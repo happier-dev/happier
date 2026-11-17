@@ -33,6 +33,7 @@ export async function runBoundSessionSetup(input: Readonly<{
     if (!operationId) throw new ManagedMachineControllerError('admission_unavailable');
     const basis = { kind: 'boundSetup' as const, managedId: machine.id, sessionId: input.sessionId, operationId };
     const sources: MachineSetupSourceV1 = [{ kind: 'accountPreset', presetId: machine.preset.id,
+        ...(machine.preset.setupRevision === undefined ? {} : { setupRevision: machine.preset.setupRevision }),
         presetRevision: machine.preset.revision, contentEncryptionMode: machine.preset.contentEncryptionMode, setup: input.setup }];
     const execution = projectMachineSetupSourceChangeExecutionV1(sources, sources, input.setup, [],
         { currentSourceFacts: input.sourceFacts, mode: 'recovery' });

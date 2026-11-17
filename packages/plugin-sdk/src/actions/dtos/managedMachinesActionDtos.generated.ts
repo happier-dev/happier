@@ -228,6 +228,9 @@ export type ManagedMachinesActionInputById = {
                 };
                 definitionId?: string | undefined;
             };
+            profileId?: string | undefined;
+            title?: string | undefined;
+            allowedTools?: string[] | undefined;
             identity?: undefined | {
                 bot?: undefined | {
                     kind: 'bot';
@@ -258,9 +261,6 @@ export type ManagedMachinesActionInputById = {
                 };
                 createdAsBot?: true | undefined;
             };
-            title?: string | undefined;
-            profileId?: string | undefined;
-            allowedTools?: string[] | undefined;
             terminal?: undefined | {
                 mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
                 tmux?: undefined | {
@@ -277,7 +277,6 @@ export type ManagedMachinesActionInputById = {
                     windowName?: string | undefined;
                 };
             };
-            roleId?: string | undefined;
             modelSelection?: undefined | {
                 v: 1;
                 ref: {
@@ -352,16 +351,19 @@ export type ManagedMachinesActionInputById = {
                     };
                 }> | undefined;
             };
+            checkoutCreationDraft?: null | undefined | {
+                kind: 'git_worktree';
+                displayName: string;
+                baseRef: null | string;
+                branchMode?: 'existing' | 'new' | undefined;
+            };
+            transcriptStorage?: 'direct' | 'persisted' | undefined;
             permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             configuration?: unknown;
+            roleId?: string | undefined;
             approvalProfileId?: null | string | undefined;
             manager?: undefined | {
                 sessionId: string;
-            };
-            primaryTeamId?: null | string | undefined;
-            organizationPlacement?: undefined | {
-                folderId: null | string;
-                tagIds: string[];
             };
             initialInput?: undefined | {
                 text?: string | undefined;
@@ -1167,23 +1169,26 @@ export type ManagedMachinesActionInputById = {
                     displayText: string;
                 };
             };
+            sourceContext?: undefined | {
+                v: 1;
+                kind: 'session_replay';
+                sourceSessionId: string;
+                forkPoint: {
+                    type: 'latest';
+                } | {
+                    type: 'seq';
+                    upToSeqInclusive: number;
+                };
+            };
+            primaryTeamId?: null | string | undefined;
+            organizationPlacement?: undefined | {
+                folderId: null | string;
+                tagIds: string[];
+            };
             attestedContext?: undefined | {
                 externalPrincipalId: string;
                 sourceMessageId: string;
             };
-            placementOrigin?: undefined | {
-                kind: 'machine_pool';
-                poolId: string;
-            };
-            secretReferenceOverlay?: undefined | {
-                v: 1;
-                bindings: Record<string, {
-                    ref: string;
-                    revision?: number | undefined;
-                }>;
-            };
-            agentModeId?: string | undefined;
-            unlistedTools?: 'ask' | 'deny' | undefined;
             capabilitySelection?: undefined | {
                 mcp?: undefined | {
                     v?: 1 | undefined;
@@ -1199,14 +1204,46 @@ export type ManagedMachinesActionInputById = {
                     excludeNativeSkillNames?: string[] | undefined;
                 };
             };
-            transcriptStorage?: 'direct' | 'persisted' | undefined;
-            checkoutCreationDraft?: null | undefined | {
-                kind: 'git_worktree';
-                displayName: string;
-                baseRef: null | string;
-                branchMode?: 'existing' | 'new' | undefined;
-            };
             memoryEnabled?: boolean | undefined;
+            promptStack?: undefined | {
+                id: string;
+                ref: {
+                    kind: 'bundle' | 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                enabled?: boolean | undefined;
+                placement?: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append' | undefined;
+                maxChars?: number | undefined;
+                required?: boolean | undefined;
+                skillMigrationV1?: true | undefined;
+                plan?: true | undefined;
+            }[];
+            managedCreation?: undefined | {
+                homeId: string;
+                managedId: string;
+                controller?: undefined | {
+                    machineId: string;
+                    installationId: string;
+                };
+            };
+            discussionParticipant?: undefined | {
+                discussionId: string;
+                participantSlotId: string;
+            };
+            secretReferenceOverlay?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
+            agentModeId?: string | undefined;
+            unlistedTools?: 'ask' | 'deny' | undefined;
+            placementOrigin?: undefined | {
+                kind: 'machine_pool';
+                poolId: string;
+            };
             teamCredentialBindings?: ({
                 v: 1;
                 slot: {
@@ -1438,32 +1475,6 @@ export type ManagedMachinesActionInputById = {
                     instanceKey?: string | undefined;
                 };
             };
-            managedCreation?: undefined | {
-                homeId: string;
-                managedId: string;
-                controller?: undefined | {
-                    machineId: string;
-                    installationId: string;
-                };
-            };
-            discussionParticipant?: undefined | {
-                discussionId: string;
-                participantSlotId: string;
-            };
-            promptStack?: undefined | {
-                id: string;
-                ref: {
-                    kind: 'bundle' | 'doc';
-                    artifactId: string;
-                    serverId?: string | undefined;
-                };
-                enabled?: boolean | undefined;
-                placement?: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append' | undefined;
-                maxChars?: number | undefined;
-                required?: boolean | undefined;
-                skillMigrationV1?: true | undefined;
-                plan?: true | undefined;
-            }[];
             initialTriggers?: undefined | {
                 trigger: {
                     kind: 'ciFailed' | 'prComment';
@@ -1786,6 +1797,7 @@ export type ManagedMachinesActionInputById = {
                                 folderId: null | string;
                                 tagIds: string[];
                             };
+                            memoryEnabled?: boolean | undefined;
                             secretReferenceOverlay?: undefined | {
                                 v: 1;
                                 bindings: Record<string, {
@@ -1793,7 +1805,6 @@ export type ManagedMachinesActionInputById = {
                                     revision?: number | undefined;
                                 }>;
                             };
-                            memoryEnabled?: boolean | undefined;
                             teamCredentialBindings?: ({
                                 v: 1;
                                 slot: {
@@ -2089,17 +2100,6 @@ export type ManagedMachinesActionInputById = {
                 id: string;
                 revision: number;
             }> | undefined;
-            sourceContext?: undefined | {
-                v: 1;
-                kind: 'session_replay';
-                sourceSessionId: string;
-                forkPoint: {
-                    type: 'latest';
-                } | {
-                    type: 'seq';
-                    upToSeqInclusive: number;
-                };
-            };
         };
         reviewedFacts?: undefined | {
             launch: {
@@ -2569,6 +2569,9 @@ export type ManagedMachinesActionInputById = {
                 };
                 definitionId?: string | undefined;
             };
+            profileId?: string | undefined;
+            title?: string | undefined;
+            allowedTools?: string[] | undefined;
             identity?: undefined | {
                 bot?: undefined | {
                     kind: 'bot';
@@ -2599,9 +2602,6 @@ export type ManagedMachinesActionInputById = {
                 };
                 createdAsBot?: true | undefined;
             };
-            title?: string | undefined;
-            profileId?: string | undefined;
-            allowedTools?: string[] | undefined;
             terminal?: undefined | {
                 mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
                 tmux?: undefined | {
@@ -2618,7 +2618,6 @@ export type ManagedMachinesActionInputById = {
                     windowName?: string | undefined;
                 };
             };
-            roleId?: string | undefined;
             modelSelection?: undefined | {
                 v: 1;
                 ref: {
@@ -2693,16 +2692,19 @@ export type ManagedMachinesActionInputById = {
                     };
                 }> | undefined;
             };
+            checkoutCreationDraft?: null | undefined | {
+                kind: 'git_worktree';
+                displayName: string;
+                baseRef: null | string;
+                branchMode?: 'existing' | 'new' | undefined;
+            };
+            transcriptStorage?: 'direct' | 'persisted' | undefined;
             permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             configuration?: unknown;
+            roleId?: string | undefined;
             approvalProfileId?: null | string | undefined;
             manager?: undefined | {
                 sessionId: string;
-            };
-            primaryTeamId?: null | string | undefined;
-            organizationPlacement?: undefined | {
-                folderId: null | string;
-                tagIds: string[];
             };
             initialInput?: undefined | {
                 text?: string | undefined;
@@ -3508,23 +3510,26 @@ export type ManagedMachinesActionInputById = {
                     displayText: string;
                 };
             };
+            sourceContext?: undefined | {
+                v: 1;
+                kind: 'session_replay';
+                sourceSessionId: string;
+                forkPoint: {
+                    type: 'latest';
+                } | {
+                    type: 'seq';
+                    upToSeqInclusive: number;
+                };
+            };
+            primaryTeamId?: null | string | undefined;
+            organizationPlacement?: undefined | {
+                folderId: null | string;
+                tagIds: string[];
+            };
             attestedContext?: undefined | {
                 externalPrincipalId: string;
                 sourceMessageId: string;
             };
-            placementOrigin?: undefined | {
-                kind: 'machine_pool';
-                poolId: string;
-            };
-            secretReferenceOverlay?: undefined | {
-                v: 1;
-                bindings: Record<string, {
-                    ref: string;
-                    revision?: number | undefined;
-                }>;
-            };
-            agentModeId?: string | undefined;
-            unlistedTools?: 'ask' | 'deny' | undefined;
             capabilitySelection?: undefined | {
                 mcp?: undefined | {
                     v?: 1 | undefined;
@@ -3540,14 +3545,46 @@ export type ManagedMachinesActionInputById = {
                     excludeNativeSkillNames?: string[] | undefined;
                 };
             };
-            transcriptStorage?: 'direct' | 'persisted' | undefined;
-            checkoutCreationDraft?: null | undefined | {
-                kind: 'git_worktree';
-                displayName: string;
-                baseRef: null | string;
-                branchMode?: 'existing' | 'new' | undefined;
-            };
             memoryEnabled?: boolean | undefined;
+            promptStack?: undefined | {
+                id: string;
+                ref: {
+                    kind: 'bundle' | 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                enabled?: boolean | undefined;
+                placement?: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append' | undefined;
+                maxChars?: number | undefined;
+                required?: boolean | undefined;
+                skillMigrationV1?: true | undefined;
+                plan?: true | undefined;
+            }[];
+            managedCreation?: undefined | {
+                homeId: string;
+                managedId: string;
+                controller?: undefined | {
+                    machineId: string;
+                    installationId: string;
+                };
+            };
+            discussionParticipant?: undefined | {
+                discussionId: string;
+                participantSlotId: string;
+            };
+            secretReferenceOverlay?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
+            agentModeId?: string | undefined;
+            unlistedTools?: 'ask' | 'deny' | undefined;
+            placementOrigin?: undefined | {
+                kind: 'machine_pool';
+                poolId: string;
+            };
             teamCredentialBindings?: ({
                 v: 1;
                 slot: {
@@ -3779,32 +3816,6 @@ export type ManagedMachinesActionInputById = {
                     instanceKey?: string | undefined;
                 };
             };
-            managedCreation?: undefined | {
-                homeId: string;
-                managedId: string;
-                controller?: undefined | {
-                    machineId: string;
-                    installationId: string;
-                };
-            };
-            discussionParticipant?: undefined | {
-                discussionId: string;
-                participantSlotId: string;
-            };
-            promptStack?: undefined | {
-                id: string;
-                ref: {
-                    kind: 'bundle' | 'doc';
-                    artifactId: string;
-                    serverId?: string | undefined;
-                };
-                enabled?: boolean | undefined;
-                placement?: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append' | undefined;
-                maxChars?: number | undefined;
-                required?: boolean | undefined;
-                skillMigrationV1?: true | undefined;
-                plan?: true | undefined;
-            }[];
             initialTriggers?: undefined | {
                 trigger: {
                     kind: 'ciFailed' | 'prComment';
@@ -4127,6 +4138,7 @@ export type ManagedMachinesActionInputById = {
                                 folderId: null | string;
                                 tagIds: string[];
                             };
+                            memoryEnabled?: boolean | undefined;
                             secretReferenceOverlay?: undefined | {
                                 v: 1;
                                 bindings: Record<string, {
@@ -4134,7 +4146,6 @@ export type ManagedMachinesActionInputById = {
                                     revision?: number | undefined;
                                 }>;
                             };
-                            memoryEnabled?: boolean | undefined;
                             teamCredentialBindings?: ({
                                 v: 1;
                                 slot: {
@@ -4430,17 +4441,6 @@ export type ManagedMachinesActionInputById = {
                 id: string;
                 revision: number;
             }> | undefined;
-            sourceContext?: undefined | {
-                v: 1;
-                kind: 'session_replay';
-                sourceSessionId: string;
-                forkPoint: {
-                    type: 'latest';
-                } | {
-                    type: 'seq';
-                    upToSeqInclusive: number;
-                };
-            };
         };
     };
     readonly "machines.managed.list": {
@@ -4473,6 +4473,19 @@ export type ManagedMachinesActionInputById = {
         expectedIntentRevision: number;
         homeId: string;
         managedId: string;
+        guestCli?: undefined | {
+            source: 'home-payload' | 'public-release';
+            line: string;
+            channel: 'preview' | 'publicdev' | 'stable';
+            payloads?: undefined | {
+                target: {
+                    os: 'darwin' | 'linux';
+                    arch: 'arm64' | 'x64';
+                };
+                sha256: string;
+                url: string;
+            }[];
+        };
     };
     readonly "machines.managed.cancel": {
         expectedIntentRevision: number;
@@ -4600,10 +4613,17 @@ export type ManagedMachinesActionInputById = {
                         teamId: string;
                     };
                 };
-                deployerPrincipals?: undefined | {
-                    principalKind: 'account' | 'teamGroup';
-                    principalId: string;
-                }[];
+                deployerPrincipals?: ({
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'group';
+                    teamId: string;
+                    groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                })[] | undefined;
                 buildMachineId?: string | undefined;
                 managedRetention?: 'keep' | 'until-delete' | undefined;
                 preview?: undefined | {
@@ -4778,7 +4798,7 @@ export type ManagedMachinesActionInputById = {
                             kind: 'remap';
                             source: {
                                 kind: 'deploymentFact';
-                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                             } | {
                                 kind: 'deploymentFact';
                                 fact: 'domainUrl';
@@ -4881,7 +4901,7 @@ export type ManagedMachinesActionInputById = {
                     } | {
                         source: {
                             kind: 'deploymentFact';
-                            fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                            fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                         } | {
                             kind: 'deploymentFact';
                             fact: 'domainUrl';
@@ -4904,6 +4924,8 @@ export type ManagedMachinesActionInputById = {
                         name: string;
                         phase: 'build' | 'runtime';
                         grantRef?: string | undefined;
+                        managedBy?: 'telemetry' | undefined;
+                        valueFormat?: 'otelAuthorizationHeader' | undefined;
                     } | {
                         source: {
                             ref: string;
@@ -5009,10 +5031,17 @@ export type ManagedMachinesActionInputById = {
                     purpose: 'standard';
                     deployerMode: 'chosen' | 'managers' | 'members';
                     controllerMachineId: string;
-                    deployerPrincipals?: undefined | {
-                        principalKind: 'account' | 'teamGroup';
-                        principalId: string;
-                    }[];
+                    deployerPrincipals?: ({
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'group';
+                        teamId: string;
+                        groupId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    })[] | undefined;
                     buildMachineId?: string | undefined;
                     retainPreviousDeployments?: number | undefined;
                 } | {
@@ -5070,6 +5099,8 @@ export type ManagedMachinesActionInputById = {
                     name: string;
                     phase: 'build' | 'runtime';
                     grantRef?: string | undefined;
+                    managedBy?: 'telemetry' | undefined;
+                    valueFormat?: 'otelAuthorizationHeader' | undefined;
                 }[];
                 projectSourceId?: string | undefined;
                 newProject?: undefined | {
@@ -5127,6 +5158,10 @@ export type ManagedMachinesActionInputById = {
                 };
             };
         })[] | undefined;
+        candidatePreset?: undefined | {
+            presetId: string;
+            presetRevision: number;
+        };
         updates?: undefined | {
             scope: 'all' | 'security';
         };
@@ -5238,10 +5273,17 @@ export type ManagedMachinesActionInputById = {
                             teamId: string;
                         };
                     };
-                    deployerPrincipals?: undefined | {
-                        principalKind: 'account' | 'teamGroup';
-                        principalId: string;
-                    }[];
+                    deployerPrincipals?: ({
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'group';
+                        teamId: string;
+                        groupId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    })[] | undefined;
                     buildMachineId?: string | undefined;
                     managedRetention?: 'keep' | 'until-delete' | undefined;
                     preview?: undefined | {
@@ -5416,7 +5458,7 @@ export type ManagedMachinesActionInputById = {
                                 kind: 'remap';
                                 source: {
                                     kind: 'deploymentFact';
-                                    fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                    fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                                 } | {
                                     kind: 'deploymentFact';
                                     fact: 'domainUrl';
@@ -5519,7 +5561,7 @@ export type ManagedMachinesActionInputById = {
                         } | {
                             source: {
                                 kind: 'deploymentFact';
-                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                             } | {
                                 kind: 'deploymentFact';
                                 fact: 'domainUrl';
@@ -5542,6 +5584,8 @@ export type ManagedMachinesActionInputById = {
                             name: string;
                             phase: 'build' | 'runtime';
                             grantRef?: string | undefined;
+                            managedBy?: 'telemetry' | undefined;
+                            valueFormat?: 'otelAuthorizationHeader' | undefined;
                         } | {
                             source: {
                                 ref: string;
@@ -5647,10 +5691,17 @@ export type ManagedMachinesActionInputById = {
                         purpose: 'standard';
                         deployerMode: 'chosen' | 'managers' | 'members';
                         controllerMachineId: string;
-                        deployerPrincipals?: undefined | {
-                            principalKind: 'account' | 'teamGroup';
-                            principalId: string;
-                        }[];
+                        deployerPrincipals?: ({
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'group';
+                            teamId: string;
+                            groupId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        })[] | undefined;
                         buildMachineId?: string | undefined;
                         retainPreviousDeployments?: number | undefined;
                     } | {
@@ -5708,6 +5759,8 @@ export type ManagedMachinesActionInputById = {
                         name: string;
                         phase: 'build' | 'runtime';
                         grantRef?: string | undefined;
+                        managedBy?: 'telemetry' | undefined;
+                        valueFormat?: 'otelAuthorizationHeader' | undefined;
                     }[];
                     projectSourceId?: string | undefined;
                     newProject?: undefined | {
@@ -5765,6 +5818,10 @@ export type ManagedMachinesActionInputById = {
                     };
                 };
             })[] | undefined;
+            candidatePreset?: undefined | {
+                presetId: string;
+                presetRevision: number;
+            };
             updates?: undefined | {
                 scope: 'all' | 'security';
             };
@@ -7788,10 +7845,17 @@ export type ManagedMachinesActionInputById = {
                             teamId: string;
                         };
                     };
-                    deployerPrincipals?: undefined | {
-                        principalKind: 'account' | 'teamGroup';
-                        principalId: string;
-                    }[];
+                    deployerPrincipals?: ({
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'group';
+                        teamId: string;
+                        groupId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    })[] | undefined;
                     buildMachineId?: string | undefined;
                     managedRetention?: 'keep' | 'until-delete' | undefined;
                     preview?: undefined | {
@@ -7966,7 +8030,7 @@ export type ManagedMachinesActionInputById = {
                                 kind: 'remap';
                                 source: {
                                     kind: 'deploymentFact';
-                                    fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                    fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                                 } | {
                                     kind: 'deploymentFact';
                                     fact: 'domainUrl';
@@ -8069,7 +8133,7 @@ export type ManagedMachinesActionInputById = {
                         } | {
                             source: {
                                 kind: 'deploymentFact';
-                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                             } | {
                                 kind: 'deploymentFact';
                                 fact: 'domainUrl';
@@ -8092,6 +8156,8 @@ export type ManagedMachinesActionInputById = {
                             name: string;
                             phase: 'build' | 'runtime';
                             grantRef?: string | undefined;
+                            managedBy?: 'telemetry' | undefined;
+                            valueFormat?: 'otelAuthorizationHeader' | undefined;
                         } | {
                             source: {
                                 ref: string;
@@ -8197,10 +8263,17 @@ export type ManagedMachinesActionInputById = {
                         purpose: 'standard';
                         deployerMode: 'chosen' | 'managers' | 'members';
                         controllerMachineId: string;
-                        deployerPrincipals?: undefined | {
-                            principalKind: 'account' | 'teamGroup';
-                            principalId: string;
-                        }[];
+                        deployerPrincipals?: ({
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'group';
+                            teamId: string;
+                            groupId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        })[] | undefined;
                         buildMachineId?: string | undefined;
                         retainPreviousDeployments?: number | undefined;
                     } | {
@@ -8258,6 +8331,8 @@ export type ManagedMachinesActionInputById = {
                         name: string;
                         phase: 'build' | 'runtime';
                         grantRef?: string | undefined;
+                        managedBy?: 'telemetry' | undefined;
+                        valueFormat?: 'otelAuthorizationHeader' | undefined;
                     }[];
                     projectSourceId?: string | undefined;
                     newProject?: undefined | {
@@ -11515,24 +11590,6 @@ export type ManagedMachinesActionResultById = {
                             localId: string;
                         };
                         accountId: string;
-                    } | {
-                        teamId: string;
-                        selection: {
-                            source: 'team_resource';
-                            resourceId: string;
-                            deliveryMode: 'brokered';
-                        } | {
-                            source: 'team_resource';
-                            resourceId: string;
-                            deliveryMode: 'direct';
-                            disclosedMember: {
-                                service: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                accountId: string;
-                            };
-                        };
                     };
                     label: string;
                 }[];
@@ -11558,7 +11615,7 @@ export type ManagedMachinesActionResultById = {
             fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
         } | {
             localCause: 'native_command_failed';
-            command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+            command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
             exitCode: null | number;
             stderr?: string | undefined;
             stderrTruncated?: true | undefined;
@@ -11613,6 +11670,7 @@ export type ManagedMachinesActionResultById = {
                 presetId: string;
                 presetRevision: number;
                 contentEncryptionMode: 'e2ee' | 'plain';
+                setupRevision?: number | undefined;
                 presetContentOverride?: undefined | {
                     content: {
                         t: 'encrypted';
@@ -12397,7 +12455,7 @@ export type ManagedMachinesActionResultById = {
             fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
         } | {
             localCause: 'native_command_failed';
-            command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+            command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
             exitCode: null | number;
             stderr?: string | undefined;
             stderrTruncated?: true | undefined;
@@ -12449,6 +12507,7 @@ export type ManagedMachinesActionResultById = {
                     presetId: string;
                     presetRevision: number;
                     contentEncryptionMode: 'e2ee' | 'plain';
+                    setupRevision?: number | undefined;
                     presetContentOverride?: undefined | {
                         content: {
                             t: 'encrypted';
@@ -12708,11 +12767,26 @@ export type ManagedMachinesActionResultById = {
             };
             wakeOnAcceptedMessage: boolean;
             enrollmentAccountId?: string | undefined;
+            guestCli?: undefined | {
+                source: 'home-payload' | 'public-release';
+                line: string;
+                channel: 'preview' | 'publicdev' | 'stable';
+                payloads?: undefined | {
+                    target: {
+                        os: 'darwin' | 'linux';
+                        arch: 'arm64' | 'x64';
+                    };
+                    sha256: string;
+                    url: string;
+                }[];
+            };
             acquisitionMode?: 'resource-bound' | undefined;
             preset?: undefined | {
                 id: string;
                 revision: number;
                 contentEncryptionMode: 'e2ee' | 'plain';
+                configurationRevision?: number | undefined;
+                setupRevision?: number | undefined;
             };
             controller?: undefined | {
                 machineId: string;
@@ -12829,6 +12903,7 @@ export type ManagedMachinesActionResultById = {
                         presetId: string;
                         presetRevision: number;
                         contentEncryptionMode: 'e2ee' | 'plain';
+                        setupRevision?: number | undefined;
                         presetContentOverride?: undefined | {
                             content: {
                                 t: 'encrypted';
@@ -13431,7 +13506,7 @@ export type ManagedMachinesActionResultById = {
                     fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                 } | {
                     localCause: 'native_command_failed';
-                    command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                    command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                     exitCode: null | number;
                     stderr?: string | undefined;
                     stderrTruncated?: true | undefined;
@@ -13481,6 +13556,8 @@ export type ManagedMachinesActionResultById = {
                     id: string;
                     revision: number;
                     contentEncryptionMode: 'e2ee' | 'plain';
+                    configurationRevision?: number | undefined;
+                    setupRevision?: number | undefined;
                 };
                 id: string;
                 homeId: string;
@@ -13524,6 +13601,19 @@ export type ManagedMachinesActionResultById = {
                     storage?: 'lost' | 'retained' | 'unknown' | undefined;
                 };
                 enrollmentAccountId?: string | undefined;
+                guestCli?: undefined | {
+                    source: 'home-payload' | 'public-release';
+                    line: string;
+                    channel: 'preview' | 'publicdev' | 'stable';
+                    payloads?: undefined | {
+                        target: {
+                            os: 'darwin' | 'linux';
+                            arch: 'arm64' | 'x64';
+                        };
+                        sha256: string;
+                        url: string;
+                    }[];
+                };
                 acquisitionMode?: 'resource-bound' | undefined;
                 controller?: undefined | {
                     machineId: string;
@@ -13661,11 +13751,26 @@ export type ManagedMachinesActionResultById = {
         };
         wakeOnAcceptedMessage: boolean;
         enrollmentAccountId?: string | undefined;
+        guestCli?: undefined | {
+            source: 'home-payload' | 'public-release';
+            line: string;
+            channel: 'preview' | 'publicdev' | 'stable';
+            payloads?: undefined | {
+                target: {
+                    os: 'darwin' | 'linux';
+                    arch: 'arm64' | 'x64';
+                };
+                sha256: string;
+                url: string;
+            }[];
+        };
         acquisitionMode?: 'resource-bound' | undefined;
         preset?: undefined | {
             id: string;
             revision: number;
             contentEncryptionMode: 'e2ee' | 'plain';
+            configurationRevision?: number | undefined;
+            setupRevision?: number | undefined;
         };
         controller?: undefined | {
             machineId: string;
@@ -13782,6 +13887,7 @@ export type ManagedMachinesActionResultById = {
                     presetId: string;
                     presetRevision: number;
                     contentEncryptionMode: 'e2ee' | 'plain';
+                    setupRevision?: number | undefined;
                     presetContentOverride?: undefined | {
                         content: {
                             t: 'encrypted';
@@ -14384,7 +14490,7 @@ export type ManagedMachinesActionResultById = {
                 fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
             } | {
                 localCause: 'native_command_failed';
-                command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
@@ -14960,6 +15066,7 @@ export type ManagedMachinesActionResultById = {
                 machineServiceLogsGeneration?: undefined | {
                     expectedGeneration: string;
                 };
+                registryThemeContent?: true | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -15228,6 +15335,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -15670,6 +15778,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -16159,6 +16280,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -16601,6 +16723,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -16841,11 +16976,16 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
                 deploymentMetadataEnvironmentId?: string | undefined;
+                deploymentMetadataReceiptId?: string | undefined;
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
                     expectedRevision: number;
                     machineId: string;
+                } | {
+                    homeId: string;
+                    id: string;
+                    expectedRevision: number;
                 };
                 deploymentPreparationAdmission?: undefined | {
                     operation: 'catalog';
@@ -16919,10 +17059,17 @@ export type ManagedMachinesActionResultById = {
                         version: string;
                         expectedContributorOccurrenceId?: string | undefined;
                     };
-                    deployerPrincipals?: undefined | {
-                        principalKind: 'account' | 'teamGroup';
-                        principalId: string;
-                    }[];
+                    deployerPrincipals?: ({
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'group';
+                        teamId: string;
+                        groupId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    })[] | undefined;
                     copyFrom?: undefined | {
                         environmentId: string;
                         expectedRevision: number;
@@ -16992,10 +17139,17 @@ export type ManagedMachinesActionResultById = {
                         purpose: 'standard';
                         deployerMode: 'chosen' | 'managers' | 'members';
                         controllerMachineId: string;
-                        deployerPrincipals?: undefined | {
-                            principalKind: 'account' | 'teamGroup';
-                            principalId: string;
-                        }[];
+                        deployerPrincipals?: ({
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'group';
+                            teamId: string;
+                            groupId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        })[] | undefined;
                         buildMachineId?: string | undefined;
                     } | {
                         kind: 'existing';
@@ -17047,186 +17201,20 @@ export type ManagedMachinesActionResultById = {
                     environmentId: string;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    retention: {
-                        kind: 'keep';
-                        last?: number | undefined;
-                        daily?: number | undefined;
-                        weekly?: number | undefined;
-                        monthly?: number | undefined;
-                    } | {
-                        kind: 'keepEverything';
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
                     };
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.prune';
-                    kind: 'backup';
-                    inputDigest: string;
+                    confirmDelete?: true | undefined;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.history';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.inventory';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.run';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.test';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    snapshotId: string;
-                    level: 'manifestReadBack' | 'repositoryCheck';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    backupOperationId: string;
-                    actionId: 'deployments.backups.verify';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'confirm';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    prepareOperationId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    snapshot?: boolean | undefined;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'prepare';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    operationId: string;
-                    mode: 'recover';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    targetLinkId: string;
                     environmentId: string;
                     requestKey: string;
+                    targetLinkId: string;
                     expectedTargetLinkRevision: number;
                     kind: 'domainDns';
                     actionId: 'deployments.domains.verify';
@@ -17258,6 +17246,183 @@ export type ManagedMachinesActionResultById = {
                     targetLinkId: string;
                     machineId: string;
                     installationId: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.history';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.inventory';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.run';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.test';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    retention: {
+                        kind: 'keep';
+                        last?: number | undefined;
+                        daily?: number | undefined;
+                        weekly?: number | undefined;
+                        monthly?: number | undefined;
+                    } | {
+                        kind: 'keepEverything';
+                    };
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.prune';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    snapshotId: string;
+                    machineId: string;
+                    level: 'manifestReadBack' | 'repositoryCheck';
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    backupOperationId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.verify';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'confirm';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    prepareOperationId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    snapshot?: boolean | undefined;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'prepare';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'recover';
+                    machineId: string;
+                    operationId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
                 };
                 registryAppUpdateAdmission?: undefined | {
                     environments: {
@@ -17273,6 +17438,8 @@ export type ManagedMachinesActionResultById = {
                 id: string;
                 revision: number;
                 contentEncryptionMode: 'e2ee' | 'plain';
+                configurationRevision?: number | undefined;
+                setupRevision?: number | undefined;
             };
             id: string;
             homeId: string;
@@ -17316,6 +17483,19 @@ export type ManagedMachinesActionResultById = {
                 storage?: 'lost' | 'retained' | 'unknown' | undefined;
             };
             enrollmentAccountId?: string | undefined;
+            guestCli?: undefined | {
+                source: 'home-payload' | 'public-release';
+                line: string;
+                channel: 'preview' | 'publicdev' | 'stable';
+                payloads?: undefined | {
+                    target: {
+                        os: 'darwin' | 'linux';
+                        arch: 'arm64' | 'x64';
+                    };
+                    sha256: string;
+                    url: string;
+                }[];
+            };
             acquisitionMode?: 'resource-bound' | undefined;
             controller?: undefined | {
                 machineId: string;
@@ -17910,6 +18090,7 @@ export type ManagedMachinesActionResultById = {
                 machineServiceLogsGeneration?: undefined | {
                     expectedGeneration: string;
                 };
+                registryThemeContent?: true | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -18178,6 +18359,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -18620,6 +18802,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -19109,6 +19304,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -19551,6 +19747,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -19791,11 +20000,16 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
                 deploymentMetadataEnvironmentId?: string | undefined;
+                deploymentMetadataReceiptId?: string | undefined;
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
                     expectedRevision: number;
                     machineId: string;
+                } | {
+                    homeId: string;
+                    id: string;
+                    expectedRevision: number;
                 };
                 deploymentPreparationAdmission?: undefined | {
                     operation: 'catalog';
@@ -19869,10 +20083,17 @@ export type ManagedMachinesActionResultById = {
                         version: string;
                         expectedContributorOccurrenceId?: string | undefined;
                     };
-                    deployerPrincipals?: undefined | {
-                        principalKind: 'account' | 'teamGroup';
-                        principalId: string;
-                    }[];
+                    deployerPrincipals?: ({
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'group';
+                        teamId: string;
+                        groupId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    })[] | undefined;
                     copyFrom?: undefined | {
                         environmentId: string;
                         expectedRevision: number;
@@ -19942,10 +20163,17 @@ export type ManagedMachinesActionResultById = {
                         purpose: 'standard';
                         deployerMode: 'chosen' | 'managers' | 'members';
                         controllerMachineId: string;
-                        deployerPrincipals?: undefined | {
-                            principalKind: 'account' | 'teamGroup';
-                            principalId: string;
-                        }[];
+                        deployerPrincipals?: ({
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'group';
+                            teamId: string;
+                            groupId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        })[] | undefined;
                         buildMachineId?: string | undefined;
                     } | {
                         kind: 'existing';
@@ -19997,186 +20225,20 @@ export type ManagedMachinesActionResultById = {
                     environmentId: string;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    retention: {
-                        kind: 'keep';
-                        last?: number | undefined;
-                        daily?: number | undefined;
-                        weekly?: number | undefined;
-                        monthly?: number | undefined;
-                    } | {
-                        kind: 'keepEverything';
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
                     };
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.prune';
-                    kind: 'backup';
-                    inputDigest: string;
+                    confirmDelete?: true | undefined;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.history';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.inventory';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.run';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.test';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    snapshotId: string;
-                    level: 'manifestReadBack' | 'repositoryCheck';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    backupOperationId: string;
-                    actionId: 'deployments.backups.verify';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'confirm';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    prepareOperationId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    snapshot?: boolean | undefined;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'prepare';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    operationId: string;
-                    mode: 'recover';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    targetLinkId: string;
                     environmentId: string;
                     requestKey: string;
+                    targetLinkId: string;
                     expectedTargetLinkRevision: number;
                     kind: 'domainDns';
                     actionId: 'deployments.domains.verify';
@@ -20208,6 +20270,183 @@ export type ManagedMachinesActionResultById = {
                     targetLinkId: string;
                     machineId: string;
                     installationId: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.history';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.inventory';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.run';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.test';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    retention: {
+                        kind: 'keep';
+                        last?: number | undefined;
+                        daily?: number | undefined;
+                        weekly?: number | undefined;
+                        monthly?: number | undefined;
+                    } | {
+                        kind: 'keepEverything';
+                    };
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.prune';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    snapshotId: string;
+                    machineId: string;
+                    level: 'manifestReadBack' | 'repositoryCheck';
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    backupOperationId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.verify';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'confirm';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    prepareOperationId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    snapshot?: boolean | undefined;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'prepare';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'recover';
+                    machineId: string;
+                    operationId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
                 };
                 registryAppUpdateAdmission?: undefined | {
                     environments: {
@@ -20238,7 +20477,7 @@ export type ManagedMachinesActionResultById = {
             kind: 'automation_assignment' | 'board' | 'deployment_environment' | 'machine_pool' | 'profile' | 'workflow_assignment';
             id: string;
             name: string;
-            deploymentRoles?: readonly ('build' | 'controller' | 'data' | 'detached' | 'edge' | 'retiring' | 'runtime')[] | undefined;
+            deploymentRoles?: readonly ('build' | 'controller' | 'data' | 'detached' | 'edge' | 'retiring' | 'runtime' | 'telemetry')[] | undefined;
             deploymentDomains?: readonly Readonly<{
                 environmentId: string;
                 targetLinkId: string;
@@ -20323,11 +20562,26 @@ export type ManagedMachinesActionResultById = {
             };
             wakeOnAcceptedMessage: boolean;
             enrollmentAccountId?: string | undefined;
+            guestCli?: undefined | {
+                source: 'home-payload' | 'public-release';
+                line: string;
+                channel: 'preview' | 'publicdev' | 'stable';
+                payloads?: undefined | {
+                    target: {
+                        os: 'darwin' | 'linux';
+                        arch: 'arm64' | 'x64';
+                    };
+                    sha256: string;
+                    url: string;
+                }[];
+            };
             acquisitionMode?: 'resource-bound' | undefined;
             preset?: undefined | {
                 id: string;
                 revision: number;
                 contentEncryptionMode: 'e2ee' | 'plain';
+                configurationRevision?: number | undefined;
+                setupRevision?: number | undefined;
             };
             controller?: undefined | {
                 machineId: string;
@@ -20444,6 +20698,7 @@ export type ManagedMachinesActionResultById = {
                         presetId: string;
                         presetRevision: number;
                         contentEncryptionMode: 'e2ee' | 'plain';
+                        setupRevision?: number | undefined;
                         presetContentOverride?: undefined | {
                             content: {
                                 t: 'encrypted';
@@ -21046,7 +21301,7 @@ export type ManagedMachinesActionResultById = {
                     fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                 } | {
                     localCause: 'native_command_failed';
-                    command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                    command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                     exitCode: null | number;
                     stderr?: string | undefined;
                     stderrTruncated?: true | undefined;
@@ -21095,6 +21350,8 @@ export type ManagedMachinesActionResultById = {
                 id: string;
                 revision: number;
                 contentEncryptionMode: 'e2ee' | 'plain';
+                configurationRevision?: number | undefined;
+                setupRevision?: number | undefined;
             };
             id: string;
             homeId: string;
@@ -21138,6 +21395,19 @@ export type ManagedMachinesActionResultById = {
                 storage?: 'lost' | 'retained' | 'unknown' | undefined;
             };
             enrollmentAccountId?: string | undefined;
+            guestCli?: undefined | {
+                source: 'home-payload' | 'public-release';
+                line: string;
+                channel: 'preview' | 'publicdev' | 'stable';
+                payloads?: undefined | {
+                    target: {
+                        os: 'darwin' | 'linux';
+                        arch: 'arm64' | 'x64';
+                    };
+                    sha256: string;
+                    url: string;
+                }[];
+            };
             acquisitionMode?: 'resource-bound' | undefined;
             controller?: undefined | {
                 machineId: string;
@@ -21314,11 +21584,26 @@ export type ManagedMachinesActionResultById = {
             };
             wakeOnAcceptedMessage: boolean;
             enrollmentAccountId?: string | undefined;
+            guestCli?: undefined | {
+                source: 'home-payload' | 'public-release';
+                line: string;
+                channel: 'preview' | 'publicdev' | 'stable';
+                payloads?: undefined | {
+                    target: {
+                        os: 'darwin' | 'linux';
+                        arch: 'arm64' | 'x64';
+                    };
+                    sha256: string;
+                    url: string;
+                }[];
+            };
             acquisitionMode?: 'resource-bound' | undefined;
             preset?: undefined | {
                 id: string;
                 revision: number;
                 contentEncryptionMode: 'e2ee' | 'plain';
+                configurationRevision?: number | undefined;
+                setupRevision?: number | undefined;
             };
             controller?: undefined | {
                 machineId: string;
@@ -21435,6 +21720,7 @@ export type ManagedMachinesActionResultById = {
                         presetId: string;
                         presetRevision: number;
                         contentEncryptionMode: 'e2ee' | 'plain';
+                        setupRevision?: number | undefined;
                         presetContentOverride?: undefined | {
                             content: {
                                 t: 'encrypted';
@@ -22037,7 +22323,7 @@ export type ManagedMachinesActionResultById = {
                     fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                 } | {
                     localCause: 'native_command_failed';
-                    command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                    command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                     exitCode: null | number;
                     stderr?: string | undefined;
                     stderrTruncated?: true | undefined;
@@ -22086,6 +22372,8 @@ export type ManagedMachinesActionResultById = {
                 id: string;
                 revision: number;
                 contentEncryptionMode: 'e2ee' | 'plain';
+                configurationRevision?: number | undefined;
+                setupRevision?: number | undefined;
             };
             id: string;
             homeId: string;
@@ -22129,6 +22417,19 @@ export type ManagedMachinesActionResultById = {
                 storage?: 'lost' | 'retained' | 'unknown' | undefined;
             };
             enrollmentAccountId?: string | undefined;
+            guestCli?: undefined | {
+                source: 'home-payload' | 'public-release';
+                line: string;
+                channel: 'preview' | 'publicdev' | 'stable';
+                payloads?: undefined | {
+                    target: {
+                        os: 'darwin' | 'linux';
+                        arch: 'arm64' | 'x64';
+                    };
+                    sha256: string;
+                    url: string;
+                }[];
+            };
             acquisitionMode?: 'resource-bound' | undefined;
             controller?: undefined | {
                 machineId: string;
@@ -22275,11 +22576,26 @@ export type ManagedMachinesActionResultById = {
         };
         wakeOnAcceptedMessage: boolean;
         enrollmentAccountId?: string | undefined;
+        guestCli?: undefined | {
+            source: 'home-payload' | 'public-release';
+            line: string;
+            channel: 'preview' | 'publicdev' | 'stable';
+            payloads?: undefined | {
+                target: {
+                    os: 'darwin' | 'linux';
+                    arch: 'arm64' | 'x64';
+                };
+                sha256: string;
+                url: string;
+            }[];
+        };
         acquisitionMode?: 'resource-bound' | undefined;
         preset?: undefined | {
             id: string;
             revision: number;
             contentEncryptionMode: 'e2ee' | 'plain';
+            configurationRevision?: number | undefined;
+            setupRevision?: number | undefined;
         };
         controller?: undefined | {
             machineId: string;
@@ -22396,6 +22712,7 @@ export type ManagedMachinesActionResultById = {
                     presetId: string;
                     presetRevision: number;
                     contentEncryptionMode: 'e2ee' | 'plain';
+                    setupRevision?: number | undefined;
                     presetContentOverride?: undefined | {
                         content: {
                             t: 'encrypted';
@@ -22998,7 +23315,7 @@ export type ManagedMachinesActionResultById = {
                 fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
             } | {
                 localCause: 'native_command_failed';
-                command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
@@ -23574,6 +23891,7 @@ export type ManagedMachinesActionResultById = {
                 machineServiceLogsGeneration?: undefined | {
                     expectedGeneration: string;
                 };
+                registryThemeContent?: true | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -23842,6 +24160,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -24284,6 +24603,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -24773,6 +25105,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -25215,6 +25548,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -25455,11 +25801,16 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
                 deploymentMetadataEnvironmentId?: string | undefined;
+                deploymentMetadataReceiptId?: string | undefined;
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
                     expectedRevision: number;
                     machineId: string;
+                } | {
+                    homeId: string;
+                    id: string;
+                    expectedRevision: number;
                 };
                 deploymentPreparationAdmission?: undefined | {
                     operation: 'catalog';
@@ -25533,10 +25884,17 @@ export type ManagedMachinesActionResultById = {
                         version: string;
                         expectedContributorOccurrenceId?: string | undefined;
                     };
-                    deployerPrincipals?: undefined | {
-                        principalKind: 'account' | 'teamGroup';
-                        principalId: string;
-                    }[];
+                    deployerPrincipals?: ({
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'group';
+                        teamId: string;
+                        groupId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    })[] | undefined;
                     copyFrom?: undefined | {
                         environmentId: string;
                         expectedRevision: number;
@@ -25606,10 +25964,17 @@ export type ManagedMachinesActionResultById = {
                         purpose: 'standard';
                         deployerMode: 'chosen' | 'managers' | 'members';
                         controllerMachineId: string;
-                        deployerPrincipals?: undefined | {
-                            principalKind: 'account' | 'teamGroup';
-                            principalId: string;
-                        }[];
+                        deployerPrincipals?: ({
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'group';
+                            teamId: string;
+                            groupId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        })[] | undefined;
                         buildMachineId?: string | undefined;
                     } | {
                         kind: 'existing';
@@ -25661,186 +26026,20 @@ export type ManagedMachinesActionResultById = {
                     environmentId: string;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    retention: {
-                        kind: 'keep';
-                        last?: number | undefined;
-                        daily?: number | undefined;
-                        weekly?: number | undefined;
-                        monthly?: number | undefined;
-                    } | {
-                        kind: 'keepEverything';
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
                     };
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.prune';
-                    kind: 'backup';
-                    inputDigest: string;
+                    confirmDelete?: true | undefined;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.history';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.inventory';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.run';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.test';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    snapshotId: string;
-                    level: 'manifestReadBack' | 'repositoryCheck';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    backupOperationId: string;
-                    actionId: 'deployments.backups.verify';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'confirm';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    prepareOperationId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    snapshot?: boolean | undefined;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'prepare';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    operationId: string;
-                    mode: 'recover';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    targetLinkId: string;
                     environmentId: string;
                     requestKey: string;
+                    targetLinkId: string;
                     expectedTargetLinkRevision: number;
                     kind: 'domainDns';
                     actionId: 'deployments.domains.verify';
@@ -25872,6 +26071,183 @@ export type ManagedMachinesActionResultById = {
                     targetLinkId: string;
                     machineId: string;
                     installationId: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.history';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.inventory';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.run';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.test';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    retention: {
+                        kind: 'keep';
+                        last?: number | undefined;
+                        daily?: number | undefined;
+                        weekly?: number | undefined;
+                        monthly?: number | undefined;
+                    } | {
+                        kind: 'keepEverything';
+                    };
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.prune';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    snapshotId: string;
+                    machineId: string;
+                    level: 'manifestReadBack' | 'repositoryCheck';
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    backupOperationId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.verify';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'confirm';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    prepareOperationId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    snapshot?: boolean | undefined;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'prepare';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'recover';
+                    machineId: string;
+                    operationId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
                 };
                 registryAppUpdateAdmission?: undefined | {
                     environments: {
@@ -25887,6 +26263,8 @@ export type ManagedMachinesActionResultById = {
                 id: string;
                 revision: number;
                 contentEncryptionMode: 'e2ee' | 'plain';
+                configurationRevision?: number | undefined;
+                setupRevision?: number | undefined;
             };
             id: string;
             homeId: string;
@@ -25930,6 +26308,19 @@ export type ManagedMachinesActionResultById = {
                 storage?: 'lost' | 'retained' | 'unknown' | undefined;
             };
             enrollmentAccountId?: string | undefined;
+            guestCli?: undefined | {
+                source: 'home-payload' | 'public-release';
+                line: string;
+                channel: 'preview' | 'publicdev' | 'stable';
+                payloads?: undefined | {
+                    target: {
+                        os: 'darwin' | 'linux';
+                        arch: 'arm64' | 'x64';
+                    };
+                    sha256: string;
+                    url: string;
+                }[];
+            };
             acquisitionMode?: 'resource-bound' | undefined;
             controller?: undefined | {
                 machineId: string;
@@ -26524,6 +26915,7 @@ export type ManagedMachinesActionResultById = {
                 machineServiceLogsGeneration?: undefined | {
                     expectedGeneration: string;
                 };
+                registryThemeContent?: true | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -26792,6 +27184,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -27234,6 +27627,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -27723,6 +28129,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -28165,6 +28572,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -28405,11 +28825,16 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
                 deploymentMetadataEnvironmentId?: string | undefined;
+                deploymentMetadataReceiptId?: string | undefined;
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
                     expectedRevision: number;
                     machineId: string;
+                } | {
+                    homeId: string;
+                    id: string;
+                    expectedRevision: number;
                 };
                 deploymentPreparationAdmission?: undefined | {
                     operation: 'catalog';
@@ -28483,10 +28908,17 @@ export type ManagedMachinesActionResultById = {
                         version: string;
                         expectedContributorOccurrenceId?: string | undefined;
                     };
-                    deployerPrincipals?: undefined | {
-                        principalKind: 'account' | 'teamGroup';
-                        principalId: string;
-                    }[];
+                    deployerPrincipals?: ({
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'group';
+                        teamId: string;
+                        groupId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    })[] | undefined;
                     copyFrom?: undefined | {
                         environmentId: string;
                         expectedRevision: number;
@@ -28556,10 +28988,17 @@ export type ManagedMachinesActionResultById = {
                         purpose: 'standard';
                         deployerMode: 'chosen' | 'managers' | 'members';
                         controllerMachineId: string;
-                        deployerPrincipals?: undefined | {
-                            principalKind: 'account' | 'teamGroup';
-                            principalId: string;
-                        }[];
+                        deployerPrincipals?: ({
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'group';
+                            teamId: string;
+                            groupId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        })[] | undefined;
                         buildMachineId?: string | undefined;
                     } | {
                         kind: 'existing';
@@ -28611,186 +29050,20 @@ export type ManagedMachinesActionResultById = {
                     environmentId: string;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    retention: {
-                        kind: 'keep';
-                        last?: number | undefined;
-                        daily?: number | undefined;
-                        weekly?: number | undefined;
-                        monthly?: number | undefined;
-                    } | {
-                        kind: 'keepEverything';
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
                     };
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.prune';
-                    kind: 'backup';
-                    inputDigest: string;
+                    confirmDelete?: true | undefined;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.history';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.inventory';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.run';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.test';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    snapshotId: string;
-                    level: 'manifestReadBack' | 'repositoryCheck';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    backupOperationId: string;
-                    actionId: 'deployments.backups.verify';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'confirm';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    prepareOperationId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    snapshot?: boolean | undefined;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'prepare';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    operationId: string;
-                    mode: 'recover';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    targetLinkId: string;
                     environmentId: string;
                     requestKey: string;
+                    targetLinkId: string;
                     expectedTargetLinkRevision: number;
                     kind: 'domainDns';
                     actionId: 'deployments.domains.verify';
@@ -28822,6 +29095,183 @@ export type ManagedMachinesActionResultById = {
                     targetLinkId: string;
                     machineId: string;
                     installationId: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.history';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.inventory';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.run';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.test';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    retention: {
+                        kind: 'keep';
+                        last?: number | undefined;
+                        daily?: number | undefined;
+                        weekly?: number | undefined;
+                        monthly?: number | undefined;
+                    } | {
+                        kind: 'keepEverything';
+                    };
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.prune';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    snapshotId: string;
+                    machineId: string;
+                    level: 'manifestReadBack' | 'repositoryCheck';
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    backupOperationId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.verify';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'confirm';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    prepareOperationId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    snapshot?: boolean | undefined;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'prepare';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'recover';
+                    machineId: string;
+                    operationId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
                 };
                 registryAppUpdateAdmission?: undefined | {
                     environments: {
@@ -28839,6 +29289,7 @@ export type ManagedMachinesActionResultById = {
             presetId: string;
             presetRevision: number;
             contentEncryptionMode: 'e2ee' | 'plain';
+            setupRevision?: number | undefined;
             presetContentOverride?: undefined | {
                 content: {
                     t: 'encrypted';
@@ -28882,6 +29333,7 @@ export type ManagedMachinesActionResultById = {
                     recipientContentPublicKeyFingerprint: string;
                 };
             };
+            setupRevision?: number | undefined;
             presetContentOverride?: undefined | {
                 content: {
                     t: 'encrypted';
@@ -30989,10 +31441,17 @@ export type ManagedMachinesActionResultById = {
                         teamId: string;
                     };
                 };
-                deployerPrincipals?: undefined | {
-                    principalKind: 'account' | 'teamGroup';
-                    principalId: string;
-                }[];
+                deployerPrincipals?: ({
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'group';
+                    teamId: string;
+                    groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                })[] | undefined;
                 buildMachineId?: string | undefined;
                 managedRetention?: 'keep' | 'until-delete' | undefined;
                 preview?: undefined | {
@@ -31167,7 +31626,7 @@ export type ManagedMachinesActionResultById = {
                             kind: 'remap';
                             source: {
                                 kind: 'deploymentFact';
-                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                             } | {
                                 kind: 'deploymentFact';
                                 fact: 'domainUrl';
@@ -31270,7 +31729,7 @@ export type ManagedMachinesActionResultById = {
                     } | {
                         source: {
                             kind: 'deploymentFact';
-                            fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                            fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                         } | {
                             kind: 'deploymentFact';
                             fact: 'domainUrl';
@@ -31293,6 +31752,8 @@ export type ManagedMachinesActionResultById = {
                         name: string;
                         phase: 'build' | 'runtime';
                         grantRef?: string | undefined;
+                        managedBy?: 'telemetry' | undefined;
+                        valueFormat?: 'otelAuthorizationHeader' | undefined;
                     } | {
                         source: {
                             ref: string;
@@ -31398,10 +31859,17 @@ export type ManagedMachinesActionResultById = {
                     purpose: 'standard';
                     deployerMode: 'chosen' | 'managers' | 'members';
                     controllerMachineId: string;
-                    deployerPrincipals?: undefined | {
-                        principalKind: 'account' | 'teamGroup';
-                        principalId: string;
-                    }[];
+                    deployerPrincipals?: ({
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'group';
+                        teamId: string;
+                        groupId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    })[] | undefined;
                     buildMachineId?: string | undefined;
                     retainPreviousDeployments?: number | undefined;
                 } | {
@@ -31459,6 +31927,8 @@ export type ManagedMachinesActionResultById = {
                     name: string;
                     phase: 'build' | 'runtime';
                     grantRef?: string | undefined;
+                    managedBy?: 'telemetry' | undefined;
+                    valueFormat?: 'otelAuthorizationHeader' | undefined;
                 }[];
                 projectSourceId?: string | undefined;
                 newProject?: undefined | {
@@ -31524,7 +31994,7 @@ export type ManagedMachinesActionResultById = {
                 bindings: {
                     source: {
                         kind: 'deploymentFact';
-                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                     } | {
                         kind: 'deploymentFact';
                         fact: 'domainUrl';
@@ -31547,6 +32017,8 @@ export type ManagedMachinesActionResultById = {
                     name: string;
                     phase: 'build' | 'runtime';
                     grantRef?: string | undefined;
+                    managedBy?: 'telemetry' | undefined;
+                    valueFormat?: 'otelAuthorizationHeader' | undefined;
                 }[];
                 generatedSecrets: {
                     name: string;
@@ -31642,6 +32114,7 @@ export type ManagedMachinesActionResultById = {
                 creationDefaults?: undefined | {
                     values: {
                         retainPreviousDeployments: number;
+                        telemetryMachineId?: string | undefined;
                         buildMachineId?: string | undefined;
                         controllerMachineId?: string | undefined;
                         previewMachineId?: string | undefined;
@@ -31679,6 +32152,7 @@ export type ManagedMachinesActionResultById = {
                         }[];
                     };
                     sources: {
+                        telemetryMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                         buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                         controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                         retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
@@ -32749,6 +33223,7 @@ export type ManagedMachinesActionResultById = {
                     presetId: string;
                     presetRevision: number;
                     contentEncryptionMode: 'e2ee' | 'plain';
+                    setupRevision?: number | undefined;
                     presetContentOverride?: undefined | {
                         content: {
                             t: 'encrypted';
@@ -32792,6 +33267,7 @@ export type ManagedMachinesActionResultById = {
                             recipientContentPublicKeyFingerprint: string;
                         };
                     };
+                    setupRevision?: number | undefined;
                     presetContentOverride?: undefined | {
                         content: {
                             t: 'encrypted';
@@ -34899,10 +35375,17 @@ export type ManagedMachinesActionResultById = {
                                 teamId: string;
                             };
                         };
-                        deployerPrincipals?: undefined | {
-                            principalKind: 'account' | 'teamGroup';
-                            principalId: string;
-                        }[];
+                        deployerPrincipals?: ({
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'group';
+                            teamId: string;
+                            groupId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        })[] | undefined;
                         buildMachineId?: string | undefined;
                         managedRetention?: 'keep' | 'until-delete' | undefined;
                         preview?: undefined | {
@@ -35077,7 +35560,7 @@ export type ManagedMachinesActionResultById = {
                                     kind: 'remap';
                                     source: {
                                         kind: 'deploymentFact';
-                                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                                     } | {
                                         kind: 'deploymentFact';
                                         fact: 'domainUrl';
@@ -35180,7 +35663,7 @@ export type ManagedMachinesActionResultById = {
                             } | {
                                 source: {
                                     kind: 'deploymentFact';
-                                    fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                    fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                                 } | {
                                     kind: 'deploymentFact';
                                     fact: 'domainUrl';
@@ -35203,6 +35686,8 @@ export type ManagedMachinesActionResultById = {
                                 name: string;
                                 phase: 'build' | 'runtime';
                                 grantRef?: string | undefined;
+                                managedBy?: 'telemetry' | undefined;
+                                valueFormat?: 'otelAuthorizationHeader' | undefined;
                             } | {
                                 source: {
                                     ref: string;
@@ -35308,10 +35793,17 @@ export type ManagedMachinesActionResultById = {
                             purpose: 'standard';
                             deployerMode: 'chosen' | 'managers' | 'members';
                             controllerMachineId: string;
-                            deployerPrincipals?: undefined | {
-                                principalKind: 'account' | 'teamGroup';
-                                principalId: string;
-                            }[];
+                            deployerPrincipals?: ({
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'group';
+                                teamId: string;
+                                groupId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            })[] | undefined;
                             buildMachineId?: string | undefined;
                             retainPreviousDeployments?: number | undefined;
                         } | {
@@ -35369,6 +35861,8 @@ export type ManagedMachinesActionResultById = {
                             name: string;
                             phase: 'build' | 'runtime';
                             grantRef?: string | undefined;
+                            managedBy?: 'telemetry' | undefined;
+                            valueFormat?: 'otelAuthorizationHeader' | undefined;
                         }[];
                         projectSourceId?: string | undefined;
                         newProject?: undefined | {
@@ -35434,7 +35928,7 @@ export type ManagedMachinesActionResultById = {
                         bindings: {
                             source: {
                                 kind: 'deploymentFact';
-                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                             } | {
                                 kind: 'deploymentFact';
                                 fact: 'domainUrl';
@@ -35457,6 +35951,8 @@ export type ManagedMachinesActionResultById = {
                             name: string;
                             phase: 'build' | 'runtime';
                             grantRef?: string | undefined;
+                            managedBy?: 'telemetry' | undefined;
+                            valueFormat?: 'otelAuthorizationHeader' | undefined;
                         }[];
                         generatedSecrets: {
                             name: string;
@@ -35552,6 +36048,7 @@ export type ManagedMachinesActionResultById = {
                         creationDefaults?: undefined | {
                             values: {
                                 retainPreviousDeployments: number;
+                                telemetryMachineId?: string | undefined;
                                 buildMachineId?: string | undefined;
                                 controllerMachineId?: string | undefined;
                                 previewMachineId?: string | undefined;
@@ -35589,6 +36086,7 @@ export type ManagedMachinesActionResultById = {
                                 }[];
                             };
                             sources: {
+                                telemetryMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                                 buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                                 controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                                 retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
@@ -36740,10 +37238,17 @@ export type ManagedMachinesActionResultById = {
                             teamId: string;
                         };
                     };
-                    deployerPrincipals?: undefined | {
-                        principalKind: 'account' | 'teamGroup';
-                        principalId: string;
-                    }[];
+                    deployerPrincipals?: ({
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'group';
+                        teamId: string;
+                        groupId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    })[] | undefined;
                     buildMachineId?: string | undefined;
                     managedRetention?: 'keep' | 'until-delete' | undefined;
                     preview?: undefined | {
@@ -36918,7 +37423,7 @@ export type ManagedMachinesActionResultById = {
                                 kind: 'remap';
                                 source: {
                                     kind: 'deploymentFact';
-                                    fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                    fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                                 } | {
                                     kind: 'deploymentFact';
                                     fact: 'domainUrl';
@@ -37021,7 +37526,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             source: {
                                 kind: 'deploymentFact';
-                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                             } | {
                                 kind: 'deploymentFact';
                                 fact: 'domainUrl';
@@ -37044,6 +37549,8 @@ export type ManagedMachinesActionResultById = {
                             name: string;
                             phase: 'build' | 'runtime';
                             grantRef?: string | undefined;
+                            managedBy?: 'telemetry' | undefined;
+                            valueFormat?: 'otelAuthorizationHeader' | undefined;
                         } | {
                             source: {
                                 ref: string;
@@ -37149,10 +37656,17 @@ export type ManagedMachinesActionResultById = {
                         purpose: 'standard';
                         deployerMode: 'chosen' | 'managers' | 'members';
                         controllerMachineId: string;
-                        deployerPrincipals?: undefined | {
-                            principalKind: 'account' | 'teamGroup';
-                            principalId: string;
-                        }[];
+                        deployerPrincipals?: ({
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'group';
+                            teamId: string;
+                            groupId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        })[] | undefined;
                         buildMachineId?: string | undefined;
                         retainPreviousDeployments?: number | undefined;
                     } | {
@@ -37210,6 +37724,8 @@ export type ManagedMachinesActionResultById = {
                         name: string;
                         phase: 'build' | 'runtime';
                         grantRef?: string | undefined;
+                        managedBy?: 'telemetry' | undefined;
+                        valueFormat?: 'otelAuthorizationHeader' | undefined;
                     }[];
                     projectSourceId?: string | undefined;
                     newProject?: undefined | {
@@ -37452,7 +37968,7 @@ export type ManagedMachinesActionResultById = {
                 fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
             } | {
                 localCause: 'native_command_failed';
-                command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
@@ -37492,7 +38008,7 @@ export type ManagedMachinesActionResultById = {
                 fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
             } | {
                 localCause: 'native_command_failed';
-                command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
@@ -37581,7 +38097,7 @@ export type ManagedMachinesActionResultById = {
                 fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
             } | {
                 localCause: 'native_command_failed';
-                command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
@@ -37718,11 +38234,26 @@ export type ManagedMachinesActionResultById = {
         };
         wakeOnAcceptedMessage: boolean;
         enrollmentAccountId?: string | undefined;
+        guestCli?: undefined | {
+            source: 'home-payload' | 'public-release';
+            line: string;
+            channel: 'preview' | 'publicdev' | 'stable';
+            payloads?: undefined | {
+                target: {
+                    os: 'darwin' | 'linux';
+                    arch: 'arm64' | 'x64';
+                };
+                sha256: string;
+                url: string;
+            }[];
+        };
         acquisitionMode?: 'resource-bound' | undefined;
         preset?: undefined | {
             id: string;
             revision: number;
             contentEncryptionMode: 'e2ee' | 'plain';
+            configurationRevision?: number | undefined;
+            setupRevision?: number | undefined;
         };
         controller?: undefined | {
             machineId: string;
@@ -37839,6 +38370,7 @@ export type ManagedMachinesActionResultById = {
                     presetId: string;
                     presetRevision: number;
                     contentEncryptionMode: 'e2ee' | 'plain';
+                    setupRevision?: number | undefined;
                     presetContentOverride?: undefined | {
                         content: {
                             t: 'encrypted';
@@ -38441,7 +38973,7 @@ export type ManagedMachinesActionResultById = {
                 fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
             } | {
                 localCause: 'native_command_failed';
-                command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
@@ -39017,6 +39549,7 @@ export type ManagedMachinesActionResultById = {
                 machineServiceLogsGeneration?: undefined | {
                     expectedGeneration: string;
                 };
+                registryThemeContent?: true | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -39285,6 +39818,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -39727,6 +40261,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -40216,6 +40763,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -40658,6 +41206,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -40898,11 +41459,16 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
                 deploymentMetadataEnvironmentId?: string | undefined;
+                deploymentMetadataReceiptId?: string | undefined;
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
                     expectedRevision: number;
                     machineId: string;
+                } | {
+                    homeId: string;
+                    id: string;
+                    expectedRevision: number;
                 };
                 deploymentPreparationAdmission?: undefined | {
                     operation: 'catalog';
@@ -40976,10 +41542,17 @@ export type ManagedMachinesActionResultById = {
                         version: string;
                         expectedContributorOccurrenceId?: string | undefined;
                     };
-                    deployerPrincipals?: undefined | {
-                        principalKind: 'account' | 'teamGroup';
-                        principalId: string;
-                    }[];
+                    deployerPrincipals?: ({
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'group';
+                        teamId: string;
+                        groupId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    })[] | undefined;
                     copyFrom?: undefined | {
                         environmentId: string;
                         expectedRevision: number;
@@ -41049,10 +41622,17 @@ export type ManagedMachinesActionResultById = {
                         purpose: 'standard';
                         deployerMode: 'chosen' | 'managers' | 'members';
                         controllerMachineId: string;
-                        deployerPrincipals?: undefined | {
-                            principalKind: 'account' | 'teamGroup';
-                            principalId: string;
-                        }[];
+                        deployerPrincipals?: ({
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'group';
+                            teamId: string;
+                            groupId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        })[] | undefined;
                         buildMachineId?: string | undefined;
                     } | {
                         kind: 'existing';
@@ -41104,186 +41684,20 @@ export type ManagedMachinesActionResultById = {
                     environmentId: string;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    retention: {
-                        kind: 'keep';
-                        last?: number | undefined;
-                        daily?: number | undefined;
-                        weekly?: number | undefined;
-                        monthly?: number | undefined;
-                    } | {
-                        kind: 'keepEverything';
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
                     };
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.prune';
-                    kind: 'backup';
-                    inputDigest: string;
+                    confirmDelete?: true | undefined;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.history';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.inventory';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.run';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.test';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    snapshotId: string;
-                    level: 'manifestReadBack' | 'repositoryCheck';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    backupOperationId: string;
-                    actionId: 'deployments.backups.verify';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'confirm';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    prepareOperationId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    snapshot?: boolean | undefined;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'prepare';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    operationId: string;
-                    mode: 'recover';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    targetLinkId: string;
                     environmentId: string;
                     requestKey: string;
+                    targetLinkId: string;
                     expectedTargetLinkRevision: number;
                     kind: 'domainDns';
                     actionId: 'deployments.domains.verify';
@@ -41315,6 +41729,183 @@ export type ManagedMachinesActionResultById = {
                     targetLinkId: string;
                     machineId: string;
                     installationId: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.history';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.inventory';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.run';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.test';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    retention: {
+                        kind: 'keep';
+                        last?: number | undefined;
+                        daily?: number | undefined;
+                        weekly?: number | undefined;
+                        monthly?: number | undefined;
+                    } | {
+                        kind: 'keepEverything';
+                    };
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.prune';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    snapshotId: string;
+                    machineId: string;
+                    level: 'manifestReadBack' | 'repositoryCheck';
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    backupOperationId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.verify';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'confirm';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    prepareOperationId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    snapshot?: boolean | undefined;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'prepare';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'recover';
+                    machineId: string;
+                    operationId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
                 };
                 registryAppUpdateAdmission?: undefined | {
                     environments: {
@@ -41330,6 +41921,8 @@ export type ManagedMachinesActionResultById = {
                 id: string;
                 revision: number;
                 contentEncryptionMode: 'e2ee' | 'plain';
+                configurationRevision?: number | undefined;
+                setupRevision?: number | undefined;
             };
             id: string;
             homeId: string;
@@ -41373,6 +41966,19 @@ export type ManagedMachinesActionResultById = {
                 storage?: 'lost' | 'retained' | 'unknown' | undefined;
             };
             enrollmentAccountId?: string | undefined;
+            guestCli?: undefined | {
+                source: 'home-payload' | 'public-release';
+                line: string;
+                channel: 'preview' | 'publicdev' | 'stable';
+                payloads?: undefined | {
+                    target: {
+                        os: 'darwin' | 'linux';
+                        arch: 'arm64' | 'x64';
+                    };
+                    sha256: string;
+                    url: string;
+                }[];
+            };
             acquisitionMode?: 'resource-bound' | undefined;
             controller?: undefined | {
                 machineId: string;
@@ -41967,6 +42573,7 @@ export type ManagedMachinesActionResultById = {
                 machineServiceLogsGeneration?: undefined | {
                     expectedGeneration: string;
                 };
+                registryThemeContent?: true | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -42235,6 +42842,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -42677,6 +43285,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -43166,6 +43787,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -43608,6 +44230,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -43848,11 +44483,16 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
                 deploymentMetadataEnvironmentId?: string | undefined;
+                deploymentMetadataReceiptId?: string | undefined;
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
                     expectedRevision: number;
                     machineId: string;
+                } | {
+                    homeId: string;
+                    id: string;
+                    expectedRevision: number;
                 };
                 deploymentPreparationAdmission?: undefined | {
                     operation: 'catalog';
@@ -43926,10 +44566,17 @@ export type ManagedMachinesActionResultById = {
                         version: string;
                         expectedContributorOccurrenceId?: string | undefined;
                     };
-                    deployerPrincipals?: undefined | {
-                        principalKind: 'account' | 'teamGroup';
-                        principalId: string;
-                    }[];
+                    deployerPrincipals?: ({
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'group';
+                        teamId: string;
+                        groupId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    })[] | undefined;
                     copyFrom?: undefined | {
                         environmentId: string;
                         expectedRevision: number;
@@ -43999,10 +44646,17 @@ export type ManagedMachinesActionResultById = {
                         purpose: 'standard';
                         deployerMode: 'chosen' | 'managers' | 'members';
                         controllerMachineId: string;
-                        deployerPrincipals?: undefined | {
-                            principalKind: 'account' | 'teamGroup';
-                            principalId: string;
-                        }[];
+                        deployerPrincipals?: ({
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'group';
+                            teamId: string;
+                            groupId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        })[] | undefined;
                         buildMachineId?: string | undefined;
                     } | {
                         kind: 'existing';
@@ -44054,186 +44708,20 @@ export type ManagedMachinesActionResultById = {
                     environmentId: string;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    retention: {
-                        kind: 'keep';
-                        last?: number | undefined;
-                        daily?: number | undefined;
-                        weekly?: number | undefined;
-                        monthly?: number | undefined;
-                    } | {
-                        kind: 'keepEverything';
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
                     };
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.prune';
-                    kind: 'backup';
-                    inputDigest: string;
+                    confirmDelete?: true | undefined;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.history';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.inventory';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.run';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.test';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    snapshotId: string;
-                    level: 'manifestReadBack' | 'repositoryCheck';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    backupOperationId: string;
-                    actionId: 'deployments.backups.verify';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'confirm';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    prepareOperationId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    snapshot?: boolean | undefined;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'prepare';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    operationId: string;
-                    mode: 'recover';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    targetLinkId: string;
                     environmentId: string;
                     requestKey: string;
+                    targetLinkId: string;
                     expectedTargetLinkRevision: number;
                     kind: 'domainDns';
                     actionId: 'deployments.domains.verify';
@@ -44265,6 +44753,183 @@ export type ManagedMachinesActionResultById = {
                     targetLinkId: string;
                     machineId: string;
                     installationId: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.history';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.inventory';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.run';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.test';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    retention: {
+                        kind: 'keep';
+                        last?: number | undefined;
+                        daily?: number | undefined;
+                        weekly?: number | undefined;
+                        monthly?: number | undefined;
+                    } | {
+                        kind: 'keepEverything';
+                    };
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.prune';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    snapshotId: string;
+                    machineId: string;
+                    level: 'manifestReadBack' | 'repositoryCheck';
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    backupOperationId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.verify';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'confirm';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    prepareOperationId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    snapshot?: boolean | undefined;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'prepare';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'recover';
+                    machineId: string;
+                    operationId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
                 };
                 registryAppUpdateAdmission?: undefined | {
                     environments: {
@@ -44284,7 +44949,7 @@ export type ManagedMachinesActionResultById = {
                 kind: 'automation_assignment' | 'board' | 'deployment_environment' | 'machine_pool' | 'profile' | 'workflow_assignment';
                 id: string;
                 name: string;
-                deploymentRoles?: readonly ('build' | 'controller' | 'data' | 'detached' | 'edge' | 'retiring' | 'runtime')[] | undefined;
+                deploymentRoles?: readonly ('build' | 'controller' | 'data' | 'detached' | 'edge' | 'retiring' | 'runtime' | 'telemetry')[] | undefined;
                 deploymentDomains?: readonly Readonly<{
                     environmentId: string;
                     targetLinkId: string;
@@ -44312,7 +44977,7 @@ export type ManagedMachinesActionResultById = {
                 kind: 'automation_assignment' | 'board' | 'deployment_environment' | 'machine_pool' | 'profile' | 'workflow_assignment';
                 id: string;
                 name: string;
-                deploymentRoles?: readonly ('build' | 'controller' | 'data' | 'detached' | 'edge' | 'retiring' | 'runtime')[] | undefined;
+                deploymentRoles?: readonly ('build' | 'controller' | 'data' | 'detached' | 'edge' | 'retiring' | 'runtime' | 'telemetry')[] | undefined;
                 deploymentDomains?: readonly Readonly<{
                     environmentId: string;
                     targetLinkId: string;
@@ -44334,7 +44999,7 @@ export type ManagedMachinesActionResultById = {
                 kind: 'automation_assignment' | 'board' | 'deployment_environment' | 'machine_pool' | 'profile' | 'workflow_assignment';
                 id: string;
                 name: string;
-                deploymentRoles?: readonly ('build' | 'controller' | 'data' | 'detached' | 'edge' | 'retiring' | 'runtime')[] | undefined;
+                deploymentRoles?: readonly ('build' | 'controller' | 'data' | 'detached' | 'edge' | 'retiring' | 'runtime' | 'telemetry')[] | undefined;
                 deploymentDomains?: readonly Readonly<{
                     environmentId: string;
                     targetLinkId: string;
@@ -44421,11 +45086,26 @@ export type ManagedMachinesActionResultById = {
         };
         wakeOnAcceptedMessage: boolean;
         enrollmentAccountId?: string | undefined;
+        guestCli?: undefined | {
+            source: 'home-payload' | 'public-release';
+            line: string;
+            channel: 'preview' | 'publicdev' | 'stable';
+            payloads?: undefined | {
+                target: {
+                    os: 'darwin' | 'linux';
+                    arch: 'arm64' | 'x64';
+                };
+                sha256: string;
+                url: string;
+            }[];
+        };
         acquisitionMode?: 'resource-bound' | undefined;
         preset?: undefined | {
             id: string;
             revision: number;
             contentEncryptionMode: 'e2ee' | 'plain';
+            configurationRevision?: number | undefined;
+            setupRevision?: number | undefined;
         };
         controller?: undefined | {
             machineId: string;
@@ -44542,6 +45222,7 @@ export type ManagedMachinesActionResultById = {
                     presetId: string;
                     presetRevision: number;
                     contentEncryptionMode: 'e2ee' | 'plain';
+                    setupRevision?: number | undefined;
                     presetContentOverride?: undefined | {
                         content: {
                             t: 'encrypted';
@@ -45144,7 +45825,7 @@ export type ManagedMachinesActionResultById = {
                 fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
             } | {
                 localCause: 'native_command_failed';
-                command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
@@ -45720,6 +46401,7 @@ export type ManagedMachinesActionResultById = {
                 machineServiceLogsGeneration?: undefined | {
                     expectedGeneration: string;
                 };
+                registryThemeContent?: true | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -45988,6 +46670,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -46430,6 +47113,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -46919,6 +47615,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -47361,6 +48058,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -47601,11 +48311,16 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
                 deploymentMetadataEnvironmentId?: string | undefined;
+                deploymentMetadataReceiptId?: string | undefined;
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
                     expectedRevision: number;
                     machineId: string;
+                } | {
+                    homeId: string;
+                    id: string;
+                    expectedRevision: number;
                 };
                 deploymentPreparationAdmission?: undefined | {
                     operation: 'catalog';
@@ -47679,10 +48394,17 @@ export type ManagedMachinesActionResultById = {
                         version: string;
                         expectedContributorOccurrenceId?: string | undefined;
                     };
-                    deployerPrincipals?: undefined | {
-                        principalKind: 'account' | 'teamGroup';
-                        principalId: string;
-                    }[];
+                    deployerPrincipals?: ({
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'group';
+                        teamId: string;
+                        groupId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    })[] | undefined;
                     copyFrom?: undefined | {
                         environmentId: string;
                         expectedRevision: number;
@@ -47752,10 +48474,17 @@ export type ManagedMachinesActionResultById = {
                         purpose: 'standard';
                         deployerMode: 'chosen' | 'managers' | 'members';
                         controllerMachineId: string;
-                        deployerPrincipals?: undefined | {
-                            principalKind: 'account' | 'teamGroup';
-                            principalId: string;
-                        }[];
+                        deployerPrincipals?: ({
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'group';
+                            teamId: string;
+                            groupId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        })[] | undefined;
                         buildMachineId?: string | undefined;
                     } | {
                         kind: 'existing';
@@ -47807,186 +48536,20 @@ export type ManagedMachinesActionResultById = {
                     environmentId: string;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    retention: {
-                        kind: 'keep';
-                        last?: number | undefined;
-                        daily?: number | undefined;
-                        weekly?: number | undefined;
-                        monthly?: number | undefined;
-                    } | {
-                        kind: 'keepEverything';
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
                     };
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.prune';
-                    kind: 'backup';
-                    inputDigest: string;
+                    confirmDelete?: true | undefined;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.history';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.inventory';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.run';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.test';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    snapshotId: string;
-                    level: 'manifestReadBack' | 'repositoryCheck';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    backupOperationId: string;
-                    actionId: 'deployments.backups.verify';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'confirm';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    prepareOperationId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    snapshot?: boolean | undefined;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'prepare';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    operationId: string;
-                    mode: 'recover';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    targetLinkId: string;
                     environmentId: string;
                     requestKey: string;
+                    targetLinkId: string;
                     expectedTargetLinkRevision: number;
                     kind: 'domainDns';
                     actionId: 'deployments.domains.verify';
@@ -48018,6 +48581,183 @@ export type ManagedMachinesActionResultById = {
                     targetLinkId: string;
                     machineId: string;
                     installationId: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.history';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.inventory';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.run';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.test';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    retention: {
+                        kind: 'keep';
+                        last?: number | undefined;
+                        daily?: number | undefined;
+                        weekly?: number | undefined;
+                        monthly?: number | undefined;
+                    } | {
+                        kind: 'keepEverything';
+                    };
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.prune';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    snapshotId: string;
+                    machineId: string;
+                    level: 'manifestReadBack' | 'repositoryCheck';
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    backupOperationId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.verify';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'confirm';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    prepareOperationId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    snapshot?: boolean | undefined;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'prepare';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'recover';
+                    machineId: string;
+                    operationId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
                 };
                 registryAppUpdateAdmission?: undefined | {
                     environments: {
@@ -48033,6 +48773,8 @@ export type ManagedMachinesActionResultById = {
                 id: string;
                 revision: number;
                 contentEncryptionMode: 'e2ee' | 'plain';
+                configurationRevision?: number | undefined;
+                setupRevision?: number | undefined;
             };
             id: string;
             homeId: string;
@@ -48076,6 +48818,19 @@ export type ManagedMachinesActionResultById = {
                 storage?: 'lost' | 'retained' | 'unknown' | undefined;
             };
             enrollmentAccountId?: string | undefined;
+            guestCli?: undefined | {
+                source: 'home-payload' | 'public-release';
+                line: string;
+                channel: 'preview' | 'publicdev' | 'stable';
+                payloads?: undefined | {
+                    target: {
+                        os: 'darwin' | 'linux';
+                        arch: 'arm64' | 'x64';
+                    };
+                    sha256: string;
+                    url: string;
+                }[];
+            };
             acquisitionMode?: 'resource-bound' | undefined;
             controller?: undefined | {
                 machineId: string;
@@ -48670,6 +49425,7 @@ export type ManagedMachinesActionResultById = {
                 machineServiceLogsGeneration?: undefined | {
                     expectedGeneration: string;
                 };
+                registryThemeContent?: true | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -48938,6 +49694,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -49380,6 +50137,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -49869,6 +50639,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -50311,6 +51082,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -50551,11 +51335,16 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
                 deploymentMetadataEnvironmentId?: string | undefined;
+                deploymentMetadataReceiptId?: string | undefined;
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
                     expectedRevision: number;
                     machineId: string;
+                } | {
+                    homeId: string;
+                    id: string;
+                    expectedRevision: number;
                 };
                 deploymentPreparationAdmission?: undefined | {
                     operation: 'catalog';
@@ -50629,10 +51418,17 @@ export type ManagedMachinesActionResultById = {
                         version: string;
                         expectedContributorOccurrenceId?: string | undefined;
                     };
-                    deployerPrincipals?: undefined | {
-                        principalKind: 'account' | 'teamGroup';
-                        principalId: string;
-                    }[];
+                    deployerPrincipals?: ({
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'group';
+                        teamId: string;
+                        groupId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    })[] | undefined;
                     copyFrom?: undefined | {
                         environmentId: string;
                         expectedRevision: number;
@@ -50702,10 +51498,17 @@ export type ManagedMachinesActionResultById = {
                         purpose: 'standard';
                         deployerMode: 'chosen' | 'managers' | 'members';
                         controllerMachineId: string;
-                        deployerPrincipals?: undefined | {
-                            principalKind: 'account' | 'teamGroup';
-                            principalId: string;
-                        }[];
+                        deployerPrincipals?: ({
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'group';
+                            teamId: string;
+                            groupId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        })[] | undefined;
                         buildMachineId?: string | undefined;
                     } | {
                         kind: 'existing';
@@ -50757,186 +51560,20 @@ export type ManagedMachinesActionResultById = {
                     environmentId: string;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    retention: {
-                        kind: 'keep';
-                        last?: number | undefined;
-                        daily?: number | undefined;
-                        weekly?: number | undefined;
-                        monthly?: number | undefined;
-                    } | {
-                        kind: 'keepEverything';
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
                     };
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.prune';
-                    kind: 'backup';
-                    inputDigest: string;
+                    confirmDelete?: true | undefined;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.history';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.inventory';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.run';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.test';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    snapshotId: string;
-                    level: 'manifestReadBack' | 'repositoryCheck';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    backupOperationId: string;
-                    actionId: 'deployments.backups.verify';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'confirm';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    prepareOperationId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    snapshot?: boolean | undefined;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'prepare';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    operationId: string;
-                    mode: 'recover';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    targetLinkId: string;
                     environmentId: string;
                     requestKey: string;
+                    targetLinkId: string;
                     expectedTargetLinkRevision: number;
                     kind: 'domainDns';
                     actionId: 'deployments.domains.verify';
@@ -50968,6 +51605,183 @@ export type ManagedMachinesActionResultById = {
                     targetLinkId: string;
                     machineId: string;
                     installationId: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.history';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.inventory';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.run';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.test';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    retention: {
+                        kind: 'keep';
+                        last?: number | undefined;
+                        daily?: number | undefined;
+                        weekly?: number | undefined;
+                        monthly?: number | undefined;
+                    } | {
+                        kind: 'keepEverything';
+                    };
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.prune';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    snapshotId: string;
+                    machineId: string;
+                    level: 'manifestReadBack' | 'repositoryCheck';
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    backupOperationId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.verify';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'confirm';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    prepareOperationId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    snapshot?: boolean | undefined;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'prepare';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'recover';
+                    machineId: string;
+                    operationId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
                 };
                 registryAppUpdateAdmission?: undefined | {
                     environments: {
@@ -51051,11 +51865,26 @@ export type ManagedMachinesActionResultById = {
         };
         wakeOnAcceptedMessage: boolean;
         enrollmentAccountId?: string | undefined;
+        guestCli?: undefined | {
+            source: 'home-payload' | 'public-release';
+            line: string;
+            channel: 'preview' | 'publicdev' | 'stable';
+            payloads?: undefined | {
+                target: {
+                    os: 'darwin' | 'linux';
+                    arch: 'arm64' | 'x64';
+                };
+                sha256: string;
+                url: string;
+            }[];
+        };
         acquisitionMode?: 'resource-bound' | undefined;
         preset?: undefined | {
             id: string;
             revision: number;
             contentEncryptionMode: 'e2ee' | 'plain';
+            configurationRevision?: number | undefined;
+            setupRevision?: number | undefined;
         };
         controller?: undefined | {
             machineId: string;
@@ -51172,6 +52001,7 @@ export type ManagedMachinesActionResultById = {
                     presetId: string;
                     presetRevision: number;
                     contentEncryptionMode: 'e2ee' | 'plain';
+                    setupRevision?: number | undefined;
                     presetContentOverride?: undefined | {
                         content: {
                             t: 'encrypted';
@@ -51774,7 +52604,7 @@ export type ManagedMachinesActionResultById = {
                 fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
             } | {
                 localCause: 'native_command_failed';
-                command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
@@ -52350,6 +53180,7 @@ export type ManagedMachinesActionResultById = {
                 machineServiceLogsGeneration?: undefined | {
                     expectedGeneration: string;
                 };
+                registryThemeContent?: true | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -52618,6 +53449,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -53060,6 +53892,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -53549,6 +54394,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -53991,6 +54837,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -54231,11 +55090,16 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
                 deploymentMetadataEnvironmentId?: string | undefined;
+                deploymentMetadataReceiptId?: string | undefined;
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
                     expectedRevision: number;
                     machineId: string;
+                } | {
+                    homeId: string;
+                    id: string;
+                    expectedRevision: number;
                 };
                 deploymentPreparationAdmission?: undefined | {
                     operation: 'catalog';
@@ -54309,10 +55173,17 @@ export type ManagedMachinesActionResultById = {
                         version: string;
                         expectedContributorOccurrenceId?: string | undefined;
                     };
-                    deployerPrincipals?: undefined | {
-                        principalKind: 'account' | 'teamGroup';
-                        principalId: string;
-                    }[];
+                    deployerPrincipals?: ({
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'group';
+                        teamId: string;
+                        groupId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    })[] | undefined;
                     copyFrom?: undefined | {
                         environmentId: string;
                         expectedRevision: number;
@@ -54382,10 +55253,17 @@ export type ManagedMachinesActionResultById = {
                         purpose: 'standard';
                         deployerMode: 'chosen' | 'managers' | 'members';
                         controllerMachineId: string;
-                        deployerPrincipals?: undefined | {
-                            principalKind: 'account' | 'teamGroup';
-                            principalId: string;
-                        }[];
+                        deployerPrincipals?: ({
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'group';
+                            teamId: string;
+                            groupId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        })[] | undefined;
                         buildMachineId?: string | undefined;
                     } | {
                         kind: 'existing';
@@ -54437,186 +55315,20 @@ export type ManagedMachinesActionResultById = {
                     environmentId: string;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    retention: {
-                        kind: 'keep';
-                        last?: number | undefined;
-                        daily?: number | undefined;
-                        weekly?: number | undefined;
-                        monthly?: number | undefined;
-                    } | {
-                        kind: 'keepEverything';
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
                     };
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.prune';
-                    kind: 'backup';
-                    inputDigest: string;
+                    confirmDelete?: true | undefined;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.history';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.inventory';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.run';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.test';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    snapshotId: string;
-                    level: 'manifestReadBack' | 'repositoryCheck';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    backupOperationId: string;
-                    actionId: 'deployments.backups.verify';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'confirm';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    prepareOperationId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    snapshot?: boolean | undefined;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'prepare';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    operationId: string;
-                    mode: 'recover';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    targetLinkId: string;
                     environmentId: string;
                     requestKey: string;
+                    targetLinkId: string;
                     expectedTargetLinkRevision: number;
                     kind: 'domainDns';
                     actionId: 'deployments.domains.verify';
@@ -54648,6 +55360,183 @@ export type ManagedMachinesActionResultById = {
                     targetLinkId: string;
                     machineId: string;
                     installationId: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.history';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.inventory';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.run';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.test';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    retention: {
+                        kind: 'keep';
+                        last?: number | undefined;
+                        daily?: number | undefined;
+                        weekly?: number | undefined;
+                        monthly?: number | undefined;
+                    } | {
+                        kind: 'keepEverything';
+                    };
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.prune';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    snapshotId: string;
+                    machineId: string;
+                    level: 'manifestReadBack' | 'repositoryCheck';
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    backupOperationId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.verify';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'confirm';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    prepareOperationId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    snapshot?: boolean | undefined;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'prepare';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'recover';
+                    machineId: string;
+                    operationId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
                 };
                 registryAppUpdateAdmission?: undefined | {
                     environments: {
@@ -54663,6 +55552,8 @@ export type ManagedMachinesActionResultById = {
                 id: string;
                 revision: number;
                 contentEncryptionMode: 'e2ee' | 'plain';
+                configurationRevision?: number | undefined;
+                setupRevision?: number | undefined;
             };
             id: string;
             homeId: string;
@@ -54706,6 +55597,19 @@ export type ManagedMachinesActionResultById = {
                 storage?: 'lost' | 'retained' | 'unknown' | undefined;
             };
             enrollmentAccountId?: string | undefined;
+            guestCli?: undefined | {
+                source: 'home-payload' | 'public-release';
+                line: string;
+                channel: 'preview' | 'publicdev' | 'stable';
+                payloads?: undefined | {
+                    target: {
+                        os: 'darwin' | 'linux';
+                        arch: 'arm64' | 'x64';
+                    };
+                    sha256: string;
+                    url: string;
+                }[];
+            };
             acquisitionMode?: 'resource-bound' | undefined;
             controller?: undefined | {
                 machineId: string;
@@ -55300,6 +56204,7 @@ export type ManagedMachinesActionResultById = {
                 machineServiceLogsGeneration?: undefined | {
                     expectedGeneration: string;
                 };
+                registryThemeContent?: true | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -55568,6 +56473,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -56010,6 +56916,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -56499,6 +57418,7 @@ export type ManagedMachinesActionResultById = {
                                     presetId: string;
                                     presetRevision: number;
                                     contentEncryptionMode: 'e2ee' | 'plain';
+                                    setupRevision?: number | undefined;
                                     presetContentOverride?: undefined | {
                                         content: {
                                             t: 'encrypted';
@@ -56941,6 +57861,19 @@ export type ManagedMachinesActionResultById = {
                         expectedIntentRevision: number;
                         homeId: string;
                         managedId: string;
+                        guestCli?: undefined | {
+                            source: 'home-payload' | 'public-release';
+                            line: string;
+                            channel: 'preview' | 'publicdev' | 'stable';
+                            payloads?: undefined | {
+                                target: {
+                                    os: 'darwin' | 'linux';
+                                    arch: 'arm64' | 'x64';
+                                };
+                                sha256: string;
+                                url: string;
+                            }[];
+                        };
                     };
                 } | {
                     actionId: 'machines.managed.cancel';
@@ -57181,11 +58114,16 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
                 deploymentMetadataEnvironmentId?: string | undefined;
+                deploymentMetadataReceiptId?: string | undefined;
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
                     expectedRevision: number;
                     machineId: string;
+                } | {
+                    homeId: string;
+                    id: string;
+                    expectedRevision: number;
                 };
                 deploymentPreparationAdmission?: undefined | {
                     operation: 'catalog';
@@ -57259,10 +58197,17 @@ export type ManagedMachinesActionResultById = {
                         version: string;
                         expectedContributorOccurrenceId?: string | undefined;
                     };
-                    deployerPrincipals?: undefined | {
-                        principalKind: 'account' | 'teamGroup';
-                        principalId: string;
-                    }[];
+                    deployerPrincipals?: ({
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'group';
+                        teamId: string;
+                        groupId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    })[] | undefined;
                     copyFrom?: undefined | {
                         environmentId: string;
                         expectedRevision: number;
@@ -57332,10 +58277,17 @@ export type ManagedMachinesActionResultById = {
                         purpose: 'standard';
                         deployerMode: 'chosen' | 'managers' | 'members';
                         controllerMachineId: string;
-                        deployerPrincipals?: undefined | {
-                            principalKind: 'account' | 'teamGroup';
-                            principalId: string;
-                        }[];
+                        deployerPrincipals?: ({
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'group';
+                            teamId: string;
+                            groupId: string;
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        })[] | undefined;
                         buildMachineId?: string | undefined;
                     } | {
                         kind: 'existing';
@@ -57387,186 +58339,20 @@ export type ManagedMachinesActionResultById = {
                     environmentId: string;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    retention: {
-                        kind: 'keep';
-                        last?: number | undefined;
-                        daily?: number | undefined;
-                        weekly?: number | undefined;
-                        monthly?: number | undefined;
-                    } | {
-                        kind: 'keepEverything';
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
                     };
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.prune';
-                    kind: 'backup';
-                    inputDigest: string;
+                    confirmDelete?: true | undefined;
                 } | {
                     expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.history';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.inventory';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.run';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    actionId: 'deployments.backups.test';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    machineId: string;
-                    snapshotId: string;
-                    level: 'manifestReadBack' | 'repositoryCheck';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    configRevision: number;
-                    backupOperationId: string;
-                    actionId: 'deployments.backups.verify';
-                    kind: 'backup';
-                    inputDigest: string;
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'confirm';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    prepareOperationId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    snapshot?: boolean | undefined;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    mode: 'prepare';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    source: {
-                        kind: 'repository';
-                        snapshotId: string;
-                        backupOperationId?: string | undefined;
-                        origin?: undefined | {
-                            environmentId: string;
-                            targetLinkId: string;
-                        };
-                    } | {
-                        kind: 'upload';
-                        transferId: string;
-                    };
-                    machineId: string;
-                    operationId: string;
-                    mode: 'recover';
-                    installationId: string;
-                    targetLinkId: string;
-                    environmentId: string;
-                    deploymentId: string;
-                    kind: 'restore';
-                    actionId: 'deployments.backups.restore';
-                    inputDigest: string;
-                    destination?: undefined | {
-                        kind: 'database';
-                        service: string;
-                        database: string;
-                    } | {
-                        kind: 'volume';
-                        service: string;
-                        volume: string;
-                    };
-                } | {
-                    expectedRevision: number;
-                    targetLinkId: string;
                     environmentId: string;
                     requestKey: string;
+                    targetLinkId: string;
                     expectedTargetLinkRevision: number;
                     kind: 'domainDns';
                     actionId: 'deployments.domains.verify';
@@ -57598,6 +58384,183 @@ export type ManagedMachinesActionResultById = {
                     targetLinkId: string;
                     machineId: string;
                     installationId: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.history';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.inventory';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.run';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.test';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    retention: {
+                        kind: 'keep';
+                        last?: number | undefined;
+                        daily?: number | undefined;
+                        weekly?: number | undefined;
+                        monthly?: number | undefined;
+                    } | {
+                        kind: 'keepEverything';
+                    };
+                    environmentId: string;
+                    configRevision: number;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.prune';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    snapshotId: string;
+                    machineId: string;
+                    level: 'manifestReadBack' | 'repositoryCheck';
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    configRevision: number;
+                    backupOperationId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    actionId: 'deployments.backups.verify';
+                    kind: 'backup';
+                    inputDigest: string;
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'confirm';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    prepareOperationId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    snapshot?: boolean | undefined;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'prepare';
+                    machineId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
+                } | {
+                    source: {
+                        kind: 'repository';
+                        snapshotId: string;
+                        backupOperationId?: string | undefined;
+                        origin?: undefined | {
+                            environmentId: string;
+                            targetLinkId: string;
+                        };
+                    } | {
+                        kind: 'upload';
+                        transferId: string;
+                    };
+                    mode: 'recover';
+                    machineId: string;
+                    operationId: string;
+                    installationId: string;
+                    expectedRevision: number;
+                    environmentId: string;
+                    deploymentId: string;
+                    targetLinkId: string;
+                    kind: 'restore';
+                    actionId: 'deployments.backups.restore';
+                    inputDigest: string;
+                    destination?: undefined | {
+                        kind: 'database';
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'volume';
+                        service: string;
+                        volume: string;
+                    };
                 };
                 registryAppUpdateAdmission?: undefined | {
                     environments: {

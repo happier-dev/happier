@@ -4,12 +4,14 @@ import { homedir } from 'node:os';
 import type { ActionExecuteResult, ActionExecutorDeps } from '@happier-dev/protocol';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { MachineSetupResolveResultV1Schema, MachineSetupResolvedSourceV1Schema, MachineSetupReportInputV1Schema, MachineSetupApplyResultV1Schema,
+  machineSetupSourceApplyOriginKeyV1,
   type MachineSetupResolvedSourceV1, type MachineSetupSourceApplyV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineSetupNativeSshHostKeyV1 } from '@happier-dev/protocol/machines/setup/backupReceiverV1';
 import type { MachineSetupApplyTargetV1, MachineSetupRemoveInputV1, MachineSetupPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { isMachineSetupRecipeItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { machineSetupSourceOriginKeyV1, reviewMachineSetupSourceChangeV1,
   MachineSetupSourceV1Schema, type MachineSetupSourceV1 } from '@happier-dev/protocol';
 import type { ApiMachineClient } from '@/api/apiMachine';
@@ -37,53 +39,86 @@ import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { withReachabilityJoinCredential } from '../reachability/prepareReachabilityJoinCredential';
 import { createManagedPresetHydrator, type ManagedPresetHydrator } from '../managed/presetHydration';
-import { hydrateManagedOpaqueSetupSourcesV1, projectManagedOpaqueSetupSourcesV1 } from '@happier-dev/cli-common/machines/managed';
+import { hydrateManagedOpaqueSetupSourcesV1, projectManagedOpaqueSetupSourcesV1,
+  readRetainedManagedOpaqueSetupSourcesV1 } from '@happier-dev/cli-common/machines/managed';
 
 export type MachineSetupTargetAction = (params: Readonly<{
   input: MachineSetupApplyTargetV1; context: RpcActionExecutorContext; signal?: AbortSignal;
 }>) => Promise<unknown>;
 
 
-function actionSourcesForHome(sources: MachineSetupSourceApplyV1): MachineSetupSourceApplyV1 {
+function actionSourcesForHome(sources: MachineSetupSourceApplyV1,
+  retained: ReadonlyMap<string, MachineSetupSourceV1[number]> = new Map()): MachineSetupSourceApplyV1 {
   // Bundled presets are already locally declared and checked below. The Home
   // resolver owns only saved-preset recipient projections plus the direct arm.
-  return sources.filter(source => source.kind !== 'bundledPreset');
+  return sources.filter(source => source.kind !== 'bundledPreset' && !retained.has(machineSetupSourceApplyOriginKeyV1(source)));
+}
+
+type HomeSetupCopyRequest = Readonly<{ sources: MachineSetupSourceApplyV1 }>
+  | Readonly<{ candidatePreset: Readonly<{ presetId: string; presetRevision: number }> }>;
+type HomeSetupCopyResult = ReturnType<typeof MachineSetupResolveResultV1Schema.parse>;
+
+/** Signed creation keeps its original snapshot; ordinary edits resolve only new copies. */
+async function resolveHomeMachineSetupCopies(sources: MachineSetupSourceApplyV1, creation: boolean,
+  request: (body: HomeSetupCopyRequest) => Promise<unknown>): Promise<HomeSetupCopyResult | null> {
+  if (creation) {
+    const result = MachineSetupResolveResultV1Schema.safeParse(await request({ sources }));
+    return result.success ? result.data : null;
+  }
+  const resolved = await Promise.all(sources.map(async source => {
+    if (source.kind !== 'accountPresetOpaque') return source;
+    const result = MachineSetupResolveResultV1Schema.safeParse(await request({ candidatePreset: {
+      presetId: source.presetId, presetRevision: source.presetRevision,
+    } }));
+    if (!result.success || !('sources' in result.data)) return null;
+    const copy = result.data.sources.find(candidate => candidate.kind === 'accountPresetOpaque');
+    return copy?.kind === 'accountPresetOpaque' ? { ...copy,
+      ...(source.presetContentOverride === undefined ? {} : { presetContentOverride: source.presetContentOverride }) } : null;
+  }));
+  if (resolved.some(source => source === null)) return null;
+  return { sources: resolved.filter(source => source !== null) };
 }
 
 async function resolveLocalMachineSetupSources(params: Readonly<{
   sources: MachineSetupSourceApplyV1;
-  resolved: unknown;
+  resolved: HomeSetupCopyResult | null;
   hydrator: ManagedPresetHydrator;
+  retained?: ReadonlyMap<string, MachineSetupSourceV1[number]>;
   signal?: AbortSignal;
-}>): Promise<Readonly<{ sources: MachineSetupSourceV1; resolvedSources: MachineSetupResolvedSourceV1;
+}>): Promise<Readonly<{ sources: MachineSetupSourceV1; resolvedSources?: MachineSetupResolvedSourceV1;
   creation?: Readonly<{ managedId: string; preset: Readonly<{ id: string; revision: number }> }> }> | null> {
-  const response = MachineSetupResolveResultV1Schema.safeParse(params.resolved);
-  if (!response.success || !('sources' in response.data)) return null;
-  const resolved = response.data;
-  const requested = actionSourcesForHome(params.sources);
+  const resolved = params.resolved;
+  if (!resolved || !('sources' in resolved)) return null;
+  const pending = params.sources.filter(source => !params.retained?.has(machineSetupSourceApplyOriginKeyV1(source)));
+  const requested = actionSourcesForHome(pending);
   let responseIndex = 0;
-  const aligned = params.sources.map(source => source.kind === 'bundledPreset'
+  const aligned = pending.map(source => source.kind === 'bundledPreset'
     ? source : resolved.sources[responseIndex++]);
   if (responseIndex !== resolved.sources.length) return null;
   const resolvedSources = MachineSetupResolvedSourceV1Schema.safeParse(aligned);
   if (!resolvedSources.success) return null;
+  const finish = (sources: MachineSetupSourceV1) => {
+    let index = 0;
+    return { sources: params.sources.map(source => params.retained?.get(machineSetupSourceApplyOriginKeyV1(source)) ?? sources[index++]!),
+      // Retained copies need no new presentation carrier from Home.
+      ...(params.retained?.size ? {} : { resolvedSources: resolvedSources.data }),
+      ...(resolved.creation === undefined ? {} : { creation: resolved.creation }) };
+  };
   const hasOpaque = requested.some(source => source.kind === 'accountPresetOpaque');
   if (!hasOpaque) {
-    const parsed = MachineSetupSourceV1Schema.safeParse(params.sources);
-    if (!parsed.success || !sameStrictJsonValue(response.data.sources, requested)) return null;
-    return { sources: parsed.data, resolvedSources: resolvedSources.data,
-      ...(response.data.creation === undefined ? {} : { creation: response.data.creation }) };
+    const parsed = MachineSetupSourceV1Schema.safeParse(pending);
+    if (!parsed.success || !sameStrictJsonValue(resolved.sources, requested)) return null;
+    return finish(parsed.data);
   }
-  const opened = await hydrateManagedOpaqueSetupSourcesV1({ sources: requested, resolvedSources: response.data.sources,
+  const opened = await hydrateManagedOpaqueSetupSourcesV1({ sources: requested, resolvedSources: resolved.sources,
     open: async source => await params.hydrator.openRecipientProjection({ presetId: source.presetId,
       mode: source.mode, projection: source.projection, signal: params.signal }) });
   if (!opened) return null;
   let index = 0;
-  const local = params.sources.map(source => source.kind === 'bundledPreset' ? source : opened[index++]);
+  const local = pending.map(source => source.kind === 'bundledPreset' ? source : opened[index++]);
   if (index !== opened.length) return null;
   const parsed = MachineSetupSourceV1Schema.safeParse(local);
-  return parsed.success ? { sources: parsed.data, resolvedSources: resolvedSources.data,
-    ...(response.data.creation === undefined ? {} : { creation: response.data.creation }) } : null;
+  return parsed.success ? finish(parsed.data) : null;
 }
 
 function projectMachineSetupPlanResult(result: MachineSetupLocalPlanResultV1,
@@ -119,10 +154,13 @@ export function createMachineSetupPlanAction(params: Readonly<{
     if (input.machineId !== params.machineId || input.homeId !== params.homeId) return fail('target_mismatch');
     if (context.machineAdmission && (context.machineAdmission.machineId !== params.machineId
       || !context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent())) return fail('machine_admission_changed');
-    const { sources: wireSources, ...inputWithoutSources } = input;
+    const { sources: wireSources, candidatePreset, ...inputWithoutSources } = input;
+    let reviewedWireSources = wireSources;
     let localInput: MachineSetupLocalPlanInputV1 = inputWithoutSources;
     let resolvedSources: MachineSetupResolvedSourceV1 | undefined;
-    const resolveHomeSources = async (sources: MachineSetupSourceApplyV1) => {
+    const current = await params.apiMachine.getMachineSetupDesiredSnapshot();
+    if ((signal ?? context.signal)?.aborted) return fail('cancelled');
+    const requestHomeSources = async (body: HomeSetupCopyRequest) => {
       const lifetime = signal ?? context.signal;
       let runtimeRefusal: Parameters<typeof machineSetupTargetUnavailable>[1];
       const runtime = await params.apiMachine.resolveMachineSetupRuntime!({ ...(lifetime ? { signal: lifetime } : {}),
@@ -132,16 +170,52 @@ export function createMachineSetupPlanAction(params: Readonly<{
       if (!runtime || !runtime.isCurrent || !await runtime.isCurrent()) return {
         failure: machineSetupTargetUnavailable('installed_runtime', runtimeRefusal ?? 'runtime_closed'),
       };
-      const admitted = await requestMachineSetupHome({ runtime, context, installation: params.installation!, homeId: params.homeId,
-        actionId: 'machines.setup.plan', path: '/v1/machines/setup/resolve', body: { homeId: input.homeId,
-          machineId: input.machineId, sources: actionSourcesForHome(sources) }, ...(lifetime ? { signal: lifetime } : {}) });
+      const request = async (copy: HomeSetupCopyRequest) => await requestMachineSetupHome({ runtime, context,
+        installation: params.installation!, homeId: params.homeId, actionId: 'machines.setup.plan',
+        path: '/v1/machines/setup/resolve', body: { homeId: input.homeId, machineId: input.machineId, ...copy },
+        ...(lifetime ? { signal: lifetime } : {}) });
+      if ('sources' in body) return { runtime, admitted: await resolveHomeMachineSetupCopies(body.sources,
+        context.externalActionExecutionAuthorization?.binding.managedContinuation !== undefined, request) };
+      const result = MachineSetupResolveResultV1Schema.safeParse(await request(body));
+      return { runtime, admitted: result.success ? result.data : null };
+    };
+    const resolveHomeSources = async (sources: MachineSetupSourceApplyV1,
+      retained?: ReadonlyMap<string, MachineSetupSourceV1[number]>) => {
+      const request = await requestHomeSources({ sources: actionSourcesForHome(sources, retained) });
+      if ('failure' in request) return request;
+      const { runtime, admitted } = request;
       const resolved = await resolveLocalMachineSetupSources({ sources, resolved: admitted,
-        hydrator: createManagedPresetHydrator({ credentials: runtime.credentials, serverUrl: runtime.serverHttpBaseUrl }), signal: lifetime });
+        hydrator: createManagedPresetHydrator({ credentials: runtime.credentials, serverUrl: runtime.serverHttpBaseUrl }),
+        signal: signal ?? context.signal, ...(retained ? { retained } : {}) });
       if (!resolved) return { failure: fail('machine_setup_response_invalid') };
       if (!await runtime.isCurrent()) return { failure: machineSetupTargetUnavailable('installed_runtime', 'runtime_closed') };
       return { resolved };
     };
-    if (wireSources !== undefined) {
+    if (candidatePreset !== undefined) {
+      if (current.status !== 'ready') return fail(`machine_setup_content_${current.status}`);
+      if (!params.installation || !params.apiMachine.resolveMachineSetupRuntime) return fail('admission_unavailable');
+      const sourceIndex = current.policy.sources.findIndex(source => source.kind === 'accountPreset'
+        && source.presetId === candidatePreset.presetId);
+      if (sourceIndex < 0) return fail('plan_changed');
+      try {
+        const requested = await requestHomeSources({ candidatePreset });
+        if ('failure' in requested) return requested.failure;
+        if (!requested.admitted || !('sources' in requested.admitted)) return fail('machine_setup_response_invalid');
+        const wire = requested.admitted.sources.map(source => source.kind === 'accountPresetOpaque'
+          ? (({ presetContent: _content, ...reference }) => reference)(source) : source);
+        const opened = await resolveLocalMachineSetupSources({ sources: wire, resolved: requested.admitted,
+          hydrator: createManagedPresetHydrator({ credentials: requested.runtime.credentials,
+            serverUrl: requested.runtime.serverHttpBaseUrl }), signal: signal ?? context.signal });
+        const candidate = opened?.sources.find(source => source.kind === 'accountPreset'
+          && source.presetId === candidatePreset.presetId && source.presetRevision === candidatePreset.presetRevision);
+        if (!candidate || opened?.sources.length !== 2) return fail('machine_setup_response_invalid');
+        localInput = { ...inputWithoutSources, sources: current.policy.sources.map((source, index) => index === sourceIndex ? candidate : source) };
+      } catch (error) {
+        const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+          ? error.code : (signal ?? context.signal)?.aborted ? 'cancelled' : 'machine_setup_request_failed';
+        return { ok: false, ...normalizeActionExecutorThrownError(error, 'machines.setup.plan'), errorCode: code };
+      }
+    } else if (wireSources !== undefined) {
       const managedContinuation = context.externalActionExecutionAuthorization?.binding.managedContinuation;
       const needsOpaqueOpen = wireSources.some(source => source.kind === 'accountPresetOpaque');
       if ((managedContinuation && input.mode !== 'effects') || ((managedContinuation || needsOpaqueOpen)
@@ -152,39 +226,29 @@ export function createMachineSetupPlanAction(params: Readonly<{
           const parsed = MachineSetupSourceV1Schema.safeParse(wireSources);
           localSources = parsed.success ? parsed.data : null;
         } else {
-          const opened = await resolveHomeSources(wireSources);
+          const retained = !managedContinuation && current.status === 'ready'
+            ? readRetainedManagedOpaqueSetupSourcesV1(wireSources, current.policy.sources) : undefined;
+          const opened = await resolveHomeSources(wireSources, retained);
           if ('failure' in opened) return opened.failure;
           localSources = opened.resolved.sources;
           resolvedSources = opened.resolved.resolvedSources;
         }
         if (!localSources) return fail('machine_setup_response_invalid');
         localInput = { ...inputWithoutSources, sources: localSources };
+        const capturedSources = localSources;
+        reviewedWireSources = wireSources.map((source, index) => {
+          const local = capturedSources[index];
+          return source.kind === 'accountPresetOpaque' && local?.kind === 'accountPreset' && local.setupRevision !== undefined
+            ? { ...source, setupRevision: local.setupRevision } : source;
+        });
       } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
           ? error.code : (signal ?? context.signal)?.aborted ? 'cancelled' : 'machine_setup_request_failed';
         return { ok: false, ...normalizeActionExecutorThrownError(error, 'machines.setup.plan'), errorCode: code };
       }
     }
-    const current = await params.apiMachine.getMachineSetupDesiredSnapshot();
-    if ((signal ?? context.signal)?.aborted) return fail('cancelled');
-    if (wireSources === undefined && current.status === 'ready') {
-      const currentWireSources = projectManagedOpaqueSetupSourcesV1(current.policy.sources);
-      if (currentWireSources.some(source => source.kind === 'accountPresetOpaque')) {
-        if (!params.installation || !params.apiMachine.resolveMachineSetupRuntime) return fail('admission_unavailable');
-        try {
-          const opened = await resolveHomeSources(currentWireSources);
-          if ('failure' in opened) return opened.failure;
-          // The desired snapshot owns the attached revision. A resolver may not
-          // substitute a newer preset while producing its presentation carrier.
-          if (!sameStrictJsonValue(opened.resolved.sources, current.policy.sources)) return fail('machine_setup_response_invalid');
-          resolvedSources = opened.resolved.resolvedSources;
-        } catch (error) {
-          const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
-            ? error.code : (signal ?? context.signal)?.aborted ? 'cancelled' : 'machine_setup_request_failed';
-          return { ok: false, ...normalizeActionExecutorThrownError(error, 'machines.setup.plan'), errorCode: code };
-        }
-      }
-    }
+    // Current setup is the admitted local copy. Only an explicit proposal
+    // resolves new preset content; source edits or access loss cannot withdraw it.
     if (input.updates) {
       if (current.status !== 'ready') return fail(`machine_setup_content_${current.status}`);
       if (!params.apiMachine.refreshMachineSetupUpdates || !params.apiMachine.publishMachineSetupUpdates) return fail('target_unavailable');
@@ -238,7 +302,7 @@ export function createMachineSetupPlanAction(params: Readonly<{
     return withAdministratorPrerequisite('errorCode' in appPrepared ? appPrepared : projectMachineSetupPlanResult(appPrepared, resolvedSources,
       current.status === 'ready' && current.policy.sources.some(source => source.kind === 'accountPreset'
         && source.contentEncryptionMode !== undefined) || wireSources?.some(source => source.kind === 'accountPresetOpaque')
-        ? wireSources : undefined));
+        ? reviewedWireSources : undefined));
   };
 }
 
@@ -334,13 +398,15 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         const managedContinuation = context.externalActionExecutionAuthorization?.binding.managedContinuation;
         const wireSources = input.sources;
         let sources: MachineSetupSourceV1;
+        const retained = managedContinuation ? undefined : readRetainedManagedOpaqueSetupSourcesV1(wireSources, current.policy.sources);
         if (managedContinuation || wireSources.some(source => source.kind === 'accountPresetOpaque')) {
-          const resolved = await request('/v1/machines/setup/resolve', {
-            homeId: input.homeId, machineId: input.machineId, sources: actionSourcesForHome(wireSources),
-          }, cancellationSignal);
+          const resolved = await resolveHomeMachineSetupCopies(actionSourcesForHome(wireSources, retained),
+            managedContinuation !== undefined, async body => await request('/v1/machines/setup/resolve', {
+              homeId: input.homeId, machineId: input.machineId, ...body,
+            }, cancellationSignal));
           const opened = await resolveLocalMachineSetupSources({ sources: wireSources, resolved,
             hydrator: createManagedPresetHydrator({ credentials: runtime.credentials, serverUrl: runtime.serverHttpBaseUrl }),
-            signal: cancellationSignal });
+            signal: cancellationSignal, ...(retained ? { retained } : {}) });
           if (!opened) return fail('machine_setup_response_invalid');
           sources = opened.sources;
           creation = opened.creation;
@@ -387,7 +453,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
             const structure = { ...source.setup, ...(source.setup.items ? {
               items: source.setup.items.map((item, index) => {
                 const expected = authored.items?.[index];
-                return item.kind !== 'app' && expected && expected.kind !== 'app'
+                return isMachineSetupRecipeItemV1(item) && expected && isMachineSetupRecipeItemV1(expected)
                   ? { ...item, selection: { ...item.selection, inputs: expected.selection.inputs } } : item;
               }),
             } : {}) };

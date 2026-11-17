@@ -1,4 +1,4 @@
-import { MachineSetupSourceApplyV1Schema, type MachineSetupResolvedOpaquePresetSourceV1,
+import { MachineSetupSourceApplyV1Schema, machineSetupSourceApplyOriginKeyV1, type MachineSetupResolvedOpaquePresetSourceV1,
   type MachineSetupResolvedSourceV1, type MachineSetupSourceApplyV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachinePresetContentV1Schema, type ManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { readManagedMachinePresetContentOverrideForModeV1,
@@ -65,6 +65,7 @@ async function hydrateManagedOpaqueSetupSourceV1(params: ManagedOpaqueSetupSourc
     : resolveManagedMachinePresetSetupOverrideV1({ baseContent: opened.data, overrideContent: openedOverride.data });
   if (setup === null) return null;
   const local = parseLocalSource({ kind: 'accountPreset', presetId: source.presetId, presetRevision: source.presetRevision,
+    ...(resolved.setupRevision === undefined ? {} : { setupRevision: resolved.setupRevision }),
     contentEncryptionMode: source.contentEncryptionMode, ...(override === undefined ? {} : { presetContentOverride: override }), setup });
   return local === null ? null : { source: local, presetName: opened.data.name };
 }
@@ -109,7 +110,26 @@ export async function hydrateManagedOpaqueSetupSourcesV1(params: Readonly<{
 export function projectManagedOpaqueSetupSourcesV1(sources: MachineSetupSourceV1): MachineSetupSourceApplyV1 {
   return MachineSetupSourceApplyV1Schema.parse(sources.map(source => source.kind === 'accountPreset'
     ? { kind: 'accountPresetOpaque' as const, presetId: source.presetId, presetRevision: source.presetRevision,
+      ...(source.setupRevision === undefined ? {} : { setupRevision: source.setupRevision }),
       contentEncryptionMode: source.contentEncryptionMode,
       ...(source.presetContentOverride === undefined ? {} : { presetContentOverride: source.presetContentOverride }) }
     : source));
+}
+
+/** An unchanged opaque address continues to use the Machine's admitted opened copy. */
+export function readRetainedManagedOpaqueSetupSourcesV1(sources: MachineSetupSourceApplyV1,
+  current: MachineSetupSourceV1): ReadonlyMap<string, MachineSetupSourceV1[number]> {
+  const previous = projectManagedOpaqueSetupSourcesV1(current);
+  const previousByOrigin = new Map(previous.map((wire, index) => [machineSetupSourceApplyOriginKeyV1(wire), { wire, local: current[index]! }]));
+  const retained = new Map<string, MachineSetupSourceV1[number]>();
+  for (const source of sources) {
+    if (source.kind !== 'accountPresetOpaque') continue;
+    const key = machineSetupSourceApplyOriginKeyV1(source);
+    const before = previousByOrigin.get(key);
+    if (!before || before.wire.kind !== 'accountPresetOpaque') continue;
+    const { setupRevision: _previousRevision, ...previousReference } = before.wire;
+    const { setupRevision: _requestedRevision, ...requestedReference } = source;
+    if (sameStrictJsonValue(previousReference, requestedReference)) retained.set(key, before.local);
+  }
+  return retained;
 }

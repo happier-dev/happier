@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { readRetainedManagedOpaqueSetupSourcesV1 } from '@happier-dev/cli-common/machines/managed';
 import {
   machineSetupSourceApplyOriginKeyV1,
   ManagedMachineActionOutputSchemasV1,
@@ -34,6 +35,8 @@ import { classifyAccountStorageReadFailure } from '@/sync/encryption/accountStor
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { useMachineField } from '@/sync/store/hooks';
+import { readMachinePresetRevisionsSnapshot, retainMachinePresets, subscribeMachinePresets } from '@/sync/engine/machines/machinePresetsResource';
+import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import {
   openManagedMachineSetupPlanSourcesV1,
   type ManagedMachineSetupSourcePresentationV1,
@@ -63,6 +66,7 @@ export function readOpenedMachineSetupSources(
 export type MachineSetupReviewIntent =
   | Readonly<{ kind: 'reapply' }>
   | Readonly<{ kind: 'preset'; preset: MachineSetupPresetChoice }>
+  | Readonly<{ kind: 'presetUpdate'; presetId: string; presetRevision: number; setupRevision: number }>
   | Readonly<{ kind: 'sources'; sources: MachineSetupSourceApplyV1 }>
   /** Stop using one attached preset (its source origin key); what it set up stays unless the review removes it. */
   | Readonly<{ kind: 'stop'; sourceKey: string; name: string }>
@@ -79,6 +83,9 @@ export type MachineSetupFailure = Readonly<{
   during: 'check' | 'review' | 'apply';
   failure?: ActionExecuteFailure;
 }>;
+export type MachineSetupPresetUpdateV1 =
+  | Readonly<{ kind: 'changed'; presetId: string; presetRevision: number; setupRevision: number }>
+  | Readonly<{ kind: 'unavailable'; presetId: string; reason: 'preset_not_found' | 'preset_archived' }>;
 
 /**
  * The Setup tab's one data port (P-M1): the Machine's current setup read through `machines.setup.plan` on open and on
@@ -101,8 +108,32 @@ export function useMachineSetup(
     serverId,
     enabled: input.active,
   });
+  const retainedSetup = useMachineField(machineId, 'metadata', 'setup', { serverId, enabled: input.active });
   const { binding } = useServerCredentialAccountScopeBinding(serverId);
   const homeId = getServerProfileById(serverId)?.serverIdentityId ?? null;
+  const hasAttachedPresets = observation?.attachedPresets?.some(source => source.kind === 'accountPreset') === true;
+  React.useEffect(() => input.active && homeId && binding && hasAttachedPresets
+    ? retainMachinePresets(binding, homeId, undefined, { projection: 'revisions' }) : undefined,
+  [input.active, homeId, binding, hasAttachedPresets]);
+  const subscribeRevisions = React.useCallback((listener: () => void) =>
+    input.active && hasAttachedPresets ? subscribeMachinePresets([serverId], listener) : () => {},
+  [input.active, hasAttachedPresets, serverId]);
+  const readRevisions = React.useCallback(() => readMachinePresetRevisionsSnapshot(serverId, homeId ?? '', binding?.accountId),
+    [serverId, homeId, binding?.accountId]);
+  const revisions = React.useSyncExternalStore(subscribeRevisions, readRevisions, readRevisions);
+  const previousPresetUpdates = React.useRef<readonly MachineSetupPresetUpdateV1[]>([]);
+  const notices: MachineSetupPresetUpdateV1[] = [];
+  if (input.active && revisions.value !== null) for (const source of observation?.attachedPresets ?? []) {
+    if (source.kind !== 'accountPreset') continue;
+    const header = revisions.value[source.presetId];
+    if (!header || header.archivedAt !== undefined) notices.push({ kind: 'unavailable', presetId: source.presetId,
+      reason: header ? 'preset_archived' : 'preset_not_found' });
+    else if (source.setupRevision !== undefined && header.setupRevision > source.setupRevision) notices.push({
+      kind: 'changed', presetId: source.presetId, presetRevision: header.revision, setupRevision: header.setupRevision,
+    });
+  }
+  const presetUpdates = retainKeyedRows(previousPresetUpdates.current, notices, notice => notice.presetId);
+  previousPresetUpdates.current = presetUpdates;
   const scopeKey = JSON.stringify([
     serverId,
     binding?.accountId ?? null,
@@ -130,9 +161,15 @@ export function useMachineSetup(
   }> | null>(null);
   const operationId = accepted?.operationId ?? null;
   const plan = current?.key === scopeKey ? current.plan : null;
-  const sourcePresentations = current?.key === scopeKey
-    ? current.sourcePresentations
-    : null;
+  const sourcePresentations = React.useMemo(() => {
+    if (!current || current.key !== scopeKey) return null;
+    if (!retainedSetup) return current.sourcePresentations;
+    const retained = readRetainedManagedOpaqueSetupSourcesV1(current.plan.sources, retainedSetup.sources);
+    return current.sourcePresentations.map((presentation, index): MachineSetupSourcePresentationV1 => {
+      const source = retained.get(machineSetupSourceApplyOriginKeyV1(current.plan.sources[index]!));
+      return source ? { ...presentation, kind: 'opened', source } : presentation;
+    });
+  }, [current, scopeKey, retainedSetup]);
 
   const context = React.useCallback(
     () =>
@@ -274,20 +311,22 @@ export function useMachineSetup(
         } else {
           // Re-apply the setup the Machine already has: its own sources, planned again for their effects now. Stop
           // using proposes the same sources without that preset; native retention keeps its items by default.
-          const result = await execute(
+          // The open tab already holds the attached references; candidate Plan alone admits their replacement.
+          const result = intent.kind === 'presetUpdate' ? null : await execute(
             'machines.setup.plan',
             { homeId, machineId },
             ctx,
           );
-          const outcome = classifyHomeActionOutcome(result);
+          const outcome = result ? classifyHomeActionOutcome(result) : null;
           const parsed =
-            outcome.kind === 'completed'
+            outcome?.kind === 'completed'
               ? MachineSetupPlanResultV1Schema.safeParse(outcome.result)
               : null;
+          const baseline = intent.kind === 'presetUpdate' ? plan : parsed?.success ? parsed.data : null;
           prepared =
-            !result.ok
+            result?.ok === false
               ? result
-              : !parsed?.success
+              : !baseline
                 ? {
                     ok: false,
                     errorCode: 'managed_response_invalid',
@@ -306,12 +345,20 @@ export function useMachineSetup(
                         machineId,
                         sources:
                           intent.kind === 'stop'
-                            ? parsed.data.sources.filter(
+                            ? baseline.sources.filter(
                                 (source) => machineSetupSourceApplyOriginKeyV1(source) !== intent.sourceKey,
                               )
-                            : parsed.data.sources,
-                        ...(intent.kind === 'stop' ? { current: parsed.data } : {}),
-                        desiredRevision: parsed.data.desiredRevision,
+                            : intent.kind === 'presetUpdate'
+                              ? baseline.sources.map(source => source.kind === 'accountPresetOpaque' && source.presetId === intent.presetId
+                                ? { kind: source.kind, presetId: source.presetId, presetRevision: intent.presetRevision,
+                                  contentEncryptionMode: source.contentEncryptionMode, setupRevision: intent.setupRevision }
+                                : source)
+                            : baseline.sources,
+                        ...(intent.kind === 'presetUpdate' ? { candidatePreset: {
+                          presetId: intent.presetId, presetRevision: intent.presetRevision,
+                        } } : {}),
+                        ...(intent.kind === 'stop' ? { current: baseline } : {}),
+                        desiredRevision: baseline.desiredRevision,
                         ...(removeItemKeys?.length ? { removeItemKeys } : {}),
                       },
                     ],
@@ -339,7 +386,7 @@ export function useMachineSetup(
         setPending(null);
       }
     },
-    [binding, context, homeId, machineId, pending],
+    [binding, context, homeId, machineId, pending, plan],
   );
 
   const apply = React.useCallback(async () => {
@@ -410,6 +457,7 @@ export function useMachineSetup(
 
   return {
     observation,
+    presetUpdates,
     plan,
     sourcePresentations,
     checkedAt: current?.key === scopeKey ? current.checkedAt : null,

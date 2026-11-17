@@ -226,6 +226,137 @@ it('opens an opaque saved setup source from the exact plan projection without fe
   });
   expect(harness.requests.some(request => request.path.startsWith('/v1/machines/presets/'))).toBe(false);
 });
+it('reads bodyless setup notices and preserves the attached copy until candidate Review', async () => {
+  const home = await harness.addHome({ name: 'Preset headers', serverUrl: 'https://preset-headers.example',
+    serverIdentityId: 'srv_preset_headers', accountId: 'owner', currentAccount: true });
+  const serverId = resolveServerProfileScopeIdForIdentifier(home);
+  const ids = ['changed', 'renamed', 'archived', 'missing'];
+  const machine = await publishManagedDevbox(serverId, undefined, { setup: { version: 1, desiredRevision: 3,
+    status: 'satisfied', recipes: [], attachedPresets: ids.map(presetId => ({ kind: 'accountPreset' as const,
+      presetId, presetRevision: 2, setupRevision: 1 })) } });
+  harness.answer(home, '/v1/machines/devbox', {
+    body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner', machine }) },
+  });
+  const plan = MachineSetupPlanResultV1Schema.parse({ desiredRevision: 3, exclusions: [], support: [],
+    sources: [...ids.map(presetId => ({ kind: 'accountPresetOpaque', presetId, presetRevision: 2,
+      setupRevision: 1, contentEncryptionMode: 'plain' })), { kind: 'direct', setup: {} }] });
+  harness.answer(home, '/v1/actions/machines.setup.plan', { select: input => {
+    const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
+    const request = MachineSetupPlanInputV1Schema.parse(envelope.input);
+    const reviewed = request.candidatePreset ? MachineSetupPlanResultV1Schema.parse({ ...plan, recipePlans: [],
+      sources: plan.sources.map(source => source.kind === 'accountPresetOpaque' && source.presetId === 'changed'
+        ? { ...source, presetRevision: 5, setupRevision: 2 } : source) }) : plan;
+    return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId,
+      execution: { ok: true, result: reviewed } } };
+  } });
+  const reads: unknown[] = [];
+  harness.answer(home, '/v1/machines/presets/list', { select: input => {
+    reads.push(input);
+    return { body: { kind: 'revisions', presets: [
+      { id: 'changed', homeId: 'srv_preset_headers', revision: 5, setupRevision: 2 },
+      { id: 'renamed', homeId: 'srv_preset_headers', revision: 8, setupRevision: 1 },
+      { id: 'archived', homeId: 'srv_preset_headers', revision: 3, setupRevision: 1, archivedAt: 1 },
+    ] } };
+  } });
+  const { renderHook } = await import('@/dev/testkit/hooks/renderHook');
+  const { useMachineSetup } = await import('./useMachineSetup');
+  const hook = await renderHook(() => useMachineSetup({ serverId, machineId: 'devbox', active: true, online: true, canCheck: true }));
+  onTestFinished(() => hook.unmount());
+  // The existing Plan path must work before exercising the new header consumer.
+  await waitForHomeGovernance(() => expect(hook.getCurrent().plan).toEqual(plan));
+  await waitForHomeGovernance(() => expect(reads).toHaveLength(1));
+  const { readMachinePresetRevisionsSnapshot } = await import('@/sync/engine/machines/machinePresetsResource');
+  const { getServerProfileById } = await import('@/sync/domains/server/serverProfiles');
+  expect(getServerProfileById(serverId)?.serverIdentityId).toBe('srv_preset_headers');
+  await waitForHomeGovernance(() => expect(readMachinePresetRevisionsSnapshot(serverId, 'srv_preset_headers'))
+    .toMatchObject({ loading: false, error: null }));
+  await waitForHomeGovernance(() => expect(readMachinePresetRevisionsSnapshot(serverId, 'srv_preset_headers', 'owner'))
+    .toMatchObject({ loading: false, error: null }));
+  await waitForHomeGovernance(() => expect(hook.getCurrent().presetUpdates).toEqual([
+    { kind: 'changed', presetId: 'changed', presetRevision: 5, setupRevision: 2 },
+    { kind: 'unavailable', presetId: 'archived', reason: 'preset_archived' },
+    { kind: 'unavailable', presetId: 'missing', reason: 'preset_not_found' },
+  ]));
+  expect(reads).toEqual([{ homeId: 'srv_preset_headers', projection: 'revisions', includeArchived: true }]);
+  const notices = hook.getCurrent().presetUpdates;
+  const { invalidateMachinePresets } = await import('@/sync/engine/machines/machinePresetsResource');
+  await act(async () => { invalidateMachinePresets(serverId); });
+  await waitForHomeGovernance(() => expect(reads).toHaveLength(2));
+  expect(hook.getCurrent().presetUpdates).toBe(notices);
+  expect(hook.getCurrent().plan).toEqual(plan);
+  expect(harness.requests.some(request => request.path === '/v1/actions/machines.setup.apply'
+    || request.path === '/v1/machines/presets/get')).toBe(false);
+  const plansBeforeReview = harness.requests.filter(request => request.path === '/v1/actions/machines.setup.plan').length;
+  await act(async () => { await hook.getCurrent().prepare({ kind: 'presetUpdate', presetId: 'changed',
+    presetRevision: 5, setupRevision: 2 }); });
+  expect(hook.getCurrent().failure).toBeNull();
+  expect(hook.getCurrent().review?.prepared).toMatchObject({ ok: true, input: { targets: [{ sources: [
+    { kind: 'accountPresetOpaque', presetId: 'changed', presetRevision: 5, setupRevision: 2 },
+    ...plan.sources.slice(1),
+  ] }] } });
+  expect(harness.requests.filter(request => request.path === '/v1/actions/machines.setup.plan'))
+    .toHaveLength(plansBeforeReview + 1);
+  await act(async () => { hook.getCurrent().cancelReview(); });
+  expect(hook.getCurrent().plan).toEqual(plan);
+  expect(harness.requests.some(request => request.path === '/v1/actions/machines.setup.apply')).toBe(false);
+});
+it('keeps the retained recipe rows across a Home-free Check after the preset is archived', async () => {
+  const home = await harness.addHome({ name: 'Retained setup', serverUrl: 'https://retained-setup.example',
+    serverIdentityId: 'srv_retained_setup', accountId: 'owner', currentAccount: true });
+  const serverId = resolveServerProfileScopeIdForIdentifier(home);
+  const item = { kind: 'softwareRecipe' as const, selection: {
+    ref: { pluginId: 'example.setup', recipeId: 'runtime', revision: '1' }, inputs: {},
+  } };
+  const sources: MachineSetupSourceV1 = [{ kind: 'accountPreset', presetId: 'archived-preset', presetRevision: 2,
+    setupRevision: 1, contentEncryptionMode: 'plain', setup: { items: [item] } }, { kind: 'direct', setup: {} }];
+  const desired = { version: 1 as const, revision: 3, sources, exclusions: [] };
+  const original = await publishManagedDevbox(serverId, undefined, { setup: { version: 1, desiredRevision: 3,
+    status: 'satisfied', recipes: [], attachedPresets: [{ kind: 'accountPreset', presetId: 'archived-preset',
+      presetRevision: 2, setupRevision: 1 }] } });
+  const machine = { ...original, metadata: { ...original.metadata!, setup: desired } };
+  const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+  await act(async () => { await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine]); });
+  harness.answer(home, '/v1/machines/devbox', {
+    body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner', machine }) },
+  });
+  harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'revisions', presets: [{
+    id: 'archived-preset', homeId: 'srv_retained_setup', revision: 4, setupRevision: 2, archivedAt: 1,
+  }] } });
+  const { PluginProjectedMachineRecipeEntryV1Schema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+  const recipe = PluginProjectedMachineRecipeEntryV1Schema.parse({ id: 'example.setup/runtime', pluginId: 'example.setup', pluginVersion: '1',
+    definition: { id: 'runtime', revision: '1', title: 'Retained runtime', software: true,
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      steps: [{ id: 'install', kind: 'command', executable: 'install', args: ['runtime'],
+        check: { executable: 'test', args: ['-e', 'runtime'], unsatisfiedExitCodes: [1] } }],
+    } });
+  const current = await getMachineSetupDesiredV1({
+    read: async () => ({ status: 'ready', metadataVersion: 3, metadata: machine.metadata }),
+    compareAndSwap: async () => { throw new Error('Check cannot mutate retained Setup'); },
+  });
+  harness.answer(home, '/v1/actions/machines.setup.plan', { select: async input => {
+    const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
+    const local = await prepareMachineSetupPlanV1({ input: MachineSetupPlanInputV1Schema.parse(envelope.input), current,
+      readRecipes: async () => [recipe], runNative: async command => {
+        expect(command.executable).toBe('test');
+        return { code: 0, stdout: '', stderr: '' };
+      } });
+    if ('errorCode' in local) throw new Error(local.errorCode);
+    return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId,
+      execution: { ok: true, result: { ...local, sources: projectManagedOpaqueSetupSourcesV1(local.sources) } } } };
+  } });
+  const { renderHook } = await import('@/dev/testkit/hooks/renderHook');
+  const { useMachineSetup, readOpenedMachineSetupSources, readMachineSetupRecipes } = await import('./useMachineSetup');
+  const hook = await renderHook(() => useMachineSetup({ serverId, machineId: 'devbox', active: true, online: true, canCheck: true }));
+  onTestFinished(() => hook.unmount());
+  await waitForHomeGovernance(() => expect(hook.getCurrent().plan?.desiredRevision).toBe(3));
+  await waitForHomeGovernance(() => expect(readMachineSetupRecipes(hook.getCurrent().plan,
+    readOpenedMachineSetupSources(hook.getCurrent().sourcePresentations), hook.getCurrent().observation))
+    .toMatchObject([{ ref: item.selection.ref, fromPreset: true }]));
+  expect(readOpenedMachineSetupSources(hook.getCurrent().sourcePresentations)[0]?.source).toEqual(sources[0]);
+  expect(harness.requests.some(request => request.path.startsWith('/v1/machines/presets/')
+    && request.path !== '/v1/machines/presets/list')).toBe(false);
+  expect(hook.getCurrent().plan).not.toHaveProperty('resolvedSources');
+});
 const { resetScopedHomeActionExecutorsForTests } =
   await import('@/sync/ops/actions/scopedHomeActionExecutor');
 // Load the real app singleton after its transport boundaries, outside each

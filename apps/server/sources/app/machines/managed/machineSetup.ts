@@ -108,6 +108,34 @@ export async function resolveMachineSetup(params: Readonly<{
     const input = MachineSetupResolveInputV1Schema.parse(params.input);
     return inReadSnapshot(async tx => {
         const target = await requireTargetInTx(tx, { ...params, input });
+        const resolvePreset = async (selected: Pick<MachineSetupOpaquePresetSourceV1, 'presetId' | 'presetRevision'>
+            & Partial<Pick<MachineSetupOpaquePresetSourceV1, 'contentEncryptionMode' | 'presetContentOverride'>>): Promise<Readonly<{
+                source: MachineSetupResolvedSourceEntryV1;
+            }>> => {
+        const result = await getMachinePresetInTx(tx, { accountId: params.actorAccountId, authentication: params.authentication,
+            input: { homeId: input.homeId, id: selected.presetId } });
+        if (result.kind === 'refused') throw new ManagedMachineError(result.code);
+        const preset = result.preset;
+        if (preset.revision !== selected.presetRevision) throw new ManagedMachineError('request_conflict');
+        if (preset.archivedAt !== undefined) throw new ManagedMachineError('preset_archived');
+        if (selected.contentEncryptionMode !== undefined && selected.contentEncryptionMode !== preset.contentEncryptionMode)
+            throw new ManagedMachineError('account_mode_mismatch');
+        const presetContentOverride = readOpaquePresetSourceOverride({ kind: 'accountPresetOpaque', ...selected,
+            contentEncryptionMode: preset.contentEncryptionMode }, preset.contentEncryptionMode);
+        return { source: { kind: 'accountPresetOpaque', presetId: selected.presetId, presetRevision: selected.presetRevision,
+            contentEncryptionMode: preset.contentEncryptionMode,
+            ...(preset.setupRevision === undefined ? {} : { setupRevision: preset.setupRevision }),
+            presetContent: projectManagedMachinePresetForRecipientV1({ content: preset.content,
+                recipients: preset.recipients, recipientAccountId: params.actorAccountId }),
+            ...(presetContentOverride === undefined ? {} : { presetContentOverride }) } };
+        };
+        // A candidate certifies only the newly addressed copy. Other attached
+        // copies stay with the target's desired snapshot, including lost access.
+        if ('candidatePreset' in input) {
+            if (params.creationManagedId) throw new ManagedMachineError('invalid_request');
+            const resolved = await resolvePreset(input.candidatePreset);
+            return { sources: [resolved.source, { kind: 'direct' as const, setup: {} }] };
+        }
         const row = await tx.managedMachine.findUnique({ where: { enrolledMachineId: input.machineId } });
         if (params.creationManagedId && row?.id !== params.creationManagedId) throw new ManagedMachineError('resource_mismatch');
         if (row !== null && isStoredOpaquePresetMachine(row)) {
@@ -147,6 +175,7 @@ export async function resolveMachineSetup(params: Readonly<{
             return {
                 sources: [
                     { kind: 'accountPresetOpaque' as const, presetId: opaque.presetId, presetRevision: opaque.presetRevision,
+                        ...(row.presetSetupRevision === null ? {} : { setupRevision: row.presetSetupRevision }),
                         contentEncryptionMode: stored.contentEncryptionMode,
                         presetContent: projectManagedMachinePresetForRecipientV1({ content: stored.content,
                             recipients: stored.recipients, recipientAccountId: params.actorAccountId }),
@@ -162,31 +191,13 @@ export async function resolveMachineSetup(params: Readonly<{
             return { purpose: 'creationOrigin' as const };
         }
         if (params.creationManagedId) throw new ManagedMachineError('intent_changed');
-        const resolvePreset = async (selected: Extract<MachineSetupSourceApplyEntryV1,
-            { kind: 'accountPresetOpaque' }> & MachineSetupPresetApplyInputV1): Promise<Readonly<{
-                source: MachineSetupResolvedSourceEntryV1;
-            }>> => {
-        const result = await getMachinePresetInTx(tx, { accountId: params.actorAccountId, authentication: params.authentication,
-            input: { homeId: selected.homeId, id: selected.presetId } });
-        if (result.kind === 'refused') throw new ManagedMachineError(result.code);
-        const preset = result.preset;
-        if (preset.revision !== selected.presetRevision) throw new ManagedMachineError('request_conflict');
-        if (preset.archivedAt !== undefined) throw new ManagedMachineError('preset_archived');
-        requireOpaquePresetSourceMode(selected, preset.contentEncryptionMode);
-        const presetContentOverride = readOpaquePresetSourceOverride(selected, preset.contentEncryptionMode);
-        return { source: { kind: 'accountPresetOpaque', presetId: selected.presetId, presetRevision: selected.presetRevision,
-            contentEncryptionMode: preset.contentEncryptionMode,
-            presetContent: projectManagedMachinePresetForRecipientV1({ content: preset.content,
-                recipients: preset.recipients, recipientAccountId: params.actorAccountId }),
-            ...(presetContentOverride === undefined ? {} : { presetContentOverride }) } };
-        };
         const sources: MachineSetupResolvedSourceV1 = [];
         for (const source of input.sources) {
             if (source.kind === 'direct') { sources.push(source); continue; }
             // Bundled declarations are target-daemon catalog authority, not a
             // Home-owned Preset. Do not certify an unresolved catalog copy.
             if (source.kind === 'bundledPreset') throw new ManagedMachineError('invalid_request');
-            const resolved = await resolvePreset({ ...source, homeId: input.homeId, machineId: input.machineId });
+            const resolved = await resolvePreset(source);
             if (resolved.source.kind !== 'accountPresetOpaque'
                 || resolved.source.presetId !== source.presetId || resolved.source.presetRevision !== source.presetRevision) {
                 throw new ManagedMachineError('request_conflict');

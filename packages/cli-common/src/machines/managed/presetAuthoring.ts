@@ -30,8 +30,8 @@ export async function prepareManagedMachinePresetAuthoringV1(
   if (request.approvalReplay === true) return null;
   const value = 'patch' in input ? input.patch : input;
   if (!value.content) {
-    if ('patch' in input && input.patch.configurationRevision !== undefined) {
-      const { configurationRevision: _configurationRevision, ...patch } = input.patch;
+    if ('patch' in input && (input.patch.configurationRevision !== undefined || input.patch.setupRevision !== undefined)) {
+      const { configurationRevision: _configurationRevision, setupRevision: _setupRevision, ...patch } = input.patch;
       return { children: [], input: { ...input, patch } };
     }
     return null;
@@ -62,8 +62,10 @@ export async function prepareManagedMachinePresetAuthoringV1(
   const configurationRevision = incumbent && previous ? (incumbent.configurationRevision ?? 0)
     + (sameStrictJsonValue(readAuthoredConfiguration(previous), readAuthoredConfiguration(content),
       { omitUndefinedObjectMembers: true }) ? 0 : 1) : 0;
-  const preparedInput = 'patch' in input ? { ...input, patch: { ...input.patch, configurationRevision } }
-    : { ...input, configurationRevision };
+  const setupRevision = incumbent && previous ? (incumbent.setupRevision ?? 0)
+    + (sameStrictJsonValue(previous.setup ?? {}, content.setup ?? {}, { omitUndefinedObjectMembers: true }) ? 0 : 1) : 0;
+  const preparedInput = 'patch' in input ? { ...input, patch: { ...input.patch, configurationRevision, setupRevision } }
+    : { ...input, configurationRevision, setupRevision };
   const prepared: HostReviewedChildrenPreparationV1 = { children: [], input: preparedInput };
   if (!content.launch) return prepared;
   if (content.authorEffectReview) {

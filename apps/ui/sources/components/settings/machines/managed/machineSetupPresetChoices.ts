@@ -11,7 +11,7 @@ export type SavedMachineSetupPresetChoice = OpenedManagedMachinePresetV1
     & Readonly<{ setup: NonNullable<OpenedManagedMachinePresetV1['setup']> }>;
 export type MachineSetupPresetChoice = SavedMachineSetupPresetChoice | BundledMachineSetupPresetChoice;
 export type MachineSetupPresetInput = Pick<OpenedManagedMachinePresetV1,
-    'id' | 'revision' | 'contentEncryptionMode' | 'setup'> & Partial<Pick<OpenedManagedMachinePresetV1, 'recipientProjection'>>
+    'id' | 'revision' | 'contentEncryptionMode' | 'setup' | 'setupRevision'> & Partial<Pick<OpenedManagedMachinePresetV1, 'recipientProjection'>>
     | Extract<MachineSetupSourceEntryV1, { kind: 'bundledPreset' }>;
 
 /** Saved and bundled setup presets share the same list and source preparation. */
@@ -35,6 +35,7 @@ export function machineSetupPresetSource(preset: MachineSetupPresetInput): Exclu
     return 'kind' in preset
         ? { kind: 'bundledPreset', ref: preset.ref, setup: preset.setup }
         : { kind: 'accountPreset', presetId: preset.id, presetRevision: preset.revision,
+            ...(preset.setupRevision === undefined ? {} : { setupRevision: preset.setupRevision }),
             contentEncryptionMode: preset.contentEncryptionMode, setup: preset.setup ?? {} };
 }
 
@@ -43,6 +44,7 @@ export function machineSetupPresetApplySource(preset: MachineSetupPresetInput,
     presetContentOverride?: ManagedMachinePresetLaunchNameOverrideV1): MachineSetupSourceApplyEntryV1 {
     if ('kind' in preset) return { kind: 'bundledPreset', ref: preset.ref, setup: preset.setup };
     return { kind: 'accountPresetOpaque', presetId: preset.id, presetRevision: preset.revision,
+        ...(preset.setupRevision === undefined ? {} : { setupRevision: preset.setupRevision }),
         contentEncryptionMode: preset.contentEncryptionMode,
         ...(presetContentOverride ? { presetContentOverride } : {}) };
 }

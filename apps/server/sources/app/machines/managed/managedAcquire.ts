@@ -135,6 +135,7 @@ export async function admitManagedAcquire(params: Readonly<{
                 if (!sameManagedInput(controller, review.controller)) throw new ManagedMachineError("controller_retired");
                 if (request.acquisitionMode && selected.custodianAccountId !== params.custodianAccountId) throw new ManagedMachineError('permission_denied');
                 const preset = { id: selected.preset.id, revision: selected.preset.revision,
+                    setupRevision: selected.preset.setupRevision ?? 0,
                     configurationRevision: selected.preset.configurationRevision ?? 0 } as const;
                 const presetContent = ManagedAdmissionPresetContentV1Schema.parse(selected.presetContent);
                 const presetContentOverride = request.input.presetContentOverride;
@@ -192,6 +193,7 @@ export async function admitManagedAcquire(params: Readonly<{
                     controllerMachineId: controller?.machineId ?? null, controllerInstallationId: controller?.installationId ?? null,
                     admittedActionRequestId: request.requestId, admittedInput,
                     presetId: preset.id, presetRevision: preset.revision, presetConfigurationRevision: preset.configurationRevision,
+                    presetSetupRevision: preset.setupRevision,
                     // The historical column is non-null; its value is an
                     // opaque envelope, never a launch snapshot.
                     launch: storeOpaquePresetLaunch({

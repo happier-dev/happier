@@ -10,6 +10,7 @@ export function projectManagedMachineSetupCreationSourcesV1(creation:
   Parameters<typeof matchesMachineSetupCreationSourcesV1>[1]): MachineSetupSourceApplyV1 {
   return projectManagedOpaqueSetupSourcesV1([
     { kind: 'accountPreset', presetId: creation.preset.id, presetRevision: creation.preset.revision,
+      ...(creation.preset.setupRevision === undefined ? {} : { setupRevision: creation.preset.setupRevision }),
       contentEncryptionMode: creation.preset.contentEncryptionMode, setup: creation.setup },
     { kind: 'direct', setup: {} },
   ]);
@@ -32,6 +33,7 @@ export async function prepareManagedMachineSetupApplyInput(input: Readonly<{
     // comparison belongs. Actions/Home carry the persisted author mode and
     // address, never its private setup body.
     const localSource = { kind: 'accountPreset' as const, presetId: preset.id, presetRevision: preset.revision,
+      ...(preset.setupRevision === undefined ? {} : { setupRevision: preset.setupRevision }),
       contentEncryptionMode: preset.contentEncryptionMode, setup };
     const sources = projectManagedMachineSetupCreationSourcesV1(input.creation);
     const opaqueSource = sources[0]!;

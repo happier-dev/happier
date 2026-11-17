@@ -179,6 +179,35 @@ describe("Machine preset relational owner", () => {
     });
 
     it.each(['plain', 'e2ee'] as const)('reads retained raw %s-author presets without rewriting and seals only on normal save', async mode => {
+    it.each(['plain', 'e2ee'] as const)('persists setup-only %s counters and returns bodyless revision headers', async mode => {
+        const accountId = `preset-setup-counter-${mode}-owner`;
+        const homeId = await getOrCreateServerIdentityId();
+        const keys = tweetnacl.box.keyPair();
+        await db.account.create({ data: { id: accountId, encryptionMode: mode,
+            ...createSignedAccountContentBinding(keys.publicKey) } });
+        const id = `preset-setup-counter-${mode}`;
+        const owner = { kind: 'account' as const, accountId };
+        const census = await readReadyPresetRecipientCensus(accountId, { homeId, owner });
+        const seal = (name: string, setup = {}) => sealManagedMachinePresetContentV1({ presetId: id, mode,
+            content: { v: 1, name, launch, setup }, recipientCensus: census.recipients, randomBytes: tweetnacl.randomBytes });
+        const created = await requestPreset(accountId, 'create', { homeId, id, owner, contentEncryptionMode: mode,
+            ...seal('Initial'), setupRevision: 1 });
+        expect(created.statusCode, created.body).toBe(200);
+        expect(created.json()).toMatchObject({ kind: 'saved', preset: { id, setupRevision: 1, revision: 0 } });
+        const updated = await requestPreset(accountId, 'update', { homeId, id, expectedRevision: 0,
+            patch: { ...seal('Changed', { scripts: [{ body: 'echo changed', affects: 'none' }] }), setupRevision: 3 } });
+        expect(updated.statusCode, updated.body).toBe(200);
+        expect(updated.json()).toMatchObject({ kind: 'saved', preset: { id, setupRevision: 3, revision: 1 } });
+        expect((await requestPreset(accountId, 'get', { homeId, id })).json())
+            .toMatchObject({ kind: 'found', preset: { setupRevision: 3 } });
+        const renamed = await requestPreset(accountId, 'update', { homeId, id, expectedRevision: 1,
+            patch: seal('Renamed', { scripts: [{ body: 'echo changed', affects: 'none' }] }) });
+        expect(renamed.json()).toMatchObject({ kind: 'saved', preset: { setupRevision: 3, revision: 2 } });
+        const headers = await requestPreset(accountId, 'list', { homeId, projection: 'revisions', includeArchived: true });
+        expect(headers.statusCode, headers.body).toBe(200);
+        expect(headers.json()).toEqual({ kind: 'revisions', presets: [{ id, homeId, revision: 2, setupRevision: 3 }] });
+    });
+
         const accountId = `preset-legacy-${mode}-owner`;
         const homeId = await getOrCreateServerIdentityId();
         const keys = tweetnacl.box.keyPair();
@@ -967,6 +996,46 @@ describe("Machine preset relational owner", () => {
     });
 
     it('publishes the shared preset collection discriminator only for real content mutations', async () => {
+    it('resolves a new setup copy on a managed Machine while retaining its original creation snapshot', async () => {
+        const accountId = 'preset-managed-setup-candidate-owner';
+        const homeId = await getOrCreateServerIdentityId();
+        await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: 'plain' } });
+        const target = await seedCurrentProvisioner(accountId, homeId);
+        const presetId = 'preset-managed-setup-candidate';
+        const definition = taggedPlainPreset({ id: presetId, homeId, owner: { kind: 'account', accountId },
+            name: 'Original creation', privateFields: { launch, setup: { scripts: [{ body: 'echo original' }] } }, controller: target });
+        expect((await requestPreset(accountId, 'create', definition)).json()).toMatchObject({ kind: 'saved' });
+        const next = taggedPlainPresetContent('Updated setup', { launch, setup: { scripts: [{ body: 'echo updated' }] } });
+        expect((await requestPreset(accountId, 'update', { homeId, id: presetId, expectedRevision: 0,
+            patch: { content: next } })).json()).toMatchObject({ kind: 'saved', preset: { revision: 1 } });
+        const input = { homeId, machineId: target.machineId, sources: [
+            { kind: 'accountPresetOpaque' as const, presetId, presetRevision: 1, contentEncryptionMode: 'plain' as const },
+            { kind: 'direct' as const, setup: {} },
+        ] };
+        // The same admitted target and current preset resolve before it owns a managed creation row.
+        expect(await resolveMachineSetup({ actorAccountId: accountId, custodianAccountId: accountId, input }))
+            .toMatchObject({ sources: [{ presetRevision: 1, presetContent: { content: next } }, { kind: 'direct' }] });
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: accountId,
+            enrolledMachineId: target.machineId, presetId, presetRevision: 0, allocation: 'bound', creationState: 'active',
+            admittedActionRequestId: 'preset-managed-setup-candidate-create',
+            launch: { contentEncryptionMode: 'plain', content: definition.content, recipients: [] },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            admittedInput: { enrollmentAccountId: accountId } } });
+        const candidateInput = { homeId, machineId: target.machineId,
+            candidatePreset: { presetId, presetRevision: 1 } };
+        expect(await resolveMachineSetup({ actorAccountId: accountId, custodianAccountId: accountId, input: candidateInput }))
+            .toMatchObject({ sources: [{ presetRevision: 1, presetContent: { content: next } }, { kind: 'direct' }] });
+        await expect(resolveMachineSetup({ actorAccountId: accountId, custodianAccountId: accountId, input }))
+            .rejects.toMatchObject({ code: 'invalid_request' });
+        const creation = await resolveMachineSetup({ actorAccountId: accountId, custodianAccountId: accountId,
+            creationManagedId: row.id, input: { ...input, sources: [{ kind: 'accountPresetOpaque', presetId,
+                presetRevision: 0, contentEncryptionMode: 'plain' },
+                { kind: 'direct', setup: {} }] } });
+        expect(creation).toMatchObject({ creation: { managedId: row.id },
+            sources: [{ presetRevision: 0, presetContent: { content: definition.content } }, { kind: 'direct' }] });
+        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).toEqual(row);
+    });
+
         const accountId = 'preset-collection-publication-owner';
         const homeId = await getOrCreateServerIdentityId();
         await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: 'plain' } });

@@ -190,6 +190,8 @@ export function createManagedMachinePresetV1BaseShape<Choices extends z.core.$Zo
     id: id(), homeId: id(), revision: revision(),
     /** Client-maintained launch/setup change counter; absent legacy rows mean zero. */
     configurationRevision: z.optional(revision()),
+    /** Author-owned setup-only counter; metadata and launch edits leave it unchanged. */
+    setupRevision: z.optional(revision()),
     owner: ManagedMachinePresetOwnerV1Schema,
     /** Persisted owner mode: readers must never substitute the viewer's Account mode. */
     contentEncryptionMode: AccountEncryptionModeSchema,
@@ -269,12 +271,14 @@ export const ManagedMachinePresetCreateInputV1Schema = lazyZodSchema(() => z.omi
 export const ManagedMachinePresetGetInputV1Schema = lazyZodSchema(() => z.strictObject({ homeId: id(), id: id() }));
 export const ManagedMachinePresetListInputV1Schema = lazyZodSchema(() => z.strictObject({
   homeId: id(), owner: z.optional(ManagedMachinePresetOwnerV1Schema),
+  projection: z.optional(z.literal('revisions')),
   includeArchived: z.optional(z.boolean()), cursor: z.optional(id()),
 }));
 export const ManagedMachinePresetUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
   homeId: id(), id: id(), expectedRevision: revision(),
   patch: z.strictObject({
     configurationRevision: z.optional(revision()),
+    setupRevision: z.optional(revision()),
     contentEncryptionMode: z.optional(AccountEncryptionModeSchema),
     content: mini.optional(mini.nullable(ManagedMachinePresetStoredContentCarrierV1Schema)),
     recipients: mini.optional(ManagedMachinePresetRecipientsV1Schema),
@@ -299,8 +303,15 @@ export const ManagedMachinePresetGetResultV1Schema = lazyZodSchema(() => z.discr
   z.strictObject({ kind: z.literal('found'), preset: ManagedMachinePresetV1Schema }),
   ManagedMachinePresetRefusedV1Schema,
 ]));
+/** Public counters for attached-copy notices; no private content or recipients. */
+export const ManagedMachinePresetRevisionV1Schema = lazyZodSchema(() => z.strictObject({
+  id: id(), homeId: id(), revision: revision(), setupRevision: revision(),
+  archivedAt: z.optional(z.number().check(z.nonnegative())),
+}));
+export type ManagedMachinePresetRevisionV1 = z.infer<typeof ManagedMachinePresetRevisionV1Schema>;
 export const ManagedMachinePresetListResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('listed'), presets: z.array(ManagedMachinePresetV1Schema), cursor: z.optional(id()) }),
+  z.strictObject({ kind: z.literal('revisions'), presets: z.array(ManagedMachinePresetRevisionV1Schema), cursor: z.optional(id()) }),
   ManagedMachinePresetRefusedV1Schema,
 ]));
 export type ManagedMachinePresetCreateInputV1 = z.infer<typeof ManagedMachinePresetCreateInputV1Schema>;

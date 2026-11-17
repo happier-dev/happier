@@ -189,6 +189,8 @@ describe('preset authored configuration counter', () => {
       if (!prepared || 'ok' in prepared) throw new Error(`Expected counter write: ${JSON.stringify(prepared)}`);
       const captured = ManagedMachinePresetUpdateInputV1Schema.parse(prepared.input);
       expect(captured.patch.configurationRevision).toBe(expected);
+      // A Machine setup notice must ignore launch edits and display/preparation metadata.
+      expect(captured.patch).toHaveProperty('setupRevision', next.setup === original.setup ? 0 : 1);
       expect(reads).toBe(1);
       expect(captured.patch).not.toHaveProperty('configurationDigest');
       expect(await managed.prepareManagedMachinePresetAuthoringV1({ actionId: 'machines.presets.update',

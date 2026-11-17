@@ -70,6 +70,8 @@ import { createWorkflowRunMachineTransport } from '@/daemon/workflows/workflowMa
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
+import { createForegroundPurposeOwnerFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
+import { createActionPurposeBindingAdmission } from '@/daemon/connectedServices/purposeBindings/teamDirectMaterialAdmission';
 
 const osStore = vi.hoisted(() => ({
   identity: null as import('@happier-dev/protocol').MachineInstallationIdentityV1 | null,
@@ -226,6 +228,18 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
         resolveServerFeaturesSnapshot: async () => options.sessionStartup?.startup?.resolveServerFeaturesSnapshot?.(),
       } : {}) });
   recordFixturePhase('machine_client.end');
+  // The native-confirm scenario installs its real startup owner below.
+  if (!nativeConfirmed) {
+    const account = createForegroundPurposeOwnerFixture({ consumer: { pluginId: 'example.setup', localId: 'native' },
+      service: { pluginId: 'example.setup', localId: 'account' }, materializeAccount: async () => {
+        throw new Error('Unbound native setup must not acquire a connected Account');
+      } });
+    await account.store.update(() => ({ v: 1, bindings: [] }));
+    client.registerConnectedAccountPurposeBindingRuntime({ ...account.owner, owner: account.owner,
+      admitActionPurposeBindings: createActionPurposeBindingAdmission({ activatePurposeBindings: account.owner.activatePurposeBindings }),
+      listActionFormConnectedAccountOptions: async () => { throw new Error('Setup does not select connected Accounts'); },
+    });
+  }
   recordFixturePhase('initial_rpc_registration.begin');
   let registration = client.setRPCHandlers({ spawnSession: async () => { throw new Error('Not a Session'); },
     stopSession: async () => ({ status: 'not_found' }), requestShutdown() {} });

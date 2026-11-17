@@ -1,9 +1,9 @@
-import { MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1, type ManagedMachinePresetRevisionV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { retainKeyedRows, retainShallow } from '@/sync/domains/state/structuralSharing';
+import { retainDeep, retainKeyedRows, retainShallow } from '@/sync/domains/state/structuralSharing';
 import { createMachinePresetCollectionClient, type ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
@@ -14,12 +14,15 @@ export type MachinePresetQueryState<T> = Readonly<{
     approval?: ActionApprovalRegistration;
 }>;
 type Snapshot = MachinePresetQueryState<readonly ManagedMachinePresetListEntryV1[]>;
-type Consumer = Readonly<{ onApprovalPending?: (approval: ActionApprovalRegistration) => void }>;
-type PendingRead = { controller: AbortController; awaitingApproval: boolean };
+type RevisionSnapshot = MachinePresetQueryState<Readonly<Record<string, ManagedMachinePresetRevisionV1>>>;
+type Consumer = Readonly<{ onApprovalPending?: (approval: ActionApprovalRegistration) => void; projection: 'content' | 'revisions' }>;
+type PendingRead = { controller: AbortController; awaitingApproval: boolean; content: boolean };
 type Entry = {
     lifetime: ServerAccountScopeLifetime;
     homeId: string;
     snapshot: Snapshot;
+    revisions: RevisionSnapshot;
+    contentStale: boolean;
     consumers: Set<Consumer>;
     retirement: { dispose(): void };
     read: PendingRead | null;
@@ -27,6 +30,7 @@ type Entry = {
 };
 
 const empty: Snapshot = { value: null, loading: true, error: null };
+const emptyRevisions: RevisionSnapshot = { value: null, loading: true, error: null };
 const entries = new Map<string, Entry>();
 const listeners = new Map<string, Set<() => void>>();
 const scopeId = (serverId: string) => resolveServerProfileScopeIdForIdentifier(serverId) || serverId;
@@ -49,9 +53,17 @@ function publish(serverId: string, entry: Entry, next: Snapshot) {
     notify(serverId);
 }
 
+function publishRevisions(serverId: string, entry: Entry, next: RevisionSnapshot) {
+    const retained = retainShallow(entry.revisions, next);
+    if (retained === entry.revisions) return;
+    entry.revisions = retained;
+    notify(serverId);
+}
+
 function load(serverId: string, entry: Entry) {
     if (entry.read || !entry.stale || !entry.lifetime.isCurrent() || entry.consumers.size === 0) return;
-    const read: PendingRead = { controller: new AbortController(), awaitingApproval: false };
+    const content = [...entry.consumers].some(consumer => consumer.projection === 'content');
+    const read: PendingRead = { controller: new AbortController(), awaitingApproval: false, content };
     entry.read = read;
     entry.stale = false;
     if (entry.snapshot.approval) {
@@ -59,28 +71,60 @@ function load(serverId: string, entry: Entry) {
         publish(serverId, entry, settled);
     }
     const current = () => !read.controller.signal.aborted && entry.lifetime.isCurrent() && entry.read === read;
-    void createMachinePresetCollectionClient(entry.lifetime.scope, entry.homeId).list({
+    const client = createMachinePresetCollectionClient(entry.lifetime.scope, entry.homeId);
+    const options = {
         signal: read.controller.signal,
-        onApprovalPending: approval => {
+        onApprovalPending: (approval: ActionApprovalRegistration) => {
             if (!current()) return;
             read.awaitingApproval = true;
             publish(serverId, entry, { ...entry.snapshot, approval });
+            publishRevisions(serverId, entry, { ...entry.revisions, approval });
             for (const consumer of entry.consumers) consumer.onApprovalPending?.(approval);
         },
         onApprovalSettled: () => { read.awaitingApproval = false; },
-    }).then(result => {
+    };
+    const request = content ? client.list(options) : (async () => {
+        const presets: ManagedMachinePresetRevisionV1[] = [];
+        let cursor: string | undefined;
+        do {
+            const result = await client.read('machines.presets.list', { homeId: entry.homeId,
+                projection: 'revisions', includeArchived: true, ...(cursor ? { cursor } : {}) }, options);
+            if (result.kind === 'failed') return result;
+            if (result.value.kind === 'refused') return { kind: 'failed' as const, code: result.value.code };
+            if (result.value.kind !== 'revisions') return { kind: 'failed' as const, code: 'invalid_action_output' };
+            presets.push(...result.value.presets);
+            cursor = result.value.cursor;
+        } while (cursor);
+        return { kind: 'succeeded' as const, value: presets };
+    })();
+    void request.then(result => {
         if (!current()) return;
         entry.read = null;
-        publish(serverId, entry, {
-            value: result.kind === 'succeeded' ? retainKeyedRows(entry.snapshot.value, result.value, preset => preset.id)
-                : isMachinePresetAccessLost(result.code) ? null : entry.snapshot.value,
+        const error = result.kind === 'failed' ? result.code : null;
+        const lost = result.kind === 'failed' && isMachinePresetAccessLost(result.code);
+        if (content) {
+            entry.contentStale = result.kind === 'failed';
+            publish(serverId, entry, {
+                value: result.kind === 'succeeded' ? retainKeyedRows(entry.snapshot.value,
+                    result.value.filter((preset): preset is ManagedMachinePresetListEntryV1 => 'contentEncryptionMode' in preset), preset => preset.id)
+                    : lost ? null : entry.snapshot.value,
+                loading: false, error,
+            });
+        } else if (lost) publish(serverId, entry, { value: null, loading: false, error });
+        publishRevisions(serverId, entry, {
+            value: result.kind === 'succeeded' ? retainDeep(entry.revisions.value ?? undefined, Object.fromEntries(
+                result.value.flatMap(preset => preset.setupRevision === undefined ? [] : [[preset.id, {
+                    id: preset.id, homeId: preset.homeId, revision: preset.revision, setupRevision: preset.setupRevision,
+                    ...(preset.archivedAt === undefined ? {} : { archivedAt: preset.archivedAt }),
+                }]]))) : lost ? null : entry.revisions.value,
             loading: false,
-            error: result.kind === 'failed' ? result.code : null,
+            error,
         });
     }).catch(() => {
         if (!current()) return;
         entry.read = null;
         publish(serverId, entry, { value: entry.snapshot.value, loading: false, error: 'request_failed' });
+        publishRevisions(serverId, entry, { value: entry.revisions.value, loading: false, error: 'request_failed' });
     }).finally(() => {
         if (entry.read === read) entry.read = null;
     });
@@ -92,6 +136,7 @@ export function invalidateMachinePresets(serverId: string): void {
     // An approved read has not executed yet; its eventual answer covers this change.
     if (!entry || entry.read?.awaitingApproval) return;
     entry.stale = true;
+    entry.contentStale = true;
     entry.read?.controller.abort();
     entry.read = null;
     load(id, entry);
@@ -114,7 +159,7 @@ function reconcileObservation() {
     if (key === demandedHomes) return;
     stopDemanding?.();
     const readNotCurrent = (entry: Entry | undefined) => !!entry && entry.read === null
-        && (entry.snapshot.value === null || entry.snapshot.error !== null);
+        && (entry.revisions.value === null || entry.revisions.error !== null);
     // The incumbent reconnect owner retries failed reads; settled content follows the feed.
     stopDemanding = homes.length ? subscribeHomeAccountChange(event => {
         if (event.source === 'connected' && readNotCurrent(entries.get(scopeId(event.serverId)))) {
@@ -135,7 +180,9 @@ function retire(serverId: string, entry: Entry) {
 
 /** Account-owned settled content survives page bindings; credential retirement withdraws it synchronously. */
 export function retainMachinePresets(lifetime: ServerAccountScopeLifetime, homeId: string,
-    onApprovalPending?: (approval: ActionApprovalRegistration) => void): () => void {
+    onApprovalPending?: (approval: ActionApprovalRegistration) => void,
+    options?: Readonly<{ projection?: 'content' | 'revisions' }>): () => void {
+    const projection = options?.projection ?? 'content';
     const owner = readServerAccountScopeOwnerLifetime(lifetime);
     if (!owner.isCurrent()) return () => {};
     const id = scopeId(owner.scope.serverId);
@@ -145,15 +192,22 @@ export function retainMachinePresets(lifetime: ServerAccountScopeLifetime, homeI
         entry = undefined;
     }
     if (!entry) {
-        const created: Entry = { lifetime: owner, homeId, snapshot: empty, consumers: new Set(),
+        const created: Entry = { lifetime: owner, homeId, snapshot: empty, revisions: emptyRevisions, contentStale: true, consumers: new Set(),
             retirement: { dispose() {} }, read: null, stale: true };
         entries.set(id, created);
         created.retirement = owner.onRetire(() => retire(id, created));
         entry = created;
     }
     const retained = entry;
-    const consumer: Consumer = { onApprovalPending };
+    const consumer: Consumer = { onApprovalPending, projection };
     retained.consumers.add(consumer);
+    if (projection === 'content' && retained.contentStale && !retained.read?.content) {
+        retained.stale = true;
+        if (retained.read && !retained.read.content) {
+            retained.read.controller.abort();
+            retained.read = null;
+        }
+    }
     reconcileObservation();
     load(id, retained);
     if (retained.snapshot.approval) onApprovalPending?.(retained.snapshot.approval);
@@ -173,6 +227,13 @@ export function readMachinePresetsSnapshot(serverId: string, homeId: string, acc
     return entry?.lifetime.isCurrent() && entry.homeId === homeId
         && getServerProfileById(serverId)?.serverIdentityId === homeId
         && (accountId === undefined || entry.lifetime.scope.accountId === accountId) ? entry.snapshot : empty;
+}
+
+export function readMachinePresetRevisionsSnapshot(serverId: string, homeId: string, accountId?: string): RevisionSnapshot {
+    const entry = entries.get(scopeId(serverId));
+    return entry?.lifetime.isCurrent() && entry.homeId === homeId
+        && getServerProfileById(serverId)?.serverIdentityId === homeId
+        && (accountId === undefined || entry.lifetime.scope.accountId === accountId) ? entry.revisions : emptyRevisions;
 }
 
 export function subscribeMachinePresets(serverIds: readonly string[], listener: () => void): () => void {

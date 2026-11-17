@@ -902,6 +902,7 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
             });
             if (result.kind === 'failed') return result;
             if (result.value.kind === 'refused') return { kind: 'failed', code: result.value.code };
+            if (result.value.kind !== 'listed') return { kind: 'failed', code: 'invalid_action_output' };
             for (const preset of result.value.presets) {
                 if (!isOpenedManagedMachinePresetV1(preset)
                     || !options?.search || preset.name.toLocaleLowerCase().includes(options.search.toLocaleLowerCase())) presets.push(preset);

@@ -94,7 +94,7 @@ function ownerOf(row: Pick<StoredPreset, 'teamId' | 'custodianAccountId'>): Mana
 }
 
 /** Team archive is inherited for reads and new selection, never written into the Preset row. */
-function inheritPresetOwnerArchive(row: StoredPreset, teamArchivedAt: Date | null | undefined): StoredPreset {
+function inheritPresetOwnerArchive<T extends { archivedAt: Date | null }>(row: T, teamArchivedAt: Date | null | undefined): T {
     return row.archivedAt === null && teamArchivedAt ? { ...row, archivedAt: teamArchivedAt } : row;
 }
 
@@ -120,7 +120,8 @@ function readStoredPresetContent(row: StoredPreset) {
 function projectPreset(row: StoredPreset): ManagedMachinePresetV1 {
     const stored = readStoredPresetContent(row);
     return ManagedMachinePresetV1Schema.parse({
-        id: row.id, homeId: row.homeId, revision: row.revision, configurationRevision: row.configurationRevision, owner: ownerOf(row),
+        id: row.id, homeId: row.homeId, revision: row.revision, configurationRevision: row.configurationRevision,
+        setupRevision: row.setupRevision, owner: ownerOf(row),
         contentEncryptionMode: stored.contentEncryptionMode,
         content: stored.content, recipients: stored.recipients,
         ...(stored.controllerPoolId === undefined ? {} : { controllerPoolId: stored.controllerPoolId }),
@@ -405,6 +406,7 @@ function definition(preset: ManagedMachinePresetV1): ManagedMachinePresetCreateI
 export async function createMachinePreset(params: PresetContext & Readonly<{ input: ManagedMachinePresetCreateInputV1 }>): Promise<PresetMutationResultV1> {
     const input = ManagedMachinePresetCreateInputV1Schema.parse(params.input);
     input.configurationRevision ??= 0;
+    input.setupRevision ??= 0;
     if (input.teamAcquireDelegated === false) delete input.teamAcquireDelegated;
     const execute = () => inTx(async tx => {
         await acquirePresetMutationAccountsInTx(tx, { actorAccountId: params.accountId, owner: input.owner,
@@ -424,6 +426,7 @@ export async function createMachinePreset(params: PresetContext & Readonly<{ inp
         await validatePresetRecipientsInTx(tx, params, input, params.accountId);
         const row = await tx.managedMachinePreset.create({ data: {
             id: input.id, homeId: input.homeId, name: '', configurationRevision: input.configurationRevision,
+            setupRevision: input.setupRevision,
             custodianAccountId: input.owner.kind === "account" ? input.owner.accountId : null,
             teamId: input.owner.kind === "team" ? input.owner.teamId : null,
             launch: storeOpaquePresetLaunch(input),
@@ -927,7 +930,18 @@ export async function listMachinePresets(params: PresetContext & Readonly<{ inpu
     try { return await inReadSnapshot(async tx => {
         await requireHomeInTx(tx, params.input.homeId);
         const input = params.input;
-        if ((await tx.account.findUnique({ where: { id: params.accountId }, select: { status: true } }))?.status !== AccountStatus.active) return { kind: "listed", presets: [] } as const;
+        // Revision demand never reads the private content or recipient envelopes.
+        const revisionSelect = { id: true, homeId: true, revision: true, setupRevision: true,
+            archivedAt: true, teamId: true } as const;
+        const readRows = (where: Prisma.ManagedMachinePresetWhereInput) => input.projection === 'revisions'
+            ? tx.managedMachinePreset.findMany({ where, select: revisionSelect, orderBy: { id: 'asc' } })
+            : tx.managedMachinePreset.findMany({ where, orderBy: { id: 'asc' } });
+        const projectRows = (rows: Awaited<ReturnType<typeof readRows>>): ManagedMachinePresetListResultV1 =>
+            input.projection === 'revisions' ? { kind: 'revisions', presets: rows.map(row => ({
+                id: row.id, homeId: row.homeId, revision: row.revision, setupRevision: row.setupRevision,
+                ...(row.archivedAt === null ? {} : { archivedAt: row.archivedAt.getTime() }),
+            })) } : { kind: 'listed', presets: rows.flatMap(row => 'launch' in row ? [projectPreset(row)] : []) };
+        if ((await tx.account.findUnique({ where: { id: params.accountId }, select: { status: true } }))?.status !== AccountStatus.active) return projectRows([]);
         const memberships = await tx.teamMembership.findMany({ where: { accountId: params.accountId, status: TeamMembershipStatus.active,
             ...(input.owner?.kind === "team" ? { teamId: input.owner.teamId } : {}) }, select: { teamId: true } });
         const contexts = await resolveTeamActorContextsInTx(tx, { actorAccountId: params.accountId, teamIds: memberships.map(member => member.teamId) });
@@ -935,25 +949,24 @@ export async function listMachinePresets(params: PresetContext & Readonly<{ inpu
         const teamIds = [...contexts.values()].filter(context => context.teamCapabilities.viewTeam
             && (input.includeArchived || context.team.archivedAt === null)
             && qualifications.get(context.team.id)?.ok === true).map(context => context.team.id);
-        const rowsById = new Map<string, StoredPreset>();
+        const rowsById = new Map<string, Awaited<ReturnType<typeof readRows>>[number]>();
         // Home, custodian, archive/cursor and Prisma pagination are fixed;
         // Team membership contributes one bind per selected id.
         const teamChunks = portableQueryChunks({ values: teamIds, bindingsPerValue: 1,
             fixedBindings: 7 + (input.owner ? 1 : 0) });
         for (const [index, ids] of (teamChunks.length ? teamChunks : [[]]).entries()) {
-            const selected = await tx.managedMachinePreset.findMany({ where: {
+            const selected = await readRows({
             homeId: input.homeId, ...(!input.includeArchived ? { archivedAt: null } : {}),
             OR: [...(index === 0 ? [{ custodianAccountId: params.accountId }] : []), { teamId: { in: [...ids] } }],
             ...(input.owner?.kind === "account" ? { custodianAccountId: input.owner.accountId } : {}),
             ...(input.owner?.kind === "team" ? { teamId: input.owner.teamId } : {}),
             ...(input.cursor ? { id: { gt: input.cursor } } : {}),
-        }, orderBy: { id: "asc" } });
+        });
             for (const row of selected) rowsById.set(row.id, row);
         }
         const rows = [...rowsById.values()].map(row => inheritPresetOwnerArchive(row,
             row.teamId ? contexts.get(row.teamId)?.team.archivedAt : null)).sort((left, right) => left.id.localeCompare(right.id));
-        const presets: ManagedMachinePresetV1[] = rows.map(row => projectPreset(row));
-        return { kind: "listed", presets } as const;
+        return projectRows(rows);
     }); } catch (error) { return refusal(error); }
 }
 
@@ -1021,6 +1034,7 @@ export async function updateMachinePreset(params: PresetPreparationContext & Rea
         const recipientRepairOnly = input.patch.recipients !== undefined
             && input.patch.content === undefined && input.patch.contentEncryptionMode === undefined
             && input.patch.configurationRevision === undefined
+            && input.patch.setupRevision === undefined
             && input.patch.controller === undefined && input.patch.controllerPoolId === undefined
             && input.patch.retention === undefined && input.patch.wakeOnAcceptedMessage === undefined
             && input.patch.teamAcquireDelegated === undefined && input.patch.simultaneousLimit === undefined;
@@ -1040,6 +1054,7 @@ export async function updateMachinePreset(params: PresetPreparationContext & Rea
             // `name` is a legacy storage key only; private content remains in
             // the opaque envelope and is never projected or searched here.
             name: '', launch: storeOpaquePresetLaunch(next), configurationRevision: next.configurationRevision,
+            setupRevision: next.setupRevision,
             controllerMachineId: next.controller?.machineId ?? null, controllerInstallationId: next.controller?.installationId ?? null,
             setup: getActivePrismaRuntime().DbNull,
             retentionOverride: next.retention ?? getActivePrismaRuntime().DbNull,

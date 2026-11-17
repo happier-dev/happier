@@ -9,7 +9,7 @@ type SetupSourcePair = [MachineSetupSourceApplyV1[number], MachineSetupSourceApp
 
 describe('opaque managed setup sources', () => {
   it('opens only the exact projected source locally and reprojects it without setup bytes', async () => {
-    const wire = [{ kind: 'accountPresetOpaque' as const, presetId: 'preset', presetRevision: 4,
+    const wire = [{ kind: 'accountPresetOpaque' as const, presetId: 'preset', presetRevision: 4, setupRevision: 2,
       contentEncryptionMode: 'e2ee' as const }, { kind: 'direct' as const, setup: {} }] satisfies SetupSourcePair;
     const opened = await hydrateManagedOpaqueSetupSourcesV1({ sources: wire, resolvedSources: [{ ...wire[0],
       presetContent: { content: { t: 'encrypted' as const, c: 'opaque' }, recipientEnvelope: {
@@ -17,7 +17,7 @@ describe('opaque managed setup sources', () => {
       open: async source => source.presetId === 'preset' ? { v: 1, name: 'Private',
         setup: { scripts: [{ body: 'private setup', affects: 'none' }] } } : null });
 
-    expect(opened).toEqual([{ kind: 'accountPreset', presetId: 'preset', presetRevision: 4,
+    expect(opened).toEqual([{ kind: 'accountPreset', presetId: 'preset', presetRevision: 4, setupRevision: 2,
       contentEncryptionMode: 'e2ee', setup: { scripts: [{ body: 'private setup', affects: 'none' }] } }, wire[1]]);
     expect(projectManagedOpaqueSetupSourcesV1(opened!)).toEqual(wire);
     expect(JSON.stringify(projectManagedOpaqueSetupSourcesV1(opened!))).not.toContain('private setup');

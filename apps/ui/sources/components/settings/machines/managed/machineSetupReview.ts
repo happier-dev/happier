@@ -1,6 +1,6 @@
 import { MachineSetupPlanResultV1Schema, MachineSetupCombinedPlanResultV1Schema, MachineSetupApplyInputV1Schema,
     type MachineSetupAppChildV1, type MachineSetupApplyInputV1, type MachineSetupCombinedPlanResultV1,
-    type MachineSetupPlanResultV1, type MachineSetupPlanUnavailableTargetV1, type MachineSetupSourceApplyV1,
+    type MachineSetupPlanResultV1, type MachineSetupPlanInputV1, type MachineSetupPlanUnavailableTargetV1, type MachineSetupSourceApplyV1,
     type MachineSetupRemoveInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { type MachineSetupSourceV1, reviewMachineSetupSourceChangeV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -16,6 +16,7 @@ import {
 export type MachineSetupReviewTarget = Readonly<{
     homeId: string; machineId: string; desiredRevision: number; sources: MachineSetupSourceApplyV1; appChildren?: MachineSetupAppChildV1[];
     removeItemKeys?: string[];
+    candidatePreset?: MachineSetupPlanInputV1['candidatePreset'];
     /** Snapshot read before proposing a source change; native retention normalizes the expected response. */
     current?: Pick<MachineSetupPlanResultV1, 'sources' | 'sourceFacts'>;
 }>;
@@ -59,7 +60,8 @@ export async function prepareMachineSetupSourcesApplyInput(params: Readonly<{
     if (!params.targets.length) return params.unavailableTargets?.length ? {
         ok: false, errorCode: 'machine_offline', error: 'machine_offline', details: { targets: params.unavailableTargets },
     } : fail('invalid_parameters');
-    const targets = params.targets.map(target => ({ homeId: target.homeId, machineId: target.machineId, sources: target.sources,
+    const targets = params.targets.map(target => ({ homeId: target.homeId, machineId: target.machineId,
+        ...(target.candidatePreset ? { candidatePreset: target.candidatePreset } : { sources: target.sources }),
         mode: 'effects' as const, ...(target.appChildren === undefined ? {} : { appChildren: target.appChildren }),
         ...(target.removeItemKeys === undefined ? {} : { removeItemKeys: target.removeItemKeys }) }));
     const expectedSources: Array<MachineSetupSourceApplyV1 | MachineSetupSourceV1> = [];

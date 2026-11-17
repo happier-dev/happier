@@ -384,7 +384,8 @@ describe('admitted Machine setup snapshot lifetime', () => {
       recipientEnvelope: null } }, direct];
     const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
       expect(new URL(String(url)).pathname).toBe('/v1/machines/setup/resolve');
-      expect(body).toEqual({ homeId: 'srv_home', machineId: fixture.machine.id, sources });
+      expect(body).toEqual({ homeId: 'srv_home', machineId: fixture.machine.id,
+        candidatePreset: { presetId: opaque.presetId, presetRevision: opaque.presetRevision } });
       return { status: 200, data: { sources: resolvedSources } };
     });
     const plan = MachineSetupPlanResultV1Schema.parse(await createMachineSetupPlanAction({ apiMachine: fixture.client,
@@ -398,31 +399,75 @@ describe('admitted Machine setup snapshot lifetime', () => {
     expect(machineSetupApplyTargetFromPlanV1({ homeId: 'srv_home', machineId: fixture.machine.id }, plan)).not.toHaveProperty('resolvedSources');
     expect(JSON.stringify(post.mock.calls)).not.toContain('private setup');
   });
-  it('returns the authorized resolved projection for an incumbent opaque preset source', async () => {
+  it('reviews an addressed preset candidate without changing the attached desired copy', async () => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain' });
-    const local = { kind: 'accountPreset' as const, presetId: 'incumbent-preset', presetRevision: 9,
-      contentEncryptionMode: 'plain' as const, setup: { scripts: [{ body: 'incumbent private setup', affects: 'none' as const }] } };
+    const local = { kind: 'accountPreset' as const, presetId: 'candidate-preset', presetRevision: 3, setupRevision: 1,
+      contentEncryptionMode: 'plain' as const, setup: { scripts: [{ body: 'echo incumbent', affects: 'none' as const }] } };
+    const retained = { ...local, presetId: 'unreadable-retained', presetRevision: 1, setup: {} };
     const direct = { kind: 'direct' as const, setup: {} };
-    await fixture.client.captureMachineSetupDesired().apply({ expectedDesiredRevision: 0, sources: [local, direct], exclusions: [] });
-    const opaque = { kind: 'accountPresetOpaque' as const, presetId: local.presetId, presetRevision: local.presetRevision,
-      contentEncryptionMode: local.contentEncryptionMode };
-    const sources = [opaque, direct];
-    const resolvedSources = [{ ...opaque, presetContent: { content: { t: 'plain' as const, v: { v: 1,
-      name: 'Incumbent private setup', setup: local.setup } }, recipientEnvelope: null } }, direct];
+    const target = { homeId: 'srv_home', machineId: fixture.machine.id };
+    nativeTerminal.onLaunch = () => queueMicrotask(() => nativeTerminal.exit?.(0));
+    const control = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: { ...target, mode: 'effects', sources: [{ kind: 'direct', setup: {
+        scripts: [{ body: 'printf CONTROL', affects: 'none' }] } }] }, context: fixture.context('machines.setup.plan'),
+    }));
+    expect(await fixture.apply({ input: machineSetupApplyTargetFromPlanV1(target, control),
+      context: fixture.context('machines.setup.apply', 'known-good-control') })).toMatchObject({ operationId: expect.any(String) });
+    expect(nativeTerminal.launches).toHaveLength(1);
+    await fixture.client.captureMachineSetupDesired().apply({ expectedDesiredRevision: 1, sources: [local, retained, direct], exclusions: [] });
+    const before = await fixture.client.getMachineSetupDesiredSnapshot();
+    const candidate = { kind: 'accountPresetOpaque' as const, presetId: local.presetId, presetRevision: 4, setupRevision: 2,
+      contentEncryptionMode: 'plain' as const };
+    const candidatePreset = { presetId: candidate.presetId, presetRevision: candidate.presetRevision };
+    const sources = [candidate, { kind: 'accountPresetOpaque' as const, presetId: retained.presetId,
+      presetRevision: retained.presetRevision, setupRevision: retained.setupRevision, contentEncryptionMode: retained.contentEncryptionMode }, direct];
     const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
       expect(new URL(String(url)).pathname).toBe('/v1/machines/setup/resolve');
-      expect(body).toEqual({ homeId: 'srv_home', machineId: fixture.machine.id, sources });
-      return { status: 200, data: { sources: resolvedSources } };
+      if (typeof body === 'object' && body !== null && 'purpose' in body) {
+        expect(body).toEqual({ homeId: 'srv_home', machineId: fixture.machine.id, purpose: 'creationOrigin',
+          candidates: sources.filter(source => source.kind === 'accountPresetOpaque') });
+        return { status: 200, data: { purpose: 'creationOrigin' } };
+      }
+      expect(body).toEqual({ homeId: 'srv_home', machineId: fixture.machine.id, candidatePreset });
+      return { status: 200, data: { sources: [{ ...candidate, presetContent: {
+        content: { t: 'plain', v: { v: 1, name: 'Candidate', setup: { scripts: [{ body: 'echo candidate', affects: 'none' }] } } },
+        recipientEnvelope: null } }, direct] } };
     });
-    const plan = MachineSetupPlanResultV1Schema.parse(await createMachineSetupPlanAction({ apiMachine: fixture.client,
-      machineId: fixture.machine.id, homeId: 'srv_home', installation: fixture.installation })({
-      input: { homeId: 'srv_home', machineId: fixture.machine.id, mode: 'check' },
-      context: fixture.context('machines.setup.plan'),
-    }));
-
-    expect(plan.sources).toEqual(sources);
-    expect(plan.resolvedSources).toEqual(resolvedSources);
-    expect(JSON.stringify(post.mock.calls)).not.toContain('incumbent private setup');
+    onTestFinished(() => post.mockRestore());
+    const result = await fixture.createExecutor(fixture.credentials).execute('machines.setup.plan', {
+      homeId: 'srv_home', machineId: fixture.machine.id, candidatePreset, mode: 'effects',
+    }, fixture.context('machines.setup.plan'));
+    expect(result).toMatchObject({ ok: true, result: { sources, desiredRevision: 2 } });
+    expect(await fixture.client.getMachineSetupDesiredSnapshot()).toEqual(before);
+    expect(fixture.rootLaunches).toEqual([]);
+    expect(post).toHaveBeenCalledTimes(1);
+    const plan = MachineSetupPlanResultV1Schema.parse(result.ok ? result.result : null);
+    expect(await fixture.apply({ input: machineSetupApplyTargetFromPlanV1(target, plan),
+      context: fixture.context('machines.setup.apply', 'reviewed-candidate') })).toMatchObject({ operationId: expect.any(String) });
+    expect(await fixture.client.getMachineSetupDesiredSnapshot()).toMatchObject({ status: 'ready', policy: {
+      revision: 3, sources: [{ kind: 'accountPreset', presetId: candidate.presetId,
+        presetRevision: 4, setupRevision: 2 }, retained, direct],
+    } });
+    expect(nativeTerminal.launches).toHaveLength(2);
+    expect(post).toHaveBeenCalledTimes(3);
+  });
+  it('checks the admitted local copy without re-reading its preset authority', async () => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain' });
+    const local = { kind: 'accountPreset' as const, presetId: 'retained-preset', presetRevision: 3,
+      setupRevision: 1, contentEncryptionMode: 'plain' as const, setup: {} };
+    const direct = { kind: 'direct' as const, setup: {} };
+    await fixture.client.captureMachineSetupDesired().apply({ expectedDesiredRevision: 0, sources: [local, direct], exclusions: [] });
+    const before = await fixture.client.getMachineSetupDesiredSnapshot();
+    const post = vi.spyOn(axios, 'post').mockRejectedValue(new Error('Preset authority is unavailable'));
+    onTestFinished(() => post.mockRestore());
+    const result = await createMachineSetupPlanAction({ apiMachine: fixture.client, machineId: fixture.machine.id,
+      homeId: 'srv_home', installation: fixture.installation })({ input: { homeId: 'srv_home', machineId: fixture.machine.id, mode: 'check' },
+      context: fixture.context('machines.setup.plan') });
+    expect(result).toMatchObject({ desiredRevision: 1, sources: [{ kind: 'accountPresetOpaque', presetId: local.presetId,
+      presetRevision: 3, setupRevision: 1 }, direct] });
+    expect(await fixture.client.getMachineSetupDesiredSnapshot()).toEqual(before);
+    expect(post).not.toHaveBeenCalled();
+    expect(fixture.rootLaunches).toEqual([]);
   });
   it.each([
     { unavailable: 'locks', present: false, mode: 'plain' },
@@ -480,20 +525,24 @@ describe('admitted Machine setup snapshot lifetime', () => {
         if (command.executable === 'python3') return { code: 0, stdout: JSON.stringify({ architecture: 'amd64', packages: [
           { name: 'jq', version: '1.0', architecture: 'amd64', security: true },
         ] }), stderr: '' };
+        if (command.executable === 'dpkg-query') return { code: 0,
+          stdout: 'jq\tinstall ok installed\t0.9\tamd64\n', stderr: '' };
         if (command.executable === 'test') return { code: 0, stdout: '', stderr: '' };
         throw new Error(`Unexpected native read: ${command.executable}`);
       } });
     const before = fixture.machine.metadata?.setup;
     const input = MachineSetupPlanInputV1Schema.parse({ homeId: 'srv_home', machineId: fixture.machine.id,
       mode: 'check', updates: { scope: 'all' } });
-    const result = MachineSetupPlanResultV1Schema.parse(await planAction({ input, context: fixture.context('machines.setup.plan') }));
+    const rawResult = await planAction({ input, context: fixture.context('machines.setup.plan') });
+    expect(rawResult).not.toHaveProperty('errorCode');
+    const result = MachineSetupPlanResultV1Schema.parse(rawResult);
     expect(result).toMatchObject({ updates: { observation: {
       status: 'drifted', backend: 'apt', pendingAll: 1, pendingSecurity: 1, rebootNeeded: true,
     } } });
     expect(fixture.machine.daemonState?.setup?.updates).toEqual(result.updates?.observation);
     expect(fixture.machine.metadata?.setup).toEqual(before);
     expect(fixture.metadataWrites).toHaveLength(0);
-    expect(commands).toEqual(['apt-get', 'python3', 'test']);
+    expect(commands).toEqual(['apt-get', 'python3', 'dpkg-query', 'test']);
   });
   it('observes pending updates once after native Software settlement and publishes the reboot fact', async () => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });

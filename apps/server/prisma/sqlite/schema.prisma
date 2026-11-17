@@ -2693,6 +2693,7 @@ model ManagedMachine {
     presetId String?
     presetRevision Int?
     presetConfigurationRevision Int?
+    presetSetupRevision Int?
     launch Json
     reviewedFacts Json?
     machineSetup Json?
@@ -2731,6 +2732,7 @@ model ManagedMachinePreset {
     name String
     revision Int @default(0)
     configurationRevision Int @default(0)
+    setupRevision Int @default(0)
     launch Json?
     setup Json?
     controllerMachineId String?

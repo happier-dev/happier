@@ -13,6 +13,7 @@ export type MachinePresetsActionInputById = {
             kind: 'team';
             teamId: string;
         };
+        projection?: 'revisions' | undefined;
         includeArchived?: boolean | undefined;
         cursor?: string | undefined;
     };
@@ -22,13 +23,6 @@ export type MachinePresetsActionInputById = {
     };
     readonly "machines.presets.create": {
         id: string;
-        owner: {
-            kind: 'account';
-            accountId: string;
-        } | {
-            kind: 'team';
-            teamId: string;
-        };
         content: {
             t: 'encrypted';
             c: string;
@@ -36,6 +30,14 @@ export type MachinePresetsActionInputById = {
             t: 'plain';
             v: unknown;
         };
+        owner: {
+            kind: 'account';
+            accountId: string;
+        } | {
+            kind: 'team';
+            teamId: string;
+        };
+        homeId: string;
         recipients: {
             accountId: string;
             envelope: {
@@ -43,12 +45,7 @@ export type MachinePresetsActionInputById = {
                 recipientContentPublicKeyFingerprint: string;
             };
         }[];
-        homeId: string;
         contentEncryptionMode: 'e2ee' | 'plain';
-        controller?: undefined | {
-            machineId: string;
-            installationId: string;
-        };
         retention?: undefined | {
             afterMs: number;
             kind: 'unused';
@@ -57,6 +54,12 @@ export type MachinePresetsActionInputById = {
             kind: 'until-delete';
         };
         wakeOnAcceptedMessage?: boolean | undefined;
+        controller?: undefined | {
+            machineId: string;
+            installationId: string;
+        };
+        configurationRevision?: number | undefined;
+        setupRevision?: number | undefined;
         controllerPoolId?: string | undefined;
         teamAcquireDelegated?: boolean | undefined;
         simultaneousLimit?: undefined | {
@@ -68,6 +71,8 @@ export type MachinePresetsActionInputById = {
         id: string;
         expectedRevision: number;
         patch: {
+            configurationRevision?: number | undefined;
+            setupRevision?: number | undefined;
             contentEncryptionMode?: 'e2ee' | 'plain' | undefined;
             content?: null | undefined | {
                 t: 'encrypted';
@@ -112,6 +117,12 @@ export type MachinePresetsActionInputById = {
         id: string;
         expectedRevision: number;
     };
+    readonly "machines.presets.prepare": {
+        homeId: string;
+        id: string;
+        expectedRevision: number;
+        machineId: string;
+    };
 };
 export type MachinePresetsActionResultById = {
     readonly "machines.presets.list": {
@@ -142,6 +153,8 @@ export type MachinePresetsActionResultById = {
                     recipientContentPublicKeyFingerprint: string;
                 };
             }[];
+            configurationRevision?: number | undefined;
+            setupRevision?: number | undefined;
             controller?: undefined | {
                 machineId: string;
                 installationId: string;
@@ -165,6 +178,16 @@ export type MachinePresetsActionResultById = {
     } | {
         kind: 'refused';
         code: 'account_mode_mismatch' | 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'pool_no_available_machine' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
+    } | {
+        kind: 'revisions';
+        presets: {
+            id: string;
+            homeId: string;
+            revision: number;
+            setupRevision: number;
+            archivedAt?: number | undefined;
+        }[];
+        cursor?: string | undefined;
     };
     readonly "machines.presets.get": {
         kind: 'found';
@@ -194,6 +217,8 @@ export type MachinePresetsActionResultById = {
                     recipientContentPublicKeyFingerprint: string;
                 };
             }[];
+            configurationRevision?: number | undefined;
+            setupRevision?: number | undefined;
             controller?: undefined | {
                 machineId: string;
                 installationId: string;
@@ -251,6 +276,8 @@ export type MachinePresetsActionResultById = {
                     recipientContentPublicKeyFingerprint: string;
                 };
             }[];
+            configurationRevision?: number | undefined;
+            setupRevision?: number | undefined;
             controller?: undefined | {
                 machineId: string;
                 installationId: string;
@@ -305,6 +332,8 @@ export type MachinePresetsActionResultById = {
                     recipientContentPublicKeyFingerprint: string;
                 };
             }[];
+            configurationRevision?: number | undefined;
+            setupRevision?: number | undefined;
             controller?: undefined | {
                 machineId: string;
                 installationId: string;
@@ -359,6 +388,8 @@ export type MachinePresetsActionResultById = {
                     recipientContentPublicKeyFingerprint: string;
                 };
             }[];
+            configurationRevision?: number | undefined;
+            setupRevision?: number | undefined;
             controller?: undefined | {
                 machineId: string;
                 installationId: string;
@@ -413,6 +444,8 @@ export type MachinePresetsActionResultById = {
                     recipientContentPublicKeyFingerprint: string;
                 };
             }[];
+            configurationRevision?: number | undefined;
+            setupRevision?: number | undefined;
             controller?: undefined | {
                 machineId: string;
                 installationId: string;
@@ -432,5 +465,10 @@ export type MachinePresetsActionResultById = {
             };
             archivedAt?: number | undefined;
         };
+    };
+    readonly "machines.presets.prepare": {
+        status: 'accepted';
+        operationId: string;
+        machineId: string;
     };
 };

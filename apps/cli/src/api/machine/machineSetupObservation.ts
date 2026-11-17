@@ -43,7 +43,8 @@ export function projectMachineSetupUpdatesObservation(
     const attachedPresets: NonNullable<MachineSetupObservationV1['attachedPresets']> = [];
     for (const source of metadata?.setup?.sources ?? []) {
         if (source.kind === 'accountPreset') attachedPresets.push({ kind: source.kind,
-            presetId: source.presetId, presetRevision: source.presetRevision });
+            presetId: source.presetId, presetRevision: source.presetRevision,
+            ...(source.setupRevision === undefined ? {} : { setupRevision: source.setupRevision }) });
         if (source.kind === 'bundledPreset') attachedPresets.push({ kind: source.kind, ref: {
             pluginId: source.ref.pluginId, localId: source.ref.localId, revision: source.ref.revision,
         } });

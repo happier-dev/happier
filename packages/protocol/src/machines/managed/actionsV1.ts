@@ -68,6 +68,7 @@ export const MachineSetupPresetApplyInputV1Schema = lazyZodSchema(() => z.strict
 }));
 export type MachineSetupPresetApplyInputV1 = z.infer<typeof MachineSetupPresetApplyInputV1Schema>;
 
+const MachineSetupPresetCandidateV1Schema = lazyZodSchema(() => z.strictObject({ presetId: id(), presetRevision: revision() }));
 export { MachineSetupOpaquePresetSourceV1Schema, MachineSetupSourceApplyEntryV1Schema, MachineSetupSourceApplyV1Schema,
   machineSetupSourceApplyOriginKeyV1, type MachineSetupOpaquePresetSourceV1, type MachineSetupSourceApplyEntryV1,
   type MachineSetupSourceApplyV1 } from '../setup/machineSetupSourcesV1.js';
@@ -157,8 +158,11 @@ export const MachineSetupPlanInputV1Schema = lazyZodSchema(() => z.strictObject(
   exclusions: z.optional(MachineSetupExclusionsV1Schema), removeItemKeys: z.optional(removalKeys()),
   mode: z.optional(z.enum(['check', 'effects'])),
   appChildren: z.optional(z.array(MachineSetupAppChildV1Schema)),
+  candidatePreset: z.optional(MachineSetupPresetCandidateV1Schema),
   updates: z.optional(z.strictObject({ scope: z.enum(['security', 'all']) })),
-}).check(z.refine(input => input.updates === undefined || input.sources === undefined && input.exclusions === undefined
+}).check(z.refine(input => input.candidatePreset === undefined || input.sources === undefined && input.updates === undefined,
+{ message: 'A candidate replaces one attached preset, without a separate source proposal.' }),
+z.refine(input => input.updates === undefined || input.sources === undefined && input.exclusions === undefined
   && input.removeItemKeys === undefined && input.appChildren === undefined,
 { message: 'Updates cannot include setup source changes or app operands.' })));
 export type MachineSetupPlanInputV1 = z.infer<typeof MachineSetupPlanInputV1Schema>;
@@ -344,6 +348,7 @@ export const MachineSetupResolveInputV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ homeId: id(), machineId: id(), purpose: z.literal('creationOrigin'),
     candidates: z.array(MachineSetupSourceApplyEntryV1Schema).check(z.refine(
       candidates => candidates.every(candidate => candidate.kind === 'accountPresetOpaque'),
+  z.strictObject({ homeId: id(), machineId: id(), candidatePreset: MachineSetupPresetCandidateV1Schema }),
       { message: 'Creation origin candidates are Account Preset copies.' })),
   }),
 ]));
