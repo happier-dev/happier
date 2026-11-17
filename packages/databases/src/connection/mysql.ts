@@ -1,6 +1,7 @@
 import { createConnection, type ConnectionOptions } from 'mysql2';
 import type { Duplex } from 'node:stream';
 import type { DatabaseOperationInputV1, DatabaseOperationResultV1 } from '@happier-dev/database-protocol';
+import { statsOperationResultV1 } from '../stats.js';
 import { DatabaseStatementError, fitDatabaseOperationResult, withDatabaseConnectionUrlOptions } from '../index.js';
 import {
     executeMysqlOperation, mysqlFailureCause, MysqlOperationError, type MysqlCompiledStatement, type MysqlExecutionOptions,
@@ -158,17 +159,17 @@ export async function openMysqlConnection(connectionString: string, signal?: Abo
             const [native, fields] = await request(client.execute(statement.text, statement.values));
             return mysqlNativeResult(native, fields ?? []);
         };
+        const executionOptions: MysqlExecutionOptions = input.operation === 'stats.read' && stats ? { ...lexical, stats: {
+            database: stats.database, intervalBasis: { databaseIdentity: stats.databaseIdentity,
+                bindingKey: JSON.stringify({ target: input.target, databaseIdentity: stats.databaseIdentity, currentUser: stats.currentUser }),
+                selectionKey: JSON.stringify(input.request) },
+        } } : lexical;
         try {
             const write = input.operation === 'edits.apply' || (input.operation === 'statement.run' && input.mode === 'write')
                 || (input.operation === 'statement.explain' && input.accessMode === 'write');
             await control(`SET SESSION transaction_read_only=${write ? '0' : '1'}`);
             await control(write ? 'START TRANSACTION' : 'START TRANSACTION READ ONLY');
             transaction = true;
-            const executionOptions: MysqlExecutionOptions = input.operation === 'stats.read' && stats ? { ...lexical, stats: {
-                database: stats.database, intervalBasis: { databaseIdentity: stats.databaseIdentity,
-                    bindingKey: JSON.stringify({ target: input.target, databaseIdentity: stats.databaseIdentity, currentUser: stats.currentUser }),
-                    selectionKey: JSON.stringify(input.request) },
-            } } : lexical;
             const result = fitDatabaseOperationResult(input, await executeMysqlOperation(input, query, executionOptions));
             cancellation.throwIfAborted();
             if (result.ok && !(input.operation === 'statement.explain' && input.accessMode === 'write')) {
@@ -196,6 +197,10 @@ export async function openMysqlConnection(connectionString: string, signal?: Abo
             if (error instanceof MysqlOperationError) return error.failure;
             if (error instanceof DatabaseStatementError) return { ok: false, status: 'failed', code: error.code, reason: error.reason };
             const cause = mysqlFailureCause(error);
+            if (input.operation === 'stats.read' && cause.code === 'ER_TABLEACCESS_DENIED_ERROR' && executionOptions.stats) {
+                return statsOperationResultV1('mysql', input.request,
+                    { status: 'unavailable', reason: 'visibility_restricted' }, [], executionOptions.stats);
+            }
             return { ok: false, status: 'failed', code: cause.source === 'engine' ? 'database_engine_error' : 'database_transport_error', cause };
         } finally { operationSignal?.removeEventListener('abort', onAbort); }
     };

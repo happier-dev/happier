@@ -35,7 +35,7 @@ function nativeConnection(database: string | null = 'native_fixture', version = 
         destroy: vi.fn(),
     });
     driver.createConnection.mockReturnValue(core);
-    return { core, executions };
+    return { core, executions, execute };
 }
 
 it('opens native MySQL stats with held setup facts and no per-read metadata probes', async () => {
@@ -76,6 +76,22 @@ it('keeps absent selected-database facts unavailable and preserves MariaDB refus
     await expect(openMysqlConnection('mysql://happier_ro:private@unreachable.invalid/native_fixture'))
         .rejects.toMatchObject({ failure: { status: 'unavailable', code: 'database_engine_unavailable' } });
     expect(maria.core.destroy).toHaveBeenCalledOnce();
+});
+
+it('preserves unclassified statistics engine and transport failures instead of guessing prerequisites', async () => {
+    const native = nativeConnection();
+    const connection = await openMysqlConnection('mysql://happier_ro:private@unreachable.invalid/native_fixture');
+    const input = { operation: 'stats.read', target, request: { kind: 'stats.read', group: 'size', selection: {} } } as const;
+    try {
+        expect(await connection.execute(input)).toMatchObject({ ok: true, observation: { status: 'available' } });
+        for (const failure of [
+            { code: 'ER_PARSE_ERROR', sqlState: '42000', result: 'database_engine_error' },
+            { code: 'ECONNRESET', result: 'database_transport_error' },
+        ]) {
+            native.execute.mockRejectedValueOnce(Object.assign(new Error('Native read failed'), failure));
+            expect(await connection.execute(input)).toMatchObject({ ok: false, code: failure.result, cause: { code: failure.code } });
+        }
+    } finally { await connection.close(); }
 });
 
 it('advertises implemented builtin statistics while execution owns group availability', () => {

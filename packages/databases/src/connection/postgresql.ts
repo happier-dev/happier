@@ -153,6 +153,10 @@ export async function openPostgresqlConnection(connectionString: string, signal?
             if (error instanceof PostgresqlOperationError) return error.failure;
             if (error instanceof PostgresqlInputError) return { ok: false, status: 'failed', code: error.code, reason: error.reason };
             const failureCause = postgresqlFailureCause(error);
+            if (input.operation === 'stats.read' && failureCause.code === '42501' && executionOptions.stats) {
+                return statsOperationResultV1('postgresql', input.request,
+                    { status: 'unavailable', reason: 'visibility_restricted' }, [], executionOptions.stats);
+            }
             // Installed pg_stat_statements reports 55000 when its shared library
             // was not loaded. Settle after rollback, preserving this connection
             // for ordinary reads and leaving user-authored SQL failures intact.

@@ -50,6 +50,22 @@ it.skipIf(!image)('uses container-local MySQL authority with lossless native fra
                 data: { bytes: expect.stringMatching(/^\d+$/u), measurement: 'table_bytes_estimate' },
             } });
             expect(DatabaseOperationResultV1Schema.safeParse(size).success).toBe(true);
+            for (const request of [
+                { kind: 'stats.read', group: 'statements', selection: { page: { rows: 10 }, order: 'calls' } },
+                { kind: 'stats.read', group: 'tables', selection: { schema: 'native_fixture', page: { rows: 10 } } },
+                { kind: 'stats.read', group: 'indexes', selection: { schema: 'native_fixture', page: { rows: 10 } } },
+                { kind: 'stats.read', group: 'activity', selection: { page: { rows: 10 } } },
+            ] as const) {
+                expect(await connection.execute({ operation: 'stats.read', target, request })).toMatchObject({
+                    ok: true, operation: 'stats.read', observation: { status: 'unavailable', group: request.group, reason: 'visibility_restricted' },
+                });
+                expect(await connection.execute({ operation: 'statement.run', target, mode: 'read', statement: {
+                    sql: 'SELECT 1', parameters: [],
+                } })).toMatchObject({ ok: true });
+            }
+            expect(await connection.execute({ operation: 'statement.run', target, mode: 'read', statement: {
+                sql: 'SELECT * FROM performance_schema.threads', parameters: [],
+            } })).toMatchObject({ ok: false, code: 'database_engine_error', cause: { code: 'ER_TABLEACCESS_DENIED_ERROR' } });
             expect(await connection.execute({ operation: 'statement.run', target, mode: 'write', statement: {
                 sql: "UPDATE items SET note='forbidden'", parameters: [],
             } })).toMatchObject({ ok: false });
