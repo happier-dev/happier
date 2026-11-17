@@ -695,6 +695,8 @@ describe('TeamJoinScreen', () => {
 
         expect(await waitForTestId(rendered, 'team-auth-entry-admission-complete')).toBeTruthy();
         expect(authEntryReads).toBe(1);
+        expect(committed).toEqual([]);
+        expect(routerReplaceSpy).not.toHaveBeenCalled();
 
         // Open Team is an arrival, not a bare route push: the Account was created
         // on this Home while another was focused.
