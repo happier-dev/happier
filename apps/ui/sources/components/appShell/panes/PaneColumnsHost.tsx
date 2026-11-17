@@ -222,17 +222,18 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
 
     // The main column's reading width: an undragged right pane takes the canvas a wide window leaves beyond it.
     const mainReadingWidthPx = useLayoutMaxWidth('conversation');
-    const storedEffectiveRightDockWidthPx = Math.max(right.minPx, resolveRightDockPreferredPx({
-        storedPx: rightPaneWidthPx ?? right.defaultPx,
-        storedDefaultPx: localSettingsDefaults.rightPaneWidthPx,
-        containerWidthPx: panelContainerWidthPx,
-        mainReadingWidthPx,
-    }));
     const storedEffectiveDetailsDockWidthPx = Math.max(details.minPx, resolveDetailsDockPreferredPx({
         storedPx: detailsPaneWidthPx ?? details.minPx,
         storedDefaultPx: localSettingsDefaults.detailsPaneWidthPx,
         destinationPreferredPx: props.detailsPreferredWidthPx,
         budgetMaxPx: panelContainerWidthPx - mainMinPx,
+    }));
+    const storedEffectiveRightDockWidthPx = Math.max(right.minPx, resolveRightDockPreferredPx({
+        storedPx: rightPaneWidthPx ?? right.defaultPx,
+        storedDefaultPx: localSettingsDefaults.rightPaneWidthPx,
+        containerWidthPx: panelContainerWidthPx,
+        mainReadingWidthPx,
+        besidePx: detailsOpen ? storedEffectiveDetailsDockWidthPx : 0,
     }));
     const effectiveRightDockWidthPx = rightDragWidthPx ?? storedEffectiveRightDockWidthPx;
     const effectiveDetailsDockWidthPx = detailsDragWidthPx ?? storedEffectiveDetailsDockWidthPx;

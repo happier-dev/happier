@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { resolvePaneLayout } from '@/components/ui/panels/paneBreakpoints';
 import { PANE_SIZING_DEFAULTS, resolveDetailsDockPreferredPx, resolveDockedPaneSizing, resolveRightDockPreferredPx } from './paneSizing';
 
 describe('resolveRightDockPreferredPx', () => {
@@ -9,6 +10,23 @@ describe('resolveRightDockPreferredPx', () => {
     });
     it('keeps the default where the window has no spare canvas', () => {
         expect(resolveRightDockPreferredPx({ ...base, storedPx: 380, containerWidthPx: 1096 })).toBe(380);
+    });
+    // DESIGN-ACCEPT-1116-D (X-routed P2): with Browser in Details and Local services beside it, the side pane took
+    // all the canvas beyond the transcript's reading width as if Details were closed, so three docked columns never
+    // fit and Details covered the transcript even at 2560 (lab FB1: from 1920 Details docks beside it, no scrim).
+    it('leaves an open Details its column before the side pane takes the spare canvas', () => {
+        const container = 2196;
+        const rightPx = resolveRightDockPreferredPx({ ...base, storedPx: 380, containerWidthPx: container, besidePx: 600 });
+        expect(rightPx).toBe(746);
+        expect(resolvePaneLayout({
+            arrangement: 'session', containerWidthPx: container, deviceType: 'tablet', multiPaneEnabled: true,
+            rightOpen: true, detailsOpen: true, mainMinPx: PANE_SIZING_DEFAULTS.mainMinPx,
+            mainMinPxThreePane: PANE_SIZING_DEFAULTS.mainMinThreePanePx,
+            rightMinPx: PANE_SIZING_DEFAULTS.right.minPx, detailsMinPx: PANE_SIZING_DEFAULTS.details.minPx,
+            rightPreferredPx: rightPx, detailsPreferredPx: 600,
+        })).toMatchObject({ right: 'docked', details: 'docked' });
+        // Where Details cannot dock anyway, the side pane keeps its default width.
+        expect(resolveRightDockPreferredPx({ ...base, storedPx: 380, containerWidthPx: 1096, besidePx: 600 })).toBe(380);
     });
     it('keeps a dragged width and a full-width reading preference', () => {
         expect(resolveRightDockPreferredPx({ ...base, storedPx: 420, containerWidthPx: 2196 })).toBe(420);

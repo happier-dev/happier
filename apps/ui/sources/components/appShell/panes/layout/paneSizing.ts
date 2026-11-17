@@ -71,9 +71,11 @@ export function resolveRightDockPreferredPx(input: Readonly<{
     storedDefaultPx: number;
     containerWidthPx: number;
     mainReadingWidthPx: number;
+    /** The column an open Details takes beside it: the spare canvas is what is left after that column. */
+    besidePx?: number;
 }>): number {
     if (input.storedPx !== input.storedDefaultPx || !Number.isFinite(input.mainReadingWidthPx)) return input.storedPx;
-    return Math.max(input.storedPx, Math.round(input.containerWidthPx - input.mainReadingWidthPx));
+    return Math.max(input.storedPx, Math.round(input.containerWidthPx - input.mainReadingWidthPx - (input.besidePx ?? 0)));
 }
 
 function clamp(value: number, min: number, max: number): number {
