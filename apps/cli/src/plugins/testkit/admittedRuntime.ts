@@ -23,6 +23,7 @@ import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPat
 import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import type { PluginDaemonDatabaseQuiescence } from '@/plugins/runtime/context/daemonDatabase';
 
 type RuntimeOptions = Omit<
     NonNullable<Parameters<typeof resolveExecutablePluginRuntimeRegistry>[0]>,
@@ -112,8 +113,15 @@ export async function createAdmittedPluginRuntimeFixture(params: Readonly<{
             throw new Error('Unexpected development source observation in admitted runtime fixture');
         },
     });
+    let incumbentDatabaseQuiescence: PluginDaemonDatabaseQuiescence | null = null;
+    const resumeIncumbentDatabases = async () => {
+        const quiescence = incumbentDatabaseQuiescence;
+        incumbentDatabaseQuiescence = null;
+        await quiescence?.resume();
+    };
     try {
-        const resolveRuntimeRegistry = async () => await resolveExecutablePluginRuntimeRegistry({
+        const resolveRuntimeRegistry = async () => {
+            const registry = await resolveExecutablePluginRuntimeRegistry({
                 ...params.runtimeOptions,
                 happyHomeDir,
                 generation: controller.getState().generation + 1,
@@ -122,6 +130,30 @@ export async function createAdmittedPluginRuntimeFixture(params: Readonly<{
                 runtimeRegistryController: controller,
                 targetedContributions: controller.getTargetedContributionsOwner(),
             });
+            // Authored modules carry the executable database callbacks. Prepare
+            // those declarations through the same owner used by daemon reload,
+            // before publication can start their continuous background work.
+            const pluginIds = registry.contributes.activationTargets.filter(target =>
+                target.manifest.contributes.daemonDatabases.length > 0
+                && params.runtimeOptions?.preparedActivationGraphsByPluginId?.has(target.pluginId))
+                .map(target => target.pluginId);
+            if (pluginIds.length === 0) return registry;
+            const incumbent = controller.getState().activeRegistry;
+            const incumbentContractsByPluginId = new Map(pluginIds.map(pluginId => [pluginId,
+                incumbent?.readPreparedDaemonDatabaseContracts?.(pluginId) ?? Object.freeze([])]));
+            const incumbentPluginIds = pluginIds.filter(pluginId => incumbentContractsByPluginId.get(pluginId)!.length > 0);
+            try {
+                if (incumbent && incumbentPluginIds.length > 0) {
+                    incumbentDatabaseQuiescence = await incumbent.quiesceDaemonDatabases(incumbentPluginIds);
+                }
+                await registry.prepareDaemonDatabases({ pluginIds, incumbentContractsByPluginId });
+                return registry;
+            } catch (error) {
+                try { await registry.dispose(); }
+                finally { await resumeIncumbentDatabases(); }
+                throw error;
+            }
+        };
         if (params.controller && controller.getState().activeRegistry) {
             // Acquiring an active controller only leases its incumbent. An
             // authored fixture must publish its requested physical candidate
@@ -141,6 +173,7 @@ export async function createAdmittedPluginRuntimeFixture(params: Readonly<{
         }
         const registry = lease.registry;
         assertPublishedFixtureFacts(registry);
+        incumbentDatabaseQuiescence = null;
         let disposed = false;
         return {
             happyHomeDir,
@@ -171,7 +204,8 @@ export async function createAdmittedPluginRuntimeFixture(params: Readonly<{
         };
     } catch (error) {
         try {
-            if (ownsController) await controller.shutdown();
+            try { await resumeIncumbentDatabases(); }
+            finally { if (ownsController) await controller.shutdown(); }
         } finally {
             await developmentRoots.stop();
             if (ownsHome) await rm(happyHomeDir, { recursive: true, force: true });
