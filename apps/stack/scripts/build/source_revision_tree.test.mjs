@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
+import { inspectDependencyRefresh } from '../utils/proc/dependency_refresh.mjs';
 import { generateServerClients, installServerGeneratorFixture, readGeneratedClientFields, writeServerSchemas, FIXTURE_MACHINE_SCHEMA } from '../testkit/core/server_generator_fixture.mjs';
 import { resolveSourceRevision, resolveSourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 import { beginPendingSourceStart } from '../runtime/shared/pending_source_start.mjs';
@@ -102,6 +103,7 @@ export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES = ${JSON.stringify(locator
   const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
   await gitIn('add', 'apps/cli', 'apps/ui', 'packages/plugins', 'packages/cli-common');
   await gitIn('commit', '--quiet', '-m', 'voice declarations and real compiler entry');
+  await publishFixtureInstall(repoDir);
   const revision = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'), rev: 'HEAD', overlay: [], outputDir: fixture.path('descriptors') });
   // This fixture supplies its own installed OS/tool boundary, never an installer.
   const env = { ...process.env, HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
@@ -202,6 +204,15 @@ export async function ensureDaemonSupportArtifact({ stackBaseDir, repoDir, depen
 }
 `;
 
+// The dependency owner's publication (the refresh marker) for the checkout's
+// installed fixture tree: its current dependency inputs, so a base of a revision
+// with the same inputs reuses this installation.
+async function publishFixtureInstall(repoDir) {
+  await mkdir(join(repoDir, 'node_modules'), { recursive: true });
+  const { installIdentity } = await inspectDependencyRefresh({ installDir: repoDir });
+  await writeFile(join(repoDir, 'node_modules/.happier-stack-dependencies-ready'), JSON.stringify({ version: 7, identity: installIdentity }));
+}
+
 async function createRevisionFixture(t) {
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-revision-tree-', registerCleanup: false });
   t.after(async () => { await setSourceRevisionTreeWritable(fixture.root); await fixture.cleanup(); });
@@ -213,9 +224,8 @@ async function createRevisionFixture(t) {
   await gitIn('config', 'user.name', 'test');
   await writeFile(join(repoDir, 'package.json'), JSON.stringify({ workspaces: ['apps/*', 'packages/*'] }));
   await writeFile(join(repoDir, '.gitignore'), 'node_modules\n');
-  // The dependency owner's published install identity (the refresh marker).
+  await writeFile(join(repoDir, 'pnpm-workspace.yaml'), 'packages:\n  - apps/*\n  - packages/*\n');
   await mkdir(join(repoDir, 'node_modules'), { recursive: true });
-  await writeFile(join(repoDir, 'node_modules/.happier-stack-dependencies-ready'), JSON.stringify({ version: 7, identity: 'install-1' }));
   for (const [directory, name] of [['apps/server', '@happier-dev/server'], ['apps/cli', '@happier-dev/cli'], ['packages/shared', '@happier-dev/shared']]) {
     await mkdir(join(repoDir, directory, 'src'), { recursive: true });
     await writeFile(join(repoDir, directory, 'package.json'), JSON.stringify({ name, type: 'module',
@@ -253,6 +263,7 @@ async function createRevisionFixture(t) {
   await writeFile(join(repoDir, 'docs/notes.md'), 'committed notes');
   await gitIn('add', '-A');
   await gitIn('commit', '--quiet', '-m', 'rev');
+  await publishFixtureInstall(repoDir);
   // The shared checkout moves: another lane edits a committed file and adds an
   // untracked one; this lane edits the file it declares as its overlay.
   await writeFile(join(repoDir, 'packages/shared/src/index.ts'), 'export const marker = "other-lane";');
@@ -627,6 +638,7 @@ test('daemon source trees expose declared private CLI runtime entries from their
   const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
   await gitIn('add', 'apps/cli');
   await gitIn('commit', '--quiet', '-m', 'private runtime entries');
+  await publishFixtureInstall(repoDir);
   // A competing checkout edit must never leak through the generated entry.
   await writeFile(join(cli, source), 'export const voiceInferenceRuntimeEngine = { revision: "foreign dirty" };');
   const revision = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'), rev: 'HEAD', overlay: [], outputDir: fixture.path('descriptors') });
@@ -654,6 +666,7 @@ test('HEAD moves and the checkout reinstalls: a running tree keeps its packages 
   await writeFile(join(repoDir, 'apps/cli/src/index.ts'), 'export {};');
   await gitIn('add', 'apps/cli');
   await gitIn('commit', '--quiet', '-m', 'cli');
+  await publishFixtureInstall(repoDir);
   const revision = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'), rev: 'HEAD', overlay: [], outputDir: fixture.path('descriptors') });
   const { daemon } = await prepareSourceTreeRuntimeComponents({ repoDir, env: { ...process.env, HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: join(repoDir, 'manual-payload') }, stackBaseDir: fixture.path('stacks/qa'),
     descriptorPath: revision.descriptorPath, components: [{ component: 'daemon' }], logger: { error() {} } });
@@ -814,8 +827,7 @@ test('a base of a generation-managed checkout carries its installed root package
   await writeFile(join(repoDir, 'apps/cli/src/index.ts'), 'export {};');
   await promisify(execFile)('git', ['-C', repoDir, 'add', 'apps/cli']);
   await promisify(execFile)('git', ['-C', repoDir, 'commit', '--quiet', '-m', 'cli']);
-  // The generation layout reads the pnpm workspace's project paths.
-  await writeFile(join(repoDir, 'pnpm-workspace.yaml'), 'packages:\n  - apps/*\n  - packages/*\n');
+  await publishFixtureInstall(repoDir);
   await moveInPlaceInstallationIntoGeneration(repoDir);
   assert.equal((await lstat(join(repoDir, 'node_modules/fixture-dep'))).isSymbolicLink(), true);
   const revision = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'), rev: 'HEAD', overlay: [], outputDir: fixture.path('descriptors') });

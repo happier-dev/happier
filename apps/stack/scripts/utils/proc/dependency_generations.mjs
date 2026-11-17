@@ -68,11 +68,12 @@ async function readProjectDirs(installDir) {
 
 /** Lay out a new, empty generation: real directories along every project path,
  * with every other entry linked to the checkout's own (so installed lifecycle
- * scripts read and write the real sources). */
-export async function createDependencyGeneration(installDir) {
+ * scripts read and write the real sources). `genRoot` lays it out elsewhere
+ * (a revision base installs from its own manifests and lockfile). */
+export async function createDependencyGeneration(installDir, { genRoot: target } = {}) {
   const root = resolve(installDir);
   const name = `g${Date.now().toString(36).padStart(9, '0')}-${randomUUID().slice(0, 8)}`;
-  const genRoot = join(resolveDependencyGenerationContainer(root), name);
+  const genRoot = target ? resolve(target) : join(resolveDependencyGenerationContainer(root), name);
   const projects = await readProjectDirs(root);
   const spine = new Set(['']);
   for (const project of projects) {

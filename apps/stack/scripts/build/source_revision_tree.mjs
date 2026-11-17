@@ -14,8 +14,8 @@ import { isPidAlive } from '../utils/proc/pids.mjs';
 import { captureSourceWebBuildInputs, readSourceRuntimeProcessCommands, resolveSourceRuntimeProducerContext, setBundleReadOnly } from './build_source_runtime.mjs';
 import { readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment } from './source_guest_payload.mjs';
 import { run, runCapture } from '../utils/proc/proc.mjs';
-import { resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
-import { CURRENT_GENERATION_LINK, resolveDependencyGenerationContainer } from '../utils/proc/dependency_generations.mjs';
+import { inspectDependencyRefresh, resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
+import { CURRENT_GENERATION_LINK, createDependencyGeneration, resolveDependencyGenerationContainer } from '../utils/proc/dependency_generations.mjs';
 import { SOURCE_RELOAD_ADMISSION_CLASS } from '../utils/dev_targets/remote_commands.mjs';
 import { runSourceBuildCommand, sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH } from '../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
@@ -26,8 +26,9 @@ import { deriveRevisionGeneratedInputs, isRevisionGeneratorInput, isRevisionKept
  * base build per HEAD, each Stack's overlay applied at runtime from source).
  *
  * - One base tree per revision per host: the whole tracked tree at that revision,
- *   the ignored generated inputs the runtime consumes (derived from that revision), and the host's installed
- *   dependencies mounted so workspace imports resolve inside the tree. It is
+ *   the ignored generated inputs the runtime consumes (derived from that revision), and an
+ *   installation of that revision's own dependency inputs mounted so workspace imports
+ *   resolve inside the tree (prepareRevisionInstall). It is
  *   built once under a lock, published by rename and kept read-only.
  * - Each Stack runs a hardlink clone of it with only its declared overlay files
  *   replaced by the selected bytes carried in their revision description. The daemon guest payload uses
@@ -206,10 +207,11 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, preparePluginUi
   // import reaches the moving checkout's packages.
   const workspaces = await readWorkspacePackages(baseDir);
   const workspaceDirs = [...workspaces.values()].map(workspace => relative(baseDir, workspace.root)).filter(Boolean);
-  // The base mounts a pinned snapshot of the installation, so a later dependency
-  // refresh of the shared checkout never changes (or refuses) a running tree.
+  // The base mounts a pinned installation of its own revision's dependency
+  // inputs, so neither a later refresh nor uncommitted dependency edits in the
+  // shared checkout change (or refuse) a running tree.
   const install = installIdentity ? { identity: installIdentity, dir: join(dirname(baseDir), INSTALLS, installIdentity) }
-    : await prepareInstallSnapshot({ repoDir, treesRoot: dirname(baseDir), workspaceDirs, env, signal });
+    : await prepareRevisionInstall({ repoDir, baseDir, treesRoot: dirname(baseDir), workspaceDirs, env, signal });
   await mountCapturedWorkspaceDependencies({ sourceDir: install.dir, captureDir: baseDir, workspaceDirs });
   // Plugin UI preparation reads the manifests this derivation places.
   await deriveDaemonPluginPublication({ treeDir: baseDir, env, signal });
@@ -226,25 +228,26 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, preparePluginUi
 const INSTALLS = 'installs';
 
 /**
- * One hardlink snapshot of the checkout's installation per dependency
- * identity per host (the root and every workspace `node_modules`, without the
- * workspace links a base mounts itself). The dependency owner's consumption guard
- * waits for an active writer and refuses a copy taken while it moved. A refresh
- * replaces installed files, never rewrites them, so the snapshot keeps the bytes.
+ * One installation per dependency identity per host, keyed like the shared
+ * checkout's refresh marker (the base's own manifests, lockfile, patches and
+ * runtime). When the checkout's published installation has exactly that
+ * identity it is reused as a hardlink snapshot (the root and every workspace
+ * `node_modules`, without the workspace links a base mounts itself; a refresh
+ * replaces installed files, never rewrites them). Otherwise the revision's own
+ * lockfile is installed frozen into a dependency generation laid out from the
+ * base, so another lane's uncommitted dependency edit never reaches a base.
  * @returns {Promise<{ dir: string, identity: string }>}
  */
-async function prepareInstallSnapshot({ repoDir, treesRoot, workspaceDirs, env, signal }) {
-  return await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, async (_env, publication) => {
-    const identity = publication.state.identity;
-    if (typeof identity !== 'string' || !/^[A-Za-z0-9._-]+$/.test(identity)) {
-      throw new Error('[source-tree] the checkout installation has no published dependency identity; refresh dependencies first');
-    }
-    const dir = join(resolve(treesRoot), INSTALLS, identity);
-    await mkdir(dirname(dir), { recursive: true });
-    return await withBaseLock(dir, signal, async () => {
-      if (existsSync(join(dir, BASE_MARKER))) return { dir, identity };
-      const staging = `${dir}.tmp-${randomUUID()}`;
-      try {
+async function prepareRevisionInstall({ repoDir, baseDir, treesRoot, workspaceDirs, env, signal }) {
+  const { installIdentity: identity } = await inspectDependencyRefresh({ installDir: baseDir, env });
+  const dir = join(resolve(treesRoot), INSTALLS, identity);
+  await mkdir(dirname(dir), { recursive: true });
+  return await withBaseLock(dir, signal, async () => {
+    if (existsSync(join(dir, BASE_MARKER))) return { dir, identity };
+    const staging = `${dir}.tmp-${randomUUID()}`;
+    try {
+      const snapshotted = await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, async (_env, publication) => {
+        if (publication.state.identity !== identity) return false;
         for (const workspaceDir of ['', ...workspaceDirs]) {
           const installed = await realpath(join(repoDir, workspaceDir, 'node_modules')).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));
           // A generation-managed root links each installed entry into its generation: copy what they name.
@@ -252,17 +255,64 @@ async function prepareInstallSnapshot({ repoDir, treesRoot, workspaceDirs, env, 
             skip: ['@happier-dev', '.pnpm-task-run-state-v1', CURRENT_GENERATION_LINK], follow: resolveDependencyGenerationContainer(repoDir) });
         }
         await publication.assertCurrent();
-        await writeFile(join(staging, BASE_MARKER), JSON.stringify({ installIdentity: identity, builtAt: new Date().toISOString() }));
-        await rm(dir, { recursive: true, force: true });
-        await rename(staging, dir);
-      } catch (error) {
-        await rm(staging, { recursive: true, force: true });
-        throw error;
-      }
-      // Never chmod it: its files share inodes with the checkout's installation.
-      return { dir, identity };
-    });
+        return true;
+      });
+      if (!snapshotted) await installRevisionDependencies({ baseDir, staging, workspaceDirs, env, signal });
+      await writeFile(join(staging, BASE_MARKER), JSON.stringify({ installIdentity: identity, builtAt: new Date().toISOString() }));
+      await rm(dir, { recursive: true, force: true });
+      await rename(staging, dir);
+    } catch (error) {
+      await rm(staging, { recursive: true, force: true });
+      throw error;
+    }
+    // Never chmod it: a snapshot's files share inodes with the checkout's installation.
+    return { dir, identity };
   });
+}
+
+/** Frozen install of the base's lockfile in a generation shadow (its project
+ * paths real, every other entry linked to the base), then only the installed
+ * trees stay: the shadow's source links and workspace links are dropped, so an
+ * installation shared by bases never points into one base's sources. */
+async function installRevisionDependencies({ baseDir, staging, workspaceDirs, env, signal }) {
+  await createDependencyGeneration(baseDir, { genRoot: staging });
+  const { ensureUiPostinstallOutputs, installFrozenDependencies } = await import('../utils/proc/pm.mjs');
+  await installFrozenDependencies(staging, { env, signal });
+  const keepInstalledTrees = async dir => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.name === 'node_modules' && entry.isDirectory()) {
+        await rm(join(path, '@happier-dev'), { recursive: true, force: true });
+        await rm(join(path, '.pnpm-task-run-state-v1'), { recursive: true, force: true });
+      } else if (entry.isDirectory()) await keepInstalledTrees(path);
+      else await rm(path, { force: true });
+    }
+  };
+  await keepInstalledTrees(staging);
+  // The UI's installed outputs (vendored WASM, worker bundles) are written by
+  // tools that resolve their own real location: run from the shadow, whose
+  // tools link into the base, they would write into the base and leave the
+  // installation unpatched. Run them from the base with this installation
+  // mounted, then remove what the mount added (the base's physical generated
+  // clients stay) so the base mounts the published installation.
+  const uiDir = join(baseDir, 'apps', 'ui');
+  if (!existsSync(join(uiDir, 'package.json'))) return;
+  const before = new Map();
+  for (const dir of ['', ...workspaceDirs]) {
+    const modules = join(baseDir, dir, 'node_modules');
+    before.set(modules, existsSync(modules) ? new Set(await readdir(modules)) : null);
+  }
+  await mountCapturedWorkspaceDependencies({ sourceDir: staging, captureDir: baseDir, workspaceDirs });
+  try {
+    await ensureUiPostinstallOutputs(uiDir, baseDir, { env, quiet: true, force: true });
+    const ready = join(baseDir, 'node_modules', '.happier-ui-postinstall-ready');
+    if (existsSync(ready)) await rename(ready, join(staging, 'node_modules', '.happier-ui-postinstall-ready'));
+  } finally {
+    for (const [modules, kept] of before) {
+      if (kept === null) { await rm(modules, { recursive: true, force: true }); continue; }
+      for (const name of await readdir(modules)) if (!kept.has(name)) await rm(join(modules, name), { recursive: true, force: true });
+    }
+  }
 }
 
 /** Installation snapshots no remaining base names go with the base sweep (the newest is kept). */

@@ -528,6 +528,19 @@ export async function ensureUiPostinstallOutputs(componentDir, installDir, { qui
   });
 }
 
+/** A frozen installation of a tree outside the shared checkout's refresh owner
+ * (a revision base's dependency generation): the same install command, lifecycle
+ * scope and package-manager readiness as a refresh, from that tree's own manifests
+ * and lockfile. Installed-tree outputs are prepared by their owners afterwards. */
+export async function installFrozenDependencies(installDir, { quiet = false, env: envIn = process.env, signal } = {}) {
+  // The refresh's lifecycle scope: workspace output owners run after pnpm, never as install builds.
+  const env = resolveLockedInstallEnv(await preparePmEnv(installDir, envIn));
+  const pm = await getComponentPm(installDir, env);
+  if (pm.name === 'pnpm') await ensurePnpmReady({ dir: installDir, env, quiet, pm });
+  await runPm(pm, buildDependencyInstallArgs(pm.name), { cwd: installDir, stdio: quiet ? 'ignore' : 'inherit', env, signal,
+    captureFailureDiagnostic: true });
+}
+
 async function ensureComponentPrerequisites(componentDir, _label, { quiet = false, env = process.env, pm } = {}) {
   const installDir = resolveDependencyInstallRoot(componentDir);
   await ensureServerGeneratedProviderOutputs(componentDir, installDir, { quiet, env, pm });
