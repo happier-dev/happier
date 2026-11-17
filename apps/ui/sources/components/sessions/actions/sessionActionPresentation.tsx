@@ -63,7 +63,7 @@ export function createSessionActionDropdownItem(params: Readonly<{
         // Menus stay one line per row except where the row's consequence is the point of the choice.
         ...(metadata.subtitleKey && MENU_SUBTITLE_ACTION_IDS.has(params.actionId) ? { subtitle: t(metadata.subtitleKey) } : {}),
         icon: <Icon name={metadata.icon} size={params.iconSize ?? 16} color={params.iconColor} />,
-        ...(metadata.destructive ? { destructive: true } : {}),
+        ...(metadata.irreversible ? { destructive: true } : {}),
     };
     if (params.target && (params.actionId === SESSION_ACTION_COORDINATOR_MAKE_ID || params.actionId === SESSION_ACTION_COORDINATOR_STOP_ID)) {
         const controls = resolveSessionCoordinatorMenuControls(params.target);

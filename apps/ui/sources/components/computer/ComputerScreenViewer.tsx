@@ -562,7 +562,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                             ...(props.recording ? [props.recording.recording
                                 ? { id: 'discard-recording', title: t('browserPresence.recording.discard'), destructive: true, testID: `${testID}-discard-recording` }
                                 : { id: 'record', title: t('browserRecording.actions.start'), testID: `${testID}-record` }] : []),
-                            { id: 'stop', title: t('computerUse.picker.stopSharing'), destructive: true, testID: `${testID}-stop-sharing` },
+                            { id: 'stop', title: t('computerUse.picker.stopSharing'), testID: `${testID}-stop-sharing` },
                         ]}
                         onSelect={(id) => {
                             setMenuOpen(false);

@@ -27,8 +27,8 @@ function createBulkDescriptor(actionId: SessionBulkActionId): SessionBulkActionD
         id: actionId,
         title: resolveSessionActionTitle(metadata),
         icon: metadata.icon,
-        requiresConfirmation: metadata.requiresConfirmation,
-        destructive: metadata.destructive,
+        requiresConfirmation: metadata.irreversible,
+        destructive: metadata.irreversible,
     };
 }
 

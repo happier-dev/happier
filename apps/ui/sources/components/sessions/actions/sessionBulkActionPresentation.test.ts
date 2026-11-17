@@ -52,14 +52,12 @@ describe('listSessionBulkActionDescriptors', () => {
             SESSION_BULK_ACTION_IDS.tagsSet,
             SESSION_BULK_ACTION_IDS.moveToFolder,
         ]);
-        expect(descriptors.find((descriptor) => descriptor.id === SESSION_BULK_ACTION_IDS.stop)).toMatchObject({
-            requiresConfirmation: undefined,
-            destructive: true,
-        });
-        expect(descriptors.find((descriptor) => descriptor.id === SESSION_BULK_ACTION_IDS.archive)).toMatchObject({
-            requiresConfirmation: undefined,
-            destructive: true,
-        });
+        // Stop and Archive are undone with Resume and Unarchive: no confirmation, no danger emphasis.
+        for (const id of [SESSION_BULK_ACTION_IDS.stop, SESSION_BULK_ACTION_IDS.archive]) {
+            const descriptor = descriptors.find((candidate) => candidate.id === id);
+            expect(descriptor?.requiresConfirmation).toBeFalsy();
+            expect(descriptor?.destructive).toBeFalsy();
+        }
     });
 
     it('does not expose read-state actions when selected targets have no available read state', () => {

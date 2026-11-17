@@ -9,6 +9,7 @@ import { preloadLocaleBundle } from '@/text/localeBundlesSync';
 
 import {
     SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_COORDINATOR_STOP_ID,
     SESSION_ACTION_DELETE_ID,
     SESSION_ACTION_EDIT_TAGS_ID,
     SESSION_ACTION_MARK_READ_ID,
@@ -36,9 +37,15 @@ function toolCallsTarget(input: Readonly<{ bot: boolean; override: boolean | nul
 }
 
 describe('session action presentation', () => {
-    it('marks destructive Session operations so a menu can draw them in danger ink and place them last', () => {
-        expect(createSessionActionDropdownItem({ actionId: SESSION_ACTION_ARCHIVE_ID, iconColor: '#000' })?.destructive).toBe(true);
-        expect(createSessionActionDropdownItem({ actionId: SESSION_ACTION_RENAME_ID, iconColor: '#000' })?.destructive).toBeUndefined();
+    it('draws only an irreversible Session operation in danger ink; operations a person can undo stay neutral', () => {
+        const destructive = (actionId: Parameters<typeof createSessionActionDropdownItem>[0]['actionId']) =>
+            createSessionActionDropdownItem({ actionId, iconColor: '#000' })?.destructive;
+        expect(destructive(SESSION_ACTION_DELETE_ID)).toBe(true);
+        // Archive (Unarchive), Stop (Resume) and Stop managing (Make coordinator) are undone in one press.
+        expect(destructive(SESSION_ACTION_ARCHIVE_ID)).toBeUndefined();
+        expect(destructive(SESSION_ACTION_STOP_ID)).toBeUndefined();
+        expect(destructive(SESSION_ACTION_COORDINATOR_STOP_ID)).toBeUndefined();
+        expect(destructive(SESSION_ACTION_RENAME_ID)).toBeUndefined();
     });
 
     it('states where a Session\'s tool-call visibility comes from and offers Use default only over its own choice', () => {

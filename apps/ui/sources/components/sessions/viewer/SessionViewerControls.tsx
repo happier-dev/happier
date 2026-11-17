@@ -216,7 +216,6 @@ export function SessionViewerControls(
     menuItems.push({
       id: 'stop',
       title: t('computerUse.picker.stopSharing'),
-      destructive: true,
       testID: 'session-viewer-menu-stop',
     });
   }

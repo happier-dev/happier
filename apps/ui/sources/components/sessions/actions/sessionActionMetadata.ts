@@ -47,8 +47,12 @@ export type SessionActionMetadata = Readonly<{
     icon: SessionActionIconName;
     /** Where the operation sits in the session's ⋯ menu. */
     group: SessionHeaderMenuGroup;
-    destructive?: boolean;
-    requiresConfirmation?: boolean;
+    /**
+     * The operation cannot be undone (Delete). It alone takes the danger tone and asks first; an
+     * operation a person can reverse in one press (Archive, Stop, Stop managing) never does
+     * (DESIGN.md: destructive treatment only for irreversible consequences).
+     */
+    irreversible?: true;
 }>;
 
 const METADATA_BY_ACTION_ID: Readonly<Record<string, SessionActionMetadata>> = {
@@ -91,7 +95,7 @@ const METADATA_BY_ACTION_ID: Readonly<Record<string, SessionActionMetadata>> = {
     [SESSION_ACTION_COORDINATOR_STOP_ID]: {
         titleKey: 'sessionCoordinator.menu.stop',
         subtitleKey: 'sessionCoordinator.menu.stopSubtitle',
-        icon: 'minus-circle', group: 'work', destructive: true,
+        icon: 'minus-circle', group: 'work',
     },
     [SESSION_ACTION_PUT_UNDER_ID]: {
         titleKey: 'sessionWork.putUnder.title',
@@ -112,13 +116,11 @@ const METADATA_BY_ACTION_ID: Readonly<Record<string, SessionActionMetadata>> = {
         titleKey: 'sessionInfo.stopSession',
         subtitleKey: 'sessionInfo.stopSessionSubtitle',
         icon: 'stop-circle', group: 'finish',
-        destructive: true,
     },
     [SESSION_ACTION_ARCHIVE_ID]: {
         titleKey: 'sessionInfo.archiveSession',
         subtitleKey: 'sessionInfo.archiveSessionSubtitle',
         icon: 'archive', group: 'finish',
-        destructive: true,
     },
     [SESSION_ACTION_UNARCHIVE_ID]: {
         titleKey: 'sessionInfo.unarchiveSession',
@@ -129,8 +131,7 @@ const METADATA_BY_ACTION_ID: Readonly<Record<string, SessionActionMetadata>> = {
         titleKey: 'sessionInfo.deleteSession',
         subtitleKey: 'sessionInfo.deleteSessionSubtitle',
         icon: 'trash', group: 'finish',
-        destructive: true,
-        requiresConfirmation: true,
+        irreversible: true,
     },
     [SESSION_ACTION_PIN_ID]: {
         titleKey: 'sessionInfo.pinSession',
