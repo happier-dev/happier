@@ -143,16 +143,15 @@ describe('buildTriagePickerView — corpus search', () => {
 describe('buildTriagePickerView — selection and row actions', () => {
     const attached = selectTriageAttachedEntries([attachment('42', 'triage-1')]);
 
-    it('derives multi-selection from the canonical attachment snapshot alone', () => {
+    it('derives selection and independent row actions from the canonical attachment snapshot', () => {
         const view = buildTriagePickerView({ facts: facts({ rows: ROWS }), query: '', attached });
 
-        expect(view.rows.map((entry) => entry.attachment.kind))
-            .toEqual(['attached', 'notAttached', 'notAttached']);
-    });
-
-    it('plans Remove for an attached row and Attach for the rest', () => {
-        const view = buildTriagePickerView({ facts: facts({ rows: ROWS }), query: '', attached });
-
+        expect(view.rows.map((entry) => entry.attachment)).toEqual([
+            { kind: 'attached', instanceId: 'triage-1' },
+            { kind: 'notAttached' },
+            { kind: 'notAttached' },
+        ]);
+        expect(view.rows.map((entry) => entry.activatesOnPress)).toEqual([false, false, false]);
         expect(view.rows[0]?.mutation).toEqual({ kind: 'remove', instanceId: 'triage-1' });
         expect(view.rows[1]?.mutation).toEqual({
             kind: 'attach',
@@ -176,12 +175,6 @@ describe('buildTriagePickerView — selection and row actions', () => {
         expect(mutation?.kind).toBe('attach');
         if (mutation?.kind !== 'attach') return;
         expect(mutation.lastKnownLocator).toEqual({ v: 1, routingToken: 'acme/api' });
-    });
-
-    it('keeps every row non-activating so only its two controls commit an effect', () => {
-        const view = buildTriagePickerView({ facts: facts({ rows: ROWS }), query: '', attached });
-
-        expect(view.rows.every((entry) => entry.activatesOnPress === false)).toBe(true);
     });
 
     it('opens View details under the same instance the mutation would use', () => {
@@ -284,16 +277,6 @@ describe('buildTriagePickerView — corpus result state', () => {
 
         expect(view.state).toEqual({ kind: 'boundedWindow' });
         expect(view.coverage).toBe('progressive');
-        // A reader who typed nothing has no match to be waiting for. The
-        // contract is that the two answers differ, asserted against this same
-        // builder's answer for the narrowed window rather than against copy.
-        const narrowed = buildTriagePickerView({
-            facts: facts({ coverage: 'progressive' }),
-            query: 'nothing matches this',
-            attached: [],
-        });
-        expect(narrowed.state).toEqual({ kind: 'noMatchYet' });
-        expect(view.state).not.toEqual(narrowed.state);
     });
 
     it('separates a query with no match yet from one the completed walk answered', () => {
@@ -377,18 +360,14 @@ describe('buildTriagePickerView — corpus result state', () => {
         }] as const;
         const partial = facts({ configuredSourceInstanceCount: 3, rows: [], health: [...health] });
 
-        // The walk is still running, so the answer is the same one this builder
-        // gives for that window with nothing broken at all.
+        // Other connections are still walking; a failed subset cannot prove
+        // that the window is exhausted or that every source is unavailable.
         const walking = buildTriagePickerView({
             facts: { ...partial, coverage: 'progressive' },
             query: '',
             attached: [],
         });
-        expect(walking.state).toEqual(buildTriagePickerView({
-            facts: facts({ configuredSourceInstanceCount: 3, coverage: 'progressive' }),
-            query: '',
-            attached: [],
-        }).state);
+        expect(walking.state).toEqual({ kind: 'boundedWindow' });
         expect(walking.health).toEqual(health);
 
         // And a completed walk answers with its own honest empty, still naming
