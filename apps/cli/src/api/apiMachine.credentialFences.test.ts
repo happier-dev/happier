@@ -2,6 +2,7 @@ import axios from 'axios';
 import { readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { configuration, reloadConfiguration } from '@/configuration';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
@@ -51,12 +52,21 @@ async function withInstalledAccount(run: (input: Readonly<{
     }, credentialProvenance: 'stored_session' };
     await writeStoredCredentialsForServerId(configuration.activeServerId, credentials);
     const credentialPath = join(configuration.serversDir, configuration.activeServerId, 'access.key');
+    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { id: 'credential-account' } });
+    const startupPost = vi.spyOn(axios, 'post').mockRejectedValue(new Error('Fixture Account census unavailable'));
     const client = new ApiMachineClient(credentials.token, { id: 'credential-machine', encryptionMode: 'plain',
       metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
-    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { id: 'credential-account' } });
-    vi.mocked(readFile).mockClear();
-    await run({ client, credentials, credentialPath, installationId: installation.installationId,
-      reads: () => vi.mocked(readFile).mock.calls.filter(([path]) => path === credentialPath).length });
+    try {
+      // Capability warmup owns a separate credential admission and Account census.
+      // Await the registered owner before measuring the operation under test.
+      await client.getMachineRoleRpcHandlerManager().invokeLocal(RPC_METHODS.CAPABILITIES_DESCRIBE, {});
+      startupPost.mockRestore();
+      vi.mocked(readFile).mockClear();
+      await run({ client, credentials, credentialPath, installationId: installation.installationId,
+        reads: () => vi.mocked(readFile).mock.calls.filter(([path]) => path === credentialPath).length });
+    } finally {
+      await client.shutdown();
+    }
   });
 }
 
@@ -142,14 +152,26 @@ describe('installed Account credential fences', () => {
     });
   });
 
-  it.each(['cancelled', 'installation-retired'] as const)('refuses entry when %s during physical credential opening', async change => {
+  it('refuses entry when cancelled during physical credential opening', async () => {
     await withInstalledAccount(async ({ client }) => {
       const lifetime = new AbortController();
       fileBoundary.afterCredentialRead = async () => {
-        if (change === 'cancelled') lifetime.abort();
-        else await unlink(configuration.installationIdentityFile);
+        lifetime.abort();
       };
       await expect(client.resolveInstalledAccountObservationRuntime(lifetime.signal)).resolves.toBeNull();
+    });
+  });
+
+  it('finishes admitted work after installation retirement and refuses the next admission', async () => {
+    await withInstalledAccount(async ({ client }) => {
+      const signal = new AbortController().signal;
+      fileBoundary.afterCredentialRead = async () => {
+        fileBoundary.afterCredentialRead = undefined;
+        await unlink(configuration.installationIdentityFile);
+      };
+      const runtime = await client.resolveInstalledAccountObservationRuntime(signal);
+      expect(await runtime?.isCurrent?.()).toBe(true);
+      await expect(client.resolveInstalledAccountObservationRuntime(signal)).resolves.toBeNull();
     });
   });
 

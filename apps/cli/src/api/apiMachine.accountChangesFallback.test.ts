@@ -1,5 +1,7 @@
+import '@/testkit/async/mockNodeTimers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { emptyPromptLibraryRecordV1, readPromptLibraryCatalogRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import * as persistence from '@/persistence';
@@ -79,7 +81,6 @@ describe('ApiMachineClient Account changes fallbacks', () => {
     });
 
     it('reconciles reconnect recovery once per transport while the changes retry owner retries only the feed', async () => {
-        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
         const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'retry-account' })).toString('base64url')}.signature`, encryption: null };
         vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
         const previous = getActiveAccountSettingsSnapshot();
@@ -108,6 +109,8 @@ describe('ApiMachineClient Account changes fallbacks', () => {
         // The authenticated ApiClient is the injected Machine snapshot boundary.
         const client = new ApiMachineClient(credentials.token, machine, undefined,
             { loadMachine: async () => { machineSnapshots += 1; return machine; } });
+        await client.getMachineRoleRpcHandlerManager().invokeLocal(RPC_METHODS.CAPABILITIES_DESCRIBE, {});
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
         const reconciliations: string[] = [];
         const availability = vi.fn();
         const unsubscribeAvailability = subscribePluginAccountAvailabilityChanges(availability);
