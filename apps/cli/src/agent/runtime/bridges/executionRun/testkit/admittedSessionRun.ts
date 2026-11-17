@@ -111,6 +111,7 @@ const nativeConversationOpen = vi.fn<(request: AgentExecutionRunOpenRequest) => 
 type AdmittedSessionRunOptions = Readonly<{
   resume?: boolean;
   profile?: boolean;
+  profileIntent?: 'memory_hints' | 'review';
   directOwner?: boolean;
   runReportPolicy?: import('@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1').FollowPolicyV1;
   runReportPreferencesUnavailable?: boolean;
@@ -151,8 +152,10 @@ const createTestAgentPlugin = (skills: boolean, options?: AdmittedSessionRunOpti
   id: skills ? 'test.skills.own-set' : 'test.c42.attribution', version: '0.0.0', displayName: 'Attribution test Agent',
   entrypoints: { daemon: './daemon.mjs' },
   ...(options?.profile ? {
-    executionRunProfiles: { memory: { id: 'memory', intent: 'memory_hints', title: 'Admitted memory policy',
+    executionRunProfiles: { memory: { id: 'memory', intent: options.profileIntent ?? 'memory_hints', title: 'Admitted memory policy',
       promptAsset: 'memory-prompt', compatibleAgents: ['agent'],
+      ...(options.profileIntent === 'review' ? { optionsSchema: { type: 'object', additionalProperties: false,
+        properties: { effort: { type: 'string', enum: ['deep', 'fast'] } } } } : {}),
       defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'streaming' } } },
     resources: { 'memory-prompt-resource': { kind: 'prompt', path: './resources/memory.md', contentType: 'text/markdown' } },
     promptAssets: { 'memory-prompt': { kind: 'systemPrompt', resource: 'memory-prompt-resource', target: { kind: 'agent', agent: 'agent' } } },

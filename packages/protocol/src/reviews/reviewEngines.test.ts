@@ -35,4 +35,10 @@ describe('reviewEngines', () => {
     expect(source).not.toContain(['list', 'Native', 'ReviewEngines'].join(''));
     expect(source).not.toContain(['get', 'Native', 'ReviewEngine'].join(''));
   });
+
+  it('does not continue a structured-capable ephemeral reviewer as the narrator', () => {
+    expect(resolveReviewNarratorPolicy({ selectedEngineIds: ['finite-reviewer'], engines: [
+      { value: 'finite-reviewer', retentionPolicy: 'ephemeral', capabilities: { structuredNarration: true } },
+    ] })).toEqual({ requiresSeparateNarrator: true, defaultNarratorEngineId: null });
+  });
 });

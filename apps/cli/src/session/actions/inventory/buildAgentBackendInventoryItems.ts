@@ -34,7 +34,7 @@ function buildCatalogBackendInventoryItems(
 export async function buildConfiguredAcpBackendInventoryItems(
   accountSettings: AccountSettings | null,
   acpCatalogSnapshot?: AcpCatalogSnapshotV1,
-  catalog = readAgentCatalogSnapshot(),
+  catalog: Pick<ReturnType<typeof readAgentCatalogSnapshot>, 'agentDefinitionsById'> = readAgentCatalogSnapshot(),
 ): Promise<AgentBackendInventoryItem[]> {
   // Optional discovery cannot withdraw built-in choices. Configured launch
   // admission still requires ready, current authority at its runtime owner.

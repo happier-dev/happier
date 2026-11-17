@@ -33,7 +33,7 @@ type ReadinessDeps = Pick<ActionExecutorDeps, 'machinesAgentsList' | 'agentsConn
  * executable prerequisites. A target whose probe failed is `unknown`; a target
  * the Machine does not list, or an unreadable inventory, gets no entry.
  */
-async function readAgentTargetReadinessV1(
+export async function readAgentTargetReadinessV1(
   deps: ReadinessDeps,
   machineId: string,
   targets: readonly (MachineAgentInventoryTargetV1 | null)[],

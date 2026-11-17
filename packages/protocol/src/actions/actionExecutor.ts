@@ -419,6 +419,7 @@ import type { SessionRollbackTarget } from '../sessions/rollback.js';
 import type { ReviewStartInput } from '../reviews/reviewStart.js';
 import { ReviewWalkthroughInputSchema, ReviewWalkthroughRequestSchema, ReviewExplainFindingsInputSchema, ReviewExplainFindingsRequestSchema, ReviewExplainFindingsRefinementSchema } from '../reviews/reviewNarration.js';
 import { resolveReviewNarratorPolicy } from '../reviews/reviewEngines.js';
+import type { ReviewEnginesListInputSchema } from './specs/reviews.js';
 import {
   ReviewCommentActionIdV1Schema,
   ReviewCommentListActionRequestV1Schema,
@@ -6535,11 +6536,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!deps.reviewEnginesList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const target = resolveReviewEngineInventoryTarget(parsed.data, ctx, resolveSessionIdFromInput);
           if (!target.ok) return target;
+          const args = parsed.data as z.infer<typeof ReviewEnginesListInputSchema>;
           const res = await deps.reviewEnginesList({
             ...target.target,
             ...(typeof data.includeDisabled === 'boolean' ? { includeDisabled: data.includeDisabled } : {}),
             ...(data.scope === 'paths' ? { scope: 'paths' as const } : {}),
-          });
+            ...(args.profileSelections ? { profileSelections: args.profileSelections } : {}),
+          }, ctx);
           return completeActionResult(res);
         }
 

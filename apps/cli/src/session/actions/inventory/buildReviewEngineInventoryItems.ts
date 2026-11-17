@@ -1,15 +1,21 @@
 import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { AccountSettings } from '@happier-dev/protocol';
-import { ReviewEngineListItemSchema, type ReviewEngineListItem } from '@happier-dev/protocol/reviews/reviewEngines';
+import { ReviewEngineListItemSchema, type ReviewEngineListItem, type ReviewEngineProfileSelection } from '@happier-dev/protocol/reviews/reviewEngines';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { AGENT_IDS, isBundledAgentId } from '@happier-dev/agents/agent-ids';
+import { isMachineAgentExecutionStateBlockingV1, type MachineAgentExecutionStateV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 
 import { readAgentContributionDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import { resolveExecutionRunAgentDefaultSelection } from '@/agent/runtime/bridges/executionRun/runtime/openInputs';
 import { isNativeAutomaticModelSelectionInputV1 } from '@happier-dev/protocol/providers/selection/v1';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
+import {
+  resolveExecutionRunProfileSelectionForAgent,
+  resolveExecutionRunProfileContributionDescriptor,
+  type ExecutionRunProfileContributionCatalog,
+} from '@/agent/executionRuns/profiles/intentRegistry';
 import { readAgentExecutionRunCapabilities, readAgentStructuredOutputCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import type {
   ResolvedAgentContribution,
@@ -22,7 +28,7 @@ export type ActionReviewEngineInventoryItem = ReviewEngineListItem & Readonly<{
   backendId: string;
 }>;
 
-export type ReviewEngineScope = 'worktree' | 'paths';
+export type ReviewEngineScope = NonNullable<ReviewEngineListItem['reviewScopes']>[number];
 
 type ReviewAgentCatalog = Pick<ReturnType<typeof readAgentCatalogSnapshot>, 'agentDefinitionsById' | 'executionRunProfiles'>;
 
@@ -58,48 +64,49 @@ function readReviewEngineDescription(
   return undefined;
 }
 
-/** Shared selector for the Action inventory and machine-capability projection. */
-export function selectReviewEngineAgentIds(
+function selectReviewEngineAgents(
   registry: ReviewAgentCatalog,
   scope: ReviewEngineScope = 'worktree',
-): ReadonlySet<string> {
-  const agentIdByQualifiedIdentity = new Map(
-    [...registry.agentDefinitionsById.values()].flatMap((agent) => (
-      agent.identity
-        ? [[`${agent.identity.pluginId}\0${agent.identity.localId}`, agent.id] as const]
-        : []
-    )),
-  );
-  const reviewProfileAgentIds = new Set<string>();
-  const exactPathProfileAgentIds = new Set<string>();
-  for (const profile of registry.executionRunProfiles ?? []) {
-    if (profile.definition.intent !== 'review') continue;
-    const declaredScopes = profile.definition.metadata?.reviewScopes;
-    const supportsExactPaths = !Array.isArray(declaredScopes) || declaredScopes.includes('paths');
-    for (const reference of profile.definition.compatibleAgents) {
-        const localId = typeof reference === 'string' ? reference : reference.localId;
-        const pluginId = typeof reference === 'string' ? profile.pluginId : reference.pluginId;
-        const qualifiedAgentId = pluginId
-          ? agentIdByQualifiedIdentity.get(`${pluginId}\0${localId}`)
-          : undefined;
-        const agentId = qualifiedAgentId ?? (registry.agentDefinitionsById.has(localId) ? localId : null);
-        if (!agentId) continue;
-        reviewProfileAgentIds.add(agentId);
-        if (supportsExactPaths) exactPathProfileAgentIds.add(agentId);
-    }
-  }
-  const reviewAgentIds = new Set<string>();
+  profileCatalog?: ExecutionRunProfileContributionCatalog,
+) {
+  const agents = new Map<string, ReturnType<typeof resolveReviewProfileFacts>>();
   for (const agent of registry.agentDefinitionsById.values()) {
     if (agent.identity && listAgentExecutionTargetsV1(agent.identity).length === 0) continue;
     const definition = agent.richDefinition?.definition;
-    if (
-      readAgentExecutionRunCapabilities(definition)?.open.includes('create')
-      && (scope !== 'paths' || !reviewProfileAgentIds.has(agent.id) || exactPathProfileAgentIds.has(agent.id))
-    ) {
-      reviewAgentIds.add(agent.id);
-    }
+    if (!readAgentExecutionRunCapabilities(definition)?.open.includes('create')) continue;
+    const facts = resolveReviewProfileFacts(agent.id, profileCatalog);
+    if (!facts.reviewScopes.includes(scope)) continue;
+    agents.set(agent.id, facts);
   }
-  return reviewAgentIds;
+  return agents;
+}
+
+function resolveReviewProfileFacts(
+  agentId: string,
+  catalog?: ExecutionRunProfileContributionCatalog,
+  selection?: ReviewEngineProfileSelection,
+): Pick<ReviewEngineListItem, 'retentionPolicy' | 'profileId' | 'profileSourceCustody'> & {
+  reviewScopes: ReviewEngineScope[];
+  sessionTranscript: boolean;
+} {
+  const selected = catalog ? resolveExecutionRunProfileSelectionForAgent(catalog, { intent: 'review', agentId, ...selection }) : null;
+  const profile = selected && catalog ? resolveExecutionRunProfileContributionDescriptor(catalog, selected.profileId) : null;
+  const declaredScopes = profile?.metadata?.reviewScopes;
+  const reviewScopes: ReviewEngineScope[] = Array.isArray(declaredScopes) && !declaredScopes.includes('paths')
+    ? ['worktree'] : ['worktree', 'paths'];
+  return { reviewScopes, retentionPolicy: profile?.defaults.retention ?? 'resumable',
+    sessionTranscript: profile?.metadata?.reviewTranscriptInput !== 'unsupported',
+    ...(selected ? { profileId: selected.profileId,
+      ...(selected.profileSourceCustody ? { profileSourceCustody: selected.profileSourceCustody } : {}) } : {}) };
+}
+
+/** Shared selector; contributed behavior comes only from the selected catalog profile. */
+export function selectReviewEngineAgentIds(
+  registry: ReviewAgentCatalog,
+  scope: ReviewEngineScope = 'worktree',
+  profileCatalog?: ExecutionRunProfileContributionCatalog,
+): ReadonlySet<string> {
+  return new Set(selectReviewEngineAgents(registry, scope, profileCatalog).keys());
 }
 
 export async function buildReviewEngineInventoryItems(params: Readonly<{
@@ -109,22 +116,26 @@ export async function buildReviewEngineInventoryItems(params: Readonly<{
   acpCatalogSnapshot?: AcpCatalogSnapshotV1;
   scope?: ReviewEngineScope;
   registrySnapshot?: ReviewAgentCatalog;
+  profileCatalog?: ExecutionRunProfileContributionCatalog;
+  /** One batched observation from the existing Machine inventory readiness owner. */
+  readReadiness?: (targetKeys: readonly string[]) => Promise<readonly (MachineAgentExecutionStateV1 | undefined)[] | null>;
 }>): Promise<readonly ActionReviewEngineInventoryItem[]> {
   const accountSettings = params.accountSettings ?? null;
   const includeDisabled = params.includeDisabled === true;
   const limit = normalizeLimit(params.limit);
   const registry = params.registrySnapshot ?? readAgentCatalogSnapshot();
-  const reviewAgentIds = selectReviewEngineAgentIds(registry, params.scope);
+  const reviewAgents = selectReviewEngineAgents(registry, params.scope, params.profileCatalog);
   // Match the shared Agent catalog's display/default order; installed Agents retain their registry order.
   const orderedReviewAgentIds = [
-    ...AGENT_IDS.filter((agentId) => reviewAgentIds.has(agentId)),
-    ...[...reviewAgentIds].filter((agentId) => !isBundledAgentId(agentId)),
+    ...AGENT_IDS.filter((agentId) => reviewAgents.has(agentId)),
+    ...[...reviewAgents.keys()].filter((agentId) => !isBundledAgentId(agentId)),
   ];
   const agentItems = orderedReviewAgentIds
     .flatMap((agentId) => {
       const agent = registry.agentDefinitionsById.get(agentId);
       if (!agent) return [];
       const description = readReviewEngineDescription(agent);
+      const { sessionTranscript, ...profileFacts } = reviewAgents.get(agent.id)!;
       return [{
         engineId: agent.id,
         value: buildBackendTargetKeyV2(agent.identity
@@ -134,10 +145,12 @@ export async function buildReviewEngineInventoryItems(params: Readonly<{
         ...(description ? { description } : {}),
         enabled: !isBackendTargetDisabledByAccountSettings(accountSettings, { kind: 'backend', backendId: agent.id }),
         backendId: agent.id,
-        capabilities: { structuredNarration: readAgentStructuredOutputCapabilities(agent.richDefinition?.definition)?.formats.includes('json') === true },
+        ...profileFacts,
+        capabilities: { structuredNarration: readAgentStructuredOutputCapabilities(agent.richDefinition?.definition)?.formats.includes('json') === true,
+          sessionTranscript },
       }];
     });
-  const configuredItems = (await buildConfiguredAcpBackendInventoryItems(accountSettings, params.acpCatalogSnapshot))
+  const configuredItems = (await buildConfiguredAcpBackendInventoryItems(accountSettings, params.acpCatalogSnapshot, registry))
     .filter((item): item is typeof item & { backendId: string } => typeof item.backendId === 'string')
     .map((item): ActionReviewEngineInventoryItem => ({
       engineId: item.targetKey,
@@ -145,20 +158,49 @@ export async function buildReviewEngineInventoryItems(params: Readonly<{
       label: item.label,
       enabled: item.enabled,
       backendId: item.backendId,
-      capabilities: { structuredNarration: false },
+      capabilities: { structuredNarration: false, sessionTranscript: true },
+      retentionPolicy: 'resumable',
+      reviewScopes: ['worktree', 'paths'],
       ...(item.description ? { description: item.description } : {}),
     }));
-  const items = [...agentItems, ...configuredItems]
-    .map((item): ActionReviewEngineInventoryItem => {
+  const roster = [...agentItems, ...configuredItems];
+  const readiness = roster.length > 0 ? await params.readReadiness?.(roster.map(item => item.value)) : null;
+  const items = roster
+    .map((item, index): ActionReviewEngineInventoryItem => {
       const selection = resolveExecutionRunAgentDefaultSelection({
         backendTarget: item.engineId === item.backendId ? { kind: 'backend', backendId: item.backendId } : item.value,
         accountSettings,
       });
       const launchModelId = selection && !isNativeAutomaticModelSelectionInputV1(selection) ? selection.modelId : undefined;
-      return { ...ReviewEngineListItemSchema.parse({ ...item, ...(launchModelId ? { launchModelId } : {}) }),
+      const state = readiness?.[index];
+      const unavailableCode = !item.enabled ? 'account_disabled'
+        : state && isMachineAgentExecutionStateBlockingV1(state) ? state : undefined;
+      return { ...ReviewEngineListItemSchema.parse({ ...item, enabled: !unavailableCode, available: !unavailableCode,
+        ...(state ? { readiness: state } : {}), ...(unavailableCode ? { unavailableCode } : {}),
+        ...(launchModelId ? { launchModelId } : {}) }),
         value: item.value, backendId: item.backendId };
     })
-    .filter((item) => includeDisabled || item.enabled !== false);
+    .filter((_item, index) => includeDisabled || roster[index]?.enabled !== false);
 
   return limit ? items.slice(0, limit) : items;
+}
+
+export async function buildReviewEngineInventory(
+  params: Parameters<typeof buildReviewEngineInventoryItems>[0] & Readonly<{
+    profileSelections?: readonly ReviewEngineProfileSelection[];
+  }>,
+): Promise<Readonly<{ items: readonly ActionReviewEngineInventoryItem[]; selectionItems?: readonly ActionReviewEngineInventoryItem[] }>> {
+  if (!params.profileSelections?.length) return { items: await buildReviewEngineInventoryItems(params) };
+  // An authored profile can support a scope that this Agent's default profile does not.
+  // Read Machine facts once for the roster, then project each selection's own scope.
+  const roster = await buildReviewEngineInventoryItems({ ...params, scope: undefined });
+  const items = roster.filter(item => !params.scope || item.reviewScopes?.includes(params.scope));
+  const selectionItems = params.profileSelections.flatMap(selection => {
+    const item = roster.find(row => row.engineId === selection.engineId || row.value === selection.engineId);
+    if (!item) return [];
+    const { sessionTranscript, ...facts } = resolveReviewProfileFacts(item.backendId, params.profileCatalog, selection);
+    if (params.scope && !facts.reviewScopes.includes(params.scope)) return [];
+    return [{ ...item, ...facts, capabilities: { ...item.capabilities, sessionTranscript } }];
+  });
+  return { items, selectionItems };
 }

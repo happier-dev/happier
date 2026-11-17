@@ -42,6 +42,23 @@ const rawStart = (fixture: AdmittedSessionRunFixture, input: Record<string, unkn
   }, presentUser);
 
 describe('ExecutionRunHostBridge admitted registry integration', () => {
+  it('validates default contributed Review options at admission before creating a Run', async () => {
+    await withAdmittedSessionRun({ directOwner: true, profile: true, profileIntent: 'review', run: async fixture => {
+      const agentId = readAgentRoutingIdForContributionIdentity(indexAgentRoutingIdsByContributionIdentity(
+        fixture.admittedRuntime.registry.contributes.agents), fixture.agentIdentity)!;
+      const profile = fixture.admittedRuntime.registry.contributes.executionRunProfiles!.find(entry => entry.definition.id === 'memory')!;
+      const sourceCustody = fixture.admittedRuntime.registry.pluginFinalPolicyCurrentRuntimesById!.get(profile.pluginId!)!.sourceCustody;
+      const request = { intent: 'review' as const, retentionPolicy: 'resumable' as const,
+        intentInput: { engines: { [agentId]: { effort: 'invalid' } } } };
+      // Explicit selection reaches profile validation before generic Review scope preparation.
+      await expect(fixture.start({ ...request, profileId: `${profile.pluginId}/memory`, profileSourceCustody: sourceCustody }))
+        .rejects.toMatchObject({ code: 'execution_run_profile_options_invalid' });
+      await expect(fixture.start(request))
+        .rejects.toMatchObject({ code: 'execution_run_profile_options_invalid' });
+      expect(fixture.nativeOpen).not.toHaveBeenCalled();
+      expect(await listExecutionRunMarkers()).toEqual([]);
+    } });
+  });
   it('refuses an unavailable Machine sandbox choice before creating a detached Run', async () => {
     await withAdmittedSessionRun({ directOwner: true,
       machineMetadata: {

@@ -2351,7 +2351,8 @@ export type ActionExecutorDeps = Readonly<{
   machinePageAction?: (request: Readonly<{ actionId: MachinePageActionId; input: MachinePageActionInput; context: ActionExecutorContext }>) => Promise<unknown>;
   machineTerminalAction?: (request: Readonly<{ actionId: MachineTerminalActionId; input: MachineTerminalActionInput; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   serversList?: (args: Readonly<{ limit?: number }>) => Promise<unknown>;
-  reviewEnginesList?: (args: Readonly<{ sessionId: string | null; machineId?: string; includeDisabled?: boolean; scope?: 'paths' }>) => Promise<unknown>;
+  reviewEnginesList?: (args: Readonly<{ sessionId: string | null; machineId?: string; includeDisabled?: boolean; scope?: 'paths';
+    profileSelections?: readonly import('../../reviews/reviewEngines.js').ReviewEngineProfileSelection[] }>, context?: ActionExecutorContext) => Promise<unknown>;
   /** Caller-owned Account delivery; the host checks visibility of any deep link. */
   notificationsNotifyMe?: (
     input: NotificationsNotifyMeInputV1,

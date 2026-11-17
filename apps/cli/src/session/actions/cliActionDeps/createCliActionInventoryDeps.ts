@@ -16,6 +16,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc/providers';
 import type { connectedServiceProfileKey, legacyCustomAcpCompat } from '@happier-dev/agents';
+import { readAgentTargetReadinessV1 } from '@happier-dev/protocol/actions/executor/agents/agentBackendReadiness';
 
 import type { resolveAccountSettingsHttpBaseUrl } from '@/settings/accountSettings/resolveAccountSettingsHttpBaseUrl';
 import { readSettings, type StoredCredentials } from '@/persistence';
@@ -333,6 +334,8 @@ async function probeActionConfigOptionsBestEffort(params: Readonly<{
 export function createCliActionInventoryDeps(params: Readonly<{
   machineRecipesRead?: ActionExecutorDeps['machineRecipesRead'];
   localMachineId?: string;
+  /** Lazy because the Machine inventory owner is composed after the Account catalog owner. */
+  getReviewReadinessDeps?: () => Pick<ActionExecutorDeps, 'machinesAgentsList' | 'agentsConnectedDefaultRoutesRead'>;
   token: string;
   serverId?: string;
   /** Portable Home identity: the server id published to Action outputs that other Machines consume. */
@@ -646,16 +649,29 @@ export function createCliActionInventoryDeps(params: Readonly<{
         throw error;
       }
     },
-    reviewEnginesList: async ({ sessionId, includeDisabled, scope }) => {
-      const captured = await readAcpCatalogSnapshot();
-      const items = await (await import('./buildReviewEngineInventoryItemsLazy')).buildReviewEngineInventoryItemsLazy({
+    reviewEnginesList: async ({ sessionId, machineId, includeDisabled, scope, profileSelections }, context = {}) => {
+      const captured = await readAcpCatalogSnapshot(context.signal);
+      const selectedMachineId = machineId ?? params.localMachineId;
+      const { resolveCliEngineRegistry } = await import('@/agent/runtime/registry/engineRegistry');
+      const registry = await resolveCliEngineRegistry();
+      const profileCatalog = await registry.resolveExecutionRunProfileCatalog({
+        resolveAgentIdentity: agentId => registry.contributions.agentDefinitionsById.get(agentId)?.identity ?? null,
+      });
+      const inventory = await (await import('./buildReviewEngineInventoryItemsLazy')).buildReviewEngineInventoryItemsLazy({
         includeDisabled,
         scope,
+        profileSelections,
         accountSettings: captured.account.settings,
         acpCatalogSnapshot: captured.catalog,
+        registrySnapshot: registry.contributions,
+        profileCatalog,
+        ...(selectedMachineId && params.getReviewReadinessDeps ? {
+          readReadiness: targets => readAgentTargetReadinessV1(params.getReviewReadinessDeps!(), selectedMachineId,
+            targets.map(target => parseBackendTargetKeyV2(target)), context),
+        } : {}),
       });
       await captured.assertCurrent();
-      return { sessionId, items };
+      return { sessionId, ...inventory };
     },
     agentsBackendsList: async (args) => {
       const captured = await readAcpCatalogSnapshot();

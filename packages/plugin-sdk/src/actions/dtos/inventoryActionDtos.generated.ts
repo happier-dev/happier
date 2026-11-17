@@ -355,6 +355,35 @@ export type InventoryActionInputById = {
         machineId?: string | undefined;
         includeDisabled?: boolean | undefined;
         scope?: 'paths' | undefined;
+        profileSelections?: undefined | {
+            engineId: string;
+            profileId: string;
+            profileSourceCustody?: undefined | {
+                kind: 'account_release';
+                pluginId: string;
+                version: string;
+                archiveDigestSha256: string;
+            } | {
+                kind: 'bundled_first_party';
+                packagedRuntime: {
+                    kind: 'cli_version_root';
+                    versionRootId: string;
+                } | {
+                    kind: 'pinned_runner_snapshot';
+                    snapshotId: string;
+                } | {
+                    kind: 'source_declaration';
+                    packageName: string;
+                };
+            } | {
+                kind: 'development';
+                registeredRootId: string;
+            } | {
+                kind: 'managed';
+                immutableGenerationId: string;
+                installSource: 'archive' | 'localPath' | 'npm';
+            };
+        }[];
     };
     readonly "projects.setup.set": {
         projectRef: {

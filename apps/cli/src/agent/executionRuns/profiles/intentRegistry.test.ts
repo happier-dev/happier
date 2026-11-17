@@ -8,6 +8,7 @@ import {
   listExecutionRunSupportedIntents,
   resolveExecutionRunIntentProfile,
   resolveExecutionRunIntentProfileFromCatalog,
+  resolveExecutionRunProfileSelectionForAgent,
   resolveExecutionRunProfileContributionDescriptor,
 } from './intentRegistry';
 import * as intentRegistry from './intentRegistry';
@@ -19,6 +20,53 @@ const managedProfileCustody = {
 } as const;
 
 describe('executionRun intent profile registry', () => {
+  it('selects the same first compatible profile for default launches and preserves an explicit authored selection', () => {
+    const catalog = buildExecutionRunProfileCatalog(['first', 'second'].map((id) => ({
+      pluginId: 'acme.review', sourceCustody: managedProfileCustody,
+      definition: {
+        id, intent: 'review' as const, title: id, promptAsset: 'review-prompt', compatibleAgents: ['reviewer'],
+        defaults: { retention: 'ephemeral' as const, runClass: 'bounded' as const, io: 'streaming' as const },
+      },
+    })), { resolveAgentIdentity: (agentId) => agentId === 'public-reviewer'
+      ? { pluginId: 'acme.review', localId: 'reviewer' } : null });
+    expect(resolveExecutionRunProfileSelectionForAgent(catalog, { intent: 'review', agentId: 'public-reviewer' }))
+      .toEqual({ profileId: 'acme.review/first', profileSourceCustody: managedProfileCustody });
+    expect(resolveExecutionRunProfileSelectionForAgent(catalog, { intent: 'review', agentId: 'public-reviewer',
+      profileId: 'acme.review/second', profileSourceCustody: managedProfileCustody }))
+      .toEqual({ profileId: 'acme.review/second', profileSourceCustody: managedProfileCustody });
+    expect(resolveExecutionRunProfileSelectionForAgent(catalog, { intent: 'review', agentId: 'unknown' })).toBeNull();
+    expect(() => resolveExecutionRunProfileSelectionForAgent(catalog, { intent: 'review', agentId: 'unknown',
+      profileId: 'acme.review/second', profileSourceCustody: managedProfileCustody }))
+      .toThrowError(expect.objectContaining({ code: 'execution_run_profile_agent_incompatible' }));
+    expect(() => resolveExecutionRunProfileSelectionForAgent(catalog, { intent: 'review', agentId: 'public-reviewer',
+      profileId: 'acme.review/second', profileSourceCustody: { ...managedProfileCustody, immutableGenerationId: 'stale' } }))
+      .toThrow(/source custody/);
+  });
+
+  it('admits only engine options declared by the selected plugin profile before loading prompt assets', async () => {
+    let promptReads = 0;
+    const catalog = buildExecutionRunProfileCatalog([{
+      pluginId: 'acme.review', sourceCustody: managedProfileCustody,
+      definition: {
+        id: 'review', intent: 'delegate', title: 'Review', promptAsset: 'review-prompt', compatibleAgents: ['reviewer'],
+        defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'streaming' },
+        optionsSchema: { type: 'object', additionalProperties: false, properties: { effort: { type: 'string', enum: ['deep', 'fast'] } } },
+      },
+    }], { resolvePromptAssetBlocks: async () => { promptReads += 1; return []; } });
+    const profile = resolveExecutionRunIntentProfileFromCatalog(catalog, 'delegate', 'acme.review/review', managedProfileCustody);
+    const prepare = (options: unknown) => profile.prepareStartParams!({ cwd: process.cwd(), request: {
+      intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'reviewer' },
+      instructions: 'Review.', permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'streaming',
+      profileSourceCustody: managedProfileCustody, intentInput: { engines: { reviewer: options } },
+    } });
+    await expect(prepare({ effort: 'deep' })).resolves.toMatchObject({ retentionPolicy: 'ephemeral' });
+    const knownGoodReads = promptReads;
+    for (const invalid of [{ effort: 'unknown' }, { promptOnly: true }]) {
+      await expect(prepare(invalid)).rejects.toMatchObject({ code: 'execution_run_profile_options_invalid' });
+    }
+    expect(promptReads).toBe(knownGoodReads);
+  });
+
   it('keeps profile coverage aligned with the protocol intent surface', () => {
     expect(listExecutionRunSupportedIntents().slice().sort()).toEqual(ExecutionRunIntentSchema.options.slice().sort());
 

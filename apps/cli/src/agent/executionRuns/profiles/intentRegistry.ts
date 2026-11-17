@@ -8,6 +8,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { PluginSourceCustodyV1Schema, pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { ReviewCommentProposalsV1Schema } from '@happier-dev/protocol/reviews/comments/proposals';
+import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 
 import type { ExecutionRunIntentProfile } from './ExecutionRunIntentProfile';
 import { ReviewProfile } from './review/ReviewProfile';
@@ -45,6 +46,7 @@ export type ExecutionRunProfileContributionCatalog = Readonly<{
   profileDescriptorsById: ReadonlyMap<string, OwnedExecutionRunProfileDescriptor>;
   profileDescriptorIdsByIntent: ReadonlyMap<ExecutionRunIntent, readonly string[]>;
   runtimeProfilesById: ReadonlyMap<string, ExecutionRunIntentProfile>;
+  resolveAgentIdentity?: ExecutionRunProfileCatalogOptions['resolveAgentIdentity'];
 }>;
 
 export type ExecutionRunProfileContributionCatalogInput =
@@ -118,6 +120,20 @@ function resolveCompatibleAgentId(
       `Execution-run profile '${descriptor.qualifiedId}' is not compatible with the selected Agent`,
     );
   }
+  if (!isCompatibleAgentId(descriptor, requestedAgentId, options)) {
+    return failProfileSelection(
+      'execution_run_profile_agent_incompatible',
+      `Execution-run profile '${descriptor.qualifiedId}' is not compatible with the selected Agent`,
+    );
+  }
+  return requestedAgentId;
+}
+
+function isCompatibleAgentId(
+  descriptor: OwnedExecutionRunProfileDescriptor,
+  requestedAgentId: string,
+  options: Pick<ExecutionRunProfileCatalogOptions, 'resolveAgentIdentity'>,
+): boolean {
   const requestedIdentity = options.resolveAgentIdentity
     ? options.resolveAgentIdentity(requestedAgentId)
     : null;
@@ -133,13 +149,7 @@ function resolveCompatibleAgentId(
     return compatibleIdentity?.pluginId === requestedIdentity.pluginId
       && compatibleIdentity.localId === requestedIdentity.localId;
   });
-  if (!compatible || (options.resolveAgentIdentity && !requestedIdentity)) {
-    return failProfileSelection(
-      'execution_run_profile_agent_incompatible',
-      `Execution-run profile '${descriptor.qualifiedId}' is not compatible with the selected Agent`,
-    );
-  }
-  return requestedAgentId;
+  return compatible && (!options.resolveAgentIdentity || requestedIdentity !== null);
 }
 
 function profileDefaultsPatch(
@@ -210,6 +220,21 @@ function withDescriptorBehavior(
         }
       }
       const agentId = resolveCompatibleAgentId(ownedDescriptor, params.request, options);
+      const input = params.request.intentInput;
+      const engineOptions = input && typeof input === 'object' && !Array.isArray(input)
+        && 'engines' in input && input.engines && typeof input.engines === 'object' && !Array.isArray(input.engines)
+        ? (input.engines as Record<string, unknown>)[agentId] : undefined;
+      if (descriptor.optionsSchema) {
+        const validate = compilePluginJsonSchema(descriptor.optionsSchema);
+        if (!isValidPluginJsonSchemaValue(validate, engineOptions === undefined ? {} : engineOptions)) {
+          return failProfileSelection('execution_run_profile_options_invalid',
+            `Engine options do not match execution-run profile '${ownedDescriptor.qualifiedId}'`);
+        }
+      } else if (engineOptions !== undefined && (engineOptions === null || typeof engineOptions !== 'object'
+        || Array.isArray(engineOptions) || Object.keys(engineOptions).length > 0)) {
+        return failProfileSelection('execution_run_profile_options_unsupported',
+          `Execution-run profile '${ownedDescriptor.qualifiedId}' does not declare engine options`);
+      }
       if (descriptor.availability) {
         const facts = options.resolvePolicyFacts?.({
           descriptor: ownedDescriptor,
@@ -324,6 +349,7 @@ export function buildExecutionRunProfileCatalog(
 
   return Object.freeze({
     builtInProfilesByIntent,
+    ...(options.resolveAgentIdentity ? { resolveAgentIdentity: options.resolveAgentIdentity } : {}),
     profileDescriptorsById: Object.freeze(profileDescriptorsById),
     profileDescriptorIdsByIntent: Object.freeze(new Map(
       Array.from(profileDescriptorIdsByIntent.entries()).map(([intent, ids]) => [
@@ -388,6 +414,41 @@ export function resolveExecutionRunIntentProfileFromCatalog(
   }
 
   return catalog.builtInProfilesByIntent.get(intent) ?? resolveExecutionRunIntentProfile(intent);
+}
+
+export type ExecutionRunProfileSelection = Readonly<{
+  profileId: string;
+  profileSourceCustody: PluginSourceCustodyV1 | null;
+}>;
+
+/** Inventory and admission select from the same catalog, preserving authored choices. */
+export function resolveExecutionRunProfileSelectionForAgent(
+  catalog: ExecutionRunProfileContributionCatalog,
+  params: Readonly<{
+    intent: ExecutionRunIntent;
+    agentId: string;
+    profileId?: string | null;
+    profileSourceCustody?: PluginSourceCustodyV1 | null;
+  }>,
+): ExecutionRunProfileSelection | null {
+  const explicitProfileId = params.profileId?.trim();
+  if (explicitProfileId) {
+    resolveExecutionRunIntentProfileFromCatalog(catalog, params.intent, explicitProfileId, params.profileSourceCustody);
+    const descriptor = catalog.profileDescriptorsById.get(explicitProfileId)!;
+    if (!isCompatibleAgentId(descriptor, params.agentId, catalog)) {
+      return failProfileSelection('execution_run_profile_agent_incompatible',
+        `Execution-run profile '${explicitProfileId}' is not compatible with the selected Agent`);
+    }
+    return { profileId: explicitProfileId,
+      profileSourceCustody: descriptor.sourceCustody };
+  }
+  for (const profileId of catalog.profileDescriptorIdsByIntent.get(params.intent) ?? []) {
+    const descriptor = catalog.profileDescriptorsById.get(profileId);
+    if (descriptor && isCompatibleAgentId(descriptor, params.agentId, catalog)) {
+      return { profileId, profileSourceCustody: descriptor.sourceCustody };
+    }
+  }
+  return null;
 }
 
 export function resolveExecutionRunProfileContributionDescriptor(

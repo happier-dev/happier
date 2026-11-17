@@ -62,6 +62,7 @@ import { readBackendResumableRuntimeId } from '@/agent/executionRuns/controllers
 import {
   buildExecutionRunProfileCatalog,
   resolveExecutionRunIntentProfileFromCatalog,
+  resolveExecutionRunProfileSelectionForAgent,
   type ExecutionRunProfileContributionCatalog,
 } from '@/agent/executionRuns/profiles/intentRegistry';
 import { createExecutionRunBridgeRuntime } from './createExecutionRunBridgeRuntime';
@@ -292,6 +293,16 @@ async function prepareExecutionRunManagerStartParams(
   cwd: string,
   profileCatalog: ExecutionRunProfileContributionCatalog,
 ): Promise<ExecutionRunManagerStartParams> {
+  if (params.intent === 'review') {
+    const selection = resolveExecutionRunProfileSelectionForAgent(profileCatalog, {
+      intent: params.intent,
+      agentId: resolveExecutionRunRuntimeBackendId(params.backendTarget),
+      profileId: params.profileId,
+      profileSourceCustody: params.profileSourceCustody,
+    });
+    if (selection) params = { ...params, profileId: selection.profileId,
+      ...(selection.profileSourceCustody ? { profileSourceCustody: selection.profileSourceCustody } : {}) };
+  }
   const profile = resolveExecutionRunIntentProfileFromCatalog(
     profileCatalog,
     params.intent,

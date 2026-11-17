@@ -16,6 +16,8 @@ import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDire
 import { readCapabilitySelectionCarrierV1, SessionCapabilitySelectionAuthoringV1Schema, setSessionCapabilitySelectionItemV1 } from '../reach/sessionCapabilitySelectionV1.js';
 import { SpawnCapabilitiesPreviewOutputV1Schema } from '../actions/specs/sessionCapabilities.js';
 import { resolveReviewNarratorPolicy, ReviewEngineCapabilitiesSchema } from '../reviews/reviewEngines.js';
+import { ExecutionRunRetentionPolicySchema } from '../execution/runs/runPrimitives.js';
+import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
 import { resolveActionBackendTargetSelection, resolveExecutionBackendTargetSelectionForValue } from '../actions/resolveActionBackendTargetSelection.js';
 import { readRecord, readRecordListProperty, readNonEmptyString, isRecord, hasOwn } from './inputRecords.js';
 import { projectInputOptionsDependencies } from './inputOptionsDependencies.js';
@@ -124,10 +126,15 @@ export function readReviewNarratorOptions(value: unknown) {
     : Array.isArray(value) ? value.filter(isRecord) : [];
   return items.flatMap((item) => {
     const capability = ReviewEngineCapabilitiesSchema.safeParse(item.capabilities);
+    const retentionPolicy = ExecutionRunRetentionPolicySchema.safeParse(item.retentionPolicy);
+    const profileSourceCustody = PluginSourceCustodyV1Schema.safeParse(item.profileSourceCustody);
     return normalizeResolvedOptions([item]).map((option) => ({
       ...option,
       value: tryNormalizeExecutionBackendOptionValue(option.value) ?? option.value,
       capabilities: capability.success ? capability.data : { structuredNarration: false },
+      ...(retentionPolicy.success ? { retentionPolicy: retentionPolicy.data } : {}),
+      ...(typeof item.profileId === 'string' ? { profileId: item.profileId } : {}),
+      ...(profileSourceCustody.success ? { profileSourceCustody: profileSourceCustody.data } : {}),
     }));
   });
 }

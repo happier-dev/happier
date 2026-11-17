@@ -3,6 +3,10 @@ import { AccountSettingsSchema, buildBackendTargetKeyV2, PluginAgentContribution
 import { AcpCatalogRecordV1Schema, type AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
 import { projectManifestAgentContribution } from '@/plugins/projection/registry/projectManifestAgentContribution';
+import { readReviewNarratorOptions } from '@happier-dev/protocol/inputs/inputOptions';
+import { readAgentTargetReadinessV1 } from '@happier-dev/protocol/actions/executor/agents/agentBackendReadiness';
+import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildExecutionRunProfileCatalog } from '@/agent/executionRuns/profiles/intentRegistry';
 
 const registryMocks = vi.hoisted(() => ({
   getResolvedContributionRegistry: vi.fn(),
@@ -21,7 +25,7 @@ vi.mock('@/plugins/runtime/reload/singleton', () => ({
   },
 }));
 
-import { buildReviewEngineInventoryItems as buildReviewInventory } from './buildReviewEngineInventoryItems';
+import { buildReviewEngineInventory, buildReviewEngineInventoryItems as buildReviewInventory } from './buildReviewEngineInventoryItems';
 const emptyCatalog = { status: 'ready', revision: 1, record: { v: 1, definitions: [] } } satisfies AcpCatalogSnapshotV1;
 const buildReviewEngineInventoryItems = (params: Parameters<typeof buildReviewInventory>[0]) => buildReviewInventory({
   acpCatalogSnapshot: emptyCatalog, ...params,
@@ -39,6 +43,62 @@ describe('buildReviewEngineInventoryItems', () => {
   beforeEach(() => {
     registryMocks.getReloadState.mockReturnValue({ activeRegistry: null });
     registryMocks.isRuntimeRegistryCurrent.mockReturnValue(true);
+  });
+
+  it('projects transcript support from the selected profile while preserving the default roster', async () => {
+    const agent = projectManifestAgentContribution({
+      pluginId: 'acme.review', provenance: 'external', source: { kind: 'path' },
+      definition: PluginAgentContributionV2Schema.parse({ id: 'reviewer', title: 'Reviewer',
+        primary: 'executionRuns', runtime: { kind: 'custom' },
+        capabilities: { executionRuns: { open: ['create'], checkpoint: false, stop: true } } }),
+    });
+    const profileSourceCustody = { kind: 'managed', immutableGenerationId: 'transcript-profile', installSource: 'archive' } as const;
+    const profileCatalog = buildExecutionRunProfileCatalog(['native-cli', 'text-review'].map(id => ({
+      pluginId: 'acme.review', sourceCustody: profileSourceCustody,
+      definition: { id, intent: 'review' as const, title: id, promptAsset: 'prompt', compatibleAgents: ['reviewer'],
+        defaults: { retention: 'ephemeral' as const, runClass: 'bounded' as const, io: 'streaming' as const },
+        ...(id === 'native-cli' ? { metadata: { reviewTranscriptInput: 'unsupported', reviewScopes: ['worktree'] } } : {}) },
+    })), { resolveAgentIdentity: id => id === agent.id ? agent.identity ?? null : null });
+    const inventory = await buildReviewEngineInventory({
+      acpCatalogSnapshot: emptyCatalog,
+      registrySnapshot: { agentDefinitionsById: new Map([[agent.id, agent]]), executionRunProfiles: [] },
+      profileCatalog,
+      profileSelections: [{ engineId: agent.id, profileId: 'acme.review/text-review', profileSourceCustody }],
+    });
+    expect(inventory.items).toEqual([expect.objectContaining({ profileId: 'acme.review/native-cli',
+      capabilities: expect.objectContaining({ sessionTranscript: false }) })]);
+    expect(inventory.selectionItems).toEqual([expect.objectContaining({ profileId: 'acme.review/text-review',
+      capabilities: expect.objectContaining({ sessionTranscript: true }) })]);
+    const scopedInventory = await buildReviewEngineInventory({
+      acpCatalogSnapshot: emptyCatalog, scope: 'paths', profileCatalog,
+      registrySnapshot: { agentDefinitionsById: new Map([[agent.id, agent]]), executionRunProfiles: [] },
+      profileSelections: [{ engineId: agent.id, profileId: 'acme.review/text-review', profileSourceCustody }],
+    });
+    expect(scopedInventory.items).toEqual([]);
+    expect(scopedInventory.selectionItems).toEqual([expect.objectContaining({ profileId: 'acme.review/text-review',
+      reviewScopes: ['worktree', 'paths'] })]);
+  });
+
+  it('retains every executable reviewer while consuming one Machine readiness projection and setup reason', async () => {
+    const agents = ['ready-agent', 'setup-agent'].map(id => projectManifestAgentContribution({
+      pluginId: 'acme.review', provenance: 'external', source: { kind: 'path' },
+      definition: PluginAgentContributionV2Schema.parse({ id, title: id, primary: 'sessions', runtime: { kind: 'custom' },
+        capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } }),
+    }));
+    const machinesAgentsList = vi.fn(async () => ({ items: agents.map((agent, index) => ({
+      agentId: agent.id, title: agent.id, installed: index === 0, version: null, latestVersion: null,
+      update: { supported: false, command: null }, signIn: { status: 'signedIn', loginSupport: 'unsupported' },
+      platform: { supported: true }, install: { available: true, mode: 'manual', sizeBytes: null, guideUrl: null }, dependencies: [],
+    })) }));
+    const items = await buildReviewEngineInventoryItems({
+      registrySnapshot: { agentDefinitionsById: new Map(agents.map(agent => [agent.id, agent])), executionRunProfiles: [] },
+      readReadiness: targets => readAgentTargetReadinessV1({ machinesAgentsList }, 'machine-1', targets.map(parseBackendTargetKeyV2), {}),
+    });
+    expect(items).toEqual([
+      expect.objectContaining({ engineId: agents[0]!.id, available: true, readiness: 'ready' }),
+      expect.objectContaining({ engineId: agents[1]!.id, available: false, readiness: 'notInstalled', unavailableCode: 'notInstalled' }),
+    ]);
+    expect(machinesAgentsList).toHaveBeenCalledTimes(1);
   });
 
   it('projects the Account model resolved by the Run launch owner and omits the bare Agent default', async () => {
@@ -76,8 +136,8 @@ describe('buildReviewEngineInventoryItems', () => {
       executionRunProfiles: [], catalogEntriesById: {},
     } } });
     expect(await buildReviewEngineInventoryItems({})).toEqual([
-      expect.objectContaining({ engineId: 'acme.review/assistant', capabilities: { structuredNarration: true } }),
-      expect.objectContaining({ engineId: 'acme.review/codex', capabilities: { structuredNarration: false } }),
+      expect.objectContaining({ engineId: 'acme.review/assistant', capabilities: { structuredNarration: true, sessionTranscript: true } }),
+      expect.objectContaining({ engineId: 'acme.review/codex', capabilities: { structuredNarration: false, sessionTranscript: true } }),
     ]);
   });
 
@@ -194,7 +254,7 @@ describe('buildReviewEngineInventoryItems', () => {
 
     expect(await buildReviewEngineInventoryItems({ accountSettings, acpCatalogSnapshot })).toContainEqual(
       expect.objectContaining({ engineId: targetKey, value: targetKey, label: 'Review Bot',
-        capabilities: { structuredNarration: false }, launchModelId: 'configured-review-model' }),
+        capabilities: { structuredNarration: false, sessionTranscript: true }, launchModelId: 'configured-review-model' }),
     );
     expect(await buildReviewEngineInventoryItems({
       acpCatalogSnapshot,
@@ -273,6 +333,14 @@ describe('buildReviewEngineInventoryItems', () => {
   });
 
   it('hides a profile that declares exact paths unsupported for a paths scope', async () => {
+    const profileCatalog = buildExecutionRunProfileCatalog([
+      { id: 'review', intent: 'review', title: 'Review', promptAsset: 'prompt', compatibleAgents: ['coderabbit'],
+        metadata: { reviewScopes: ['worktree'] }, defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'requestResponse' } },
+      { id: 'paths-review', intent: 'review', title: 'Paths review', promptAsset: 'prompt', compatibleAgents: ['coderabbit'],
+        metadata: { reviewScopes: ['worktree', 'paths'] }, defaults: { retention: 'resumable', runClass: 'bounded', io: 'requestResponse' } },
+    ]);
+    const buildSelectedInventory = (params: Parameters<typeof buildReviewEngineInventoryItems>[0] = {}) =>
+      buildReviewEngineInventoryItems({ profileCatalog, ...params });
     registryMocks.getResolvedContributionRegistry.mockReturnValue({
       agentDefinitionsById: new Map([
         ['coderabbit', { id: 'coderabbit', definition: { id: 'coderabbit', title: 'CodeRabbit' }, richDefinition: { definition: runCapableDefinition({ id: 'coderabbit' }) } }],
@@ -282,12 +350,24 @@ describe('buildReviewEngineInventoryItems', () => {
         { definition: {
           id: 'review', intent: 'review', compatibleAgents: ['coderabbit'],
           metadata: { reviewScopes: ['worktree'] },
+          defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'requestResponse' },
         } },
         { definition: { id: 'security', intent: 'review', compatibleAgents: ['deepsec'] } },
       ],
     });
 
-    expect((await buildReviewEngineInventoryItems({ scope: 'paths' })).map((item) => item.engineId)).toEqual(['deepsec']);
-    expect((await buildReviewEngineInventoryItems({})).map((item) => item.engineId)).toEqual(['coderabbit', 'deepsec']);
+    expect((await buildSelectedInventory({ scope: 'paths' })).map((item) => item.engineId)).toEqual(['deepsec']);
+    expect((await buildSelectedInventory()).map((item) => item.engineId)).toEqual(['coderabbit', 'deepsec']);
+    expect(await buildSelectedInventory()).toEqual([
+      expect.objectContaining({ engineId: 'coderabbit', profileId: 'review', reviewScopes: ['worktree'], retentionPolicy: 'ephemeral', available: true }),
+      expect.objectContaining({ engineId: 'deepsec', reviewScopes: ['worktree', 'paths'], retentionPolicy: 'resumable', available: true }),
+    ]);
+    expect(readReviewNarratorOptions({ items: await buildSelectedInventory() })).toContainEqual(
+      expect.objectContaining({ retentionPolicy: 'ephemeral' }),
+    );
+    expect(await buildSelectedInventory({ includeDisabled: true, accountSettings: AccountSettingsSchema.parse({
+      backendEnabledByTargetKey: { 'agent:happier.review.coderabbit/coderabbit': false },
+    }) })).toContainEqual(expect.objectContaining({ engineId: 'coderabbit', enabled: false, available: false,
+      unavailableCode: 'account_disabled', reviewScopes: ['worktree'] }));
   });
 });

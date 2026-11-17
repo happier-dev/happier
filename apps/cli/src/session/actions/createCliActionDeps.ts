@@ -723,6 +723,10 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const { callMachineAction, isMachineActionServerScopeCurrent } = createCliMachineActionTransport(params);
   const inventoryDeps = createCliActionInventoryDeps({ ...params, callMachineAction,
     localMachineId,
+    getReviewReadinessDeps: (): Pick<ActionExecutorDeps, 'machinesAgentsList' | 'agentsConnectedDefaultRoutesRead'> => ({
+      machinesAgentsList: machineInventoryDeps.machinesAgentsList,
+      agentsConnectedDefaultRoutesRead: inventoryDeps.agentsConnectedDefaultRoutesRead,
+    }),
     authorizeConnectedAccountRequest: (context, request) => resolveServerRequestHeaders(context,
       context?.externalActionExecutionAuthorization?.binding.actionId ?? 'sessions.spawn.connected_services.list', request),
     readCurrentSessionMetadata: () => readCurrentSessionMetadata(),
