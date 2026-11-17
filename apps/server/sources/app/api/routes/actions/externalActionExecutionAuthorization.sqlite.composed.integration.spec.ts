@@ -5352,12 +5352,13 @@ describe("external Action execution authorization", () => {
                     attribution: { serverId: homeId, accountId: fixture.account.id, machineId: fixture.machine.id,
                         installationId: fixture.machine.installationId! } } });
             if (!projected) throw new Error('Requester Account projection was not admitted');
-            const executor = createActionExecutor(createCliActionDeps({ credentials, token, sessionId: session.id,
+            // This is a present-user read of an explicit target, not a bound live Session caller.
+            const executor = createActionExecutor(createCliActionDeps({ credentials, token, sessionId: 'cli-global',
                 serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl, mode: 'plain', ctx: null,
                 externalActionMachineRequestPrivateKey: fixture.keyPair.secretKey,
                 externalActionMachineInstallationId: fixture.machine.installationId! }));
             const result = await executor.execute('session.status.get', input, {
-                surface: 'ui', authority: 'present_user', serverId: homeId, defaultSessionId: session.id, runtimeAccountId: fixture.account.id,
+                surface: 'ui', authority: 'present_user', serverId: homeId, runtimeAccountId: fixture.account.id,
                 externalActionExecutionAuthorization: projected, externalActionTarget: projected.binding.target,
             });
             expect(result, JSON.stringify({ reads, result })).toMatchObject({ ok: true, result: { session: { id: session.id },
