@@ -44,11 +44,11 @@ describe('shared source scope selection', () => {
         expect(TriageListScopeUnitsInputV1Schema.parse({ v: 1, draft: context, mode: 'configured' }))
             .toMatchObject({ draft: context, mode: 'configured' });
         expect(TriageSourceInstanceDraftV1Schema.safeParse(context).success).toBe(false);
-        const page = TriageListScopeUnitsResultV1Schema.parse({
+        const page = {
             kind: 'page', status: 'partial', selection: { kind: 'selected', unitIds: ['11'] },
             units: [{ id: '11', label: 'Selected project', secondaryText: 'Workspace', collisionScope: fixture.getInput.localRef.collisionScope }],
             nextCursor: { v: 1, token: '{"page":2}' },
-        });
+        };
         expect(TriageListScopeUnitsResultV1Schema.parse(page)).toEqual(page);
         expect(TriageListScopeUnitsResultV1Schema.safeParse({ ...page, status: 'complete' }).success).toBe(false);
         expect(TriageListScopeUnitsInputV1Schema.safeParse({ v: 1, draft, mode: 'configured', token: 'foreign' }).success).toBe(false);

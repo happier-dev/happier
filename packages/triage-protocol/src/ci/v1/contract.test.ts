@@ -166,8 +166,8 @@ describe('CI executable V1 contract', () => {
         expect(ForgeCiActionInputSchemasV1.readFailureContext.safeParse(input).success).toBe(false);
         const explicit = { ...input, jobs: ['native-job'], excerpt: { contextLines: 0, tailLines: 0, failedOnly: false, stepIds: ['native-step'] }, maxSerializedBytes: 1 };
         expect(ForgeCiActionInputSchemasV1.readFailureContext.parse(explicit)).toEqual(explicit);
-        expect(ForgeCiActionInputSchemasV1.readFailureContext.safeParse({ ...input, maxSerializedBytes: 0 }).success).toBe(false);
-        expect(ForgeCiActionInputSchemasV1.readFailureContext.safeParse({ ...input, limit: 200 }).success).toBe(false);
+        expect(ForgeCiActionInputSchemasV1.readFailureContext.safeParse({ ...explicit, maxSerializedBytes: 0 }).success).toBe(false);
+        expect(ForgeCiActionInputSchemasV1.readFailureContext.safeParse({ ...explicit, limit: 200 }).success).toBe(false);
     });
 
     it('keeps pending and unsupported logs distinct from available original evidence', () => {

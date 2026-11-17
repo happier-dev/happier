@@ -44,8 +44,13 @@ describe('Session PR Resource admission', () => {
         expect(SessionPullRequestStatusResourceResultV1Schema.parse(external)).toEqual(external);
         const linked = { ...external, pullRequests: [{ ...external.pullRequests[0], entry }] };
         expect(SessionPullRequestStatusResourceResultV1Schema.parse(linked)).toEqual(linked);
+        const withoutInstance = { ...external, pullRequests: [{ ...external.pullRequests[0],
+            entry: { entryRef: entry.entryRef },
+            nativeStatus: { kind: 'unavailable', failure: { class: 'unsupportedContract', code: 'sessionLinksSourceInstanceRequired' } },
+        }] };
+        expect(SessionPullRequestStatusResourceResultV1Schema.parse(withoutInstance)).toEqual(withoutInstance);
         for (const invalid of [{ ...entry, sourceInstanceId: 'invented-from-url' },
-            { ...entry, entryRef: { ...entry.entryRef, entryId: '' } }, { entryRef: entry.entryRef },
+            { ...entry, entryRef: { ...entry.entryRef, entryId: '' } }, { sourceInstanceId: entry.sourceInstanceId },
             { ...entry, credentialRevision: 1 }]) {
             expect(SessionPullRequestStatusResourceResultV1Schema.safeParse({ ...external,
                 pullRequests: [{ ...external.pullRequests[0], entry: invalid }] }).success).toBe(false);

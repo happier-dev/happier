@@ -319,6 +319,12 @@ describe('Triage get result', () => {
             kind: 'absent',
             localRef: present.localRef,
         }).success).toBe(true);
+        const merged = { kind: 'merged', localRef: present.localRef,
+            successor: { ...present.localRef, entryId: '18' } };
+        expect(TriageGetResultV1Schema.parse(merged)).toEqual(merged);
+        const unresolved = { kind: 'unresolved', localRef: present.localRef,
+            failure: { class: 'permission', code: 'source-forbidden' } };
+        expect(TriageGetResultV1Schema.parse(unresolved)).toEqual(unresolved);
         expect(TriageGetResultV1Schema.safeParse({
             kind: 'notFound',
             localRef: present.localRef,

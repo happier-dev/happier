@@ -135,12 +135,16 @@ describe('Triage review-workspace result', () => {
     });
 
     it('keeps `created` the sole rollback authority on the only Session-composing arm', () => {
-        expect(TriagePrepareReviewWorkspaceResultV1Schema.safeParse({
+        const prepared = {
             kind: 'prepared',
             repositoryPath: '/workspaces/example-repository',
             branch: 'review/pull-17',
             currentness: { kind: 'currentAtObservedHead' },
-        }).success).toBe(false);
+            pullRequest: { number: 17 },
+        };
+        expect(TriagePrepareReviewWorkspaceResultV1Schema.parse({ ...prepared, created: true }))
+            .toEqual({ ...prepared, created: true });
+        expect(TriagePrepareReviewWorkspaceResultV1Schema.safeParse(prepared).success).toBe(false);
     });
 
     it('requires the exact moved and stale head facts rather than a bare verdict', () => {
@@ -150,6 +154,7 @@ describe('Triage review-workspace result', () => {
             branch: 'review/pull-17',
             created: false,
             currentness: { kind: 'movedToObservedHead' },
+            pullRequest: { number: 17 },
         }).success).toBe(false);
         expect(TriagePrepareReviewWorkspaceResultV1Schema.safeParse({
             kind: 'prepared',

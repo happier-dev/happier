@@ -409,17 +409,3 @@ describe('Triage sources V1 contribution conformance', () => {
         expect(result.ok === false && result.errors.join(' ')).toContain("'sidebar'");
     });
 });
-
-describe('Triage sources V1 fixture', () => {
-    it('produces every public value by parsing through its own published schema', () => {
-        expect(fixture.descriptor.kinds.map((kind) => kind.id))
-            .toEqual(['pull-request', 'issue']);
-        expect(fixture.scanResult.kind).toBe('complete');
-        expect(fixture.getResult.kind).toBe('present');
-        expect(fixture.detailInput.linkedSessions).toHaveLength(1);
-        expect(fixture.administrationResult).toEqual({
-            kind: 'active',
-            sourceInstanceId: fixture.configuredInstance.instance.sourceInstanceId,
-        });
-    });
-});

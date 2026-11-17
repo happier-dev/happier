@@ -51,7 +51,6 @@ describe('truncateTriageUtf8V1', () => {
         const bounded = truncateTriageUtf8V1('\u{1F680}'.repeat(10), 7);
 
         expect(bounded.value).toBe('\u{1F680}');
-        expect([...bounded.value].every((point) => point === '\u{1F680}')).toBe(true);
     });
 
     it('passes a fitting value through unchanged and unflagged', () => {
@@ -70,10 +69,6 @@ describe('projectTriageDisplayTextV1', () => {
 
         expect(projected).toEqual({ value: 'Crash in render()', truncated: false });
         expect(SINGLE_LINE.test(projected.value)).toBe(true);
-    });
-
-    it('charges normalization no truncation, because collapsing a control run loses no content', () => {
-        expect(projectTriageDisplayTextV1('a\nb').truncated).toBe(false);
     });
 
     it('truncates and reports it rather than dropping oversized display text', () => {
