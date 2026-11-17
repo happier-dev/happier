@@ -964,7 +964,7 @@ const settingsAppearanceTranslationExtension = {
     invalidColor: 'Use hex, rgb(...), rgba(...), or transparent.',
     invalidProfileName: 'Nom de perfil no vàlid.',
     profileLimitReached: 'S\'ha arribat al límit del tema.',
-    contrastWarning: 'Baix contrast per a aquest parell de fitxes. Encara podeu desar o restablir.',
+    contrastWarning: ({ pair }: { pair: string }) => `Baix contrast amb ${pair}.`,
     fixContrast: 'Corregeix el contrast',
     resetToken: 'Restableix el testimoni',
     resetGroup: 'Restablir i desactivar',

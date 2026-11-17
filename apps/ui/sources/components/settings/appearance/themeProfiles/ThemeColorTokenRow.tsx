@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { HAPPIER_ICON_BUTTON_SIZE } from '@happier-dev/plugin-ui/presentation';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
@@ -9,7 +10,8 @@ import { Text } from '@/components/ui/text/Text';
 import { ThemeColorPicker } from '@/components/ui/forms/color/ThemeColorPicker';
 import { t } from '@/text';
 import type { ThemeProfileMode } from '@/theme/profiles/themeProfileTypes';
-import type { ThemeProfileTokenDefinition } from '@/theme/profiles/themeProfileTokenRegistry';
+import { getThemeProfileTokenDefinition, type ThemeProfileTokenDefinition } from '@/theme/profiles/themeProfileTokenRegistry';
+import { joinList } from '@/utils/text/joinList';
 
 /**
  * One colour of a theme: its name, what it follows or that it changed, the colour field, and Reset when
@@ -52,7 +54,8 @@ export const ThemeColorRow = React.memo(function ThemeColorRow(props: Readonly<{
         inlineTestID: `settings-theme-contrast-fix-${props.rowId}`,
         onPress: props.onFixContrast,
     });
-    const actionIds = actions.map(action => action.id);
+    const fixAction = actions.find(action => action.id === fixActionId);
+    const resetAction = actions.find(action => action.id === resetActionId);
 
     return (
         <View testID={`settings-theme-color-token-${props.rowId}`} style={props.highlighted ? styles.highlighted : null}>
@@ -61,8 +64,21 @@ export const ThemeColorRow = React.memo(function ThemeColorRow(props: Readonly<{
                 subtitle={props.subtitle}
                 mode="info"
                 accessoryLayout="adaptive"
+                // The contrast warning belongs to this row: it reads under the row's description, never between rows.
+                bottomElement={props.warning ? (
+                    <Text testID={`settings-theme-contrast-warning-${props.rowId}`} variant="meta" style={styles.warningText}>
+                        {props.warning}
+                    </Text>
+                ) : undefined}
+                bottomElementInset="text"
                 rightElement={(
+                    // Fixed slots on every row (fix contrast before the colour, reset after it), so each row's
+                    // swatch and field stand on the same column whatever actions a row offers.
                     <View style={styles.controls}>
+                        <View style={styles.actionSlot}>
+                            {fixAction ? <ItemRowActions title={props.title} actions={[fixAction]} compactActionIds={[fixAction.id]}
+                                pinnedActionIds={[fixAction.id]} overflowTriggerTestID={`settings-theme-color-fix-${props.rowId}`} /> : null}
+                        </View>
                         <ThemeColorPicker
                             value={props.value}
                             inputTestID={`settings-theme-color-input-${props.rowId}`}
@@ -72,26 +88,16 @@ export const ThemeColorRow = React.memo(function ThemeColorRow(props: Readonly<{
                             onChange={props.onChange}
                             onValidityChange={(isValid) => props.onInvalidChange(!isValid)}
                         />
-                        {actions.length ? (
-                            <ItemRowActions
-                                title={props.title}
-                                actions={actions}
-                                compactActionIds={actionIds}
-                                pinnedActionIds={actionIds}
-                                overflowTriggerTestID={`settings-theme-color-actions-${props.rowId}`}
-                            />
-                        ) : null}
+                        <View style={styles.actionSlot}>
+                            {resetAction ? <ItemRowActions title={props.title} actions={[resetAction]} compactActionIds={[resetAction.id]}
+                                pinnedActionIds={[resetAction.id]} overflowTriggerTestID={`settings-theme-color-actions-${props.rowId}`} /> : null}
+                        </View>
                     </View>
                 )}
             />
             {props.invalid ? (
                 <Text testID={`settings-theme-color-error-${props.rowId}`} variant="meta" style={styles.feedbackText}>
                     {t('settingsAppearance.themeProfiles.invalidColor')}
-                </Text>
-            ) : null}
-            {props.warning ? (
-                <Text testID={`settings-theme-contrast-warning-${props.rowId}`} variant="meta" style={styles.feedbackText}>
-                    {props.warning}
                 </Text>
             ) : null}
         </View>
@@ -102,7 +108,8 @@ export const ThemeColorRow = React.memo(function ThemeColorRow(props: Readonly<{
 export const ThemeColorTokenRow = React.memo(function ThemeColorTokenRow(props: Readonly<{
     value: string;
     changed: boolean;
-    contrastWarning: boolean;
+    /** The colours this one fails to contrast with, named ("Danger background"); null when every pair reads. */
+    contrastAgainst: string | null;
     contrastFix: string | null;
     mode: ThemeProfileMode;
     token: ThemeProfileTokenDefinition;
@@ -127,7 +134,7 @@ export const ThemeColorTokenRow = React.memo(function ThemeColorTokenRow(props: 
             value={props.value}
             changed={changed}
             invalid={props.invalid}
-            warning={props.contrastWarning ? t('settingsAppearance.themeProfiles.contrastWarning') : undefined}
+            warning={props.contrastAgainst ? t('settingsAppearance.themeProfiles.contrastWarning', { pair: props.contrastAgainst }) : undefined}
             onFixContrast={contrastFix === null ? undefined : fixContrast}
             readonly={props.readonly}
             recentColors={props.recentColors}
@@ -153,4 +160,22 @@ const stylesheet = StyleSheet.create((theme) => ({
     highlighted: {
         backgroundColor: theme.colors.surface.selected,
     },
+    warningText: {
+        color: theme.colors.state.warning.foreground,
+    },
+    actionSlot: {
+        width: HAPPIER_ICON_BUTTON_SIZE,
+        alignItems: 'center',
+    },
 }));
+
+const NO_PAIRS: readonly string[] = Object.freeze([]);
+
+/** The colours a token fails to contrast with, by their names, for its row's warning; null when none fails. */
+export function describeContrastPairs(tokenIds: readonly string[] = NO_PAIRS): string | null {
+    if (tokenIds.length === 0) return null;
+    return joinList(tokenIds.map((id) => {
+        const definition = getThemeProfileTokenDefinition(id);
+        return definition ? (definition.labelKey ? t(definition.labelKey) : definition.label) : id;
+    }));
+}

@@ -1092,8 +1092,7 @@ const settingsAppearanceTranslationExtension = {
     invalidColor: 'Use hex, rgb(...), rgba(...), or transparent.',
     invalidProfileName: 'Invalid profile name.',
     profileLimitReached: 'Theme limit reached.',
-    contrastWarning:
-      'Low contrast for this token pair. You can still save or reset.',
+    contrastWarning: ({ pair }: { pair: string }) => `Low contrast against ${pair}.`,
     fixContrast: 'Fix contrast',
     resetToken: 'Reset token',
     resetGroup: 'Reset and deactivate',

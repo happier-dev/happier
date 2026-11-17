@@ -965,7 +965,7 @@ const settingsAppearanceTranslationExtension = {
     invalidColor: 'Use hex, rgb(...), rgba(...), or transparent.',
     invalidProfileName: 'Неверное имя профиля.',
     profileLimitReached: 'Достигнут лимит тем.',
-    contrastWarning: 'Низкий контраст для этой пары токенов. Вы все еще можете сохранить или сбросить настройки.',
+    contrastWarning: ({ pair }: { pair: string }) => `Низкий контраст с: ${pair}.`,
     fixContrast: 'Исправить контраст',
     resetToken: 'Сбросить токен',
     resetGroup: 'Сброс и деактивация',

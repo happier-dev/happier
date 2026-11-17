@@ -964,7 +964,7 @@ const settingsAppearanceTranslationExtension = {
     invalidColor: 'Use hex, rgb(...), rgba(...), or transparent.',
     invalidProfileName: 'Nieprawidłowa nazwa profilu.',
     profileLimitReached: 'Osiągnięto limit motywów.',
-    contrastWarning: 'Niski kontrast dla tej pary żetonów. Nadal możesz zapisać lub zresetować.',
+    contrastWarning: ({ pair }: { pair: string }) => `Niski kontrast z: ${pair}.`,
     fixContrast: 'Popraw kontrast',
     resetToken: 'Zresetuj token',
     resetGroup: 'Zresetuj i dezaktywuj',

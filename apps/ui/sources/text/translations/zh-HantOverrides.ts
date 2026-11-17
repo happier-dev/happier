@@ -969,7 +969,7 @@ const settingsAppearanceTranslationExtension = {
     invalidColor: 'Use hex, rgb(...), rgba(...), or transparent.',
     invalidProfileName: '個人資料名稱無效。',
     profileLimitReached: '已達到主題限制。',
-    contrastWarning: '該令牌對的對比度較低。您仍然可以儲存或重置。',
+    contrastWarning: ({ pair }: { pair: string }) => `與${pair}的對比度較低。`,
     fixContrast: '修正對比度',
     resetToken: '重置令牌',
     resetGroup: '重置和停用',

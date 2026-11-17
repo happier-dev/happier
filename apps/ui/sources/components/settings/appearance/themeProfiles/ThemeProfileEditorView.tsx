@@ -25,6 +25,7 @@ import { PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
@@ -34,7 +35,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { ThemeProfileMode } from '@/theme/profiles/themeProfileTypes';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { ThemeColorRow, ThemeColorTokenRow } from './ThemeColorTokenRow';
+import { ThemeColorRow, ThemeColorTokenRow, describeContrastPairs } from './ThemeColorTokenRow';
 import type { ThemeLibraryPreview } from './themeLibraryViewTypes';
 import type {
   ThemeEditorView,
@@ -163,6 +164,8 @@ export const ThemeProfileEditorView = React.memo(
             activeTabId={props.view}
             onSelectTab={props.onViewChange}
             testIDPrefix="settings-theme-profile-view"
+            // Three short views: a compact either-or at the page's start edge (lab D2), not a bar across both columns.
+            segmentSizing={phone ? 'equal' : 'content'}
           />
         </ItemGroup>
         {phone ? (
@@ -187,10 +190,13 @@ export const ThemeProfileEditorView = React.memo(
             {body}
           </>
         ) : (
-          <View style={stylesheet.columns}>
-            <View style={stylesheet.controls}>{body}</View>
-            {aside ? <View style={stylesheet.aside}>{aside}</View> : null}
-          </View>
+          // The controls and the preview share the page's wide column, so the preview never runs past the header's edge.
+          <PageContentColumn>
+            <View style={stylesheet.columns}>
+              <View style={stylesheet.controls}>{body}</View>
+              {aside ? <View style={stylesheet.aside}>{aside}</View> : null}
+            </View>
+          </PageContentColumn>
         )}
       </ItemList>
     );
@@ -371,7 +377,7 @@ function ColorsView(props: ThemeProfileEditorViewProps) {
           value={colors.query}
           onChangeText={colors.onQueryChange}
           placeholder={t('settingsAppearance.themeProfiles.findColor')}
-          placement="page"
+          // Inside its section: the section already stands on the sheets' edge, so the field adds no inset.
         />
       </ItemGroup>
       {groups.length === 0 ? (
@@ -388,7 +394,7 @@ function ColorsView(props: ThemeProfileEditorViewProps) {
                 key={token.id}
                 value={colors.resolvedDraft.tokens[token.id]!.value}
                 changed={colors.resolvedDraft.tokens[token.id]!.changed}
-                contrastWarning={colors.resolvedDraft.tokens[token.id]!.contrast.warnings.length > 0}
+                contrastAgainst={describeContrastPairs(colors.resolvedDraft.tokens[token.id]!.contrast.warnings)}
                 contrastFix={colors.resolvedDraft.tokens[token.id]!.contrast.fix}
                 mode={colors.mode}
                 token={token}
@@ -688,7 +694,7 @@ function SurfaceReference(
               ? `${surface.id} · ${surface.parts.join(', ')}`
               : surface.id
           }
-          mode="info"
+          mode={props.onInsertSelector ? undefined : 'info'}
           onPress={props.onInsertSelector ? () => props.onInsertSelector?.(surface.id) : undefined}
           showChevron={false}
         />
@@ -727,7 +733,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   preview: {
     width: '100%',
-    borderRadius: 12,
+    borderRadius: theme.borderRadius.lg,
     overflow: 'hidden',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border.default,

@@ -158,6 +158,7 @@ vi.mock('@/text', async () => {
         ...createTextModuleMock({
             translate: (key: string, params?: Record<string, unknown>) => {
                 if (typeof params?.path === 'string') return `${key}: ${params.path}`;
+                if (typeof params?.pair === 'string') return `${key}: ${params.pair}`;
                 if (typeof params?.name === 'string') return `${params.name} copy`;
                 if (typeof params?.count === 'number') return `Custom theme ${params.count}`;
                 if (typeof params?.formats === 'string') return `Supported formats: ${params.formats}`;
@@ -998,6 +999,14 @@ describe('Theme profile editor', () => {
         const screen = await renderEditorScreen('ocean');
 
         await vi.waitFor(() => expect(screen.findByTestId('settings-theme-contrast-warning-light-text.primary')).not.toBeNull());
+        // The warning names the colour it fails against (owner 11-17: "Low contrast against …"), within its own row.
+        const { getThemeProfileTokenDefinition } = await import('@/theme/profiles/themeProfileTokenRegistry');
+        const canvas = getThemeProfileTokenDefinition('background.canvas')!;
+        const warningText = screen.findByTestId('settings-theme-contrast-warning-light-text.primary')!
+            .findAll((node) => typeof node.type === 'string').flatMap((node) => node.children.filter((child) => typeof child === 'string')).join(' ');
+        expect(warningText).toContain(canvas.labelKey ? canvas.labelKey : canvas.label);
+        expect(screen.findByTestId('settings-theme-color-token-light-text.primary')!
+            .findAll((node) => node.props?.testID === 'settings-theme-contrast-warning-light-text.primary').length).toBeGreaterThan(0);
         expect(screen.findByTestId('settings-theme-profile-save')).not.toBeNull();
         expect(await findHeaderMenuAction(screen, 'deactivate')).toBeDefined();
         await screen.pressByTestIdAsync('settings-theme-contrast-fix-light-text.primary');

@@ -971,7 +971,7 @@ const settingsAppearanceTranslationExtension = {
     invalidColor: 'Use hex, rgb(...), rgba(...), or transparent.',
     invalidProfileName: 'プロファイル名が無効です。',
     profileLimitReached: 'テーマの制限に達しました。',
-    contrastWarning: 'このトークン ペアのコントラストは低いです。保存したりリセットしたりすることもできます。',
+    contrastWarning: ({ pair }: { pair: string }) => `${pair} とのコントラストが低いです。`,
     fixContrast: 'コントラストを修正',
     resetToken: 'トークンをリセットする',
     resetGroup: 'リセットして無効化する',
