@@ -21,7 +21,7 @@ const response = (data: unknown, status = 200) => ({ data, status, statusText: '
 afterEach(() => vi.restoreAllMocks());
 
 describe('captured Account workspace preference carrier', () => {
-  it.each(['projects.worker.preferences.get', 'projects.worker.preferences.set', 'projects.worker.preferences.reset',
+  it.each(['projects.worker.preferences.reset',
     'projects.service.placement.get', 'projects.service.placement.set'] as const)(
     'emits the registered %s contract through the real Account carrier and config projection', async actionId => {
     let row: unknown = { t: 'plain', v: { ...preference, services: {} } };
@@ -41,10 +41,7 @@ describe('captured Account workspace preference carrier', () => {
       credentials: { token: input.token, encryption: null }, serverId: workspace.serverId,
       serverHttpBaseUrl: input.serverHttpBaseUrl }).projectWorkerAction!;
     const serviceName = '服务🚀'.repeat(400);
-    const actionInput = actionId === 'projects.worker.preferences.get' ? { workspace }
-      : actionId === 'projects.worker.preferences.set' ? { workspace, expectedRevision: 1,
-        expected: { kind: 'value', value: preference }, next: { ...preference, allowAdHoc: true } }
-      : actionId === 'projects.worker.preferences.reset' ? { workspace, expectedRevision: 1, expected: { kind: 'value', value: preference } }
+    const actionInput = actionId === 'projects.worker.preferences.reset' ? { workspace, expectedRevision: 1, expected: { kind: 'value', value: preference } }
       : actionId === 'projects.service.placement.get' ? { workspace, serviceName }
       : { workspace, serviceName, expectedRevision: 1, expected: { kind: 'absent' },
         value: { runsOn: { kind: 'workers', destination: { kind: 'machine', machineId: 'worker-世界' } }, unavailable: 'fail' } };

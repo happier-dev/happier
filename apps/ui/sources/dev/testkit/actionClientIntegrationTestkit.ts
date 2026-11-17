@@ -5,7 +5,9 @@ import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testH
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { disconnectActiveServerConnection, restoreConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
@@ -34,16 +36,28 @@ export async function connectUiActionClient(params: Readonly<{ serverUrl: string
         }
     };
     try {
-        const { id: serverId } = await upsertServerProfile({ name: 'Composed Action client', serverUrl: params.serverUrl });
-        if (!await TokenStorage.setCredentialsForServerUrl(params.serverUrl, { serverId }, params.credentials)) {
+        const { id: configuredServerId } = await upsertServerProfile({ name: 'Composed Action client', serverUrl: params.serverUrl });
+        if (!await TokenStorage.setCredentialsForServerUrl(params.serverUrl, { serverId: configuredServerId }, params.credentials)) {
             throw new Error('UI credential storage failed');
         }
-        await setActiveServerId(serverId, { scope: 'device' });
-        if ((await getServerFeaturesSnapshot({ serverId, force: true })).status !== 'ready') {
+        await setActiveServerId(configuredServerId, { scope: 'device' });
+        if ((await getServerFeaturesSnapshot({ serverId: configuredServerId, force: true })).status !== 'ready') {
             throw new Error('UI Home discovery did not become ready');
         }
         bridge = await loadSyncSingletonForTests();
         await restoreConnectionToActiveServer(params.credentials);
+        // Cold restore prepares transport; bootstrap publishes Account readiness
+        // separately. A composed caller starts after that real initial read.
+        await getSyncSingleton().awaitBootstrapForegroundAcquisition();
+        if (!storage.getState().isDataReady) await new Promise<void>(resolve => {
+            const unsubscribe = storage.subscribe(state => {
+                if (!state.isDataReady) return;
+                unsubscribe();
+                resolve();
+            });
+        });
+        await getSyncSingleton().refreshMachines();
+        const serverId = getActiveServerSnapshot().serverId;
         const execute = createFrontDoorActionExecute(createDefaultActionExecutor());
         return {
             serverId,
