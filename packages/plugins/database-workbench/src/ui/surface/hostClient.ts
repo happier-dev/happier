@@ -146,7 +146,8 @@ export function createHostWorkbenchClient(
       return await hostApi.downloadFile(
         {
           action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1) },
-          input: projectNativeJsonValueForTransport(input),
+          // The serializer input is one object; its rows project member by member for transport.
+          input: { format: input.format, result: projectNativeJsonValueForTransport(input.result) },
         },
         signal ? { signal } : undefined,
       );

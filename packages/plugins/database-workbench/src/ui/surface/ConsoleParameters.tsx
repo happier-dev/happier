@@ -7,6 +7,7 @@ import {
   Item,
   Row,
   Select,
+  Stack,
   TextField,
   usePluginTranslation,
 } from '@happier-dev/plugin-ui';
@@ -65,13 +66,13 @@ export function ConsoleParameters(
   );
   if (props.inputs.length === 0) return <Row>{add}</Row>;
   return (
+    <Stack gap="small">
     <ItemGroup
       title={translate('plugins.database.console.parameters', 'Parameters')}
       description={translate(
         'plugins.database.console.parametersLine',
         'Sent separately from the statement, never pasted into it.',
       )}
-      footer={add}
     >
       {props.inputs.map((input, index) => {
         const invalid =
@@ -104,12 +105,10 @@ export function ConsoleParameters(
                   presentation="field"
                   options={typeOptions}
                   value={input.type}
-                  onChange={(type) =>
-                    replace(index, {
-                      ...input,
-                      type: type as ConsoleParameterInput['type'],
-                    })
-                  }
+                  onChange={(next) => {
+                    const type = TYPES.find((candidate) => candidate === next);
+                    if (type) replace(index, { ...input, type });
+                  }}
                 />
                 {input.type === 'null' ? null : (
                   <TextField
@@ -143,5 +142,7 @@ export function ConsoleParameters(
         );
       })}
     </ItemGroup>
+      <Row>{add}</Row>
+    </Stack>
   );
 }

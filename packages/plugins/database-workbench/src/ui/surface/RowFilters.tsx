@@ -17,7 +17,6 @@ import {
 } from '../consoleParameters.js';
 import type { GridColumn } from './grid.js';
 
-type Leaf = Extract<DatabaseFilterV1, { kind: 'comparison' | 'null' }>;
 type Operator =
   | 'eq'
   | 'ne'
@@ -130,7 +129,7 @@ function leafLabel(leaf: DatabaseFilterV1, translate: PluginTranslate): string {
   if (leaf.kind !== 'comparison')
     return translate('plugins.database.filter.custom', 'Custom condition');
   const words: Readonly<
-    Record<Leaf extends { operator: infer O } ? O & string : never, string>
+    Record<Extract<DatabaseFilterV1, { kind: 'comparison' }>['operator'], string>
   > = {
     eq: translate('plugins.database.filter.is', 'is'),
     ne: translate('plugins.database.filter.isNot', 'is not'),
@@ -259,7 +258,9 @@ function FilterAdder(
           }))}
           value={column?.name ?? ''}
           onChange={(next) => {
-            setColumnName(next);
+            const picked = props.columns.find((candidate) => candidate.name === next);
+            if (!picked) return;
+            setColumnName(picked.name);
             setOperator(null);
           }}
         />
@@ -268,7 +269,10 @@ function FilterAdder(
           presentation="field"
           options={operators}
           value={chosen ?? ''}
-          onChange={(next) => setOperator(next as Operator)}
+          onChange={(next) => {
+            const picked = operators.find((candidate) => candidate.value === next);
+            if (picked) setOperator(picked.value);
+          }}
         />
         {needsValue ? (
           <TextField
