@@ -2177,6 +2177,27 @@ test('AUTO ranks waiting workers by projected start, not by memory waves', { ski
   assert.equal(result.stdout, 'remote:nl1\n', 'the shortest projected start wins');
 });
 
+// P03-QUEUE-2 2026-11-17: linux1 (8 throttled threads) ran targeted validation
+// at p50 178 s vs 51-62 s elsewhere and won placement on a short queue alone.
+test('AUTO ranks waiting workers by projected finish: queue start plus that worker\'s own run time', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await placementFleet(t, {
+    slow: placementSample({ achievableKiB: gibKiB(16), ceilingKiB: gibKiB(100), queuedKiB: gibKiB(4), expectedStartMs: 60_000 }),
+    fast: placementSample({ achievableKiB: gibKiB(16), ceilingKiB: gibKiB(100), queuedKiB: gibKiB(8), expectedStartMs: 120_000 }),
+  });
+  // The fixture's node stub runs only named real modules; add the duration owner.
+  const nodeStub = join(fixture.binDir, 'node');
+  await writeFile(nodeStub, (await readFile(nodeStub, 'utf8')).replace('  */native_execution_projection.mjs)',
+    '  */execution_provenance.mjs|*/native_execution_projection.mjs)'));
+  const own = { 'targeted-validation': [600_000], 'full-validation': [600_000], validation: [600_000] };
+  const quick = { 'targeted-validation': [30_000], 'full-validation': [30_000], validation: [30_000] };
+  await mkdir(join(fixture.stackDir, 'dev-target-command-load-native'), { recursive: true });
+  await writeFile(join(fixture.stackDir, 'dev-target-command-load-native', 'duration-projection.json'),
+    JSON.stringify({ schemaVersion: 1, durations: {}, targets: { slow: own, fast: quick } }));
+  const result = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], fixture.invocation);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'remote:fast\n', 'a short queue on a slow worker finishes later');
+});
+
 test('AUTO sends test overflow to a Mac only while every Linux worker would queue, and keeps compilers on Linux', { skip: process.platform !== 'linux' }, async t => {
   const busy = placementSample({ achievableKiB: gibKiB(16), ceilingKiB: gibKiB(100), queuedKiB: gibKiB(32), expectedStartMs: 600_000 });
   const mac = placementSample({ platform: 'darwin', cores: 18, load: 4, totalKiB: gibKiB(128), availableKiB: gibKiB(60), unreservedKiB: gibKiB(60) });

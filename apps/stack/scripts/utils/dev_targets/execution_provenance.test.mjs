@@ -27,6 +27,22 @@ test('duration p99 uses successful completed records of the requested class with
   assert.equal(await readExecutionDurationP99(root, 'unknown-class'), null);
 });
 
+test('duration p99 is per worker: a slow worker projects its queue with its own run times', async t => {
+  const { readExecutionDurationP99, readExecutionDurationP99ByTarget } = await import('./execution_provenance.mjs');
+  const root = await mkdtemp(join(tmpdir(), 'happier-duration-target-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const durationMs of [50, 60, 70]) {
+    await appendExecutionProvenance(root, { phase: 'completed', target: 'fast', commandClass: 'targeted-validation', exitCode: 0, durationMs: 1000, runMs: durationMs });
+  }
+  await appendExecutionProvenance(root, { phase: 'completed', target: 'slow', commandClass: 'targeted-validation', exitCode: 0, durationMs: 1000, runMs: 400 });
+  assert.equal(await readExecutionDurationP99(root, 'targeted-validation', 'fast'), 70);
+  assert.equal(await readExecutionDurationP99(root, 'targeted-validation', 'slow'), 400);
+  // A worker without its own history uses the class history of every worker.
+  assert.equal(await readExecutionDurationP99(root, 'targeted-validation', 'new'), 400);
+  assert.equal(await readExecutionDurationP99(root, 'targeted-validation'), 400);
+  assert.deepEqual(await readExecutionDurationP99ByTarget(root, 'targeted-validation'), { fast: 70, slow: 400 });
+});
+
 test('duration p99 remains available beyond the whole-file string boundary', async t => {
   const { readExecutionDurationP99 } = await import('./execution_provenance.mjs');
   const root = await mkdtemp(join(tmpdir(), 'happier-duration-stream-'));

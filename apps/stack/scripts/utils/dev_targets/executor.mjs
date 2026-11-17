@@ -392,7 +392,7 @@ export async function runDevTargetCommand(
   signal?.throwIfAborted();
   const lifetimeStdin = target.platform !== 'windows' && !tty;
   const durationP99 = commandPolicy.heavyClass
-    ? await readExecutionDurationP99(stackBaseDir, commandPolicy.commandClass) : null;
+    ? await readExecutionDurationP99(stackBaseDir, commandPolicy.commandClass, target.name) : null;
   const remoteCommand = buildRemoteExecCommand(target, {
     executionId,
     cwd,

@@ -1948,12 +1948,19 @@ EOF
     "$candidate_class_active" "${candidate_native_preference:-0}" "$candidate_queue_pressure" "$candidate_empty_memory" \
     "$candidate_expected_start" >> "$candidates"
 done
-# Queued workers compete on projected start: each broker's memory x recorded run
-# time ahead over its achievable memory. Use it only when every candidate
-# reports one; otherwise keep the queued-memory waves for all of them.
+# Queued workers compete on projected finish: each broker's memory x recorded
+# run time ahead over its achievable memory, plus this class's recorded run time
+# on that worker (workers differ several-fold in speed). Use it only when every
+# candidate reports a projected start; otherwise keep the queued-memory waves.
 if [ "$heavyweight_placement_required" -eq 1 ] \
   && awk '($3 == 1 || $3 == "busy") && $13 !~ /^[0-9]+$/ {missing = 1} END {exit missing}' "$candidates"; then
-  awk '{ if ($13 ~ /^[0-9]+$/) $11 = $13; print }' "$candidates" > "$candidates.projected" \
+  : > "$probe_tmp/own-run-p99"
+  if [ -z "$explicit_target_number" ]; then
+    node "$script_dir/../scripts/utils/dev_targets/execution_provenance.mjs" --duration-p99-targets "$stack_dir" "$command_class" \
+      > "$probe_tmp/own-run-p99" 2>/dev/null || : > "$probe_tmp/own-run-p99"
+  fi
+  awk 'FILENAME == ARGV[1] { if ($2 ~ /^[0-9]+$/) run[$1] = $2; next }
+    { if ($13 ~ /^[0-9]+$/) $11 = $13 + ($2 in run ? run[$2] : 0); print }' "$probe_tmp/own-run-p99" "$candidates" > "$candidates.projected" \
     && mv -f -- "$candidates.projected" "$candidates"
 fi
 
@@ -2081,7 +2088,7 @@ record_remote_command_completion() {
   # Fold heavyweight completions into the compact p99 projection dispatch reads.
   if [ -n "${heavyweight_remote_class-}" ] && [ "$status" = 0 ]; then
     node "$script_dir/../scripts/utils/dev_targets/execution_provenance.mjs" --record-duration "$stack_dir" \
-      "$command_class" "$status" "${run_ms:-$duration_ms}" || true
+      "$command_class" "$status" "${run_ms:-$duration_ms}" "$selected_name" || true
   fi
 }
 sync_status=unknown
@@ -2202,7 +2209,7 @@ remote_script="set -euo pipefail; export HAPPIER_DEV_TARGET_EXECUTION=1; export 
 # Send the producer's class, which can differ from the worker resource class.
 duration_p99=
 if [ -n "$heavyweight_remote_class" ]; then
-  duration_p99=$(node "$script_dir/../scripts/utils/dev_targets/execution_provenance.mjs" --duration-p99 "$stack_dir" "$command_class")
+  duration_p99=$(node "$script_dir/../scripts/utils/dev_targets/execution_provenance.mjs" --duration-p99 "$stack_dir" "$command_class" "$selected_name")
 fi
 if [ -n "$duration_p99" ]; then
   remote_script="$remote_script export HAPPIER_ADMISSION_DURATION_CLASS=$(quote_remote "$command_class"); export HAPPIER_ADMISSION_DURATION_P99_MS=$(quote_remote "$duration_p99");"
