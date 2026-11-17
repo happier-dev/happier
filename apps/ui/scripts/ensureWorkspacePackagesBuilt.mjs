@@ -82,7 +82,7 @@ async function waitForMetroPluginUiInventory({ metroServer, metroConfig, invento
   return paths;
 }
 
-export async function prepareUiSourcePluginInventory({ uiPackageDir = uiDir, env = process.env, signal, metroServer, metroConfig } = {}) {
+export async function prepareUiSourcePluginInventory({ uiPackageDir = uiDir, env = process.env, signal, metroServer, metroConfig, preparePlugins = true } = {}) {
   const repoRoot = resolve(uiPackageDir, '../..');
   // The compiler import itself reads installed modules, before its subprocess
   // can apply dependency admission. Wait at this owning entry point first.
@@ -109,7 +109,7 @@ export async function prepareUiSourcePluginInventory({ uiPackageDir = uiDir, env
     if (metroServer) await metroServer.getBundler().getBundler().getDependencyGraph();
     signal?.throwIfAborted();
     await prepareSourcePluginUiInventory({ repoDir: repoRoot, outputDir, inventoryPath: candidatePath,
-      retainedInventoryPath: outputPath, artifactStoreDir, deferSourceAssetsPublication: true, env, signal, devStartup: true });
+      retainedInventoryPath: outputPath, artifactStoreDir, deferSourceAssetsPublication: true, preparePlugins, env, signal, devStartup: true });
     if (metroServer) await waitForMetroPluginUiInventory({ metroServer, metroConfig,
       inventoryPath: candidatePath, artifactStoreDir, sourceAssetsRecordPath, signal });
     signal?.throwIfAborted();
@@ -136,6 +136,7 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
   const cancellation = new AbortController();
   let closed = false;
   let queued = false;
+  let pluginsQueued = false;
   let pending = Promise.resolve();
   let inputsPromise;
   let admission;
@@ -162,8 +163,9 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
         pluginDirectory: name.slice('@happier-dev/plugins-'.length), inventory: true, packages, includeDirectories: true, packageInputs }));
     }
     const sourceInputs = readSourceUiAssetsRecord(resolveSourceUiAssetsRecordPath(inventoryPath))?.inputPaths ?? [];
-    return new Set([...groups.flat(), 'apps/cli/package.json', 'apps/ui/package.json',
-      ...sourceInputs, ...sourceInputs.map(path => dirname(path))].map(path => resolve(repoRoot, path)));
+    const pluginPaths = new Set([...groups.flat(), 'apps/cli/package.json', 'apps/ui/package.json'].map(path => resolve(repoRoot, path)));
+    const paths = new Set([...pluginPaths, ...sourceInputs, ...sourceInputs.map(path => dirname(path))].map(path => resolve(repoRoot, path)));
+    return { paths, pluginPaths };
   })().catch(error => { inputsPromise = null; throw error; });
   const onChange = ({ eventsQueue }) => {
     // Publication changes and removal/repair of admitted files invalidate at
@@ -174,7 +176,7 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
         || (type !== 'change' && admission?.paths.has(path));
     })) admission = undefined;
     const previous = pending;
-    const refresh = inputs().then(async paths => {
+    const refresh = inputs().then(async ({ paths, pluginPaths }) => {
       const { isWorkspaceBuildInputIgnoredPath } = await import('../../stack/scripts/utils/fs/workspaceBuildInputs.mjs');
       const changed = eventsQueue.find(({ filePath, type }) => {
         let path = resolve(filePath);
@@ -189,7 +191,13 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
         }
         return false;
       });
-      if (closed || !changed || queued) return;
+      if (closed || !changed) return;
+      pluginsQueued ||= eventsQueue.some(({ filePath, type }) => {
+        const path = resolve(filePath);
+        return pluginPaths.has(path) || (type !== 'change' && pluginPaths.has(dirname(path))
+          && !isWorkspaceBuildInputIgnoredPath(relative(repoRoot, path)));
+      });
+      if (queued) return;
       queued = true;
       await previous;
       // Arrivals during an install share one refresh. Edits during the actual
@@ -206,27 +214,27 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
       const { readBuildInputIdentity } = await import('../../../scripts/workspaces/buildInputConvergence.mjs');
       const identity = await readBuildInputIdentity({ sourceDir: repoRoot,
         files: [...paths].map(path => relative(repoRoot, path)), directoryEntries: true });
+      const preparePlugins = pluginsQueued;
+      pluginsQueued = false;
       if (closed || identity === preparedIdentity) return;
-      logger.info?.(`[source-ui] phase=plugin-ui-refresh input=${relative(repoRoot, changed.filePath)}`);
+      logger.info?.(`[source-ui] phase=${preparePlugins ? 'plugin-ui-refresh' : 'source-assets-refresh'} input=${relative(repoRoot, changed.filePath)}`);
       try {
-        const { published } = await prepareUiSourcePluginInventory({ uiPackageDir, env, signal: cancellation.signal, metroServer, metroConfig });
+        const { published } = await prepareUiSourcePluginInventory({ uiPackageDir, env, signal: cancellation.signal, metroServer, metroConfig, preparePlugins });
         preparedIdentity = identity;
         // The Stack supervisor retires superseded graphs after this line.
         if (published) logger.info?.(PLUGIN_UI_PUBLISHED_LINE);
       } finally { inputsPromise = null; }
     });
-    // Include discovery immediately: a request can arrive before we know
-    // whether this observed batch changes the compiler's input graph.
+    // Retain discovery and preparation for trailing refreshes and shutdown;
+    // serving requests consume the published inventory independently.
     pending = Promise.all([previous, refresh.catch(report)]).then(() => {});
   };
   watcher.on('change', onChange);
   void inputs().catch(report);
   return { async ready() {
     cancellation.signal.throwIfAborted();
-    // A reload during compilation must consume the successor inventory, not
-    // pin an HMR-disabled tab to the previous graph for its entire lifetime.
-    await pending;
-    cancellation.signal.throwIfAborted();
+    // Background preparation publishes only after Metro admits its assets.
+    // Requests keep consuming the last-green publication while it is in flight.
     // A one-shot child/warm-start parent can publish without this process's
     // callback. Two metadata reads detect that atomic publication; immutable
     // asset files and Metro's file map are admitted once per publication.

@@ -1079,7 +1079,7 @@ test('cold Expo source preparation needs no workspace dist build or materializat
   const preflight = join(repoDir, 'apps/stack/scripts/cold_preflight.mjs');
   await writeFile(preflight, String.raw`
   import assert from 'node:assert/strict';
-  import { access, readFile, rm } from 'node:fs/promises';
+  import { access, readFile, rm, writeFile } from 'node:fs/promises';
   import { join } from 'node:path';
   import { ensureExpoWorkspacePrepared, hasUsableExpoWorkspaceLastGreen, withExpoPreparationEnv }
     from ${JSON.stringify(pathToFileURL(join(repoDir, 'apps/stack/scripts/utils/expo/command.mjs')).href)};
@@ -1103,6 +1103,13 @@ test('cold Expo source preparation needs no workspace dist build or materializat
   assert.equal(await readFile(result.outputPath, 'utf8'), inventory);
   for (const [, assetPath] of inventory.matchAll(/require\(("(?:[^"\\]|\\.)*")\)/g)) await access(JSON.parse(assetPath));
   assert.equal(await hasUsableExpoWorkspaceLastGreen({ projectDir: join(repoDir, 'apps/ui'), env }), true);
+  // Asset-only refresh must not even evaluate the Plugin UI compiler. Keep the
+  // real Stack child, source-asset generators and publication beneath this.
+  await writeFile(join(repoDir, 'apps/ui/scripts/prepareSourcePluginUiArtifacts.mjs'),
+    'throw new Error("asset-only refresh evaluated the Plugin UI compiler");');
+  const { prepareUiSourcePluginInventory } = await import(${JSON.stringify(pathToFileURL(join(repoDir, 'apps/ui/scripts/ensureWorkspacePackagesBuilt.mjs')).href)});
+  await prepareUiSourcePluginInventory({ uiPackageDir: join(repoDir, 'apps/ui'), env, preparePlugins: false });
+  assert.equal(await readFile(result.outputPath, 'utf8'), inventory, 'asset-only preparation retains last-green plugin bytes');
   const asset = inventory.match(/require\(("(?:[^"\\]|\\.)*")\)/);
   assert.ok(asset);
   await rm(JSON.parse(asset[1]));

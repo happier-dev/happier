@@ -559,13 +559,13 @@ async function exportCapturedSourceWebUiInputs({ repoDir, baseDir, outputDir, in
 
 /** Live Metro and finite exports share source artifact construction. Only a
  * finite export captures inputs; interactive Expo intentionally reads live source. */
-export async function prepareSourcePluginUiInventory({ repoDir, inputRepoDir = repoDir, outputDir, inventoryPath, retainedInventoryPath, artifactStoreDir, deferSourceAssetsPublication = false, env = process.env, signal,
+export async function prepareSourcePluginUiInventory({ repoDir, inputRepoDir = repoDir, outputDir, inventoryPath, retainedInventoryPath, artifactStoreDir, deferSourceAssetsPublication = false, preparePlugins = true, env = process.env, signal,
   stdoutStream = process.stdout, devStartup = false }) {
   await runSourceBuildCommand({ repoDir, scriptPath: fileURLToPath(import.meta.url),
-    args: [JSON.stringify({ repoDir: inputRepoDir, outputDir, inventoryPath, retainedInventoryPath, artifactStoreDir, deferSourceAssetsPublication })], env, signal, captureStdout: false, captureStderr: true, stdoutStream, devStartup });
+    args: [JSON.stringify({ repoDir: inputRepoDir, outputDir, inventoryPath, retainedInventoryPath, artifactStoreDir, deferSourceAssetsPublication, preparePlugins })], env, signal, captureStdout: false, captureStderr: true, stdoutStream, devStartup });
 }
 
-async function prepareSourceWebUiInputs({ repoDir, outputDir, inventoryPath, retainedInventoryPath, artifactStoreDir, deferSourceAssetsPublication }) {
+async function prepareSourceWebUiInputs({ repoDir, outputDir, inventoryPath, retainedInventoryPath, artifactStoreDir, deferSourceAssetsPublication, preparePlugins = true }) {
   const uiProjectDir = join(repoDir, 'apps/ui');
   const packages = await readWorkspacePackages(repoDir);
   const uiPackage = JSON.parse(await readFile(join(uiProjectDir, 'package.json'), 'utf8'));
@@ -585,14 +585,19 @@ async function prepareSourceWebUiInputs({ repoDir, outputDir, inventoryPath, ret
   // abort every plugin before that boundary on one malformed declaration.
   const preparationPath = join(toolsDir, 'prepare.mjs');
   const source = [
-    `import { prepareSourcePluginUiArtifacts } from ${JSON.stringify(join(uiProjectDir, 'scripts/prepareSourcePluginUiArtifacts.mjs'))};`,
+    ...(preparePlugins ? [`import { prepareSourcePluginUiArtifacts } from ${JSON.stringify(join(uiProjectDir, 'scripts/prepareSourcePluginUiArtifacts.mjs'))};`] : []),
     `import { prepareSourceUiAssets, resolveSourceUiAssetsRecordPath } from ${JSON.stringify(join(uiProjectDir, 'scripts/prepareSourceUiAssets.mjs'))};`,
     `import { readWorkspacePackages, resolveWorkspaceSource } from ${JSON.stringify(join(repoDir, 'packages/cli-common/sourceRuntimeEntries.mjs'))};`,
     `import { pathToFileURL } from 'node:url';`,
+    `import { copyFile, mkdir } from 'node:fs/promises';`,
+    `import { dirname } from 'node:path';`,
     `const workspaces = await readWorkspacePackages(${JSON.stringify(repoDir)});`,
-    `await prepareSourcePluginUiArtifacts({repoRoot:${JSON.stringify(repoDir)},outputDir:${JSON.stringify(inputsDir)},outputPath:${JSON.stringify(inventoryPath)},retainedInventoryPath:${JSON.stringify(retainedInventoryPath)},artifactStoreDir:${JSON.stringify(artifactStoreDir)},plugins:[${plugins.map(([name]) => (
+    ...(preparePlugins ? [`await prepareSourcePluginUiArtifacts({repoRoot:${JSON.stringify(repoDir)},outputDir:${JSON.stringify(inputsDir)},outputPath:${JSON.stringify(inventoryPath)},retainedInventoryPath:${JSON.stringify(retainedInventoryPath)},artifactStoreDir:${JSON.stringify(artifactStoreDir)},plugins:[${plugins.map(([name]) => (
       `{directory:${JSON.stringify(name.slice('@happier-dev/plugins-'.length))},loadManifest:async()=> (await import(pathToFileURL(resolveWorkspaceSource(workspaces,${JSON.stringify(`${name}/manifest`)})).href)).PLUGIN_MANIFEST,uiArtifacts:${Boolean(uiPackage.dependencies?.[name] && listBundledPluginUiArtifactExports(packages.get(name).manifest).length > 0)}}`
-    )).join(',')}]});`,
+    )).join(',')}]});`] : [
+      `await mkdir(dirname(${JSON.stringify(inventoryPath)}), {recursive:true});`,
+      `await copyFile(${JSON.stringify(retainedInventoryPath)}, ${JSON.stringify(inventoryPath)});`,
+    ]),
     `await prepareSourceUiAssets({uiPackageDir:${JSON.stringify(uiProjectDir)},outputDir:${JSON.stringify(inputsDir)},recordPath:resolveSourceUiAssetsRecordPath(${JSON.stringify(inventoryPath ?? join(inputsDir, 'inventory.js'))}),retainedRecordPath:resolveSourceUiAssetsRecordPath(${JSON.stringify(retainedInventoryPath ?? inventoryPath ?? join(inputsDir, 'inventory.js'))}),deferPublication:${Boolean(deferSourceAssetsPublication)}});`,
   ].join('\n');
   await writeFile(preparationPath, source);
@@ -601,7 +606,7 @@ async function prepareSourceWebUiInputs({ repoDir, outputDir, inventoryPath, ret
   // require(esm) dependencies that do not pass through ESM loader hooks.
   await run(process.execPath, ['--conditions=happier-source', '--import', join(repoDir, 'packages/cli-common/registerSourceRuntime.mjs'), preparationPath],
     { cwd: uiProjectDir, env: process.env });
-  console.log(`[source-ui] phase=plugin-ui-preparation elapsedMs=${Math.round(performance.now() - preparationStartedAt)} plugins=${plugins.length}`);
+  console.log(`[source-ui] phase=${preparePlugins ? 'plugin-ui-preparation' : 'source-assets-preparation'} elapsedMs=${Math.round(performance.now() - preparationStartedAt)} plugins=${preparePlugins ? plugins.length : 0}`);
 }
 
 // Finite preparation and Expo reuse one containing native admission envelope.

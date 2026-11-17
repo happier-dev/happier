@@ -1,3 +1,4 @@
+// @happier-test-preparation source-condition
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cp, mkdir, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
@@ -468,11 +469,13 @@ test('source inventory refreshes compile only when their observed inputs changed
   // with one that publishes a valid candidate. Discovery, matching, admission
   // waits, publication and the refresh queue stay real.
   let compilations = 0;
+  let pluginCompilations = 0;
+  let published;
   const compiler = `const options = JSON.parse(process.argv[1]);
     const { mkdirSync, writeFileSync } = require('node:fs');
     const { dirname, join } = require('node:path');
     mkdirSync(dirname(options.inventoryPath), { recursive: true });
-    writeFileSync(options.inventoryPath, 'export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = [];\\n');
+    writeFileSync(options.inventoryPath, 'export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = []; // ' + process.argv[2] + '\\n');
     writeFileSync(join(dirname(options.inventoryPath), 'source-assets.json'), ${JSON.stringify(record)});`;
   const nativeFork = childProcess.fork;
   t.mock.method(childProcess, 'fork', (modulePath, args, options) => {
@@ -481,8 +484,9 @@ test('source inventory refreshes compile only when their observed inputs changed
       const index = invocation.args?.findIndex(arg => typeof arg === 'string' && basename(arg) === 'build_source_web_ui.mjs') ?? -1;
       if (index >= 0) {
         compilations += 1;
+        if (JSON.parse(invocation.args[index + 1]).preparePlugins !== false) pluginCompilations += 1;
         args = [args[0], JSON.stringify({ ...invocation, command: process.execPath,
-          args: ['-e', compiler, invocation.args[index + 1]] })];
+          args: ['-e', compiler, invocation.args[index + 1], String(compilations)] })];
       }
     }
     return nativeFork(modulePath, args, options);
@@ -498,15 +502,17 @@ test('source inventory refreshes compile only when their observed inputs changed
   const failures = [];
   const { watchUiSourcePluginInventory } = await import('./ensureWorkspacePackagesBuilt.mjs');
   const owner = watchUiSourcePluginInventory({ uiPackageDir, env, metroServer, metroConfig,
-    logger: { info() {}, error: (_message, error) => failures.push(error) } });
+    logger: { info(line) { if (line === '[source-ui] phase=plugin-ui-published') published?.(); }, error: (_message, error) => failures.push(error) } });
   t.after(() => owner.close());
-  const observe = async (path, type) => {
+  const observe = async (path, type, prepares = false) => {
+    const publication = prepares ? new Promise(resolve => { published = resolve; }) : null;
     watcher.emit('change', { eventsQueue: [{ filePath: path, type }] });
     await owner.ready();
+    if (publication) await publication;
     assert.deepEqual(failures, []);
     return compilations;
   };
-  assert.equal(await observe(cliManifestPath, 'change'), 1, 'the first observed input event prepares');
+  assert.equal(await observe(cliManifestPath, 'change', true), 1, 'the first observed input event prepares');
   // Events that leave every observed input unchanged: a generated locale
   // bundle, an unrelated file beneath an input directory's subtree, and a
   // same-bytes rewrite of an input.
@@ -518,10 +524,60 @@ test('source inventory refreshes compile only when their observed inputs changed
   assert.equal(await observe(unrelated, 'add'), 1, 'an addition outside every input directory is not an input change');
   await write(localeSource, 'export const en = 1;\n');
   assert.equal(await observe(localeSource, 'change'), 1, 'a same-bytes rewrite is not an input change');
-  // Real input changes still refresh promptly.
+  // Asset inputs refresh without compiling Plugin UI.
+  const beforeLocaleEdit = pluginCompilations;
   await write(localeSource, 'export const en = 2;\n');
-  assert.equal(await observe(localeSource, 'change'), 2, 'an edited input prepares');
+  assert.equal(await observe(localeSource, 'change', true), 2, 'an edited input prepares');
+  assert.equal(pluginCompilations, beforeLocaleEdit, 'translation changes must not compile Plugin UI');
   const added = join(uiPackageDir, 'sources/text/es.ts');
   await write(added, 'export const es = 1;\n');
-  assert.equal(await observe(added, 'add'), 3, 'a new member of an input directory prepares');
+  assert.equal(await observe(added, 'add', true), 3, 'a new member of an input directory prepares');
+  assert.equal(pluginCompilations, beforeLocaleEdit, 'translation additions must not compile Plugin UI');
+  await owner.close();
+  assert.equal(compilations, 3, 'unrelated arrivals and same-byte rewrites add no preparation');
+});
+
+
+test('bundle admission serves the last-green inventory while refresh waits for dependency publication', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-ui-last-green-request-' });
+  const repoRoot = fixture.path('source');
+  const uiPackageDir = join(repoRoot, 'apps/ui');
+  await mkdir(uiPackageDir, { recursive: true });
+  await mkdir(join(repoRoot, 'apps/cli'), { recursive: true });
+  const manifest = join(repoRoot, 'apps/cli/package.json');
+  await writeFile(manifest, JSON.stringify({ bundledDependencies: [] }));
+  const inventoryPath = fixture.path('consumer/inventory.js');
+  await mkdir(join(inventoryPath, '..'), { recursive: true });
+  const artifactPath = fixture.path('consumer/artifacts/last-green/entry.cjs.bundle');
+  await mkdir(join(artifactPath, '..'), { recursive: true });
+  await writeFile(artifactPath, 'module.exports = { lastGreen: true };');
+  const lastGreen = `const BUNDLED_PLUGIN_UI_APP_ASSET_0 = require(${JSON.stringify(artifactPath)});\nexport const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = [];\n`;
+  await writeFile(inventoryPath, lastGreen);
+  const env = { ...process.env, HAPPIER_STACK_HOME_DIR: fixture.root, HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: inventoryPath };
+  const watcher = new EventEmitter();
+  let releaseGraph;
+  const graphWait = new Promise(resolve => { releaseGraph = resolve; });
+  let graphHeld = false;
+  const metroServer = { getWatchFolders: () => [], getBundler: () => ({ getBundler: () => ({
+    getWatcher: () => watcher,
+    getDependencyGraph: async () => { if (graphHeld) await graphWait; return { doesFileExist: () => true }; },
+  }) }) };
+  const metroConfig = { projectRoot: fixture.root, resolver: { sourceExts: ['js'], assetExts: ['bundle'] }, watcher: { additionalExts: [] } };
+  const { watchUiSourcePluginInventory } = await import('./ensureWorkspacePackagesBuilt.mjs');
+  let started;
+  const refreshing = new Promise(resolve => { started = resolve; });
+  const owner = watchUiSourcePluginInventory({ uiPackageDir, env, metroServer, metroConfig,
+    logger: { info(line) { if (line.includes('phase=plugin-ui-refresh')) { graphHeld = true; started(); } }, error() {} } });
+  t.after(async () => { releaseGraph(); await owner.close(); });
+  await owner.ready(); // The same last-green publication is already admitted.
+  watcher.emit('change', { eventsQueue: [{ filePath: manifest, type: 'change' }] });
+  await refreshing;
+  let deadline;
+  try {
+    await Promise.race([owner.ready(), new Promise((_, reject) => {
+      deadline = setTimeout(() => reject(new Error('bundle admission waited for the in-flight refresh')), 1000);
+    })]);
+    assert.equal(await readFile(inventoryPath, 'utf8'), lastGreen);
+    assert.equal(await readFile(artifactPath, 'utf8'), 'module.exports = { lastGreen: true };');
+  } finally { clearTimeout(deadline); }
 });

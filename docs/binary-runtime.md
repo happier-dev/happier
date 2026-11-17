@@ -1425,6 +1425,11 @@ unindexable candidate reports `plugin_ui_inventory_unindexable` with its invento
 and asset path, preserves the serving inventory and releases the refresh queue
 for subsequent source edits. An admitted candidate waits on Metro's existing
 file-map change events until every asset is indexed before atomic publication.
+Bundle and artifact-asset requests consume the admitted last-green inventory
+while a background refresh runs; they do not wait for that refresh queue.
+Plugin compilation runs only for changes in its compiler, declaration or artifact
+inputs. Locale and other source-asset changes use the same preparation queue and
+asset publishers while retaining the Plugin UI inventory.
 Bundle and artifact-asset requests also use that readiness check for inventories
 published by warm-start or explicit one-shot preparation, including Expo's
 `/assets?unstable_path=...` route. Ordinary image requests do not read the plugin
