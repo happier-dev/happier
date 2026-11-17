@@ -151,7 +151,7 @@ export async function prepareManagedGuestCliBuildInput(input: Readonly<{
       versionId: source.versionId, os: target.os, arch: target.arch, remoteHomeDir: input.remoteHomeDir, fetchImpl, managedGuest: true,
       readReleaseTextAsset: async url => {
         const response = await fetchImpl(url, { credentials: 'omit', signal: input.signal });
-        if (!response.ok) throw new SystemTaskExecutionError('guest_payload_missing', `The signed CLI integrity asset could not be read (HTTP ${response.status}).`);
+        if (!response.ok) throw new SystemTaskExecutionError('managed_guest_cli_release_unavailable', `The signed CLI integrity asset could not be read (HTTP ${response.status}).`);
         return await response.text();
       },
     });

@@ -162,6 +162,23 @@ describe('managed guest CLI source supplier', () => {
     expect(urls).toContain('https://api.github.com/repos/happier-dev/happier/releases/tags/cli-v0.3.10-preview.1');
     expect(urls).not.toContain('https://downloads.example/cli.tar.gz');
   });
+  it.each([404, 429, 503])('reports signed integrity HTTP %s as release unavailable before producing image input', async status => {
+    const requested: string[] = [];
+    const fetchImpl: typeof fetch = async input => {
+      const url = String(input); requested.push(url);
+      if (url.endsWith('/v1/features')) return Response.json({ capabilities: { guestCli: { source: 'public-release', line: '0.3', channel: 'stable' } } });
+      if (new URL(url).pathname.endsWith('/releases')) return Response.json([{ tag_name: 'cli-v0.3.10', draft: false, prerelease: false }]);
+      if (url.includes('/releases/tags/')) return Response.json({ assets: [
+        { name: 'checksums-happier-v0.3.10.txt', browser_download_url: 'https://downloads.example/checksums.txt' },
+        { name: 'checksums-happier-v0.3.10.txt.minisig', browser_download_url: 'https://downloads.example/checksums.txt.minisig' },
+        { name: 'happier-v0.3.10-linux-x64.tar.gz', browser_download_url: 'https://downloads.example/cli.tar.gz' },
+      ] });
+      return new Response('upstream content must stay private', { status });
+    };
+    await expect(prepareManagedGuestCliBuildInput({ homeUrl: 'https://home.example', target: { os: 'linux', arch: 'x64' }, fetchImpl }))
+      .rejects.toMatchObject({ code: 'managed_guest_cli_release_unavailable', message: expect.stringContaining(`HTTP ${status}`) });
+    expect(requested).not.toContain('https://downloads.example/cli.tar.gz');
+  });
   it('requires the dev payload before guest mutation or public release lookup', async () => {
     const http = homeFetch('home-payload'); let guestCommands = 0;
     await expect(resolveManagedGuestCliSource({ homeUrl: 'https://home.example', binaryPath: '$HOME/.happier/cli/current/happier', fetchImpl: http.boundary,
