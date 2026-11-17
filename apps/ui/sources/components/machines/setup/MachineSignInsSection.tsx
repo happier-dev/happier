@@ -81,7 +81,11 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
     },
     [props.machineId, props.machineName, props.serverId, terminalHost],
   );
-  if (signIns.items.length === 0) return null;
+  // Only CLIs whose sign-in the Machine could read: one it can't check (today: not installed there) belongs to the
+  // Agents tab's install flow, not to a wall of "Couldn't check" rows here.
+  const rows = React.useMemo(() => signIns.items.filter((row) => row.authentication !== null
+    && (row.authentication.status !== 'unknown' || row.authentication.nativeLogin === 'unsupported')), [signIns.items]);
+  if (rows.length === 0) return null;
   return (
     <ItemGroup
       testID="machine-setup-sign-ins"
@@ -92,7 +96,7 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
         machine: props.machineName,
       })}
     >
-      {signIns.items.map((row) => (
+      {rows.map((row) => (
         <Item
           key={row.id}
           testID={`machine-setup-sign-in:${row.id}`}
