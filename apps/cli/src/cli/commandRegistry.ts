@@ -327,9 +327,7 @@ export async function resolveAdmittedActionCliCommand(
   if (isDeploymentCiStepCommand(args)) return null;
   const words = readLeadingCommandWords(args);
   if (words.length === 0) return null;
-  if (!BUNDLED_ACTION_CLI_COMMAND_PATHS.some(({ path }) => (
-    path[0] === words[0]
-  ))) return null;
+  if (!findActionCliCommandPattern(words, BUNDLED_ACTION_CLI_COMMAND_PATHS)) return null;
   const { findCompiledActionCliCommand } = await import('@/cli/actions/compiledCommands');
   return findCompiledActionCliCommand(words, await loadAdmittedActionCliCommands());
 }
