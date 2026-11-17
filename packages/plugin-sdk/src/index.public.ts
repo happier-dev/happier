@@ -1,3 +1,5 @@
+export type { PluginServiceLaunchEnvironmentContributionV1 } from '@happier-dev/protocol/plugins/contributions/serviceLaunchEnvironments';
+export type { PluginServiceLaunchEnvironmentInputV1, PluginServiceLaunchEnvironmentProjectionV1, PluginServiceLaunchEnvironmentResultV1, PluginServiceLaunchEnvironmentRuntimeV1, PluginServiceLaunchEnvironmentDefinitionV1 } from './serviceLaunchEnvironments.js';
 export type { ActionConfirmationWhen } from './definePlugin.js';
 export type { StoreKindContributionV1, StoreKindLaunchInputV1, PluginStoreItemReferenceV1, PluginStoreItemV1 } from './storeKinds.js';
 export { createPluginStoreItemHref, PluginStoreItemReferenceV1ProtocolSchema, PluginStoreItemV1ProtocolSchema } from './storeKinds.js';

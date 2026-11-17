@@ -1,3 +1,4 @@
+import type { PluginServiceLaunchEnvironmentRuntimeV1 } from '../serviceLaunchEnvironments.js';
 import type { ActionHandler } from '../actions/service.js';
 import type { PluginCaptureSourceRuntime } from '../captureSources.js';
 import type { PluginSecretSourceRuntimeV1 } from '../secretSources.js';
@@ -67,6 +68,7 @@ export interface PluginRegistrationValueByFamily {
     dropTargets: PluginDropTargetRuntime;
     captureSources: PluginCaptureSourceRuntime;
     secretSources: PluginSecretSourceRuntimeV1;
+    serviceLaunchEnvironments: PluginServiceLaunchEnvironmentRuntimeV1;
     projectNativeAdapters: PluginProjectNativeAdapterRuntimeV1;
     deploymentTargets: DeploymentTargetDatabaseRuntimeV1;
     actions: CapturedActionHandler;

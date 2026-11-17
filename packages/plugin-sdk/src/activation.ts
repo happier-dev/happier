@@ -1,3 +1,4 @@
+import type { PluginServiceLaunchEnvironmentRuntimeV1 } from './serviceLaunchEnvironments.js';
 /** @moduleRealm daemon */
 import type {
     AgentCliAuthContributionV1,
@@ -409,6 +410,7 @@ export interface PluginApi {
     readonly backgroundServices: BackgroundServicesRegistrationApi;
     readonly captureSources: { register(id: string, runtime: PluginCaptureSourceRuntime): void };
     readonly secretSources: { register(id: string, runtime: PluginSecretSourceRuntimeV1): void };
+    readonly serviceLaunchEnvironments: { register(id: string, runtime: PluginServiceLaunchEnvironmentRuntimeV1): void };
     readonly projectNativeAdapters: { register(id: string, runtime: PluginProjectNativeAdapterRuntimeV1): void };
     readonly deploymentTargets: { register(id: string, runtime: DeploymentTargetDatabaseRuntimeV1): void };
 }
