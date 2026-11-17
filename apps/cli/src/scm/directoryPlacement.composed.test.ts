@@ -12,6 +12,8 @@ import { registerSessionTargetWorkspace, resolveSessionTargetWorkspace } from '@
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { registerScmHandlers } from '@/rpc/handlers/scm';
 import { createScmBackendRegistry } from '@/scm/registry';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
 import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
 import { createHostScmCommandRunner } from '@/scm/runtime';
 import { createHostScmHostingProviderRuntimeServices } from '@/scm/hostingProviders/runtimeServices';
@@ -27,6 +29,7 @@ const dockerPath = process.env.HAPPIER_TEST_SCM_DOCKER_BIN ?? 'docker';
 describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('directory-only daemon SCM placement', () => {
     const status = { method: RPC_METHODS.SCM_STATUS_SNAPSHOT, operation: {} };
     const commit = { method: RPC_METHODS.SCM_COMMIT_CREATE, operation: { message: 'panel change', scope: { kind: 'all-pending' } } };
+    const comparison = { method: RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, operation: { source: { kind: 'workingTree' } } };
     const push = { method: RPC_METHODS.SCM_REMOTE_PUSH, operation: { remote: 'origin', branch: 'main' } };
     it.each([
         ...[true, false].flatMap(placed => [status, commit, push].map(request => ({ placed, caller: 'none', ...request }))),
@@ -35,6 +38,9 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
         // SEC1116I item 1: the member's own read of their placed root; another member stays in their own child.
         { placed: true, caller: 'member', ...status },
         { placed: true, caller: 'other-member', ...status },
+        // SEC2: comparison capture must share the placed-root owner decision.
+        { placed: true, caller: 'member', ...comparison },
+        { placed: true, caller: 'other-member', ...comparison },
     ] as const)('keeps $method hooks at their workspace authority (placed=$placed, caller=$caller)', async ({ placed, caller, method, operation }) => {
         const directory = await mkdtemp(join(tmpdir(), 'scm-directory-'));
         const root = join(directory, 'workspace-sync');
@@ -136,6 +142,9 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
             const requester = { serverId: 'home', accountId: 'member-account', machineId: 'machine', installationId: 'installation' };
             registerScmHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, root,
                 { registry, selectWorkspaceSource: admission.selectWorkspaceSource,
+                    actionExecutor: createActionExecutor({ scmActionExecute: input => executeScmActionOperation({
+                        ...input, actionContext: input.context, workingDirectory: root, accessPolicy: { kind: 'osUser' }, registry,
+                    }) }),
                     ...(caller !== 'none' ? {
                         resolveRequester: async () => ({ identity: caller === 'manage'
                             ? { kind: 'owner_person' as const, requester: { ...requester, accountId: 'owner-account' } }
@@ -151,16 +160,22 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
                         },
                     } : {}) });
             const response = await handlers.get(method)!({ cwd: root, ...operation },
-                caller !== 'none' ? { signal: new AbortController().signal } : undefined);
+                caller !== 'none' ? { signal: new AbortController().signal, localActionContext: { authority: 'present_user', runtimeAccountId:
+                    caller === 'member' ? requester.accountId : 'other-member-account' } } : undefined);
             if (caller === 'other-member') {
                 // Another person's placed root is never reached through its holder; their own child decides.
                 expect(memberLaunches).toEqual([method]);
+                expect(response).toMatchObject({ success: false, actionErrorCode: 'agent_isolation_unavailable' });
                 await expect(readFile(join(root, '.git/executions'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
                 return;
             }
             expect(memberLaunches).toEqual([]);
             // A target may refuse a capability, but must never retry it on the host.
-            expect(response, JSON.stringify(response)).toMatchObject({ success: placed ? expect.any(Boolean) : true });
+            if (method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) {
+                expect(response, JSON.stringify(response)).toMatchObject({ comparison: { inventory: {
+                    files: [expect.objectContaining({ path: 'notes.txt' })],
+                } } });
+            } else expect(response, JSON.stringify(response)).toMatchObject({ success: placed ? expect.any(Boolean) : true });
             const executions = await readFile(join(root, '.git/executions'), 'utf8');
             expect(executions.split('\n').filter(Boolean)).toEqual(expect.arrayContaining([placed ? 'target' : 'host']));
             if (placed) expect(executions.split('\n')).not.toContain('host');

@@ -195,6 +195,8 @@ export function registerScmHandlers(
         const requester = await deps.resolveRequester(context);
         try {
             const identity = requester.identity;
+            const comparisons = method.startsWith('scm.diffSummary.') || method === RPC_METHODS.SCM_DIFF_FILE
+                && input !== null && typeof input === 'object' && Reflect.get(input, 'captured') !== undefined;
             if (isHostRequesterUnrestrictedOwner(identity)) {
                 // Manage keeps full access to a member folder, but daemon Git never runs a member
                 // repository's config or hooks (F-A ruling, MEMBER-CHILD-READS-1115): its repository
@@ -216,7 +218,7 @@ export function registerScmHandlers(
                     ? await runAsMember(context, member, method, projectRoot, input) : await run();
                 return await runWithRequesterScmCommandRunner(createHostScmCommandRunner({ isCurrent: () => !context.signal.aborted }), run);
             }
-            if (!isScmLocalRepositoryReadRpcMethod(method)) return await run();
+            if (!comparisons && !isScmLocalRepositoryReadRpcMethod(method)) return await run();
             if (identity.kind !== 'isolated') return refused('agent_isolation_unavailable');
             // The member's own placed Session already selected its target: their read runs there, never
             // on this Machine as them (SEC1116I item 1). Another person's placed root stays in the
