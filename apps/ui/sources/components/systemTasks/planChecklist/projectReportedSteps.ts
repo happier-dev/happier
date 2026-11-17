@@ -20,10 +20,12 @@ export function projectReportedSteps(steps: readonly Pick<HappierSetupStep, 'key
                 : state === 'running' ? 'running' : state === 'cancelled' ? 'idle' : 'queued',
             logs: NO_LOGS,
         };
-        const stateLabel = state === 'waiting' || state === 'current' ? t('settings.machineSetupTaskWaitingForInput')
-            : state === 'cancelled' ? t('status.canceled') : undefined;
+        // A step waiting on the person is the shared row's "Needs you", never a second badge for the same state.
+        const needsAttention = state === 'waiting' || state === 'current';
+        const stateLabel = state === 'cancelled' ? t('status.canceled') : undefined;
         const badge = [stateLabel, step.meta].filter(Boolean).join(' · ');
         return { id: step.key, title: step.title, satisfied: state === 'done', disabled: true,
+            ...(needsAttention ? { needsAttention } : {}),
             ...(step.detail ? { subtitle: step.detail } : {}), ...(badge ? { badge } : {}) };
     });
     return { items, selectedIds: items.map((item) => item.id), executionById };

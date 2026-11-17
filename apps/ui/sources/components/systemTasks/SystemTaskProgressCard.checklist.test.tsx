@@ -159,6 +159,21 @@ describe('SystemTaskProgressCard checklist rendering', () => {
         expect(textUnder(installRow)).toContain('Installing runtime');
     });
 
+    it('marks the step waiting on the person as Needs you, once, instead of a running label', async () => {
+        isDesktopHostMock.mockReturnValue(false);
+        const screen = await renderScreen(React.createElement(SystemTaskProgressCard, {
+            snapshot: createSnapshot({ awaitingInput: true, currentStepId: 'install.runtime', events: [{
+                protocolVersion: 1, taskId: 'task_1', tsMs: 200, type: 'progress', stepId: 'install.runtime', message: 'Installing runtime',
+            }] }),
+        }));
+        const row = screen.findByTestId('system-task-progress-checklist-step-row-install.runtime');
+        expect(row).not.toBeNull();
+        expect(textUnder(row!)).toContain('inbox.needsYou');
+        expect(textUnder(row!)).not.toContain('common.running');
+        expect(textUnder(row!)).not.toContain('settings.machineSetupTaskWaitingForInput');
+        await screen.unmount();
+    });
+
     it('supports a checklist-only variant without the verbose status rows', async () => {
         isDesktopHostMock.mockReturnValue(false);
 
