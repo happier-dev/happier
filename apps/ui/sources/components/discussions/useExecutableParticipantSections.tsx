@@ -30,6 +30,8 @@ import { useDiscussionInviteCandidates } from './useDiscussionInviteCandidates';
 import { SharePrincipalVisual } from '@happier-dev/plugin-ui/components';
 import type { SharePrincipalPresentation } from '@/components/sharing/shareSheetTypes';
 import { t } from '@/text';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { describeMachineReadinessCause, presentSessionReadiness } from '@/components/sessions/model/sessionReadinessPresentation';
 import { selectHomeQualifiedSession } from '@/sync/domains/session/selectHomeQualifiedSession';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -143,6 +145,12 @@ export function useExecutableParticipantSections(
     (machines ?? []).filter(isMachineVisibleForLaunchSelection),
     { onlineOnly: false },
   ) : [], [input.accountLifetime.scope, input.enabled, machines]);
+  // The viewer has no Machine and nothing else can join (no Session, Bot or model): agents can't be offered
+  // here at all. Decided once: the list says so and how to add a Machine, and the search stops promising them.
+  // A Machine list or Session read that has not landed is unknown, not empty.
+  const noAgentToOffer = machinesLoaded && launchMachines.length === 0 && candidates.candidates.length === 0
+    && candidates.sessions.status === 'ready';
+  const router = useRouter();
   const sections = React.useMemo<readonly ExecutableParticipantSection[]>(() => {
     if (!input.enabled) return [];
     // A session leads with its Agent's own mark (identity marks always stay); the catalog decides
@@ -161,11 +169,13 @@ export function useExecutableParticipantSections(
     const matches = (text: string) =>
       needle.length === 0 || text.toLocaleLowerCase().includes(needle);
     const sessions: ExecutableParticipantSectionOption[] = [];
+    let listedSessions = 0;
     const bots: ExecutableParticipantSectionOption[] = [];
     for (const candidate of candidates.candidates) {
       if (candidate.kind !== 'session' || !matches(
         [candidate.label ?? t('session.collaboration.discussion.participants.session'), candidate.contextLabel].filter(Boolean).join(' '),
       )) continue;
+      if (!candidate.bot) listedSessions += 1;
       (candidate.bot ? bots : sessions).push({
         id: `session:${candidate.selection.session.sessionId}`,
         testID: `discussion-invite-session-${candidate.selection.session.sessionId}`,
@@ -239,8 +249,7 @@ export function useExecutableParticipantSections(
     // carry; Bots run with their Team's setup and stay choosable. Unknown readiness never counts as not ready.
     // A viewer with no Machine at all and nothing else to choose gets the same line, naming how to add one; a
     // Machine list that has not loaded is unknown, not empty.
-    const noMachineToAnswer = needle.length === 0 && status === 'ready' && machinesLoaded && launchMachines.length === 0
-      && candidates.candidates.length === 0;
+    const noMachineToAnswer = needle.length === 0 && noAgentToOffer;
     const nothingCanAnswer = noMachineToAnswer || (needle.length === 0 && status === 'ready' && launchMachines.length > 0
       && [...readinessByMachineId.values()].every((readiness) => readinessCause(readiness) !== null)
       && candidates.candidates.every((candidate) => candidate.kind === 'session'
@@ -252,8 +261,10 @@ export function useExecutableParticipantSections(
         'unavailable',
         t('session.collaboration.discussion.secondOpinion.nothingCanAnswer'),
         <Icon name="cloud-slash" size={ICON_SIZE.md} color={theme.colors.text.tertiary} />,
-        { subtitle: noMachineToAnswer ? t('addFlows.addMachineDescription')
-          : t('session.collaboration.discussion.secondOpinion.nothingCanAnswerBody'), disabled: true },
+        noMachineToAnswer
+          ? { subtitle: t('addFlows.addMachineDescription'),
+            onSelect: () => router.push(buildMachineAddHref({ serverId }) as never) }
+          : { subtitle: t('session.collaboration.discussion.secondOpinion.nothingCanAnswerBody'), disabled: true },
       ));
     }
     const sections: ExecutableParticipantSection[] = [];
@@ -262,11 +273,12 @@ export function useExecutableParticipantSections(
         kind: 'static',
         id: 'agents-sessions',
         title: t('session.collaboration.discussion.manage.sessionsGroup'),
-        rightAccessory: (
+        // How listed Sessions answer; said only over Sessions, never over a status line alone.
+        ...(listedSessions > 0 ? { rightAccessory: (
           <Text numberOfLines={1} style={{ ...Typography.variant('meta'), color: theme.colors.text.tertiary }}>
             {sessionsContext}
           </Text>
-        ),
+        ) } : {}),
         options: sessions,
       });
     if (bots.length)
@@ -292,7 +304,8 @@ export function useExecutableParticipantSections(
     input.enabled,
     input.people,
     launchMachines,
-    machinesLoaded,
+    noAgentToOffer,
+    router,
     query,
     onChoose,
     onReadinessSessionChange,
@@ -356,5 +369,5 @@ export function useExecutableParticipantSections(
       const selection = normalizeExecutableParticipantSelectionV1({ kind: 'model', launch: projectDiscussionModelParticipantLaunchV1(draft) });
       if (selection) recipe.onChoose(selection);
     }} /> : null;
-  return { sections, peopleSection, sessions: candidates.sessions, recipeEditor, editModel, addAgent };
+  return { sections, peopleSection, sessions: candidates.sessions, recipeEditor, editModel, addAgent, offersAgents: !noAgentToOffer };
 }

@@ -359,6 +359,8 @@ function createDiscussionInviteAdapter(
     retry(): void;
     /** Sessions, bots and models that can join and answer (lab T2-I), after the people. */
     agentSections?: readonly SelectionListSectionDescriptor[];
+    /** False when no Session, Bot or model can be offered (no Machine): the search then promises people only. */
+    offersAgents?: boolean;
     /** Who already answers here (lab T2-S), right under the people who can read it. */
     afterAccess?: readonly SelectionListSectionDescriptor[];
     /** Live words under a person's name ("Here now"). */
@@ -374,7 +376,7 @@ function createDiscussionInviteAdapter(
     ...(input.principalTags ? { principalTags: input.principalTags } : {}),
     // The participants panel's roster is its content; its search is how to add.
     ...(input.namespace ? { browseOnlyWhileAdding: true } : {}),
-    ...(input.agentSections
+    ...(input.agentSections && input.offersAgents !== false
       ? { searchPlaceholder: t('session.collaboration.discussion.manage.invitePlaceholder') }
       : {}),
     levels: {
@@ -501,7 +503,7 @@ function DiscussionInviteSheetWithAgents(
     (selection: ExecutableParticipantSelectionV1) => { void inviteExecutable(selection); },
     [inviteExecutable],
   );
-  const { sections: agentSections, recipeEditor } = useExecutableParticipantSections({
+  const { sections: agentSections, recipeEditor, offersAgents } = useExecutableParticipantSections({
     accountLifetime: props.accountLifetime,
     roster: props.roster,
     busy: operation.kind === 'working',
@@ -513,12 +515,13 @@ function DiscussionInviteSheetWithAgents(
     query: props.controller.model.directory.query,
   });
   const { accountLifetime: _lifetime, management: _management, roster: _roster, ...shared } = props;
-  return recipeEditor ?? <DiscussionInviteShareSheet {...shared} agentSections={agentSections} />;
+  return recipeEditor ?? <DiscussionInviteShareSheet {...shared} agentSections={agentSections} offersAgents={offersAgents} />;
 }
 
 function DiscussionInviteShareSheet(
   props: DiscussionShareSheetShared & Readonly<{
     agentSections?: readonly SelectionListSectionDescriptor[];
+    offersAgents?: boolean;
   }>,
 ) {
   const { controller } = props;
@@ -532,6 +535,7 @@ function DiscussionInviteShareSheet(
     ...(controller.notice ? { notice: controller.notice } : {}),
     retry: controller.retry,
     ...(props.agentSections ? { agentSections: props.agentSections } : {}),
+    ...(props.offersAgents === false ? { offersAgents: false } : {}),
     ...(props.composition?.afterAccess ? { afterAccess: props.composition.afterAccess } : {}),
     ...(props.composition?.principalTags ? { principalTags: props.composition.principalTags } : {}),
     ...(props.composition?.notes ? { notes: props.composition.notes } : {}),

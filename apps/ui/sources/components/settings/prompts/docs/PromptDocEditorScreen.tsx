@@ -46,11 +46,8 @@ const styles = StyleSheet.create((theme) => ({
   conflict: {
     marginBottom: theme.space.s8,
   },
+  // The field sits in its section like every other editor host (Skills): no frame of its own inside the sheet.
   editorContainer: {
-    borderRadius: 10,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: theme.colors.border.default,
     minHeight: 360,
   },
 }));
@@ -450,7 +447,6 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
               value={title}
               onChangeText={setTitle}
               accessibilityLabel={t('promptLibrary.surface.nameTitle')}
-              placeholder={t('promptLibrary.titlePlaceholder')}
               autoCapitalize="sentences"
               autoFocus={isNew}
               editable={!isLoading && (!isNew || !saving)}

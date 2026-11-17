@@ -290,7 +290,6 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
               value={title}
               onChangeText={setTitle}
               accessibilityLabel={t('promptLibrary.surface.nameTitle')}
-              placeholder={t('promptLibrary.titlePlaceholder')}
               autoCapitalize="sentences"
               autoFocus={isNew}
             />

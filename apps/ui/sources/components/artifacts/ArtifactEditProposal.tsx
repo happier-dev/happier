@@ -608,7 +608,8 @@ function ProposalText(props: HappierDocEditProposalTextProps) {
   const { theme } = useUnistyles();
   const styles = stylesheet;
   if (props.role === 'title') {
-    return <Text variant="label" emphasis="semiBold" style={styles.title}>{props.children}</Text>;
+    // One step under the comment's byline it answers, so the suggestion reads as part of the thread.
+    return <Text variant="body" emphasis="medium" style={styles.title}>{props.children}</Text>;
   }
   if (props.role === 'meta') {
     return <Text testID={props.testID} variant="meta" style={styles.meta} numberOfLines={props.numberOfLines}>{props.children}</Text>;

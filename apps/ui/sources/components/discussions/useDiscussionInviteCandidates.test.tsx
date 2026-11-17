@@ -306,12 +306,18 @@ describe('Discussion Invite source composition', () => {
             sessionsContext: 'Reviewer', onChoose: vi.fn() }));
         await vi.waitFor(() => expect(hook.getCurrent().sessions.status).toBe('ready'));
         expect(statusRows(hook)).toHaveLength(0);
-        // Loaded and empty: one line, not a choice, naming the next step instead of a Machine that isn't there.
+        expect(hook.getCurrent().offersAgents).toBe(true);
+        // Loaded and empty: one line that leads to adding a Machine, and the search stops promising agents.
         await act(async () => { storage.setState({ machineListByServerId: { [home]: [] } }); });
         await vi.waitFor(() => expect(statusRows(hook)).toHaveLength(1));
-        expect(statusRows(hook)[0]).toMatchObject({ disabled: true,
+        expect(statusRows(hook)[0]).toMatchObject({
             label: t('session.collaboration.discussion.secondOpinion.nothingCanAnswer'),
             subtitle: t('addFlows.addMachineDescription') });
+        expect(statusRows(hook)[0]!.disabled).not.toBe(true);
+        expect(typeof statusRows(hook)[0]!.onSelect).toBe('function');
+        expect(hook.getCurrent().offersAgents).toBe(false);
+        // A status line alone is not a list of Sessions: no "how they answer" note above it.
+        expect(hook.getCurrent().sections.find(section => section.id === 'agents-sessions')?.rightAccessory).toBeUndefined();
     });
     it('projects encrypted title readability from the exact Home title owner and tracks unlock without label heuristics', async () => {
         const [focusedHome, home] = boundary.serverIds as [string, string, string];

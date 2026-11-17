@@ -106,6 +106,6 @@ function Reply(props: Readonly<{
             disabled={composerBlocked || unavailable} value={value} onChange={draft.setComposer}
             onSend={(content, attachments) => { void send(content, attachments); }} draftAddress={draftAddress}
             prepareParticipantMentions={prepareParticipantMentions} recipients={recipients} contextItems={contextItems} focusOnOpen
-            placeholder={t('artifacts.browser.passage.replyPlaceholder')} />
+            placeholder={t('artifacts.browser.passage.replyPlaceholder')} panelPresentation="embedded" />
     </View>;
 }

@@ -152,6 +152,8 @@ export function DiscussionComposer(props: Readonly<{
     focusOnOpen?: boolean;
     /** What the empty field says; a narrow host (a Doc passage thread) passes a shorter line than the Discussion's own. */
     placeholder?: string;
+    /** A composer nested in another surface (a Doc passage thread card) draws no floating coat of its own. */
+    panelPresentation?: 'embedded';
 }>): React.ReactElement {
     const { scope, availability, disabled, accountLifetime } = props;
     const controlsDisabled = disabled || props.isSendDisabled === true;
@@ -497,6 +499,7 @@ export function DiscussionComposer(props: Readonly<{
                 value={props.value.text}
                 placeholder={placeholder}
                 inputAccessibilityLabel={placeholder}
+                panelPresentation={props.panelPresentation}
                 submitAccessibilityLabel={t('common.send')}
                 onChangeText={onChangeText}
                 structuredInputMentions={composerMentions}

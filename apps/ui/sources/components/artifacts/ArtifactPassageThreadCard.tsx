@@ -153,7 +153,7 @@ export function ArtifactPassageThreadCard(
       style={[
         styles.card,
         props.focused
-          ? { borderColor: theme.colors.state.active.border }
+          ? { borderColor: theme.colors.border.strong }
           : null,
       ]}
     >
