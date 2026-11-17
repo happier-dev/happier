@@ -14,3 +14,4 @@ export type {
 } from './models.js';
 export { createDatabaseWorkbenchPlacements } from './placements.js';
 export type { WorkbenchPaneState, WorkbenchPaneIdentity } from './state.js';
+export { projectDatabaseStatementMetrics } from '../insights/presentation.js';
