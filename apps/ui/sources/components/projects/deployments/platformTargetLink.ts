@@ -225,8 +225,20 @@ export function buildPlatformTargetDraft(
  * or a reviewed create intent with its own retry key. The draft links it once Create has made the Environment.
  */
 export type PreparedPlatformTargetLink =
-  | Readonly<{ kind: 'existing'; provider: DeploymentTargetLinkProviderContentV1 }>
-  | Readonly<{ kind: 'create'; requestKey: string; providerCreate: PlatformTargetProviderCreate }>;
+  | Readonly<{ kind: 'existing'; provider: DeploymentTargetLinkProviderContentV1; reviewNotice: string | null }>
+  | Readonly<{ kind: 'create'; requestKey: string; providerCreate: PlatformTargetProviderCreate; reviewNotice: string | null }>;
+
+/**
+ * The platform's own Review notice (`preparedNative.reviewNotice`), from its inspect reply: an inspected resource, or
+ * a draft before Create, which names no resource and is answered with the notice alone. One field; the UI never
+ * decides it per platform.
+ */
+export function readPlatformReviewNotice(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null || !('preparedNative' in value)) return null;
+  const prepared = value.preparedNative;
+  return typeof prepared === 'object' && prepared !== null && 'reviewNotice' in prepared
+    && typeof prepared.reviewNotice === 'string' ? prepared.reviewNotice : null;
+}
 
 /** A reviewed platform draft's provider part: what a create intent asks the platform to make. */
 export type PlatformTargetProviderCreate = Omit<ReturnType<typeof buildPlatformTargetDraft>, 'v' | 'serverId' | 'environmentId' | 'expectedRevision'>;

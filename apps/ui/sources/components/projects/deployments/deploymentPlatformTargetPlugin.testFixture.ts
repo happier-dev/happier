@@ -48,7 +48,7 @@ export async function answerDeploymentTargetInspectForHome(params: Readonly<{
 
 /** A third-party plugin declaring two runtime platforms, Alpha and Beta, through the public deployment target contract. */
 export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: (name: string, input: JsonValue) => Promise<void> = async () => {},
-  options: Readonly<{ emptyChoices?: boolean; upload?: boolean; create?: boolean; teardown?: boolean; plans?: boolean }> = {}) {
+  options: Readonly<{ emptyChoices?: boolean; upload?: boolean; create?: boolean; teardown?: boolean; plans?: boolean; reviewNotice?: string }> = {}) {
   const service = DEPLOYMENT_TARGETS_TEST_SERVICE;
   const execution = DEPLOYMENT_TARGETS_TEST_EXECUTION;
   const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
@@ -59,7 +59,10 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
     inputSchema: { ...DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema,
       properties: { ...DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema.properties, [name]: { type: 'string' },
         repository: ScmHostingRepositoryIdentityV1ProtocolSchema.jsonSchema } },
-    resultSchema: DeploymentTargetLinkProviderContentV1ProtocolSchema.jsonSchema,
+    resultSchema: options.reviewNotice ? { anyOf: [DeploymentTargetLinkProviderContentV1ProtocolSchema.jsonSchema,
+      { type: 'object', additionalProperties: false, required: ['preparedNative'], properties: { preparedNative: {
+        type: 'object', additionalProperties: false, required: ['reviewNotice'], properties: { reviewNotice: { type: 'string' } } } } }] }
+      : DeploymentTargetLinkProviderContentV1ProtocolSchema.jsonSchema,
     inputHints: { fields: [{ path: name, title: `${name} region`, widget: 'select', required: true,
       ...(options.emptyChoices ? { inputType: { pluginId, localId: 'region-choice' } }
         : { options: [{ value: `${name}-west`, label: `${name} West` }] }) },
@@ -71,7 +74,10 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
       const credentialPrincipal = admitted.credentialPrincipal;
       if (credentialPrincipal === undefined) throw new Error('Expected admitted credential principal');
       await runInspect(name, input);
+      // A draft before Create names no resource; the platform answers with what creating one will mean (U8 contract).
+      if (options.reviewNotice && admitted[name] === undefined) return { preparedNative: { reviewNotice: options.reviewNotice } };
       return { credentialPrincipal,
+        ...(options.reviewNotice ? { preparedNative: { projectName: String(admitted[name]), reviewNotice: options.reviewNotice } } : {}),
         providerIdentity: { providerAccountId: 'cloud', providerResourceId: String(admitted[name]), providerEnvironment: 'production' },
         providerEnvironment: { kind: 'production' } };
     },
@@ -90,6 +96,7 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
     actions: { 'inspect-alpha': inspect('alpha'), 'inspect-beta': inspect('beta'),
       ...(options.create ? { 'create-beta': { ...inspect('beta'), title: 'Create Beta project', dangerLevel: 'writesRemote', readOnly: false,
         confirmation: { title: 'Create this provider project?' }, inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.create.jsonSchema,
+        resultSchema: DeploymentTargetLinkProviderContentV1ProtocolSchema.jsonSchema,
         inputHints: { fields: [
           { path: 'providerAccountId', title: 'Account', widget: 'text', required: true },
           { path: 'resourceName', title: 'Project name', widget: 'text', required: true },

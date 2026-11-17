@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { randomUUID } from '@/platform/randomUUID';
@@ -15,7 +16,7 @@ import { seedInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRu
 import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
-import type { DeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
+import { DeploymentSourceMethodV1Schema, type DeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
 import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 import type { DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
@@ -64,6 +65,7 @@ import {
   readProviderCreate,
   type PreparedPlatformTargetLink,
   readPlatformInspectOutcome,
+  readPlatformReviewNotice,
   type PlatformInspectOutcome,
   applyPlatformFieldPatch,
   disclosePlatformFields,
@@ -467,7 +469,8 @@ export function DeploymentPlatformTargetEditor(
     setBusy(null);
     const inspected = readPlatformInspectOutcome(result);
     setOutcome(inspected);
-    props.onPrepared?.(inspected.kind === 'ready' ? { kind: 'existing', provider: inspected.provider } : null);
+    props.onPrepared?.(inspected.kind === 'ready' ? { kind: 'existing', provider: inspected.provider,
+      reviewNotice: readPlatformReviewNotice(inspected.provider) } : null);
   };
   const link = async () => {
     if (!target || outcome?.kind !== 'ready' || busy || !props.environment.id || props.environment.revision === undefined) return;
@@ -559,12 +562,37 @@ export function DeploymentPlatformTargetEditor(
   const preparedCreateKey = React.useRef<string | null>(null);
   const createIntentReady = Boolean(create && draft && target && !missing && !needsConnect && drawn.canCheck);
   const { onPrepared } = props;
+  // Before Create, the platform's inspect says what making this resource means (deploy auto-mode U8): read once per
+  // platform, account and source method, through the target's own inspect with no resource named.
+  // The create draft's own choices name how it deploys and which provider environment; the notice is read for those.
+  const draftMethod = DeploymentSourceMethodV1Schema.safeParse(draft?.sourceMethod);
+  const createSourceMethod = draftMethod.success ? draftMethod.data : sourceMethod;
+  const providerEnvironment = draft?.providerEnvironment;
+  const noticeKey = onPrepared && create && createIntentReady && target && account
+    ? JSON.stringify([target.key, account, createSourceMethod ?? null, providerEnvironment ?? null]) : null;
+  const [createNotice, setCreateNotice] = React.useState<Readonly<{ key: string; notice: string | null }> | null>(null);
+  const readCreateNotice = useEventCallback((key: string, isCurrent: () => boolean) => {
+    if (!target || !account) return;
+    void actions.inspectPlatformTarget(target.inspectActionId, buildPlatformTargetDraft({ target,
+      ownerAccountId: props.ownerAccountId, serverId: props.lifetime.scope.serverId, environment: {}, account,
+      repository: null, values: providerEnvironment === undefined ? {} : { providerEnvironment },
+      ...(createSourceMethod ? { sourceMethod: createSourceMethod } : {}) }),
+      props.environment.controllerMachineId ? { externalActionTarget: { kind: 'machine', machineId: props.environment.controllerMachineId } } : undefined)
+      .then(result => { if (isCurrent()) setCreateNotice({ key, notice: result.ok ? readPlatformReviewNotice(result.value) : null }); });
+  });
+  React.useEffect(() => {
+    if (!noticeKey) return;
+    let current = true;
+    readCreateNotice(noticeKey, () => current);
+    return () => { current = false; };
+  }, [noticeKey, readCreateNotice]);
+  const reviewNotice = createNotice && createNotice.key === noticeKey ? createNotice.notice : null;
   React.useEffect(() => {
     if (!onPrepared || !create) return;
     if (!createIntentReady || !draft) { onPrepared(null); return; }
     preparedCreateKey.current ??= randomUUID();
-    onPrepared({ kind: 'create', requestKey: preparedCreateKey.current, providerCreate: readProviderCreate(draft) });
-  }, [onPrepared, create, createIntentReady, draft]);
+    onPrepared({ kind: 'create', requestKey: preparedCreateKey.current, providerCreate: readProviderCreate(draft), reviewNotice });
+  }, [onPrepared, create, createIntentReady, draft, reviewNotice]);
   const primary = createdBranchOutcome || provisioned || outcomeUnknown || duplicate || pendingLink || unresolvedLink
     || (create && props.onPrepared) ? null : {
     testID: create ? 'project-deployments.platform.create'

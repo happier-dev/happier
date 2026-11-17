@@ -1123,7 +1123,8 @@ describe('Environment draft Machine Home', () => {
     const saved: Array<[string, unknown]> = [];
     const pluginId = 'com.example.draft-platform-create';
     const { DeploymentTargetLinkCreateIntentInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
-    const authoredPlugin = createDeploymentTargetsTestPlugin(pluginId, undefined, { create: true });
+    const notice = 'Beta: the source is final at creation.';
+    const authoredPlugin = createDeploymentTargetsTestPlugin(pluginId, undefined, { create: true, reviewNotice: notice });
     const installed = await installPortableAccountPluginReleaseForTest({ manifest: authoredPlugin.manifest,
       activate: api => authoredPlugin.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account),
       accountLifetime: account.accountLifetime, publishProjection: true });
@@ -1193,6 +1194,10 @@ describe('Environment draft Machine Home', () => {
       await act(async () => header().props.primaryAction.onPress());
       await waitForHomeGovernance(async () => { await act(async () => {});
         expect(screen.findHostByTestId('project-deployments.draft.defaults'), screen.getTextContent()).not.toBeNull(); });
+      // Review says, before Create, what making this resource means, in the platform's own words (deploy auto-mode U8).
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(screen.findHostByTestId('project-deployments.draft.reviewNotice'), screen.getTextContent()).not.toBeNull(); });
+      expect(screen.getTextContent()).toContain(notice);
       await act(async () => header().props.primaryAction.onPress());
       await waitForHomeGovernance(async () => { await act(async () => {}); expect(saved, screen.getTextContent()).toHaveLength(1); });
       expect(creates).toHaveLength(1);
