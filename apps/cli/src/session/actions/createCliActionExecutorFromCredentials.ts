@@ -941,6 +941,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
     createApprovalRoutingContext(params, fixedServerId, approvalServerApiUrl);
   const bindExecutorToActionServer = (source: CliActionExecutor): CliActionExecutor => ({
     observeRecordedApprovalExecution: async args => await runWithActionServer(() => source.observeRecordedApprovalExecution(args)),
+    resolveReviewServices: async context => await runWithActionServer(async () =>
+      await source.resolveReviewServices?.(context) ?? {}),
     prepare: async (...args) => {
       const prepared = await runWithActionServer(async () => await source.prepare(...args));
       if (prepared.kind !== 'ready') return prepared;
@@ -2203,6 +2205,14 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       return { context: originalContext, invocation: null };
     };
     return bindExecutorToActionServer({
+      resolveReviewServices: async rawContext => {
+        const credentials = await readCurrentCredentials();
+        if (!credentials) return {};
+        const routing = await resolveInvocationRoutingContext(rawContext, credentials);
+        const signal = combineInvocationSignals(invocationSignal, routing.context?.signal);
+        const executor = await resolveExecutor(credentials, undefined, routing);
+        return await executor.resolveReviewServices?.(signal ? { ...routing.context, signal } : routing.context) ?? {};
+      },
       observeRecordedApprovalExecution: async args => {
         const selection = await readApprovalReplayCredentials(args.expectedOrigin.accountId);
         if (!selection.ok) return selection;

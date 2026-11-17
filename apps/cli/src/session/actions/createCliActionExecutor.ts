@@ -48,6 +48,7 @@ import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { isManagedControllerCodecRootV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readRetainedVerifiedExternalActionRequester, retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import type { ReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 
 type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>[0]
   & CliTranscriptActionExecutorOptions
@@ -114,8 +115,14 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
     accountPluginActions?: true;
   }>;
 
+export type CliReviewServices = Readonly<{
+  records?: ReviewRecordPortV1;
+  comments?: ActionExecutorDeps['reviewCommentAction'];
+}>;
+
 type CliActionExecutor = ReturnType<typeof createCliActionExecutorHarness>['executor']
-  & Pick<ReturnType<typeof createCliActionExecutorHarness>, 'observeRecordedApprovalExecution'>;
+  & Pick<ReturnType<typeof createCliActionExecutorHarness>, 'observeRecordedApprovalExecution'>
+  & Readonly<{ resolveReviewServices?(context?: ActionExecutorContext): Promise<CliReviewServices> }>;
 
 export function createCliActionExecutor(params: CliActionExecutorParams): CliActionExecutor {
   return createCliActionHost(params).executor;
@@ -577,6 +584,18 @@ export function createCliActionHost(params: CliActionExecutorParams):
   };
   return { ...harness, executor: {
     observeRecordedApprovalExecution: harness.observeRecordedApprovalExecution,
+    resolveReviewServices: async context => {
+      const resolvedContext = await resolveContext(context);
+      if (!resolvedContext) return {};
+      const comments = harness.deps.reviewCommentAction;
+      const boundComments: ActionExecutorDeps['reviewCommentAction'] = comments ? request => params.serverHttpBaseUrl
+        ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => comments(request))
+        : comments(request) : undefined;
+      return {
+        ...(harness.deps.reviewRecords ? { records: harness.deps.reviewRecords(resolvedContext) } : {}),
+        ...(boundComments ? { comments: boundComments } : {}),
+      } satisfies CliReviewServices;
+    },
     prepare: async (actionId, input, context) => {
       const denied = filesystemRequesterAuthorityFailure(actionId, context)
         ?? requesterPrivateEffectAuthorityFailure(actionId, input, context);
