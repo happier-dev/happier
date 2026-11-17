@@ -5,6 +5,7 @@ import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { deriveArtifactKindV1, deriveArtifactKindWriteItemV1, tryDeriveArtifactStoredKindV1, writeArtifactKindBatchesV1,
     type ArtifactKindWriteBatchInputV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { deriveApprovalArtifactQueryHintsV1, isApprovalArtifactKindV1, type ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
+import { readSettledApprovalInputCustodyV1 } from '@happier-dev/protocol/approvals/approvalInputCustody';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { readApprovalTranscriptVisualPublicationV1 } from '@happier-dev/protocol/sessions/board/transcriptReference';
 import { areCredentialsEqual } from '@/auth/storage/tokenStorage';
@@ -1871,9 +1872,13 @@ export async function updateArtifactWithHeaderViaApi(params: {
 
     // Send update to server
     if (updateRequest.header && updateRequest.body) {
-        const publication = readApprovalTranscriptVisualPublicationV1({ artifactId,
-            approval: approvalArtifactBodyMatchesHeaderV1(rawHeader, typeof body === 'string' ? body : null) });
+        const approval = approvalArtifactBodyMatchesHeaderV1(rawHeader, typeof body === 'string' ? body : null);
+        const publication = readApprovalTranscriptVisualPublicationV1({ artifactId, approval });
         if (publication) updateRequest.transcriptVisualPublication = publication;
+        if (approval?.family === 'target_action') {
+            const custody = readSettledApprovalInputCustodyV1(approval.request);
+            if (custody) updateRequest.approvalInputCustody = custody;
+        }
     }
     const kind = tryDeriveArtifactStoredKindV1(rawHeader);
     if (kind !== undefined) updateRequest.kind = kind;

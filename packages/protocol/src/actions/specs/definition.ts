@@ -1,5 +1,6 @@
 import type { ApprovalActionReference } from '../actionApprovalPresentation.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { ApprovalInputCustodySchema } from '../../approvals/approvalInputCustody.js';
 import { PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
 import { ActionSessionTargetDeclarationV1Schema } from '../sessionTargetV1.js';
 import { ActionPromptingSchema } from '../metadata.js';
@@ -307,7 +308,7 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
    * replay that no longer has the live invocation fails closed instead of
    * recovering the secret from durable approval state.
    */
-  approvalInputCustody: z.optional(z.literal('live_only')),
+  approvalInputCustody: z.optional(ApprovalInputCustodySchema),
   /** Domain-owned disclosure of this exact operation to its Session participants. */
   projectSessionConfirmation: z.optional(z.custom<(
     input: unknown,

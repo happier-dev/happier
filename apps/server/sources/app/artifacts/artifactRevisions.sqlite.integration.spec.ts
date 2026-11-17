@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as privacyKit from "privacy-kit";
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, sealEncryptedDataKeyEnvelopeV1 } from "@happier-dev/protocol";
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, FeaturesResponseSchema, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, sealEncryptedDataKeyEnvelopeV1 } from "@happier-dev/protocol";
 import tweetnacl from "tweetnacl";
 import { createHash } from "node:crypto";
 import { request as requestHttp } from 'node:http';
@@ -12,7 +12,7 @@ import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
-import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
+import { createAuthenticatedTestApp, withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { artifactsRoutes } from "@/app/api/routes/artifacts/artifactsRoutes";
 import { readArtifactRecipientCensusInTx } from "./artifactAccessService";
 import { createArtifact, updateArtifact } from './artifactWriteService';
@@ -20,6 +20,10 @@ import { eventRouter } from '@/app/events/connectionEventRouter';
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { storePlainArtifactDbBytes } from './artifactStoredContent';
 import { deleteAccountForErasure } from "@/app/plugins/data/accountDataErase";
+import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
+import { createAccountArtifactStore } from '../../../../cli/src/api/artifacts/accountArtifactStore';
+import { runWithServerHttpBaseUrl } from '../../../../cli/src/api/client/serverHttpBaseUrl';
+import { createTargetActionApprovalLifecycle } from '../../../../cli/src/session/actions/approvals/targetActionLifecycle';
 
 describe("Artifact revisions and storage budgets (real SQLite)", () => {
     let harness: LightSqliteHarness;
@@ -38,6 +42,59 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
     const headers = (accountId: string) => ({ "x-test-user-id": accountId,
         "x-happier-account-stored-content-protocol": String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION) });
     const body = (value: string) => encodePlainArtifactStoredContent({ body: value });
+
+    it.each(['plain', 'e2ee'] as const)('keeps durable approval history but settles live-only input out of the %s head and revisions (DBW R17)', async mode => {
+        const keys = tweetnacl.box.keyPair();
+        const owner = await db.account.create({ data: { encryptionMode: mode, ...createSignedAccountContentBinding(keys.publicKey) } });
+        const token = `fixture.${Buffer.from(JSON.stringify({ sub: owner.id })).toString('base64url')}.signature`;
+        const app = createAuthenticatedTestApp();
+        app.addHook('onRequest', async request => { request.headers['x-test-user-id'] = owner.id; });
+        artifactsRoutes(app);
+        const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+        try {
+            await runWithServerHttpBaseUrl(origin, async () => {
+                const accountArtifactStore = createAccountArtifactStore({ credentials: { token, encryption: mode === 'plain' ? null
+                    : { type: 'dataKey', publicKey: keys.publicKey, machineKey: keys.secretKey } }, getAccountEncryptionMode: async () => mode,
+                    resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
+                        features: { artifacts: { queryHints: { enabled: true } } }, capabilities: {},
+                    }) }) });
+                const lifecycle = createTargetActionApprovalLifecycle({ accountArtifactStore, getAccountId: () => owner.id,
+                    newId: () => crypto.randomUUID(), prepareRequesterRecipient: async () => {} });
+                // G1: prove ordinary replayable approvals retain history before the live-only refusal assertion.
+                for (const custody of ['durable', 'live_only'] as const) {
+                    const request = TargetActionApprovalRequestV1Schema.parse({ v: 1, kind: 'plugin_target_action', status: 'open',
+                        createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'cli' }, requestedSurface: 'cli',
+                        qualifiedActionId: 'acme.database/actions/statement', input: { sql: 'DELETE FROM private_records', parameters: [] },
+                        secretInputPaths: ['parameters.[]'], ...(custody === 'live_only' ? { approvalInputCustody: custody } : {}),
+                        sourceCustody: { kind: 'development', registeredRootId: 'database-test' },
+                        policyFingerprint: 'b'.repeat(64), subjectFingerprint: 'a'.repeat(64), summary: 'Run statement' });
+                    const { artifactId } = await lifecycle.targetActionApprovalsCreate({ request });
+                    expect(await lifecycle.targetActionApprovalsGet({ artifactId })).toEqual(request);
+                    const approved = TargetActionApprovalRequestV1Schema.parse({ ...request, status: 'approved', updatedAtMs: 2,
+                        decision: { kind: 'approve', decidedAtMs: 2, narrowedInput: request.input } });
+                    const executing = TargetActionApprovalRequestV1Schema.parse({ ...approved, status: 'executing', updatedAtMs: 3 });
+                    const terminal = TargetActionApprovalRequestV1Schema.parse({ ...executing, status: 'executed', updatedAtMs: 4,
+                        execution: { executedAtMs: 4, ok: true } });
+                    for (const next of [approved, executing, terminal]) {
+                        expect(await lifecycle.targetActionApprovalsUpdate({ artifactId, request: next })).toEqual({ ok: true });
+                    }
+                    const head = await lifecycle.targetActionApprovalsGet({ artifactId });
+                    const revisions = await accountArtifactStore.revisions.list({ artifactId });
+                    if (custody === 'durable') {
+                        expect(head).toEqual(terminal);
+                        expect(revisions.revisions.map(revision => JSON.parse(String(revision.body)).status)).toEqual(['executing', 'approved', 'open']);
+                    } else {
+                        expect.soft(head).toMatchObject({ status: 'executed', input: null });
+                        expect.soft(head?.decision?.narrowedInput).toBeUndefined();
+                        expect.soft(revisions.revisions).toEqual([]);
+                        expect(await db.artifactRevision.count({ where: { artifactId } })).toBe(0);
+                        expect(await lifecycle.targetActionApprovalsUpdate({ artifactId, request: terminal })).toEqual({ ok: true });
+                        expect(await db.artifactRevision.count({ where: { artifactId } })).toBe(0);
+                    }
+                }
+            });
+        } finally { await app.close(); }
+    });
 
     it('publishes both Artifact kinds when an admitted header edit changes its list membership', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });

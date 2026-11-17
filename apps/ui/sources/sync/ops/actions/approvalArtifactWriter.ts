@@ -1,7 +1,7 @@
 import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1, buildTargetActionApprovalArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { createApprovalRequestArtifact, decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { ApprovalRequestUpdateSchema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { admitTargetActionApprovalTransition } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
+import { admitTargetActionApprovalTransition, settleTargetActionApprovalReplayInputs } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 
 import type { ArtifactHeader, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
@@ -67,8 +67,8 @@ export async function writeApprovalRequestArtifact(input: Readonly<{
         const transition = admitTargetActionApprovalTransition(stored.request, target.data);
         if (!transition.ok) return { ...transition, writeCommitted: false };
         if (transition.unchanged) return { ok: true };
-        request = target.data;
-        header = buildTargetActionApprovalArtifactHeaderV1(target.data);
+        request = settleTargetActionApprovalReplayInputs(target.data);
+        header = buildTargetActionApprovalArtifactHeaderV1(request);
     } else {
         const builtIn = ApprovalRequestUpdateSchema.safeParse(input.request);
         if (stored?.family !== 'built_in' || !builtIn.success) {

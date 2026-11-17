@@ -11,12 +11,13 @@ import type { CoordinationMessageRefV1 } from '@happier-dev/protocol/discussions
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { readDatabaseErrorCode } from '@/storage/transactionErrors';
 import type { ApprovalArtifactQueryHintsV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
+import type { ApprovalInputCustody } from '@happier-dev/protocol/approvals/approvalInputCustody';
 import type { ArtifactIdScopeV1 } from '@happier-dev/protocol';
 import type { ApprovalTranscriptVisualPublicationV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 
 export type ArtifactHttpMutationResult = Awaited<ReturnType<typeof createArtifactHttpMutation | typeof updateArtifactHttpMutation>>;
 export type ArtifactCreateHttpInput = Readonly<{ id: string; idScope?: ArtifactIdScopeV1; kind?: string; header: string; body: string; dataEncryptionKey: string; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteV1; memoryDecisionSource?: CoordinationMessageRefV1 } & Partial<ApprovalArtifactQueryHintsV1>>;
-export type ArtifactUpdateHttpInput = Readonly<{ transcriptVisualPublication?: ApprovalTranscriptVisualPublicationV1; kind?: string; header?: string; expectedHeaderVersion?: number; body?: string; expectedBodyVersion?: number; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteV1 | null; memoryDecisionSource?: CoordinationMessageRefV1 } & Partial<ApprovalArtifactQueryHintsV1>>;
+export type ArtifactUpdateHttpInput = Readonly<{ transcriptVisualPublication?: ApprovalTranscriptVisualPublicationV1; approvalInputCustody?: ApprovalInputCustody; kind?: string; header?: string; expectedHeaderVersion?: number; body?: string; expectedBodyVersion?: number; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteV1 | null; memoryDecisionSource?: CoordinationMessageRefV1 } & Partial<ApprovalArtifactQueryHintsV1>>;
 
 function memoryDecisionHttpFailure(error: string) {
     if (error === 'memory_decision_source_unavailable') return { statusCode: 404 as const, body: { error: 'memory_decision_source_unavailable' as const } };
@@ -120,6 +121,7 @@ export async function updateArtifactHttpMutation(userId: string, artifactId: str
 
             const result = await updateArtifact({
                 transcriptVisualPublication: input.transcriptVisualPublication,
+                approvalInputCustody: input.approvalInputCustody,
                 actorUserId: userId,
                 artifactId: id,
                 mutationGuard,

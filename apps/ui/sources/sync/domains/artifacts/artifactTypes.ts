@@ -175,6 +175,7 @@ export interface ArtifactCreateRequest {
  * Request to update an existing artifact
  */
 export interface ArtifactUpdateRequest {
+    approvalInputCustody?: import('@happier-dev/protocol/approvals/approvalInputCustody').ApprovalInputCustody;
     transcriptVisualPublication?: import('@happier-dev/protocol/sessions/messages/transcriptObservationV1').ApprovalTranscriptVisualPublicationV1;
     approvalState?: ApprovalArtifactStateV1 | null;
     approvalSessionId?: string | null;

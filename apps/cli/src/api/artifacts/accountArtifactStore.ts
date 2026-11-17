@@ -1,4 +1,5 @@
 import axios from '@/api/client/credentialAxios';
+import { readSettledApprovalInputCustodyV1 } from '@happier-dev/protocol/approvals/approvalInputCustody';
 import type { ArtifactTemplateAcceptedVersionInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { artifactAccessUrl as accessUrl, requireArtifactAccessResponse as requireAccessResponse,
   reportArtifactTemplateAcceptedVersion } from './artifactAccessHttp';
@@ -927,10 +928,11 @@ export function createAccountArtifactStore(params: Readonly<{
     const provenance = await writeProvenance({ artifactId: input.artifactId, header: nextHeader, bodyVersion: input.expectedRevision.bodyVersion + 1,
       savedBy: input.savedBy, source, signal: input.signal,
       mutationAuthorizationHeaders: input.mutationAuthorizationHeaders, authorizationHeaders: input.authorizationHeaders }, stored, codec);
-    const transcriptVisualPublication = readApprovalTranscriptVisualPublicationV1({
-      artifactId: input.artifactId, approval: approvalArtifactBodyMatchesHeaderV1(nextHeader,
-        typeof content.body === 'string' ? content.body : null) });
+    const approval = approvalArtifactBodyMatchesHeaderV1(nextHeader, typeof content.body === 'string' ? content.body : null);
+    const approvalInputCustody = approval?.family === 'target_action' ? readSettledApprovalInputCustodyV1(approval.request) : undefined;
+    const transcriptVisualPublication = readApprovalTranscriptVisualPublicationV1({ artifactId: input.artifactId, approval });
     const wire = { header, expectedHeaderVersion: input.expectedRevision.headerVersion,
+      ...(approvalInputCustody ? { approvalInputCustody } : {}),
       ...(transcriptVisualPublication ? { transcriptVisualPublication } : {}),
       body, expectedBodyVersion: input.expectedRevision.bodyVersion,
       ...provenance.wire, ...(kind === undefined ? {} : { kind, ...(isApprovalArtifactKindV1(nextHeader.kind)

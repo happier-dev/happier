@@ -1,7 +1,7 @@
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
 import { approvalArtifactBodyMatchesHeaderV1, buildTargetActionApprovalArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { createApprovalRequestArtifact } from '@happier-dev/protocol/approvals/approvalRequestTransition';
-import { admitTargetActionApprovalTransition } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
+import { admitTargetActionApprovalTransition, settleTargetActionApprovalReplayInputs } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
 import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 
 type ArtifactStore = Pick<ReturnType<typeof createAccountArtifactStore>, 'read' | 'readForUpdate' | 'create' | 'list'>;
@@ -28,7 +28,8 @@ export function createTargetActionApprovalLifecycle(input: Readonly<{
     const transition = admitTargetActionApprovalTransition(existing, request);
     if (!transition.ok) return transition;
     if (transition.unchanged) return { ok: true as const };
-    const updated = await current.update({ header: buildTargetActionApprovalArtifactHeaderV1(request), body: JSON.stringify(request) });
+    const receipt = settleTargetActionApprovalReplayInputs(request);
+    const updated = await current.update({ header: buildTargetActionApprovalArtifactHeaderV1(receipt), body: JSON.stringify(receipt) });
     return updated.ok ? { ok: true as const } : updated;
   };
   return {

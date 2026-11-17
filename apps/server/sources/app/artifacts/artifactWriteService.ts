@@ -1,4 +1,5 @@
 import { isTransactionStorageError } from '@/storage/transactionErrors';
+import type { ApprovalInputCustody } from '@happier-dev/protocol/approvals/approvalInputCustody';
 import { artifactIdScopeMatchesAccountV1, type ArtifactIdScopeV1 } from '@happier-dev/protocol';
 import { afterTx, inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import { eventRouter } from '@/app/events/connectionEventRouter';
@@ -1111,6 +1112,7 @@ export type UpdateArtifactResult =
 
 export async function updateArtifact(params: {
     transcriptVisualPublication?: ApprovalTranscriptVisualPublicationV1;
+    approvalInputCustody?: ApprovalInputCustody;
     actorUserId: string;
     artifactId: string;
     mutationGuard?: ArtifactMutationTransactionGuard;
@@ -1159,6 +1161,7 @@ export async function updateArtifact(params: {
         }
         const result = await inTx(async (tx) => await updateArtifactTx(tx, {
             transcriptVisualPublication: params.transcriptVisualPublication,
+            approvalInputCustody: params.approvalInputCustody,
             actorUserId,
             artifactId,
             mutationGuard: params.mutationGuard,
@@ -1188,6 +1191,7 @@ export async function updateArtifactTx(
     tx: Tx,
     params: {
         transcriptVisualPublication?: ApprovalTranscriptVisualPublicationV1;
+        approvalInputCustody?: ApprovalInputCustody;
         actorUserId: string;
         artifactId: string;
         mutationGuard?: ArtifactMutationTransactionGuard;
@@ -1419,6 +1423,7 @@ export async function updateArtifactTx(
 
     // Classification changes no stored content bytes and does not consume storage quota.
     const quota = kindOnly ? null : await checkArtifactStorageBudgetInTx(tx, { accountId: ownerAccountId, artifactId: current.id,
+        approvalInputCustody: params.approvalInputCustody,
         nextHeaderBytes: (updateData.header ?? current.header).byteLength,
         nextBodyBytes: (updateData.body ?? current.body).byteLength,
         currentHeaderBytes: current.header.byteLength, currentBodyBytes: current.body.byteLength, retainCurrentBody: Boolean(params.body),
@@ -1490,6 +1495,7 @@ export async function updateArtifactTx(
         await completeArtifactBlobCandidateCustodyInTx(tx, params.preparedBlob);
     }
     if (params.body) await retainArtifactBodyRevisionInTx(tx, {
+        approvalInputCustody: params.approvalInputCustody,
         artifactId: current.id, bodyVersion: current.bodyVersion, body: current.body, blobId: current.currentBlobId,
         provenance: current.provenance,
         // History dates the displaced version by its own last save, not by the write replacing it.

@@ -1,10 +1,15 @@
 import type { Tx } from "@/storage/inTx";
+import type { ApprovalInputCustody } from '@happier-dev/protocol/approvals/approvalInputCustody';
 import { getActivePrismaRuntime, getDbProviderFromEnv } from "@/storage/prisma";
 import { readArtifactStorageEnv } from "@/app/features/catalog/readFeatureEnv";
 import { artifactOrdinarySqlPredicate } from "./artifactClassification";
 import type { ArtifactQuotaExceededV1, ArtifactStorageUsageV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 
 export type ArtifactQuotaExceeded = ArtifactQuotaExceededV1;
+
+function retainedRevisionCount(configuredCount: number, custody: ApprovalInputCustody | undefined): number {
+    return custody === 'live_only' ? 0 : configuredCount;
+}
 
 export class ArtifactStorageSizeUnavailableError extends Error {
     readonly code = 'storage_size_out_of_range';
@@ -50,6 +55,7 @@ export async function readArtifactStorageUsageInTx(tx: Tx, accountId: string): P
 
 /** Project retention before the write, so quota refusal leaves head, history and changes untouched. */
 export async function checkArtifactStorageBudgetInTx(tx: Tx, input: Readonly<{
+    approvalInputCustody?: ApprovalInputCustody;
     accountId: string;
     artifactId: string;
     nextHeaderBytes: number;
@@ -67,6 +73,7 @@ export async function checkArtifactStorageBudgetInTx(tx: Tx, input: Readonly<{
 }>): Promise<ArtifactQuotaExceeded | null> {
     const config = readArtifactStorageEnv(process.env);
     if (config.documentLimitBytes === null && config.accountLimitBytes === null) return null;
+    const revisionRetentionCount = retainedRevisionCount(config.revisionRetentionCount, input.approvalInputCustody);
     const headBytes = storageSize(input.nextHeaderBytes + input.nextBodyBytes + (input.nextProvenanceBytes ?? 0));
     const { sql, identifier, bytes } = storageSql();
     const rows = await tx.$queryRaw<Array<{ sizeBytes: bigint | number | string; blobId: string | null }>>(sql.sql`
@@ -74,15 +81,15 @@ export async function checkArtifactStorageBudgetInTx(tx: Tx, input: Readonly<{
         WHERE ${identifier("artifactId")} = ${input.artifactId} ORDER BY ${identifier("bodyVersion")} DESC`);
     const currentRevisionBytes = storageSize(rows.reduce((sum, row) => sum + storageSize(row.sizeBytes), 0));
     const removedRevisionBytes = input.retainCurrentBody
-        ? rows.slice(Math.max(0, config.revisionRetentionCount - 1)).reduce((sum, row) => sum + storageSize(row.sizeBytes), 0)
+        ? rows.slice(Math.max(0, revisionRetentionCount - 1)).reduce((sum, row) => sum + storageSize(row.sizeBytes), 0)
         : 0;
-    const revisionBytesDelta = (input.retainCurrentBody && config.revisionRetentionCount > 0 ? (input.currentBodyBytes ?? 0) + (input.currentProvenanceBytes ?? 0) : 0)
+    const revisionBytesDelta = (input.retainCurrentBody && revisionRetentionCount > 0 ? (input.currentBodyBytes ?? 0) + (input.currentProvenanceBytes ?? 0) : 0)
         - removedRevisionBytes + (input.revisionBytesDelta ?? 0);
     const blobs = await tx.artifactBlob.findMany({ where: { artifactId: input.artifactId }, select: { id: true, storedSizeBytes: true } });
     const currentBlobBytes = storageSize(blobs.reduce((sum, blob) => sum + storageSize(blob.storedSizeBytes), 0));
-    const retainedRows = input.retainCurrentBody ? rows.slice(0, Math.max(0, config.revisionRetentionCount - 1)) : rows;
+    const retainedRows = input.retainCurrentBody ? rows.slice(0, Math.max(0, revisionRetentionCount - 1)) : rows;
     const retainedIds = new Set(retainedRows.flatMap(row => row.blobId ? [row.blobId] : []));
-    if (input.retainCurrentBody && config.revisionRetentionCount > 0 && input.currentBlobId) retainedIds.add(input.currentBlobId);
+    if (input.retainCurrentBody && revisionRetentionCount > 0 && input.currentBlobId) retainedIds.add(input.currentBlobId);
     const nextBlobId = input.nextBlobId === undefined ? input.currentBlobId : input.nextBlobId;
     if (nextBlobId) retainedIds.add(nextBlobId);
     const projectedBlobBytes = storageSize(blobs.filter(blob => retainedIds.has(blob.id)).reduce((sum, blob) => sum + storageSize(blob.storedSizeBytes), 0)
@@ -102,6 +109,7 @@ export async function checkArtifactStorageBudgetInTx(tx: Tx, input: Readonly<{
 
 /** Successful body CAS writes retain the displaced stored bytes in the same transaction. */
 export async function retainArtifactBodyRevisionInTx(tx: Tx, input: Readonly<{
+    approvalInputCustody?: ApprovalInputCustody;
     artifactId: string;
     bodyVersion: number;
     body: Uint8Array;
@@ -109,9 +117,10 @@ export async function retainArtifactBodyRevisionInTx(tx: Tx, input: Readonly<{
     blobId?: string | null;
     createdAt: Date;
 }>) {
-    const { revisionRetentionCount } = readArtifactStorageEnv(process.env);
+    const { approvalInputCustody, ...revision } = input;
+    const revisionRetentionCount = retainedRevisionCount(readArtifactStorageEnv(process.env).revisionRetentionCount, approvalInputCustody);
     if (revisionRetentionCount > 0) {
-        await tx.artifactRevision.create({ data: { ...input, body: Buffer.from(input.body), provenance: input.provenance ? Buffer.from(input.provenance) : null } });
+        await tx.artifactRevision.create({ data: { ...revision, body: Buffer.from(input.body), provenance: input.provenance ? Buffer.from(input.provenance) : null } });
     }
     const retained = await tx.artifactRevision.findMany({ where: { artifactId: input.artifactId },
         orderBy: { bodyVersion: "desc" }, take: revisionRetentionCount, select: { bodyVersion: true } });

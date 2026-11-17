@@ -7,7 +7,7 @@ import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeader
 import { ApprovalRequestSchema, isHistoricalPublishApprovalRequestV2, type ApprovalRequest, type CurrentApprovalRequest, type ApprovalRequestV2 } from './approvalRequestV1.js';
 import { settleApprovalRequestReplayInputs } from './approvalRequestTransition.js';
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from './targetActionApprovalRequestV1.js';
-import { targetActionApprovalSubjectsEqual } from './targetActionApprovalRequestTransition.js';
+import { targetActionApprovalSubjectsEqual, settleTargetActionApprovalReplayInputs } from './targetActionApprovalRequestTransition.js';
 
 type StoredArtifact = Readonly<{ header: Readonly<Record<string, unknown>>; body: unknown; access?: string }>;
 type CreationRequest = CurrentApprovalRequest | TargetActionApprovalRequestV1;
@@ -178,16 +178,19 @@ function rejoin(stored: StoredArtifact | null, proposed: CreationRequest): Creat
     message: 'Approval creation requires a readable owned Artifact with a matching body and header' }]);
   if (isTargetActionRequest(proposed)) {
     const existing = parsed.family === 'target_action' ? parsed.request : null;
-    if (!existing?.executionOriginV1 || !proposed.executionOriginV1
-      || !sameStrictJsonValue(originSubject(existing.executionOriginV1), originSubject(proposed.executionOriginV1))
-      || !targetActionApprovalSubjectsEqual(existing, { ...proposed,
+    if (!existing?.executionOriginV1 || !proposed.executionOriginV1) throw new ApprovalRequestConflict();
+    const receipt = settleTargetActionApprovalReplayInputs(existing);
+    const subject = settleTargetActionApprovalReplayInputs(proposed, existing.status);
+    // Settlement preserves each origin's binding, erasing only its original envelope.
+    if (!sameStrictJsonValue(originSubject(receipt.executionOriginV1!), originSubject(subject.executionOriginV1!))
+      || !targetActionApprovalSubjectsEqual(receipt, { ...subject,
         createdAtMs: existing.createdAtMs, summary: existing.summary, detail: existing.detail,
         // Profile aliases are routing hints, not a second Home identity.
         ...(existing.replayPlacement && proposed.replayPlacement
           && existing.executionOriginV1.serverIdentityId
           && existing.executionOriginV1.serverIdentityId === proposed.executionOriginV1.serverIdentityId
           ? { replayPlacement: { ...proposed.replayPlacement, serverId: existing.replayPlacement.serverId } } : {}),
-        executionOriginV1: existing.executionOriginV1 })) throw new ApprovalRequestConflict();
+        executionOriginV1: receipt.executionOriginV1 })) throw new ApprovalRequestConflict();
     return existing;
   }
   const request = parsed?.family === 'built_in' && parsed.request.v === 2

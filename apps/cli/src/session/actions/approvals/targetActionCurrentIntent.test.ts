@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
 import { createTargetActionCurrentIntentAdapter } from './targetActionCurrentIntent';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
-import { admitTargetActionApprovalTransition } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
+import { admitTargetActionApprovalTransition, settleTargetActionApprovalReplayInputs } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
 import { logger } from '@/ui/logger';
 import { runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
 
@@ -20,14 +20,14 @@ function deliverApproved(artifactId: string, request: TargetActionApprovalReques
 describe('target action current-intent adapter', () => {
   it.each(['1', '0'])('correlates the awaited Artifact and observed status without its body (QA tracing %s)', async tracing => {
     vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', tracing);
-    const sink = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    const sink = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => {});
     const artifactId = 'af669b29-7812-4a3b-88ac-154721e1588c';
     const rootRequestId = '70cc64d3-0386-4914-b7d8-713b7879e99f';
     let stored: TargetActionApprovalRequestV1 | null = null;
     const read = vi.fn(async () => stored);
     const adapter = createTargetActionCurrentIntentAdapter({
       create: async (request, onReady) => {
-        stored = { ...request, status: 'rejected', decision: { kind: 'reject', decidedAtMs: 2 } };
+        stored = settleTargetActionApprovalReplayInputs({ ...request, status: 'rejected', decision: { kind: 'reject', decidedAtMs: 2 } });
         onReady?.({ artifactId, request });
         return { artifactId };
       },

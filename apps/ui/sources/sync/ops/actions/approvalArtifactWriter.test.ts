@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
     ArtifactJsonCreateHttpInputV1Schema,
+    ArtifactJsonUpdateHttpInputV1Schema,
+    type ArtifactJsonUpdateHttpInputV1,
     artifactIdScopeMatchesAccountV1,
     buildApprovalRequestArtifactHeaderV1,
     decodePlainArtifactStoredContent,
@@ -23,7 +25,11 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 // codec, the real CAS writer (`updateArtifactWithHeaderViaApi`) and the real
 // Protocol approval subject/transition owner all run above it.
 const home = { artifacts: createArtifactStoreBoundary({ ownerAccountId: () => 'account-1', encryptionMode: 'plain' }) };
+const artifactUpdates: ArtifactJsonUpdateHttpInputV1[] = [];
 const request: ServerFetch = async (path, init) => {
+    if (/^\/v1\/artifacts\/[^/]+$/.test(path) && init?.method === 'POST') {
+        artifactUpdates.push(ArtifactJsonUpdateHttpInputV1Schema.parse(JSON.parse(String(init.body))));
+    }
     if (path === '/v1/artifacts' && init?.method === 'POST') {
         const wire = ArtifactJsonCreateHttpInputV1Schema.parse(JSON.parse(String(init.body)));
         // Mirror the genuine Home boundary with its canonical admission owner.
@@ -141,6 +147,7 @@ const claim = (request: ApprovalRequestV2): ApprovalRequestV2 => ({ ...request, 
 describe('UI approval Artifact writer', () => {
     beforeEach(() => {
         home.artifacts.clear();
+        artifactUpdates.length = 0;
     });
 
     it('cancels retained Publish history through the stored transition owner without changing its private subject', async () => {
@@ -324,6 +331,40 @@ describe('UI approval Artifact writer', () => {
         expect(stored().status).toBe('executing');
     });
 
+    it.each(['executed', 'failed', 'outcome_unknown', 'rejected', 'canceled'] as const)('erases live-only review input only after admitting the %s transition and makes its retry a no-op', async status => {
+        const open = TargetActionApprovalRequestV1Schema.parse({
+            v: 1, kind: 'plugin_target_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'cli' }, requestedSurface: 'cli',
+            qualifiedActionId: 'acme.database/actions/statement', input: { sql: 'DELETE FROM private_records' },
+            secretInputPaths: [], approvalInputCustody: 'live_only',
+            sourceCustody: { kind: 'development', registeredRootId: 'database-test' },
+            policyFingerprint: 'b'.repeat(64), subjectFingerprint: 'c'.repeat(64), summary: 'Run statement',
+        });
+        await seed(open);
+        const write = uiWriter();
+        const approved = { ...open, status: 'approved' as const, updatedAtMs: 2,
+            decision: { kind: 'approve' as const, decidedAtMs: 2 } };
+        if (status === 'executed' || status === 'failed' || status === 'outcome_unknown') {
+            await expect(write(approved)).resolves.toEqual({ ok: true });
+            await expect(write({ ...approved, status: 'executing', updatedAtMs: 3 })).resolves.toEqual({ ok: true });
+        }
+        const terminal = TargetActionApprovalRequestV1Schema.parse({ ...open, status, updatedAtMs: 4,
+            ...(status === 'canceled' ? {} : { decision: { kind: status === 'rejected' ? 'reject' : 'approve', decidedAtMs: 2 } }),
+            ...(status === 'executed' || status === 'failed' || status === 'outcome_unknown' ? { execution: {
+                executedAtMs: 4, ok: status === 'executed', effectAttempted: true,
+            } } : {}),
+        });
+        // Erasing a proposed subject before authorization must not bypass full pending equality.
+        await expect(write({ ...terminal, input: null })).resolves.toMatchObject({ ok: false, errorCode: 'subject_mismatch' });
+        await expect(write(terminal)).resolves.toEqual({ ok: true });
+        expect(JSON.parse(storedJson())).toMatchObject({ status, input: null });
+        expect(artifactUpdates.at(-1)).toMatchObject({ approvalInputCustody: 'live_only', approvalState: status });
+        expect(storedJson()).not.toContain('DELETE FROM private_records');
+        const version = home.artifacts.read(ARTIFACT_ID)?.bodyVersion;
+        await expect(write(terminal)).resolves.toEqual({ ok: true });
+        expect(home.artifacts.read(ARTIFACT_ID)?.bodyVersion).toBe(version);
+    });
+
     it('keeps target Action subjects immutable and prevents a decision from overwriting a competing CAS', async () => {
         const open = TargetActionApprovalRequestV1Schema.parse({
             v: 1, kind: 'plugin_target_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
@@ -347,7 +388,7 @@ describe('UI approval Artifact writer', () => {
         await expect(write(approved)).resolves.toMatchObject({ ok: false, errorCode: 'version_mismatch' });
         await expect(write(approved)).resolves.toMatchObject({ ok: false, errorCode: 'invalid_transition' });
         expect(TargetActionApprovalRequestV1Schema.parse(JSON.parse(storedJson())))
-            .toMatchObject({ status: 'rejected', decision: { kind: 'reject' }, input: open.input });
+            .toMatchObject({ status: 'rejected', decision: { kind: 'reject' }, input: null });
     });
 
     it.each([undefined, 'future_builtin_extension'])('preserves the retained V1 Home history index and canonical subject projection (kind: %s)', async kind => {

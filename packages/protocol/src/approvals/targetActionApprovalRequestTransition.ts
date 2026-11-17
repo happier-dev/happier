@@ -1,4 +1,30 @@
 import type { TargetActionApprovalRequestV1 } from './targetActionApprovalRequestV1.js';
+import { readSettledApprovalInputCustodyV1 } from './approvalInputCustody.js';
+
+/** Terminal receipts retain admission evidence, never the live invocation's raw operands.
+ * A reader comparing an original proposal with a stored receipt supplies that receipt's status.
+ */
+export function settleTargetActionApprovalReplayInputs(
+  request: TargetActionApprovalRequestV1,
+  settlementStatus: TargetActionApprovalRequestV1['status'] = request.status,
+): TargetActionApprovalRequestV1 {
+  if (readSettledApprovalInputCustodyV1({ ...request, status: settlementStatus }) !== 'live_only') return request;
+  const withoutInput = (decision: NonNullable<TargetActionApprovalRequestV1['decision']>) => {
+    const { narrowedInput: _input, ...receipt } = decision;
+    return receipt;
+  };
+  const originReceipt = request.executionOriginV1 ? (() => {
+    const { originalActionEnvelope: _envelope, ...receipt } = request.executionOriginV1;
+    return receipt;
+  })() : undefined;
+  return { ...request, input: null,
+    ...(request.decision ? { decision: withoutInput(request.decision) } : {}),
+    ...(request.automaticChecks?.humanDecision ? { automaticChecks: { ...request.automaticChecks,
+      humanDecision: withoutInput(request.automaticChecks.humanDecision) } } : {}),
+    ...(originReceipt ? { executionOriginV1: originReceipt } : {}),
+  };
+}
+
 
 function stable(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
@@ -52,12 +78,20 @@ export function admitTargetActionApprovalTransition(
   existing: TargetActionApprovalRequestV1,
   request: TargetActionApprovalRequestV1,
 ): Readonly<{ ok: true; unchanged: boolean } | { ok: false; errorCode: string; error: string }> {
+  // An idempotent retry may still carry the caller's original live operands.
+  let receiptAlreadySettled = true;
+  if (readSettledApprovalInputCustodyV1(existing) === 'live_only') {
+    const receipt = settleTargetActionApprovalReplayInputs(existing);
+    receiptAlreadySettled = targetActionApprovalRequestsEqual(existing, receipt);
+    existing = receipt;
+    request = settleTargetActionApprovalReplayInputs(request, existing.status);
+  }
   if (!targetActionApprovalSubjectsEqual(existing, request)) {
     return { ok: false, errorCode: 'subject_mismatch', error: 'target_action_approval_subject_mismatch' };
   }
   const invalid = { ok: false, errorCode: 'invalid_transition', error: 'target_action_approval_invalid_transition' } as const;
   if (targetActionApprovalRequestsEqual(existing, request)) {
-    return existing.status === 'executing' ? invalid : { ok: true, unchanged: true };
+    return existing.status === 'executing' ? invalid : { ok: true, unchanged: receiptAlreadySettled };
   }
   const isOpenDecision = existing.status === 'open'
     && (request.status === 'approved' || request.status === 'rejected' || request.status === 'canceled');

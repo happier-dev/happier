@@ -1,9 +1,11 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ArtifactCreateIdV1Schema } from './artifactIdV1.js';
-import { ApprovalArtifactQueryHintsV1Schema } from '../approvals/approvalArtifactKindV1.js';
+import { APPROVAL_ARTIFACT_KINDS_V1, ApprovalArtifactQueryHintsV1Schema } from '../approvals/approvalArtifactKindV1.js';
+import { ApprovalInputCustodySchema } from '../approvals/approvalInputCustody.js';
+import { isApprovalRequestV2TerminalStatus } from '../approvals/approvalRequestStatus.js';
 import { ArtifactBlobWriteV1Schema } from './artifactBinaryV1.js';
-import { ArtifactStoredKindV1Schema } from './artifactKindV1.js';
+import { ArtifactStoredKindV1Schema, decodeArtifactKindV1 } from './artifactKindV1.js';
 import { CoordinationMessageRefV1Schema } from '../discussions/messageRefs.js';
 import { ArtifactIdScopeV1Schema } from './idScope.js';
 import { ApprovalTranscriptVisualPublicationV1Schema } from '../sessions/messages/transcriptObservationV1.js';
@@ -45,6 +47,7 @@ export function createArtifactUpdateHttpInputV1Schema<const RequiresMemoryDecisi
 }>) {
     return z.strictObject({
         transcriptVisualPublication: z.optional(lazyZodSchema(() => ApprovalTranscriptVisualPublicationV1Schema)),
+        approvalInputCustody: z.optional(ApprovalInputCustodySchema),
         header: z.optional(z.string()),
         kind: z.optional(ArtifactStoredKindV1Schema),
         approvalState: z.optional(ApprovalArtifactQueryHintsV1Schema.shape.approvalState),
@@ -58,7 +61,11 @@ export function createArtifactUpdateHttpInputV1Schema<const RequiresMemoryDecisi
         // TypeScript cannot correlate the runtime branch with a generic boolean.
         memoryDecisionSource: (input.requiresMemoryDecisionSource
             ? CoordinationMessageRefV1Schema : z.optional(z.never())) as MemoryDecisionSourceSchema<RequiresMemoryDecisionSource>,
-    }).check(z.refine(value => input.requiresBlob ? value.blob !== undefined : value.blob === undefined));
+    }).check(z.refine(value => input.requiresBlob ? value.blob !== undefined : value.blob === undefined),
+        z.refine(value => value.approvalInputCustody === undefined || (
+            decodeArtifactKindV1(value.kind).kindHint === APPROVAL_ARTIFACT_KINDS_V1.targetAction && isApprovalRequestV2TerminalStatus(value.approvalState)
+            && value.header !== undefined && value.expectedHeaderVersion !== undefined
+            && value.body !== undefined && value.expectedBodyVersion !== undefined)));
 }
 
 export const ArtifactJsonUpdateHttpInputV1Schema = createArtifactUpdateHttpInputV1Schema({

@@ -10,6 +10,7 @@ import { buildApprovalRequestArtifactHeaderV1, buildTargetActionApprovalArtifact
 import { ApprovalRequestV2Schema, StoredApprovalRequestSchema, type ApprovalRequestV2 } from './approvalRequestV1.js';
 import { assertApprovalRequestCreationBinding, createApprovalRequestArtifact, deriveApprovalRequestArtifactId } from './creation.js';
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from './targetActionApprovalRequestV1.js';
+import { settleTargetActionApprovalReplayInputs } from './targetActionApprovalRequestTransition.js';
 import { sealExternalActionRequestV2 } from '../actions/externalActionEncryption.js';
 import { ExternalActionExecutionAuthorizationV1Schema, projectExternalActionDeploymentNativeEnvelopeAdmissionV1 } from '../actions/externalActionApi.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '../actions/externalActionExecutionAuthorization.js';
@@ -134,12 +135,13 @@ describe('approval Artifact request identity', () => {
     expect(JSON.stringify(scope)).not.toContain('private-value');
   });
 
-  it('binds contributed Action input to the same request identity without a parallel writer', async () => {
+  it.each([undefined, 'live_only'] as const)('binds contributed Action input to the same request identity without a parallel writer (%s)', async approvalInputCustody => {
     const home = persistence();
     const request = TargetActionApprovalRequestV1Schema.parse({
       v: 1, kind: 'plugin_target_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
       createdBy: { surface: 'cli' }, requestedSurface: 'cli', summary: 'Approve run',
       qualifiedActionId: 'acme.alpha/actions/run', input: { value: 'original' },
+      ...(approvalInputCustody ? { approvalInputCustody } : {}),
       sourceCustody: { kind: 'development', registeredRootId: 'root' },
       policyFingerprint: 'b'.repeat(64), subjectFingerprint: 'a'.repeat(64),
       executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
@@ -159,9 +161,14 @@ describe('approval Artifact request identity', () => {
     const unknown = TargetActionApprovalRequestV1Schema.parse({ ...request, status: 'outcome_unknown',
       decision: { kind: 'approve', decidedAtMs: 2 }, execution: { executedAtMs: 3, ok: false,
         effectAttempted: true, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown' } });
+    const receipt = settleTargetActionApprovalReplayInputs(unknown);
+    home.rows.set(first.artifactId, { header: buildTargetActionApprovalArtifactHeaderV1(receipt),
+      body: JSON.stringify(receipt), access: 'owner' });
+    // Transport retry rejoins the old receipt; Request again is a fresh invocation.
+    expect((await home.createTarget(request)).request.status).toBe('outcome_unknown');
+    // Older 0.3 terminal records can still carry their original review operands.
     home.rows.set(first.artifactId, { header: buildTargetActionApprovalArtifactHeaderV1(unknown),
       body: JSON.stringify(unknown), access: 'owner' });
-    // Transport retry rejoins the old receipt; Request again is a fresh invocation.
     expect((await home.createTarget(request)).request.status).toBe('outcome_unknown');
     const again = await home.createTarget({ ...request,
       executionOriginV1: { ...request.executionOriginV1!, requestId: 'fresh-contributed-request' } });

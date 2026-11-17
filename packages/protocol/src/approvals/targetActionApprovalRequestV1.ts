@@ -1,6 +1,7 @@
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ApprovalRequestV2StatusSchema } from './approvalRequestStatus.js';
+import { ApprovalInputCustodySchema, readSettledApprovalInputCustodyV1 } from './approvalInputCustody.js';
 import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import {
@@ -52,7 +53,7 @@ export const TargetActionApprovalRequestV1Schema = lazyZodSchema(() => z.strictO
   secretInputPaths: z.optional(z.array(InputPathSchema)),
   secretInputLabels: z.optional(z.record(InputPathSchema, z.string())),
   /** Replay requires the original live invocation, including any confidential raw operands. */
-  approvalInputCustody: z.optional(z.literal('live_only')),
+  approvalInputCustody: z.optional(ApprovalInputCustodySchema),
   sourceCustody: PluginSourceCustodyV1Schema,
   policyFingerprint: z.string().check(z.regex(/^[a-f0-9]{64}$/)),
   subjectFingerprint: z.string().check(z.regex(/^[a-f0-9]{64}$/)),
@@ -66,8 +67,9 @@ export const TargetActionApprovalRequestV1Schema = lazyZodSchema(() => z.strictO
 }).check(z.superRefine((value, ctx) => {
   if (value.requesterConfirmation) {
     const invocation = projectTargetActionApprovalInvocationV1(value);
+    const settledLiveInput = readSettledApprovalInputCustodyV1(value) === 'live_only' && value.input === null;
     if (!value.executionOriginV1 || !isApprovalRequesterConfirmationBoundToOriginV1(value.requesterConfirmation, value.executionOriginV1)
-      || !invocation || value.requesterConfirmation.inputDigest !== computeActionInputApprovalDigestV1(invocation.actionId, invocation.actionArgs)) {
+      || !invocation || (!settledLiveInput && value.requesterConfirmation.inputDigest !== computeActionInputApprovalDigestV1(invocation.actionId, invocation.actionArgs))) {
       ctx.addIssue({ code: 'custom', path: ['requesterConfirmation'], message: 'Requester confirmation must bind the original target Action and execution origin' });
     }
     if (value.decision && (!ApprovalDecisionV2Schema.safeParse(value.decision).success

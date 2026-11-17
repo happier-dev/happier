@@ -5,6 +5,7 @@ import { resolvePluginLocalizedStringV2Text as resolveLocalizedConfirmationText 
 import type { TargetActionCurrentIntentRequest, TargetActionCurrentIntentResult } from '@/plugins/runtime/invocation/actionExecutor';
 import { createLiveApprovalDecision } from './liveDecision';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { settleTargetActionApprovalReplayInputs } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
 import { projectTargetActionApprovalInput, resolveApprovalRequestApproveAdmission } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import type { createCliApprovalsArtifactStore } from './artifactStore';
 import { persistTargetActionReceipt } from './targetActionSettlement';
@@ -146,7 +147,8 @@ export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
       || decidedRequest.data.qualifiedActionId !== request.qualifiedActionId
       || decidedRequest.data.accountId !== request.accountId
       || decidedRequest.data.executionOriginV1?.accountId !== request.executionOriginV1?.accountId
-      || !sameStrictJsonValue(decidedRequest.data.input, request.input)) {
+      || !sameStrictJsonValue(settleTargetActionApprovalReplayInputs(decidedRequest.data).input,
+        settleTargetActionApprovalReplayInputs(request, decidedRequest.data.status).input)) {
       return { status: 'unavailable', code: 'plugin_action_current_intent_mismatch', mismatch: { field: 'fingerprint_source' } };
     }
     if (result.decision !== 'approve') {

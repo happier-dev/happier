@@ -2309,6 +2309,14 @@ actual input before invoking the target, so one mixed read/write Action can
 admit its read operands while refusing its mutation operands. The result keeps
 the ordinary Action success/failure envelope and existing permission checks.
 
+Terminal target-Action receipts erase live-only input, narrowed human input and
+the original Action envelope after transition admission. They retain the subject
+fingerprints, requester binding and execution outcome. The Artifact writer sends
+the existing custody fact with that terminal body replacement; the storage owner
+uses retention zero for this write, atomically removing earlier body revisions.
+Ordinary replayable approval history keeps the configured retention. E2EE bodies
+remain opaque to the server; this non-content custody fact does not disclose SQL.
+
 In unreleased 0.3 source, the Protocol Action invoker also owns cancellation
 settlement. Once a non-read handler starts, cancellation still reaches its IO
 signal, while the invoker awaits the handler's exact success, native failure or
