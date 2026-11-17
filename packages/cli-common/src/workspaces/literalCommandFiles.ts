@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import type { ProjectCommandFileFactV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 
@@ -176,36 +176,35 @@ export async function readLiteralCommandExecutedFiles(root: string, cwd: string,
         facts.set(file, fact);
         return null;
     };
-    // Node's order: the exact file, its .js/.mjs/.cjs forms, then a folder's index.js. The
-    // first present one is what runs; when none is, all are recorded absent so adding one asks again.
-    const resolveNodeEntry = async (entry: string): Promise<string | null> => {
-        const candidates = [entry, `${entry}.js`, `${entry}.mjs`, `${entry}.cjs`, join(entry, 'index.js')].map(path => path.replaceAll('\\', '/'));
-        const missing: LiteralCommandFileFactV1[] = [];
-        for (const candidate of candidates) {
-            const known = facts.get(candidate);
-            if (known && !('absent' in known) && !('directory' in known)) return null;
-            const fact = known ?? await read(candidate);
-            if ('refused' in fact) return fact.refused;
-            if ('digest' in fact || 'linkTarget' in fact) { facts.set(candidate, fact); return null; }
-            if ('absent' in fact) missing.push(fact);
-        }
-        for (const fact of missing) facts.set(fact.file, fact);
-        return null;
-    };
-    for (const file of scan.files) {
-        const refused = await record(file);
-        if (refused) return { kind: 'refused', code: refused };
-        if (!scan.packageOperands.has(file)) continue;
-        // `node app` runs app.js when app is absent.
-        if ('absent' in facts.get(file)!) {
-            const entryRefused = await resolveNodeEntry(file);
-            if (entryRefused) return { kind: 'refused', code: entryRefused };
-            continue;
-        }
-        // Node loads a folder through its package.json `main`; deeper imports are setupInputs.
-        if (!('directory' in facts.get(file)!)) continue;
-        const manifest = file === '.' ? 'package.json' : `${file}/package.json`;
-        let main = 'index.js';
+    // Node's CommonJS order for a path operand: the exact file, then .js/.json/.node; for a
+    // folder, its package.json `main` (as a file, then as a folder's index), then its
+    // index.js/.json/.node. The first present file runs; every absent candidate tried before it
+    // is recorded too, because adding one would take precedence and must ask again.
+    const sub = (folder: string, name: string) => folder === '.' ? name : `${folder}/${name}`;
+    const asFile = (path: string) => path === '.' ? [] : [path, `${path}.js`, `${path}.json`, `${path}.node`];
+    const asIndex = (folder: string) => ['index.js', 'index.json', 'index.node'].map(name => sub(folder, name));
+    const resolveNodeOperand = async (operand: string): Promise<string | null> => {
+        const tried: LiteralCommandFileFactV1[] = [];
+        const first = async (candidates: readonly string[]): Promise<'found' | 'missing' | Readonly<{ refused: string }>> => {
+            for (const candidate of candidates) {
+                const fact = facts.get(candidate) ?? await read(candidate);
+                if ('refused' in fact) return fact;
+                if ('digest' in fact || 'linkTarget' in fact) { facts.set(candidate, fact); return 'found'; }
+                if ('absent' in fact) tried.push(fact);
+            }
+            return 'missing';
+        };
+        const settle = (result: Awaited<ReturnType<typeof first>>) => {
+            if (typeof result === 'object') return result.refused;
+            for (const fact of tried) facts.set(fact.file, fact);
+            return null;
+        };
+        const asPath = await first(asFile(operand));
+        const operandFact = facts.get(operand);
+        if (asPath !== 'missing' || !operandFact || !('directory' in operandFact)) return settle(asPath);
+        // Deeper imports are setupInputs.
+        const manifest = sub(operand, 'package.json');
+        let main: string | undefined;
         const manifestBytes = await io.readBytes(root, manifest);
         if (manifestBytes.kind === 'read') {
             facts.set(manifest, { file: manifest, digest: createHash('sha256').update(manifestBytes.bytes).digest('hex') });
@@ -215,11 +214,22 @@ export async function readLiteralCommandExecutedFiles(root: string, cwd: string,
             } catch { /* An invalid manifest's bytes are already the reviewed fact; Node falls back to index.js. */ }
         } else {
             const manifestRefused = await record(manifest);
-            if (manifestRefused) return { kind: 'refused', code: manifestRefused };
+            if (manifestRefused) return manifestRefused;
         }
-        const entry = relative(root, resolve(root, file, main));
-        if (entry === '' || entry === '..' || entry.startsWith(`..${sep}`) || isAbsolute(entry)) continue;
-        const entryRefused = await resolveNodeEntry(entry);
+        if (main !== undefined) {
+            const entry = relative(root, resolve(root, operand, main)).replaceAll('\\', '/');
+            if (entry !== '' && entry !== '..' && !entry.startsWith('../') && !isAbsolute(entry)) {
+                const asMain = await first([...asFile(entry), ...asIndex(entry)]);
+                if (asMain !== 'missing') return settle(asMain);
+            }
+        }
+        return settle(await first(asIndex(operand)));
+    };
+    for (const file of scan.files) {
+        const refused = await record(file);
+        if (refused) return { kind: 'refused', code: refused };
+        if (!scan.packageOperands.has(file)) continue;
+        const entryRefused = await resolveNodeOperand(file);
         if (entryRefused) return { kind: 'refused', code: entryRefused };
     }
     return { kind: 'read', files: [...facts.values()].sort((a, b) => a.file < b.file ? -1 : a.file > b.file ? 1 : 0) };
