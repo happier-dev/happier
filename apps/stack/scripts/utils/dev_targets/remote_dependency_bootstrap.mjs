@@ -55,6 +55,8 @@ async function installInitialDependencies({ repoDir, env, stdio = 'inherit' }) {
 }
 
 async function prepareInitialUiOutputs({ repoDir, env, force, stdio = 'inherit', quiet = false }) {
+  // Installation precedes source registration; readiness does not require published workspace dist.
+  await import(new URL('../../../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url));
   const installEnv = resolveInitialInstallEnv(env);
   const runPnpm = async (args, postinstallEnv = installEnv) => {
     const invocation = resolvePnpmCommandInvocation(args, { preferPath: true });
@@ -139,7 +141,11 @@ export async function bootstrapRemoteDependencies({
     // A warm starter verifies the completed install without retaining a lease.
     // Every host refreshes mismatched inputs through the same writer owner.
     try {
-      await assertDependenciesReady({ installDir: repoDir, componentDir, env, signal });
+      await assertDependenciesReady({ installDir: repoDir, componentDir, env, signal,
+        onInstalledDependenciesReady: async () => {
+          await import(new URL('../../../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url));
+        },
+      });
       return { refreshed: false, reason: 'up-to-date' };
     } catch (error) {
       if (!['HAPPIER_DEPENDENCIES_NEED_REFRESH', 'HAPPIER_DEPENDENCY_REFRESH_FAILED'].includes(error?.code)
@@ -177,6 +183,7 @@ export async function bootstrapRemoteDependencies({
     );
   }
 
+  await import(new URL('../../../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url));
   const {
     ensureDepsInstalled,
     ensureWorkspacePackagesBuiltForComponent,

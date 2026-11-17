@@ -6,7 +6,7 @@ import fsPromises from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join, sep } from 'node:path';
+import { delimiter, dirname, join, sep } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
@@ -75,6 +75,76 @@ async function setupPrismaFreshness(t) {
   await withDependencyRefresh({ installDir: root, env }, async () => mkdir(join(root, 'node_modules')));
   return { root, server, env, generationLog: join(root, 'generator-invocations.jsonl') };
 }
+
+test('cold source bootstrap resolves readiness imports after installation without workspace dist', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-cold-source-readiness-' });
+  const bootstrapSource = new URL('./remote_dependency_bootstrap.mjs', import.meta.url);
+  const bootstrap = fixture.path('apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs');
+  for (const directory of ['apps/stack/scripts/utils/dev_targets',
+    'apps/server', 'apps/ui', 'apps/cli', 'packages/cli-common', 'packages/protocol/src/env']) {
+    await mkdir(fixture.path(directory), { recursive: true });
+  }
+  // Relocation keeps the real bootstrap, readiness, and source resolver. Only
+  // installation/transpilation are fixture system boundaries, as in the source-build tests.
+  const relocate = (source, url) => source.replace(/(from\s*|import\()(['"])(\.[^'"]+)\2/gu,
+    (_match, prefix, quote, specifier) => `${prefix}${quote}${new URL(specifier, url).href}${quote}`);
+  await writeFile(bootstrap, relocate(await readFile(bootstrapSource, 'utf8'), bootstrapSource));
+  for (const name of ['registerSourceRuntime.mjs', 'sourceRuntimeEntries.mjs', 'cliRuntimeSidecars.mjs',
+    'sourceRuntimeDependencies.mjs', 'packageExportMatch.cjs']) {
+    await cp(new URL(`../../../../../packages/cli-common/${name}`, import.meta.url), fixture.path('packages/cli-common', name));
+  }
+  await writeFile(fixture.path('package.json'), JSON.stringify({ private: true, type: 'module',
+    packageManager: 'pnpm@12.14.0', workspaces: ['apps/*', 'packages/*'] }));
+  await writeFile(fixture.path('pnpm-workspace.yaml'), 'packages:\n  - apps/*\n  - packages/*\n');
+  await writeFile(fixture.path('pnpm-lock.yaml'), '# fixture\n');
+  for (const component of ['stack', 'server', 'ui', 'cli']) await writeFile(fixture.path('apps', component, 'package.json'), '{}');
+  await writeFile(fixture.path('packages/protocol/package.json'), JSON.stringify({ name: '@happier-dev/protocol', type: 'module',
+    exports: { './*': { 'happier-source': './src/*.ts', default: './dist/*.js' } } }));
+  await cp(new URL('../../../../../packages/protocol/src/env/parseBooleanEnv.ts', import.meta.url),
+    fixture.path('packages/protocol/src/env/parseBooleanEnv.ts'));
+  const installedTsx = dirname(createRequire(import.meta.url).resolve('tsx/package.json'));
+  const child = `
+    import {mkdir,symlink,writeFile} from 'node:fs/promises';
+    import {registerHooks} from 'node:module';
+    // The source checkout has no published workspace packages, including when
+    // the real readiness owner imports its own pm module from this checkout.
+    registerHooks({resolve(specifier,context,nextResolve){
+      const resolved=nextResolve(specifier,context);
+      if(resolved.url.includes('/protocol/dist/')) throw Object.assign(new Error('Workspace publication is absent'),{code:'ERR_MODULE_NOT_FOUND'});
+      return resolved;
+    }});
+    const {bootstrapRemoteDependencies} = await import(${JSON.stringify(pathToFileURL(bootstrap).href)});
+    await bootstrapRemoteDependencies({repoDir:${JSON.stringify(fixture.root)},validationKind:'source-test',
+      executionPlacement:'local',env:{...process.env,HAPPIER_STACK_SKIP_REFRESH_DEPS:'',HAPPIER_STACK_DISABLE_REFRESH_DEPS:''},
+      installInitialDependencies:async()=>{
+        await mkdir(${JSON.stringify(fixture.path('node_modules/@happier-dev'))},{recursive:true});
+        await symlink(${JSON.stringify(installedTsx)},${JSON.stringify(fixture.path('node_modules/tsx'))},${JSON.stringify(process.platform === 'win32' ? 'junction' : 'dir')});
+        await symlink(${JSON.stringify(fixture.path('packages/protocol'))},${JSON.stringify(fixture.path('node_modules/@happier-dev/protocol'))},${JSON.stringify(process.platform === 'win32' ? 'junction' : 'dir')});
+        await writeFile(${JSON.stringify(fixture.path('node_modules/installed'))},'installed');
+      }});
+    console.log('ready-without-dist');
+  `;
+  const output = execFileSync(process.execPath, ['--input-type=module', '-e', child], {
+    cwd: fixture.root, env: { ...process.env, NODE_OPTIONS: '' }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  assert.match(output, /ready-without-dist/u);
+  await assert.rejects(stat(fixture.path('packages/protocol/dist')), { code: 'ENOENT' });
+  assert.equal(await readFile(fixture.path('node_modules/installed'), 'utf8'), 'installed');
+  // Warm runtime preparation can retain its dependency owner while protocol
+  // remains source-only. A fresh process must register before importing pm.
+  for (const domain of ['workspaces', 'process']) {
+    await mkdir(fixture.path('packages/cli-common/dist', domain), { recursive: true });
+    await writeFile(fixture.path('packages/cli-common/dist', domain, 'index.js'), '');
+  }
+  for (const validationKind of ['source-test', 'runtime']) {
+    const warm = execFileSync(process.execPath, ['--input-type=module', '-e',
+      child.replace("validationKind:'source-test'", `validationKind:${JSON.stringify(validationKind)}`)], {
+      cwd: fixture.root, env: { ...process.env, NODE_OPTIONS: '' }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    assert.match(warm, /ready-without-dist/u);
+  }
+  await assert.rejects(stat(fixture.path('packages/protocol/dist')), { code: 'ENOENT' });
+});
 
 test('concurrent remote dependency bootstraps inspect fresh generations without exclusive acquisitions', {
   skip: process.platform === 'win32' ? 'Uses the POSIX package-manager executable fixture' : false,

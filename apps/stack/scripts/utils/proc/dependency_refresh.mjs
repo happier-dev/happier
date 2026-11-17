@@ -448,7 +448,7 @@ async function assertMandatoryOutputsReady({ installDir, componentDir, env, sign
   } catch { signal?.throwIfAborted(); throw dependenciesNeedRefresh(installDir, 'prisma-outputs-incomplete'); }
 }
 
-export async function assertDependenciesReady({ installDir, componentDir = installDir, env = process.env, runtimeIdentity, signal }) {
+export async function assertDependenciesReady({ installDir, componentDir = installDir, env = process.env, runtimeIdentity, signal, onInstalledDependenciesReady }) {
   await waitForDependencyRefreshWriter({ installDir, env, signal });
   const isYarnPredecessor = isYarnWorkspace(await readJsonIfExists(join(installDir, 'package.json')));
   const inspect = isYarnPredecessor
@@ -460,7 +460,10 @@ export async function assertDependenciesReady({ installDir, componentDir = insta
     assertDependencyPublicationComplete(installDir, publication);
     throw dependenciesNeedRefresh(installDir, 'stale-or-unadmitted');
   }
-  if (!isYarnPredecessor) await assertMandatoryOutputsReady({ installDir, componentDir, env, signal });
+  if (!isYarnPredecessor) {
+    await onInstalledDependenciesReady?.();
+    await assertMandatoryOutputsReady({ installDir, componentDir, env, signal });
+  }
   return readiness;
 }
 
