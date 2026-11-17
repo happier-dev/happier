@@ -13,8 +13,34 @@ import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
 import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol';
 import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
 import { createHttpStatusError } from '@/api/client/httpStatusError';
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 describe('deployment failure diagnostics', () => {
+    it('keeps an authored prerequisite refusal public shape while logging its closed cause', () => {
+        const warn = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        try {
+            const error = Object.assign(new Error('private-provider-response'), { code: 'docker_buildx_not_installed' });
+            const failure = projectDeploymentFailure(error.code, error, 'deployment.build.prerequisite');
+            const result = settleActionOutput('execution.run.start', failure);
+            expect(result).not.toHaveProperty('failureCause');
+            expect(warn.mock.calls).toEqual(expect.arrayContaining([[expect.any(String), expect.objectContaining({
+                phase: 'deployment.build.prerequisite', failureCause: expect.objectContaining({ errorClass: 'Error', errorCode: null }),
+            })]]));
+            expect(JSON.stringify([result, warn.mock.calls])).not.toContain('private-provider-response');
+        } finally { warn.mockRestore(); }
+    });
+    it('retains a private closed cause when callers select a public fallback code', () => {
+        const error = Object.assign(new Error('private-provider-message'), { code: 'ECONNRESET' });
+        const failure = projectDeploymentFailure('outcome_unknown', error, 'deployment.native.settle');
+        expect(failure.errorCode).toBe('outcome_unknown');
+        expect(readActionOutputDiagnostic(failure)).toMatchObject({
+            phase: 'deployment.native.settle', failureCause: { errorCode: 'ECONNRESET' },
+        });
+        expect(readActionOutputDiagnostic({ ...failure, effectAttempted: true })).toEqual(readActionOutputDiagnostic(failure));
+        expect(JSON.stringify(failure)).not.toContain('private-provider-message');
+        expect(JSON.stringify(readActionOutputDiagnostic(failure))).not.toContain('private-provider-message');
+    });
     it('retains closed Domain recovery facts through an Action error carrier', () => {
         const details = { environmentId: 'environment', domainId: 'domain', step: 'native_execution' as const,
             requiredFact: 'caddyAdminConfig' as const, remedy: 'Review the Caddy admin service.',
@@ -98,7 +124,7 @@ describe('deployment failure diagnostics', () => {
         const failureCause = projectActionFailureCauseV1(new Error(code), 'deployment.source.admission.requester_authority_unavailable');
         const result = projectDeploymentFailure(code, new PluginError({ code, retryable: false, details, failureCause }));
 
-        expect(result).toEqual({ ok: false, errorCode: code, error: code, details, failureCause });
+        expect(JSON.parse(JSON.stringify(result))).toEqual({ ok: false, errorCode: code, error: code, details, failureCause });
         const opaque = projectDeploymentFailure(code, new PluginError({ code,
             details: { ...details, token: 'private-source-token' } }));
         expect(opaque.details).toEqual({ requiredFact: 'deploymentActionResult', remedy: expect.stringMatching(/\S/) });

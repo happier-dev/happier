@@ -1,5 +1,5 @@
-import { createActionExecuteFailureError, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { withActionFailureDiagnostic, type ActionFailureDiagnosticInput } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { createActionExecuteFailureError, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { carryActionFailureDiagnostic, withActionFailureDiagnostic, withActionFailureCauseDiagnostic, type ActionFailureDiagnosticInput } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm';
 import { projectConfirmedActionHttpRefusal } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
@@ -75,8 +75,18 @@ export function projectDeploymentFailure(errorCode: string, error?: unknown, pha
     const failure = readAuthoredDeploymentFailure(errorCode, error, phase);
     const projected = failure.details === undefined
         ? { ...failure, details: projectDeploymentFailureRecoveryV1({}) } : failure;
-    return errorCode === 'deployment_unavailable'
-        ? deploymentUnavailableDiagnostic(projected, phase, 'native_failure', error) : projected;
+    // Terminal Actions promote a hidden cause into public output. Authored refusals
+    // without that public member keep their shape and record closed facts locally.
+    if (error !== undefined && projected.failureCause === undefined) {
+        logger.warnLocalFile('[Deployment] Failure cause', { phase, errorCode: projected.errorCode,
+            failureCause: projectActionFailureCauseV1(error, phase, { allowUnknownErrorCode: false }) });
+        return projected;
+    }
+    const diagnosed = error === undefined ? projected : withActionFailureCauseDiagnostic(projected, error, phase);
+    const result = errorCode === 'deployment_unavailable' || errorCode === 'action_failed'
+        ? deploymentUnavailableDiagnostic(diagnosed, phase, 'native_failure', error) : diagnosed;
+    // Native adapters add effect metadata with object spread before terminal projection.
+    return error === undefined ? result : carryActionFailureDiagnostic(result, result, { enumerable: true });
 }
 
 /**
@@ -90,8 +100,7 @@ export function projectDeploymentException(error: unknown,
     const phase = options.phase ?? 'deployment.failure';
     const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code
         : normalizeActionExecutorThrownError(error, phase).errorCode;
-    if (code !== 'action_failed') return projectDeploymentFailure(code, error, phase);
-    return deploymentUnavailableDiagnostic(projectDeploymentFailure('action_failed', error, phase), phase, 'native_failure', error);
+    return projectDeploymentFailure(code, error, phase);
 }
 
 function readAuthoredDeploymentFailure(errorCode: string, error: unknown, phase: string): ActionExecuteFailure {
