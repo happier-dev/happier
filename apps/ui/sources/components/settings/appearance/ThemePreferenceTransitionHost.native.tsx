@@ -8,12 +8,13 @@ import { FURTHER_PLANET_MOMENT_TIMINGS } from '@happier-dev/brand/planet-moments
 import { useAtmosphereMoment } from '@/components/atmosphere/atmosphereMoments';
 import { useCanvasRenderState } from '@/components/atmosphere/useCanvasRenderState';
 import { useNativeMomentEnvironment } from '@/components/atmosphere/useNativeMomentEnvironment';
+import { readThemeRuntimeInk } from '@/theme/profiles/themeProfileRuntime';
 import { paintNativeThemeHorizon } from './themeHorizonPaint.native';
 import { createNativeThemePreferenceTransitionController } from './nativeThemePreferenceTransitionController';
 import { registerNativeThemePreferenceTransitionController } from './themePreferenceTransition';
 import { THEME_TRANSITION_DURATION_MS, THEME_TRANSITION_EASING_BEZIER } from './themePreferenceTransitionMotion';
 
-type Overlay = Readonly<{ uri: string; direction: 'sunrise' | 'night'; horizon: boolean }>;
+type Overlay = Readonly<{ uri: string; direction: 'sunrise' | 'night'; horizon: boolean; ink: string }>;
 
 /** The existing screenshot owner now reveals the brand Horizon when enabled; off keeps the native wipe. */
 export function ThemePreferenceTransitionHost(props: Readonly<{ children: React.ReactNode }>) {
@@ -44,7 +45,8 @@ export function ThemePreferenceTransitionHost(props: Readonly<{ children: React.
             showOverlay(uri, direction = 'sunrise') {
                 horizon = preference.current;
                 reveal.value = 0;
-                setOverlay({ uri, direction, horizon });
+                // The switch applied before the overlay shows: its digits take the incoming theme's ink.
+                setOverlay({ uri, direction, horizon, ink: readThemeRuntimeInk() });
             },
             waitForFrame: () => new Promise<void>(resolve => requestAnimationFrame(() => resolve())),
             animateOverlay: () => disposed.current ? undefined : new Promise<void>(resolve => {
@@ -91,12 +93,12 @@ function HorizonOverlay(props: Readonly<{ overlay: Overlay; size: { width: numbe
             start ??= time;
             const t = (time - start) / 1000;
             if (t >= FURTHER_PLANET_MOMENT_TIMINGS.TH.DUR) { onDone(); return; }
-            setPicture(createPicture(canvas => paintNativeThemeHorizon(canvas, latest.current.image!, t, overlay.direction, latest.current.env!), props.size));
+            setPicture(createPicture(canvas => paintNativeThemeHorizon(canvas, latest.current.image!, t, overlay.direction, latest.current.env!, overlay.ink), props.size));
             frame = requestAnimationFrame(step);
         };
         frame = requestAnimationFrame(step);
         return () => { live = false; cancelAnimationFrame(frame); };
-    }, [playing, ready, loadError, state.visible, reducedMotion, onDone, overlay.direction, props.size]);
+    }, [playing, ready, loadError, state.visible, reducedMotion, onDone, overlay.direction, overlay.ink, props.size]);
     React.useEffect(() => () => picture?.dispose(), [picture]);
     return <>
         {!picture ? <Image source={{ uri: overlay.uri }} resizeMode="stretch" style={StyleSheet.absoluteFill} /> : null}

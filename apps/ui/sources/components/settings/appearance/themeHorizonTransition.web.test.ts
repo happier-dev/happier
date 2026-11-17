@@ -5,6 +5,13 @@ import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { ThemePreferenceTransitionHost } from './ThemePreferenceTransitionHost.web';
 import { runThemePreferenceChange } from './themePreferenceTransition';
 import { themeHorizonClipKeyframes, themeHorizonTransition } from './themeHorizonTransition.web';
+import { darkTheme } from '@/theme';
+import { DEFAULT_THEME_PROFILES_LOCAL_STATE } from '@/theme/profiles/themeProfilePersistence';
+import { applyThemeRuntimeSelection } from '@/theme/profiles/themeProfileRuntime';
+
+// Status bar and system background are platform boundaries of the theme runtime the digits read their ink from.
+vi.mock('expo-status-bar', () => ({ setStatusBarStyle: vi.fn() }));
+vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: vi.fn(async () => {}) }));
 
 function deferred() {
     let resolve!: () => void;
@@ -14,13 +21,29 @@ function deferred() {
 }
 
 // Browser DOM, font readiness and animation scheduling are the external boundaries.
-function browser(start = true) {
+/** A 2D context (browser boundary) that remembers the ink and alpha each glyph was drawn in. */
+function recordingContext() {
+    const glyphs: Array<{ fill: unknown; alpha: unknown }> = [];
+    const state: Record<string, unknown> = { globalAlpha: 1 };
+    const context = new Proxy(state, {
+        get(target, key: string) {
+            if (key in target) return target[key];
+            if (key === 'createRadialGradient' || key === 'createLinearGradient') return () => ({ addColorStop: () => {} });
+            if (key === 'fillText') return () => { glyphs.push({ fill: target.fillStyle, alpha: target.globalAlpha }); };
+            return () => {};
+        },
+        set(target, key: string, value) { target[key] = value; return true; },
+    });
+    return { context, glyphs };
+}
+
+function browser(start = true, context: unknown = null) {
     const fonts = deferred();
     const ready = deferred();
     const finished = deferred();
     const frames = new Map<number, FrameRequestCallback>();
     let id = 0;
-    const canvas = { style: { setProperty: vi.fn() }, setAttribute: vi.fn(), remove: vi.fn(), getContext: () => null };
+    const canvas = { style: { setProperty: vi.fn() }, setAttribute: vi.fn(), remove: vi.fn(), getContext: () => context };
     const reveal = { currentTime: 0 as number | null, cancel: vi.fn(() => { reveal.currentTime = null; }) };
     const animate = vi.fn(() => reveal);
     const document = {
@@ -82,6 +105,22 @@ describe('theme Horizon lifetime', () => {
         host.ready.resolve(); host.fonts.resolve(); await flush();
         expect(host.animate).not.toHaveBeenCalled();
         expect(host.frames.size).toBe(0);
+    });
+
+    it('draws the digits in the ink of the theme it reveals', async () => {
+        // The switch to dark has applied by the time the reveal is ready.
+        applyThemeRuntimeSelection({ themePreference: 'dark', themeProfiles: DEFAULT_THEME_PROFILES_LOCAL_STATE, systemTheme: 'light',
+            platform: 'ios', setSystemBackgroundColor: () => {}, recordBreadcrumb: () => {}, style: null });
+        const { context, glyphs } = recordingContext();
+        const host = browser(false, context);
+        const play = themeHorizonTransition.prepare(host.document as unknown as Document, 'night')!;
+        play({ ready: host.ready.promise, finished: host.finished.promise } as ViewTransition);
+        host.ready.resolve(); host.fonts.resolve(); await flush();
+        host.reveal.currentTime = 600;
+        for (const frame of [...host.frames.values()]) frame(0);
+        expect(glyphs.length).toBeGreaterThan(0);
+        expect(new Set(glyphs.map((glyph) => glyph.fill))).toEqual(new Set([darkTheme.colors.text.primary]));
+        host.finished.resolve(); await flush();
     });
 
     it('cleans up a rejected font load without scheduling paint', async () => {

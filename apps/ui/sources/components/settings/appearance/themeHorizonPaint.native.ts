@@ -3,8 +3,8 @@ import { themeSwitchFrame } from '@happier-dev/brand/planet-moments';
 import { paintNativeMomentCommands, type NativeMomentEnvironment } from '@/components/atmosphere/momentPaint.native';
 
 /** The old screenshot is the complement of brand's incoming clip; digits/glow replay its command stream. */
-export function paintNativeThemeHorizon(canvas: SkCanvas, image: SkImage, seconds: number, direction: 'sunrise' | 'night', env: NativeMomentEnvironment): void {
-    const frame = themeSwitchFrame(seconds, { w: env.w, h: env.h, dir: direction, kind: 'horizon' });
+export function paintNativeThemeHorizon(canvas: SkCanvas, image: SkImage, seconds: number, direction: 'sunrise' | 'night', env: NativeMomentEnvironment, ink?: string): void {
+    const frame = themeSwitchFrame(seconds, { w: env.w, h: env.h, dir: direction, kind: 'horizon', ink });
     if (frame.clipPath !== 'none') {
         canvas.save();
         if (frame.visibility !== 'hidden') {

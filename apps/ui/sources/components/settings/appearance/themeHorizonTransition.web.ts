@@ -7,6 +7,7 @@ import {
   paintMomentCommands,
   prepareMomentCanvas,
 } from '@/components/atmosphere/momentPaint.web';
+import { readThemeRuntimeInk } from '@/theme/profiles/themeProfileRuntime';
 import type { WebThemePreferenceChoreography } from './themePreferenceTransition';
 
 /** The overlay's view-transition group: captured in both views (empty in the old), drawn live above the root. */
@@ -112,6 +113,8 @@ export const themeHorizonTransition: WebThemePreferenceChoreography = {
           },
         );
         reveal = running;
+        // The switch has applied by `ready`: the digits take the incoming theme's ink, so they read on it.
+        const ink = readThemeRuntimeInk();
         const paint = () => {
           if (disposed) return;
           // The digits read the reveal's own clock, so the band can never drift from the boundary.
@@ -120,7 +123,7 @@ export const themeHorizonTransition: WebThemePreferenceChoreography = {
           if (context)
             paintMomentCommands(
               context,
-              themeSwitchFrame(t, { w, h, dir: direction, kind: 'horizon' })
+              themeSwitchFrame(t, { w, h, dir: direction, kind: 'horizon', ink })
                 .commands,
               { w, h, dpr },
             );

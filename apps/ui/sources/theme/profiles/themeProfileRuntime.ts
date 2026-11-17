@@ -420,6 +420,14 @@ export const applyThemeRuntimeSelection = (requested: ApplyThemeRuntimeSelection
     applyPreparedThemeRuntimeSelection(prepareThemeRuntimeSelection(requested))
 );
 
+/** The text ink of the theme on screen: once a switch has applied, the theme it switched to. Moments drawn over the switch read it. */
+export const readThemeRuntimeInk = (): string => {
+    const current = currentRuntimeSelection;
+    if (!current) return canonicalBaseThemes[readSystemTheme()].colors.text.primary;
+    const mode = resolveThemeRuntimeVisualTheme(current.input.themePreference, current.input.systemTheme ?? readSystemTheme());
+    return current.themes[mode].colors.text.primary;
+};
+
 /** Every observed palette change uses the appearance reveal; an already-painted mode/Keep is a no-op. */
 export const transitionThemeRuntimeSelection = (requested: ApplyThemeRuntimeSelectionInput, reduceMotion: boolean): Promise<void> => {
     const prepared = prepareThemeRuntimeSelection(requested);
