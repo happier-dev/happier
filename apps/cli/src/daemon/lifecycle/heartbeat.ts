@@ -65,6 +65,8 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
     exit: Readonly<{ reason: string; code: number | null; signal: string | null }>,
   ) => void | Promise<void>;
   onTrackedSessionHealthy?: (tracked: TrackedSession) => Promise<void>;
+  /** Terminal-started foreground owners are not daemon children; their crash is observed here. */
+  releaseExitedForegroundOwners?: () => Promise<void>;
   /**
    * Retires state owned by runners that ended (managed-service projections, execution-run markers).
    * The daemon runs it on every runner exit edge; the heartbeat runs it once at startup for runners
@@ -167,6 +169,10 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
     if (isShuttingDown?.() === true) {
       return;
     }
+    // Independent of the tick's other steps, so none of them (or an overlapping tick) delays it.
+    void params.releaseExitedForegroundOwners?.().catch(error => {
+      logger.warn("[DAEMON RUN] Cleanup of an exited foreground owner's admission failed", { error });
+    });
     if (heartbeatRunning) {
       return;
     }

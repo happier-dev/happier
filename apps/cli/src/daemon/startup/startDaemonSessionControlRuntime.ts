@@ -1492,6 +1492,7 @@ export async function startDaemonSessionControlRuntime(
     }>;
     onChildExited: (pid: number, exit: ChildExit) => Promise<void>;
     onTrackedSessionHealthy: (tracked: TrackedSession) => Promise<void>;
+    releaseExitedForegroundOwners: () => Promise<void>;
     controlPort: number;
     controlToken: string;
     daemonWorkSignal: AbortSignal;
@@ -15802,6 +15803,7 @@ export async function startDaemonSessionControlRuntime(
       getV2: resolveSessionRunnerStatusV2,
     },
     onChildExited,
+    releaseExitedForegroundOwners: () => foregroundAgentRuntimeAdmission.releaseExitedForegroundOwners(),
     onTrackedSessionHealthy: async (tracked: TrackedSession): Promise<void> => {
       await superviseTrackedOptionalTerminalPresentation({
         tracked,

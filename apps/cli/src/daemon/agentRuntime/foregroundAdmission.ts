@@ -181,7 +181,8 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
   const pendingByAttemptId = new Map<string, PendingAdmission>();
   const reservedAttemptIds = new Set<string>();
   let disposed = false;
-  let livenessTimer: ReturnType<typeof setInterval> | null = null;
+  const isForegroundOwnerAlive = (admission: Admission) =>
+    (dependencies.isProcessAlive ?? isPidPresent)(admission.request.foregroundPid);
 
   const readCurrentDaemonServiceAdmission = (sessionId: string) => {
     const attemptId = attemptIdBySessionId.get(sessionId);
@@ -218,12 +219,6 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
     }
   };
 
-  const stopLivenessTimerIfIdle = () => {
-    if (byAttemptId.size > 0 || !livenessTimer) return;
-    clearInterval(livenessTimer);
-    livenessTimer = null;
-  };
-
   const releaseAdmission = async (admission: Admission): Promise<void> => {
     if (admission.releasePromise) {
       await admission.releasePromise;
@@ -246,7 +241,6 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
     }
     byAttemptId.delete(admission.request.attemptId);
     releaseReservation(admission.request, admission.runtimeSessionId);
-    stopLivenessTimerIfIdle();
     const claimPromise = admission.claimPromise;
     admission.releasePromise = (async () => {
       await claimPromise?.catch(() => undefined);
@@ -264,6 +258,11 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
           'Foreground Agent runtime admission owner is disposed',
         );
       }
+      // A crashed owner's admission blocks its Session until the next heartbeat; the new
+      // attempt for that Session is the moment it matters, so release it here.
+      const heldAttemptId = attemptIdBySessionId.get(request.sessionId);
+      const held = heldAttemptId ? byAttemptId.get(heldAttemptId) : undefined;
+      if (held && !isForegroundOwnerAlive(held)) await releaseAdmission(held);
       if (
         reservedAttemptIds.has(request.attemptId)
         || attemptIdBySessionId.has(request.sessionId)
@@ -361,19 +360,6 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
         };
         byAttemptId.set(request.attemptId, admission);
         promoted = true;
-        if (!livenessTimer) {
-          livenessTimer = setInterval(() => {
-            for (const active of byAttemptId.values()) {
-              const alive = (dependencies.isProcessAlive ?? isPidPresent)(
-                active.request.foregroundPid,
-              );
-              if (!alive) {
-                void releaseAdmission(active).catch(() => undefined);
-              }
-            }
-          }, 1_000);
-          livenessTimer.unref?.();
-        }
         return {
           ok: true,
           capability: {
@@ -749,12 +735,19 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
       const admission = byAttemptId.get(attemptId);
       if (admission) await releaseAdmission(admission);
     },
+    /**
+     * A terminal-started foreground owner is not a daemon child, so its crash has no exit event.
+     * The daemon heartbeat, which already observes such processes, calls this once per tick.
+     */
+    async releaseExitedForegroundOwners(): Promise<void> {
+      const released = await Promise.allSettled([...byAttemptId.values()]
+        .filter(admission => !isForegroundOwnerAlive(admission))
+        .map(admission => releaseAdmission(admission)));
+      const failed = released.find((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
+      if (failed) throw new Error('foreground_admission_release_failed', { cause: failed.reason });
+    },
     async dispose(): Promise<void> {
       disposed = true;
-      if (livenessTimer) {
-        clearInterval(livenessTimer);
-        livenessTimer = null;
-      }
       const pending = [...pendingByAttemptId.values()];
       for (const admission of pending) admission.cancellation.abort();
       await Promise.allSettled(

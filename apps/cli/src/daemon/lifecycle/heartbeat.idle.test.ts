@@ -27,12 +27,14 @@ describe('daemon heartbeat idle cost', () => {
     const { startDaemonHeartbeatLoop } = await import('./heartbeat');
     const writeDaemonStateForCurrentOwner = vi.fn(() => true);
     const retireEndedRunnerOwnedState = vi.fn(async () => {});
+    const releaseExitedForegroundOwners = vi.fn(async () => {});
     const handle = startDaemonHeartbeatLoop({
       trackedSessionsByKey: new Map(),
       spawnResourceCleanupByKey: new Map(),
       sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       retireEndedRunnerOwnedState,
+      releaseExitedForegroundOwners,
       fileState: { pid: process.pid, httpPort: 8765, startedAt: Date.now(), startedWithCliVersion: '1.0.0' },
       // The version poll is kept (L5 AMENDMENT_REQUIRED); its self-restart is a boundary stub here.
       currentCliVersion: '0.0.0-never-installed',
@@ -45,7 +47,9 @@ describe('daemon heartbeat idle cost', () => {
       expect({
         stateWrites: writeDaemonStateForCurrentOwner.mock.calls.length,
         endedRunnerRetirements: retireEndedRunnerOwnedState.mock.calls.length,
-      }).toEqual({ stateWrites: 0, endedRunnerRetirements: 1 });
+        // Crashed terminal-started owners are observed once per tick, not by a 1 Hz timer.
+        foregroundOwnerChecks: releaseExitedForegroundOwners.mock.calls.length,
+      }).toEqual({ stateWrites: 0, endedRunnerRetirements: 1, foregroundOwnerChecks: 10 });
     } finally {
       expect(handle).toBe(1);
     }

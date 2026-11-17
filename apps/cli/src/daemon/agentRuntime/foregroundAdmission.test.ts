@@ -914,28 +914,60 @@ describe('foreground Agent runtime admission', () => {
     );
   });
 
-  it('releases admission custody when the foreground owner process exits', async () => {
+  it('costs no liveness probe per idle minute while a foreground owner lives', async () => {
     vi.useFakeTimers();
     try {
-      const cleanup = vi.fn(async () => undefined);
-      const retirement = new AbortController();
-      let alive = true;
+      const isProcessAlive = vi.fn(() => true);
       const owner = createForegroundAgentRuntimeAdmissionOwner({
-        prepare: async () => ({
-          ok: true,
-          prepared: createPrepared(cleanup, retirement),
-        }),
-        isProcessAlive: () => alive,
+        prepare: async () => ({ ok: true, prepared: createPrepared(async () => undefined, new AbortController()) }),
+        isProcessAlive,
       });
-
       await owner.admit(admissionRequest);
-      alive = false;
-      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.advanceTimersByTimeAsync(60_000);
 
-      expect(cleanup).toHaveBeenCalledTimes(1);
+      expect(isProcessAlive).toHaveBeenCalledTimes(0);
+      await owner.dispose();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('releases admission custody of an exited foreground owner when the daemon observes exits', async () => {
+    const exitedCleanup = vi.fn(async () => undefined);
+    const liveCleanup = vi.fn(async () => undefined);
+    const alive = new Map([[1234, true], [5678, true]]);
+    const owner = createForegroundAgentRuntimeAdmissionOwner({
+      prepare: async (request) => ({ ok: true, prepared: createPrepared(
+        request.foregroundPid === 1234 ? exitedCleanup : liveCleanup, new AbortController()) }),
+      isProcessAlive: (pid) => alive.get(pid) === true,
+    });
+    await owner.admit(admissionRequest);
+    await owner.admit({ ...admissionRequest, attemptId: 'attempt-2', sessionId: 'session-2', foregroundPid: 5678 });
+    alive.set(1234, false);
+
+    await owner.releaseExitedForegroundOwners();
+
+    expect({ exited: exitedCleanup.mock.calls.length, live: liveCleanup.mock.calls.length }).toEqual({ exited: 1, live: 0 });
+    await owner.dispose();
+  });
+
+  it('admits a Session again at once when its previous foreground owner exited', async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const alive = new Map([[1234, true]]);
+    const owner = createForegroundAgentRuntimeAdmissionOwner({
+      prepare: async () => ({ ok: true, prepared: createPrepared(cleanup, new AbortController()) }),
+      isProcessAlive: (pid) => alive.get(pid) === true,
+    });
+    await owner.admit(admissionRequest);
+    await expect(owner.admit({ ...admissionRequest, attemptId: 'attempt-2', foregroundPid: 5678 }))
+      .rejects.toThrow('already exists');
+    alive.set(1234, false);
+    alive.set(5678, true);
+
+    await expect(owner.admit({ ...admissionRequest, attemptId: 'attempt-3', foregroundPid: 5678 }))
+      .resolves.toMatchObject({ ok: true });
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    await owner.dispose();
   });
 
   it('releases a claimed admission through the foreground owner', async () => {
