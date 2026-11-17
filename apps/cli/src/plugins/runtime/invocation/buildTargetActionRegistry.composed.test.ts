@@ -88,7 +88,7 @@ import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1
 import { resolveApprovalRequestApproveAdmission } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import { createProductionPluginInvocationServiceOwners } from './services/production';
-import { DeploymentTargetRoleInputSchemasV1, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/v2';
+import { isDynamicPluginResourceContributionV2, DeploymentTargetRoleInputSchemasV1, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { createDeploymentTargetRoleAdmissionFixture } from '@/deployments/targets/deploymentTargetRoleAdmission.testkit';
 import type { PluginInvocationLogRecord } from './services/logger';
 import { createStablePluginHttpHost } from '../fetch/service';
@@ -686,9 +686,10 @@ describe('buildTargetActionInvocationRegistry', () => {
                 target: { kind: 'account' as const, account } };
             setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), settingsVersion: 1,
                 loadedAtMs: Date.now(), settingsSecretsReadKeys: [], scopeKey: 'home:custody-account' });
-            resourceOwner = await createStablePluginResourcesOwner({ registry: { resources: contributes.resources }, generations: new Map(),
+            const dynamicResources = contributes.resources.filter(resource => isDynamicPluginResourceContributionV2(resource.definition));
+            resourceOwner = await createStablePluginResourcesOwner({ registry: { resources: dynamicResources }, generations: new Map(),
                 dynamicOccurrenceIdsByPluginId: new Map([[pluginId, '7']]),
-                dynamicProducers: contributes.resources.map(resource => {
+                dynamicProducers: dynamicResources.map(resource => {
                     const runtime = kit.registration('resources', resource.definition.id);
                     if (!runtime) throw new Error('Actual target-options Resource did not activate');
                     return { pluginId, localId: resource.definition.id, runtime, prepareRuntime: async () => {} };
@@ -719,6 +720,7 @@ describe('buildTargetActionInvocationRegistry', () => {
                 listRuntimeContributedActionDefinitions(runtime, selection);
             const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...createRegistryInputTypeDeps(runtime),
                 listContributedActionDefinitions: definitions, readContributedActionSchemas: createCommittedContributedActionSchemaReader(definitions) });
+            const fieldPath = provider === 'vercel' ? 'projectId' : 'providerIdentity.providerResourceId';
             const draftInput = { credentialRef: account, credentialPrincipal: { kind: 'account', accountId: 'custody-account',
                 purpose: { consumer: { pluginId, localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' },
                 target: { kind: 'account', account } }, ...(provider === 'vercel' ? {} : { product: provider }),
@@ -730,14 +732,14 @@ describe('buildTargetActionInvocationRegistry', () => {
             ]) {
                 expect(await executor.execute('action.options.resolve', {
                     actionId: `${pluginId}/actions/targets-inspect-v1`,
-                    fieldPath: 'providerIdentity.providerResourceId', draftInput: foreignDraft, query: 'selected',
+                    fieldPath, draftInput: foreignDraft, query: 'selected',
                 }, { surface: 'agent', runtimeAccountId: 'custody-account', signal: lifetime.signal }))
                     .toMatchObject({ ok: false, errorCode: 'deployment_access_denied' });
                 expect(acquisitions).toBe(0);
                 expect(requests).toEqual([]);
             }
             const result = await executor.execute('action.options.resolve', { actionId: `${pluginId}/actions/targets-inspect-v1`,
-                fieldPath: 'providerIdentity.providerResourceId', draftInput, query: 'selected' },
+                fieldPath, draftInput, query: 'selected' },
                 { surface: 'agent', runtimeAccountId: 'custody-account', signal: lifetime.signal });
             expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { options: [{
                 value: provider === 'vercel' ? 'prj-selected' : provider === 'pages' ? 'project-selected' : 'b'.repeat(32),
@@ -1469,9 +1471,10 @@ describe('buildTargetActionInvocationRegistry', () => {
                 const admittedTarget = target;
                 setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), settingsVersion: 1,
                     loadedAtMs: Date.now(), settingsSecretsReadKeys: [], scopeKey: 'home:custody-account' });
-                resourceOwner = await createStablePluginResourcesOwner({ registry: { resources: contributes.resources }, generations: new Map(),
+                const dynamicResources = contributes.resources.filter(resource => isDynamicPluginResourceContributionV2(resource.definition));
+                resourceOwner = await createStablePluginResourcesOwner({ registry: { resources: dynamicResources }, generations: new Map(),
                     dynamicOccurrenceIdsByPluginId: new Map([[pluginId, '7']]),
-                    dynamicProducers: contributes.resources.map(resource => {
+                    dynamicProducers: dynamicResources.map(resource => {
                         const runtime = kit.registration('resources', resource.definition.id);
                         if (!runtime) throw new Error('Data plugin did not activate its declared Resource');
                         return { pluginId, localId: resource.definition.id, runtime };
