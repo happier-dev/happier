@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createRequire } from 'node:module';
 
 const { spawnMock, fileSyncMock } = vi.hoisted(() => ({
     spawnMock: vi.fn(),
@@ -32,16 +33,6 @@ describe('migrate.light.new.ts', () => {
     let tmpDir = '';
     let originalArgv: string[] = [];
 
-    async function waitForSpawnCount(expected: number): Promise<void> {
-        for (let i = 0; i < 40; i++) {
-            if (spawnMock.mock.calls.length >= expected) {
-                return;
-            }
-            await new Promise((resolve) => setTimeout(resolve, 0));
-        }
-        throw new Error(`Timed out waiting for ${expected} spawn calls; saw ${spawnMock.mock.calls.length}`);
-    }
-
     beforeEach(async () => {
         tmpDir = await mkdtemp(join(tmpdir(), 'happier-server-light-new-migrate-'));
         spawnMock.mockClear();
@@ -49,7 +40,7 @@ describe('migrate.light.new.ts', () => {
             name: join(tmpDir, 'happy server light.sqlite'),
         });
         originalArgv = process.argv.slice();
-        process.argv = [...originalArgv, '--name', 'add_test'];
+        process.argv = [...originalArgv, '--name', 'add_test', '--force'];
     });
 
     afterEach(async () => {
@@ -58,18 +49,25 @@ describe('migrate.light.new.ts', () => {
         vi.resetModules();
     });
 
-    it('derives a safe sqlite DATABASE_URL for the temporary migration database', async () => {
+    it('authors through the canonical migrator with an isolated database and passthrough flags', async () => {
         await import('./migrate.light.new');
-        await waitForSpawnCount(2);
+        await vi.waitFor(() => expect(spawnMock.mock.calls.some(([, args]) =>
+            Array.isArray(args) && args.includes('migrate') && args.includes('dev'))).toBe(true));
 
         const prismaCall = spawnMock.mock.calls.find(([, args]) => {
             const argv = Array.isArray(args) ? args : [];
-            return argv.includes('prisma') && argv.includes('migrate') && argv.includes('dev');
+            return argv.includes('migrate') && argv.includes('dev');
         });
 
         expect(prismaCall).toBeDefined();
         const env = (prismaCall?.[2] as { env?: NodeJS.ProcessEnv } | undefined)?.env;
         const expected = `file:${join(tmpDir, 'happy server light.sqlite')}?socket_timeout=30`;
         expect(env?.DATABASE_URL).toBe(expected);
+        const require = createRequire(import.meta.url);
+        expect(prismaCall?.[1]).toEqual([
+            require.resolve('prisma-migrate-cli/build/index.js'),
+            'migrate', 'dev', '--name', 'add_test', '--create-only', '--skip-generate', '--skip-seed', '--force',
+            '--config', expect.any(String),
+        ]);
     });
 });

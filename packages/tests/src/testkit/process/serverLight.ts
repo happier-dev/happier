@@ -476,7 +476,7 @@ export function resolveMigrateCommandArgs(provider: TestDbProvider): string[] {
   if (provider === 'mysql') {
     return ['--filter', resolveServerAppWorkspaceName(), 'run', '--silent', 'migrate:mysql:deploy'];
   }
-  return ['--filter', resolveServerAppWorkspaceName(), 'exec', 'prisma', 'migrate', 'deploy'];
+  return ['--filter', resolveServerAppWorkspaceName(), 'run', '--silent', 'migrate:full:deploy'];
 }
 
 function supportsServerLightTemplateCache(provider: TestDbProvider): provider is 'sqlite' | 'pglite' {

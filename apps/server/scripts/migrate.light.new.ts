@@ -1,6 +1,8 @@
 import tmp from 'tmp';
 import { renderPrismaCompatibleSqliteDatabaseUrl } from '@happier-dev/cli-common/firstPartyRuntime';
 import { runCommand } from './runCommand';
+import { resolveServerWorkspaceRoot } from './prismaCli';
+import { runPrismaMigrateCli } from './prismaMigrateCli';
 
 function parseNameArg(argv: string[]): { name: string | null; passthrough: string[] } {
     const passthrough: string[] = [];
@@ -40,16 +42,11 @@ async function main() {
     env.DATABASE_URL = renderPrismaCompatibleSqliteDatabaseUrl({ dbPath: dbFile, platform: process.platform });
 
     await runCommand('pnpm', ['--silent', 'run', 'schema:sync', '--quiet'], env);
-    await runCommand(
-        'pnpm',
-        [
-            '--silent',
-            'exec',
-            'prisma',
-            'migrate',
+    await runPrismaMigrateCli({
+        serverRoot: resolveServerWorkspaceRoot(import.meta.url),
+        schemaPath: 'prisma/sqlite/schema.prisma',
+        args: [
             'dev',
-            '--schema',
-            'prisma/sqlite/schema.prisma',
             '--name',
             name,
             '--create-only',
@@ -57,8 +54,8 @@ async function main() {
             '--skip-seed',
             ...passthrough,
         ],
-        env
-    );
+        env,
+    });
 }
 
 main().catch((err) => {

@@ -1,6 +1,8 @@
 import { mkdir, readdir } from 'node:fs/promises';
 import { applyLightDefaultEnv } from '../sources/flavors/light/env';
 import { runCommand } from './runCommand';
+import { resolveServerWorkspaceRoot } from './prismaCli';
+import { runPrismaMigrateCli } from './prismaMigrateCli';
 
 async function findBaselineMigrationDir(): Promise<string> {
     const entries = await readdir('prisma/sqlite/migrations', { withFileTypes: true });
@@ -25,11 +27,12 @@ async function main() {
     await runCommand('pnpm', ['--silent', 'run', 'schema:sync', '--quiet'], env);
 
     const baseline = await findBaselineMigrationDir();
-    await runCommand(
-        'pnpm',
-        ['--silent', 'exec', 'prisma', 'migrate', 'resolve', '--schema', 'prisma/sqlite/schema.prisma', '--applied', baseline],
-        env
-    );
+    await runPrismaMigrateCli({
+        serverRoot: resolveServerWorkspaceRoot(import.meta.url),
+        schemaPath: 'prisma/sqlite/schema.prisma',
+        args: ['resolve', '--applied', baseline],
+        env,
+    });
 }
 
 main().catch((err) => {

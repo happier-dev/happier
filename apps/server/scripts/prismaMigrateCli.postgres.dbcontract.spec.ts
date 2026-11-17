@@ -49,6 +49,14 @@ describe("Prisma migrator owner (PostgreSQL)", () => {
             env: { ...process.env, DATABASE_URL: url.href },
         });
 
+        // A second deploy must retain the applied migration without replaying its DDL.
+        await runPrismaMigrateCli({
+            serverRoot,
+            schemaPath: join(dir, "schema.prisma"),
+            args: ["deploy"],
+            env: { ...process.env, DATABASE_URL: url.href },
+        });
+
         const client = await createDbMaintenanceClient("postgres");
         try {
             const rows = await client.$queryRawUnsafe<Array<{ v: number }>>(

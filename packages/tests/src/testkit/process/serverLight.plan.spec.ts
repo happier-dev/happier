@@ -125,7 +125,7 @@ describe("startServerLight planning helpers", () => {
   it.each<[TestDbProvider, string]>([
     ["pglite", "migrate:light:deploy"],
     ["sqlite", "migrate:sqlite:deploy"],
-    ["postgres", "prisma migrate deploy"],
+    ["postgres", "migrate:full:deploy"],
     ["mysql", "migrate:mysql:deploy"],
   ])("uses the expected migration command for %s", (provider, expected) => {
     const args = resolveMigrateCommandArgs(provider).join(" ");
