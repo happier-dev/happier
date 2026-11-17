@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { PluginCompatibilityDiagnosticSchema } from '@/plugins/validation/diagnostics/types';
 import { PluginUiArtifactsManifestV2Schema } from '@happier-dev/protocol/plugins/ui';
@@ -14,6 +15,57 @@ import { projectLoadedPluginContributes } from '../fullProjection';
 import { projectPluginUiDeclarationEntries } from '../ui/projection';
 import { admitPluginContributionGraph } from './admission';
 import { DEEPSEEK_PROVIDER_CONTRIBUTION } from '../../../../../../../packages/plugins/deepseek/src/provider/contribution';
+import { loadPluginAuthorSourceModule } from '@/plugins/runtime/loadPluginModule';
+import { resolvePluginAuthorWorkspaceAliases } from '@/plugins/authoring/hostSdkResolution';
+import { loadCurrentBundledPluginLocatorResult } from '../builtIn/locators';
+
+it.each(['database-workbench', 'telemetry'] as const)(
+  'admits published and every %s source contribution through the host loader and contextual registry normalizer',
+  async (packageName) => {
+    const pluginRootPath = fileURLToPath(new URL(`../../../../../../../packages/plugins/${packageName}/`, import.meta.url));
+    const entryPath = `${pluginRootPath}src/index.ts`;
+    const module = await loadPluginAuthorSourceModule(entryPath, {
+      aliases: await resolvePluginAuthorWorkspaceAliases(pluginRootPath),
+    });
+    const manifest = normalizePluginManifestV2(module.manifest);
+    const plugin: LoadedPlugin = {
+      pluginId: manifest.id, pluginRootPath, manifestPath: `${pluginRootPath}src/manifest.ts`,
+      daemonEntryPath: entryPath, devDaemonEntryPath: entryPath, manifest,
+      sourceSpec: { kind: 'path', locator: pluginRootPath, trustPolicy: 'local_trusted', installPolicy: 'link' },
+    };
+    const bundled = loadCurrentBundledPluginLocatorResult();
+    expect(bundled.admittedGraph.diagnosticsByPluginId[manifest.id] ?? []).toEqual([]);
+    expect(bundled.admittedGraph.loadedPlugins.map(entry => entry.pluginId)).toContain(manifest.id);
+    const registry = buildPluginContributionRegistry({
+      loadedPlugins: [plugin],
+      referenceGraph: bundled.admittedGraph,
+    });
+    expect(registry.admittedGraph.diagnosticsByPluginId[manifest.id] ?? []).toEqual([]);
+    expect(registry.admittedGraph.loadedPlugins.map(entry => entry.pluginId)).toEqual([manifest.id]);
+    expect(registry.actions.map(action => action.identity?.localId).sort()).toEqual(
+      manifest.contributes.actions.map(action => action.id).sort(),
+    );
+    expect([...registry.semanticContributionsByFamily.keys()]).toEqual(expect.arrayContaining([
+      'actions', 'resources', 'serviceLaunchEnvironments',
+      ...(packageName === 'telemetry' ? ['workflows', 'healthCheckKinds', 'targetedPluginContributions', 'daemonDatabases'] : []),
+    ]));
+    expect(registry.uiViewsV2.map(view => view.definition.id).sort()).toEqual(
+      manifest.contributes.ui.views.map(view => view.id).sort(),
+    );
+    if (packageName === 'database-workbench') {
+      const { DATABASE_STATEMENT_RUN_ACTION_ID_V1, databaseActionLocalIdV1 } = await import('@happier-dev/protocol/actions/actionIdsDatabaseV1');
+      const run = registry.actions.find(action => action.identity.localId === databaseActionLocalIdV1(DATABASE_STATEMENT_RUN_ACTION_ID_V1));
+      const declaredRun = manifest.contributes.actions.find(action => action.id === databaseActionLocalIdV1(DATABASE_STATEMENT_RUN_ACTION_ID_V1));
+      for (const surface of declaredRun?.surfaces ?? []) {
+        expect(run?.definition.surfaces[surface], surface).toBe(true);
+      }
+      expect(run?.definition.surfaces).toMatchObject({ cli: true, ui: true, plugin: true });
+      expect(run?.definition.readOnly).toEqual({ op: 'eq', path: 'mode', value: 'read' });
+      expect(run?.definition.approvalInputCustody).toBe('live_only');
+      expect(run?.definition.secretInputPaths).toEqual(['statement.parameters.[].value', 'statements.[].parameters.[].value']);
+    }
+  },
+);
 
 function loaded(
   pluginId: string,
@@ -42,22 +94,6 @@ function loaded(
     }),
   };
 }
-
-it('keeps producer-backed database Actions on the generic CLI catalogue with declared input custody', async () => {
-  const { definePlugin } = await import('@happier-dev/plugin-sdk');
-  const { createDatabaseActions } = await import('../../../../../../../packages/plugins/database-workbench/src/actions');
-  const { DATABASE_STATEMENT_RUN_ACTION_ID_V1, databaseActionLocalIdV1 } = await import('@happier-dev/database-protocol');
-  const plugin = definePlugin({ id: 'happier.database', version: '0.0.0', displayName: 'Database',
-    actions: createDatabaseActions({ executeOperation: () => ({ ok: false, status: 'unavailable',
-      code: 'database_unavailable', reason: 'No driver in a declaration test' }) }),
-  });
-  const registry = buildPluginContributionRegistry({ loadedPlugins: [loaded(plugin.manifest.id, plugin.manifest.contributes)] });
-  const run = registry.actions.find(action => action.identity.localId === databaseActionLocalIdV1(DATABASE_STATEMENT_RUN_ACTION_ID_V1));
-  expect(run?.definition.surfaces).toMatchObject({ cli: true, ui: true, plugin: true, agent: false, mcp: false });
-  expect(run?.definition.readOnly).toEqual({ op: 'eq', path: 'mode', value: 'read' });
-  expect(run?.definition.approvalInputCustody).toBe('live_only');
-  expect(run?.definition.secretInputPaths).toEqual(['statement.parameters.[].value', 'statements.[].parameters.[].value']);
-});
 
 it('keeps conditional mutations visible in the static Action effect catalog', async () => {
   const { definePlugin } = await import('@happier-dev/plugin-sdk');

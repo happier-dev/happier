@@ -11,12 +11,69 @@ import { resolveBuiltInContributions } from '@/plugins/projection/registry/resol
 import { BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 import { createBundledActivationSourceResolver } from '@/plugins/runtime/bundledActivationSource';
 import { bindPluginRuntimeSourceAuthority } from '@/plugins/runtime/sourceAuthority';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
+import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
 
 import { collectActivationTargets, shouldActivateTargetAtStartup } from './activation/targets';
 import type { TargetInvocationServiceOwner } from './contributions/targetHooks';
 import { activatePluginRuntimeRegistry } from './manager';
 
 describe('bundled PluginApi parity', () => {
+    it('loads and registers current database and telemetry contributions through the real daemon host', async () => {
+        const database = await import('../../../../../../packages/plugins/database-workbench/src/index.js');
+        const telemetry = await import('../../../../../../packages/plugins/telemetry/src/index.js');
+        const loadedPlugins: LoadedPlugin[] = [
+            { name: 'database-workbench', manifest: database.manifest },
+            { name: 'telemetry', manifest: telemetry.manifest },
+        ].map(({ name, manifest: authoredManifest }) => {
+            const pluginRootPath = fileURLToPath(new URL(`../../../../../../packages/plugins/${name}/`, import.meta.url));
+            const packageName = `@happier-dev/plugins-${name}`;
+            const manifest = normalizePluginManifestV2(authoredManifest);
+            return { pluginId: manifest.id, pluginRootPath, manifest,
+                manifestPath: join(pluginRootPath, 'src/manifest.ts'), daemonEntryPath: packageName, devDaemonEntryPath: null,
+                sourceSpec: { kind: 'bundled', locator: packageName, trustPolicy: 'local_trusted', installPolicy: 'link' },
+            } satisfies LoadedPlugin;
+        });
+        const contributes = createResolvedContributionRegistry(projectLoadedPluginContributes({
+            loadResult: { loadedPlugins, diagnosticsByPluginId: {} }, provenance: 'external',
+        }));
+        const activated = await activatePluginRuntimeRegistry({
+            contributes, generation: 1, serviceHost: true,
+            resolveActivationSource: createBundledActivationSourceResolver({
+                bundledPackageNames: loadedPlugins.map(plugin => plugin.sourceSpec.locator),
+                bundledDeclarations: loadedPlugins,
+                resolveDevelopmentSourceAuthority: ({ rootPath }) => {
+                    const authority = bindPluginRuntimeSourceAuthority({ custody: { kind: 'development', registeredRootId: rootPath },
+                        resolvedRoot: rootPath, observedRevision: 1 });
+                    return authority.kind === 'development' ? authority : null;
+                },
+            }),
+            invocationServices: {
+                createOrdinaryServiceBinding() { throw new Error('Declaration activation must not invoke services'); },
+                createServices() { throw new Error('Declaration activation must not invoke services'); },
+                resolveInvocationHostPolicy() { throw new Error('Declaration activation must not invoke services'); },
+            } satisfies TargetInvocationServiceOwner,
+        });
+        try {
+            await activated.activateContributionsOnDemand(loadedPlugins.map(plugin => ({
+                pluginId: plugin.pluginId, family: 'actions', localId: plugin.manifest.contributes.actions[0]!.id,
+            })));
+            for (const plugin of loadedPlugins) {
+                expect(activated.pluginDiagnosticsByPluginId[plugin.pluginId] ?? [], plugin.pluginId).toEqual([]);
+                expect(activated.activatedPluginIds.has(plugin.pluginId), plugin.pluginId).toBe(true);
+                const registrations = activated.targetRegistrations.filter(entry => entry.pluginId === plugin.pluginId);
+                expect(registrations.map(({ registration }) => `${registration.family}/${registration.localId}`).sort()).toEqual(
+                    derivePluginDaemonContributionRegistrationRights(plugin.manifest.contributes)
+                        .map(right => `${right.family}/${right.localId}`).sort(),
+                );
+            }
+        } finally {
+            await activated.dispose();
+        }
+    });
+
     it('activates the real frozen bundled Agent on first demand through canonical source custody', async () => {
         const repoDir = fileURLToPath(new URL('../../../../../../', import.meta.url));
         const outputDir = await mkdtemp('/var/tmp/happier-frozen-first-demand-');
