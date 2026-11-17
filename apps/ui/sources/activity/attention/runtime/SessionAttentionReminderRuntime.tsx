@@ -6,6 +6,7 @@ import {
     resolveSessionAttentionReminderDeadline,
     type SessionAttentionReminderInventoryRefreshResult,
     type SessionAttentionReminderDeadline,
+    listSessionAttentionReminderHomeIds,
     useSessionAttentionReminderRefresh,
 } from '@/activity/attention/runtime/sessionAttentionReminderScheduler';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -77,10 +78,8 @@ export function SessionAttentionReminderRuntime(): React.ReactElement | null {
     const serverProfilesByScopeId = React.useMemo(() => new Map(
         serverProfiles.map((profile) => [resolveServerProfileScopeId(profile), profile] as const),
     ), [serverProfiles]);
-    const serverIds = React.useMemo(() => [...new Set([
-        ...serverProfiles.map((profile) => resolveServerProfileScopeId(profile)).filter(Boolean),
-        ...(activeServerId ? [activeServerId] : []),
-    ])].sort(), [activeServerId, serverProfiles]);
+    const serverIds = React.useMemo(() => listSessionAttentionReminderHomeIds(serverProfiles, activeServerId),
+        [activeServerId, serverProfiles]);
     const organizationByServerId = useSessionOrganizationProjections(serverIds);
     const secondaryConnectedByServerId = storage(useShallow(React.useCallback((state) => (
         Object.fromEntries(serverIds.map((serverId) => [

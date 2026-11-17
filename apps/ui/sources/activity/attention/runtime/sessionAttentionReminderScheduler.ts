@@ -7,6 +7,22 @@ import type { EnsureSessionVisibleForRouteResult } from '@/sync/domains/session/
 
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
+/**
+ * The reminder clock's known Homes, one key each: the active Home by the id its Sync, socket and
+ * organization store use, every other Home profile by its scope id. A Home's profile id and its server
+ * identity id name the same Home; keying it twice read its inventory twice and re-read the alias on
+ * every return, because the alias never looked connected.
+ */
+export function listSessionAttentionReminderHomeIds(
+    profiles: readonly Readonly<{ id: string; serverIdentityId?: string | null }>[],
+    activeServerId: string,
+): string[] {
+    return [...new Set([
+        ...profiles.map((profile) => (profile.id === activeServerId ? activeServerId : profile.serverIdentityId ?? profile.id)).filter(Boolean),
+        ...(activeServerId ? [activeServerId] : []),
+    ])].sort();
+}
+
 export type SessionAttentionReminderDeadline = Readonly<{
     address: SessionAddress;
     remindAt: number;

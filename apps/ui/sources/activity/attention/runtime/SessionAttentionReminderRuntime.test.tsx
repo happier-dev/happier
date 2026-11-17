@@ -13,6 +13,7 @@ import {
 } from '@/sync/domains/session/listing/sessionListQueryInvalidation';
 
 import {
+    listSessionAttentionReminderHomeIds,
     resolveSessionAttentionReminderDeadline,
     resolveSessionAttentionReminderRefreshPlan,
     useSessionAttentionReminderRefresh,
@@ -302,6 +303,15 @@ describe('SessionAttentionReminderRuntime', () => {
         await act(async () => Promise.resolve());
         expect(refreshReminderInventory.mock.calls.filter(([serverId]) => serverId === 'home-a')).toHaveLength(1);
         expect(refreshReminderInventory.mock.calls.filter(([serverId]) => serverId === 'home-b').length).toBeGreaterThan(1);
+    });
+
+    it('keys the active Home once, by the id its Sync and socket use, not a second time by its server identity', () => {
+        // A Home profile id ("127.0.0.1-3281") and its server identity id ("srv_…") name the same Home.
+        // Two keys made the clock read the active Home's inventory twice and re-read the alias on every show.
+        expect(listSessionAttentionReminderHomeIds([
+            { id: 'home-local', serverIdentityId: 'srv_active' },
+            { id: 'home-other', serverIdentityId: 'srv_other' },
+        ], 'home-local')).toEqual(['home-local', 'srv_other']);
     });
 
     it('does not mark an inventory refresh loaded when the credential is unavailable', async () => {
