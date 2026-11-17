@@ -11,6 +11,7 @@ import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_CONNECT_ACTION_ID_V1, databaseA
 import { DatabaseTargetsConnectInputV1Schema, DatabaseTargetsConnectResultV1Schema } from '../../../database-protocol/src/databaseTargetActions';
 
 import { startDatabaseWorkbenchPostgres } from './process/databaseWorkbenchPostgres';
+export { prepareDatabaseWorkbenchPostgresService } from './process/databaseWorkbenchPostgres';
 import { repoRootDir } from './paths';
 
 /** Install and trust the current source through the daemon's ordinary plugin
