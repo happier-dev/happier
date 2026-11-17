@@ -15,12 +15,27 @@ describe('Provider contribution identity', () => {
     });
     expect(normalizeProviderContributionKeyV1('acme.gateway/gateway'))
       .toBe('acme.gateway/gateway');
+    expect(normalizeProviderContributionKeyV1('acme.gateway/nested/provider'))
+      .toBe('acme.gateway/nested/provider');
     expect(canonicalizeProviderContributionKeyV1('acme.gateway/gateway'))
       .toBe('acme.gateway/gateway');
     expect(areProviderContributionKeysEqualV1(
       'acme.gateway/gateway',
       'acme.gateway/gateway',
     )).toBe(true);
+  });
+
+  it.each([
+    'acme.gateway:providers:gateway',
+    'acme.gateway:agents:gateway',
+    'acme.gateway:providers:',
+    ':providers:gateway',
+    'acme.gateway:providers:gateway:providers:other',
+    'acme.gateway//gateway',
+    'acme.gateway:providers:Gateway',
+    ' acme.gateway:providers:gateway ',
+  ])('rejects malformed or retired contribution identity %s', (input) => {
+    expect(normalizeProviderContributionKeyV1(input)).toBeNull();
   });
 
   it('does not parse or equate the retired colon-form key', () => {

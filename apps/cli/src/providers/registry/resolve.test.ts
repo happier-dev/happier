@@ -400,14 +400,6 @@ it('resolves a configured family while unused required coordinates stay unconfig
     .toMatchObject({ status: 'endpoint_unresolved', reason: 'endpoint_invalid' });
 });
 
-it('resolves the admitted Provider domain basis without a Settings subtree', () => {
-  const providerSettings = settingsWith([connection('pc_catalog')]);
-  const resolved = resolveProviderConnectionForMachine({ connectionId: 'pc_catalog', machineId: 'machine-1',
-    providerSettings, registry: registry(), dnsEvidenceByEndpointUrl: publicDns });
-  expect(resolved.status).toBe('resolved');
-  if (resolved.status === 'resolved') expect(resolved.record.connection.id).toBe('pc_catalog');
-});
-
 it.each([
   ['happier.provider.deepseek', DEEPSEEK_PROVIDER_CONTRIBUTION],
   ['happier.provider.openrouter', OPENROUTER_PROVIDER_CONTRIBUTION],
@@ -434,7 +426,8 @@ it.each([
       endpoint.baseUrl ? [[endpoint.baseUrl, ['1.1.1.1']] as const] : [])),
   });
   expect(resolution).toMatchObject({ status: 'resolved', record: { connectionId: 'pc_new_contribution',
-    source: { kind: 'contribution', contributionKey: key }, authorization: { authorized: true } } });
+    connection: { id: 'pc_new_contribution' },
+    source: { kind: 'contribution', contributionKey: key, pluginId }, authorization: { authorized: true } } });
 });
 
 it('admits the exact Account grant fingerprint for canonical URLs and all declared endpoint effects', async () => {
@@ -848,83 +841,6 @@ describe('machine-aware provider connection resolver', () => {
     })).toMatchObject({
       status: 'invalid',
       reason: 'managed_purpose_bindings_invalid',
-    });
-  });
-
-  it('resolves the exact canonical contribution identity through the registry', () => {
-    const configured = connection('pc_gateway');
-
-    expect(resolveProviderConnectionForMachine({
-      connectionId: configured.id,
-      machineId: 'machine-a',
-      providerSettings: settingsWith([configured]),
-      registry: {
-        providersByContributionKey: new Map([[canonicalContributionKey, contribution()]]),
-      },
-      dnsEvidenceByEndpointUrl: publicDns,
-    })).toMatchObject({
-      status: 'resolved',
-      record: {
-        source: {
-          kind: 'contribution',
-          contributionKey: canonicalContributionKey,
-          pluginId: 'acme.gateway',
-        },
-      },
-    });
-  });
-
-  it('authorizes a public connection only while its account grant matches current contribution security facts', () => {
-    const configured = connection('pc_gateway');
-    const providerEntries = new Map([[canonicalContributionKey, contribution()]]);
-    const mutableRegistry: ProviderContributionRegistryView = {
-      providersByContributionKey: providerEntries,
-    };
-    const first = resolveProviderConnectionForMachine({
-      connectionId: configured.id,
-      machineId: 'machine-a',
-      providerSettings: settingsWith([configured]),
-      registry: mutableRegistry,
-      dnsEvidenceByEndpointUrl: publicDns,
-    });
-    expect(first).toMatchObject({
-      status: 'resolved',
-      record: {
-        scope: 'account',
-        authorization: { authorized: false, errorCode: 'provider_connection_disabled' },
-      },
-    });
-    if (first.status !== 'resolved') throw new Error('Expected resolved connection');
-
-    const grantedSettings = settingsWith([configured], {
-      accountGrants: [{
-        v: 1,
-        connectionId: configured.id,
-        connectionSecurityFingerprint: first.record.connectionSecurityFingerprint,
-        confirmedAt: 2,
-      }],
-    });
-    expect(resolveProviderConnectionForMachine({
-      connectionId: configured.id,
-      machineId: 'machine-a',
-      providerSettings: grantedSettings,
-      registry: mutableRegistry,
-      dnsEvidenceByEndpointUrl: publicDns,
-    })).toMatchObject({
-      status: 'resolved',
-      record: { authorization: { authorized: true, grantKind: 'account' } },
-    });
-
-    providerEntries.set(canonicalContributionKey, contribution('https://gateway-v2.example/v1'));
-    expect(resolveProviderConnectionForMachine({
-      connectionId: configured.id,
-      machineId: 'machine-a',
-      providerSettings: grantedSettings,
-      registry: mutableRegistry,
-      dnsEvidenceByEndpointUrl: publicDns,
-    })).toMatchObject({
-      status: 'resolved',
-      record: { authorization: { authorized: false, errorCode: 'provider_account_grant_stale' } },
     });
   });
 
