@@ -60,8 +60,11 @@ export function useRegistryItems(request: { kind: RegistryKindV1; sourceIds?: re
         const previousPages = pagesFor(previous);
         const projected = project(value, previousPages, previous?.curation);
         const replacements = new Map(projected.pages.map(page => [page.sourceId, page]));
+        // Confirmed-empty catalogs may be omitted by the host. Retain only
+        // untouched siblings when a refreshed source has no replacement page.
         const mergedPages = refreshedSourceIds && previousPages
-            ? [...previousPages.map(page => replacements.get(page.sourceId) ?? page),
+            ? [...previousPages.filter(page => !refreshedSourceIds.includes(page.sourceId) || replacements.has(page.sourceId))
+                .map(page => replacements.get(page.sourceId) ?? page),
                 ...projected.pages.filter(page => !previousPages.some(prior => prior.sourceId === page.sourceId))]
             : projected.pages;
         const parsed = mergedPages === projected.pages ? projected : { ...projected, pages: mergedPages,

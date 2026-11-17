@@ -936,17 +936,25 @@ describe('registry item last-known reads through the Account and HTTP owners', (
             ? received.catalog.rows.find(row => row.record.key === 'registry-sources') : null;
         const sourceValue = getPromptLibraryCatalogValue(scope, 'registry-sources').value;
         if (!row || row.record.key !== 'registry-sources' || !sourceValue) throw new Error('Expected source record');
-        await act(async () => applyPromptLibraryCatalogAcknowledgedRecord(scope, { key: 'registry-sources',
-            value: { ...sourceValue, sources: sourceValue.sources.map(source => source.id === sourceId
-                ? { ...source, title: 'Changed source' } : source) } }, row.revision + 1, true));
+        const { writePromptLibraryRecord } = await import('@/sync/api/account/apiPromptLibraryCatalog');
+        await act(async () => {
+            const result = await writePromptLibraryRecord(scope, { record: { key: 'registry-sources',
+                value: { ...sourceValue, sources: sourceValue.sources.map(source => source.id === sourceId
+                    ? { ...source, title: 'Changed source' } : source) } }, expectedRevision: row.revision });
+            expect(result).toMatchObject({ status: 'updated', revision: row.revision + 1 });
+        });
+        expect(fixture.read().revision).toBe(row.revision + 1);
         await waitForHomeGovernance(() => expect(hook.getCurrent().sources).toContainEqual(expect.objectContaining({ id: sourceId, title: 'Changed source' })));
         expect(loads - baseline).toBe(1);
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const beforeRenewal = loads;
         const credentials = await TokenStorage.getCredentialsForServerUrl(fixture.home.serverUrl, { serverId: fixture.home.id });
         if (!credentials) throw new Error('Expected fixture credentials');
-        const replacement = await TokenStorage.setCredentialsForServerUrlWithRollback(fixture.home.serverUrl,
-            { serverId: fixture.home.id }, { ...credentials, token: `${credentials.token}-renewed` });
+        let replacement!: Awaited<ReturnType<typeof TokenStorage.setCredentialsForServerUrlWithRollback>>;
+        await act(async () => {
+            replacement = await TokenStorage.setCredentialsForServerUrlWithRollback(fixture.home.serverUrl,
+                { serverId: fixture.home.id }, { ...credentials, token: `${credentials.token}-renewed` });
+        });
         if (!replacement) throw new Error('Expected replacement fixture lifetime');
         try {
             await waitForHomeGovernance(() => {
