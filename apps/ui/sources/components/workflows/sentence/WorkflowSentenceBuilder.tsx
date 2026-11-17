@@ -17,6 +17,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useMachineListForServer, useServerScopedMachine } from '@/sync/domains/state/storage';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
+import { readWorkflowBlockShape } from '@/sync/domains/workflows/workflowAuthoring';
 import { isWorkflowProjectTarget } from '@/sync/domains/workflows/workflowProjectTarget';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
@@ -116,6 +117,7 @@ function WorkflowSentenceBuilderBody(
   const sentence = useWorkflowSentenceDraft(props.intent, lifetime);
   const { draftStore, onChange, project } = sentence;
   const blocks = useWorkflowEditorSelector(draftStore, readBlocks);
+  const { blockIds } = useWorkflowEditorSelector(draftStore, readWorkflowBlockShape, sameRetainedValue);
   const name = useWorkflowEditorSelector(draftStore, readName);
   const step = blocks[0] ?? null;
   const [selectedBlockId, selectBlock] = React.useState<string | null>(null);
@@ -127,7 +129,7 @@ function WorkflowSentenceBuilderBody(
   const composerCustody = useWorkflowEditorComposerCustody({
     readDraft,
     draftId: readDraft().draftId,
-    blockIds: React.useMemo(() => blocks.map((block) => block.id), [blocks]),
+    blockIds,
     scope: host.composerScope,
     editable: true,
     onChange,
