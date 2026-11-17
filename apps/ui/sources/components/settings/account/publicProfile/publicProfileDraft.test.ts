@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_PUBLIC_PROFILE_POLICY_V1, PublicProfileSnapshotV1Schema } from '@happier-dev/protocol/account/publicProfile';
-import { DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1, type PublicProfileLayoutV1, type PublicProfileOwnerRecordV1 } from '@happier-dev/protocol/account/publicProfilePublication';
+import { DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1, PublicProfileOwnerRecordV1Schema, type PublicProfileLayoutV1, type PublicProfileOwnerRecordV1 } from '@happier-dev/protocol/account/publicProfilePublication';
+
+import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { ScmCredentialFreeRepositorySelectorV1Schema } from '@happier-dev/protocol/scm/repositoryClone';
 
 import { createPublicProfileDraft, draftLookPresentation, draftVisitorTheme, publicProfileDraftQuery, resolvePublicFieldPlacements, resolvePublicProfileDraftChanges, setPublicProfileDraftField,
   setPublicProfileDraftTheme } from './publicProfileDraft';
@@ -16,7 +19,7 @@ const layout: PublicProfileLayoutV1 = { v: 1, items: [
   { kind: 'widget', id: 'days', size: 'full', frameStyle: 'plain', presentation: { kind: 'usage', widgetId: 'usage_rhythm', inputs: { style: 'sky' } } },
   { kind: 'widget', id: 'tide', size: 'medium', frameStyle: 'plain', presentation: { kind: 'usage', widgetId: 'usage_rhythm', inputs: { style: 'weekTide' } } },
 ] };
-const record = (overrides: Partial<PublicProfileOwnerRecordV1> = {}): PublicProfileOwnerRecordV1 => ({
+const record = (overrides: Partial<PublicProfileOwnerRecordV1> = {}) => PublicProfileOwnerRecordV1Schema.parse({
   state: 'published', policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1, metadata: {}, projectSelections: [], query: null, snapshot,
   layout, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1, updatedAtMs: 1, publishedAtMs: 1, restriction: null, ...overrides,
 });
@@ -102,11 +105,11 @@ describe('public profile draft', () => {
   });
 
   it('carries the page period, its words and repositories, and the visitor theme as reviewed members of the one draft', () => {
-    const selection = { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
-      repository: { nameWithOwner: 'happier-dev/happier', webUrl: 'https://github.com/happier-dev/happier', visibility: 'public' }, protocol: 'https' } as const;
-    const applied = record({ query: { period: { relative: '30days' } } as PublicProfileOwnerRecordV1['query'],
+    const selection = ScmCredentialFreeRepositorySelectorV1Schema.parse({ provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+      repository: { nameWithOwner: 'happier-dev/happier', webUrl: 'https://github.com/happier-dev/happier', visibility: 'public' }, protocol: 'https' });
+    const applied = record({ query: normalizeUsageQuery({ period: { relative: '30days' } }),
       metadata: { bio: 'Building Happier.', projects: [{ label: 'happier-dev/happier', url: 'https://github.com/happier-dev/happier' }] },
-      projectSelections: [selection] as unknown as PublicProfileOwnerRecordV1['projectSelections'] });
+      projectSelections: [selection] });
     const draft = createPublicProfileDraft(applied, { layout: { v: 1, items: [] } });
     // Projects are sent as the repositories chosen, never as the links the host derived from them.
     expect(draft.metadata).toEqual({ bio: 'Building Happier.', projectSelections: [selection] });

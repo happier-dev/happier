@@ -1,3 +1,4 @@
+import { ManagedIdentityProviderV1Schema, type ManagedIdentityProviderV1 } from '@happier-dev/protocol/identity/providers';
 import { AccountDisplayProfileV1Schema, type AccountDisplayProfileV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 import type { FeatureDecision} from '@happier-dev/protocol/features/decision';
 import type { FeatureId } from '@happier-dev/protocol/features/catalog';
@@ -330,4 +331,33 @@ export function homeRetentionGlobalEntriesFixture(overrides?: Readonly<{
         homeSettingEntryFixture('HAPPIER_SERVER_RETENTION__ENABLED', { value: false, declaration, ...overrides?.enabled }),
         homeSettingEntryFixture('HAPPIER_SERVER_RETENTION__DRY_RUN', { value: false, declaration, ...overrides?.dryRun }),
     ];
+}
+
+/** A managed provider projected by the Home identity owner, with variant-valid defaults. */
+export function managedIdentityProviderFixture(
+    overrides?: Partial<ManagedIdentityProviderV1>,
+): ManagedIdentityProviderV1 {
+    const common = {
+        v: 1, owner: { kind: 'home' }, id: 'provider-1',
+        displayName: 'Corporate OIDC', enabled: false, firstEnabledAt: null,
+        securityRevision: 1, revision: 4, teamConsumers: [], lastSuccessfulTest: null,
+        createdByAccountId: 'account-1', createdAt: 1, updatedAt: 1,
+    };
+    if (overrides?.kind === 'github_app_identity') {
+        return ManagedIdentityProviderV1Schema.parse({ ...common, kind: 'github_app_identity',
+            config: { v: 1, kind: 'github_app_identity' }, githubAppInstallationId: 'installation-1', ...overrides });
+    }
+    return ManagedIdentityProviderV1Schema.parse({
+        ...common, kind: 'oidc',
+        config: {
+            v: 1, kind: 'oidc', issuer: 'https://id.example', clientId: 'client-1',
+            clientAuthenticationMethod: 'client_secret_post', scopes: 'openid profile email',
+            httpTimeoutSeconds: 15,
+            claims: { login: 'preferred_username', email: 'email', groups: 'groups' },
+            allow: { usersAllowlist: [], emailDomains: [], groupsAny: [], groupsAll: [] },
+            fetchUserInfo: true, storeRefreshToken: false, ui: { buttonColor: null, iconHint: null },
+        },
+        secret: { configured: true, health: 'configured' },
+        ...overrides,
+    });
 }

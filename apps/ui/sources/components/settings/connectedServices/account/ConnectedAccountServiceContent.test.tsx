@@ -5,8 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { ConnectedServiceAuthGroupPolicyV2Schema} from '@happier-dev/protocol/connect/connected-service-schemas';
-import { type PluginConnectedAccountAuthenticationModeV2} from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
-import { type QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { PluginConnectedAccountAuthenticationModeV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { ConnectedAccountServiceContent } from './ConnectedAccountServiceContent';
 import { QualifiedAccountDetailView } from './QualifiedAccountDetailView';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
@@ -32,32 +33,12 @@ vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createT
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
     spies: { confirm: boundary.confirm },
 }).module);
-// These injected account journeys make no HTTP requests; fail if the transport is reached.
-vi.mock('@/sync/http/client', () => ({
-    serverFetch: () => { throw new Error('Unexpected HTTP request in injected account detail'); },
-}));
-// Session/Team envelope HTTP APIs are unrelated to this injected account journey.
-// Throw if reached instead of replacing any encryption or Account-domain logic.
-vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
-    const unused = () => { throw new Error('Unexpected Session envelope API in account detail'); };
-    return {
-        createSessionDataKeyEnvelopeClient: unused,
-        readSessionDataKeyEnvelopeCollectionPage: unused,
-        prepareSessionDataKeyEnvelopesForScope: unused,
-        prepareSessionDataKeyEnvelopesDetached: unused,
-    };
-});
-vi.mock('@/sync/api/teams/membershipSessionDataKeyEnvelopesApi', () => {
-    const unused = () => { throw new Error('Unexpected Team envelope API in account detail'); };
-    return {
-        createMembershipSessionDataKeyEnvelopeClient: unused,
-        prepareMembershipHistoryEnvelopesForScope: unused,
-        prepareMembershipHistoryEnvelopesDetached: unused,
-        membershipHistoryPreparationScopeKey: unused,
-    };
-});
+// Keep HTTP clients, envelope preparation and domain owners real. The Home harness
+// owns the network boundary and rejects any route this injected journey did not declare.
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
 
-afterEach(standardCleanup);
+afterEach(async () => { standardCleanup(); await homes.reset(); });
 
 function renderContent(element: React.ReactElement) {
     return renderScreen(element, {
@@ -66,11 +47,11 @@ function renderContent(element: React.ReactElement) {
 }
 
 const service = { pluginId: 'acme.accounts', localId: 'gateway' };
-const account = {
+const account = QualifiedConnectedAccountProfileV4Schema.parse({
     ref: { service, accountId: 'work' }, status: 'connected', authenticationModeId: 'token',
-    revisionSemantics: 'revisioned', credentialRevision: 'revision-1',
+    revisionSemantics: 'revisioned', credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
     configurationReady: false, configurationRevision: null, scopes: [],
-} satisfies QualifiedConnectedAccountProfileV4;
+});
 
 function makeGroup(): QualifiedConnectedAccountUiGroup {
     return {
@@ -103,7 +84,7 @@ const modes = [{
     configuration: { scope: 'service', changeBehavior: 'refresh', fields: [
         { id: 'organization', title: 'Organization', schema: { type: 'string' }, secret: false },
     ] },
-}] satisfies PluginConnectedAccountAuthenticationModeV2[];
+}].map(mode => PluginConnectedAccountAuthenticationModeV2Schema.parse(mode));
 
 describe('ConnectedAccountServiceContent focused ownership', () => {
     it('feeds held sign-in provenance and refresh time to the account detail without a credential read', async () => {
