@@ -39,6 +39,9 @@ vi.mock('expo-router', async () => {
 
 installWebLayoutBridge();
 
+// Prepare the real component graph during collection, outside the render assertion budget.
+const { SessionInstrumentStrip } = await import('./SessionInstrumentStrip');
+
 let root: Root | null = null;
 let host: HTMLElement | null = null;
 
@@ -67,7 +70,6 @@ async function measureStrip(
   more: readonly StripBadge[] = [],
   statusRegions?: React.ComponentProps<typeof import('./SessionInstrumentStrip').SessionInstrumentStrip>['statusRegions'],
 ): Promise<WebLayoutMeasurement> {
-  const { SessionInstrumentStrip } = await import('./SessionInstrumentStrip');
   host = document.createElement('div');
   document.body.appendChild(host);
   root = createRoot(host);
@@ -106,7 +108,6 @@ async function measureStrip(
 
 describe('the composer status line on a phone (owner 2026-11-10)', () => {
   it('keeps a trailing instrument on the status line instead of wrapping it to a row of its own', async () => {
-    const { SessionInstrumentStrip } = await import('./SessionInstrumentStrip');
     host = document.createElement('div');
     document.body.appendChild(host);
     root = createRoot(host);
@@ -146,7 +147,6 @@ describe('the composer status line on a phone (owner 2026-11-10)', () => {
 
 describe('a long host status beside a readiness badge at 390 (owner 2026-11-11)', () => {
   it('stays one line: the status ellipsizes while its action and the badge keep their width', async () => {
-    const { SessionInstrumentStrip } = await import('./SessionInstrumentStrip');
     host = document.createElement('div');
     document.body.appendChild(host);
     root = createRoot(host);
@@ -189,7 +189,6 @@ describe('a long host status beside a readiness badge at 390 (owner 2026-11-11)'
 
 describe('the status line band (owner 2026-11-11)', () => {
   it('centres its line in the band, so the free space is not all piled up between it and the composer', async () => {
-    const { SessionInstrumentStrip } = await import('./SessionInstrumentStrip');
     host = document.createElement('div');
     document.body.appendChild(host);
     root = createRoot(host);
@@ -217,7 +216,6 @@ describe('the status line band (owner 2026-11-11)', () => {
 
 describe('work items on the status line (owner 2026-11-11, as 0.2)', () => {
   it('stands a work item beside the status on the left, and leaves the instruments on the right', async () => {
-    const { SessionInstrumentStrip } = await import('./SessionInstrumentStrip');
     host = document.createElement('div');
     document.body.appendChild(host);
     root = createRoot(host);
