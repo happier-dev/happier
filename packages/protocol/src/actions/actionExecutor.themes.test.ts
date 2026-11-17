@@ -66,6 +66,17 @@ it('keeps deletion and plugin authoring on the declared static Agent Ask default
   }
 });
 
+it('asks Agent and MCP for theme deletion, uninstall and sharing while trusted plugins and user presses stay Direct', () => {
+  for (const actionId of [THEME_ACTION_IDS.delete, THEME_ACTION_IDS.uninstall, THEME_ACTION_IDS.sharePlugin]) {
+    for (const surface of ['agent', 'mcp', 'ui', 'plugin'] as const) {
+      expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId),
+        context: { surface, authority: 'present_user', actionCaller: surface === 'plugin'
+          ? { kind: 'plugin', pluginId: 'trusted.theme-tools' } : { kind: 'host' } } }).required,
+      `${actionId}:${surface}`).toBe(surface === 'agent' || surface === 'mcp');
+    }
+  }
+});
+
 it('keeps Store installs Direct for Agent, MCP, user and trusted plugins', () => {
   const actionId = THEME_ACTION_IDS.install;
   for (const surface of ['agent', 'mcp', 'ui', 'plugin'] as const) {

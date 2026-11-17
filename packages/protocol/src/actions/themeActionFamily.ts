@@ -192,13 +192,13 @@ function createThemeActionSpecs() {
     id, title: titles[id], description: 'Use the answering client’s shared theme library and temporary preview owner. Try on before Keep; immutable themes must be duplicated before editing. Connected client routing never queues offline effects.',
     approval: { result: 'required' },
     approvalPolicy: id === THEME_ACTION_IDS.delete || id === THEME_ACTION_IDS.uninstall || id === THEME_ACTION_IDS.sharePlugin
-      ? { agentDefault: 'authority', requiredSurfaces: ['agent', 'mcp', 'plugin', 'api'] }
+      ? { agentDefault: 'authority', uiConfirmation: 'direct' }
       : id === THEME_ACTION_IDS.install
         ? { uiConfirmation: 'direct' }
         : { uiConfirmation: 'direct',
           ...(id === THEME_ACTION_IDS.tryOn || id === THEME_ACTION_IDS.save
             ? { agentDefaultForInput: hasThemeAuthorCss } : {}) },
-    safety: id === THEME_ACTION_IDS.delete || id === THEME_ACTION_IDS.uninstall ? 'danger' : 'safe',
+    safety: 'safe',
     ...(id === THEME_ACTION_IDS.sharePlugin ? { hostReviewedChildren: themeSharePluginReviewedChildren } : {}),
     sideEffectClass: id === THEME_ACTION_IDS.list || id === THEME_ACTION_IDS.get || id === THEME_ACTION_IDS.storeGet || id === THEME_ACTION_IDS.export ? 'read' : 'write',
     requiredAuthority: 'account_automation', executionPlacement: 'client', placements: [],
