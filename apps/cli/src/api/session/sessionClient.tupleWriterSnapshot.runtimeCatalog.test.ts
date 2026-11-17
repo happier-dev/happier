@@ -5,6 +5,7 @@ import { SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Sc
   convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { SessionTeamCredentialBindingMetadataPatchV1Schema } from '@happier-dev/protocol/teams';
+import { SessionModelSelectionV2Schema, sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
 import { createAccountEncryptionCurrentnessFixture, createPlainSessionFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createApiSessionSocketStub, createSessionRuntimeActivityHomeStub, createSessionTranscriptHomeStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { createInitialHostRuntimeActivityMutation } from '@/agent/runtime/session/activity/createHostRuntimeActivityProjection';
@@ -251,6 +252,44 @@ describe('ApiSessionClient owner tuple writer snapshot', () => {
     await client.updateMetadata(metadata => ({ ...metadata }));
     expect({ sessionReads, currentnessReads }).toEqual(afterConflict);
     expect(client.getMetadataSnapshot()?.path).toBe('/after-conflict');
+  });
+
+  it('exposes only the Team binding admitted with the committed metadata tuple without rereading Home', async () => {
+    const owner = createOwnerSession('tuple-writer-team-binding');
+    row = owner.row;
+    row.acceptedTeamCredentialBinding = null;
+    serve();
+    const client = createClient(owner.session);
+    expect(client.getAcceptedTeamCredentialBinding()).toBeUndefined();
+    await client.updateMetadata(metadata => ({ ...metadata, path: '/control' }));
+    expect(client.getAcceptedTeamCredentialBinding()).toBeNull();
+    const selection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 10, ref: {
+      source: 'team_resource', resourceId: 'resource-1', teamId: 'team-1',
+      expectedResourceRevision: 4, deliveryMode: 'brokered', agentTargetKey: 'backend:codex', modelId: 'model-1',
+    } });
+    await client.updateMetadataAsCurrentPublisher(metadata => ({ ...metadata, modelSelectionIntentV2: selection }));
+    const reads = { sessionReads, currentnessReads };
+    expect(client.getAcceptedTeamCredentialBinding()).toEqual(sessionModelSelectionV2TeamBindingIntent(selection));
+    expect(client.getAcceptedTeamCredentialBinding()).toEqual(row.acceptedTeamCredentialBinding);
+    expect({ sessionReads, currentnessReads }).toEqual(reads);
+    const commitPatch = vi.mocked(axios.patch).getMockImplementation();
+    if (!commitPatch) throw new Error('Expected Home tuple patch boundary');
+    let releaseWrite: () => void = () => undefined;
+    let markWriteStarted: () => void = () => undefined;
+    const writeReleased = new Promise<void>(resolve => { releaseWrite = resolve; });
+    const writeStarted = new Promise<void>(resolve => { markWriteStarted = resolve; });
+    vi.mocked(axios.patch).mockImplementationOnce(async (url, data, config) => {
+      markWriteStarted();
+      await writeReleased;
+      return await commitPatch(url, data, config);
+    });
+    const pendingWrite = client.updateMetadata(metadata => ({ ...metadata, path: '/unrelated-pending' }));
+    await writeStarted;
+    const bindingWhileWritePending = client.getAcceptedTeamCredentialBinding();
+    releaseWrite();
+    await pendingWrite;
+    expect(bindingWhileWritePending).toEqual(sessionModelSelectionV2TeamBindingIntent(selection));
+    expect({ sessionReads, currentnessReads }).toEqual(reads);
   });
 
   it('keeps a changed Account encryption admission closed at the write boundary', async () => {

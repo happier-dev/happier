@@ -16,6 +16,7 @@ import {
   ProviderConnectionIdSchema,
   type ProviderConnectionId,
   type ProviderBoundModelRef,
+  type TeamCredentialProviderModelSelectionV1,
   type ProviderRuntimeBindingBasisV1,
   type SessionProviderBindingMetadataV1,
   SessionProviderBindingMetadataV1Schema,
@@ -24,6 +25,7 @@ import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents
 import { SessionModelTransitionResultV1Schema } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import { createModelIntentMetadataCasCandidate, createModelIntentV2MetadataCasCandidate } from '@happier-dev/agents/session/state/metadataWriters';
 import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
+import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 
 import {
   createSessionModelTransitionAuthorizer,
@@ -591,6 +593,54 @@ describe('createSessionModelTransitionCoordinator', () => {
     await harness.coordinator.dispose();
   });
 
+  it('reopens a current V2 Team revision carried by the next prompt before dispatch', async () => {
+    const selection = native('model');
+    let appliedTeam = { kind: 'team_credential_provider_model' as const, resourceId: 'resource', teamId: 'team',
+      expectedResourceRevision: 0, deliveryMode: 'brokered' as const, agentTargetKey: selection.agentTargetKey, modelId: selection.modelId };
+    const { kind: _kind, ...ref } = appliedTeam;
+    const current = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 42, ref: {
+      source: 'team_resource', ...ref, expectedResourceRevision: 2,
+    } });
+    const initialTarget = { ...authorized(selection), readAppliedTeamCredentialModel: () => appliedTeam };
+    const authorize = createSessionModelTransitionAuthorizer({ sessionId: 'session-1', machineId: 'machine-1',
+      agentId: 'claude', agentTargetKey: selection.agentTargetKey, nativeModelApplyPolicy: 'live',
+      readActiveTarget: () => initialTarget });
+    const harness = createHarness({ initialTarget, authorize });
+    let dispatched = false;
+    try {
+      const result = await harness.coordinator.submit(current.ref, { source: 'prompt',
+        restartRuntime: { required: false, run: async () => { appliedTeam = { ...appliedTeam, expectedResourceRevision: 2 }; } },
+        runWithActiveSelection: async transfer => { await transfer({ abortSignal: new AbortController().signal,
+          dispatch: async () => { dispatched = true; expect(appliedTeam.expectedResourceRevision).toBe(2); } }); },
+      });
+      expect(result).toMatchObject({ ok: true });
+      expect(dispatched).toBe(true);
+      expect(harness.publishIntent).toHaveBeenCalledWith(current.ref);
+    } finally { await harness.coordinator.dispose(); }
+  });
+
+  it('clears the opened Team route before dispatching an explicit V2 native choice', async () => {
+    const selection = native('same-model');
+    let appliedTeam: TeamCredentialProviderModelSelectionV1 | null = {
+      kind: 'team_credential_provider_model', resourceId: 'resource', teamId: 'team',
+      expectedResourceRevision: 2, deliveryMode: 'brokered', ...selection,
+    };
+    const initialTarget = { ...authorized(selection), readAppliedTeamCredentialModel: () => appliedTeam };
+    const authorize = createSessionModelTransitionAuthorizer({ sessionId: 'session-1', machineId: 'machine-1',
+      agentId: 'claude', agentTargetKey: selection.agentTargetKey, nativeModelApplyPolicy: 'live',
+      readActiveTarget: () => initialTarget });
+    const harness = createHarness({ initialTarget, authorize });
+    const ref = { source: 'native' as const, agentTargetKey: selection.agentTargetKey, modelId: selection.modelId };
+    try {
+      await expect(harness.coordinator.submit(ref, { source: 'prompt',
+        restartRuntime: { run: async () => { appliedTeam = null; } },
+        runWithActiveSelection: async transfer => { await transfer({ abortSignal: new AbortController().signal,
+          dispatch: async () => { expect(appliedTeam).toBeNull(); } }); },
+      })).resolves.toMatchObject({ ok: true });
+      expect(harness.publishIntent).toHaveBeenCalledWith(ref);
+    } finally { await harness.coordinator.dispose(); }
+  });
+
   it.each([false, true])('compares the startup Team metadata echo with its opened source (changed: %s)', async changed => {
     const selection = native('same-model');
     const team = { kind: 'team_credential_provider_model' as const,
@@ -692,6 +742,7 @@ describe('createSessionModelTransitionCoordinator', () => {
     const harness = createHarness({ initialTarget, authorize,
       readModelSelectionIntent: () => readSessionModelSelectionV2FromMetadata(metadata), publishIntent: async requested => {
       intentWrites++;
+      if ('source' in requested) throw new Error('This legacy projection fixture expects a V1 tuple');
       const candidate = createModelIntentMetadataCasCandidate({ selection: requested, nowMs: () => 20 });
       metadata = candidate.update(metadata);
       return { accepted: candidate.readState().accepted, updatedAt: candidate.readState().updatedAt! };
@@ -1150,6 +1201,7 @@ describe('createSessionModelTransitionCoordinator', () => {
       authorize: authorizer, ownerScope: modelMutationScope, readRuntimeModelId: () => 'actual-model',
       subscribeRuntimeModelChanges: handler => { handler('actual-model'); return () => undefined; },
       publishIntent: async (selection, expected, requiredBefore) => {
+        if ('source' in selection) throw new Error('This V1 reversal fixture expects a V1 tuple');
         const candidate = createModelIntentMetadataCasCandidate({ selection, nowMs: () => ++order, ownerScope: modelMutationScope,
           ...(requiredBefore ? { captureBefore: true, requiredBefore } : {}),
           ...(expected ? { expected: { owner: 'inactive', scope: modelMutationScope, ...expected } } : {}) });
@@ -1177,6 +1229,7 @@ describe('createSessionModelTransitionCoordinator', () => {
       readActiveTarget: () => h.coordinator.readActiveTarget() });
     const h = createHarness({ initial: native('old'), authorize: authorizer, ownerScope: modelMutationScope,
       publishIntent: async (selection, expected, requiredBefore) => {
+        if ('source' in selection) throw new Error('This V1 reversal fixture expects a V1 tuple');
         const candidate = createModelIntentMetadataCasCandidate({ selection, nowMs: () => ++order, ownerScope: modelMutationScope,
           ...(requiredBefore ? { captureBefore: true, requiredBefore } : {}),
           ...(expected ? { expected: { owner: 'inactive', scope: modelMutationScope, ...expected } } : {}) });

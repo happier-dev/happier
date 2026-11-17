@@ -14,6 +14,7 @@ import { assertSessionTeamCredentialNativeModel, type SessionTeamCredentialInsta
 import { assertTeamCredentialModelAdmission } from '@/providers/broker/teamCredentialModelCompatibility';
 import type { SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol/teams';
 import { projectTeamCredentialLaunchFailure } from '@/session/services/sessionTeamCredentialLaunchError';
+import { readSessionModelSelectionProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 
 /** The daemon's Team preparation adapter; domain admission stays with the shared normalizer. */
 export async function prepareSessionTeamCredentialLaunch(input: Readonly<{
@@ -37,8 +38,10 @@ export async function prepareSessionTeamCredentialLaunch(input: Readonly<{
     }
     if (input.options.existingSessionId && accepted?.resourceId && accepted.slot.kind === 'provider_model'
         && accepted.deliveryMode === 'vendor-native') {
-        const model = input.options.modelSelection?.ref;
-        if (!model || model.agentTargetKey !== input.agentTargetKey || model.providerConnectionId !== null
+        const selection = input.options.modelSelection;
+        const model = selection?.ref;
+        if (!selection || !model || model.agentTargetKey !== input.agentTargetKey
+            || readSessionModelSelectionProviderConnectionId(selection) !== null
             || !input.readInstalledTeamCredentialProviderModel
             || (accepted.providerModelSelection?.executionMachineId && accepted.providerModelSelection.executionMachineId !== input.executionMachineId)) {
             throw new SessionTeamCredentialLaunchUnavailableError();

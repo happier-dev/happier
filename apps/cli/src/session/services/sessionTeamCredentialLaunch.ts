@@ -158,9 +158,9 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
       ?? (matchingRows.length > 0 ? 'team_credential_provider_selection_not_current' : 'provider_model_not_found'), 'model_catalog');
   }
   if (!explicitModelBinding && !automatic) throw new SessionTeamCredentialLaunchUnavailableError('provider_compatibility_unverified', 'model_catalog');
-  if (explicitModelBinding && explicitModelBinding.teamId === undefined) {
+  if (explicitModelBinding) {
     teamCredentialBindings = teamCredentialBindings?.map(binding => binding.slot.kind === 'provider_model'
-      ? { ...binding, teamId: row.selection.teamId } : binding);
+      ? { ...binding, teamId: row.selection.teamId, expectedResourceRevision: row.selection.expectedResourceRevision } : binding);
   }
   if (!explicitModelBinding) teamCredentialBindings = mergeSessionTeamCredentialBindingIntents({
     explicit: teamCredentialBindings,

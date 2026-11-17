@@ -346,6 +346,36 @@ describe('Workflow Session step execution', () => {
 
 
 
+  it('carries an explicit current Team V2 choice into the active Session raw input', async () => {
+    const previousGet = http.get.getMockImplementation()!;
+    http.get.mockImplementation(async (url: string) => url.endsWith(`/v2/sessions/${sessionId}`)
+      ? { status: 200, data: { session: createSessionRecordFixture({ id: sessionId, active: true,
+          encryptionMode: 'plain', machineId: 'machine-1',
+          metadata: JSON.stringify({ machineId: 'machine-1', flavor: 'codex' }),
+        }) } } : previousGet(url));
+    const ref = { source: 'team_resource' as const, teamId: 'team-1', resourceId: 'resource-1',
+      expectedResourceRevision: 2, deliveryMode: 'brokered' as const,
+      agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'muse-current' };
+    let admitted = false;
+    await expect(enqueueWorkflowSessionInput({
+      credentials: { token: 'token', encryption: null }, sessionId, text: 'Work',
+      workflow: { purpose: 'invocation', runId: 'run-1', invocationRecordId: 'team-current' },
+      modelSelectionInput: ref, modelSelectionUpdatedAt: 42,
+      machineAdmissionTransport: async request => {
+        expect(request.content.t).toBe('plain');
+        if (request.content.t !== 'plain') throw new Error('Expected plain Account input');
+        const message = request.content.v;
+        if (!message || typeof message !== 'object' || !('meta' in message)) throw new Error('Expected raw message');
+        expect(readSessionMessageModelSelectionV1(message.meta)).toEqual({ status: 'valid',
+          selection: { v: 2, updatedAt: 42, ref } });
+        expect(message.meta).not.toHaveProperty('model');
+        admitted = true;
+        return { status: 'accepted', localId: request.localId };
+      },
+    })).resolves.toMatchObject({ status: 'accepted' });
+    expect(admitted).toBe(true);
+  });
+
   it('authors portable attachments in the canonical raw Session structured-input envelope', async () => {
     const attachment = {
       v: 1 as const, instanceId: 'workflow-attachment-1',

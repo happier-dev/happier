@@ -2,7 +2,7 @@ import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protoc
 import type { PermissionIntent } from '../../types.js';
 import { SessionModelSelectionIntentV1Schema, SessionModelSelectionResolutionError, readSessionModelSelectionIntentSourceV1, resolveSessionModelSelectionIntentV1 } from '@happier-dev/protocol/providers/model-selection';
 import type { SessionModelSelectionIntentV1 } from '@happier-dev/protocol/providers/model-selection';
-import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
+import { SessionModelSelectionV2Schema, projectSessionModelSelectionV2ToV1 } from '@happier-dev/protocol/providers/selection/v2';
 import type { SessionModelSelection, SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
 import { readSessionProviderBindingMetadataStateV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import {
@@ -35,6 +35,16 @@ export function resolveSessionModelSelectionFromMetadata(metadata: unknown, agen
     if (!selection) throw new SessionModelSelectionResolutionError('model_selection_session_provider_state_unreadable');
     if (selection.ref.agentTargetKey !== agentTargetKey) {
       throw new SessionModelSelectionResolutionError('model_selection_agent_target_mismatch');
+    }
+    const projected = projectSessionModelSelectionV2ToV1(selection);
+    if (projected) {
+      const effective = resolveModelSelectionIntentFromSessionMetadata({
+        ...record,
+        modelSelectionIntentV1: { v: 1, updatedAt: projected.updatedAt, selection: projected.ref },
+      }, agentTargetKey);
+      if (effective?.selection && effective.updatedAt > selection.updatedAt) {
+        return { v: 1, updatedAt: effective.updatedAt, ref: effective.selection };
+      }
     }
     return selection;
   }

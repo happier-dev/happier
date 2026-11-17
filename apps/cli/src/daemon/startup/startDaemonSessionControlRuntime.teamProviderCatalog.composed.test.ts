@@ -374,6 +374,38 @@ it.each(['before readiness', 'after readiness', 'replacement pid', 'replacement 
     }
   });
 
+it('opens the current accepted Team tuple after an active Session revision change', async () => {
+  const agentTargetKey = 'agent:happier.agent.codex/codex';
+  let revision = 0;
+  const openedRevisions: number[] = [];
+  const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, 'codex', false, undefined, undefined, {
+    openTeamCredentialProviderBinding: async input => {
+      openedRevisions.push(input.expectedResourceRevision);
+      return { providerBinding: {
+        source: { kind: 'team_resource', resourceId: input.resourceId, resourceRevision: input.expectedResourceRevision },
+        upstream: { protocol: 'openai-responses', normalizedUrl: 'https://provider.test/v1', credential: 'apiKey' },
+        model: { id: input.modelId, name: 'Current model' }, materialization: { v: 1, kind: 'spawnEnv' },
+      }, environmentOverlay: [], additionalRedactionValues: [], cleanup: () => undefined };
+    },
+  });
+  const binding = { v: 1 as const, slot: { kind: 'provider_model' as const }, resourceId: 'resource',
+    teamId: 'team', deliveryMode: 'brokered' as const, expectedResourceRevision: 0,
+    providerModelSelection: { agentTargetKey, modelId: 'current-model' } };
+  h.tracked.spawnOptions = { ...h.tracked.spawnOptions, teamCredentialBindings: [binding],
+    modelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey, providerConnectionId: null, modelId: 'current-model' } } };
+  const get = vi.mocked(axios.get).getMockImplementation()!;
+  vi.mocked(axios.get).mockImplementation(async (url, options) => String(url).endsWith(`/v2/sessions/${h.sessionId}`)
+    ? { status: 200, data: { session: createSessionRecordFixture({ id: h.sessionId, encryptionMode: 'plain',
+        acceptedTeamCredentialBinding: { ...binding, expectedResourceRevision: revision } }) } } : get(url, options));
+  const open = () => h.dispatch({ kind: 'provider_broker.binding.open', requestId: `current-${revision}`,
+    resourceId: binding.resourceId, expectedResourceRevision: revision, agentTargetKey, modelId: 'current-model' });
+  expect(await open()).toMatchObject({ ok: true, result: { kind: 'provider_broker.binding' } });
+  revision = 2;
+  expect(await open()).toMatchObject({ ok: true, result: { kind: 'provider_broker.binding' } });
+  expect(openedRevisions).toEqual([0, 2]);
+  expect(h.tracked.spawnOptions.teamCredentialBindings?.[0]?.expectedResourceRevision).toBe(0);
+});
+
 it.each(['fresh owner native', 'fresh member native', 'fresh member native manage', 'ready', 'requester Home', 'reattached requester Home', 'admission refused', 'binding not current', 'missing declaration', 'non-204', 'typed non-204', 'unknown non-204', 'socket closed', 'refresh refused', 'slow catalog', 'slow refresh'] as const)(
   'opens the real Codex Team binder with the tracked recipient catalog, never custodian consent (%s)', async scenario => {
   const freshNative = scenario === 'fresh owner native' || scenario === 'fresh member native' || scenario === 'fresh member native manage';
@@ -537,6 +569,13 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
   const get = vi.mocked(axios.get).getMockImplementation()!;
   vi.mocked(axios.get).mockImplementation(async (url, options) => {
     const path = new URL(String(url)).pathname;
+    if (path === `/v2/sessions/${h.sessionId}`) return { status: 200, data: { session: createSessionRecordFixture({
+      id: h.sessionId, encryptionMode: 'plain', acceptedTeamCredentialBinding: {
+        v: 1, slot: { kind: 'provider_model' }, teamId: 'team', expectedResourceRevision: 2, deliveryMode: 'brokered',
+        resourceId: metadata === 'binding not current' ? 'other-resource' : 'resource',
+        providerModelSelection: { agentTargetKey, modelId: model.descriptor.id },
+      },
+    }) } };
     if (path === '/v1/account/entity-rows/provider-connections') {
       consentCatalogReads++;
       consentCatalogReadStacks.push(new Error('Unexpected personal Provider catalog read for Team binding').stack ?? 'stack unavailable');
@@ -885,8 +924,6 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
     return;
   }
   if (metadata === 'binding not current') {
-    h.tracked.spawnOptions = { ...h.tracked.spawnOptions, teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' },
-      resourceId: 'other-resource', expectedResourceRevision: 2, teamId: 'team', deliveryMode: 'brokered' }] };
     const refused = await openThroughRunner().then(() => null, (error: unknown) => error);
     expect(brokerOpens).toBe(0);
     expect(boundary.responseStatus).toBe(200);

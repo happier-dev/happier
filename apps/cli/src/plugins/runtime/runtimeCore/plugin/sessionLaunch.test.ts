@@ -44,7 +44,7 @@ describe('plugin session launch binding', () => {
       expect(buildPluginSessionBindingInput({ ...raw, modelSelection: tuple }).runtimePreferences.modelSelection).toEqual(tuple);
       const input = buildPluginSessionBindingInput(raw);
       expect(buildPluginHostSessionRuntimeOptions(input).modelSelection).toEqual(selection);
-      expect(resolvePublicSessionModelSelection({ sessionInput: input, metadata: {} })).toEqual(tuple);
+      expect(resolvePublicSessionModelSelection({ sessionInput: input, metadata: {} })).toEqual(selection);
       if (source === 'team_resource') {
         expect(input.teamCredentialBindings).toEqual([binding]);
         expect(() => resolvePublicSessionModelSelection({
@@ -55,7 +55,7 @@ describe('plugin session launch binding', () => {
 
     it('resolves persisted V2 intent through the existing converter and accepted Team binding', () => {
       const input = buildPluginSessionBindingInput({ ...raw, modelSelection: tuple });
-      expect(resolvePublicSessionModelSelection({ sessionInput: input, metadata: { modelSelectionIntentV2: selection } })).toEqual(tuple);
+      expect(resolvePublicSessionModelSelection({ sessionInput: input, metadata: { modelSelectionIntentV2: selection } })).toEqual(selection);
     });
   });
 

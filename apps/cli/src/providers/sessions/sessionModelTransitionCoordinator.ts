@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { isModelRefGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { CallerInputConstraintsV1, ModelSelectionApplyPolicy, ProviderBoundModelRef, ProviderRuntimeBindingBasisV1, SessionModelTransitionResultV1, SessionProviderBindingMetadataV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
-import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelRefSchema, readSessionModelRefProviderConnectionId, type SessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { SessionModelMutationExpectedV1, SessionModelMutationScopeV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -108,6 +108,7 @@ export function mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult
 }
 
 type Proposal = {
+  modelRef: SessionModelRef;
   restartRuntime?: SessionModelTransitionRestart;
   callerInputConstraints?: CallerInputConstraintsV1;
   captureBefore?: boolean;
@@ -302,7 +303,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     callerInputConstraints?: CallerInputConstraintsV1,
   ) => Promise<AuthorizedSessionModelTransitionTarget>;
   publishIntent: (
-    selection: ProviderBoundModelRef,
+    selection: SessionModelRef,
     expected?: Readonly<{ selection: ProviderBoundModelRef; updatedAt: number }>,
     requiredBefore?: ProviderBoundModelRef,
   ) => Promise<Readonly<{ accepted: boolean; updatedAt: number }>>;
@@ -1022,29 +1023,31 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       return;
     }
     let target: AuthorizedSessionModelTransitionTarget;
-    // A prompt carries a model tuple without its Team source. Keep the
-    // opened source, and reopen its model-specific materialization when only
-    // the brokered model changed. The broker still admits that exact model.
-    const desiredModel = proposal.source === 'prompt'
+    // Preserve explicit V2 source identity through admission. Legacy tuples
+    // may retain the already opened Team source, but cannot select a new one.
+    const explicitModel = 'source' in proposal.modelRef ? { v: 2 as const, updatedAt: 0, ref: proposal.modelRef } : null;
+    const desiredModel = explicitModel ?? (proposal.source === 'prompt'
       || (proposal.source === 'metadata' && proposal.reuseInitialAdmission === true)
-      ? params.readModelSelectionIntent() : null;
+      ? params.readModelSelectionIntent() : null);
     const activeTeam = readTeamRoute(activeTarget);
+    const requiresTeamReopen = explicitModel?.ref.source === 'team_resource'
+      && !sameTeamResourceBinding(explicitModel.ref, activeTeam);
     let carriesActiveTeamSelection = false;
     if (proposal.source === 'prompt'
       && proposal.selection.providerConnectionId === null
       && desiredModel?.ref.source === 'team_resource'
       && desiredModel.ref.agentTargetKey === proposal.selection.agentTargetKey
       && desiredModel.ref.modelId === proposal.selection.modelId) {
-      if (!sameTeamResourceBinding(desiredModel.ref, activeTeam)
+      if (!explicitModel && (!sameTeamResourceBinding(desiredModel.ref, activeTeam)
         || (!sameSelection(activeTarget.selection, proposal.selection)
-          && desiredModel.ref.deliveryMode !== 'brokered')) {
+          && desiredModel.ref.deliveryMode !== 'brokered'))) {
         // A newly selected Team source is waiting for restart. Its V1 prompt
         // projection cannot authorize either the old source or native execution.
         await settleBeforeRuntimeEffect(proposal, failure('restart_required', activeTarget.selection,
           proposal.selection, 'team_resource_binding_changed'));
         return;
       }
-      carriesActiveTeamSelection = true;
+      carriesActiveTeamSelection = sameTeamResourceBinding(desiredModel.ref, activeTeam);
     }
     // Startup metadata echoes the Provider already admitted by the launch
     // handoff. Runtime readback does not make that echo a new admission.
@@ -1060,7 +1063,8 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       target = (carriesActiveTeamSelection && sameSelection(activeTarget.selection, proposal.selection))
         || carriesOpenedSelection ? activeTarget
         : await params.authorize(proposal.selection, proposal.callerInputConstraints);
-      if (carriesActiveTeamSelection && target !== activeTarget) {
+      if ((carriesActiveTeamSelection && target !== activeTarget)
+        || requiresTeamReopen) {
         // The broker materialization is model-bound even when the Agent can
         // otherwise update native models live. Reopen it at this turn boundary.
         target = { ...target, policy: 'restart_session', readAppliedTeamCredentialModel: activeTarget.readAppliedTeamCredentialModel };
@@ -1108,16 +1112,16 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     // Metadata proposals are observations of an intent that already won the
     // durable CAS. Republishing them would mint a newer timestamp and feed the
     // metadata synchronizer back into this coordinator indefinitely.
-    if (proposal.source !== 'metadata' && !carriesActiveTeamSelection) {
+    if (proposal.source !== 'metadata' && (!carriesActiveTeamSelection || explicitModel !== null)) {
       // A durable CAS that has started must finish, but it is not the runtime
       // effect boundary. A newer proposal may still supersede this one; the
       // newer CAS runs afterward so accepted intent order remains preserved.
       try {
         const publication = proposal.expected || proposal.capturedBefore
-          ? await params.publishIntent(proposal.selection,
+          ? await params.publishIntent(proposal.modelRef,
             proposal.expected ? { selection: proposal.expected.selection, updatedAt: proposal.expected.updatedAt } : undefined,
             proposal.capturedBefore)
-          : await params.publishIntent(proposal.selection);
+          : await params.publishIntent(proposal.modelRef);
         if (!publication.accepted) {
           await settleBeforeRuntimeEffect(proposal, failure(
             'superseded',
@@ -1160,6 +1164,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     // previously persisted restart-required proposal.
     if (
       proposal.restartRuntime?.required !== true
+      && !requiresTeamReopen
       && sameAuthorizedTarget(activeTarget, target)
       && samePublishedActiveFacts(activeTarget, target)
     ) {
@@ -1905,7 +1910,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
   }
 
   const submit = (
-    rawSelection: ProviderBoundModelRef,
+    rawSelection: SessionModelRef,
     context: Readonly<{
       source: Proposal['source'];
       reuseInitialAdmission?: boolean;
@@ -1917,11 +1922,13 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       restartRuntime?: SessionModelTransitionRestart;
     }>,
   ): Promise<SessionModelTransitionResultV1> => {
-    const selection = ProviderBoundModelRefSchema.parse(rawSelection);
+    const modelRef = SessionModelRefSchema.parse(rawSelection);
+    const selection = { agentTargetKey: modelRef.agentTargetKey, modelId: modelRef.modelId,
+      providerConnectionId: readSessionModelRefProviderConnectionId(modelRef) };
     if (context.applyTiming === 'next_prompt' && (context.captureBefore || context.expected)) {
       return Promise.resolve(failure('unsupported', activeTarget.selection, selection, 'exact_model_mutation_requires_immediate_transition'));
     }
-    if (context.callerInputConstraints && !isModelRefGrantedV1(context.callerInputConstraints, selection)) {
+    if (context.callerInputConstraints && !isModelRefGrantedV1(context.callerInputConstraints, modelRef)) {
       return Promise.resolve(failure('unsupported', activeTarget.selection, selection, 'model_not_granted'));
     }
     if (selection.agentTargetKey !== params.agentTargetKey) {
@@ -1975,6 +1982,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     if (
       current
       && !current.superseded
+      && isDeepStrictEqual(current.modelRef, modelRef)
       && sameSelection(current.selection, selection)
       && mayCoalesce(current)
     ) {
@@ -1982,6 +1990,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     }
     if (
       pending
+      && isDeepStrictEqual(pending.modelRef, modelRef)
       && sameSelection(pending.selection, selection)
       && mayCoalesce(pending)
     ) {
@@ -2002,6 +2011,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       reject = fail;
     });
     const proposal: Proposal = {
+      modelRef,
       ...(context.callerInputConstraints ? { callerInputConstraints: context.callerInputConstraints } : {}),
       ...(context.captureBefore ? { captureBefore: true } : {}),
       ...(context.expected ? { expected: context.expected } : {}),

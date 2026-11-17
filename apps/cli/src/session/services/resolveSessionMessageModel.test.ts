@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveSessionMessageModel } from './resolveSessionMessageModel';
+import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 
 /** The prompt model selector, read off the canonical resolution that keeps Provider identity. */
 const modelIdFor = (
@@ -8,6 +9,26 @@ const modelIdFor = (
 ): string => resolveSessionMessageModel(params).modelId;
 
 describe('resolveSessionMessageModel', () => {
+  it.each(['native', 'account_provider_connection', 'team_resource'] as const)(
+    'preserves an explicit current V2 %s source on an active prompt', source => {
+      const selection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 42, ref: {
+        source, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'model',
+        ...(source === 'account_provider_connection' ? { providerConnectionId: 'pc_work' } : {}),
+        ...(source === 'team_resource' ? { resourceId: 'resource', teamId: 'team',
+          expectedResourceRevision: 2, deliveryMode: 'brokered' } : {}),
+      } });
+      expect(resolveSessionMessageModel({ metadata: { flavor: 'codex' }, sessionActive: true,
+        modelSelectionInput: selection.ref, nowMs: 42 })).toEqual({ modelId: 'model', selection });
+    });
+
+  it('preserves persisted V2 Team intent for inactive resume', () => {
+    const selection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 42, ref: {
+      source: 'team_resource', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'model',
+      resourceId: 'resource', teamId: 'team', expectedResourceRevision: 2, deliveryMode: 'brokered',
+    } });
+    expect(resolveSessionMessageModel({ metadata: { flavor: 'codex', modelSelectionIntentV2: selection },
+      sessionActive: false })).toEqual({ modelId: 'model', selection });
+  });
   it.each(['canonical', 'legacy'])('omits a persisted native default on an inactive Session (%s)', shape => {
     const metadata = { flavor: 'codex', ...(shape === 'canonical'
       ? { modelSelectionIntentV1: { v: 1, updatedAt: 20,

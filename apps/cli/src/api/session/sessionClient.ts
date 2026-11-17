@@ -618,6 +618,7 @@ export class ApiSessionClient extends EventEmitter {
         accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse;
         acceptedTeamCredentialBinding: NonNullable<Awaited<ReturnType<typeof fetchSessionByIdCompat>>>['acceptedTeamCredentialBinding'];
     }> | null = null;
+    private acceptedTeamCredentialBindingSnapshot: NonNullable<Awaited<ReturnType<typeof fetchSessionByIdCompat>>>['acceptedTeamCredentialBinding'];
     private admittedMetadataPublisher: Readonly<{
         contract: SessionSyncPendingInputServerContractResult;
         precondition: SessionMetadataPublisherPreconditionV1;
@@ -3767,6 +3768,7 @@ export class ApiSessionClient extends EventEmitter {
         this.committedOwnerTuple = { credentials: acquired.credentials, snapshot,
             accountEncryptionCurrentness: acquired.accountEncryptionCurrentness,
             acceptedTeamCredentialBinding: acquired.acceptedTeamCredentialBinding };
+        this.acceptedTeamCredentialBindingSnapshot = acquired.acceptedTeamCredentialBinding;
     }
 
     private applyMetadataEnvelopeTupleSnapshot(
@@ -4605,6 +4607,11 @@ export class ApiSessionClient extends EventEmitter {
      */
     getMetadataSnapshot(): Metadata | null {
         return this.metadata;
+    }
+
+    /** Last committed source survives CAS seed consumption; reading it never admits a new source. */
+    getAcceptedTeamCredentialBinding(): NonNullable<Awaited<ReturnType<typeof fetchSessionByIdCompat>>>['acceptedTeamCredentialBinding'] {
+        return this.acceptedTeamCredentialBindingSnapshot;
     }
 
     getPendingMessageEditHoldIds(): readonly string[] | null {

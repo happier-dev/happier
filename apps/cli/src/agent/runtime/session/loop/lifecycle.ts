@@ -15,6 +15,7 @@ import type React from 'react';
 
 import type { ApiClient } from '@/api/api';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { SessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import type { RuntimeSessionTurnMutationV1 } from '@/api/session/client/transport/mutations/createRuntimeSessionClientDurableMutationOutbox';
 import { createRegisteredSessionStateFieldMutation } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
@@ -277,7 +278,7 @@ export type SessionLoopLifecycleParams = Readonly<{
   };
   setAbortRequestedCallback: (callback: (() => void | Promise<void>) | null, readSignal?: () => AbortSignal) => void;
   transitionModelSelection: (
-    selection: ProviderBoundModelRef,
+    selection: SessionModelRef,
     source: 'metadata' | 'prompt',
     runWithActiveSelection?: (
       transferPromptAdmission: (opts: Readonly<{

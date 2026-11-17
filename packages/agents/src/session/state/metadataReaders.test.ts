@@ -153,6 +153,20 @@ describe('resolveModelSelectionIntentFromSessionMetadata', () => {
 });
 
 describe('resolveSessionModelSelectionFromMetadata', () => {
+  it('preserves a newer deployed override while keeping the effective V2 native choice source-bound', () => {
+    const selection = { v: 2, updatedAt: 7, ref: {
+      source: 'native', agentTargetKey: 'backend:codex', modelId: 'same-model',
+    } };
+    expect(resolveSessionModelSelectionFromMetadata({ modelSelectionIntentV2: selection,
+      modelOverrideV1: { v: 1, modelId: 'same-model', updatedAt: 6 },
+    }, 'backend:codex')).toEqual(selection);
+    expect(resolveSessionModelSelectionFromMetadata({ modelSelectionIntentV2: selection,
+      modelOverrideV1: { v: 1, modelId: 'same-model', updatedAt: 999 },
+    }, 'backend:codex')).toEqual({ v: 1, updatedAt: 999, ref: {
+      agentTargetKey: 'backend:codex', providerConnectionId: null, modelId: 'same-model',
+    } });
+  });
+
   it.each([
     { source: 'native', modelId: 'native-model' },
     { source: 'account_provider_connection', providerConnectionId: 'pc_work', modelId: 'account-model' },

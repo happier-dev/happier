@@ -95,7 +95,7 @@ describe('Session Team runtime catalog', () => {
     } finally { await worker.cleanup(); }
   });
 
-  it('prepares an installed native Session from its accepted private model without controller discovery or fallback', async () => {
+  it.each([1, 2])('prepares an installed native Session from its accepted private model (selection v%s)', async version => {
     const worker = await createManagedRunLaunchFixture({ supportsReasoningEffort: true,
       reasoningEffortValues: PROVIDER_REASONING_EFFORT_LEVELS_V1 });
     const source = resolveProviderSourceFacts(worker.record);
@@ -118,7 +118,11 @@ describe('Session Team runtime catalog', () => {
     let current = row;
     const prepare = (readInstalled = true, accepted: typeof binding | null = binding) => prepareSessionTeamCredentialLaunch({
       options: { directory: worker.happyHomeDir, existingSessionId: 'session', teamCredentialBindings: [binding],
-        modelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey: worker.agentTargetKey, providerConnectionId: null, modelId: 'model-a' } } },
+        modelSelection: version === 1
+          ? { v: 1, updatedAt: 1, ref: { agentTargetKey: worker.agentTargetKey, providerConnectionId: null, modelId: 'model-a' } }
+          : { v: 2, updatedAt: 1, ref: { source: 'team_resource', resourceId: binding.resourceId, teamId: binding.teamId,
+            expectedResourceRevision: binding.expectedResourceRevision, deliveryMode: binding.deliveryMode, nativeDelivery,
+            agentTargetKey: worker.agentTargetKey, modelId: 'model-a' } } },
       acceptedTeamCredentialBinding: accepted, executionMachineId: worker.machineId, lease: worker.lease,
       agentId: worker.agentId, agentTargetKey: worker.agentTargetKey,
       homeDomainAction: async () => { throw new Error('Installed native preparation reached controller discovery'); },

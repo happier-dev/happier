@@ -1,6 +1,8 @@
 import { resolveCatalogAgentRequestCoverageOptions } from '@/agent/catalog/registry';
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
-import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
+import { isDeepStrictEqual } from 'node:util';
+import { readSessionModelSelectionV2FromMetadata, resolveModelSelectionIntentFromSessionMetadata } from '@happier-dev/agents/session/state/metadataReaders';
+import { sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
 
 import { SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol/providers/model-selection';
 
@@ -762,6 +764,26 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
             // Recompute on each tuple CAS attempt, from the transition that
             // actually won. Active and inactive model owners share this writer.
             teamCredentialBindings = params.teamCredentialBindings;
+            const previousModelIntentV2 = readSessionModelSelectionV2FromMetadata(previous);
+            const nextModelIntentV2 = readSessionModelSelectionV2FromMetadata(next);
+            if (!teamCredentialBindings && nextModelIntentV2
+              && !isDeepStrictEqual(previousModelIntentV2?.ref, nextModelIntentV2.ref)
+              && (nextModelIntentV2.ref.source === 'team_resource'
+                || previousModelIntentV2?.ref.source === 'team_resource'
+                || acceptedTeamCredentialBinding?.resourceId != null)) {
+              const nextBinding = sessionModelSelectionV2TeamBindingIntent(nextModelIntentV2);
+              const nextSource = { ...nextBinding, providerModelSelection: undefined };
+              const acceptedSource = { ...acceptedTeamCredentialBinding, providerModelSelection: undefined };
+              const previousModel = previousModelIntentV2?.ref
+                ?? resolveModelSelectionIntentFromSessionMetadata(previous, nextModelIntentV2.ref.agentTargetKey)?.selection;
+              // Startup can normalize a V1 model tuple using the source Home
+              // already accepted. That projection does not admit a new choice.
+              if (!isDeepStrictEqual(nextSource, acceptedSource)
+                || previousModel?.agentTargetKey !== nextModelIntentV2.ref.agentTargetKey
+                || previousModel.modelId !== nextModelIntentV2.ref.modelId) {
+                teamCredentialBindings = [nextBinding];
+              }
+            }
             if (!teamCredentialBindings && next.modelSelectionIntentV2 === undefined
               && (previous.modelSelectionIntentV2 !== undefined || acceptedTeamCredentialBinding?.resourceId != null)) {
               const previousIntent = SessionModelSelectionIntentV1Schema.safeParse(previous.modelSelectionIntentV1);

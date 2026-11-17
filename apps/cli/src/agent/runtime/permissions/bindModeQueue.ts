@@ -12,7 +12,7 @@ import { fitHappierReplaySeedWithinTotalBudget } from '@happier-dev/agents';
 import { readSessionMessageModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import type { ProviderBoundModelRef } from '@happier-dev/protocol';
+import type { ProviderBoundModelRef, SessionModelRef } from '@happier-dev/protocol';
 import { readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 
 import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
@@ -962,7 +962,7 @@ function resolveModelOverrideFromUserMessage(
   message: UserMessage,
   agentTargetKey: string | undefined,
 ): Readonly<
-  | { kind: 'structured'; selection: ProviderBoundModelRef }
+  | { kind: 'structured'; selection: SessionModelRef }
   | { kind: 'invalid_structured' }
   | { kind: 'legacy'; modelId: string }
 > | null {

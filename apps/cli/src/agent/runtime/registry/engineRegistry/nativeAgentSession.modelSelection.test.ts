@@ -15,13 +15,14 @@ import {
 const agentId = 'acme-model-choice';
 const selection = { agentTargetKey: `backend:${agentId}`, providerConnectionId: null, modelId: 'custom/unlisted' } as const;
 
-async function readOpenedConfiguration(metadata: Readonly<Record<string, unknown>>, launchSelection = false, providerBinding?: AgentSessionProviderBinding, delivery: 'factory' | 'late' | 'team' | 'attached-team' = 'factory', replaceTeamModel = false) {
+async function readOpenedConfiguration(metadata: Readonly<Record<string, unknown>>, launchSelection = false, providerBinding?: AgentSessionProviderBinding, delivery: 'factory' | 'late' | 'team' | 'attached-team' = 'factory', replaceTeamModel: boolean | 'revision' | 'clear' = false) {
     const contributions = createExternalContributionFixtures(agentId);
     const teamBinding: SessionTeamCredentialBindingIntentV1 = {
         v: 1, slot: { kind: 'provider_model' }, resourceId: 'shared-resource',
         expectedResourceRevision: 3, deliveryMode: 'brokered', teamId: 'shared-team',
     };
     const opens: AgentSessionOpenRequest[] = [];
+    let acceptedBinding: SessionTeamCredentialBindingIntentV1 | null | undefined;
     let observedModelId = providerBinding?.model.id ?? selection.modelId;
     let admittedModelId = providerBinding?.model.id;
     const modelListeners = new Set<() => void>();
@@ -64,7 +65,8 @@ async function readOpenedConfiguration(metadata: Readonly<Record<string, unknown
         ...(providerBinding && (delivery === 'team' || delivery === 'attached-team') ? {
             prepareTeamCredentialProviderBinding: async request => ({
                 providerBinding: replaceTeamModel
-                    ? { ...providerBinding, model: { ...providerBinding.model, id: request.modelId } }
+                    ? { ...providerBinding, model: { ...providerBinding.model, id: request.modelId },
+                        source: { kind: 'team_resource', resourceId: request.resourceId, resourceRevision: request.expectedResourceRevision } }
                     : providerBinding,
                 environmentOverlay: [], additionalRedactionValues: [], cleanup: () => undefined,
             }),
@@ -91,7 +93,9 @@ async function readOpenedConfiguration(metadata: Readonly<Record<string, unknown
         }),
     });
     if (!plan.config.createSessionRuntime) throw new Error('Expected native Session factory');
-    const sessionClient = createNativeSessionClientTestPort('model-choice');
+    const sessionClient = createNativeSessionClientTestPort('model-choice', {
+        getAcceptedTeamCredentialBinding: () => acceptedBinding,
+    });
     const created = await plan.config.createSessionRuntime({
         directory: '/tmp/model-choice', metadata, machineId: 'machine-1',
         session: sessionClient, transcriptSession: {}, messageBuffer: {},
@@ -103,18 +107,28 @@ async function readOpenedConfiguration(metadata: Readonly<Record<string, unknown
         expect(opens).toHaveLength(1);
         if (replaceTeamModel) {
             const nextModelId = 'muse-spark-1.3';
-            const candidate = createModelIntentV2MetadataCasCandidate({ selection: { v: 2, updatedAt: 8, ref: {
-                source: 'team_resource', resourceId: 'shared-resource', teamId: 'shared-team',
-                expectedResourceRevision: 3, deliveryMode: 'brokered',
-                agentTargetKey: selection.agentTargetKey, modelId: nextModelId,
-            } } });
+            const expectedResourceRevision = replaceTeamModel === 'revision' ? 4 : 3;
+            const candidate = createModelIntentV2MetadataCasCandidate({ selection: { v: 2, updatedAt: 8, ref:
+                replaceTeamModel === 'clear' ? { source: 'native', agentTargetKey: selection.agentTargetKey, modelId: nextModelId }
+                : { source: 'team_resource', resourceId: 'shared-resource', teamId: 'shared-team',
+                    expectedResourceRevision, deliveryMode: 'brokered',
+                    agentTargetKey: selection.agentTargetKey, modelId: nextModelId,
+                },
+            } });
             await sessionClient.updateMetadata(candidate.update);
+            if (replaceTeamModel === 'revision') acceptedBinding = { ...teamBinding, expectedResourceRevision };
+            if (replaceTeamModel === 'clear') acceptedBinding = null;
             await created.operations.resetOrDisposeRuntime('runtime_recovery', { kind: 'create' });
             expect(opens).toHaveLength(2);
             expect(opens[1]!.configuration?.model.value).toBe(nextModelId);
-            expect(opens[1]!.providerBinding).toMatchObject({ source: providerBinding!.source, model: { id: nextModelId } });
+            if (replaceTeamModel === 'clear') {
+                expect(opens[1]).not.toHaveProperty('providerBinding');
+                expect(created.operations.readAppliedTeamCredentialModel?.()).toBeNull();
+                return AgentSessionConfigurationSnapshotV1Schema.parse(opens[1]!.configuration);
+            }
+            expect(opens[1]!.providerBinding).toMatchObject({ source: { ...providerBinding!.source, resourceRevision: expectedResourceRevision }, model: { id: nextModelId } });
             expect(created.operations.readAppliedTeamCredentialModel?.()).toMatchObject({
-                resourceId: 'shared-resource', expectedResourceRevision: 3, modelId: nextModelId,
+                resourceId: 'shared-resource', expectedResourceRevision, modelId: nextModelId,
             });
             return AgentSessionConfigurationSnapshotV1Schema.parse(opens[1]!.configuration);
         }
@@ -174,6 +188,22 @@ describe('native model selection provenance', () => {
             model: { id: selection.modelId, name: 'Selected model' }, materialization: { v: 1, kind: 'spawnEnv' },
         };
         expect((await readOpenedConfiguration({}, true, binding, delivery, true)).model.value).toBe('muse-spark-1.3');
+    });
+    it('clears the attached Team custody when the committed tuple explicitly has no accepted binding', async () => {
+        const binding: AgentSessionProviderBinding = {
+            source: { kind: 'team_resource', resourceId: 'shared-resource', resourceRevision: 3 },
+            upstream: { protocol: 'openai-responses', normalizedUrl: 'http://127.0.0.1:8741/v1', credential: 'apiKey' },
+            model: { id: selection.modelId, name: 'Selected model' }, materialization: { v: 1, kind: 'spawnEnv' },
+        };
+        expect((await readOpenedConfiguration({}, true, binding, 'attached-team', 'clear')).model.value).toBe('muse-spark-1.3');
+    });
+    it.each(['team', 'attached-team'] as const)('reopens %s custody using the newly admitted Team revision', async delivery => {
+        const binding: AgentSessionProviderBinding = {
+            source: { kind: 'team_resource', resourceId: 'shared-resource', resourceRevision: 3 },
+            upstream: { protocol: 'openai-responses', normalizedUrl: 'http://127.0.0.1:8741/v1', credential: 'apiKey' },
+            model: { id: selection.modelId, name: 'Selected model' }, materialization: { v: 1, kind: 'spawnEnv' },
+        };
+        expect((await readOpenedConfiguration({}, true, binding, delivery, 'revision')).model.value).toBe('muse-spark-1.3');
     });
     it('preserves an exact target-qualified launch choice as explicit', async () => {
         expect((await readOpenedConfiguration({}, true)).model).toEqual({

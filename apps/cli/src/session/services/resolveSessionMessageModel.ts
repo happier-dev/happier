@@ -1,11 +1,12 @@
 import {
   resolveAmbientProviderConnectionForModelIntent,
-  resolveModelSelectionIntentFromSessionMetadata,
 } from '@happier-dev/agents';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import type { ModelSelectionApplyPolicy, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { ModelSelectionApplyPolicy } from '@happier-dev/protocol';
 import { isNativeAutomaticModelSelectionInputV1, ProviderBoundModelRefSchema, SessionModelSelectionResolutionError, SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import { SessionModelSelectionV2Schema, isSessionModelRefSourceBound, type SessionModelRefV2, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { resolveSessionModelSelectionFromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
 
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 
@@ -19,6 +20,7 @@ function hasPersistedModelIntent(metadata: unknown): boolean {
   const record = asRecord(metadata);
   return Boolean(record && (
     Object.prototype.hasOwnProperty.call(record, 'modelSelectionIntentV1')
+    || Object.prototype.hasOwnProperty.call(record, 'modelSelectionIntentV2')
     || Object.prototype.hasOwnProperty.call(record, 'modelOverrideV1')
   ));
 }
@@ -27,11 +29,11 @@ function hasPersistedModelIntent(metadata: unknown): boolean {
 export type SessionMessageModelSelectionInput = Readonly<{
   providerConnectionId?: string | null;
   modelId: string | null;
-}>;
+}> | SessionModelRefV2;
 
 export type SessionMessageModelResolution = Readonly<{
   modelId: string;
-  selection: SessionModelSelectionV1 | null;
+  selection: SessionModelSelection | null;
 }>;
 
 export function resolveSessionMessageModel(params: Readonly<{
@@ -54,6 +56,7 @@ export function resolveSessionMessageModel(params: Readonly<{
   // completion. A reset has no per-message structured ref; an explicitly named
   // Provider can still publish a literal model called `default`.
   if (params.modelSelectionInput !== undefined
+    && !('source' in params.modelSelectionInput)
     && isNativeAutomaticModelSelectionInputV1(params.modelSelectionInput)) {
     return { modelId: '', selection: null };
   }
@@ -63,6 +66,17 @@ export function resolveSessionMessageModel(params: Readonly<{
   if (params.modelSelectionInput !== undefined) {
     if (!agentTargetKey) {
       throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
+    }
+    if ('source' in params.modelSelectionInput) {
+      const selection = SessionModelSelectionV2Schema.parse({ v: 2,
+        updatedAt: params.nowMs ?? Date.now(), ref: params.modelSelectionInput });
+      if (selection.ref.agentTargetKey !== agentTargetKey) {
+        throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
+      }
+      if (selection.ref.source === 'native' && isNativeAutomaticModelSelectionInputV1(selection.ref)) {
+        return { modelId: '', selection: null };
+      }
+      return { modelId: selection.ref.modelId, selection };
     }
     const hasExplicitProviderConnectionId = Object.prototype.hasOwnProperty.call(
       params.modelSelectionInput,
@@ -115,18 +129,13 @@ export function resolveSessionMessageModel(params: Readonly<{
     }
     return { modelId: '', selection: null };
   }
-  const intent = resolveModelSelectionIntentFromSessionMetadata(metadata, agentTargetKey);
-  if (intent?.selection && isNativeAutomaticModelSelectionInputV1(intent.selection)) {
+  const selection = resolveSessionModelSelectionFromMetadata(metadata, agentTargetKey);
+  if (selection && !isSessionModelRefSourceBound(selection.ref)
+    && isNativeAutomaticModelSelectionInputV1(selection.ref)) {
     return { modelId: '', selection: null };
   }
   return {
-    modelId: intent?.selection?.modelId ?? '',
-    selection: intent?.selection
-      ? SessionModelSelectionV1Schema.parse({
-          v: 1,
-          updatedAt: intent.updatedAt,
-          ref: intent.selection,
-        })
-      : null,
+    modelId: selection?.ref.modelId ?? '',
+    selection,
   };
 }

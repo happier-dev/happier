@@ -506,6 +506,7 @@ describe('Session Team launch composition', () => {
         teamId: resource.teamId, expectedResourceRevision: 6, deliveryMode: 'brokered' }] }, agentId: 'codex',
       agentTargetKey: target, contributions: readCurrentContributionRegistry(), applications, readCatalog: async () => [resource] });
     expect(result.teamModelRow).toEqual(resource.providerModels[0]);
+    expect(result.options.teamCredentialBindings).toMatchObject([{ expectedResourceRevision: 7 }]);
   });
 
   it('refuses another Agent target before reading a Team source', async () => {

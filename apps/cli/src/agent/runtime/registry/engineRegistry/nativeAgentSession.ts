@@ -1182,6 +1182,9 @@ function buildNativeAgentSessionOpenInputs(
     const sessionMode = input.runtimePreferences.sessionMode;
     const launchModelSelection = input.runtimePreferences.modelSelection;
     const modelSelection = resolvePublicSessionModelSelection({ sessionInput: input, metadata });
+    const configurationModelSelection = modelSelection
+        ? { ...modelSelection.ref, providerConnectionId: readSessionModelSelectionProviderConnectionId(modelSelection) }
+        : undefined;
     let configurationMetadata = metadata;
     for (const [configId, option] of Object.entries(input.runtimePreferences.configurationOptions?.overrides ?? {})) {
         configurationMetadata = applyAcpConfigOptionIntentSessionMetadata(configurationMetadata, {
@@ -1190,7 +1193,7 @@ function buildNativeAgentSessionOpenInputs(
     }
     const options = Object.fromEntries(
         resolveApplicableSessionConfigOptionOverridesFromMetadataSnapshot({
-            metadata: configurationMetadata, modelSelection: modelSelection?.ref,
+            metadata: configurationMetadata, modelSelection: configurationModelSelection,
         })
             .map(({ configId, valueId, updatedAt }) => [configId, { value: valueId, updatedAtMs: updatedAt }]),
     );
@@ -1207,7 +1210,7 @@ function buildNativeAgentSessionOpenInputs(
         model: {
             value: modelSelection?.ref.modelId ?? null,
             updatedAtMs: modelSelection?.updatedAt ?? 0,
-            selectionSource: resolveModelSelectionSource({ selection: modelSelection?.ref, metadata, launchSelection: launchModelSelection }),
+            selectionSource: resolveModelSelectionSource({ selection: configurationModelSelection, metadata, launchSelection: launchModelSelection }),
         },
         permissionIntent: {
             value: permission
@@ -1233,7 +1236,7 @@ function buildNativeAgentSessionOpenInputs(
             }),
         ))
         : undefined;
-    const providerConnectionId = modelSelection?.ref.providerConnectionId ?? null;
+    const providerConnectionId = modelSelection ? readSessionModelSelectionProviderConnectionId(modelSelection) : null;
     if (providerConnectionId === null) {
         if (providerBindingMaterialization !== undefined && !buildOptions.providerBinding) {
             throw new Error('Native model selection cannot include Provider binding materialization');
@@ -4476,6 +4479,14 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             });
             const invokedAtMs = Date.now();
             const sessionId = hostRuntimeParams.session.sessionId;
+            const acceptedBinding = hostRuntimeParams.session.getAcceptedTeamCredentialBinding?.();
+            const sessionInput: PluginSessionBindingInput = acceptedBinding === undefined ? params.sessionInput : {
+                ...params.sessionInput,
+                teamCredentialBindings: [
+                    ...(params.sessionInput.teamCredentialBindings ?? []).filter(binding => binding.slot.kind !== 'provider_model'),
+                    acceptedBinding ?? { v: 1, slot: { kind: 'provider_model' }, resourceId: null },
+                ],
+            };
             const openPhases = createNativeAgentSessionOpenPhaseRecorder(sessionId, openIntent.kind);
             const recordOpenPhase = openPhases.record;
             recordOpenPhase('entered');
@@ -4557,7 +4568,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 throw new PluginError({ code: 'agent_session_startup_instructions_unsupported', retryable: false });
             }
             const modelSelection = resolvePublicSessionModelSelection({
-                sessionInput: params.sessionInput,
+                sessionInput,
                 metadata: hostRuntimeParams.metadata,
             });
             let openInputs: ReturnType<typeof buildNativeAgentSessionOpenInputs>;
@@ -4580,7 +4591,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 ((environment: Readonly<Record<string, string>>) =>
                     Readonly<Record<string, string>>) | null = null;
             const selectedProviderConnectionId =
-                modelSelection?.ref.providerConnectionId ?? null;
+                modelSelection ? readSessionModelSelectionProviderConnectionId(modelSelection) : null;
             const authoritativeProviderBindingMetadata =
                 readSessionProviderBindingMetadataV1(
                     hostRuntimeParams.metadata,
@@ -4634,7 +4645,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 recordOpenPhase('startup_prompt_plan');
                 openInputs = buildNativeAgentSessionOpenInputs(
                     identity.agentId,
-                    params.sessionInput,
+                    sessionInput,
                     hostRuntimeParams.metadata,
                     useRunnerManagedProviderBinding
                         ? undefined
@@ -4741,7 +4752,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         );
                     }
                     const lateInput: PluginSessionBindingInput = Object.freeze({
-                        ...params.sessionInput,
+                        ...sessionInput,
                         bootstrap: Object.freeze({
                             ...params.sessionInput.bootstrap,
                             environmentVariables: Object.freeze({
@@ -5257,7 +5268,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     }
                     const lateInput: PluginSessionBindingInput =
                         Object.freeze({
-                            ...params.sessionInput,
+                            ...sessionInput,
                             runtimePreferences: Object.freeze({
                                 ...params.sessionInput.runtimePreferences,
                                 // Validate this lifetime's admitted binding against its current intent.
@@ -5310,9 +5321,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         publicBinding.handoff;
                 }
             }
-            const teamCredentialBinding = params.sessionInput.teamCredentialBindings?.find((candidate) => (
+            const teamCredentialBinding = sessionInput.teamCredentialBindings?.find((candidate) => (
                 candidate.slot.kind === 'provider_model'
-            )) ?? params.sessionInput.resume.sessionAttachSecret?.snapshot?.acceptedTeamCredentialBinding;
+            )) ?? sessionInput.resume.sessionAttachSecret?.snapshot?.acceptedTeamCredentialBinding;
             // The Team credential custody this runtime generation actually
             // opened. An inheriting Execution Run consumes exactly this
             // (`teams-lane-10/PLAN.md` §2.3), never a later re-derivation.

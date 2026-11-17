@@ -11,6 +11,7 @@ import { formatSessionModelTransitionFailureCode } from '@happier-dev/protocol/s
 import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { SessionPendingQueueDeliveryTiming, ProviderBoundModelRef, SessionModelTransitionResultV1, AgentSessionStartupInstructionsMarkerV1 } from '@happier-dev/protocol';
 import type { AgentRuntimeDiagnosticDataV1 } from '@happier-dev/protocol/runtime/agentRuntimeDiagnosticV1';
+import type { SessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
@@ -638,7 +639,7 @@ export async function runPermissionModePromptLoop(opts: {
   transformAgentContextBeforeDispatch?: (payload: Record<string, unknown>) => Promise<Record<string, unknown>> | Record<string, unknown>;
   transformAgentContextErrorPolicy?: 'fallback' | 'throw';
   transitionModelSelectionBeforePrompt?: (
-    selection: ProviderBoundModelRef,
+    selection: SessionModelRef,
     runWithActiveSelection: (
       transferPromptAdmission: (opts: Readonly<{
         abortSignal: AbortSignal;

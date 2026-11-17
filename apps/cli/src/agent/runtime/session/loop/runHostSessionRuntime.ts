@@ -3531,7 +3531,10 @@ async function runHostedSessionRuntime(
       checkCurrentModelPublisherAuthority,
     authorize: authorizeModelTransition,
     publishIntent: async (selection, expected, requiredBefore) => {
-      const candidate = createModelIntentMetadataCasCandidate({
+      const candidate = 'source' in selection ? createModelIntentV2MetadataCasCandidate({
+        selection: { v: 2, updatedAt: 0, ref: selection },
+        nowMs: () => Math.max(Date.now(), lastAcceptedModelIntentUpdatedAt + 1),
+      }) : createModelIntentMetadataCasCandidate({
         selection,
         nowMs: () => Math.max(Date.now(), lastAcceptedModelIntentUpdatedAt + 1),
         ...(modelMutationScope ? { ownerScope: modelMutationScope } : {}),
@@ -3754,7 +3757,7 @@ async function runHostedSessionRuntime(
             ref: selection,
           });
           await traceStartupAuthority('model_intent_reconciliation', claimedSession, async () => {
-            const result = await modelTransitionCoordinator!.submit(selection, {
+            const result = await modelTransitionCoordinator!.submit(freshTypedIntent?.ref ?? selection, {
               source: 'metadata',
               reuseInitialAdmission: true,
             });

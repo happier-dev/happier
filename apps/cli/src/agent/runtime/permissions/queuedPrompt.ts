@@ -1,6 +1,6 @@
 import type { PermissionMode } from '@/api/types';
 import type {
-  ProviderBoundModelRef,
+  SessionModelRef,
   CallerInputConstraintsV1,
   SessionInputCausalPermissionAuthorityV1,
   SessionMediaItemV1,
@@ -41,7 +41,7 @@ export type PermissionModeQueuedPromptMode = Readonly<{
   callerInputConstraints?: CallerInputConstraintsV1;
   permissionMode: PermissionMode;
   appendSystemPrompt?: string | null;
-  modelSelection?: ProviderBoundModelRef;
+  modelSelection?: SessionModelRef;
   suppressUserEcho?: boolean;
   providerPromptAlreadyResolved?: boolean;
   /** Exact admitted-input authority; this is part of the batching identity. */

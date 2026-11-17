@@ -1466,6 +1466,61 @@ describe('updateSessionMetadataWithRetry', () => {
     )).not.toThrow();
   });
 
+  it.each(['team', 'revision', 'native', 'account', 'same', 'unrelated', 'explicit'] as const)(
+    'admits only changed V2 model sources in the metadata tuple (%s)', async (transition) => {
+      const credentials = { token: 'token-1', encryption: null };
+      const previousIntent = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 10, ref: {
+        source: 'team_resource', resourceId: 'resource-1', teamId: 'team-1',
+        expectedResourceRevision: 0, deliveryMode: 'brokered',
+        agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'same-model',
+      } });
+      const nextIntent = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 20,
+        ref: transition === 'native' || transition === 'team'
+          ? { source: 'native', agentTargetKey: previousIntent.ref.agentTargetKey, modelId: 'same-model' }
+          : transition === 'account'
+            ? { source: 'account_provider_connection', agentTargetKey: previousIntent.ref.agentTargetKey,
+                providerConnectionId: 'connection-1', modelId: 'same-model' }
+            : { ...previousIntent.ref, expectedResourceRevision: transition === 'same' || transition === 'unrelated' ? 0 : 2 },
+      });
+      const initialIntent = transition === 'team' ? { ...nextIntent, updatedAt: 10 } : previousIntent;
+      const publishedIntent = transition === 'team' ? { ...previousIntent, updatedAt: 20 } : nextIntent;
+      const acceptedTeamCredentialBinding = sessionModelSelectionV2TeamBindingIntent(initialIntent);
+      const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain',
+        metadata: { flavor: 'codex', modelSelectionIntentV2: initialIntent }, agentState: null, storedContentMode: 'plain' });
+      const rawSession = { metadataLayoutVersion: 1, metadata: fields.sharedMetadata.ciphertext, metadataVersion: 3,
+        ownerMetadata: fields.ownerMetadata, agentState: fields.agentState, agentStateVersion: 7,
+        encryptionMode: 'plain' as const, dataEncryptionKey: null, acceptedTeamCredentialBinding };
+      patchSessionMetadataEnvelopeTupleMock.mockResolvedValue({ success: true, metadataLayoutVersion: 1,
+        sharedMetadata: { version: 4 }, agentState: { version: 8 } });
+      const explicitBinding = { v: 1 as const, slot: { kind: 'provider_model' as const }, resourceId: null };
+      const publisherPrecondition = { machineId: 'machine-1', committedFenceMs: 1234, publisherGeneration: '7' };
+      const result = await updateSessionMetadataEnvelopeTupleWithRetry({ token: credentials.token,
+        sessionId: 'sess_team_restore', mode: 'plain', ctx: null,
+        authority: { kind: 'owner', credentials, accountEncryptionCurrentness: plainCurrentness },
+        initialSnapshot: readSessionMetadataTupleWriterSnapshot({ credentials,
+          accountEncryptionCurrentness: plainCurrentness, rawSession }),
+        acceptedTeamCredentialBinding, publisherPrecondition,
+        ...(transition === 'explicit' ? { teamCredentialBindings: [explicitBinding] } : {}),
+        mutation: { kind: 'metadata', update: metadata => ({ ...metadata,
+          ...(transition === 'unrelated' ? { path: '/unrelated-change' } : { modelSelectionIntentV2: publishedIntent }),
+        }) },
+      });
+      expect(result.value.metadata.modelSelectionIntentV2).toEqual(transition === 'unrelated' ? initialIntent : publishedIntent);
+      expect(patchSessionMetadataEnvelopeTupleMock).toHaveBeenCalledTimes(1);
+      const patch = patchSessionMetadataEnvelopeTupleMock.mock.calls[0]?.[0].patch;
+      if (transition === 'same' || transition === 'unrelated') {
+        expect(patch).toMatchObject({ mode: 'owner', publisherPrecondition });
+        expect(patch).not.toHaveProperty('teamCredentialBindings');
+      } else {
+        expect(patch).toMatchObject({ mode: 'owner_team_credential_binding', operation: 'session.model.set', publisherPrecondition,
+          teamCredentialBindings: [transition === 'explicit' ? explicitBinding
+            : sessionModelSelectionV2TeamBindingIntent(publishedIntent)],
+        });
+        expect(() => SessionTeamCredentialBindingMetadataPatchV1Schema.parse(patch)).not.toThrow();
+      }
+    },
+  );
+
   it('atomically carries a Team model binding through the inactive model CAS', async () => {
     const credentials = {
       token: 'token-1',

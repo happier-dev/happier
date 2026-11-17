@@ -13023,7 +13023,7 @@ export async function startDaemonSessionControlRuntime(
             // accepted Team and route, and is admitted on them, never on
             // its parent Session's binding, which a later parent edit may
             // change. A Session, or a Run that selected nothing and so
-            // inherits, is admitted only on its tracked Session binding.
+            // inherits, is admitted on the Session's accepted Home binding.
             // The Home authorizes either one at open and per request.
             const carriesRunSelection =
               operation.teamId !== undefined ||
@@ -13036,51 +13036,10 @@ export async function startDaemonSessionControlRuntime(
                 : operation.agentId === undefined
                   ? retainedAgent.agentId
                   : null;
-            const binding = ((): Readonly<{
-              teamId: string;
-              deliveryMode: TeamCredentialProviderModelSelectionV1['deliveryMode'];
-              nativeDelivery?: TeamCredentialProviderModelSelectionV1['nativeDelivery'];
-            }> | null => {
-              if (!tracked || consumerAgentId === null) return null;
-              if (carriesRunSelection) {
-                return operation.consumer?.kind === 'execution_run' &&
-                  operation.teamId !== undefined &&
-                  operation.deliveryMode !== undefined
-                  ? {
-                      teamId: operation.teamId,
-                      deliveryMode: operation.deliveryMode,
-                    }
-                  : null;
-              }
-              const selection = tracked.spawnOptions?.modelSelection?.ref;
-              const teamBinding =
-                tracked.spawnOptions?.teamCredentialBindings?.find(
-                  (candidate) => candidate.slot.kind === 'provider_model',
-                );
-              const teamId =
-                teamBinding?.resourceId !== null
-                  ? (teamBinding?.teamId ?? tracked.spawnOptions?.primaryTeamId)
-                  : tracked.spawnOptions?.primaryTeamId;
-              if (
-                typeof teamId !== 'string' ||
-                teamBinding?.slot.kind !== 'provider_model' ||
-                teamBinding.resourceId !== operation.resourceId ||
-                teamBinding.expectedResourceRevision !==
-                  operation.expectedResourceRevision ||
-                selection?.agentTargetKey !== operation.agentTargetKey ||
-                (teamBinding.deliveryMode !== 'brokered' && selection.modelId !== operation.modelId)
-              )
-                return null;
-              // Brokered opens retain this accepted resource/revision; Home
-              // admits the requested exact model on every new materialization.
-              return { teamId, deliveryMode: teamBinding.deliveryMode,
-                ...(teamBinding.nativeDelivery ? { nativeDelivery: teamBinding.nativeDelivery } : {}) };
-            })();
             const openTeamBinding = params.openTeamCredentialProviderBinding;
             if (
               !tracked ||
               !openTeamBinding ||
-              !binding ||
               consumerAgentId === null
             ) {
               throw new SessionTeamCredentialLaunchUnavailableError();
@@ -13089,7 +13048,34 @@ export async function startDaemonSessionControlRuntime(
             try {
               const signal = context.signal ?? new AbortController().signal;
               opened = await withSessionAccountContext(sessionId, async requester => {
-                const result = await withSessionAccountHome(requester, () => openTeamBinding({
+                const result = await withSessionAccountHome(requester, async () => {
+                  const binding = await (async (): Promise<Readonly<{
+                    teamId: string;
+                    deliveryMode: TeamCredentialProviderModelSelectionV1['deliveryMode'];
+                    nativeDelivery?: TeamCredentialProviderModelSelectionV1['nativeDelivery'];
+                  }> | null> => {
+                    if (carriesRunSelection) {
+                      return operation.consumer?.kind === 'execution_run'
+                        && operation.teamId !== undefined && operation.deliveryMode !== undefined
+                        ? { teamId: operation.teamId, deliveryMode: operation.deliveryMode } : null;
+                    }
+                    // A new materialization is a natural admission boundary.
+                    // Consume Home's accepted source, not the launch-time copy.
+                    const current = await fetchSessionByIdCompat({ reason: 'session-control', sessionId,
+                      token: requester?.bootstrap.credentials.token ?? params.credentials.token, signal });
+                    const teamBinding = current?.acceptedTeamCredentialBinding;
+                    const selection = teamBinding?.providerModelSelection ?? tracked.spawnOptions?.modelSelection?.ref;
+                    const teamId = teamBinding?.teamId ?? tracked.spawnOptions?.primaryTeamId;
+                    if (typeof teamId !== 'string' || teamBinding?.slot.kind !== 'provider_model'
+                      || teamBinding.resourceId !== operation.resourceId
+                      || teamBinding.expectedResourceRevision !== operation.expectedResourceRevision
+                      || selection?.agentTargetKey !== operation.agentTargetKey
+                      || (teamBinding.deliveryMode !== 'brokered' && selection.modelId !== operation.modelId)) return null;
+                    return { teamId, deliveryMode: teamBinding.deliveryMode,
+                      ...(teamBinding.nativeDelivery ? { nativeDelivery: teamBinding.nativeDelivery } : {}) };
+                  })();
+                  if (!binding) throw new SessionTeamCredentialLaunchUnavailableError();
+                  return await openTeamBinding({
                   sessionId,
                   teamId: binding.teamId,
                   resourceId: operation.resourceId,
@@ -13117,7 +13103,8 @@ export async function startDaemonSessionControlRuntime(
                     : {}),
                   ...(requester ? { providerSettingsOperationContext: requester.bootstrap.savedSecretOperationContext } : {}),
                   signal,
-                }));
+                  });
+                });
                 try {
                   await assertSessionAccountCurrent(sessionId, requester, undefined, signal);
                   return result;
