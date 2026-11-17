@@ -1554,8 +1554,15 @@ export function registerSocketRpcHandlers(params: Readonly<{
             // persisted identity. Session scope never falls back after refusal.
             const detachedMachine = scopedMachineId
                 ? await readMachineAdmissionFactsInTx(db, { actorAccountId, machineId: scopedMachineId }) : null;
+            // Checkout deletion remains Session-owned on the Machine carrier.
+            // A selector admits that Session before the daemon can run teardown;
+            // an opaque detached Run request retains its Run-store authority.
+            const machineSessionDelete = detachedMachine
+                && methodSessionAuthorization?.method === SESSION_RPC_METHODS.SESSION_DELETE
+                && rawSessionAuthorization !== undefined;
             if (detachedMachine) {
-                if (detachedMachine.kind === 'ephemeral_session_runner' || rawSessionAuthorization !== undefined) {
+                if (detachedMachine.kind === 'ephemeral_session_runner'
+                    || rawSessionAuthorization !== undefined && !machineSessionDelete) {
                     callback?.(buildForbiddenRpcResponse());
                     return;
                 }
@@ -1718,7 +1725,9 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 return;
             }
 
-            const sessionAuthorization = detachedMachine ? null : methodSessionAuthorization;
+            const sessionAuthorization = machineSessionDelete && methodSessionAuthorization
+                ? { ...methodSessionAuthorization, routeToSessionOwnerDaemon: false }
+                : detachedMachine ? null : methodSessionAuthorization;
             const isScmWorkEvidenceBatch = method === RPC_METHODS.SCM_WORK_EVIDENCE_READ
                 || method.slice(method.indexOf(':') + 1) === RPC_METHODS.SCM_WORK_EVIDENCE_READ;
             if (isScmWorkEvidenceBatch) {

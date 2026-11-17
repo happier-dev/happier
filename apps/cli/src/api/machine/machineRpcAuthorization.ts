@@ -1,4 +1,5 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -40,7 +41,7 @@ import {
   isSocketRpcMachineReadServerOriginAuthorizationContext,
   SOCKET_RPC_SERVER_ORIGIN_MACHINE_READ_METHODS,
 } from '@happier-dev/protocol/socketRpc';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ScmWorkEvidenceAdmissionSchema } from '@happier-dev/protocol/scm';
 import { getScmRpcSideEffectClass, isScmLocalRepositoryReadRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import {
@@ -2011,6 +2012,18 @@ export async function authorizeMachineRpcRequest(
     return requestedSessionId && requestedSessionId === authorization.sessionId
       ? { ok: true }
       : forbidden('session_target');
+  }
+  if (sessionRule?.method === SESSION_RPC_METHODS.SESSION_DELETE && request.machineAdmission !== undefined) {
+    const targeted = TargetedActionRpcRequestV1Schema.safeParse(request.params);
+    const sessionId = readSessionIdFromParams(targeted.success ? targeted.data.input : request.params, request.method);
+    if (sessionId) {
+      // Home decides ownership once. Bind its admission to the decrypted target;
+      // detached Run admission must never authorize native checkout teardown.
+      const authorization = parseSocketRpcAuthorizationContext(request.authorization);
+      if (source !== 'authenticated_home_socket' || authorization?.kind !== 'session.write')
+        return forbidden('session_authorization');
+      return authorization.sessionId === sessionId ? { ok: true } : forbidden('session_target');
+    }
   }
   if (
     sessionRule?.machineScope === true &&

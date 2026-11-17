@@ -9810,7 +9810,10 @@ and read bridge for cleanup; the original Account and operation remain in the
 host, and Storage retains its existing native Trash move.
 
 Session deletion delegates the original `session.delete` to the Session's exact
-Machine while its Home row and requester custody still exist. One containing
+Machine while its Home row and requester custody still exist. Home admits Session
+ownership before forwarding checkout deletion on that Machine carrier. The daemon
+binds the admitted Session to the decrypted deletion target before teardown;
+Machine Use alone only admits detached Run history deletion. One containing
 operation owns the existing Stop child and declared teardown, captures native
 removal while the Session exists, deletes the Home row, then removes the managed
 directory. It publishes the captured worktree-removal fact

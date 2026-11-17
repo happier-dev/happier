@@ -3,8 +3,9 @@ import { Server, type Socket } from 'socket.io';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, MACHINE_PLAIN_DATA_KEY_MARKER,
     buildAccountStoredContentCompatibilitySocketAuthV1, decodeBase64, encodePlainMachineStoredContent } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SESSION_RPC_METHODS, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
@@ -15,6 +16,9 @@ import { evaluateAccountStoredContentSocketCompatibility } from '@/app/clientCom
 import { createAuthenticatedFakeSocket, triggerSocketHandler } from '../../testkit/socketHarness';
 import { registerSocketRpcHandlers } from './registerSocketRpcHandlers';
 import { buildRpcMethodRoom } from './rpcMethodRoom';
+import { authorizeMachineRpcRequest } from '../../../../../../cli/src/api/machine/machineRpcAuthorization';
+import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/socketRpc';
+import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 
 const accountStoredContentCompatibility = evaluateAccountStoredContentSocketCompatibility(
     buildAccountStoredContentCompatibilitySocketAuthV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION),
@@ -26,6 +30,81 @@ describe('raw Session filesystem RPC authority through real admission', () => {
         harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-session-manage-', initAuth: true });
     }, 180_000);
     afterAll(async () => { await harness?.close(); });
+
+    it.each(['owner', 'non-owner'] as const)(
+        'admits checkout teardown only after Home decides Session ownership (%s)', async role => {
+            const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const actor = role === 'owner' ? owner : member;
+            const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(),
+                encryptionMode: 'plain', metadata: '{}' } });
+            const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
+                installationId: randomUUID(), active: true,
+                metadata: encodePlainMachineStoredContent({ host: 'host', platform: 'linux', happyCliVersion: 'test',
+                    homeDir: '/home/owner', happyHomeDir: '/home/owner/.happier' }),
+                dataEncryptionKey: new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')),
+                operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] },
+                    sessionInputAdmission: { protocolVersions: [1, 2] } }, operationProtocolCapabilitiesRevision: 1 } });
+            await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: owner.id, machineId: machine.id,
+                principal: { kind: 'account', accountId: member.id }, level: 'view' }));
+            const teardownEffects: string[] = [];
+            let decodedInput: { sessionId: string } | { machineId: string; runId: string } = { sessionId: session.id };
+            // Only the socket/opaque-content and native effect boundaries are replaced.
+            // Both Home admission and the daemon's proof consumer are production owners.
+            const emitWithAck = vi.fn(async (_event: string, packet: { method: string;
+                authorization?: SocketRpcAuthorizationContext; machineAdmission?: SocketRpcMachineAdmissionContextV1 }) => {
+                const admitted = await authorizeMachineRpcRequest({ ...packet, params: decodedInput }, {
+                    machineId: machine.id, resolveInstallationId: () => machine.installationId,
+                    resolveCustodianAccountId: async () => owner.id, resolveHomeServerIdentityId: async () => 'home',
+                    verifyMachineAdmission: async () => true,
+                }, 'authenticated_home_socket');
+                if (!admitted.ok) return { ok: false, errorCode: admitted.errorCode };
+                if (packet.method.endsWith(`:${SESSION_RPC_METHODS.SESSION_DELETE}`) && 'sessionId' in decodedInput) {
+                    teardownEffects.push(decodedInput.sessionId);
+                }
+                return { ok: true };
+            });
+            const target = { id: randomUUID(), connected: true, data: { clientType: 'machine-scoped',
+                machineId: machine.id, verifiedMachineInstallationId: machine.installationId,
+                accountStoredContentCompatibility }, timeout: () => ({ emitWithAck }) };
+            const io = new Server();
+            io.sockets.sockets.set(target.id, target as unknown as Socket);
+            const caller = createAuthenticatedFakeSocket({ id: randomUUID(), data: { clientType: 'user-scoped',
+                accountStoredContentCompatibility } });
+            registerSocketRpcHandlers({ userId: actor.id, socket: caller as unknown as Socket, io });
+            const invoke = async (rpcMethod: string, authorization?: SocketRpcAuthorizationContext) => {
+                const method = `${machine.id}:${rpcMethod}`;
+                io.sockets.adapter.rooms.set(buildRpcMethodRoom({ userId: owner.id, method }), new Set([target.id]));
+                const callback = vi.fn();
+                await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, params: 'opaque-request',
+                    ...(authorization ? { authorization } : {}) }, callback);
+                expect(callback).toHaveBeenCalledOnce();
+                return callback.mock.calls[0]![0];
+            };
+            try {
+                // A genuine Machine Use control must reach this same receiver first.
+                expect(await invoke(SESSION_RPC_METHODS.EXECUTION_RUN_LIST)).toMatchObject({ ok: true, result: { ok: true } });
+                expect(teardownEffects).toEqual([]);
+                // Omitting the clear selector cannot turn encrypted checkout input into detached Run authority.
+                expect(await invoke(SESSION_RPC_METHODS.SESSION_DELETE)).toMatchObject({ ok: true,
+                    result: { ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN } });
+                expect(teardownEffects).toEqual([]);
+                emitWithAck.mockClear();
+                const result = await invoke(SESSION_RPC_METHODS.SESSION_DELETE, { kind: 'session.write', sessionId: session.id });
+                if (role === 'owner') {
+                    expect(result).toMatchObject({ ok: true, result: { ok: true } });
+                    expect(teardownEffects).toEqual([session.id]);
+                } else {
+                    expect(result).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });
+                    expect(emitWithAck).not.toHaveBeenCalled();
+                    expect(teardownEffects).toEqual([]);
+                }
+                // A detached Run keeps its existing Machine/Run-store authority.
+                decodedInput = { machineId: machine.id, runId: 'retained-run' };
+                expect(await invoke(SESSION_RPC_METHODS.SESSION_DELETE)).toMatchObject({ ok: true, result: { ok: true } });
+            } finally { io.sockets.sockets.clear(); }
+        },
+    );
 
     it.each(['owner', 'manage', 'use', 'foreign'] as const)(
         'admits only owner and Manage through a daemon-user Session receiver (%s)', async role => {

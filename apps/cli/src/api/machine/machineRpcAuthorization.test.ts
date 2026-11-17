@@ -47,6 +47,28 @@ import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationEr
 import { registerScmHandlers } from '@/rpc/handlers/scm';
 
 describe('authorizeMachineRpcRequest', () => {
+  it('binds checkout deletion to Home admission for the exact decrypted Session, including targeted input', async () => {
+    const machineAdmission = { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+      installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const };
+    const boundary: MachineRpcAdmissionBoundary = { machineId: 'machine', resolveInstallationId: () => 'installation',
+      resolveCustodianAccountId: async () => 'owner', resolveHomeServerIdentityId: async () => 'home',
+      verifyMachineAdmission: async () => true };
+    for (const params of [{ sessionId: 'owned-session' }, { kind: 'targeted_action_rpc', v: 1,
+      target: { kind: 'machine', machineId: 'machine' }, input: { sessionId: 'owned-session' } }]) {
+      const request = { method: `machine:${SESSION_RPC_METHODS.SESSION_DELETE}`, params, machineAdmission };
+      const authorization = { kind: 'session.write' as const, sessionId: 'owned-session' };
+      expect(await authorizeMachineRpcRequest({ ...request, authorization }, boundary, 'authenticated_home_socket'))
+        .toEqual({ ok: true });
+      expect(await authorizeMachineRpcRequest(request, boundary, 'authenticated_home_socket'))
+        .toMatchObject({ ok: false, admissionPredicate: 'session_authorization' });
+      expect(await authorizeMachineRpcRequest({ ...request,
+        authorization: { ...authorization, sessionId: 'another-session' } }, boundary, 'authenticated_home_socket'))
+        .toMatchObject({ ok: false, admissionPredicate: 'session_target' });
+      expect(await authorizeMachineRpcRequest({ ...request, authorization }, boundary))
+        .toMatchObject({ ok: false, admissionPredicate: 'session_authorization' });
+    }
+  });
+
   it('accepts SCM work evidence stamps only through authenticated Home ingress with existing Machine admission', async () => {
     const machineAdmission = { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
       installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const };
