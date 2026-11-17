@@ -28,6 +28,8 @@ export type IntervalTimelineInterval = Readonly<{
   /** A source-provided texture; any meaning belongs in the consumer's label or annotation. */
   pattern?: 'solid' | 'hatched';
   annotation?: string;
+  /** `layout="rows"`: nesting under the interval above (a span inside its request); indents the label only. */
+  depth?: number;
   /** Exact domain wording for interaction only; axis, rows and selection readout retain their formatter. */
   datum?: HappierChartDatum;
   /** `layout="lanes"`: the lane this interval is drawn in (a machine, an agent). */
@@ -321,7 +323,7 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
         const { start, end, span } = marksOf(interval);
         const color = interval.color ?? props.theme.colors.info;
         const visual = <View aria-hidden importantForAccessibility="no-hide-descendants">
-            <HappierText style={text.caption}>{interval.label}</HappierText>
+            <HappierText style={interval.depth ? [text.caption, { paddingLeft: interval.depth * HAPPIER_DATA_METRICS.blockGapPx }] : text.caption}>{interval.label}</HappierText>
             <View style={{ height: HAPPIER_DATA_METRICS.proportionHeightPx, marginTop: HAPPIER_DATA_METRICS.axisGapPx }}>
               <View style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 1, backgroundColor: props.theme.colors.divider }} />
               {span !== null ? <View
