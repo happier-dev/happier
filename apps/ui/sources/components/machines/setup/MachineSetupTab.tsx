@@ -68,6 +68,7 @@ import {
   type MachineSetupState,
 } from './useMachineSetup';
 import { describeMachineSetupReason } from './machineSetupReasonText';
+import { MachineSignInsSection } from './MachineSignInsSection';
 
 type SetupParams = Extract<MachinePageTabParams, { id: 'setup' }>;
 const SETUP_PARAMS = Object.freeze({ id: 'setup' }) as SetupParams;
@@ -279,6 +280,13 @@ function MachineSetupRoot(
         editable={editable}
         localize={localize}
         presets={presetList}
+      />
+      <MachineSignInsSection
+        serverId={props.serverId}
+        machineId={props.machineId}
+        machineName={machine}
+        presented={presented}
+        editable={editable}
       />
       {firstLoad ? (
         <PageLoadingRows testID="machine-setup-loading" />
