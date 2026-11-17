@@ -3,6 +3,7 @@ import {
     runManagedMachineEnrollment,
     projectManagedMachineBootstrapPrompt,
     installManagedGuestCliViaRemoteDownload,
+    MANAGED_GUEST_CLI_REMOTE_PAYLOAD_CAPABILITIES,
     type ManagedMachineEnrollmentInput,
     type ManagedMachineEnrollmentDependencies,
 } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
@@ -37,7 +38,7 @@ export type UiManagedMachineEnrollmentDependencies = Omit<ManagedMachineEnrollme
 export function readUiManagedMachineEnrollmentCapabilities(
     deps?: Pick<UiManagedMachineEnrollmentDependencies, 'installNativePayload'>,
 ): Readonly<{ localPayloadAvailable: boolean; remotePayloadAvailable: true }> {
-    return { localPayloadAvailable: typeof deps?.installNativePayload === 'function', remotePayloadAvailable: true };
+    return { localPayloadAvailable: typeof deps?.installNativePayload === 'function', ...MANAGED_GUEST_CLI_REMOTE_PAYLOAD_CAPABILITIES };
 }
 
 /** Invoking-app IO and private questions for the shared ordinary enrollment recipe. */

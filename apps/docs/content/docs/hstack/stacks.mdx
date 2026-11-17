@@ -351,8 +351,11 @@ producer archives exist.
 
 The Home advertises only archives it actually has. Each new guest operation
 captures its target and exact archive SHA-256, and the guest checks that digest
-before extracting or running the CLI. A missing target stays unavailable. This
-uses the development Home as a trusted source; it adds no publisher signature.
+before extracting or running the CLI. Copied Add Machine commands use that same
+export and pin for This machine and Another machine. If the Home replaces an
+archive after you copy the command, copy a new command; changed bytes fail the
+digest check before extraction. Only exported Linux/macOS targets are available.
+This uses the development Home as a trusted source; it adds no publisher signature.
 Released server builds compile this export capability out and keep the existing
 signed public-release download path, regardless of the environment setting.
 

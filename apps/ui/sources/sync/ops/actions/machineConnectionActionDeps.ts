@@ -175,6 +175,7 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
                 kind: 'sshMachine', enrollmentIdentity: input.enrollmentIdentity, sshDraft: { ...createDefaultSshCredentialsDraft(input.authMode), host: input.host,
                     username: input.username ?? '', port: input.port === undefined ? '' : String(input.port), identityFilePath: input.identityFilePath ?? '' },
             } : { kind: 'joinHome' }) }, handoff);
+            if (!command) return { ok: false, errorCode: 'guest_payload_missing', error: 'This Home does not export a CLI archive for the selected setup target.' };
             return { command, descriptorFileRequired: handoff.kind === 'descriptor_file_required' };
         },
         machinePairingCreate: async (input, context) => {

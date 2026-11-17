@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
+import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 // App configuration is the environment adapter; retain the real command and release-ring owners.
 vi.mock('@/config', () => ({ config: { variant: 'production', identityVariant: 'stable' } }));
@@ -11,6 +14,9 @@ import { createDefaultSshCredentialsDraft } from '@/components/ssh/sshCredential
 import { MachineAddCommandInputSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
 import { ManagedMachineEnrollmentIdentityV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+
+import { createCliPayloadFixture } from '../../../../../../packages/cli-common/src/systemTasks/testkit/createCliPayloadFixture.ts';
+import { readServerGuestCliIdentity } from '../../../../../server/sources/app/runtime/serverRelease.ts';
 
 const home = { descriptor: null, fallbackHomeUrl: 'https://home.example.test',
     guestCli: { source: 'public-release' as const, line: '0.3', channel: 'stable' as const } };
@@ -21,13 +27,76 @@ describe('machine add commands', () => {
         expect(resolveWebDesktopSetupHandoffTarget(target)).toMatchObject({ kind: 'unavailable', code: 'guest_payload_missing' });
         expect(buildMachineAddCommand({ ...target, os, kind: 'joinHome' })).toBeNull();
         expect(buildMachineAddCommand({ ...target, os, remote: true, kind: 'sshMachine', sshDraft: createDefaultSshCredentialsDraft() })).toBeNull();
-        // Copied commands do not carry the managed enrollment's admitted pin.
+        // Copied setup consumes the same server-owned archive pin as managed enrollment.
         const exported = { ...target, guestCli: { ...target.guestCli, payloads: [
-            { target: { os: 'linux' as const, arch: 'x64' as const }, sha256: '4b'.repeat(32),
-                url: '/v1/runtime/guest-cli/payloads/linux/x64' },
+            { target: { os: os === 'macos' ? 'darwin' as const : 'linux' as const, arch: 'x64' as const }, sha256: '4b'.repeat(32),
+                url: `/v1/runtime/guest-cli/payloads/${os === 'macos' ? 'darwin' : 'linux'}/x64` },
         ] } };
-        expect(resolveWebDesktopSetupHandoffTarget(exported)).toMatchObject({ kind: 'unavailable', code: 'guest_payload_missing' });
-        expect(buildMachineAddCommand({ ...exported, os, kind: 'joinHome' })).toBeNull();
+        expect(resolveWebDesktopSetupHandoffTarget(exported)).toMatchObject({ kind: 'https' });
+        const command = buildMachineAddCommand({ ...exported, os, kind: 'joinHome' });
+        if (os === 'windows') expect(command).toBeNull(); // The managed archive contract supports Linux/macOS.
+        else {
+            expect(command).toContain('4b'.repeat(32));
+            expect(command).not.toContain('https://happier.dev/install');
+            const anotherMachine = buildMachineAddCommand({ ...exported, fallbackHomeUrl: 'https://home.example.test',
+                os, remote: true, kind: 'joinHome' });
+            expect(anotherMachine).toContain('4b'.repeat(32));
+            expect(anotherMachine).toContain('https://home.example.test/v1/runtime/guest-cli/payloads/');
+            expect(anotherMachine).not.toContain('https://happier.dev/install');
+        }
+    });
+    it.skipIf(process.platform !== 'linux')('runs copied setup from the server pin and rejects changed bytes before extraction', async () => {
+        const fixture = await createCliPayloadFixture();
+        const root = mkdtempSync(join(tmpdir(), 'machine-add-home-export-'));
+        const calls = join(root, 'setup-args');
+        const extracted = join(root, 'extracted');
+        const cli = join(fixture.payloadRoot, 'happier');
+        const original = readFileSync(cli, 'utf8');
+        // The executable is the process boundary; self-install runs the real promotion owner.
+        writeFileSync(cli, original.replace('#!/bin/sh\n', `#!/bin/sh\nif [ "$1" = setup ]; then printf '%s\\n' "$@" > '${calls}'; exit 0; fi\n`));
+        const archivePath = join(root, 'payload.tar.gz');
+        execFileSync('tar', ['-czf', archivePath, '-C', dirname(fixture.payloadRoot), basename(fixture.payloadRoot)]);
+        let archive = readFileSync(archivePath);
+        const digest = createHash('sha256').update(archive).digest('hex');
+        const requests: string[] = [];
+        const server = createServer((request, response) => {
+            requests.push(request.url ?? '');
+            response.end(archive);
+        });
+        await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+        try {
+            const address = server.address();
+            if (!address || typeof address === 'string') throw new Error('Expected HTTP listener');
+            const homeUrl = `http://127.0.0.1:${address.port}`;
+            const guestCli = readServerGuestCliIdentity({ HAPPIER_DEV_GUEST_CLI_EXPORT: '1',
+                HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: JSON.stringify({ archives: [
+                    { target: { os: 'linux', arch: 'x64' }, sha256: digest, archivePath },
+                ] }),
+            });
+            const command = buildMachineAddCommand({ descriptor: null, fallbackHomeUrl: homeUrl, guestCli, os: 'linux', kind: 'joinHome' });
+            expect(command).toEqual(expect.any(String));
+            if (!command) throw new Error('Expected copied Home-payload setup command');
+            const tools = join(root, 'tools'); mkdirSync(tools);
+            const actualTar = execFileSync('/bin/sh', ['-c', 'command -v tar'], { encoding: 'utf8' }).trim();
+            writeFileSync(join(tools, 'tar'), `#!/bin/sh\nprintf extracted > '${extracted}'\nexec '${actualTar}' "$@"\n`, { mode: 0o755 });
+            const run = (homeDir: string) => promisify(execFile)('/bin/sh', ['-c', command], {
+                env: { ...process.env, HOME: homeDir, PATH: `${tools}:${process.env.PATH}` },
+            });
+            await run(join(root, 'first-home'));
+            expect(readFileSync(calls, 'utf8')).toBe(`setup\n--home-url\n${homeUrl}\n`);
+            expect(existsSync(extracted)).toBe(true);
+            rmSync(calls); rmSync(extracted);
+            // Reuse the copied command: a reload cannot silently change its pinned digest.
+            archive = Buffer.concat([archive, Buffer.from([0])]);
+            await expect(run(join(root, 'second-home'))).rejects.toThrow();
+            expect(existsSync(calls)).toBe(false);
+            expect(existsSync(extracted)).toBe(false);
+            expect(requests).toEqual(['/v1/runtime/guest-cli/payloads/linux/x64', '/v1/runtime/guest-cli/payloads/linux/x64']);
+        } finally {
+            server.closeAllConnections();
+            await new Promise<void>(resolve => server.close(() => resolve()));
+            await fixture.cleanup(); rmSync(root, { recursive: true, force: true });
+        }
     });
     it.each(MACHINE_ADD_COMMAND_OS)('uses a declared public release regardless of profile provenance (%s)', os => {
         const target = { ...home, profileSource: 'stack-env' as const };

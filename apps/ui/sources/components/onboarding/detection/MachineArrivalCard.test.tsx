@@ -62,6 +62,25 @@ describe('MachineArrivalCard', () => {
         expect(screen.findByTestId('machine-arrival-card-command-setup')).toBeNull();
     });
 
+    it('offers an exported POSIX pin while keeping unsupported Windows unavailable', async () => {
+        const screen = await renderScreen(<MachineArrivalCard mode="instructional" serverUrl="https://relay.example.test" />);
+        await act(async () => primeServerFeaturesSnapshot({ serverId: commandHomeId, snapshot: { status: 'ready',
+            features: createRootLayoutFeaturesResponse({ capabilities: { guestCli: {
+                source: 'home-payload', line: '0.3', channel: 'publicdev', payloads: [
+                    { target: { os: 'linux', arch: 'x64' }, sha256: '4b'.repeat(32), url: '/v1/runtime/guest-cli/payloads/linux/x64' },
+                ],
+            } } }) } }));
+        expect(screen.findByTestId('machine-arrival-card-command-setup')).toBeTruthy();
+        await screen.pressByTestIdAsync('machine-arrival-card-command-setup.os:linux');
+        expect(screen.getTextContent()).toContain('4b'.repeat(32));
+        await screen.pressByTestIdAsync('machine-arrival-card-command-setup.os:windows');
+        const { CodeBlockView } = await import('@/components/ui/code/blocks/CodeBlockView');
+        expect(screen.findAllByType(CodeBlockView)).toHaveLength(0);
+        expect(screen.findByTestId('machine-arrival-card-command-setup.os:linux')).toBeTruthy();
+        await screen.pressByTestIdAsync('machine-arrival-card-command-setup.os:linux');
+        expect(screen.getTextContent()).toContain('4b'.repeat(32));
+    });
+
     it('renders live mode as watching, then flips to connected and calls onArrived once', async () => {
         const previousState = storage.getState();
         const now = Date.now();

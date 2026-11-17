@@ -6,7 +6,7 @@ import { GitHubReleaseRateLimitError } from '@happier-dev/release-runtime/github
 import { assertManagedGuestCliVersion, ManagedGuestCliReleaseError, resolveManagedGuestCliRelease } from '../../firstPartyRuntime/resolveManagedGuestCliRelease.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { quoteRemotePathWithHomeExpansion, safeBashSingleQuote } from '../../ssh/shellQuote.js';
-import { buildRemoteFirstPartyPromotionCommand, resolveRemoteFirstPartyInstallLayout, resolveRemoteInstalledFirstPartyBinaryPath } from './remoteFirstPartyInstallPath.js';
+import { REMOTE_RELEASE_ARCHITECTURES, buildRemoteFirstPartyPromotionCommand, resolveRemoteFirstPartyInstallLayout, resolveRemoteInstalledFirstPartyBinaryPath } from './remoteFirstPartyInstallPath.js';
 import { buildRemoteSelfDownloadFirstPartyInstallCommand, executeRemoteSelfDownloadFirstPartyInstallPlan, resolveRemoteSelfDownloadFirstPartyInstallPlan,
   type RemoteSelfDownloadFirstPartyInstallPlan } from './remoteSelfDownloadFirstPartyInstallCommand.js';
 
@@ -176,6 +176,50 @@ export async function prepareManagedGuestCliBuildInput(input: Readonly<{
     installScript, files: [{ path: 'happier-cli-payload.tar.gz', contentsBase64: local.archive.contentsBase64 }] };
 }
 
+/** Consumers with this installer can use the Home's pinned export without a controller. */
+export const MANAGED_GUEST_CLI_REMOTE_PAYLOAD_CAPABILITIES = { remotePayloadAvailable: true } as const;
+
+/** One pinned-archive plan for managed installs and copied personal setup commands. */
+function buildManagedGuestCliPayloadInstallPlan(input: Readonly<{
+  guestCliPayload: GuestCliPayloadV1;
+  channel: string;
+  remoteHomeDir?: string;
+  managedGuest?: boolean;
+}>): RemoteSelfDownloadFirstPartyInstallPlan {
+  const payload = input.guestCliPayload;
+  const versionId = `local-${payload.sha256}`;
+  return {
+    binaryPath: resolveRemoteInstalledFirstPartyBinaryPath({ componentId: 'happier-cli', channel: input.channel, remoteHomeDir: input.remoteHomeDir }),
+    versionId, source: 'home-payload', command: buildRemoteSelfDownloadFirstPartyInstallCommand({
+      componentId: 'happier-cli', channel: input.channel, versionId, remoteHomeDir: input.remoteHomeDir,
+      managedGuest: input.managedGuest ?? true,
+      archive: { name: `happier-${payload.target.os}-${payload.target.arch}.tar.gz`, url: payload.url },
+      expectedSha256: payload.sha256,
+    }),
+  };
+}
+
+/** The copied request freezes server-supplied pins; target probing never refreshes them. */
+export function buildManagedGuestCliPayloadInstallAndRunCommand(input: Readonly<{
+  homeUrl: string;
+  guestCli: GuestCliIdentityV1;
+  os: 'linux' | 'darwin';
+  /** Existing CLI grammar, already shell-quoted by its command owner. */
+  runCommand: string;
+}>): string | null {
+  const payloads = input.guestCli.payloads?.filter(payload => payload.target.os === input.os) ?? [];
+  if (!payloads.length) return null;
+  const branches = payloads.map(payload => {
+    const selected = selectManagedGuestCliPayload({ guestCli: input.guestCli, homeUrl: input.homeUrl, target: payload.target });
+    const plan = buildManagedGuestCliPayloadInstallPlan({ guestCliPayload: selected, channel: input.guestCli.channel, managedGuest: false });
+    const architecture = REMOTE_RELEASE_ARCHITECTURES.find(target => target.arch === payload.target.arch)!;
+    const pattern = architecture.aliases.map(alias => `*${input.os}*/${alias}`).join('|');
+    // The install subshell settles its staging cleanup before invoking personal setup.
+    return `${pattern}) (${plan.command}) && exec ${quoteRemotePathWithHomeExpansion(plan.binaryPath)} ${input.runCommand} ;;`;
+  });
+  return `(case "$(uname -s | tr '[:upper:]' '[:lower:]')/$(uname -m | tr '[:upper:]' '[:lower:]')" in ${branches.join(' ')} *) printf '%s\\n' guest_payload_missing >&2; exit 1 ;; esac)`;
+}
+
 /** Portable transport strategy: the existing signed installer downloads on the guest. */
 export async function installManagedGuestCliViaRemoteDownload(input: Readonly<{
   homeUrl: string;
@@ -193,12 +237,8 @@ export async function installManagedGuestCliViaRemoteDownload(input: Readonly<{
   input.signal?.throwIfAborted();
   let plan: RemoteSelfDownloadFirstPartyInstallPlan;
   if (input.guestCliPayload) {
-    const versionId = `local-${input.guestCliPayload.sha256}`;
-    plan = { binaryPath, versionId, source: 'home-payload', command: buildRemoteSelfDownloadFirstPartyInstallCommand({
-      componentId: 'happier-cli', channel: input.channel, versionId, remoteHomeDir: input.remoteHomeDir, managedGuest: true,
-      archive: { name: `happier-${input.os}-${input.arch}.tar.gz`, url: input.guestCliPayload.url },
-      expectedSha256: input.guestCliPayload.sha256,
-    }) };
+    plan = buildManagedGuestCliPayloadInstallPlan({ guestCliPayload: input.guestCliPayload,
+      channel: input.channel, remoteHomeDir: input.remoteHomeDir });
   } else {
     const source = await resolveManagedGuestCliSource({ ...input, binaryPath });
     if (source.kind !== 'public-release') throw new SystemTaskExecutionError('guest_payload_missing', 'The Home guest CLI payload is unavailable to this transport.');

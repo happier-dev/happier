@@ -166,7 +166,7 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
     os: MachineAddCommandOs;
     detectedOs: MachineAddCommandOs | null;
     setOs: (os: MachineAddCommandOs) => void;
-    commands: Record<MachineAddCommandOs, string> | null;
+    commands: Record<MachineAddCommandOs, string | null> | null;
     remoteHomeUnavailable: boolean;
     commandUnavailableMessage: string | null;
     commandUnavailableDetails: readonly string[] | undefined;
@@ -357,7 +357,7 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
             remote: chosen.id !== 'thisComputer',
             ...(chosen.id === 'ssh' ? { kind: 'sshMachine' as const, sshDraft: draft.sshDraft } : { kind: 'joinHome' as const }),
         }, commandTarget)]),
-    ) as Record<MachineAddCommandOs, string> : null, [chosen, commandTarget, descriptor, draft.sshDraft, profile, remoteHomeUnavailable, guestCli]);
+    ) as Record<MachineAddCommandOs, string | null> : null, [chosen, commandTarget, descriptor, draft.sshDraft, profile, remoteHomeUnavailable, guestCli]);
     const arrived = progress.machine ? { machineId: progress.machine.id, name: getMachineDisplayName(progress.machine),
         facts: [formatOSPlatform(progress.machine.metadata?.platform), progress.machine.metadata?.arch].filter(Boolean).join(' · '),
         next: options.startedFrom === 'picker' ? 'picker' as const : options.startedFrom === 'machines' ? 'machine' as const : 'session' as const,

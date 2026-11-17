@@ -29,9 +29,7 @@ describe('WizardTerminalHandoff', () => {
             <WizardTerminalHandoff testID="handoff" steps={[
                 {
                     title: 'Install',
-                    code: 'install-posix',
-                    windowsCode: 'install-windows',
-                    windowsLanguage: 'powershell',
+                    commands: { macos: 'install-posix', linux: 'install-posix', windows: 'install-windows' },
                     scrollTestIDSuffix: 'cli',
                 },
             ]} />,

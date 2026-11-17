@@ -83,12 +83,15 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-function useSetupCommands(serverUrl: string | null | undefined): Readonly<{ posix: string; windows: string }> | null {
+function useSetupCommands(serverUrl: string | null | undefined) {
     const target = useMachineAddHomeTargetAtUrl(serverUrl);
     return React.useMemo(() => {
-        const posix = buildMachineAddCommand({ ...target, kind: 'joinHome', os: 'linux', remote: true });
-        const windows = buildMachineAddCommand({ ...target, kind: 'joinHome', os: 'windows', remote: true });
-        return posix && windows ? { posix, windows } : null;
+        const commands = {
+            macos: buildMachineAddCommand({ ...target, kind: 'joinHome', os: 'macos', remote: true }),
+            linux: buildMachineAddCommand({ ...target, kind: 'joinHome', os: 'linux', remote: true }),
+            windows: buildMachineAddCommand({ ...target, kind: 'joinHome', os: 'windows', remote: true }),
+        };
+        return Object.values(commands).some(Boolean) ? commands : null;
     }, [target]);
 }
 
@@ -97,12 +100,7 @@ function CommandBlock(props: Readonly<{
 }>): React.ReactElement {
     const commands = useSetupCommands(props.serverUrl);
     if (!commands) return <Text>{t('common.unavailable')}</Text>;
-    return (
-        <OsCommandBlock
-            testID="machine-arrival-card-command-setup"
-            commands={{ macos: commands.posix, linux: commands.posix, windows: commands.windows }}
-        />
-    );
+    return <OsCommandBlock testID="machine-arrival-card-command-setup" commands={commands} />;
 }
 
 function useArrivalCallback(

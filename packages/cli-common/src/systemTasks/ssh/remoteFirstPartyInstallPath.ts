@@ -237,9 +237,15 @@ export function normalizeRemoteReleaseOs(value: unknown): 'linux' | 'darwin' {
   throw new Error(`Unsupported remote bootstrap platform: ${normalized || 'unknown'}`);
 }
 
+export const REMOTE_RELEASE_ARCHITECTURES = [
+  { arch: 'x64', aliases: ['x86_64', 'amd64', 'x64'] },
+  { arch: 'arm64', aliases: ['aarch64', 'arm64'] },
+] as const;
+
 export function normalizeRemoteReleaseArch(value: unknown): 'x64' | 'arm64' {
   const normalized = String(value ?? '').trim().toLowerCase();
-  if (normalized === 'x86_64' || normalized === 'amd64' || normalized === 'x64') return 'x64';
-  if (normalized === 'aarch64' || normalized === 'arm64') return 'arm64';
+  for (const target of REMOTE_RELEASE_ARCHITECTURES) {
+    if (target.aliases.some(alias => alias === normalized)) return target.arch;
+  }
   throw new SystemTaskExecutionError('guest_architecture_unsupported', 'Unsupported remote bootstrap architecture.');
 }

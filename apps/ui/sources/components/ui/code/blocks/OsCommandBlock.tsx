@@ -22,7 +22,7 @@ export const COMMAND_OS_ORDER: readonly CommandOs[] = ['macos', 'linux', 'window
  */
 export const OsCommandBlock = React.memo(function OsCommandBlock(props: Readonly<{
     testID: string;
-    commands: Readonly<Record<CommandOs, string>>;
+    commands: Readonly<Record<CommandOs, string | null>>;
     os?: CommandOs;
     onOsChange?: (os: CommandOs) => void;
     detectedOs?: CommandOs | null;
@@ -43,31 +43,33 @@ export const OsCommandBlock = React.memo(function OsCommandBlock(props: Readonly
     ], []);
     const detected = props.detectedOs && props.detectedLabel && props.detectedOs === os ? props.detectedLabel : null;
 
+    const header = (
+        <View style={styles.header}>
+            <SegmentedTabBar
+                tabs={tabs}
+                activeTabId={os}
+                onSelectTab={selectOs}
+                testIDPrefix={`${props.testID}.os`}
+                compact
+                segmentSizing="content"
+                role="radiogroup"
+            />
+            {detected ? <Text style={styles.detected}>{detected}</Text> : null}
+        </View>
+    );
+    const command = props.commands[os];
     return (
         <View testID={props.testID}>
-            <CodeBlockView
-                code={props.commands[os]}
+            {command === null ? <>{header}<Text>{t('common.unavailable')}</Text></> : <CodeBlockView
+                code={command}
                 language={os === 'windows' ? 'powershell' : 'bash'}
                 showHeaderRow
-                headerLeft={(
-                    <View style={styles.header}>
-                        <SegmentedTabBar
-                            tabs={tabs}
-                            activeTabId={os}
-                            onSelectTab={selectOs}
-                            testIDPrefix={`${props.testID}.os`}
-                            compact
-                            segmentSizing="content"
-                            role="radiogroup"
-                        />
-                        {detected ? <Text style={styles.detected}>{detected}</Text> : null}
-                    </View>
-                )}
+                headerLeft={header}
                 // The one command must be fully readable: it wraps, never scrolls out of sight.
                 wrap
                 showCopyButton
                 scrollTestID={`${props.testID}.code`}
-            />
+            />}
         </View>
     );
 });

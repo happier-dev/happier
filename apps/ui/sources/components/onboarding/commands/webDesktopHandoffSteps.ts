@@ -1,5 +1,6 @@
 import { t } from '@/text';
 
+import type { CommandOs } from '@/components/ui/code/blocks/OsCommandBlock';
 import type { WizardTerminalHandoffStep } from '../ui/WizardTerminalHandoff';
 
 export function buildWebDesktopRelayHostHandoffSteps(input: Readonly<{
@@ -10,26 +11,23 @@ export function buildWebDesktopRelayHostHandoffSteps(input: Readonly<{
         {
             title: t('setupOnboarding.webDesktopOnlyRelayInstallTitle'),
             subtitle: t('setupOnboarding.webDesktopOnlyRelayInstallSubtitle'),
-            code: input.installAndSetupRelayCommand,
-            windowsCode: input.installAndSetupRelayWindowsCommand,
-            windowsLanguage: input.installAndSetupRelayWindowsCommand ? 'powershell' : undefined,
+            ...(input.installAndSetupRelayWindowsCommand ? { commands: {
+                macos: input.installAndSetupRelayCommand, linux: input.installAndSetupRelayCommand, windows: input.installAndSetupRelayWindowsCommand,
+            } } : { code: input.installAndSetupRelayCommand }),
             scrollTestIDSuffix: 'relay-setup',
         },
     ];
 }
 
 export function buildWebDesktopBackgroundServiceHandoffSteps(input: Readonly<{
-    installAndSetupCommand: string;
-    installAndSetupWindowsCommand?: string;
+    commands: Readonly<Record<CommandOs, string | null>>;
     relayUrl: string;
 }>): readonly WizardTerminalHandoffStep[] {
     return [
         {
             title: t('setupOnboarding.webDesktopOnlySetupCommandTitle'),
             subtitle: t('setupOnboarding.webDesktopOnlySetupCommandSubtitle'),
-            code: input.installAndSetupCommand,
-            windowsCode: input.installAndSetupWindowsCommand,
-            windowsLanguage: input.installAndSetupWindowsCommand ? 'powershell' : undefined,
+            commands: input.commands,
             scrollTestIDSuffix: 'setup',
         },
     ];

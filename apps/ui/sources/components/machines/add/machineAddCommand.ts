@@ -3,6 +3,7 @@ import type { ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/m
 import { resolveRemoteHomeApplicationCarrier } from '@happier-dev/cli-common/homeEnrollment';
 import { readMachineProvisionerHostAvailability } from '@happier-dev/cli-common/machines/managed/provisioners';
 import type { GuestCliIdentityV1 } from '@happier-dev/protocol/features';
+import { MANAGED_GUEST_CLI_REMOTE_PAYLOAD_CAPABILITIES, buildManagedGuestCliPayloadInstallAndRunCommand } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
 import { config } from '@/config';
 import { resolveAppVariant } from '@/sync/runtime/appVariant';
@@ -31,9 +32,8 @@ export type MachineAddHomeTarget = Readonly<{
 
 /** A descriptor without HTTPS needs a file; the installer's stdin cannot carry it. */
 export function resolveWebDesktopSetupHandoffTarget(params: MachineAddHomeTarget): WebDesktopSetupHandoffTarget {
-    // A copied command has no controller-local payload installer. The Home's
-    // advertised artifact identity owns this decision regardless of profile provenance.
-    const delivery = readMachineProvisionerHostAvailability({ host: 'browser', guestCli: params.guestCli });
+    const delivery = readMachineProvisionerHostAvailability({ host: 'browser', guestCli: params.guestCli,
+        ...MANAGED_GUEST_CLI_REMOTE_PAYLOAD_CAPABILITIES });
     if (!delivery.available && delivery.code === 'guest_cli_identity_unavailable') return {
         kind: 'unavailable', code: delivery.code,
     };
@@ -74,7 +74,6 @@ function quoteShellValue(value: string, os: MachineAddCommandOs): string {
     return os === 'windows' ? `'${value.replace(/'/g, "''")}'` : `'${value.replace(/'/g, "'\"'\"'")}'`;
 }
 
-export function buildMachineAddCommand(input: MachineAddCommandInput, target: Exclude<WebDesktopSetupHandoffTarget, { kind: 'unavailable' }>): string;
 export function buildMachineAddCommand(input: MachineAddCommandInput, target?: WebDesktopSetupHandoffTarget): string | null;
 export function buildMachineAddCommand(input: MachineAddCommandInput, target = resolveWebDesktopSetupHandoffTarget(input)): string | null {
     if (target.kind === 'unavailable') return null;
@@ -107,10 +106,19 @@ export function buildMachineAddCommand(input: MachineAddCommandInput, target = r
     };
     const descriptorJson = target.kind === 'descriptor_file_required' && input.descriptor ? JSON.stringify(input.descriptor) : null;
     const descriptorPath = input.os === 'windows' ? '$happierHomeDescriptor' : '"$happier_home_descriptor"';
-    const command = (input.os === 'windows' ? buildHappierCliInstallAndRunPowershellCommand : buildHappierCliInstallAndRunCommand)(options, {
-        action: input.kind === 'joinHome' ? 'setup' : 'machine-enroll',
-        args: args.map((arg, index) => descriptorJson && index === 1 ? descriptorPath : quoteShellValue(arg, input.os)),
-    });
+    const action = input.kind === 'joinHome' ? 'setup' : 'machine-enroll';
+    const quotedArgs = args.map((arg, index) => descriptorJson && index === 1 ? descriptorPath : quoteShellValue(arg, input.os));
+    // Source archives use the same admitted-pin download, verification and promotion as managed acquire.
+    // A relative export needs an HTTP carrier before the CLI can use an Iroh descriptor.
+    const command = input.guestCli?.source === 'home-payload'
+        ? input.os === 'windows' || target.kind !== 'https' ? null : buildManagedGuestCliPayloadInstallAndRunCommand({
+            homeUrl: target.homeUrl, guestCli: input.guestCli, os: input.os === 'macos' ? 'darwin' : 'linux',
+            runCommand: [action, ...quotedArgs].join(' '),
+        })
+        : (input.os === 'windows' ? buildHappierCliInstallAndRunPowershellCommand : buildHappierCliInstallAndRunCommand)(options, {
+            action, args: quotedArgs,
+        });
+    if (!command) return null;
     if (!descriptorJson) return command;
     // The installer consumes stdin; provision the public descriptor before invoking
     // the existing --home-descriptor-file grammar on either supported shell.

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { OsCommandBlock } from '@/components/ui/code/blocks/OsCommandBlock';
+import { OsCommandBlock, type CommandOs } from '@/components/ui/code/blocks/OsCommandBlock';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -11,12 +11,9 @@ import { HANDOFF_TEXT_MAX_WIDTH } from './handoffLayout';
 export type WizardTerminalHandoffStep = Readonly<{
     title: React.ReactNode;
     subtitle?: React.ReactNode;
-    code: string;
-    windowsCode?: string;
-    language?: React.ComponentProps<typeof CodeBlockView>['language'];
-    windowsLanguage?: React.ComponentProps<typeof CodeBlockView>['language'];
     scrollTestIDSuffix: string;
-}>;
+} & (Readonly<{ commands: Readonly<Record<CommandOs, string | null>>; code?: never; language?: never }>
+    | Readonly<{ code: string; language?: React.ComponentProps<typeof CodeBlockView>['language']; commands?: never }>)>;
 
 export type WizardTerminalHandoffProps = Readonly<{
     testID: string;
@@ -65,10 +62,10 @@ export function WizardTerminalHandoff(props: WizardTerminalHandoffProps) {
                 >
                     <Text style={styles.sectionTitle}>{step.title}</Text>
                     {step.subtitle ? <Text style={styles.sectionSubtitle}>{step.subtitle}</Text> : null}
-                    {step.windowsCode ? (
+                    {step.commands ? (
                         <OsCommandBlock
                             testID={`${props.testID}-${step.scrollTestIDSuffix}`}
-                            commands={{ macos: step.code, linux: step.code, windows: step.windowsCode }}
+                            commands={step.commands}
                         />
                     ) : (
                         <CodeBlockView

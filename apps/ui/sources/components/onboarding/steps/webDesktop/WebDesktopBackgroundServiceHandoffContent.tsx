@@ -19,17 +19,14 @@ export type WebDesktopBackgroundServiceHandoffContentProps = Readonly<{
 
 export function WebDesktopBackgroundServiceHandoffContent(props: WebDesktopBackgroundServiceHandoffContentProps) {
     const target = useMachineAddHomeTargetAtUrl(props.relayUrl);
-    const installAndSetupCommand = React.useMemo(() => buildMachineAddCommand({
-        ...target, kind: 'joinHome', os: 'linux', remote: true, skipProviders: true,
+    const commands = React.useMemo(() => ({
+        macos: buildMachineAddCommand({ ...target, kind: 'joinHome', os: 'macos', remote: true, skipProviders: true }),
+        linux: buildMachineAddCommand({ ...target, kind: 'joinHome', os: 'linux', remote: true, skipProviders: true }),
+        windows: buildMachineAddCommand({ ...target, kind: 'joinHome', os: 'windows', remote: true, skipProviders: true }),
     }), [target]);
-    const installAndSetupWindowsCommand = React.useMemo(() => buildMachineAddCommand({
-        ...target, kind: 'joinHome', os: 'windows', remote: true, skipProviders: true,
-    }), [target]);
-    const steps = React.useMemo(() => installAndSetupCommand && installAndSetupWindowsCommand ? buildWebDesktopBackgroundServiceHandoffSteps({
-        installAndSetupCommand,
-        installAndSetupWindowsCommand,
-        relayUrl: props.relayUrl,
-    }) : [], [installAndSetupCommand, installAndSetupWindowsCommand, props.relayUrl]);
+    const steps = React.useMemo(() => Object.values(commands).some(Boolean) ? buildWebDesktopBackgroundServiceHandoffSteps({
+        commands, relayUrl: props.relayUrl,
+    }) : [], [commands, props.relayUrl]);
 
     return (
         <WizardGuidedHandoff testID={props.testID}>
