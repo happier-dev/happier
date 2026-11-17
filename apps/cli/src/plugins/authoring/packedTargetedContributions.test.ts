@@ -91,6 +91,7 @@ function expectPackedTargetedCliResult(result: PackedCliResult): void {
             contributionId: 'provider-a',
           }],
           verifications: [{ result: { verified: true } }],
+          unavailableGenericMethods: ['execute', 'observe', 'executeWithExecutionOrigin'],
         },
       },
       invocation: {
@@ -101,6 +102,7 @@ function expectPackedTargetedCliResult(result: PackedCliResult): void {
             contributionId: 'provider-a',
           }],
           verifications: [{ result: { verified: true } }],
+          unavailableGenericMethods: ['execute', 'observe', 'executeWithExecutionOrigin'],
         },
       },
     },
@@ -131,6 +133,7 @@ describe('packed public targeted-contribution conformance', () => {
             pluginId: contributorPluginId,
             contributionId: 'provider-a',
           }],
+          unavailableGenericMethods: ['execute', 'observe', 'executeWithExecutionOrigin'],
           verifications: [{
             contributor: {
               pluginId: contributorPluginId,
@@ -147,6 +150,7 @@ describe('packed public targeted-contribution conformance', () => {
             pluginId: contributorPluginId,
             contributionId: 'provider-a',
           }],
+          unavailableGenericMethods: ['execute', 'observe', 'executeWithExecutionOrigin'],
           verifications: [{
             contributor: {
               pluginId: contributorPluginId,
@@ -159,11 +163,16 @@ describe('packed public targeted-contribution conformance', () => {
     });
     if (!result.ok) throw new Error('Packed target/contributor fixture did not complete');
 
+    const admittedTarget = result.contributors[0]?.targetedAdmissions[0]?.target;
+    if (!admittedTarget) throw new Error('Expected the target-owned contributor admission');
+    expect(admittedTarget.occurrenceId).toEqual(expect.any(String));
+    // Restart creates a fresh runtime occurrence; only the final invocation
+    // shares the terminal daemon's target-owned admission identity.
     expect(result.initialInvocation?.result).toMatchObject({
-      targetGeneration: result.target.admission.appliedGeneration,
+      targetOccurrenceId: expect.any(String),
     });
     expect(result.invocation?.result).toMatchObject({
-      targetGeneration: result.target.admission.appliedGeneration,
+      targetOccurrenceId: admittedTarget.occurrenceId,
     });
     expect(result.target.admission.appliedGeneration).toEqual(
       result.target.admission.desiredGeneration,
@@ -192,7 +201,7 @@ describe('packed public targeted-contribution conformance', () => {
     expect(unrelatedPrerequisite.admission).toEqual({
       decision: 'installAndTrust',
       desiredGeneration: expect.any(String),
-      appliedGeneration: null,
+      appliedGeneration: unrelatedPrerequisite.admission.desiredGeneration,
     });
     expect(result.contributors[0]?.targetedAdmissions).toEqual([{
       target: expect.objectContaining({

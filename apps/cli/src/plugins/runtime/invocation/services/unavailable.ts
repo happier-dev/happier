@@ -813,9 +813,10 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
             }) as ActionsService;
         },
         createAvailable({ seed, params }): ActionsService | null {
-            if (params.actionExecutor === undefined || params.invokeContributedAction === undefined) return null;
+            if (params.invokeContributedAction === undefined) return null;
+            const unavailable = PLUGIN_SERVICE_DESCRIPTORS.actions.createUnavailable();
             const actionRequestAttributionV1 = seed.actionRequestAttributionV1 ?? seed.approvalContext?.actionRequestAttributionV1;
-            return createPluginInvocationActionsService({
+            const actions = createPluginInvocationActionsService({
                 seed: Object.freeze({
                     plugin: seed.plugin,
                     contribution: seed.contribution,
@@ -879,8 +880,15 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                         ? { bypassActionInterception: true as const }
                         : {}),
                 }),
-                actionExecutor: params.actionExecutor,
+                actionExecutor: params.actionExecutor ?? { execute: unavailableMethod('actions') },
                 invokeContributedAction: params.invokeContributedAction,
+            });
+            if (params.actionExecutor !== undefined) return actions;
+            return Object.freeze({
+                ...unavailable,
+                executeAdmittedTargetedOperation: actions.executeAdmittedTargetedOperation,
+                observeAdmittedTargetedOperation: actions.observeAdmittedTargetedOperation,
+                executeAdmittedTargetedOperationWithExecutionOrigin: actions.executeAdmittedTargetedOperationWithExecutionOrigin,
             });
         },
     },

@@ -279,7 +279,7 @@ describe('admitted targeted-operation execution', () => {
                 : (await service.executeAdmittedTargetedOperationWithExecutionOrigin(operation, input, options)).result;
         };
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
-        const sink = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => undefined);
+        const sink = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => undefined);
         try {
             const retainedInput = { repository: 'acme/project' };
             const requestId = '70cc64d3-0386-4914-b7d8-713b7879e99f';

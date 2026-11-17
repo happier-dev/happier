@@ -53,7 +53,17 @@
                   "kind": "contributorDefined"
                 },
                 "resultSchema": {
-                  "type": "object"
+                  "$schema": "http://json-schema.org/draft-07/schema#",
+                  "type": "object",
+                  "properties": {
+                    "verified": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "verified"
+                  ],
+                  "additionalProperties": false
                 },
                 "action": {
                   "surfaces": ["plugin"],
