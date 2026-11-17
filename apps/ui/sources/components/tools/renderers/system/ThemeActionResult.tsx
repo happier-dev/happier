@@ -7,13 +7,12 @@ import { getThemePresetSourceReferenceId } from '@/components/settings/appearanc
 import { useThemeActionExecution } from '@/components/settings/appearance/themeProfiles/useThemeActionExecution';
 import type { ThemeDevicePickerInput } from '@/components/settings/appearance/themeProfiles/useThemeDevicePicker';
 import type { ThemeActionCardPresentation } from '@/components/sessions/transcript/references/transcriptThemeAction';
-import { useLocalSetting } from '@/sync/domains/state/storage';
-import { useThemeLibraryEntry, useThemeProfileDocument } from '@/sync/store/useThemeProfiles';
+import { useThemeLibraryEntry, useThemeProfileDocument, useThemeProfileReferenceSelection } from '@/sync/store/useThemeProfiles';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { t } from '@/text';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { prepareThemeProfileCss } from '@/theme/css/prepareThemeCss';
-import { readThemeProfileReferenceSelection } from '@/theme/profiles/themeProfilePersistence';
 import { projectThemeLibraryEntry, projectThemeMiniature } from '@/theme/profiles/themeProfilePresentation';
 import { getThemeTryOnOwner } from '@/theme/profiles/themeTryOnRuntime';
 import { ThemeActionResultView } from './ThemeActionResultView';
@@ -25,16 +24,15 @@ export function ThemeActionResult({ presentation, fallback }: Readonly<{ present
     const execute = useThemeActionExecution();
     const router = useRouter();
     const owner = getThemeTryOnOwner();
-    const preview = React.useSyncExternalStore(owner.subscribe, owner.read, owner.read);
+    const presented = useLayoutPresentationActive();
     const call = presentation.call;
     const mode = call.actionId === THEME_ACTION_IDS.tryOn ? call.input.mode : call.output.applied.mode;
     const reference = call.actionId === THEME_ACTION_IDS.apply ? call.input.ref
         : presentation.replayTry ? projectThemeLibraryEntry(presentation.replayTry.input.document).reference : null;
-    const entry = useThemeLibraryEntry(reference);
+    const entry = useThemeLibraryEntry(reference, presented);
     const [created] = React.useState(() => call.actionId === THEME_ACTION_IDS.tryOn && entry === null);
-    const selection = useLocalSetting('themeProfileSelection');
-    const selected = React.useMemo(() => readThemeProfileReferenceSelection(selection)[mode], [selection, mode]);
-    const selectedDocument = useThemeProfileDocument(selected).document;
+    const selected = useThemeProfileReferenceSelection(presented)[mode];
+    const selectedDocument = useThemeProfileDocument(selected, presented).document;
     const currentSelection = React.useMemo(() => selected && !selectedDocument ? undefined : ({
         miniature: projectThemeMiniature(selectedDocument ? { ...selectedDocument.profile, assetAppearance: mode }
             : { assetAppearance: mode, overrides: { light: {}, dark: {} } }),
@@ -43,9 +41,6 @@ export function ThemeActionResult({ presentation, fallback }: Readonly<{ present
     // One card retains its initial comparison facts while Keep changes the selected appearance.
     const before = React.useRef(currentSelection);
     if (!before.current && currentSelection) before.current = currentSelection;
-    // Only the retained live preview is a CSS compiler identity. Transcript schemas rebuild documents.
-    const surfaceStyles = React.useMemo(() => preview?.document ? prepareThemeProfileCss(preview.document.profile)[preview.mode] : undefined,
-        [preview]);
     const [target, setTarget] = React.useState<ThemeDevicePickerInput['theme'] | null>(null);
     const [distribution, setDistribution] = React.useState<ThemeResultDistribution | null>(null);
     const anchorRef = React.useRef<unknown>(null);
@@ -66,7 +61,6 @@ export function ThemeActionResult({ presentation, fallback }: Readonly<{ present
             miniature: projectThemeMiniature({ assetAppearance: mode, overrides: { light: {}, dark: {} } }) } : undefined,
         created,
         here: t('themeDevices.thisDevice'), before: presentation.replayTry ? before.current : undefined,
-        surfaceStyles,
         onEdit,
         onUseOtherDevices: setTarget }, execute);
     if (!facts) return fallback ?? null;

@@ -1,4 +1,6 @@
+import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import parse from 'css-tree/lib/parser';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { THEME_ACTION_IDS, ThemeActionInputSchemas, ThemeActionOutputSchemas,
@@ -65,13 +67,27 @@ describe('theme proposal card controller', () => {
         // The preview owner prepares its retained body before the card consumes the fact.
         readSurfaceStyles();
         const parsesBeforeCard = vi.mocked(parse).mock.calls.length;
-        const hook = await renderHook(() => useThemeActionResultModel(presentation,
-            { preview: state.owner, entry: null, created: true, here: 'here', surfaceStyles: readSurfaceStyles(),
-                onUseOtherDevices: distribute, onEdit: edit }, execute));
+        let presented = true;
+        let renders = 0;
+        const hook = await renderHook(() => { renders++; return useThemeActionResultModel(presentation,
+            { preview: state.owner, entry: null, created: true, here: 'here',
+                onUseOtherDevices: distribute, onEdit: edit }, execute); }, {
+            wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active={presented}>{children}</PluginSurfaceFocusEligibilityProvider>,
+        });
         expect(vi.mocked(parse).mock.calls.length, 'the card consumes the preview owner table without parsing CSS').toBe(parsesBeforeCard);
         expect(hook.getCurrent()?.options?.map(option => option.miniature.mode)).toEqual(['dark', 'dark', 'dark']);
         hook.getCurrent()!.onEdit!();
         expect(edit).toHaveBeenCalledWith({ kind: 'document', document: presentation.options.at(-1)!.call.input.document });
+        presented = false;
+        await hook.rerender();
+        renders = 0;
+        for (let index = 0; index < 10; index++) await act(async () => {
+            state.owner.begin({ document: themeActionDocument(`Hidden-${index}`), mode: 'dark', origin: { kind: 'agent' } });
+        });
+        expect(renders).toBe(0);
+        presented = true;
+        await hook.rerender();
+        expect(hook.getCurrent()?.phase.kind).toBe('replaced');
         for (const key of ['A', 'B', 'A']) {
             await act(async () => hook.getCurrent()!.onTryOption(key));
             await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ theme: { name: key }, currentOptionKey: key, busy: null }));

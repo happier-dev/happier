@@ -10,6 +10,8 @@ import type { ThemeUiActionExecute } from '@/components/settings/appearance/them
 import type { ThemeDevicePickerInput } from '@/components/settings/appearance/themeProfiles/useThemeDevicePicker';
 import type { ThemeActionCardPresentation, TranscriptThemeTry } from '@/components/sessions/transcript/references/transcriptThemeAction';
 import type { ThemeActionResultViewProps, ThemeResultOperation, ThemeResultPhase, ThemeResultTheme } from '@/components/tools/renderers/system/themeActionResultViewTypes';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { prepareThemeProfileCss } from '@/theme/css/prepareThemeCss';
 
 type Kept = ThemeActionOutput<typeof THEME_ACTION_IDS.keep>;
 type Applied = ThemeActionOutput<typeof THEME_ACTION_IDS.apply>;
@@ -27,8 +29,6 @@ export type ThemeActionCardFacts = Readonly<{
     appliedTheme?: Pick<ThemeResultTheme, 'name' | 'mode' | 'miniature'>;
     created: boolean;
     here: string;
-    /** Selected preview/opened-detail table, already prepared by its runtime owner. */
-    surfaceStyles?: ThemeResultTheme['surfaceStyles'];
     /** Facts of the prior selection from the existing opened/runtime owner, never persisted by the card. */
     before?: Readonly<{ miniature: ThemeResultTheme['miniature']; surfaceStyles?: ThemeResultTheme['surfaceStyles'] }>;
     onEdit?: (target: ThemeActionCardEdit) => void;
@@ -45,7 +45,11 @@ function projectTryEntry(call: TranscriptThemeTry) {
 /** Card-local presentation and replay data; every effect goes through the existing Action front door. */
 export function useThemeActionResultModel(input: ThemeActionCardPresentation, facts: ThemeActionCardFacts,
     execute: ThemeUiActionExecute): ThemeActionResultViewProps | null {
-    const preview = React.useSyncExternalStore(facts.preview.subscribe, facts.preview.read, facts.preview.read);
+    const presented = useLayoutPresentationActive();
+    const subscribePreview = React.useCallback((listener: () => void) => presented ? facts.preview.subscribe(listener) : () => {}, [presented, facts.preview]);
+    const preview = React.useSyncExternalStore(subscribePreview, facts.preview.read, facts.preview.read);
+    // The retained preview is the compiler identity; transcript inputs rebuild documents.
+    const surfaceStyles = React.useMemo(() => preview?.document ? prepareThemeProfileCss(preview.document.profile)[preview.mode] : undefined, [preview]);
     const call = input.call;
     const [outcome, setOutcome] = React.useState<Outcome>(() => {
         if (call.actionId === THEME_ACTION_IDS.tryOn) return { kind: 'preview', output: call.output };
@@ -130,7 +134,7 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
     const coverage = outcome.kind === 'preview' ? outcome.output.coverage : null;
     return { theme: { name: display.name, mode: selected?.input.mode ?? display.mode,
         miniature: previewEntry?.miniature ?? display.miniature,
-        surfaceStyles: outcome.kind === 'preview' && preview?.previewRef === outcome.output.previewRef ? facts.surfaceStyles : undefined,
+        surfaceStyles: outcome.kind === 'preview' && preview?.previewRef === outcome.output.previewRef ? surfaceStyles : undefined,
         created: facts.created }, phase, busy, here: facts.here,
         before: facts.before?.miniature, beforeSurfaceStyles: facts.before?.surfaceStyles,
         options, currentOptionKey, coverage,
