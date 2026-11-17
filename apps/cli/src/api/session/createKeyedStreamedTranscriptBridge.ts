@@ -106,7 +106,12 @@ export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArg
       const summaries: readonly StreamedTranscriptFlushSummary[] = await Promise.all(
         Array.from(writerByStreamKey.values())
           .filter((entry) => !args.selectStream || args.selectStream(entry.args))
-          .map((entry) => entry.writer.flushAll(args)),
+          .map((entry) => entry.writer.flushAll({
+            ...args,
+            // Save text before the tool while the named native message still owns
+            // this row and its source timestamps.
+            keepOpen: args.reason === 'tool-call-boundary' && entry.args.messageId !== undefined,
+          })),
       );
       for (const [streamKey, { writer }] of writerByStreamKey) {
         if (!writer.hasPendingSegments()) writerByStreamKey.delete(streamKey);

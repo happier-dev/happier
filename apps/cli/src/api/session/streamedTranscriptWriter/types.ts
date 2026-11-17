@@ -24,6 +24,7 @@ export type StreamedTranscriptWriter = Readonly<{
   flushAll: (opts: {
     reason: 'tool-call-boundary' | 'turn-end' | 'abort';
     interruptedReason?: string;
+    keepOpen?: boolean;
   }) => Promise<StreamedTranscriptFlushSummary>;
 }>;
 

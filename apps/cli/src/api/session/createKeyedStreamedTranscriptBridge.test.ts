@@ -25,6 +25,81 @@ describe('keyed transcript recovery', () => {
     } finally { bridge.clear(); }
   });
 
+  it.each(['Inspecting the working tree', 'Inspected the working tree'])(
+    'reconciles the native final %j with the same durable row after a tool boundary',
+    async (finalText) => {
+      vi.useFakeTimers();
+      const rows = new Map<string, { message: string; startedAtMs: number; seq: number; sourceId?: unknown }>();
+      const checkpointWrites: string[] = [];
+      let livePublications = 0;
+      const bridge = createKeyedStreamedTranscriptBridge({
+        provider: 'opencode',
+        initialCheckpointDelayMs: 60_000,
+        createSessionForStream: () => ({
+          sendAgentMessageEphemeral: () => {
+            livePublications += 1;
+            return { accepted: true, epoch: 0 };
+          },
+          enqueueAgentMessageCommitted: async (_provider, body, opts) => {
+            const meta = opts.meta?.happierStreamSegmentV1;
+            if (body.type !== 'message' || !meta || typeof meta !== 'object'
+              || !('startedAtMs' in meta) || typeof meta.startedAtMs !== 'number') {
+              throw new Error('Expected an assistant stream snapshot');
+            }
+            const existing = rows.get(opts.localId);
+            if (existing && existing.startedAtMs !== meta.startedAtMs) {
+              throw new Error('Home rejects a different source creation time for an existing local ID');
+            }
+            const seq = existing?.seq ?? rows.size + 3;
+            checkpointWrites.push(opts.localId);
+            rows.set(opts.localId, {
+              message: body.message,
+              startedAtMs: meta.startedAtMs,
+              seq,
+              ...('sourceMessageId' in meta ? { sourceId: meta.sourceMessageId } : {}),
+            });
+            return { persisted: true, delivered: true, committedSequence: seq };
+          },
+        }),
+      });
+      const stream = {
+        streamKey: 'named-assistant-stream',
+        sidechainId: null,
+        messageId: 'opencode:native-session:native-message',
+        foregroundTurnId: 'turn-1',
+      };
+      try {
+        vi.setSystemTime(1000);
+        bridge.appendAssistantDelta({ ...stream, deltaText: 'Inspecting the working tree' });
+        vi.setSystemTime(1100);
+        await bridge.flushAll({ reason: 'tool-call-boundary' });
+        expect(rows.get(stream.messageId)).toEqual({
+          message: 'Inspecting the working tree', startedAtMs: 1000, seq: 3,
+        });
+
+        const publicationsAtCheckpoint = livePublications;
+        await bridge.flushAll({ reason: 'tool-call-boundary' });
+        expect(livePublications).toBe(publicationsAtCheckpoint);
+        expect(checkpointWrites).toEqual([stream.messageId]);
+
+        vi.setSystemTime(2000);
+        const final = await bridge.finalizeSegment({
+          ...stream,
+          channel: 'assistant',
+          sourceMessageId: stream.messageId,
+          text: finalText,
+        });
+        expect(final?.segments).toMatchObject([{ didDeliver: true, committedSequence: 3 }]);
+        expect(rows.get(stream.messageId)).toEqual({
+          message: finalText, startedAtMs: 1000, seq: 3, sourceId: stream.messageId,
+        });
+      } finally {
+        bridge.clear();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it('flushes only selected stream scope and leaves child text open for later deltas', async () => {
     vi.useFakeTimers();
     const stored: unknown[] = [];

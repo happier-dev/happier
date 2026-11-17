@@ -511,18 +511,22 @@ export function createStreamedTranscriptWriter(params: {
     interruptedReason?: string;
     admission?: CommittedTranscriptAdmission;
     retainForTurnEnd?: boolean;
+    keepOpen?: boolean;
   }): Promise<StreamedTranscriptFlushSummary> => {
     const drainPromises: Promise<void>[] = [];
+    const boundaryIntent = {
+      state: opts.reason === 'abort' ? 'interrupted' : 'complete',
+      interruptedReason: opts.interruptedReason,
+    } as const;
 
     for (const segment of flushedSegments) {
-      segment.terminalIntent ??= {
-        state: opts.reason === 'abort' ? 'interrupted' : 'complete',
-        interruptedReason: opts.interruptedReason,
-      };
-      const { state, interruptedReason } = segment.terminalIntent;
+      const intent = segment.terminalIntent ?? boundaryIntent;
+      if (!opts.keepOpen) segment.terminalIntent = intent;
+      const { state, interruptedReason } = intent;
       clearDurableCheckpointTimer(segment);
       clearLiveSnapshotTimer(segment);
-      requestLivePublication(segment, { state, interruptedReason });
+      if (opts.keepOpen && didSegmentDurablyFlush(segment, state)) continue;
+      requestLivePublication(segment, intent);
       drainPromises.push((async () => {
         // A delayed ephemeral completion must settle before the same-localId durable terminal row.
         await waitForLiveDeliveryDrain(segment);
@@ -537,7 +541,7 @@ export function createStreamedTranscriptWriter(params: {
           segments.has(segment)
           && didSegmentDurablyFlush(segment, state)
         ) {
-          if (!opts.retainForTurnEnd) segments.delete(segment);
+          if (!opts.keepOpen && !opts.retainForTurnEnd) segments.delete(segment);
         } else if (segments.has(segment)) {
           logger.infoFile('[StreamedTranscriptWriter] Terminal snapshot delivery unresolved; retained for retry', {
             localId: segment.segmentLocalId,
@@ -551,7 +555,7 @@ export function createStreamedTranscriptWriter(params: {
     }
 
     await Promise.all(drainPromises);
-    return buildFlushSummary({ flushedSegments, expectedState: (segment) => segment.terminalIntent!.state });
+    return buildFlushSummary({ flushedSegments, expectedState: (segment) => segment.terminalIntent?.state ?? boundaryIntent.state });
   };
 
   const enableDurableCommits = () => {
@@ -591,7 +595,10 @@ export function createStreamedTranscriptWriter(params: {
       const segment = Array.from(segments).find((candidate) => candidate.key === key && candidate.sourceMessageId === opts.sourceMessageId)
         ?? getExistingSegment(opts.kind, opts.sidechainId);
       if (!segment) return null;
-      segment.sourceMessageId = opts.sourceMessageId;
+      if (segment.sourceMessageId !== opts.sourceMessageId) {
+        segment.sourceMessageId = opts.sourceMessageId;
+        segment.textVersion += 1;
+      }
       overrideSegmentText(opts.kind, opts.text, opts.sidechainId);
       return await flushSegments([segment], { reason: 'turn-end', admission: opts.admission,
         retainForTurnEnd: opts.retainForTurnEnd });

@@ -775,7 +775,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   // holder and never replayed, so its streamed transcript is saved before the holder is released.
   const disposeHandoverSave = onHostedSessionHandover(async () => {
     await runtimeTranscriptProjectionSerial;
-    await runtimeMessageDeltaBridge.flushAll({ reason: 'tool-call-boundary' });
+    await runtimeMessageDeltaBridge.flushAll({ reason: 'turn-end' });
   });
   // Identity lookup mutates the recorded account, so preserve native arrival
   // order without making daemon/metadata I/O part of transcript durability.
