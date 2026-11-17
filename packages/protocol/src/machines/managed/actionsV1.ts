@@ -157,10 +157,10 @@ export const MachineSetupApplyInputV1Schema = lazyZodSchema(() => z.strictObject
 export type MachineSetupApplyInputV1 = z.infer<typeof MachineSetupApplyInputV1Schema>;
 export const MachineSetupPlanInputV1Schema = lazyZodSchema(() => z.strictObject({
   homeId: id(), machineId: id(), sources: z.optional(MachineSetupSourceApplyV1Schema),
+  candidatePreset: z.optional(MachineSetupPresetCandidateV1Schema),
   exclusions: z.optional(MachineSetupExclusionsV1Schema), removeItemKeys: z.optional(removalKeys()),
   mode: z.optional(z.enum(['check', 'effects'])),
   appChildren: z.optional(z.array(MachineSetupAppChildV1Schema)),
-  candidatePreset: z.optional(MachineSetupPresetCandidateV1Schema),
   updates: z.optional(z.strictObject({ scope: z.enum(['security', 'all']) })),
 }).check(z.refine(input => input.candidatePreset === undefined || input.sources === undefined && input.updates === undefined,
 { message: 'A candidate replaces one attached preset, without a separate source proposal.' }),
@@ -347,10 +347,10 @@ const MachineSetupCreationOriginV1Schema = lazyZodSchema(() => z.strictObject({ 
 /** Private Home read purpose: origin matching never certifies attachment copies. */
 export const MachineSetupResolveInputV1Schema = lazyZodSchema(() => z.union([
   MachineSetupSourcesApplyInputV1Schema,
+  z.strictObject({ homeId: id(), machineId: id(), candidatePreset: MachineSetupPresetCandidateV1Schema }),
   z.strictObject({ homeId: id(), machineId: id(), purpose: z.literal('creationOrigin'),
     candidates: z.array(MachineSetupSourceApplyEntryV1Schema).check(z.refine(
       candidates => candidates.every(candidate => candidate.kind === 'accountPresetOpaque'),
-  z.strictObject({ homeId: id(), machineId: id(), candidatePreset: MachineSetupPresetCandidateV1Schema }),
       { message: 'Creation origin candidates are Account Preset copies.' })),
   }),
 ]));
