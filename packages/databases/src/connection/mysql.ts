@@ -197,7 +197,8 @@ export async function openMysqlConnection(connectionString: string, signal?: Abo
             if (error instanceof MysqlOperationError) return error.failure;
             if (error instanceof DatabaseStatementError) return { ok: false, status: 'failed', code: error.code, reason: error.reason };
             const cause = mysqlFailureCause(error);
-            if (input.operation === 'stats.read' && cause.code === 'ER_TABLEACCESS_DENIED_ERROR' && executionOptions.stats) {
+            if (input.operation === 'stats.read' && executionOptions.stats
+                && (cause.code === 'ER_TABLEACCESS_DENIED_ERROR' || cause.code === 'ER_COLUMNACCESS_DENIED_ERROR')) {
                 return statsOperationResultV1('mysql', input.request,
                     { status: 'unavailable', reason: 'visibility_restricted' }, [], executionOptions.stats);
             }

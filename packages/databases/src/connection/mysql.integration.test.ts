@@ -66,6 +66,15 @@ it.skipIf(!image)('uses container-local MySQL authority with lossless native fra
             expect(await connection.execute({ operation: 'statement.run', target, mode: 'read', statement: {
                 sql: 'SELECT * FROM performance_schema.threads', parameters: [],
             } })).toMatchObject({ ok: false, code: 'database_engine_error', cause: { code: 'ER_TABLEACCESS_DENIED_ERROR' } });
+            await sql("GRANT SELECT (THREAD_ID) ON performance_schema.threads TO 'happier_ro'@'127.0.0.1'; GRANT SELECT ON performance_schema.events_statements_current TO 'happier_ro'@'127.0.0.1'; GRANT SELECT ON performance_schema.data_lock_waits TO 'happier_ro'@'127.0.0.1'");
+            expect(await connection.execute({ operation: 'stats.read', target,
+                request: { kind: 'stats.read', group: 'activity', selection: { page: { rows: 10 } } },
+            })).toMatchObject({ ok: true, operation: 'stats.read', observation: {
+                status: 'unavailable', group: 'activity', reason: 'visibility_restricted',
+            } });
+            expect(await connection.execute({ operation: 'statement.run', target, mode: 'read', statement: {
+                sql: 'SELECT PROCESSLIST_STATE FROM performance_schema.threads', parameters: [],
+            } })).toMatchObject({ ok: false, code: 'database_engine_error', cause: { code: 'ER_COLUMNACCESS_DENIED_ERROR' } });
             expect(await connection.execute({ operation: 'statement.run', target, mode: 'write', statement: {
                 sql: "UPDATE items SET note='forbidden'", parameters: [],
             } })).toMatchObject({ ok: false });
