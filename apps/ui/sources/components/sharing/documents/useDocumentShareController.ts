@@ -4,11 +4,15 @@ import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { flattenWidgetLayoutWidgetsV1, getWidgetSharedInputIssuesV1, readWidgetConnectedAccountPurposeV1, readWidgetSurfaceArtifactV1, WidgetInstanceActionOutputSchemasV1,
     type WidgetInstanceRefV1 } from '@happier-dev/protocol/widgets';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { parseWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
 
 import { sessionAccessSubjectKey } from '@/components/sessions/access/projectSessionAccessEditorSnapshot';
 import { useSessionAccessDirectory } from '@/components/sessions/access/useSessionAccessDirectory';
 import { useResourceGrantGroupDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useWorkflowTriggerSets } from '@/components/workflows/triggers/useWorkflowTriggerSets';
+import { readArtifactAccessCapabilities } from '@/sync/domains/artifacts/artifactAccessCapabilities';
 import { presentSharePrincipal } from '../sharePrincipalPresentation';
 import { useShareViewerProfile } from '../useShareViewerProfile';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -48,6 +52,7 @@ type State = Readonly<{
 const IDLE: ShareOperationModel = { kind: 'idle' };
 const NO_TEAM_CONTEXTS: readonly [] = [];
 const NO_GRANTS: readonly ArtifactAccessGrantRowV1[] = [];
+const NO_AUDIENCE: readonly PrincipalRefV1[] = [];
 type PrivateChoice = DocumentPrivateChoice & Readonly<{ ref: WidgetInstanceRefV1;
     inputPath?: string; binding?: unknown; purpose?: string }>;
 type DashboardReview = Readonly<{ phase: 'initial' | 'ready' | 'error'; choices: readonly PrivateChoice[]; issue?: ShareUiError }>;
@@ -107,6 +112,8 @@ function removalConsequences(removed: PrincipalRefV1, name: string, grants: read
 
 export function useDocumentShareController(input: Readonly<{ artifactId: string; kind?: DocumentShareKind; scope: ServerAccountScope;
     requestedAudience?: readonly PrincipalRefV1[];
+    /** The opened profile sheet consumes the selected-subject query, never the whole catalog. */
+    reviewLinkedWorkflows?: boolean;
 }> | null): Readonly<{
     model: ShareSheetModel;
     actions: ShareSheetActions;
@@ -121,6 +128,16 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
     missingAudience: readonly PrincipalRefV1[] | undefined;
     /** Apply only the owner's reviewed missing audience, returning acknowledged partial progress. */
     shareMissingAudience(): Promise<DocumentAudienceShareResult>;
+    linkedWorkflows?: Readonly<{
+        status: 'loading' | 'ready' | 'failed';
+        rows: readonly Readonly<{ ref: string }>[];
+        /** Newly acknowledged profile recipients; Workflow grants require their own explicit choice. */
+        audience: readonly PrincipalRefV1[];
+        dismiss(): void;
+        retry(): void;
+        loadMore(): void;
+        nextCursor: string | null;
+    }>;
     privateChoices: readonly DocumentPrivateChoice[];
 }> {
     const artifactId = input?.artifactId ?? null;
@@ -131,6 +148,21 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
     if (!sameStrictJsonValue(audienceRef.current ?? null, input?.requestedAudience ?? null)) audienceRef.current = input?.requestedAudience;
     const requestedAudience = audienceRef.current;
     const identity = scope ? JSON.stringify([scope.serverId, scope.accountId, artifactId, requestedAudience]) : null;
+    const reviewLinkedWorkflows = input?.kind === 'approval-profile.v1' && input.reviewLinkedWorkflows === true;
+    const { binding } = useServerCredentialAccountScopeBinding(reviewLinkedWorkflows ? scope?.serverId : '');
+    const linkedRead = useWorkflowTriggerSets(reviewLinkedWorkflows && scope && artifactId
+        ? { subject: { kind: 'approvalProfile', serverId: scope.serverId, profileId: artifactId } } : null,
+    binding?.scope.accountId === scope?.accountId ? binding : null);
+    const linkedRows = React.useMemo(() => {
+        const refs = new Set<string>();
+        for (const row of linkedRead.attachedPage?.attached ?? []) {
+            if (row.relation === 'direct' && row.setUpBy.accountId === scope?.accountId
+                && parseWorkflowDefinitionRefV1(row.workflowDefinitionId)?.kind === 'artifact'
+                && readArtifactAccessCapabilities(row.workflowAccess?.access).canShare) refs.add(row.workflowDefinitionId);
+        }
+        return [...refs].map(ref => ({ ref }));
+    }, [linkedRead.attachedPage, scope?.accountId]);
+    const [linkedAudience, setLinkedAudience] = React.useState<Readonly<{ identity: string; audience: readonly PrincipalRefV1[] }> | null>(null);
     const [execute] = React.useState(() => createFrontDoorActionExecute());
     const [state, setState] = React.useState<State>({ phase: 'initial', response: null, operations: {}, confirmingRemoval: null });
     const [query, setQuery] = React.useState('');
@@ -268,9 +300,16 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
                 operations: { ...operations, [key]: { kind: 'error', error: issue! } } };
         });
         if (parsed?.success && requestedAudience !== undefined && refreshReviewedAudience) await load();
+        if (!issue && reviewLinkedWorkflows && identity !== null && mutation.actionId === 'artifact.access.grants.set') {
+            setLinkedAudience(previous => {
+                const audience = previous?.identity === identity ? previous.audience : NO_AUDIENCE;
+                return audience.some(row => sessionAccessSubjectKey(row) === sessionAccessSubjectKey(mutation.principal)) ? previous
+                    : { identity, audience: [...audience, mutation.principal] };
+            });
+        }
         setRevision((value) => value + 1);
         return issue ? { ok: false, error: issue } : { ok: true };
-    }, [artifactId, execute, identity, scope?.serverId, scope?.accountId, requestedAudience, load]);
+    }, [artifactId, execute, identity, scope?.serverId, scope?.accountId, requestedAudience, load, reviewLinkedWorkflows]);
 
     const response = input === null ? null : state.response;
     const isOwner = response?.access === 'owner';
@@ -409,6 +448,15 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
         audience,
         missingAudience,
         shareMissingAudience,
+        ...(reviewLinkedWorkflows ? { linkedWorkflows: {
+            status: linkedRead.status,
+            rows: linkedRows,
+            audience: linkedAudience?.identity === identity ? linkedAudience.audience : NO_AUDIENCE,
+            dismiss: () => setLinkedAudience(null),
+            retry: linkedRead.retry,
+            loadMore: linkedRead.loadMore,
+            nextCursor: linkedRead.attachedPage?.nextCursor ?? null,
+        } } : {}),
         privateChoices,
     };
 }

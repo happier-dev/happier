@@ -33,7 +33,8 @@ export type DocumentShareSheetProps = Readonly<{
 
 const DEFAULT_TEST_ID = 'document-share-editor';
 function ScopedDocumentShareSheet(props: DocumentShareSheetProps & Readonly<{ scope: ServerAccountScope }>): React.ReactElement {
-    const controller = useDocumentShareController({ artifactId: props.artifactId, kind: props.kind, scope: props.scope });
+    const controller = useDocumentShareController({ artifactId: props.artifactId, kind: props.kind, scope: props.scope,
+        reviewLinkedWorkflows: props.kind === 'approval-profile.v1' });
     const publicLinkEnabled = useFeatureEnabled('sharing.public', { scopeKind: 'spawn', serverId: props.scope.serverId });
     const audience = props.kind === 'bot_template.v1' ? 'signed_in' : 'anonymous';
     const canManagePublicLink = (audience === 'signed_in' || publicLinkEnabled) && getArtifactKindPolicyV1(props.kind, audience).publicLinkAllowed && controller.model.owner !== null

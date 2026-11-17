@@ -106,6 +106,8 @@ const host = vi.hoisted(() => ({
     binaryHtml: false,
     blobUnavailable: false,
     settings: {} as Record<string, unknown>,
+    attachedWorkflows: [] as import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1').WorkflowAttachedTriggerV1[],
+    automationQueries: [] as unknown[],
 }));
 
 const WORKFLOW_DOCUMENT = {
@@ -168,6 +170,11 @@ async function serveHome(): Promise<void> {
             });
             // The sheet targets its captured profile scope, not the focused Home's transport.
             if (request.home !== 'home') return undefined;
+            if (request.path === '/v3/automations/query' && request.method === 'POST') {
+                host.automationQueries.push(request.body);
+                return Response.json({ automations: [], attached: host.attachedWorkflows,
+                    nextCursor: null, skippedNotSharedCount: 0 });
+            }
             if (request.path === '/v1/artifacts/read' && request.method === 'POST') {
                 return createArtifactReadBatchHttpResponse(request.body, artifactId => {
                     const approval = host.approvalArtifacts.get(artifactId);
@@ -654,6 +661,8 @@ describe('DocumentShareSheet', () => {
         host.binaryHtml = false;
         host.blobUnavailable = false;
         host.settings = {};
+        host.attachedWorkflows = [];
+        host.automationQueries = [];
         await serveHome();
         vi.useFakeTimers();
     });
@@ -699,6 +708,47 @@ describe('DocumentShareSheet', () => {
             { serverId: host.serverId, surface: 'ui', authority: 'present_user' });
         expect(warm).toMatchObject({ ok: true, result });
         expect(host.artifactRequests).toHaveLength(reads);
+    });
+
+    it('offers the sharer’s own shareable linked Workflows only in the opened profile sheet, after a profile grant acknowledgement', async () => {
+        host.document = { header: { kind: 'approval-profile.v1', name: 'Release' },
+            body: JSON.stringify({ kind: 'approval-profile.v1', profile: { name: 'Release' } }) };
+        host.grants = [];
+        await activateWidgetHome();
+        vi.useRealTimers();
+        const { WorkflowAttachedTriggerV1Schema } = await import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1');
+        const workflow = '11111111-1111-4111-8111-111111111111';
+        const other = '22222222-2222-4222-8222-222222222222';
+        const row = (triggerId: string, ref: string, author: string, access: 'owner' | 'view') => WorkflowAttachedTriggerV1Schema.parse({
+            automationId: `linked-${triggerId}`, triggerId, workflowDefinitionId: ref,
+            workflowAccess: { ownerAccountId: 'owner', access }, relation: 'direct', enabled: true, revision: 1,
+            summary: { kind: 'action', phase: 'before', actionIds: ['deployments.deploy'] },
+            setUpBy: { accountId: author, displayName: null },
+        });
+        host.attachedWorkflows = [row('own', workflow, 'owner', 'owner'), row('duplicate', workflow, 'owner', 'owner'),
+            row('someone-else', other, 'another', 'owner'), row('cannot-share', other, 'owner', 'view')];
+        const hook = await renderHook(({ opened }) => useDocumentShareController({ artifactId: 'profile-1', kind: 'approval-profile.v1',
+            scope: { serverId: host.serverId, accountId: 'owner' }, reviewLinkedWorkflows: opened }), { initialProps: { opened: false } });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+        expect(host.automationQueries).toEqual([]);
+        await hook.rerender({ opened: true });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().linkedWorkflows?.status).toBe('ready'));
+        expect(host.automationQueries).toEqual([expect.objectContaining({ subject: {
+            kind: 'approvalProfile', serverId: host.serverId, profileId: 'profile-1',
+        } })]);
+        expect(hook.getCurrent().linkedWorkflows?.rows.map(row => row.ref)).toEqual([workflow]);
+        expect(hook.getCurrent().linkedWorkflows?.audience).toEqual([]);
+        const principal = { kind: 'team' as const, teamId: 'studio' };
+        await act(async () => hook.getCurrent().actions.addPrincipal(principal));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().linkedWorkflows?.audience,
+            JSON.stringify({ issue: hook.getCurrent().issue, grants: hook.getCurrent().model.grants, requests: host.requests })).toEqual([principal]));
+        await act(async () => hook.getCurrent().linkedWorkflows?.dismiss());
+        expect(hook.getCurrent().linkedWorkflows?.audience).toEqual([]);
+        expect(host.requests.filter(request => request.method !== 'GET')).toEqual([
+            { method: 'PUT', body: { artifactId: 'profile-1', principal, accessLevel: 'view' } },
+        ]);
+        expect(host.automationQueries).toHaveLength(1);
+        await hook.unmount();
     });
 
     it.each(['owner', 'admin', 'edit', 'view'] as const)('reads attached dashboard grants through the sharing reader as %s, with no idle or unrelated reads', async access => {
