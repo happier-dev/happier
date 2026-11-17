@@ -1,5 +1,5 @@
 import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
 
 import { runManagedChildCommand, resolveSignalExitCode } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
@@ -35,7 +35,8 @@ const cliPath = resolve(repoRoot, 'packages', 'tests', 'src', 'testkit', 'maestr
 
 const result = await runManagedChildCommand({
   command: process.execPath,
-  args: ['--import', tsxImportHook, cliPath, ...process.argv.slice(2)],
+  // Node reads a bare Windows path here as a URL with scheme `c:` (testkit `toNodeImportSpecifier`).
+  args: ['--import', process.platform === 'win32' ? pathToFileURL(tsxImportHook).href : tsxImportHook, cliPath, ...process.argv.slice(2)],
   spawnOptions: {
     stdio: 'inherit',
     env: process.env,

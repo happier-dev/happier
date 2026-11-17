@@ -1,18 +1,19 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync as defaultExistsSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { posix, resolve, win32 } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export function resolveTsxEntrypointLaunchSpec(params) {
   const cwd = params.cwd ?? process.cwd();
   const processExecPath = params.processExecPath ?? process.execPath;
   const requireResolve = params.requireResolve ?? createRequire(import.meta.url).resolve;
   const existsSync = params.existsSync ?? defaultExistsSync;
+  const platform = params.platform ?? process.platform;
+  const path = platform === 'win32' ? win32 : posix;
 
   const tsxPackageJsonPath = requireResolve('tsx/package.json');
-  const tsxPackageDir = dirname(tsxPackageJsonPath);
-  const tsxImportHookPath = join(tsxPackageDir, 'dist', 'esm', 'index.mjs');
+  const tsxImportHookPath = path.join(path.dirname(tsxPackageJsonPath), 'dist', 'esm', 'index.mjs');
 
   if (!existsSync(tsxImportHookPath)) {
     throw new Error(`tsx import hook could not be resolved: ${tsxImportHookPath}`);
@@ -22,12 +23,13 @@ export function resolveTsxEntrypointLaunchSpec(params) {
     command: processExecPath,
     args: [
       '--import',
-      tsxImportHookPath,
-      resolve(cwd, params.entrypoint),
+      // Node reads a bare Windows path here as a URL with scheme `c:` (testkit `toNodeImportSpecifier`).
+      platform === 'win32' ? pathToFileURL(tsxImportHookPath, { windows: true }).href : tsxImportHookPath,
+      path.resolve(cwd, params.entrypoint),
       ...params.args,
     ],
     env: {
-      TSX_TSCONFIG_PATH: resolve(cwd, 'tsconfig.json'),
+      TSX_TSCONFIG_PATH: path.resolve(cwd, 'tsconfig.json'),
     },
   };
 }

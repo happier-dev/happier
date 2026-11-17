@@ -38,6 +38,22 @@ test('resolveTsxEntrypointLaunchSpec prefers the tsx import hook path over shell
   });
 });
 
+test('resolveTsxEntrypointLaunchSpec passes the tsx import hook to Node as a file URL on Windows', () => {
+  // Node reads a bare `C:\…` `--import` value as a URL with scheme `c:` and refuses it.
+  const spec = resolveTsxEntrypointLaunchSpec({
+    cwd: 'C:\\repo\\packages\\tests',
+    entrypoint: 'src\\testkit\\qaBed\\seedQaBedMain.ts',
+    args: [],
+    processExecPath: 'C:\\node\\node.exe',
+    platform: 'win32',
+    requireResolve: () => 'C:\\repo\\node_modules\\tsx\\package.json',
+    existsSync: () => true,
+  });
+
+  assert.equal(spec.args[0], '--import');
+  assert.match(spec.args[1], /^file:\/\/\/C:\/repo\/node_modules\/tsx\/dist\/esm\/index\.mjs$/);
+});
+
 test('packages/tests stress compose scripts use the node-safe tsx entrypoint runner', async () => {
   const packageJson = JSON.parse(await readFile(resolve(packageRoot, 'package.json'), 'utf8'));
 
