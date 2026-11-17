@@ -184,6 +184,7 @@ type PluginServiceDescriptorMap = {
 };
 
 export type PluginInvocationServicesFactoryParams = Readonly<{
+    deploymentTelemetry?: Readonly<{ bind(signal: AbortSignal): PluginServices['deploymentTelemetry'] }>;
     loggerSink: PluginInvocationLogSink;
     resolveLogger?: (seed: PluginInvocationServicesSeed) => PluginLoggerService;
     events?: PluginInvocationEventsHost;
@@ -598,6 +599,17 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
             return Object.freeze({ prepare: unavailableMethod('deploymentExecEnv', code, diagnostic) });
         },
         createAvailable({ deploymentExecEnv }): PluginServices['deploymentExecEnv'] | null { return deploymentExecEnv; },
+    },
+    deploymentTelemetry: {
+        id: 'deploymentTelemetry', publicProperty: 'deploymentTelemetry', requiredInvocationPlacement: 'daemon',
+        unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginServices['deploymentTelemetry'] {
+            const fail = unavailableMethod('deploymentTelemetry', code, diagnostic);
+            return Object.freeze({ readAssignments: fail, subscribeAssignmentsChanged: fail, exposeEndpoint: fail });
+        },
+        createAvailable({ seed, params }): PluginServices['deploymentTelemetry'] | null {
+            return params.deploymentTelemetry?.bind(seed.signal) ?? null;
+        },
     },
     machineProvisioners: {
         id: 'machineProvisioners', publicProperty: 'machineProvisioners', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,

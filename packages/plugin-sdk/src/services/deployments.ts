@@ -1,4 +1,5 @@
 /** @moduleRealm daemon */
+import type { DeploymentTelemetryAssignmentsV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 
 /** Exact deployment admitted by the host's target-role invocation. No paths or source overrides. */
 export type DeploymentSourceMaterializationRequestV1 = Readonly<{
@@ -27,4 +28,15 @@ export interface DeploymentSourceMaterializationV1 {
 /** Invocation admission chooses source, installation and destination from the approved target role. */
 export interface DeploymentSourceMaterializationPortV1 {
     materialize(input: DeploymentSourceMaterializationRequestV1, options?: Readonly<{ signal?: AbortSignal }>): Promise<DeploymentSourceMaterializationV1>;
+}
+
+/** Home-authoritative assignments contain token hashes, never raw tokens. */
+export type DeploymentTelemetryAssignmentV1 = Readonly<DeploymentTelemetryAssignmentsV1['assignments'][number]>;
+
+/** Same daemon's production collector, bound to its captured Account and Machine. */
+export interface DeploymentTelemetryServiceV1 {
+    readAssignments(options?: Readonly<{ signal?: AbortSignal }>): Promise<readonly DeploymentTelemetryAssignmentV1[]>;
+    subscribeAssignmentsChanged(refresh: () => Promise<void>): () => void;
+    /** Runtime-only endpoint getter; launch never reads assignments or starts another listener. */
+    exposeEndpoint(read: () => string | null): () => void;
 }

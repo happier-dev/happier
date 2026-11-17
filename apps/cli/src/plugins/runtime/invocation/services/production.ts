@@ -179,6 +179,7 @@ function readListenerFailureMessage(error: unknown): string {
 }
 
 export function createProductionPluginInvocationServiceOwners(params?: Readonly<{
+    deploymentTelemetry?: Readonly<{ bind(signal: AbortSignal): PluginServices['deploymentTelemetry'] }>;
     loggerSink?: PluginInvocationLogSink;
     readSecretSources?(): import('../../lifecycle/contributions/targetSecretSources').TargetSecretSourcesV1 | undefined;
     resolveRetirementSignal?(pluginId: string): AbortSignal;
@@ -451,6 +452,7 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
         });
     const connectedAccountsHost = params?.connectedAccounts ? createConnectedAccountsHost(params.connectedAccounts) : null;
     const createServicesFactory = createPluginInvocationServicesFactory({
+        ...(params?.deploymentTelemetry ? { deploymentTelemetry: params.deploymentTelemetry } : {}),
         loggerSink,
         resolveLogger: resolveInvocationLogger,
         secretRedactor,

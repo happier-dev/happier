@@ -430,6 +430,7 @@ function createPluginServices(
         machineProvisioners: fixtureService(fixture, 'machineProvisioners'),
         deploymentSource: fixtureService(fixture, 'deploymentSource'),
         deploymentExecEnv: fixtureService(fixture, 'deploymentExecEnv'),
+        deploymentTelemetry: fixtureService(fixture, 'deploymentTelemetry'),
         sessions: fixtureService(fixture, 'sessions'),
         resources: fixtureService(fixture, 'resources'),
         mcp: fixtureService(fixture, 'mcp'),

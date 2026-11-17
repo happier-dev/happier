@@ -173,6 +173,8 @@ export type {
     DeploymentSourceMaterializationPortV1,
     DeploymentSourceMaterializationRequestV1,
     DeploymentSourceMaterializationV1,
+    DeploymentTelemetryAssignmentV1,
+    DeploymentTelemetryServiceV1,
 } from './services/deployments.js';
 export type { JsonValue } from './identity.js';
 export type {
