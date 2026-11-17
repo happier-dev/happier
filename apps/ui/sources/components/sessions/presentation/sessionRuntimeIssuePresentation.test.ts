@@ -68,23 +68,26 @@ describe('closed startup-failure recovery copy', () => {
             launchError: { kind: 'launch_error', code, message: 'PRIVATE_CUSTODY_BODY' } })).toContain(message);
         expect(presentSessionRuntimeIssue(issue({ code, sanitizedPreview: undefined })).message).toBe(message);
     });
-    it('says each refused model change in plain words in every locale, never its code', async () => {
+    it('says a refused model change as "Couldn\'t switch models" with its cause and next step, never as a start failure', async () => {
         for (const language of SUPPORTED_LANGUAGE_CODES) {
             await useLanguage(language);
             const messages = SESSION_MODEL_TRANSITION_FAILURE_STATUSES.map((status) => {
                 const code = formatSessionModelTransitionFailureCode(status);
-                const message = presentSessionStartupFailureCause(code);
-                expect(message, `${language}:${status}`).toBeTruthy();
-                expect(message).not.toContain('session.startFailure.');
-                expect(message).not.toContain(status);
-                expect(presentSessionRuntimeIssue(issue({ code, sanitizedPreview: 'Native refusal: native_code; service=peer' })).message,
-                    `${language}:${status}`).toBe(message);
-                return message;
+                // The Session started and replied before the switch was refused (QA-MATRIX CONT4 CP1).
+                const refused = issue({ code, sanitizedPreview: 'Native refusal: native_code; service=peer' });
+                const presented = presentSessionRuntimeIssue(refused);
+                expect(presented.summary, `${language}:${status}`).toBe(t('session.modelTransitionFailure.title'));
+                expect(presented.message, `${language}:${status}`).toContain(t(`session.modelTransitionFailure.cause.${status}`));
+                expect(presented.message).not.toContain(status);
+                expect(presented.details).toContain('Native refusal');
+                expect(presentSessionStartupFailureCause(code)).toBeNull();
+                expect(resolveSessionStartFailureNotice({ issue: refused, sessionActive: false })).toBeNull();
+                return presented.message;
             });
-            // One sentence per refusal: no two statuses read the same.
             expect(new Set(messages).size, language).toBe(messages.length);
         }
-        expect(presentSessionStartupFailureCause('session_model_transition_owner_unproven')).toBeNull();
+        expect(presentSessionRuntimeIssue(issue({ code: 'session_model_transition_owner_unproven' })).summary)
+            .not.toBe(t('session.modelTransitionFailure.title'));
     });
     it('explains a server transaction timeout without startup phase facts in every locale', async () => {
         const code = 'database_transaction_timeout';

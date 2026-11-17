@@ -108,8 +108,6 @@ function resolveSessionStartupFailureCause(
     failureCause = issue?.failureCause,
 ): string | null {
     if (code === 'database_transaction_timeout') return t('session.startFailure.cause.database_transaction_timeout');
-    const modelTransition = readSessionModelTransitionFailureStatus(code);
-    if (modelTransition) return t(`session.startFailure.modelTransition.${modelTransition}`);
     if (code === 'agent_startup_model_reconciliation_failed'
         && failureCause?.failureReason === 'model_selection_required') return t('session.startFailure.modelSelectionRequired');
     const nativeAuth = presentSessionAgentAuthRequired(issue);
@@ -267,13 +265,19 @@ export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null |
 }> {
     const resetAtMs = issue?.usageLimit?.resetAtMs;
     const resetDate = resetAtMs == null ? null : new Date(resetAtMs);
-    const localized = presentSessionContinuationFailure(issue)?.message ?? presentSessionStartupFailureCause(issue?.code, issue ?? undefined);
-    const message = presentSessionStartupFailureRecovery([issue?.code])?.message ?? localized ?? issue?.sanitizedPreview ?? null;
+    // A refused model change happens in a running Session, so it is never a start failure: its title, then the
+    // cause with its next step. The Agent's own words stay in Details.
+    const modelTransition = readSessionModelTransitionFailureStatus(issue?.code);
+    const transitionTitle = modelTransition ? t('session.modelTransitionFailure.title') : null;
+    const localized = modelTransition ? t(`session.modelTransitionFailure.cause.${modelTransition}`)
+        : presentSessionContinuationFailure(issue)?.message ?? presentSessionStartupFailureCause(issue?.code, issue ?? undefined);
+    const message = transitionTitle ? `${transitionTitle} · ${localized}`
+        : presentSessionStartupFailureRecovery([issue?.code])?.message ?? localized ?? issue?.sanitizedPreview ?? null;
     const requestId = issue?.failureCause?.requestId;
     const carrierFailure = issue?.failureCause?.carrierFailure;
     // A usage limit is said as the limit itself; the provider's advice stays in Details.
     const usageLimited = issue?.source === 'usage_limit' || issue?.code === 'usage_limit';
-    const summary = issue ? localized ?? (usageLimited ? t('session.usageLimitRecovery.banner.title') : null)
+    const summary = issue ? transitionTitle ?? localized ?? (usageLimited ? t('session.usageLimitRecovery.banner.title') : null)
         ?? readRuntimeIssueTextLine(issue.sanitizedPreview) ?? readRuntimeIssueTextLine(context?.failureText) : null;
     const raw = context?.failureText ?? issue?.sanitizedPreview ?? null;
     return {

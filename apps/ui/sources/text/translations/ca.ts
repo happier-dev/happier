@@ -7775,19 +7775,22 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         },
         // How many identical failures one transcript row stands for.
         transcriptFailureRepeated: ({ count }: { count: number }) => `${count} vegades`,
+        modelTransitionFailure: {
+          title: "No s’ha pogut canviar de model",
+          cause: {
+            restart_required: "Aquest canvi de model necessita reiniciar la sessió. Reinicia-la per fer servir el model nou.",
+            unsupported: "Aquest agent no pot canviar de model durant una sessió. Inicia una sessió nova amb aquest model.",
+            superseded: "Una tria de model més recent ha substituït aquesta.",
+            apply_failed: "L’agent no ha pogut canviar al model nou. Reinicia la sessió per canviar-lo.",
+            publication_failed_rolled_back: "El canvi de model no s’ha pogut desar, així que es continua usant el model anterior. Torna a triar el model.",
+            reconciliation_required: "Happier no ha pogut confirmar quin model fa servir aquesta sessió. Reinicia la sessió per confirmar-ho.",
+            owner_unavailable: "El model no pot canviar mentre la màquina d’aquesta sessió no és accessible. Torna-ho a provar quan torni.",
+          },
+        },
         startFailure: {
           requestId: ({ id }: { id: string }) => `ID de la sol·licitud: ${id}`,
           title: 'No s’ha pogut iniciar aquesta sessió',
           modelSelectionRequired: "Aquesta sessió necessita un model per poder iniciar-se.",
-          modelTransition: {
-            restart_required: "Aquest canvi de model necessita reiniciar la sessió.",
-            unsupported: "Aquest agent no pot canviar de model durant una sessió.",
-            superseded: "Una tria de model més recent ha substituït aquesta.",
-            apply_failed: "L’agent no ha pogut canviar al model nou.",
-            publication_failed_rolled_back: "El canvi de model no s’ha pogut desar, així que es continua usant el model anterior.",
-            reconciliation_required: "Happier no ha pogut confirmar quin model fa servir aquesta sessió.",
-            owner_unavailable: "El model no pot canviar mentre la màquina d’aquesta sessió no és accessible.",
-          },
           cause: {
             agent_startup_rpc_rejected: "L’API nativa de l’agent ha rebutjat l’inici.",
             agent_startup_transport_failed: "El transport d’inici de l’agent ha fallat.",

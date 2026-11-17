@@ -8488,19 +8488,22 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         },
         // How many identical failures one transcript row stands for.
         transcriptFailureRepeated: ({ count }: { count: number }) => `${count}-mal`,
+        modelTransitionFailure: {
+          title: "Modellwechsel fehlgeschlagen",
+          cause: {
+            restart_required: "Dieser Modellwechsel erfordert einen Neustart der Session. Starte sie neu, um das neue Modell zu verwenden.",
+            unsupported: "Dieser Agent kann das Modell während einer Session nicht wechseln. Starte eine neue Session mit diesem Modell.",
+            superseded: "Eine neuere Modellwahl hat diese ersetzt.",
+            apply_failed: "Der Agent konnte nicht zum neuen Modell wechseln. Starte die Session neu, um zu wechseln.",
+            publication_failed_rolled_back: "Der Modellwechsel konnte nicht gespeichert werden, daher bleibt das bisherige Modell aktiv. Wähle das Modell erneut.",
+            reconciliation_required: "Happier konnte nicht bestätigen, welches Modell diese Session verwendet. Starte die Session neu, um es zu klären.",
+            owner_unavailable: "Das Modell kann nicht gewechselt werden, solange der Rechner dieser Session nicht erreichbar ist. Versuche es erneut, sobald er wieder da ist.",
+          },
+        },
         startFailure: {
             requestId: ({ id }: { id: string }) => `Anfrage-ID: ${id}`,
           title: 'Diese Session konnte nicht gestartet werden',
           modelSelectionRequired: "Diese Session braucht ein Modell, bevor sie starten kann.",
-          modelTransition: {
-            restart_required: "Dieser Modellwechsel erfordert einen Neustart der Session.",
-            unsupported: "Dieser Agent kann das Modell während einer Session nicht wechseln.",
-            superseded: "Eine neuere Modellwahl hat diese ersetzt.",
-            apply_failed: "Der Agent konnte nicht zum neuen Modell wechseln.",
-            publication_failed_rolled_back: "Der Modellwechsel konnte nicht gespeichert werden, daher bleibt das bisherige Modell aktiv.",
-            reconciliation_required: "Happier konnte nicht bestätigen, welches Modell diese Session verwendet.",
-            owner_unavailable: "Das Modell kann nicht gewechselt werden, solange der Rechner dieser Session nicht erreichbar ist.",
-          },
           cause: {
             agent_startup_rpc_rejected: "Die native API des Agents hat den Start abgelehnt.",
             agent_startup_transport_failed: "Der Start-Transport des Agents ist fehlgeschlagen.",

@@ -6983,18 +6983,21 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               body: ({ count }: { count: number }) => count > 0 ? `${count} 個背景工作正在執行。重新啟動可能會停止這些工作。` : '重新啟動可能會停止此工作階段的背景工作。',
               confirmAction: '仍要重新啟動',
           },
+          modelTransitionFailure: {
+            title: "無法切換模型",
+            cause: {
+              restart_required: "此模型變更需要重新啟動工作階段。請重新啟動以使用新模型。",
+              unsupported: "此代理無法在工作階段中更換模型。請用該模型開始新的工作階段。",
+              superseded: "較新的模型選擇已取代此選擇。",
+              apply_failed: "代理未能切換到新模型。請重新啟動工作階段以完成切換。",
+              publication_failed_rolled_back: "模型變更未能儲存，因此仍在使用先前的模型。請重新選擇模型。",
+              reconciliation_required: "Happier 無法確認此工作階段正在使用哪個模型。請重新啟動工作階段以確認。",
+              owner_unavailable: "此工作階段的機器無法連線時，模型無法變更。機器恢復後請重試。",
+            },
+          },
           startFailure: {
             title: '無法啟動此工作階段',
             modelSelectionRequired: "此工作階段需要先選擇模型才能啟動。",
-            modelTransition: {
-              restart_required: "此模型變更需要重新啟動工作階段。",
-              unsupported: "此代理無法在工作階段中更換模型。",
-              superseded: "較新的模型選擇已取代此選擇。",
-              apply_failed: "代理未能切換到新模型。",
-              publication_failed_rolled_back: "模型變更未能儲存，因此仍在使用先前的模型。",
-              reconciliation_required: "Happier 無法確認此工作階段正在使用哪個模型。",
-              owner_unavailable: "此工作階段的機器無法連線時，模型無法變更。",
-            },
             cause: {
               agent_startup_rpc_rejected: "代理程式的原生 API 拒絕了啟動。",
               agent_startup_transport_failed: "代理程式啟動傳輸失敗。",

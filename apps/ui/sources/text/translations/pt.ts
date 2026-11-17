@@ -8577,19 +8577,22 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     },
     // How many identical failures one transcript row stands for.
     transcriptFailureRepeated: ({ count }: { count: number }) => `${count} vezes`,
+    modelTransitionFailure: {
+      title: "Não foi possível trocar de modelo",
+      cause: {
+        restart_required: "Esta mudança de modelo precisa reiniciar a sessão. Reinicie-a para usar o novo modelo.",
+        unsupported: "Este agente não pode trocar de modelo durante uma sessão. Inicie uma nova sessão com esse modelo.",
+        superseded: "Uma escolha de modelo mais recente substituiu esta.",
+        apply_failed: "O agente não conseguiu mudar para o novo modelo. Reinicie a sessão para trocar.",
+        publication_failed_rolled_back: "Não foi possível salvar a mudança de modelo, então o modelo anterior continua em uso. Escolha o modelo novamente.",
+        reconciliation_required: "O Happier não conseguiu confirmar qual modelo esta sessão está usando. Reinicie a sessão para confirmar.",
+        owner_unavailable: "O modelo não pode mudar enquanto a máquina desta sessão estiver inacessível. Tente novamente quando ela voltar.",
+      },
+    },
     startFailure: {
         requestId: ({ id }: { id: string }) => `ID da solicitação: ${id}`,
       title: "Não foi possível iniciar esta sessão",
       modelSelectionRequired: "Esta sessão precisa de um modelo para poder iniciar.",
-      modelTransition: {
-        restart_required: "Esta mudança de modelo precisa reiniciar a sessão.",
-        unsupported: "Este agente não pode trocar de modelo durante uma sessão.",
-        superseded: "Uma escolha de modelo mais recente substituiu esta.",
-        apply_failed: "O agente não conseguiu mudar para o novo modelo.",
-        publication_failed_rolled_back: "Não foi possível salvar a mudança de modelo, então o modelo anterior continua em uso.",
-        reconciliation_required: "O Happier não conseguiu confirmar qual modelo esta sessão está usando.",
-        owner_unavailable: "O modelo não pode mudar enquanto a máquina desta sessão estiver inacessível.",
-      },
       cause: {
         agent_startup_rpc_rejected: "A API nativa do agente rejeitou a inicialização.",
         agent_startup_transport_failed: "O transporte de inicialização do agente falhou.",

@@ -557,7 +557,8 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
     open: detailsOpen,
     onPress: () => setDetailsOpen(value => !value),
     caret: bindings.renderDetailsCaret(detailsOpen),
-    renderLabel: label => bindings.renderText({ role: 'lineAction', metrics: textMetrics, children: label }),
+    // The cause leads; its Details stays quiet in the same face, never in the recovery's ink weight.
+    renderLabel: label => bindings.renderText({ role: 'quiet', align: 'start', metrics: textMetrics, children: label }),
     focusColor: bindings.focusRing,
   };
   const detailsToggle = details ? bindings.renderDetailsToggle

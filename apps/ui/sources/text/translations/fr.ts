@@ -8311,19 +8311,22 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     },
     // How many identical failures one transcript row stands for.
     transcriptFailureRepeated: ({ count }: { count: number }) => `${count} fois`,
+    modelTransitionFailure: {
+      title: "Impossible de changer de modèle",
+      cause: {
+        restart_required: "Ce changement de modèle nécessite de redémarrer la session. Redémarrez-la pour utiliser le nouveau modèle.",
+        unsupported: "Cet agent ne peut pas changer de modèle pendant une session. Démarrez une nouvelle session avec ce modèle.",
+        superseded: "Un choix de modèle plus récent a remplacé celui-ci.",
+        apply_failed: "L’agent n’a pas pu passer au nouveau modèle. Redémarrez la session pour en changer.",
+        publication_failed_rolled_back: "Le changement de modèle n’a pas pu être enregistré ; le modèle précédent reste utilisé. Choisissez de nouveau le modèle.",
+        reconciliation_required: "Happier n’a pas pu confirmer quel modèle cette session utilise. Redémarrez la session pour le confirmer.",
+        owner_unavailable: "Le modèle ne peut pas changer tant que la machine de cette session est injoignable. Réessayez quand elle sera de retour.",
+      },
+    },
     startFailure: {
         requestId: ({ id }: { id: string }) => `Identifiant de requête : ${id}`,
       title: "Impossible de démarrer cette session",
       modelSelectionRequired: "Cette session a besoin d’un modèle pour démarrer.",
-      modelTransition: {
-        restart_required: "Ce changement de modèle nécessite de redémarrer la session.",
-        unsupported: "Cet agent ne peut pas changer de modèle pendant une session.",
-        superseded: "Un choix de modèle plus récent a remplacé celui-ci.",
-        apply_failed: "L’agent n’a pas pu passer au nouveau modèle.",
-        publication_failed_rolled_back: "Le changement de modèle n’a pas pu être enregistré ; le modèle précédent reste utilisé.",
-        reconciliation_required: "Happier n’a pas pu confirmer quel modèle cette session utilise.",
-        owner_unavailable: "Le modèle ne peut pas changer tant que la machine de cette session est injoignable.",
-      },
       cause: {
         agent_startup_rpc_rejected: "L’API native de l’agent a rejeté le démarrage.",
         agent_startup_transport_failed: "Le transport de démarrage de l’agent a échoué.",

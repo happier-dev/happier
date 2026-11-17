@@ -8777,19 +8777,22 @@ localTailscale: {
     },
     // How many identical failures one transcript row stands for.
     transcriptFailureRepeated: ({ count }: { count: number }) => `${count} 回`,
+    modelTransitionFailure: {
+      title: "モデルを切り替えられませんでした",
+      cause: {
+        restart_required: "このモデル変更にはセッションの再起動が必要です。新しいモデルを使うにはセッションを再起動してください。",
+        unsupported: "このエージェントはセッション中にモデルを変更できません。そのモデルで新しいセッションを開始してください。",
+        superseded: "より新しいモデルの選択がこの選択に置き換わりました。",
+        apply_failed: "エージェントは新しいモデルに切り替えられませんでした。切り替えるにはセッションを再起動してください。",
+        publication_failed_rolled_back: "モデルの変更を保存できなかったため、以前のモデルを使い続けています。もう一度モデルを選んでください。",
+        reconciliation_required: "このセッションが使用しているモデルを Happier が確認できませんでした。確認するにはセッションを再起動してください。",
+        owner_unavailable: "このセッションのマシンに接続できない間はモデルを変更できません。接続が戻ったらもう一度お試しください。",
+      },
+    },
     startFailure: {
         requestId: ({ id }: { id: string }) => `リクエスト ID: ${id}`,
       title: "このセッションを開始できませんでした",
       modelSelectionRequired: "このセッションを開始するにはモデルが必要です。",
-      modelTransition: {
-        restart_required: "このモデル変更にはセッションの再起動が必要です。",
-        unsupported: "このエージェントはセッション中にモデルを変更できません。",
-        superseded: "より新しいモデルの選択がこの選択に置き換わりました。",
-        apply_failed: "エージェントは新しいモデルに切り替えられませんでした。",
-        publication_failed_rolled_back: "モデルの変更を保存できなかったため、以前のモデルを使い続けています。",
-        reconciliation_required: "このセッションが使用しているモデルを Happier が確認できませんでした。",
-        owner_unavailable: "このセッションのマシンに接続できない間はモデルを変更できません。",
-      },
       cause: {
         agent_startup_rpc_rejected: "エージェントのネイティブ API が起動を拒否しました。",
         agent_startup_transport_failed: "エージェントの起動トランスポートが失敗しました。",

@@ -8471,19 +8471,22 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     },
     // How many identical failures one transcript row stands for.
     transcriptFailureRepeated: ({ count }: { count: number }) => `${count} veces`,
+    modelTransitionFailure: {
+      title: "No se pudo cambiar de modelo",
+      cause: {
+        restart_required: "Este cambio de modelo necesita reiniciar la sesión. Reiníciala para usar el nuevo modelo.",
+        unsupported: "Este agente no puede cambiar de modelo durante una sesión. Inicia una sesión nueva con ese modelo.",
+        superseded: "Una elección de modelo más reciente sustituyó a esta.",
+        apply_failed: "El agente no pudo cambiar al nuevo modelo. Reinicia la sesión para cambiarlo.",
+        publication_failed_rolled_back: "No se pudo guardar el cambio de modelo, así que se sigue usando el modelo anterior. Vuelve a elegir el modelo.",
+        reconciliation_required: "Happier no pudo confirmar qué modelo usa esta sesión. Reinicia la sesión para confirmarlo.",
+        owner_unavailable: "El modelo no puede cambiar mientras la máquina de esta sesión no esté disponible. Vuelve a intentarlo cuando vuelva.",
+      },
+    },
     startFailure: {
         requestId: ({ id }: { id: string }) => `ID de solicitud: ${id}`,
       title: "No se pudo iniciar esta sesión",
       modelSelectionRequired: "Esta sesión necesita un modelo para poder iniciarse.",
-      modelTransition: {
-        restart_required: "Este cambio de modelo necesita reiniciar la sesión.",
-        unsupported: "Este agente no puede cambiar de modelo durante una sesión.",
-        superseded: "Una elección de modelo más reciente sustituyó a esta.",
-        apply_failed: "El agente no pudo cambiar al nuevo modelo.",
-        publication_failed_rolled_back: "No se pudo guardar el cambio de modelo, así que se sigue usando el modelo anterior.",
-        reconciliation_required: "Happier no pudo confirmar qué modelo usa esta sesión.",
-        owner_unavailable: "El modelo no puede cambiar mientras la máquina de esta sesión no esté disponible.",
-      },
       cause: {
         agent_startup_rpc_rejected: "La API nativa del agente rechazó el inicio.",
         agent_startup_transport_failed: "Falló el transporte de inicio del agente.",
