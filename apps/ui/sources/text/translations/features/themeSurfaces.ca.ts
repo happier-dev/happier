@@ -107,6 +107,7 @@ export const themeSurfaces = {
     factWorksOn: "Funciona a",
     everywhere: "Arreu",
     factLicence: "Llicència",
+    customLicence: "Llicència personalitzada",
     tryingFace: ({ face }: { face: string }) => `Provant ${face}`,
     tryingHere: ({ here }: { here: string }) => `Només a ${here} · no es desa res`,
     columnName: "Nom",

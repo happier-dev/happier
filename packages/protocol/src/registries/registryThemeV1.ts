@@ -14,7 +14,8 @@ const identity = () => z.string().check(z.minLength(1));
 const mode = () => ThemeMiniatureDataSchema.shape.mode;
 export const RegistryThemeListingV1Schema = lazyZodSchema(() => z.strictObject({
   includes: z.array(z.strictObject({ key: identity(), label: identity(), mode: z.optional(mode()) })),
-  license: z.optional(z.string()), preview: z.optional(z.array(ThemeMiniatureDataSchema)),
+  license: z.optional(z.string()), licenseKind: z.optional(z.literal('custom')),
+  licenseUrl: z.optional(RegistryThemeContentUrlV1Schema), preview: z.optional(z.array(ThemeMiniatureDataSchema)),
 }));
 export type RegistryThemeListingV1 = z.infer<typeof RegistryThemeListingV1Schema>;
 /** The retained raw presentation is authoritative; supported projections are derived once at ingress. */

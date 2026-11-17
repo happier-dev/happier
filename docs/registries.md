@@ -127,6 +127,12 @@ case-insensitive match is accepted for theme files and includes; zero or
 multiple matches remain unreadable. All-entry skill ZIP imports retain their
 archive entries and original paths.
 
+Open VSX npm-style `SEE LICENSE IN …` declarations project to a custom-licence
+classification in listing metadata. The detail translates its label and opens
+the advertised licence-file URL when available; neither lookup nor acquisition
+fetches that document. Ordinary declarations remain unchanged, and a missing or
+malformed optional document URL leaves the theme usable without a link.
+
 Versioned `appearance.themes.store.get` inputs require matching unreleased 0.3
 UI and Protocol readers; older development readers reject the added version.
 Omitting the version continues to resolve latest within acquisition.
@@ -626,8 +632,8 @@ retain publisher credit, sheet metadata and source rights/report links. A select
 admitted HTTP plan. Public native reads need no Machine. These sources are
 ineligible for direct browser HTTP because their listing APIs do not establish
 the required CORS contract; web uses the existing Machine carrier or returns
-`needs_machine`. Browser Add without a Machine remains blocked pending the
-transport decision.
+`needs_machine` when no eligible Machine is available. Browse and search recover
+through the existing carrier subscription when a Machine becomes reachable.
 
 Sheet bytes use base64 across the JSON carrier and become bytes at the host API.
 Account library provenance retains only `{kind: 'registry', sourceId, itemId}`;

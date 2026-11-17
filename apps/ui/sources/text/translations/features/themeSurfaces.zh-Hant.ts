@@ -107,6 +107,7 @@ export const themeSurfaces = {
     factWorksOn: "適用於",
     everywhere: "所有裝置",
     factLicence: "授權",
+    customLicence: "自訂授權",
     tryingFace: ({ face }: { face: string }) => `正在試用${face}`,
     tryingHere: ({ here }: { here: string }) => `僅在${here}上 · 未儲存任何內容`,
     columnName: "名稱",

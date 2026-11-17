@@ -15,7 +15,7 @@ const manifest = { publisher: 'sample', name: 'palette', version: '1.0.0', contr
   { label: 'Night', uiTheme: 'vs-dark', path: './themes/night.json' },
   { label: 'Day', uiTheme: 'vs', path: './themes/day.json' },
 ] } };
-async function fixture(options: Readonly<{ badHash?: boolean; badIdentity?: boolean; absentLicense?: boolean; cycle?: boolean; missing?: boolean; caseMismatch?: boolean }> = {}) {
+async function fixture(options: Readonly<{ badHash?: boolean; badIdentity?: boolean; absentLicense?: boolean; license?: string; licenseUrl?: string; cycle?: boolean; missing?: boolean; caseMismatch?: boolean }> = {}) {
   const writer = new ZipWriter(new Uint8ArrayWriter());
   for (const [path, text] of Object.entries({
     'extension/package.json': JSON.stringify(options.badIdentity ? { ...manifest, version: '2.0.0' } : manifest),
@@ -27,8 +27,9 @@ async function fixture(options: Readonly<{ badHash?: boolean; badIdentity?: bool
   const bytes = await writer.close();
   const calls: string[] = [];
   let latest = '1.0.0';
-  const detail = () => ({ namespace: 'sample', name: 'palette', version: latest, displayName: 'Sample palette', ...(options.absentLicense ? {} : { license: 'Custom licence' }),
-    files: { manifest: 'https://open-vsx.org/manifest.json', download: 'https://open-vsx.org/package.vsix', sha256: 'https://open-vsx.org/package.sha256' } });
+  const detail = () => ({ namespace: 'sample', name: 'palette', version: latest, displayName: 'Sample palette', ...(options.absentLicense ? {} : { license: options.license ?? 'Custom licence' }),
+    files: { manifest: 'https://open-vsx.org/manifest.json', download: 'https://open-vsx.org/package.vsix', sha256: 'https://open-vsx.org/package.sha256',
+      ...(options.licenseUrl === undefined ? {} : { license: options.licenseUrl }) } });
   const http: RegistryHttpV1 = {
     async getJson(url) { calls.push(url); return { ok: true, fetchedAt: 1, value: url.includes('/-/search') ? {
       offset: 0, totalSize: 100, extensions: Array.from({ length: 100 }, (_, i) => ({ namespace: 'sample', name: `palette${i}`, version: '1.0.0', displayName: `Palette ${i}` })),
@@ -66,6 +67,29 @@ describe('Open VSX theme acquisition through the registry host', () => {
     expect(acquired.item.payload.themes.map(face => face.mode)).toEqual(['dark', 'light']);
     expect(acquired.item.payload.themes[0]!.document.profile.overrides.dark).toMatchObject({ 'background.canvas': '#111111', 'text.primary': '#eeeeee' });
     expect(f.calls).toHaveLength(4);
+  });
+  it.each([
+    { license: 'SEE LICENSE IN LICENSE', licenseUrl: 'https://open-vsx.org/package/LICENSE.txt', custom: true, expectedUrl: 'https://open-vsx.org/package/LICENSE.txt' },
+    { license: 'SEE LICENSE IN COPYING', licenseUrl: undefined, custom: true, expectedUrl: undefined },
+    { license: 'SEE LICENSE IN LICENSE', licenseUrl: 'javascript:alert(1)', custom: true, expectedUrl: undefined },
+    { license: 'MIT OR Apache-2.0', licenseUrl: 'https://open-vsx.org/package/COPYING', custom: false, expectedUrl: 'https://open-vsx.org/package/COPYING' },
+    { license: 'LicenseRef-Custom', licenseUrl: undefined, custom: false, expectedUrl: undefined },
+  ])('projects readable licence metadata without acquiring its file: %j', async sample => {
+    const f = await fixture(sample);
+    for (const themeContent of [false, true]) {
+      f.calls.length = 0;
+      const result = await f.host.fetchRequest({ op: 'read', sourceId: source.id, kind: 'theme', itemId: 'sample/palette', version: '1.0.0', ...(themeContent ? { themeContent: true as const } : {}) });
+      expect(result.op).toBe('read');
+      if (result.op !== 'read' || result.item.payload.kind !== 'theme') return;
+      const listing = result.item.payload.listing;
+      expect(listing.license).toBe(sample.custom ? 'Custom licence' : sample.license);
+      if (sample.custom) expect(listing).toHaveProperty('licenseKind', 'custom');
+      else expect(listing).not.toHaveProperty('licenseKind');
+      if (sample.expectedUrl) expect(listing).toHaveProperty('licenseUrl', sample.expectedUrl);
+      else expect(listing).not.toHaveProperty('licenseUrl');
+      expect(f.calls).toHaveLength(themeContent ? 4 : 2);
+      expect(f.calls).not.toContain(sample.licenseUrl);
+    }
   });
   it('acquires a unique case-mismatched theme and its include without another fetch', async () => {
     const f = await fixture({ caseMismatch: true });

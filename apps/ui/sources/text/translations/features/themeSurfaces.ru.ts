@@ -107,6 +107,7 @@ export const themeSurfaces = {
     factWorksOn: "Работает на",
     everywhere: "Везде",
     factLicence: "Лицензия",
+    customLicence: "Пользовательская лицензия",
     tryingFace: ({ face }: { face: string }) => `Примеряется ${face}`,
     tryingHere: ({ here }: { here: string }) => `Только на ${here} · ничего не сохранено`,
     columnName: "Название",

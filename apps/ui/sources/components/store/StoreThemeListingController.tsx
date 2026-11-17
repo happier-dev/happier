@@ -144,7 +144,9 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
             { key: 'includes', value: opened ? t('themeStore.includesCount', { count: opened.listing.metadata.includes.length }) : t('common.unknown') },
             { key: 'changes', value: coverageFacts?.changes ?? t('common.unknown') },
             { key: 'worksOn', ...(coverageFacts?.worksOn ?? { value: t('common.unknown') }) },
-            { key: 'licence', value: opened?.listing.metadata.license ?? t('common.unknown') },
+            { key: 'licence', value: opened?.listing.metadata.licenseKind === 'custom'
+                ? t('themeStore.customLicence') : opened?.listing.metadata.license ?? t('common.unknown'),
+                ...(opened?.listing.metadata.licenseUrl ? { url: opened.listing.metadata.licenseUrl } : {}) },
         ], busy: check.checking ? 'check' : busy, installFailures: failedInstall?.faces ?? [],
         updateAvailable, checkError: check.failed ? check.code : null,
         onTryFace: id => {

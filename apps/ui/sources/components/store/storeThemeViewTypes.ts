@@ -31,6 +31,7 @@ export type StoreThemeCardView = Readonly<{
 export type StoreThemeListingFact = Readonly<{
   key: 'includes' | 'changes' | 'worksOn' | 'licence';
   value: string;
+  url?: string;
   /** A quieter second line (Works on: "Phones: all but 3 rules"). */
   note?: string | null;
 }>;

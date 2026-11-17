@@ -107,6 +107,7 @@ export const themeSurfaces = {
     factWorksOn: "Funktioniert auf",
     everywhere: "Überall",
     factLicence: "Lizenz",
+    customLicence: "Benutzerdefinierte Lizenz",
     tryingFace: ({ face }: { face: string }) => `${face} wird ausprobiert`,
     tryingHere: ({ here }: { here: string }) => `Nur auf ${here} · nichts gespeichert`,
     columnName: "Name",

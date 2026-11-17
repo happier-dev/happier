@@ -19,6 +19,7 @@ import { Text } from '@/components/ui/text/Text';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import type {
   StoreThemeListingFact,
@@ -251,7 +252,8 @@ const FACT_LABEL_KEY = {
 function FactRow(props: Readonly<{ fact: StoreThemeListingFact }>) {
   return (
     <Item
-      mode="info"
+      mode={props.fact.url ? 'interactive' : 'info'}
+      {...(props.fact.url ? { accessibilityRole: 'link' as const, onPress: () => { void requestOpenExternalUrl(props.fact.url!); } } : {})}
       title={t(FACT_LABEL_KEY[props.fact.key])}
       detail={props.fact.value}
       {...(props.fact.note ? { subtitle: props.fact.note } : {})}

@@ -107,6 +107,7 @@ export const themeSurfaces = {
     factWorksOn: "対応環境",
     everywhere: "すべての環境",
     factLicence: "ライセンス",
+    customLicence: "独自ライセンス",
     tryingFace: ({ face }: { face: string }) => `${face}を試用中`,
     tryingHere: ({ here }: { here: string }) => `${here}のみ · 何も保存されていません`,
     columnName: "名前",

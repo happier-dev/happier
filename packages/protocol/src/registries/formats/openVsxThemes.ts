@@ -14,7 +14,7 @@ const nonempty = () => z.string().check(z.minLength(1));
 const summarySchema = z.object({ namespace: nonempty(), name: nonempty(), version: nonempty(), displayName: z.optional(z.string()),
   description: z.optional(z.string()), files: z.optional(z.object({ icon: z.optional(RegistryThemeContentUrlV1Schema) })) });
 const detailSchema = z.object({ ...summarySchema.shape, license: z.optional(z.string()), files: z.object({ manifest: RegistryThemeContentUrlV1Schema,
-  download: RegistryThemeContentUrlV1Schema, sha256: RegistryThemeContentUrlV1Schema, icon: z.optional(RegistryThemeContentUrlV1Schema) }) });
+  download: RegistryThemeContentUrlV1Schema, sha256: RegistryThemeContentUrlV1Schema, icon: z.optional(RegistryThemeContentUrlV1Schema), license: z.optional(z.unknown()) }) });
 const manifestSchema = z.object({ publisher: nonempty(), name: nonempty(), version: nonempty(), contributes: z.object({ themes: z._default(z.array(z.object({
   path: nonempty(), label: z.optional(z.string()), id: z.optional(z.string()), uiTheme: z.optional(z.string()),
 })), []) }) });
@@ -51,15 +51,17 @@ function packagePath(path: string, from = 'extension/package.json'): string {
   if (resolved[0] !== 'extension' || resolved.length <= 1) throw invalid();
   return resolved.join('/');
 }
-function describe(manifest: z.infer<typeof manifestSchema>, license?: string): RegistryThemeListingV1 {
+function describe(manifest: z.infer<typeof manifestSchema>, license?: string, licenseUrl?: string): RegistryThemeListingV1 {
   const counts = new Map<string, number>();
   const paths = manifest.contributes.themes.map(theme => packagePath(theme.path));
   for (const path of paths) counts.set(path, (counts.get(path) ?? 0) + 1);
+  const customLicense = license !== undefined && /^SEE LICENSE IN \S.*$/i.test(license.trim());
   return { includes: manifest.contributes.themes.map((theme, index) => ({ key: counts.get(paths[index]!) === 1 ? paths[index]! : `${paths[index]}#${index}`,
     label: theme.label || theme.id || paths[index]!.split('/').at(-1)!,
     ...(theme.uiTheme === 'vs' || theme.uiTheme === 'hc-light' ? { mode: 'light' as const }
       : theme.uiTheme === 'vs-dark' || theme.uiTheme === 'hc-black' ? { mode: 'dark' as const } : {}) })),
-    ...(license === undefined ? {} : { license }) };
+    ...(license === undefined ? {} : { license: customLicense ? 'Custom licence' : license }),
+    ...(customLicense ? { licenseKind: 'custom' as const } : {}), ...(licenseUrl === undefined ? {} : { licenseUrl }) };
 }
 function sameManifest(actual: z.infer<typeof manifestSchema>, expected: z.infer<typeof manifestSchema>) {
   return actual.publisher === expected.publisher && actual.name === expected.name && actual.version === expected.version
@@ -89,7 +91,9 @@ export const openVsxThemesRegistryAdapterV1: RegistryFormatAdapterV1 = {
     const metadata = await json(ctx, req.source, detail.files.manifest);
     const manifest = parse(manifestSchema, metadata.value);
     if (manifest.publisher !== detail.namespace || manifest.name !== detail.name || manifest.version !== detail.version) throw invalid('manifest_mismatch');
-    const listing = describe(manifest, detail.license);
+    // A malformed optional document link must not make an otherwise usable theme unavailable.
+    const licenseUrl = RegistryThemeContentUrlV1Schema.safeParse(detail.files.license);
+    const listing = describe(manifest, detail.license, licenseUrl.success ? licenseUrl.data : undefined);
     const acquisition = OpenVsxThemePackageV1Schema.parse({ namespace: detail.namespace, name: detail.name, version: detail.version,
       downloadUrl: detail.files.download, checksumUrl: detail.files.sha256, ...(detail.license === undefined ? {} : { license: detail.license }) });
     const itemSummary = { ...summary(req.source, detail), ...(detail.license === undefined ? {} : { license: detail.license }), themeMetadata: listing };

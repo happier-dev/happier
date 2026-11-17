@@ -9,6 +9,12 @@ import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/
 import { ThemeProfileArtifactHeaderSchema } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
 import { deriveMarketplaceSourceId } from '@happier-dev/protocol/marketplace';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import type { RegistryThemeListingV1 } from '@happier-dev/protocol/registries/registryThemeV1';
+
+const externalUrlBoundary = vi.hoisted(() => vi.fn(async (_url: string) => true));
+// The platform URL effect is external; keep link admission and listing logic real.
+vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: externalUrlBoundary }));
+
 
 let routeParams: Record<string, string | undefined> = {};
 installPromptRegistriesCommonModuleMocks({ storage: original => original(), text: () => vi.importActual('@/text'),
@@ -31,9 +37,12 @@ const { applyPromptLibraryCatalogAcknowledgedRecord, getPromptLibraryCatalogValu
 const { useStoreThemeCardAnatomy } = await import('./storeThemeCardAnatomy');
 const { projectStoreThemeCard } = await import('./catalog/storeThemes');
 const { ThemeMiniaturePreview } = await import('@/components/settings/appearance/ThemeModePreview');
+const { Item } = await import('@/components/ui/lists/Item');
+const { preloadTranslations, setPreferredLanguageFromSettings, t } = await import('@/text/i18n');
 await initializeArtifactInventoryDemandHarness();
 
-async function createRegistryThemeListingFixture(options: Readonly<{ failAcquisition?: boolean }> = {}) {
+async function createRegistryThemeListingFixture(options: Readonly<{ failAcquisition?: boolean;
+    licence?: Pick<RegistryThemeListingV1, 'license' | 'licenseKind' | 'licenseUrl'> }> = {}) {
     const indexUrl = 'https://theme-listing.example.test/index.json';
     const contentUrl = 'https://theme-listing.example.test/palette.json';
     const sourceId = deriveMarketplaceSourceId(indexUrl);
@@ -52,7 +61,7 @@ async function createRegistryThemeListingFixture(options: Readonly<{ failAcquisi
         if (url.href === indexUrl) { state.catalogReads++;
             return Response.json({ source: { id: sourceId, title: 'Themes catalog', sourceUrl: indexUrl, kind: 'user' },
             freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], picks: [], diagnostics: [], themes: [{ itemId: 'palette',
-                title: 'Palette', version: state.catalogVersion, listing: { includes, preview, license: 'Custom' }, contentUrl }] }); }
+                title: 'Palette', version: state.catalogVersion, listing: { includes, preview, license: 'Custom', ...options.licence }, contentUrl }] }); }
         if (url.href === contentUrl) {
             state.acquisitions += 1;
             if (state.failAcquisition) return Response.json({ error: 'unavailable' }, { status: 503 });
@@ -168,6 +177,33 @@ it('browses an admitted plugin theme through the joined library and keeps its re
     await vi.waitFor(() => expect(searchRows).toHaveLength(0));
     expect(externalReads).toEqual([]);
 });
+it.each([
+    { name: 'custom licence with its advertised link', licence: { license: 'Custom licence', licenseKind: 'custom' as const,
+        licenseUrl: 'https://open-vsx.org/api/monokai/theme-monokai-pro-vscode/2.0.17/file/LICENSE.txt' }, expected: 'Licence personnalisée' },
+    { name: 'custom licence without a link', licence: { license: 'Custom licence', licenseKind: 'custom' as const }, expected: 'Licence personnalisée' },
+    { name: 'ordinary SPDX licence', licence: { license: 'MIT' }, expected: 'MIT' },
+])('presents the $name through the shared listing', async ({ licence, expected }) => {
+    externalUrlBoundary.mockClear();
+    const { sourceId, state } = await createRegistryThemeListingFixture({ licence });
+    await preloadTranslations('fr');
+    setPreferredLanguageFromSettings('fr');
+    onTestFinished(() => setPreferredLanguageFromSettings(null));
+    const screen = await renderScreen(<StoreListingBody reference={{ type: 'registryItem', kind: 'theme', sourceId, itemId: 'palette' }}
+        presentation="page" onClose={() => {}} />);
+    const row = () => screen.findAllByType<typeof Item>(Item).find(item => item.props.title === t('themeStore.factLicence'));
+    await vi.waitFor(() => expect(row()?.props.detail).toBe(expected));
+    if ('licenseUrl' in licence) {
+        expect(row()?.props.accessibilityRole).toBe('link');
+        await act(async () => { await row()!.props.onPress!(); });
+        await vi.waitFor(() => expect(externalUrlBoundary).toHaveBeenCalledWith(licence.licenseUrl));
+    } else {
+        expect(row()?.props.onPress).toBeUndefined();
+        expect(row()?.props.accessibilityRole).not.toBe('link');
+        expect(externalUrlBoundary).not.toHaveBeenCalled();
+    }
+    expect(state.acquisitions).toBe(1);
+});
+
 it('opens one theme acquisition through the shared listing body and retries Keep without losing the tried face', async () => {
     const { sourceId, preview, artifacts, state } = await createRegistryThemeListingFixture();
     const browse = await renderHook(() => useRegistryItems({ kind: 'theme', sourceIds: [sourceId] }));
