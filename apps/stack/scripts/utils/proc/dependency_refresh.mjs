@@ -814,6 +814,17 @@ export async function adoptDependencyGenerations({ installDir, env = process.env
   });
 }
 
+/** A process that consumes the installed tree for its whole run (every routed
+ * payload, through the worker custody wrapper) keeps the dependency generation
+ * it starts on until it exits: a refresh switches beside it and retires that
+ * generation only after the process is gone. Writers never drain it. Returns
+ * the generation retained, or null for an in-place tree. */
+export function retainDependencyGenerationForProcess({ installDir, pid = process.pid, env = process.env }) {
+  const generation = readCurrentDependencyGeneration(installDir);
+  if (generation) retainDependencyGeneration(`${resolveDependencyRefreshLockPath(installDir, env)}.readers`, generation, [pid]);
+  return generation;
+}
+
 export async function readDependencyPublicationState({ installDir, env = process.env }) {
   const marker = await readJsonIfExists(resolveDependencyRefreshMarkerPath(installDir));
   const generation = await readJsonIfExists(`${resolveDependencyRefreshLockPath(installDir, env)}.generation`);

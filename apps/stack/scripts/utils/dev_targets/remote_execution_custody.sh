@@ -66,6 +66,15 @@ if [ "$mode" = payload ]; then
   publish_record "$wrapper_pid" "$$" "$wrapper_token" "$(heavyweight_process_token "$$")" || exit 1
   jobs_scope_owner_pid=$wrapper_pid
   jobs_scope_owner_token=$wrapper_token
+  # A routed payload (a typecheck, a test run) consumes the installed tree for
+  # its whole run: keep the dependency generation it starts on until this
+  # process (the payload, after exec) exits, so a refresh never retires it
+  # underneath. Only generation-managed checkouts have one to keep.
+  custody_checkout=${BASH_SOURCE[0]%/apps/stack/scripts/utils/dev_targets/*}
+  if [ -L "$custody_checkout/node_modules/.happier-dependency-generation" ]; then
+    node "$custody_checkout/apps/stack/scripts/utils/proc/retain_dependency_generation.mjs" "$custody_checkout" "$$" \
+      || printf '%s\n' '[preferred-execution] dependency generation retention failed; this payload may lose its installed tree to a concurrent refresh' >&2
+  fi
   exec_worker_payload "$@"
 fi
 

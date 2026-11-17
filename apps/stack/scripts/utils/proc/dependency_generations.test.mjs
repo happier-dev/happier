@@ -1,6 +1,6 @@
 // @happier-test-preparation source-condition
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
@@ -195,4 +195,26 @@ test('a lock-only writer on a generation-managed tree runs beside a long-lived r
   assert.equal(await dependencies.withDependencyConsumption({ installDir, env }, async () => 'entered'), 'entered');
   release();
   await server;
+});
+
+test('a routed payload keeps the generation it started on through a switch, and it goes once the payload exits', async t => {
+  const { env, installDir } = await setup(t);
+  const first = (await moveInPlaceInstallationIntoGeneration(installDir)).name;
+  const container = join(installDir, '.happier', 'deps', 'node_modules');
+  // A long typecheck: a process with no dependency custody that keeps reading the tree it resolved.
+  const payload = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  t.after(() => payload.kill());
+  // The custody wrapper registers the payload's process before it runs (the CLI is the process boundary).
+  const cli = new URL('./retain_dependency_generation.mjs', import.meta.url).pathname;
+  const registered = spawnSync(process.execPath, [cli, installDir, String(payload.pid)], { env, encoding: 'utf8' });
+  assert.equal(registered.status, 0, registered.stderr);
+  await writeFile(join(installDir, 'pnpm-lock.yaml'), '# v2\n');
+  await dependencies.withDependencyRefresh({ installDir, env, generationInstall: true },
+    async ({ installCwd = installDir, publishInstallation }) => { await fakeInstall(installCwd, 'v2'); await publishInstallation?.(); });
+  const second = readCurrentDependencyGeneration(installDir);
+  assert.deepEqual((await readdir(container)).sort(), [first, second].sort(), 'the running payload still holds its generation');
+  payload.kill();
+  await once(payload, 'exit');
+  await dependencies.withDependencyConsumption({ installDir, env }, async () => {});
+  assert.deepEqual(await readdir(container), [second]);
 });
