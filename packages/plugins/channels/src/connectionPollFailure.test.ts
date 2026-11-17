@@ -10,9 +10,6 @@ import {
   projectConversationConnectionPollFailureAttention,
   readConversationConnectionPollFailureAttention,
 } from './connectionPollFailure.js';
-import {
-  isConversationPollFailureAttemptCount,
-} from './connectionPollFailureBounds.js';
 import { readPersistedConversationConnectionPollFailure } from './connectionPollFailurePersistence.js';
 
 const validatesPersistedPollFailure = compilePluginJsonSchema(
@@ -20,24 +17,15 @@ const validatesPersistedPollFailure = compilePluginJsonSchema(
 );
 
 describe('Conversation connection poll-failure codec', () => {
-  it('accepts retry attempts beyond five and rejects invalid numeric representations', () => {
-    for (const count of [1, 5, 6, Number.MAX_SAFE_INTEGER]) {
-      expect(isConversationPollFailureAttemptCount(count)).toBe(true);
-    }
-    for (const count of [0, -1, 1.5, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
-      expect(isConversationPollFailureAttemptCount(count)).toBe(false);
-    }
-  });
-
   it('accepts exactly the Collection manifest union at the persisted-value seam', () => {
     const accepted = [
       null,
-      {
-        phase: 'retryDue',
-        attemptCount: 6,
+      ...[1, 5, 6, Number.MAX_SAFE_INTEGER].map(attemptCount => ({
+        phase: 'retryDue' as const,
+        attemptCount,
         retryNotBeforeMs: 0,
-        evidence: { kind: 'provider', reason: 'network', diagnostic: 'provider unavailable' },
-      },
+        evidence: { kind: 'provider' as const, reason: 'network' as const, diagnostic: 'provider unavailable' },
+      })),
       {
         phase: 'blocked',
         attemptCount: 7,
@@ -47,12 +35,12 @@ describe('Conversation connection poll-failure codec', () => {
     ] as const;
     const rejected: readonly (JsonValue | undefined)[] = [
       undefined,
-      {
+      ...[0, -1, 1.5, Infinity, Number.MAX_SAFE_INTEGER + 1].map(attemptCount => ({
         phase: 'retryDue',
-        attemptCount: 0,
+        attemptCount,
         retryNotBeforeMs: 0,
         evidence: { kind: 'provider', reason: 'network' },
-      },
+      })),
       {
         phase: 'blocked',
         attemptCount: Number.MAX_SAFE_INTEGER + 1,
@@ -82,7 +70,7 @@ describe('Conversation connection poll-failure codec', () => {
 
     for (const value of accepted) {
       expect(isValidPluginJsonSchemaValue(validatesPersistedPollFailure, value)).toBe(true);
-      expect(readPersistedConversationConnectionPollFailure(value)).not.toBeUndefined();
+      expect(readPersistedConversationConnectionPollFailure(value)).toEqual(value);
     }
     for (const value of rejected) {
       expect(isValidPluginJsonSchemaValue(validatesPersistedPollFailure, value)).toBe(false);
