@@ -1,5 +1,5 @@
 import { useRef, type ReactElement, type ReactNode } from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 
 import type { HappierPortableStyle } from '../portableTypes.js';
 import type { HappierCapsuleColors, HappierCapsuleHost } from './capsuleHost.js';
@@ -72,6 +72,8 @@ export function HappierStatusCapsule(props: HappierStatusCapsuleProps): ReactEle
         <View
           style={[CAPSULE_STYLE, shown.action ? null : CAPSULE_TEXT_ONLY_STYLE]}
           accessibilityRole="summary"
+          // On the web a polite live sentence is a status; RNW would draw `summary` as an unnamed region.
+          role={Platform.OS === 'web' ? 'status' : undefined}
           accessibilityLiveRegion="polite"
           aria-live="polite"
         >

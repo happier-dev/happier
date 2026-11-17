@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 
 import type { HappierPortableStyle } from '../portableTypes.js';
 import type { HappierCapsuleColors, HappierCapsuleHost } from '../status/capsuleHost.js';
@@ -377,6 +377,8 @@ export function HappierPresenceCapsule(props: HappierPresenceCapsuleProps): Reac
         style={[strip ? styles.strip : styles.capsule, compact && observationRecovery ? styles.capsuleStacked : null,
           stacked ? styles.stripStacked : null]}
         accessibilityRole="summary"
+        // On the web a polite live sentence is a status; RNW would draw `summary` as an unnamed region.
+        role={Platform.OS === 'web' ? 'status' : undefined}
         accessibilityLiveRegion="polite"
         aria-live="polite"
         // Recomposed to the mark and its action, the row still says what the words said.

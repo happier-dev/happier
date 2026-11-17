@@ -456,6 +456,21 @@ describe('HappierStatusCapsule', () => {
     }
   });
 
+  it('announces its sentence as a status, not an unnamed region (C77)', () => {
+    // Simulator stream at 1440 (11-17): RNW drew the capsule's `summary` role as <section role="region">, which axe
+    // rejects (aria-allowed-role). A polite live sentence over a page is a status.
+    const { host } = createHost();
+    const mounted = mountThroughReactNativeWeb(
+      <HappierStatusCapsule text="Reconnecting…" busy colors={COLORS} host={host} testID="s" />,
+    );
+    try {
+      expect(mounted.container.querySelector('[role="region"]')).toBeNull();
+      expect(mounted.container.querySelector('[role="status"]')?.textContent).toContain('Reconnecting…');
+    } finally {
+      mounted.unmount();
+    }
+  });
+
   it('offers its one way out beside the sentence', async () => {
     const { host } = createHost();
     const onPress = vi.fn();
