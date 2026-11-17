@@ -136,13 +136,17 @@ it('confirms a resend instead of returning to a pixel-identical screen', async (
         screen!.findByTestId('email-password-email')!.props.onChangeText('person@example.test');
     });
     await screen.pressByTestIdAsync('email-password-create');
-    expect(screen.findByTestId('email-password-sent-detail')).not.toBeNull();
+    // An accepted request does not establish delivery, so the confirmation stays neutral.
+    expect(screen.findByTestId('email-password-sent-detail')?.props.children).toBe(
+        "Look for a link at person@example.test. It can take a minute; check spam if it doesn't arrive.",
+    );
 
     await screen.pressByTestIdAsync('email-password-resend');
 
     const confirmation = screen.findByTestId('email-password-resent');
     expect(confirmation).not.toBeNull();
     expect(confirmation?.props.accessibilityLiveRegion).toBe('polite');
+    expect(confirmation?.props.children).toBe('Check your email again in a minute.');
     expect(nativeEmail.requestVerification).toHaveBeenCalledTimes(2);
 });
 
