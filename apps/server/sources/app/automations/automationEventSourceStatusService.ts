@@ -559,7 +559,6 @@ async function reportCatalogStatus(params: CatalogStatusParams): Promise<void> {
         && existing.observedRevision === semanticValues.observedRevision
         && existing.adoptedRevision === semanticValues.adoptedRevision
         && existing.state === semanticValues.state
-        && existing.scanStartedAt?.getTime() === semanticValues.scanStartedAt?.getTime()
         && existing.nextRetryAt?.getTime() === semanticValues.nextRetryAt?.getTime()
     ) return;
     const values = {
@@ -612,17 +611,12 @@ export async function reportAutomationEventSourceStatusV1(params: Readonly<{
             caller: params.caller,
         });
         const manifests: AdmittedManifests = new Map();
-        // Domain rows are already settled. After the terminal Account lock, recheck the Automation
-        // rows and this Machine's materialization revision. The plugin declaration was decided once
-        // above; re-reading manifests here held every other Account writer behind multi-second reads.
+        // Caller, declaration and target admission settle before the Account fence.
+        // Compare only the revision that retires this reporter's persisted status.
         beforeAccountChangePublication(tx, [params.accountId], async currentTx => {
             if (await readPluginMaterializationRevision(currentTx, params.caller.machineId) !== admittedMaterializationRevision) {
                 throw new TransactionReplayRequiredError("automation-event-source-status-materialization-changed");
             }
-            const current = { tx: currentTx, accountId: params.accountId, caller: params.caller,
-                callerVersion: caller.version, manifests };
-            if (input.kind === "source") await assertCurrentSourceStatusTarget({ ...current, input });
-            else await assertCurrentCatalogStatusTarget({ ...current, input });
         });
         if (input.kind === "source") {
             await reportSourceStatus({
@@ -644,8 +638,8 @@ export async function reportAutomationEventSourceStatusV1(params: Readonly<{
             manifests,
         });
     }, {
-        // Revision CAS preserves concurrent deltas; terminal currentness reads
-        // validate definition/materialization changes before publication.
+        // Revision CAS preserves concurrent deltas; the publication revision comparison
+        // prevents recreating status retired by materialization replacement.
         isolationLevel: "ReadCommitted",
         transactionClass: "automation-event-source-status-report",
     });

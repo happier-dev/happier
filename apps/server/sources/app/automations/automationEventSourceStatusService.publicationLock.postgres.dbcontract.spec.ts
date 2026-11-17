@@ -5,6 +5,7 @@ import { createPluginEventAutomationSetupResultV1JsonSchema } from "@happier-dev
 import { AutomationEventActionHttpRequestSchemasV1 } from "@happier-dev/protocol/automations/event";
 import { db, getDbProviderFromEnv, initDbPostgres } from "@/storage/db";
 import { type Tx } from "@/storage/inTx";
+import { eventRouter } from "@/app/events/eventRouter";
 import { reportAutomationEventSourceStatusV1 } from "./automationEventSourceStatusService";
 import { compactReleaseLessDeclarations, createReleaseLessDeclarationV1 } from "@/app/plugins/availability/currentDeclaration";
 
@@ -146,6 +147,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         });
         let declarationReads = 0;
         let lockedDeclarationReads = 0;
+        let lockedRevisionReads = 0;
+        let lockedTargetReads = 0;
         // Prisma reuses the interactive transaction client object: restore what this case wraps.
         const restores: Array<() => void> = [];
         try { await observeTransactions(tx => {
@@ -153,6 +156,23 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
             const originalUnsafe = tx.$queryRawUnsafe;
             restores.push(() => { tx.$queryRaw = originalRaw; tx.$queryRawUnsafe = originalUnsafe; });
             let accountLocked = false;
+            const machineRead = tx.machine.findUnique.bind(tx.machine);
+            const triggerRead = tx.automationTrigger.findFirst.bind(tx.automationTrigger);
+            const catalogRead = tx.automationEventCatalogState.findUnique.bind(tx.automationEventCatalogState);
+            restores.push(() => { tx.machine.findUnique = machineRead;
+                tx.automationTrigger.findFirst = triggerRead; tx.automationEventCatalogState.findUnique = catalogRead; });
+            tx.machine.findUnique = (async (...args: Parameters<typeof machineRead>) => {
+                if (accountLocked) lockedRevisionReads++;
+                return machineRead(...args);
+            }) as typeof tx.machine.findUnique;
+            tx.automationTrigger.findFirst = (async (...args: Parameters<typeof triggerRead>) => {
+                if (accountLocked) lockedTargetReads++;
+                return triggerRead(...args);
+            }) as typeof tx.automationTrigger.findFirst;
+            tx.automationEventCatalogState.findUnique = (async (...args: Parameters<typeof catalogRead>) => {
+                if (accountLocked) lockedTargetReads++;
+                return catalogRead(...args);
+            }) as typeof tx.automationEventCatalogState.findUnique;
             const isPublicationLock = (text: string) => text.includes('FROM "Account"') && text.includes("FOR NO KEY UPDATE");
             const unsafe = tx.$queryRawUnsafe.bind(tx);
             tx.$queryRawUnsafe = (async (sql: string, ...values: unknown[]) => {
@@ -176,7 +196,35 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         finally { for (const restore of restores.reverse()) restore(); }
         expect(declarationReads).toBeGreaterThan(0);
         expect(lockedDeclarationReads).toBe(0);
+        expect(lockedRevisionReads).toBe(1);
+        expect(lockedTargetReads).toBe(0);
         expect(await db.accountChange.count({ where: { accountId: input.account.id, kind: "automation" } })).toBe(1);
+    });
+
+    it("publishes no Automation change when a source has no trigger", async () => {
+        const input = await fixture();
+        await db.automationTrigger.delete({ where: { id: input.trigger.id } });
+        const emitUpdate = vi.spyOn(eventRouter, "emitUpdate");
+        await expect(input.report(input.source(1))).rejects.toMatchObject({ code: "definition_not_current" });
+        expect(await db.automationEventSourceStatus.count({ where: { triggerId: input.trigger.id } })).toBe(0);
+        expect(await db.accountChange.count({ where: { accountId: input.account.id, kind: "automation" } })).toBe(0);
+        expect(emitUpdate.mock.calls.filter(([update]) => update.payload.body.t === "automation-source-status-updated"))
+            .toHaveLength(0);
+    });
+
+    it("publishes only changed coverage, ignoring a scan-only timestamp advance", async () => {
+        const input = await fixture();
+        await input.report(input.catalog);
+        const read = () => db.automationEventSourceCatalogStatus.findFirstOrThrow({ where: { accountId: input.account.id } });
+        const readChange = () => db.accountChange.findFirstOrThrow({ where: { accountId: input.account.id, kind: "automation" } });
+        const initial = await read();
+        const initialChange = await readChange();
+        await input.report({ ...input.catalog, scanStartedAt: input.catalog.scanStartedAt + 1 });
+        expect(await read()).toEqual(initial);
+        expect(await readChange()).toEqual(initialChange);
+        await input.report({ ...input.catalog, state: "reconciling", adoptedRevision: "6", scanStartedAt: input.catalog.scanStartedAt + 2 });
+        expect((await read()).revision).toBe(initial.revision + 1);
+        expect((await readChange()).cursor).toBe(initialChange.cursor + 1);
     });
 
 });

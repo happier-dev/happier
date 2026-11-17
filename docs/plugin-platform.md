@@ -481,9 +481,12 @@ for publication on the next natural provider cycle.
 In 0.3 development, the server resolves the admitted plugin declaration body
 before a serializing Account fence. The shared current-declaration reader then
 checks selection, version, digest and Machine installation using identity
-projections and reuses that body. Source-status publication and managed Acquire
-or legacy registration consume this owner; they do not load another declaration
-body while excluding Account cursor publication. Portable materialization
+projections and reuses that body. Managed Acquire and legacy registration consume
+this owner. Source-status publication completes caller, declaration and target
+admission before the fence and compares only the admitted Machine materialization
+revision inside it. Scan-only catalog timestamps do not change coverage or publish
+a new status revision. These paths do not load another declaration body while
+excluding Account cursor publication. Portable materialization
 correspondence reads release identity and UI-slot facts; inventory content reads
 still return the requested release body. These projections reduce transferred
 content; they do not establish a database statement-duration bound.

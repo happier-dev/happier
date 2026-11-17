@@ -202,10 +202,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         expect(await db.accountChange.count({ where: { accountId: input.account.id, kind: "automation" } })).toBe(1);
     });
 
-    it.each(["catalog", "source"] as const)("refuses a %s report if its admitted declaration is withdrawn before publication", async kind => {
+    // PROGRAM R19: admission settles this report; withdrawal applies to the next report.
+    it.each(["catalog", "source"] as const)("finishes an admitted %s report and refuses the next report after declaration withdrawal", async kind => {
         const input = await fixture();
         let withdrawn = false;
-        await expect(observeTransactions(tx => {
+        await observeTransactions(tx => {
             const withdraw = async () => {
                 if (withdrawn) return;
                 withdrawn = true;
@@ -230,12 +231,13 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
                     return row;
                 }) as unknown as typeof tx.automationEventSourceCatalogStatus.findUnique;
             }
-        }, () => input.report(kind === "source" ? input.source(1) : input.catalog), false)).rejects.toMatchObject({
+        }, () => input.report(kind === "source" ? input.source(1) : input.catalog), false);
+        expect(withdrawn).toBe(true);
+        expect(await db.automationEventSourceStatus.count({ where: { triggerId: input.trigger.id } })).toBe(kind === "source" ? 1 : 0);
+        expect(await db.automationEventSourceCatalogStatus.count({ where: { accountId: input.account.id } })).toBe(kind === "catalog" ? 1 : 0);
+        await expect(input.report(kind === "source" ? input.source(1) : input.catalog)).rejects.toMatchObject({
             code: expect.stringMatching(/^(caller_materialization|event_contribution)_not_current$/),
         });
-        expect(withdrawn).toBe(true);
-        expect(await db.automationEventSourceStatus.count({ where: { triggerId: input.trigger.id } })).toBe(0);
-        expect(await db.automationEventSourceCatalogStatus.count({ where: { accountId: input.account.id } })).toBe(0);
     });
 
     it.each(["catalog", "source"] as const)("does not write or publish repeated HTTP-admitted %s facts for two Machines", async kind => {
@@ -407,10 +409,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         expect(interleaved).toBe(true);
     });
 
-    it("refuses a catalog current report if the definition revision advances after its initial admission", async () => {
+    it("finishes an admitted catalog report and refuses its stale revision at the next admission", async () => {
         const input = await fixture();
         let interleaved = false;
-        await expect(observeTransactions(tx => {
+        await observeTransactions(tx => {
             const find = tx.automationEventCatalogState.findUnique.bind(tx.automationEventCatalogState);
             tx.automationEventCatalogState.findUnique = (async (args: Parameters<typeof find>[0]) => {
                 const row = await find(args);
@@ -423,15 +425,17 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
                 }
                 return row;
             }) as unknown as typeof tx.automationEventCatalogState.findUnique;
-        }, () => input.report(input.catalog))).rejects.toMatchObject({ code: "catalog_revision_not_current" });
-        expect(await db.automationEventSourceCatalogStatus.count({ where: { accountId: input.account.id } })).toBe(0);
+        }, () => input.report(input.catalog));
+        expect(await db.automationEventSourceCatalogStatus.findFirstOrThrow({ where: { accountId: input.account.id } }))
+            .toMatchObject({ observedRevision: 7n, revision: 1 });
+        await expect(input.report(input.catalog)).rejects.toMatchObject({ code: "catalog_revision_not_current" });
         expect(interleaved).toBe(true);
     });
 
-    it("does not recreate a source summary if definition deletion commits after initial admission", async () => {
+    it("finishes an admitted source report after definition deletion and refuses the next report", async () => {
         const input = await fixture();
         let interleaved = false;
-        await expect(observeTransactions(tx => {
+        await observeTransactions(tx => {
             const find = tx.automationEventSourceStatus.findUnique.bind(tx.automationEventSourceStatus);
             tx.automationEventSourceStatus.findUnique = (async (args: Parameters<typeof find>[0]) => {
                 const row = await find(args);
@@ -441,8 +445,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
                 }
                 return row;
             }) as unknown as typeof tx.automationEventSourceStatus.findUnique;
-        }, () => input.report(input.source(1)))).rejects.toMatchObject({ code: "definition_not_current" });
-        expect(await db.automationEventSourceStatus.count({ where: { triggerId: input.trigger.id } })).toBe(0);
+        }, () => input.report(input.source(1)));
+        expect(await db.automationEventSourceStatus.count({ where: { triggerId: input.trigger.id } })).toBe(1);
+        expect(await db.automation.findUniqueOrThrow({ where: { id: input.automation.id } }))
+            .toMatchObject({ enabled: false, deletedAt: expect.any(Date) });
+        await expect(input.report(input.source(1))).rejects.toMatchObject({ code: "definition_not_current" });
         expect(interleaved).toBe(true);
     });
 
