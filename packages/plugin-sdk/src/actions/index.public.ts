@@ -116,3 +116,5 @@ export { normalizeActionInputByFieldHints } from './inputHints.js';
 export { readActionInputOptionValue } from './inputHints.js';
 export { resolveEffectiveActionInputFields } from './inputHints.js';
 export { seedInputByFieldHints } from './inputHints.js';
+
+export { databaseActionLocalIdV1, isDatabaseActionIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';

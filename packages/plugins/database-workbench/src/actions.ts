@@ -3,7 +3,8 @@ import type { PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import * as database from '@happier-dev/database-protocol';
 import { databaseActionMetadata } from '@happier-dev/database-protocol';
 import { exportSelectedRows } from './selectedExport.js';
-import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import { FileDownloadResultV1ProtocolSchema, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
 
 export { databaseActionMetadata, databaseActionOperationClass } from '@happier-dev/database-protocol';
 
@@ -44,6 +45,19 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
         resultSchema: database.DatabaseSelectedRowsExportResultV1ProtocolSchema,
         // The SDK admits the supplied selected-result shape; serialization performs no database read.
         run: (input: JsonValue) => projectNativeJsonValueForTransport(exportSelectedRows(input as database.DatabaseSelectedRowsExportInputV1)),
+    };
+    const { agentDefault: _downloadAgentDefault, ...downloadMetadata } = databaseActionMetadata[database.DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1];
+    actions[databaseActionLocalIdV1(database.DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1)] = {
+        ...common, ...downloadMetadata,
+        inputSchema: database.DatabaseSelectedRowsExportDownloadInputV1ProtocolSchema,
+        resultSchema: FileDownloadResultV1ProtocolSchema,
+        run: async (input: JsonValue, context: PluginInvocationContext) => {
+            const selected = input as database.DatabaseSelectedRowsExportDownloadInputV1;
+            const exported = exportSelectedRows(selected);
+            return projectNativeJsonValueForTransport(await context.services.fs.prepareDownload({
+                name: `database-rows.${exported.format}`, bytes: new TextEncoder().encode(exported.content), destination: selected.destination,
+            }, { signal: context.signal }));
+        },
     };
     const listTargets = producers.listTargets;
     if (listTargets) {

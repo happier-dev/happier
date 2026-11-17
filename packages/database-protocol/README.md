@@ -45,6 +45,10 @@ completeness and partial-cell ranges; selecting loaded rows does not establish
 that the table or query is complete. CSV uses `\N` for SQL NULL and quotes an
 empty string or literal `\N`. Tagged JSON preserves exact numeric text, SQL
 NULL versus JSON null, binary encodings and duplicate column labels.
+The 0.3 `rows/export-download` Action serializes the same selected input and
+publishes its bytes through the host's existing file-download service. Its
+required `destination` comes from `hostApi.downloadFile`; the host owns saving
+the file. The inline `rows/export` Action remains available to agents.
 
 Telemetry detail bodies retain resource `service.version` and both deployment
 environment conventions. `deploymentEnvironmentName` prefers

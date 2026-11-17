@@ -4,13 +4,16 @@ import { pluginActionDeclarationIsReadOnlyForInput } from '../plugins/actions/re
 
 type Metadata = Pick<PluginActionContributionV2,
     'title' | 'dangerLevel' | 'readOnly' | 'placementBindings' | 'confirmation' | 'confirmationWhen'
-    | 'approvalScope' | 'approvalInputCustody' | 'secretInputPaths'> & Readonly<{
+    | 'approvalScope' | 'approvalInputCustody' | 'secretInputPaths' | 'operation'> & Readonly<{
         /** C6 policy metadata; U0 declarations omit agent/MCP until P3 admission. */
         agentDefault: 'allow' | 'ask' | 'authority' | Readonly<{ read: 'allow'; write: 'ask' }>;
     }>;
 
 const read = { dangerLevel: 'safe', readOnly: true, placementBindings: [], agentDefault: 'allow' } satisfies Omit<Metadata, 'title'>;
 const write = { dangerLevel: 'writesRemote', readOnly: false, agentDefault: 'ask' } as const;
+const selectedExport = { ...read, approvalInputCustody: 'live_only',
+    secretInputPaths: ['result.rows.[].cells.[].value', 'result.rows.[].identity.**.value.value', 'result.completeness.continuation.**.value.value'],
+} as const;
 
 /** C6's one presentation/classification owner. Missing producers contribute no callable Action. */
 export const databaseActionMetadata = {
@@ -32,8 +35,13 @@ export const databaseActionMetadata = {
         secretInputPaths: ['filter.**.value.value', 'page.continuation.binding.filter.**.value.value', 'page.continuation.values.[].value.value'],
     },
     [database.DATABASE_ROWS_EXPORT_ACTION_ID_V1]: {
-        ...read, title: 'Export selected database rows', approvalInputCustody: 'live_only',
-        secretInputPaths: ['result.rows.[].cells.[].value', 'result.rows.[].identity.**.value.value', 'result.completeness.continuation.**.value.value'],
+        ...selectedExport, title: 'Export selected database rows',
+    },
+    [database.DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1]: {
+        ...selectedExport, title: 'Save selected database rows', dangerLevel: 'writesLocal', readOnly: false, agentDefault: 'ask',
+        operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'activity' } },
+        confirmationWhen: { presentUserUi: false },
+        confirmation: { title: 'Save these database rows?', body: 'Save the selected loaded rows to the receiving device’s chosen destination.', confirmLabel: 'Save' },
     },
     [database.DATABASE_CELL_READ_ACTION_ID_V1]: {
         ...read, title: 'Read database cell', approvalInputCustody: 'live_only', secretInputPaths: ['key.[].value.value'],

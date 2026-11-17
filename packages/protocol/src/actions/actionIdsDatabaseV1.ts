@@ -9,6 +9,7 @@ export const DATABASE_RELATIONS_LIST_ACTION_ID_V1 = 'happier.database/actions/re
 export const DATABASE_STRUCTURE_READ_ACTION_ID_V1 = 'happier.database/actions/structure/read' as const;
 export const DATABASE_ROWS_READ_ACTION_ID_V1 = 'happier.database/actions/rows/read' as const;
 export const DATABASE_ROWS_EXPORT_ACTION_ID_V1 = 'happier.database/actions/rows/export' as const;
+export const DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1 = 'happier.database/actions/rows/export-download' as const;
 export const DATABASE_CELL_READ_ACTION_ID_V1 = 'happier.database/actions/cell/read' as const;
 export const DATABASE_STATEMENT_RUN_ACTION_ID_V1 = 'happier.database/actions/statement/run' as const;
 export const DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1 = 'happier.database/actions/statement/explain' as const;
@@ -52,6 +53,7 @@ export const DATABASE_ACTION_IDS_V1 = [
     DATABASE_STRUCTURE_READ_ACTION_ID_V1,
     DATABASE_ROWS_READ_ACTION_ID_V1,
     DATABASE_ROWS_EXPORT_ACTION_ID_V1,
+    DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1,
     DATABASE_CELL_READ_ACTION_ID_V1,
     DATABASE_STATEMENT_RUN_ACTION_ID_V1,
     DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
