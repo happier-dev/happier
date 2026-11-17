@@ -1,6 +1,5 @@
 import { scopeHappierJsonExecutor, type HappierServerScope, type HappierServiceFollowingScope } from './scopeHappierJsonExecutor.js';
 export { scopeHappierJsonExecutor, type HappierServerScope, type HappierServiceFollowingScope } from './scopeHappierJsonExecutor.js';
-import { createRelayUrlComparableKeySafe } from '@happier-dev/protocol/server/relayDrift';
 import { resolvePublicReleaseRingIdForLabel, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import { resolveHappyHomeDirFromEnvironment } from '../../agents/resolveHappyHomeDir.js';
@@ -9,6 +8,8 @@ import { discoverHappierServices } from '../../happierRuntime/services/discoverH
 import type { HappierService } from '../../happierRuntime/types.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import type { HappierJsonExecutor } from './happierJsonExecutor.js';
+import { readLocalServerProfileIdentity, type LocalServerProfileTarget } from './serverProfileScope.js';
+export type { LocalServerProfileTarget } from './serverProfileScope.js';
 
 /**
  * Which saved CLI server profile an explicit Home target is, and which server the terminal follows.
@@ -35,79 +36,6 @@ export type LocalServerProfileScope = Readonly<{
   managedBy?: 'desktop' | null;
 }>;
 
-/** An explicit Home: its URLs and, when known, its server identity (RV-11). */
-export type LocalServerProfileTarget = Readonly<{
-  serverUrl: string;
-  localServerUrl?: string | null;
-  serverIdentityId?: string | null;
-}>;
-
-type ServerProfileSummary = Readonly<{
-  id: string;
-  serverUrl: string;
-  localServerUrl: string | null;
-  /** The Home identity the CLI recorded for this profile; absent until its daemon observed one. */
-  homeServerIdentityId: string | null;
-}>;
-
-function readProfiles(parsed: unknown): Readonly<{ activeServerId: string | null; profiles: readonly ServerProfileSummary[] }> {
-  const data = parsed && typeof parsed === 'object'
-    ? (parsed as { data?: { activeServerId?: unknown; profiles?: unknown } }).data
-    : undefined;
-  const activeServerId = typeof data?.activeServerId === 'string' && data.activeServerId.trim()
-    ? data.activeServerId.trim()
-    : null;
-  const profiles = Array.isArray(data?.profiles)
-    ? data.profiles.flatMap((entry): ServerProfileSummary[] => {
-        const record = entry && typeof entry === 'object' ? entry as Record<string, unknown> : null;
-        const id = typeof record?.id === 'string' ? record.id.trim() : '';
-        const serverUrl = typeof record?.serverUrl === 'string' ? record.serverUrl.trim() : '';
-        if (!id || !serverUrl) return [];
-        const localServerUrl = typeof record?.localServerUrl === 'string' && record.localServerUrl.trim()
-          ? record.localServerUrl.trim()
-          : null;
-        const homeServerIdentityId = typeof record?.homeServerIdentityId === 'string' && record.homeServerIdentityId.trim()
-          ? record.homeServerIdentityId.trim()
-          : null;
-        return [{ id, serverUrl, localServerUrl, homeServerIdentityId }];
-      })
-    : [];
-  return { activeServerId, profiles };
-}
-
-/**
- * The one saved profile that is `target`. The CLI keeps identity-distinct profiles that share one
- * endpoint (a Personal Home erased and recreated at the same loopback URL), so the Home identity
- * decides when it is known: the profile carrying it, else the one profile that has none yet (its
- * daemon has not recorded one). A match that stays ambiguous is refused, never resolved by order.
- */
-function selectTargetProfile(
-  profiles: readonly ServerProfileSummary[],
-  target: LocalServerProfileTarget,
-): ServerProfileSummary | null {
-  const targetKeys = new Set([createRelayUrlComparableKeySafe(target.serverUrl), createRelayUrlComparableKeySafe(target.localServerUrl)].filter(
-    (key): key is string => key !== null,
-  ));
-  const urlMatches = profiles.filter((profile) => (
-    targetKeys.has(createRelayUrlComparableKeySafe(profile.serverUrl) ?? '')
-    || (profile.localServerUrl !== null && targetKeys.has(createRelayUrlComparableKeySafe(profile.localServerUrl) ?? ''))
-  ));
-  const identity = target.serverIdentityId?.trim() || null;
-  const candidates = identity
-    ? (() => {
-        const exact = urlMatches.filter((profile) => profile.homeServerIdentityId === identity);
-        return exact.length > 0 ? exact : urlMatches.filter((profile) => profile.homeServerIdentityId === null);
-      })()
-    : urlMatches;
-  if (candidates.length > 1) {
-    throw new SystemTaskExecutionError(
-      'server_profile_ambiguous',
-      `The Happier CLI has ${candidates.length} saved profiles for ${target.serverUrl} (${candidates.map((profile) => profile.id).join(', ')}), so it cannot tell which one is this Home.`,
-    );
-  }
-  return candidates[0] ?? null;
-}
-
 export async function readCurrentHappierServices(): Promise<readonly HappierService[]> {
   return (await discoverHappierServices({ processEnv: process.env })).services;
 }
@@ -128,8 +56,7 @@ export async function readLocalServerProfileScope(
     requireAppManaged?: boolean;
   }> = {},
 ): Promise<LocalServerProfileScope> {
-  const { activeServerId, profiles } = readProfiles(await executor.runHappierJson(['server', 'list', '--json']));
-  const serverId = selectTargetProfile(profiles, target)?.id ?? null;
+  const { activeServerId, serverId } = await readLocalServerProfileIdentity(executor, target);
   if (serverId === null) {
     if (deps.requireAppManaged) {
       throw new SystemTaskExecutionError('daemon_service_not_installed', 'No installed background service serves this Home.');
@@ -329,7 +256,7 @@ export async function disconnectHappierHomeService(params: Readonly<{
 
   let serverId: string | null;
   try {
-    serverId = selectTargetProfile(readProfiles(await params.executor.runHappierJson(['server', 'list', '--json'])).profiles, params.target)?.id ?? null;
+    serverId = (await readLocalServerProfileIdentity(params.executor, params.target)).serverId;
   } catch (error) {
     if (error instanceof SystemTaskExecutionError && error.code === 'server_profile_ambiguous') throw error;
     throw new SystemTaskExecutionError(
