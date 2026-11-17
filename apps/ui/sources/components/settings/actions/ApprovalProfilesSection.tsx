@@ -4,7 +4,7 @@ import type { ApprovalProfileV1, ReadableApprovalProfileV1 } from '@happier-dev/
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
@@ -71,6 +71,8 @@ export const ApprovalProfilesSection = React.memo(function ApprovalProfilesSecti
                             size="small"
                             display="inverted"
                             title={t('workflows.triggers.guided.profile.add')}
+                            // The glyph says it adds: stacked under the description on a phone, a bare label read as a heading.
+                            leading={<Icon name="plus" size={ICON_SIZE.xs} />}
                             onPress={toggle}
                         />
                     )}

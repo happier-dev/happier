@@ -36,6 +36,7 @@ import {
 import { Icon } from '@/components/ui/icons/Icon';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { ApprovalProfilesSection } from './ApprovalProfilesSection';
+import { useActionSettingsNarrowLayout } from './useActionSettingsNarrowLayout';
 import { ApprovalProfilePageHeader } from './ApprovalProfilePageHeader';
 import { buildApprovalProfileSettingsRoute } from './approvalProfileSettingsRoute';
 import { ACCOUNT_ACTION_SETTINGS_TARGET, approvalProfileSetsAction, useActionSettingsForTarget,
@@ -116,7 +117,10 @@ const stylesheet = StyleSheet.create((theme) => ({
 function ActionSettingsRowAccessory(props: Readonly<{
     entry: ActionSettingsEntry;
     testIDPrefix: string;
-    /** Absent in a profile: profiles turn surfaces off one by one, never the whole Action. */
+    /**
+     * Absent in a profile (profiles turn surfaces off one by one, never the whole Action) and on a phone, where a row
+     * keeps one control: the Action's page holds the switch in its header and the status line says when it is off.
+     */
     onEnabledChange: ((enabled: boolean) => void) | null;
 }>) {
     const { theme } = useUnistyles();
@@ -269,6 +273,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView(props
             : `/settings/actions/${encodeURIComponent(actionId)}`);
     }, [router, target]);
 
+    const narrowLayout = useActionSettingsNarrowLayout();
     const renderEntryRow = React.useCallback((entry: ActionSettingsEntry) => {
         const actionTestIdPrefix = `settings-actions:action:${entry.actionId}`;
         const statusText = presentTargetStatus(getActionSettingsEntryStatusText(entry, settings, scmRemoteConfirmPolicy),
@@ -292,7 +297,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView(props
                     <ActionSettingsRowAccessory
                         entry={entry}
                         testIDPrefix={actionTestIdPrefix}
-                        onEnabledChange={target.kind === 'profile' ? null
+                        onEnabledChange={target.kind === 'profile' || narrowLayout ? null
                             : (nextValue) => handleActionEnabledChange(entry.actionId, nextValue)}
                     />
                 )}
@@ -301,7 +306,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView(props
                 onPress={() => openActionDetails(entry.actionId)}
             />
         );
-    }, [handleActionEnabledChange, openActionDetails, profile, scmRemoteConfirmPolicy, settings, styles.actionStatusSubtitle, target]);
+    }, [handleActionEnabledChange, narrowLayout, openActionDetails, profile, scmRemoteConfirmPolicy, settings, styles.actionStatusSubtitle, target]);
 
     const renderSegment = React.useCallback(({ item: segment }: Readonly<{ item: ActionSettingsVirtualizedSegment }>) => {
         const pluginId = segment.first && segment.items[0]?.entry.kind !== 'host'

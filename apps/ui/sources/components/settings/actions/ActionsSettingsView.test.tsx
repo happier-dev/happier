@@ -487,6 +487,29 @@ describe('ActionsSettingsView', () => {
     );
   });
 
+  // DESIGN-ACCEPT-1116-D (X-routed P3): on a phone the row held a switch and a chevron beside text that wrapped to
+  // four lines. A phone row keeps one control (DESIGN.md "Phones recompose"): the row opens the Action, whose page
+  // holds the enable switch in its header; the status line still says when it is off.
+  it('keeps one control on a phone: the chevron to the Action, not a second switch beside it', async () => {
+    capture.reset();
+    // The window is the platform boundary: a phone-sized one, read the way every layout hook reads it.
+    const { Dimensions } = await import('react-native');
+    const windowSize = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 3, fontScale: 1 });
+    try {
+      const { ActionsSettingsView } = await import('./ActionsSettingsView');
+
+      const screen = await renderScreen(<ActionsSettingsView />);
+
+      expect(await screen.findByTestId('settings-actions:action:review.start:configure')).toBeTruthy();
+      expect(screen.findAllByTestId('settings-actions:action:review.start:enabled')).toHaveLength(0);
+      const reviewRow = renderedProps(Item).find((item) => item.testID === 'settings-actions:action:review.start');
+      (reviewRow?.onPress as () => void)();
+      expect(capture.routerPush).toHaveBeenCalledWith('/settings/actions/review.start');
+    } finally {
+      windowSize.mockRestore();
+    }
+  });
+
   it('keeps the switch and settings affordance beside each action and the status in its text column', async () => {
     capture.reset();
     const { ActionsSettingsView } = await import('./ActionsSettingsView');
