@@ -97,7 +97,6 @@ export const themeSurfaces = {
     tryOn: ({ here }: { here: string }) => `Prova a ${here}`,
     installConsequence: ({ face, here, count }: { face: string, here: string, count: number }) => `Instal·lar manté ${face} a ${here} i afegeix ${count} temes a Els teus temes.`,
     installedHelp: "Tria’l per a qualsevol mode a Aparença › Temes.",
-    tryHelp: ({ here }: { here: string }) => `Provar només afecta ${here}. No es desa res fins que l’instal·lis.`,
     faceFailed: ({ face }: { face: string }) => `No s’ha pogut afegir ${face}.`,
     retryFaces: "Torna-ho a provar",
     factIncludes: "Inclou",

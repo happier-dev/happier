@@ -97,7 +97,6 @@ export const themeSurfaces = {
     tryOn: ({ here }: { here: string }) => `在${here}上试用`,
     installConsequence: ({ face, here, count }: { face: string, here: string, count: number }) => `安装后将在${here}上保留${face}，并把 ${count} 个主题添加到“我的主题”。`,
     installedHelp: "可在 外观 › 主题 中为任一模式选择它。",
-    tryHelp: ({ here }: { here: string }) => `试用仅作用于${here}。安装前不会保存任何内容。`,
     faceFailed: ({ face }: { face: string }) => `无法添加${face}。`,
     retryFaces: "重试",
     factIncludes: "包含",

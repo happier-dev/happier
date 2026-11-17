@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Collection, type CollectionAnatomy, useHappierCollection } from '@happier-dev/plugin-ui';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { ThemeMiniaturePreview } from '@/components/settings/appearance/ThemeModePreview';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -48,6 +49,57 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
   })), [props.faces, props.tryingFaceId]);
   const id = (suffix: string) =>
     props.testID ? `${props.testID}:${suffix}` : undefined;
+  // What Install would do while trying, or where an installed theme is picked; at rest the Try button says it all.
+  const help = props.decisionHelp ?? (trying && tryingFace
+    ? t('themeStore.installConsequence', { face: tryingFace.name, here: props.here, count: props.faces?.length ?? 1 })
+    : props.installed ? t('themeStore.installedHelp') : null);
+  const maintenance = Boolean(props.onUninstall || props.onCheckUpdates || props.onDuplicate
+    || (props.onUpdate && props.updateAvailable) || props.onManageSource);
+  const failures = (props.installFailures ?? []).length > 0;
+  const primary = (
+    <View style={[styles.primary, phone ? styles.primaryPhone : null]}>
+      {trying ? (
+        <>
+          <RoundButton
+            size={phone ? 'normal' : 'small'}
+            display="secondary"
+            title={t('themeStore.revert')}
+            onPress={props.onRevert}
+            loading={props.busy === 'revert'}
+            disabled={props.busy !== null}
+            testID={id('revert')}
+          />
+          <RoundButton
+            size={phone ? 'normal' : 'small'}
+            title={props.installLabel ?? t('themeStore.install')}
+            onPress={props.onInstall}
+            loading={props.busy === 'install'}
+            disabled={props.busy !== null}
+            testID={id('install')}
+          />
+        </>
+      ) : props.installed ? (
+        <View style={styles.installed}>
+          <Icon name="check" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
+          <Text variant="body" style={styles.meta}>
+            {props.installedLabel ?? t('themeStore.installed')}
+          </Text>
+        </View>
+      ) : (
+        <RoundButton
+          size={phone ? 'normal' : 'small'}
+          title={t('themeStore.tryOn', { here: props.here })}
+          onPress={() => {
+            const face = props.preferredFaceId ?? props.faces?.[0]?.id;
+            if (face) props.onTryFace(face);
+          }}
+          loading={props.busy === 'try'}
+          disabled={props.busy !== null || !props.faces?.length}
+          testID={id('try')}
+        />
+      )}
+    </View>
+  );
 
   return (
     <ItemList testID={props.testID} presentation="grouped">
@@ -56,13 +108,26 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
         <Text variant="meta" style={styles.kicker}>
           {props.kicker}
         </Text>
-        <Text variant="title" emphasis="semiBold" style={styles.name}>
-          {props.name}
-        </Text>
+        {/* The title row carries the listing's one primary decision at its end (Try, then Revert and Install while
+            trying), level with the name; it wraps beneath the name when the name needs the width. */}
+        <View style={styles.titleRow}>
+          <Text variant="title" emphasis="semiBold" style={styles.name}>
+            {props.name}
+          </Text>
+          {phone ? null : primary}
+        </View>
         <Text variant="meta" style={styles.meta}>
           {props.meta}
         </Text>
+        {/* A phone keeps only the name on its line; the decision moves beneath the identity at full width. */}
+        {phone ? primary : null}
       </View>
+
+      {props.description ? (
+        <Text variant="body" style={styles.description}>
+          {props.description}
+        </Text>
+      ) : null}
 
       {props.faces && props.faces.length > 0 ? (
         <SelectionTiles
@@ -97,114 +162,50 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
         </View>
       )}
 
-      {props.description ? (
-        <Text variant="body" style={styles.description}>
-          {props.description}
-        </Text>
-      ) : null}
-
-      <View style={styles.decision}>
-        <View style={[styles.actions, phone ? styles.actionsPhone : null]}>
-          {trying ? (
-            <>
-              <RoundButton
-                size={phone ? 'normal' : 'small'}
-                display="secondary"
-                title={t('themeStore.revert')}
-                onPress={props.onRevert}
-                loading={props.busy === 'revert'}
-                disabled={props.busy !== null}
-                testID={id('revert')}
-              />
-              <RoundButton
-                size={phone ? 'normal' : 'small'}
-                title={props.installLabel ?? t('themeStore.install')}
-                onPress={props.onInstall}
-                loading={props.busy === 'install'}
-                disabled={props.busy !== null}
-                testID={id('install')}
-              />
-            </>
-          ) : props.installed ? (
-            <View style={styles.installed}>
-              <Icon name="check" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
-              <Text variant="body" style={styles.meta}>
-                {props.installedLabel ?? t('themeStore.installed')}
-              </Text>
+      {help || maintenance || props.checkError || failures ? (
+        <View style={styles.decision}>
+          {maintenance ? (
+            <View style={[styles.actions, phone ? styles.actionsPhone : null]}>
+              {props.onUninstall ? <RoundButton size={phone ? 'normal' : 'small'} display="secondary"
+                title={t('settingsPlugins.uninstall')} onPress={props.onUninstall} loading={props.busy === 'uninstall'}
+                disabled={props.busy !== null} testID={id('uninstall')} /> : null}
+              {props.onManageSource ? <RoundButton size={phone ? 'normal' : 'small'} display="secondary"
+                title={t('settingsPlugins.managePlugin')} onPress={props.onManageSource} disabled={props.busy !== null} testID={id('plugin')} /> : null}
+              {props.onCheckUpdates ? <RoundButton size={phone ? 'normal' : 'small'} display="secondary"
+                title={t('capabilities.store.updates.checkNow')} onPress={props.onCheckUpdates}
+                loading={props.busy === 'check'} disabled={props.busy !== null} testID={id('check')} /> : null}
+              {props.onUpdate && props.updateAvailable ? <RoundButton size={phone ? 'normal' : 'small'} display="secondary"
+                title={t('common.update')} onPress={props.onUpdate} loading={props.busy === 'update'}
+                disabled={props.busy !== null} testID={id('update')} /> : null}
+              {props.onDuplicate ? <RoundButton size={phone ? 'normal' : 'small'} display="secondary"
+                title={t('settingsAppearance.themeProfiles.duplicateTheme')} onPress={props.onDuplicate}
+                loading={props.busy === 'duplicate'} disabled={props.busy !== null} testID={id('duplicate')} /> : null}
             </View>
-          ) : (
-            <RoundButton
-              size={phone ? 'normal' : 'small'}
-              title={t('themeStore.tryOn', { here: props.here })}
-              onPress={() => {
-                const face = props.preferredFaceId ?? props.faces?.[0]?.id;
-                if (face) props.onTryFace(face);
-              }}
-              loading={props.busy === 'try'}
-              disabled={props.busy !== null || !props.faces?.length}
-              testID={id('try')}
-            />
-          )}
-          {props.onUninstall ? (
-            <RoundButton
-              size={phone ? 'normal' : 'small'}
-              display="secondary"
-              title={t('settingsPlugins.uninstall')}
-              onPress={props.onUninstall}
-              loading={props.busy === 'uninstall'}
-              disabled={props.busy !== null}
-              testID={id('uninstall')}
-            />
+          ) : null}
+          {props.checkError ? <SurfaceStateCard size="line" kind="warning"
+            title={t('capabilities.store.updates.checkFailed')} diagnosticCode={props.checkError} /> : null}
+          {help ? (
+            <WordCrossFade wordKey={trying ? `trying:${props.tryingFaceId}` : 'installed'}>
+              <Text variant="meta" style={styles.meta}>{help}</Text>
+            </WordCrossFade>
+          ) : null}
+          {failures ? (
+            <View style={styles.failures} testID={id('installFailures')}>
+              <InstallFailures failures={props.installFailures!} testID={id('installFailures')} />
+              <View style={styles.retry}>
+                <RoundButton
+                  size="small"
+                  display="secondary"
+                  title={t('themeStore.retryFaces')}
+                  onPress={props.onRetryFaces}
+                  disabled={props.busy !== null}
+                  testID={id('retryFaces')}
+                />
+              </View>
+            </View>
           ) : null}
         </View>
-        {props.onCheckUpdates || props.onDuplicate || props.onUpdate || props.onManageSource ? (
-          <View style={[styles.actions, phone ? styles.actionsPhone : null]}>
-            {props.onManageSource ? <RoundButton size={phone ? 'normal' : 'small'} display="secondary"
-              title={t('settingsPlugins.managePlugin')} onPress={props.onManageSource} disabled={props.busy !== null} testID={id('plugin')} /> : null}
-            {props.onCheckUpdates ? <RoundButton size={phone ? 'normal' : 'small'} display="secondary"
-              title={t('capabilities.store.updates.checkNow')} onPress={props.onCheckUpdates}
-              loading={props.busy === 'check'} disabled={props.busy !== null} testID={id('check')} /> : null}
-            {props.onUpdate && props.updateAvailable ? <RoundButton size={phone ? 'normal' : 'small'} display="secondary"
-              title={t('common.update')} onPress={props.onUpdate} loading={props.busy === 'update'}
-              disabled={props.busy !== null} testID={id('update')} /> : null}
-            {props.onDuplicate ? <RoundButton size={phone ? 'normal' : 'small'} display="secondary"
-              title={t('settingsAppearance.themeProfiles.duplicateTheme')} onPress={props.onDuplicate}
-              loading={props.busy === 'duplicate'} disabled={props.busy !== null} testID={id('duplicate')} /> : null}
-          </View>
-        ) : null}
-        {props.checkError ? <SurfaceStateCard size="line" kind="warning"
-          title={t('capabilities.store.updates.checkFailed')} diagnosticCode={props.checkError} /> : null}
-        <WordCrossFade
-          wordKey={trying ? `trying:${props.tryingFaceId}` : 'idle'}
-        >
-          <Text variant="meta" style={styles.meta}>
-            {props.decisionHelp ?? (trying && tryingFace
-              ? t('themeStore.installConsequence', {
-                  face: tryingFace.name,
-                  here: props.here,
-                  count: props.faces?.length ?? 1,
-                })
-              : props.installed
-                ? t('themeStore.installedHelp')
-                : t('themeStore.tryHelp', { here: props.here }))}
-          </Text>
-        </WordCrossFade>
-        {(props.installFailures ?? []).length > 0 ? (
-          <View style={styles.failures} testID={id('installFailures')}>
-            <InstallFailures failures={props.installFailures!} testID={id('installFailures')} />
-            <View style={styles.retry}>
-              <RoundButton
-                size="small"
-                display="secondary"
-                title={t('themeStore.retryFaces')}
-                onPress={props.onRetryFaces}
-                disabled={props.busy !== null}
-                testID={id('retryFaces')}
-              />
-            </View>
-          </View>
-        ) : null}
-      </View>
+      ) : null}
 
       {props.facts.length > 0 ? (
         // The facts card stands on the listing's edges like everything above it: a contained scope adds no second inset.
@@ -271,10 +272,33 @@ const styles = StyleSheet.create((theme) => ({
   identity: {
     gap: theme.space.s2,
   },
+  titleRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    columnGap: theme.space.s12,
+    rowGap: theme.space.s8,
+  },
+  primary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s8,
+    marginLeft: 'auto',
+  },
+  primaryPhone: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    marginLeft: 0,
+    marginTop: theme.space.s12,
+  },
   kicker: {
     color: theme.colors.text.tertiary,
   },
+  // The name keeps a readable width (the section text minimum); short of it, the decision drops beneath the name.
   name: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: HAPPIER_PAGE_METRICS.sectionTextMinWidthPx,
     color: theme.colors.text.primary,
   },
   meta: {

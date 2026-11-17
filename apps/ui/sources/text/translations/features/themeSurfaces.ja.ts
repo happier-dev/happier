@@ -97,7 +97,6 @@ export const themeSurfaces = {
     tryOn: ({ here }: { here: string }) => `${here}で試す`,
     installConsequence: ({ face, here, count }: { face: string, here: string, count: number }) => `インストールすると${face}を${here}で使い続け、${count}件のテーマをマイテーマに追加します。`,
     installedHelp: "外観 › テーマでどちらのモードにも選べます。",
-    tryHelp: ({ here }: { here: string }) => `試用は${here}だけです。インストールするまで何も保存されません。`,
     faceFailed: ({ face }: { face: string }) => `${face}を追加できませんでした。`,
     retryFaces: "再試行",
     factIncludes: "含まれるもの",

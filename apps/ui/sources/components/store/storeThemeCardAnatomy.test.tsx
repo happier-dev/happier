@@ -137,7 +137,9 @@ it('keeps three Store theme cards across the wide column and two beside the open
     const columns = (stage: number) => Math.max(1, Math.floor((stage - 2 * HAPPIER_PAGE_METRICS.sheetInsetPx + HAPPIER_PAGE_METRICS.cardGapPx)
         / (STORE_THEME_CARD_MIN_WIDTH + HAPPIER_PAGE_METRICS.cardGapPx)));
     expect(columns(HAPPIER_PAGE_METRICS.columnMaxWidthPx.wide)).toBe(3);
-    // Beside the open listing: 1440 with the default pane leaves 504 (observed live), a 1512 laptop about 576.
+    // Beside the open listing: 1440 with the default pane leaves 504, the owner's laptop split 544 (both observed
+    // live, two 250 px cards), a 1512 laptop about 576.
     expect(columns(504)).toBe(2);
+    expect(columns(544)).toBe(2);
     expect(columns(576)).toBe(2);
 });

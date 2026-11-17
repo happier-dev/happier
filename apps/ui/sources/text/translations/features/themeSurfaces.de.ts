@@ -97,7 +97,6 @@ export const themeSurfaces = {
     tryOn: ({ here }: { here: string }) => `Auf ${here} ausprobieren`,
     installConsequence: ({ face, here, count }: { face: string, here: string, count: number }) => `Installieren behält ${face} auf ${here} und fügt ${count} Themes zu „Deine Themes“ hinzu.`,
     installedHelp: "Wähle es für jeden Modus unter Darstellung › Themes.",
-    tryHelp: ({ here }: { here: string }) => `Ausprobieren gilt nur für ${here}. Gespeichert wird erst beim Installieren.`,
     faceFailed: ({ face }: { face: string }) => `${face} konnte nicht hinzugefügt werden.`,
     retryFaces: "Erneut versuchen",
     factIncludes: "Enthält",

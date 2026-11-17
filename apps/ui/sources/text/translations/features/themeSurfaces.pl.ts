@@ -97,7 +97,6 @@ export const themeSurfaces = {
     tryOn: ({ here }: { here: string }) => `Przymierz na ${here}`,
     installConsequence: ({ face, here, count }: { face: string, here: string, count: number }) => `Instalacja zachowa ${face} na ${here} i doda ${count} motywy do Twoich motywów.`,
     installedHelp: "Wybierz go dla dowolnego trybu w Wygląd › Motywy.",
-    tryHelp: ({ here }: { here: string }) => `Przymierzanie dotyczy tylko ${here}. Nic nie jest zapisywane do czasu instalacji.`,
     faceFailed: ({ face }: { face: string }) => `Nie udało się dodać ${face}.`,
     retryFaces: "Spróbuj ponownie",
     factIncludes: "Zawiera",

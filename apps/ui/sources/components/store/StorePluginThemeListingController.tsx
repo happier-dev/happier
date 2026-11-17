@@ -77,7 +77,7 @@ export function StorePluginThemeListingController(props: Readonly<{ reference: S
         facesError: document.state === 'missing' ? t('common.unavailable') : null,
         tryingFaceId: matching ? contributionId : null, preferredFaceId: entry ? contributionId : null, here, installed,
         installLabel: t('common.apply'), installedLabel: t('themeCard.applied', { here }),
-        decisionHelp: matching ? t('themeCard.trying', { here }) : installed ? t('themeCard.applied', { here }) : t('themeStore.tryHelp', { here }),
+        ...(matching ? { decisionHelp: t('themeCard.trying', { here }) } : installed ? { decisionHelp: t('themeCard.applied', { here }) } : {}),
         facts: [{ key: 'includes', value: entry ? t('themeStore.includesCount', { count: 1 }) : t('common.unknown') },
             { key: 'changes', value: coverageFacts?.changes ?? t('common.unknown') },
             { key: 'worksOn', ...(coverageFacts?.worksOn ?? { value: t('common.unknown') }) },

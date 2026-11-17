@@ -97,7 +97,6 @@ export const themeSurfaces = {
     tryOn: ({ here }: { here: string }) => `Experimentar em ${here}`,
     installConsequence: ({ face, here, count }: { face: string, here: string, count: number }) => `Instalar mantém ${face} em ${here} e adiciona ${count} temas a Seus temas.`,
     installedHelp: "Escolha-o para qualquer modo em Aparência › Temas.",
-    tryHelp: ({ here }: { here: string }) => `Experimentar vale só para ${here}. Nada é salvo até você instalar.`,
     faceFailed: ({ face }: { face: string }) => `Não foi possível adicionar ${face}.`,
     retryFaces: "Tentar novamente",
     factIncludes: "Inclui",

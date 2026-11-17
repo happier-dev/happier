@@ -97,7 +97,6 @@ export const themeSurfaces = {
     tryOn: ({ here }: { here: string }) => `Prova su ${here}`,
     installConsequence: ({ face, here, count }: { face: string, here: string, count: number }) => `Installa mantiene ${face} su ${here} e aggiunge ${count} temi a I tuoi temi.`,
     installedHelp: "Sceglilo per ciascuna modalità in Aspetto › Temi.",
-    tryHelp: ({ here }: { here: string }) => `La prova riguarda solo ${here}. Non viene salvato nulla finché non lo installi.`,
     faceFailed: ({ face }: { face: string }) => `Impossibile aggiungere ${face}.`,
     retryFaces: "Riprova",
     factIncludes: "Include",

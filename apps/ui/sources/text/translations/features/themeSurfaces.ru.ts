@@ -97,7 +97,6 @@ export const themeSurfaces = {
     tryOn: ({ here }: { here: string }) => `Примерить на ${here}`,
     installConsequence: ({ face, here, count }: { face: string, here: string, count: number }) => `Установка оставит ${face} на ${here} и добавит тем: ${count} в «Ваши темы».`,
     installedHelp: "Выберите её для любого режима в «Оформление › Темы».",
-    tryHelp: ({ here }: { here: string }) => `Примерка действует только на ${here}. Ничего не сохраняется до установки.`,
     faceFailed: ({ face }: { face: string }) => `Не удалось добавить ${face}.`,
     retryFaces: "Повторить попытку",
     factIncludes: "Содержит",
