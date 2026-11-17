@@ -22,24 +22,13 @@ import {
     parseTriageComposerEntryAttachmentValue,
 } from './attachmentValue.js';
 import { boundTriageDisplayText } from '../ui/window/boundDisplayText.js';
-import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/plugin-sdk';
-import type { SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
+import { buildSessionInputForgeEvidenceAttachmentValueV1, type SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
 
 /** The existing attachment envelope carries selected data without an entry identity. */
 export function buildTriageForgeEvidenceAttachmentDraftV1(evidence: SessionInputForgeEvidenceV1): TriageEntryAttachmentDraftV1 {
-    const forgeEvidence = { v: 1 as const, items: evidence.items.map((item) => ({
-        source: { ...item.source }, author: { ...item.author }, text: item.text,
-    })) };
-    // The chip names what the evidence is about (its first source), like an entry chip names its entry.
-    const named = evidence.items.find((item) => item.source.label.trim().length > 0)?.source.label;
     return {
         attachmentLocalId: TRIAGE_ENTRY_ATTACHMENT_LOCAL_ID_V1,
-        value: {
-            key: computeCanonicalDomainSeparatedDigest('happier:triage:composer-forge-evidence-key:v1', [JSON.stringify(forgeEvidence)]),
-            value: { v: 1, forgeEvidence },
-            presentation: { label: named === undefined
-                ? 'Selected evidence' : boundTriageDisplayText(named, MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1) },
-        },
+        value: buildSessionInputForgeEvidenceAttachmentValueV1(evidence),
     };
 }
 

@@ -203,7 +203,7 @@ export type PluginSessionInputSourceV1 = z.infer<typeof PluginSessionInputSource
  *
  * This is a Zod raw shape, not another admission schema or decision-maker.
  */
-export const PluginSessionUserTextAuthoredFieldSchemasV1 = Object.freeze({
+export const PluginSessionUserTextAuthoredFieldSchemasV1 = lazyDefinition(() => Object.freeze({
   idempotencyKey: PluginSessionInputIdempotencyKeyV1Schema,
   recipient: zMini.optional(ParticipantRecipientRoutingIdentityV1Schema),
   source: z.optional(PluginSessionInputSourceV1Schema),
@@ -212,7 +212,7 @@ export const PluginSessionUserTextAuthoredFieldSchemasV1 = Object.freeze({
   forgeEvidence: z.optional(asProtocolZod(SessionInputForgeEvidenceV1Schema)),
   /** Identifies a provider-facing reply whose visible answer belongs on its question tool. */
   toolAnswerDelivery: z.optional(z.strictObject({ toolCallId: z.string().check(z.trim(), z.minLength(1)) })),
-});
+}));
 
 /** Public plugin-authored intent. Caller identity and admitted authority are host-owned. */
 const PluginSessionUserTextInputRequestV1Schema = lazyZodSchema(() => z.strictObject({

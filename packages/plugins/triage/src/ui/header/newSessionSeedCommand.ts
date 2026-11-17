@@ -3,7 +3,7 @@ import type {
     OpenNewSessionOptions,
 } from '@happier-dev/plugin-sdk/ui';
 import { defineProtocolArray, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
-import { isPluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
+import { openSessionInputAuthoringV1, projectSessionInputLifecycleFailureV1 } from '@happier-dev/plugin-sdk/sessions';
 import { TriageSourceFailureV1Schema } from '@happier-dev/triage-protocol/v1';
 
 /**
@@ -33,15 +33,11 @@ export type TriageNewSessionFailureV1 = ReturnType<typeof TriageNewSessionFailur
 
 /** Keep public diagnostic identifiers, never arbitrary error messages or details. */
 export function projectTriageNewSessionFailureV1(error: unknown): TriageNewSessionFailureV1 | undefined {
-    if (!isPluginError(error)) {
-        const source = TriageSourceFailureV1Schema.safeParse(error);
-        if (!source.success) return undefined;
-        return { codes: [source.data.code],
-            ...(source.data.requestId === undefined ? {} : { requestId: source.data.requestId }) };
-    }
-    const requestId = readPluginErrorRequestIdV1(error);
-    return { codes: [error.code, ...(error.diagnostics ?? []).map(diagnostic => diagnostic.code)],
-        ...(requestId === undefined ? {} : { requestId }) };
+    const generic = projectSessionInputLifecycleFailureV1(error);
+    if (generic !== undefined) return generic;
+    const source = TriageSourceFailureV1Schema.safeParse(error);
+    return source.success ? { codes: [source.data.code],
+        ...(source.data.requestId === undefined ? {} : { requestId: source.data.requestId }) } : undefined;
 }
 
 export type TriageNewSessionSeedHostV1 = Readonly<{
@@ -67,25 +63,5 @@ export async function requestTriageNewSessionSeed(
     seed: TriageNewSessionSeedV1,
     options?: OpenNewSessionOptions,
 ): Promise<TriageNewSessionSeedResultV1> {
-    let installed: readonly string[];
-    try {
-        installed = host.version().methods;
-    } catch {
-        return { status: 'unsupported' };
-    }
-    if (!installed.includes('openNewSession') || !host.openNewSession) return { status: 'unsupported' };
-
-    try {
-        await host.openNewSession(seed, options);
-    } catch (error) {
-        // The canonical present-user Action gate uses this diagnostic for both
-        // Decline and dismissal. Arbitrary denial/unavailability is not cancellation.
-        const declined = 'plugin_action_current_intent_rejected';
-        if (isPluginError(error) && (error.code === declined
-            || error.diagnostics?.some((diagnostic) => diagnostic.code === declined))) {
-            return { status: 'cancelled' };
-        }
-        return { status: 'unavailable', failure: projectTriageNewSessionFailureV1(error) };
-    }
-    return { status: 'seeded' };
+    return openSessionInputAuthoringV1({ host, seed, options, projectFailure: projectTriageNewSessionFailureV1 });
 }

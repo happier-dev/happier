@@ -30,3 +30,13 @@ export const SessionInputForgeEvidenceV1Schema = defineProtocolObject({
   }, { policy: 'closed' }), { minItems: 1 }),
 }, { policy: 'closed' });
 export type SessionInputForgeEvidenceV1 = ReturnType<typeof SessionInputForgeEvidenceV1Schema.parse>;
+
+/** Composer-owned evidence data; the enclosing attachment supplies presentation and identity. */
+export const SessionInputForgeEvidenceAttachmentValueV1Schema = defineProtocolObject({
+  v: defineProtocolLiteral(1), forgeEvidence: SessionInputForgeEvidenceV1Schema,
+}, { policy: 'closed' });
+
+export function readSessionInputForgeEvidenceAttachmentV1(value: unknown): SessionInputForgeEvidenceV1 | null {
+  const parsed = SessionInputForgeEvidenceAttachmentValueV1Schema.safeParse(value);
+  return parsed.success ? parsed.data.forgeEvidence : null;
+}

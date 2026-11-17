@@ -161,7 +161,7 @@ const WORKFLOW_SESSION_AUTHORING_SELECTION_SHAPE = {
   // The catalog entry carries a `.default(null)` for draft hydration. A workflow
   // definition must distinguish omission from an explicit null, so this consumes
   // the underlying selection schema without that default.
-  modelSelection: zMini.optional(zMini.nullable(SessionModelSelectionV1Schema)),
+  modelSelection: zMini.optional(zMini.nullable(zMini.lazy(() => SessionModelSelectionV1Schema))),
   profileId: zMini.optional(SessionAuthoringSelectionFieldsV1.profileId),
   approvalProfileId: zMini.optional(SessionAuthoringSelectionFieldsV1.approvalProfileId),
   permissionMode: zMini.optional(SessionAuthoringSelectionFieldsV1.permissionMode),

@@ -1,6 +1,6 @@
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/plugin-sdk';
 import { defineProtocolLiteral, defineProtocolObject, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
-import { SessionInputForgeEvidenceV1Schema, type SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
+import { SessionInputForgeEvidenceAttachmentValueV1Schema, readSessionInputForgeEvidenceAttachmentV1 } from '@happier-dev/plugin-sdk/sessions';
 import {
     TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
     TriageEntryLocatorV1Schema,
@@ -94,17 +94,12 @@ const entryIdentityValue = defineProtocolObject({
 }, { policy: 'closed' });
 
 /** Selected evidence uses the incumbent attachment envelope without inventing an entry. */
-export const TriageComposerForgeEvidenceAttachmentValueV1Schema = defineProtocolObject({
-    v: defineProtocolLiteral(1), forgeEvidence: SessionInputForgeEvidenceV1Schema,
-}, { policy: 'closed' });
+export const TriageComposerForgeEvidenceAttachmentValueV1Schema = SessionInputForgeEvidenceAttachmentValueV1Schema;
 export const TriageComposerEntryAttachmentValueV1Schema = defineProtocolUnion([
     entryIdentityValue, TriageComposerForgeEvidenceAttachmentValueV1Schema,
 ]);
 
-export function readTriageComposerForgeEvidenceV1(value: unknown): SessionInputForgeEvidenceV1 | null {
-    const parsed = TriageComposerForgeEvidenceAttachmentValueV1Schema.safeParse(value);
-    return parsed.success ? parsed.data.forgeEvidence : null;
-}
+export const readTriageComposerForgeEvidenceV1 = readSessionInputForgeEvidenceAttachmentV1;
 
 export type TriageComposerEntryAttachmentParseResultV1 =
     | Readonly<{ status: 'valid'; value: TriageComposerEntryAttachmentValueV1 }>

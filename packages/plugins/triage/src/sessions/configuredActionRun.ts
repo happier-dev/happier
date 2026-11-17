@@ -9,8 +9,8 @@ import { triageEntryRowKey } from '../projection/listWindow.js';
 import { resolveTriageConfiguredActionForExecutionV1 } from './actionResolution.js';
 import { readTriageActionPlacementV1, resolveTriageActionReferencesV1, resolveTriageActionInstructionV1 } from './actionResolution.js';
 import { triageFailureSubjectEntryV1, triageHealthAlertEntryV1, type TriageSessionHandoffInputV1, type TriageSessionHandoffResultV1 } from '@happier-dev/triage-protocol/v1';
-import { SessionMessageSendResultV1ProtocolSchema, type ActionSessionAddressV1, type SessionInputForgeEvidenceV1, type SessionStatusActionResultV1 } from '@happier-dev/plugin-sdk/sessions';
-import type { PluginUiHostApi, ComposerTransactionV1 } from '@happier-dev/plugin-sdk/ui';
+import { composeSessionInputHandoffV1, resolveSessionInputHandoffDeliveryV1, composeSessionInputV1, SessionMessageSendResultV1ProtocolSchema, type ActionSessionAddressV1, type SessionInputForgeEvidenceV1, type SessionStatusActionResultV1 } from '@happier-dev/plugin-sdk/sessions';
+import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { PluginError, isPluginError, type JsonValue, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginActionInputById, PluginActionResultById, PluginClientActionUi } from '@happier-dev/plugin-sdk/actions';
 import { ProtocolComposerAttachmentAuthorValueV1Schema, ActionOperationGetV1ResponseProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
@@ -165,7 +165,7 @@ export async function runTriageConfiguredHandoffV1(
     }
     const action = { ...configured.action,
         profileId: input.agentChoice.kind === 'profile' ? input.agentChoice.profileId : configured.action.profileId,
-        target: { ...configured.action.target, delivery: input.delivery === 'configured' ? configured.action.target.delivery : input.delivery },
+        target: { ...configured.action.target, delivery: resolveSessionInputHandoffDeliveryV1(input.delivery, configured.action.target.delivery) },
     };
     if (primary !== undefined && (primary.workflowSubject === null
         || planTriageOfferedActionsV1([action], primary.workflowSubject).length === 0)) return unavailable('configuredActionUnavailable');
@@ -298,21 +298,19 @@ export async function runTriageConfiguredHandoffV1(
             || currentAgent.identity.localId !== agent.agentTarget.identity.localId
             || currentAgent.definitionId !== agent.agentTarget.definitionId)) return unavailable('agentMismatch');
         if (delivery === 'compose') {
-            if (host.readComposer === undefined || host.applyComposer === undefined) return unavailable('composerUnavailable');
-            const ref = { kind: 'session' as const, sessionId: existing.sessionId };
-            const read = await host.readComposer(ref, cancellation).catch(() => null);
-            if (read?.status !== 'ready' || !read.snapshot.state.editable) return unavailable('composerUnavailable');
-            const plan = planTriageActionDeliveryV1({ delivery: 'compose', promptText, entries: options.entries, attachments: attachment });
-            if (plan.kind !== 'compose') return unavailable('evidenceInvalid');
-            const operations: ComposerTransactionV1['operations'][number][] = [
-                ...(plan.text === undefined ? [] : [{ kind: 'text.insert' as const,
-                    position: { offset: read.snapshot.text.length }, text: `${read.snapshot.text.length === 0 ? '' : '\n\n'}${plan.text}` }]),
-                ...plan.attachments.map((item) => ({ kind: 'attachment.add' as const, ...item })),
-            ];
-            const applied = await host.applyComposer(ref, { expectedRevision: read.snapshot.revision, operations }, cancellation).catch(() => null);
-            return applied?.status === 'applied'
-                ? finish({ kind: 'composed', destination: { kind: 'existing', session: existing } })
-                : unavailable('composerUnavailable');
+            let noInput = false;
+            const composed = await composeSessionInputHandoffV1(existing, { text: promptText ?? '' }, async () => {
+                const result = await composeSessionInputV1({ host, sessionId: existing.sessionId, signal: options.signal,
+                    buildInput: () => {
+                        const plan = planTriageActionDeliveryV1({ delivery: 'compose', promptText, entries: options.entries, attachments: attachment });
+                        return plan.kind === 'compose' ? { ...plan, attachments: [...plan.attachments] } : { kind: 'none' };
+                    },
+                });
+                noInput = result === 'none';
+                return { ok: true, result: result === 'composed' ? 'composed' : 'composerUnavailable' };
+            }, options.signal);
+            return composed.kind === 'composed' ? finish(composed)
+                : unavailable(noInput ? 'evidenceInvalid' : 'composerUnavailable');
         }
     }
 

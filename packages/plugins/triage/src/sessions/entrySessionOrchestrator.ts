@@ -2,8 +2,9 @@ import type {
     PluginActionInputById,
     PluginActionResultById,
 } from '@happier-dev/plugin-sdk/actions';
-import { isPluginError, ActionFailureCauseV1Schema } from '@happier-dev/plugin-sdk/errors';
-import { SessionServerStartSpawnDraftV1Schema, projectSessionSpawnNewActionInputV2, type SessionId } from '@happier-dev/plugin-sdk/sessions';
+import { ActionFailureCauseV1Schema } from '@happier-dev/plugin-sdk/errors';
+import { completeSessionInputLifecycleV1, runSessionInputDestinationV1, spawnSessionInputDestinationV1, projectSessionInputSpawnFailureV1,
+    SessionServerStartSpawnDraftV1Schema, projectSessionSpawnNewActionInputV2, type SessionId } from '@happier-dev/plugin-sdk/sessions';
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 import type { TriageStartEntrySessionInputV1 } from '../actions/entrySessionProtocol.js';
 import type { TriageSessionDeliveryFailureDetailV1 } from '../actions/configuredActionRunProtocol.js';
@@ -231,31 +232,12 @@ export type TriageEntrySessionDepsV1 = Readonly<{
     signal?: AbortSignal;
 }>;
 
-/** Preserve the creator's cause; older launch replies provide only a native code. */
-function spawnFailureCause(result: Extract<PluginActionResultById['session.spawn_new'], { type: 'error' }>) {
-    const launchError = 'launchError' in result ? result.launchError : undefined;
-    const failureCause = ('failureCause' in result ? result.failureCause : undefined) ?? (launchError === undefined ? undefined : {
-        phase: 'session.spawn_new', errorClass: 'Error' as const,
-        errorCode: null, nativeErrorCode: launchError.code, httpStatus: null,
-    });
-    return failureCause === undefined ? {} : { failureCause };
-}
-
 /** SDK admission refusals reject; Session creation settlements are returned. */
 async function spawnEntrySession(
     deps: TriageEntrySessionDepsV1,
     input: SessionSpawnInput,
 ): Promise<PluginActionResultById['session.spawn_new']> {
-    try {
-        return await deps.execute('session.spawn_new', input, deps.signal ? { signal: deps.signal } : undefined);
-    } catch (error) {
-        // This documented SDK refusal precedes creation. Preserve other
-        // exceptions so a lost response retains same-key recovery.
-        if (isPluginError(error) && error.code === 'target_unavailable') {
-            return { type: 'error', code: 'target_unavailable', retryable: error.retryable };
-        }
-        throw error;
-    }
+    return spawnSessionInputDestinationV1({ execute: deps.execute, spawn: input, signal: deps.signal });
 }
 
 /**
@@ -278,9 +260,45 @@ type LinkedSessionDeliveryInput = Readonly<{
     disposition: TriageEntrySessionDispositionV1;
     workspace: TriageEntrySessionWorkspaceFactsV1;
     delivery?: TriageEntrySessionDeliveryRequestV1;
-    settledDelivery?: TriageEntrySessionDeliveryOutcomeV1;
+    settledDelivery?: Exclude<TriageEntrySessionDeliveryOutcomeV1, 'outcomeUnknown'>;
     finalOpen?: TriageEntrySessionFinalOpenV1;
 }>;
+
+/** Source preparation and links surround the Session owner's one destination
+ * lifecycle; initial creation and same-key creation retries share its verdict. */
+async function completeEntrySessionDestination(
+    deps: TriageEntrySessionDepsV1,
+    input: Omit<LinkedSessionDeliveryInput, 'sessionId' | 'disposition'> & Readonly<{
+        entryRef?: TriageEntryRefV1;
+        display?: TriageEntrySessionLinkDisplayV1;
+        destination: Readonly<{ kind: 'existing'; sessionId: SessionId; serverId?: string; disposition: TriageEntrySessionDispositionV1 }>
+            | Readonly<{ kind: 'new'; spawn: SessionSpawnInput; creationKey: string }>;
+    }>,
+): Promise<TriageEntrySessionStartResultV1> {
+    const destination = input.destination;
+    const completed = await runSessionInputDestinationV1(destination.kind === 'existing'
+        ? { kind: 'existing', session: { sessionId: destination.sessionId, ...(destination.serverId === undefined ? {} : { serverId: destination.serverId }) } }
+        : { kind: 'new', spawn: destination.spawn }, {
+        spawn: async (spawn) => ({ ok: true, result: await spawnEntrySession(deps, spawn) }),
+        complete: (session, creation) => linkDeliverThenOpen(deps, {
+            entryRef: input.entryRef, display: input.display, workspace: input.workspace,
+            sessionId: session.sessionId, serverId: session.serverId,
+            disposition: destination.kind === 'existing' ? destination.disposition : creation!.disposition,
+            ...(input.delivery === undefined ? {} : { delivery: input.delivery }),
+            ...(input.settledDelivery === undefined ? {} : { settledDelivery: input.settledDelivery }),
+            ...(input.finalOpen === undefined ? {} : { finalOpen: input.finalOpen }),
+        }),
+    }, deps.signal);
+    if (completed.kind === 'completed') return completed.result;
+    const result = completed.result;
+    // Only a new destination reaches a native creation settlement.
+    const creationKey = destination.kind === 'new' ? destination.creationKey : undefined;
+    if (result.type === 'pending') return {
+        type: 'creationPending', creationKey: creationKey!, outcome: result.outcome, workspace: input.workspace,
+    };
+    return { type: 'creationFailed', failureCode: result.code,
+        ...projectSessionInputSpawnFailureV1(result), creationKey: creationKey!, workspace: input.workspace };
+}
 
 async function linkDeliverThenOpen(
     deps: TriageEntrySessionDepsV1,
@@ -332,49 +350,29 @@ async function deliverThenOpen(
     deps: TriageEntrySessionDepsV1,
     input: LinkedSessionDeliveryInput,
 ): Promise<TriageEntrySessionStartResultV1> {
-    let deliveryResult: PluginActionResultById['session.message.send'] | undefined;
-    const delivery: TriageEntrySessionDeliveryOutcomeV1 = input.settledDelivery
-        ?? (input.delivery === undefined
-            ? 'notRequested'
-            : await deliverEntrySessionInput({
+    const requested = input.delivery;
+    return completeSessionInputLifecycleV1({
+        context: { sessionId: input.sessionId, disposition: input.disposition, workspace: input.workspace },
+        ...(input.settledDelivery === undefined ? {} : { settledDelivery: input.settledDelivery }),
+        ...(input.finalOpen === undefined ? {} : { finalOpen: input.finalOpen }),
+        ...(requested === undefined ? {} : { deliver: async () => {
+            let deliveryResult: PluginActionResultById['session.message.send'] | undefined;
+            const delivery = await deliverEntrySessionInput({
                 execute: deps.execute,
                 sessionId: input.sessionId,
                 serverId: input.serverId,
-                delivery: input.delivery,
-                onResult: (result) => { if (input.delivery?.returnResult === true) deliveryResult = result; },
+                delivery: requested,
+                onResult: (result) => { if (requested.returnResult === true) deliveryResult = result; },
                 ...(deps.onDeliveryFailure === undefined ? {} : { onFailure: deps.onDeliveryFailure }),
                 ...(deps.signal ? { signal: deps.signal } : {}),
-            }));
-    if (input.finalOpen !== undefined) {
-        // This is not an `openPending`: the canonical open phase has not been
-        // attempted or failed. The start owner has linked and delivered all it
-        // owns, and hands the exact linked Session back to the batch sequence
-        // that deliberately retained final navigation.
-        return {
-            type: 'linked',
-            sessionId: input.sessionId,
-            disposition: input.disposition,
-            workspace: input.workspace,
-            delivery,
-            ...(deliveryResult === undefined ? {} : { deliveryResult }),
-            finalOpen: input.finalOpen,
-        };
-    }
-    const opened = await openLinkedSession({
-        execute: deps.execute,
-        sessionId: input.sessionId,
-        ...(input.serverId === undefined ? {} : { serverId: input.serverId }),
-        ...(deps.signal ? { signal: deps.signal } : {}),
+            });
+            return { delivery, ...(deliveryResult === undefined ? {} : { deliveryResult }) };
+        } }),
+        open: () => openLinkedSession({ execute: deps.execute, sessionId: input.sessionId,
+            ...(input.serverId === undefined ? {} : { serverId: input.serverId }),
+            ...(deps.signal ? { signal: deps.signal } : {}),
+        }),
     });
-    return {
-        type: opened.status === 'opened' ? 'opened' : 'openPending',
-        ...(opened.status === 'failed' && opened.failure !== undefined ? { failure: opened.failure } : {}),
-        sessionId: input.sessionId,
-        disposition: input.disposition,
-        workspace: input.workspace,
-        delivery,
-        ...(deliveryResult === undefined ? {} : { deliveryResult }),
-    };
 }
 
 /**
@@ -436,36 +434,13 @@ export async function resumeEntrySessionStart(
         if (input.orchestrate === true && !hasOrchestrationEntryInput(input.entryRef, delivery)) {
             return { type: 'rejected', reason: 'orchestrationRequiresNewSessionWithEntryInput' };
         }
-        const result = await spawnEntrySession(
-            deps,
-            {
-                ...entrySpawnSelection(pending.spawn, pending.directory, input.orchestrate, delivery),
-                creationKey: pending.creationKey,
-            },
-        );
-        if (result.type === 'pending') {
-            return {
-                type: 'creationPending',
-                creationKey: pending.creationKey,
-                outcome: result.outcome,
-                workspace: pending.workspace,
-            };
-        }
-        if (result.type !== 'success') {
-            return {
-                type: 'creationFailed',
-                failureCode: result.code,
-                ...spawnFailureCause(result),
-                creationKey: pending.creationKey,
-                workspace: pending.workspace,
-            };
-        }
-        return await linkDeliverThenOpen(deps, {
+        return completeEntrySessionDestination(deps, {
             entryRef: input.entryRef,
             display: input.display,
-            sessionId: result.sessionId,
-            serverId: pending.spawn.executionTarget.serverId,
-            disposition: result.disposition,
+            destination: { kind: 'new', creationKey: pending.creationKey, spawn: {
+                ...entrySpawnSelection(pending.spawn, pending.directory, input.orchestrate, delivery),
+                creationKey: pending.creationKey,
+            } },
             workspace: pending.workspace,
             ...(delivery === undefined ? {} : { delivery }),
             ...(input.finalOpen === undefined ? {} : { finalOpen: input.finalOpen }),
@@ -625,12 +600,11 @@ export async function startEntrySession(
 
     const destination = request.destination;
     if (destination.kind === 'existing') {
-        return await linkDeliverThenOpen(deps, {
+        return completeEntrySessionDestination(deps, {
             entryRef: request.entryRef,
             display: request.display,
-            sessionId: destination.sessionId,
-            serverId: destination.serverId,
-            disposition: 'existing',
+            destination: { kind: 'existing', sessionId: destination.sessionId,
+                ...(destination.serverId === undefined ? {} : { serverId: destination.serverId }), disposition: 'existing' },
             workspace: destination.workspace ?? { kind: 'referenceOnly' },
             ...(request.delivery === undefined ? {} : { delivery: request.delivery }),
             ...(request.finalOpen === undefined ? {} : { finalOpen: request.finalOpen }),
@@ -655,36 +629,10 @@ export async function startEntrySession(
         ...entrySpawnSelection(destination.spawn, materializationDirectory(resolved.materialization), request.orchestrate, request.delivery),
         creationKey: destination.creationKey,
     };
-    const result = await spawnEntrySession(deps, spawnInput);
-    // The generic action executor is the sole owner of the creation tag,
-    // correspondence lookup and create-versus-rejoin decision. Triage consumes
-    // its result unchanged.
-    if (result.type === 'pending') {
-        // Retry only the same request under the same key. No new key, attempt
-        // ordinal, correspondence tag or second durable pending record exists,
-        // and an exact correspondence on that retry returns `rejoined`.
-        return {
-            type: 'creationPending',
-            creationKey: destination.creationKey,
-            outcome: result.outcome,
-            workspace,
-        };
-    }
-    if (result.type !== 'success') {
-        // Every canonical error is terminal for this attempt. `creation_conflict`
-        // is opaque: no Session id is disclosed, so none is fabricated,
-        // relabelled `rejoined`, linked or opened. A new visible user action
-        // receives a new key.
-        return { type: 'creationFailed', failureCode: result.code,
-            ...spawnFailureCause(result),
-            creationKey: destination.creationKey, workspace };
-    }
-    return await linkDeliverThenOpen(deps, {
+    return completeEntrySessionDestination(deps, {
         entryRef: request.entryRef,
         display: request.display,
-        sessionId: result.sessionId,
-        serverId: destination.spawn.executionTarget.serverId,
-        disposition: result.disposition,
+        destination: { kind: 'new', creationKey: destination.creationKey, spawn: spawnInput },
         workspace,
         ...(request.delivery === undefined ? {} : { delivery: request.delivery }),
         ...(request.finalOpen === undefined ? {} : { finalOpen: request.finalOpen }),

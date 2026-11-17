@@ -8,7 +8,9 @@ import {
     type ProtocolComposableSchema, type ProtocolSchemaInput, type ProtocolSchemaOutput,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
-    ActionSessionAddressV1Schema, SessionMessageSendResultV1ProtocolSchema, SessionTargetV1Schema,
+    ActionSessionAddressV1Schema, SessionMessageSendResultV1ProtocolSchema,
+    SessionInputHandoffSessionChoiceV1Schema, SessionInputHandoffDeliveryChoiceV1Schema,
+    SessionInputHandoffSendResultV1Schema, SessionInputHandoffCompositionResultV1Schema,
 } from '@happier-dev/plugin-sdk/sessions';
 import { AgentTargetKeyV2Schema } from '@happier-dev/plugin-sdk/agents';
 import { FailureActionPlacementReasonV1Schema } from '@happier-dev/plugin-sdk/ui';
@@ -59,17 +61,13 @@ export const TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1 = Object.freeze({
 
 const selectionMembers = {
     configuredActionId: TriageActionIdV1Schema,
-    sessionChoice: defineProtocolUnion([
-        defineProtocolObject({ kind: defineProtocolLiteral('configured') }, closed),
-        defineProtocolObject({ kind: defineProtocolLiteral('existing'), session: SessionTargetV1Schema }, closed),
-        defineProtocolObject({ kind: defineProtocolLiteral('new') }, closed),
-    ]),
+    sessionChoice: SessionInputHandoffSessionChoiceV1Schema,
     agentChoice: defineProtocolUnion([
         defineProtocolObject({ kind: defineProtocolLiteral('configured') }, closed),
         defineProtocolObject({ kind: defineProtocolLiteral('profile'), profileId: ProtocolLaunchProfileIdV2Schema }, closed),
         defineProtocolObject({ kind: defineProtocolLiteral('target'), targetKey: AgentTargetKeyV2Schema }, closed),
     ]),
-    delivery: defineProtocolUnion([defineProtocolLiteral('configured'), defineProtocolLiteral('compose'), defineProtocolLiteral('send')]),
+    delivery: SessionInputHandoffDeliveryChoiceV1Schema,
 };
 
 /** The same four operands accepted by the configured handoff, with no copied preferences. */
@@ -169,16 +167,11 @@ type HandoffSendResult = Readonly<{
     session: ProtocolSchemaOutput<typeof ActionSessionAddressV1Schema>;
     result: ProtocolSchemaOutput<typeof SessionMessageSendResultV1ProtocolSchema>;
 }>;
-const handoffSendResult: ProtocolComposableSchema<HandoffSendResultAuthored, HandoffSendResult> =
-    defineProtocolObject({ kind: defineProtocolLiteral('sendResult'), session: ActionSessionAddressV1Schema,
-        result: SessionMessageSendResultV1ProtocolSchema }, closed);
+const handoffSendResult: ProtocolComposableSchema<HandoffSendResultAuthored, HandoffSendResult> = SessionInputHandoffSendResultV1Schema;
 
 const handoffResult = defineProtocolUnion([
     defineProtocolObject({ kind: defineProtocolLiteral('entryExecution'), status: TriageConfiguredEntryExecutionStatusV1Schema }, closed),
-    defineProtocolObject({ kind: defineProtocolLiteral('composed'), destination: defineProtocolUnion([
-        defineProtocolObject({ kind: defineProtocolLiteral('newSessionDraft') }, closed),
-        defineProtocolObject({ kind: defineProtocolLiteral('existing'), session: ActionSessionAddressV1Schema }, closed),
-    ]) }, closed),
+    SessionInputHandoffCompositionResultV1Schema,
     handoffSendResult,
     defineProtocolObject({ kind: defineProtocolLiteral('placement_choice_required'), reason: FailureActionPlacementReasonV1Schema,
         candidates: defineProtocolArray(defineProtocolObject({

@@ -8,7 +8,7 @@ import type { TriageEntrySessionLinkDisplayV1 } from './entrySessionLinks.js';
 import type { TriageSessionActionInvokerV1 } from './entrySessionOpen.js';
 import { buildTriageForgeEvidenceAttachmentDraftV1 } from '../composer/mutationPlan.js';
 import type { SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
-import { isPluginError, readUnexpectedActionErrorDiagnosticV1, ActionFailureCauseV1Schema } from '@happier-dev/plugin-sdk/errors';
+import { deliverSessionInputV1, type SessionInputDeliveryPlanV1, type SessionInputDeliveryOutcomeV1 } from '@happier-dev/plugin-sdk/sessions';
 import type { TriageSessionDeliveryFailureDetailV1 } from '../actions/configuredActionRunProtocol.js';
 
 /**
@@ -29,18 +29,7 @@ import type { TriageSessionDeliveryFailureDetailV1 } from '../actions/configured
  * the canonical Session-input Action admits it. This module is the phase.
  */
 
-type SessionMessageSendInput = Extract<
-    PluginActionInputById['session.message.send'],
-    Readonly<{ message: string }>
->;
-
-export type TriagePlannedEntrySessionInputV1 =
-    | Readonly<{ kind: 'none' }>
-    | Readonly<{
-        kind: 'input';
-        text: string;
-        attachments: NonNullable<SessionMessageSendInput['attachments']>;
-    }>;
+export type TriagePlannedEntrySessionInputV1 = SessionInputDeliveryPlanV1;
 
 /**
  * What a start was asked to deliver once the Session exists.
@@ -88,12 +77,7 @@ export type TriageEntrySessionDeliveryRequestV1 = Readonly<{
  * at the reader as success. Reporting work that did not happen is worse than
  * reporting a failure, and this union exists so it cannot be said again.
  */
-export type TriageEntrySessionDeliveryOutcomeV1 =
-    /** The start carried no delivery at all. */
-    | 'notRequested'
-    /** A delivery was requested and had neither text nor a placeable attachment. */
-    | 'none'
-    | Extract<PluginActionResultById['session.message.send'], Readonly<{ status: string }>>['status'];
+export type TriageEntrySessionDeliveryOutcomeV1 = 'notRequested' | SessionInputDeliveryOutcomeV1;
 
 /** Builds the one structured input shared by creation and existing-Session delivery. */
 export function planEntrySessionInput(
@@ -132,50 +116,14 @@ export async function deliverEntrySessionInput(input: Readonly<{
     onResult?: (result: PluginActionResultById['session.message.send']) => void;
     onFailure?: (detail: TriageSessionDeliveryFailureDetailV1) => void;
 }>): Promise<TriageEntrySessionDeliveryOutcomeV1> {
-    let step: TriageSessionDeliveryFailureDetailV1['step'] = 'buildInput';
-    try {
-        const plan = planEntrySessionInput(input.delivery);
-        // Nothing to say. The Session still exists, is linked and will open — that
-        // is the press's real outcome, and a blank Message announcing it would be a
-        // Message the reader never wrote.
-        if (plan.kind === 'none') return 'none';
-
-        step = 'dispatch';
-        const result = await input.execute(
-            'session.message.send',
-            {
-                sessionId: input.sessionId,
-                message: plan.text,
-                idempotencyKey: input.delivery.idempotencyKey,
-                ...(plan.attachments.length === 0 ? {} : { attachments: plan.attachments }),
-            },
-            {
-                ...(input.signal === undefined ? {} : { signal: input.signal }),
-                ...(input.serverId === undefined ? {} : {
-                    sessionAddress: { serverId: input.serverId, sessionId: input.sessionId },
-                }),
-            },
-        );
-        input.onResult?.(result);
-        if ('status' in result && result.status === 'outcomeUnknown') {
-            input.onFailure?.({ step: 'awaitAck', errorClass: null, errorCode: result.code ?? null });
-        }
-        // The Message-send owner's own verdict, carried out unchanged. Collapsing
-        // `rejected` into success is the defect this whole phase exists to fix,
-        // so there is deliberately no default arm to collapse it into.
-        // This invocation addresses one exact Session. A fanout answer cannot
-        // establish what happened to that input, so retain its retry identity.
-        return 'status' in result ? result.status : 'outcomeUnknown';
-    } catch (error) {
-        const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
-        const pluginError = isPluginError(error) ? error : null;
-        const cause = ActionFailureCauseV1Schema.safeParse(pluginError?.data.failureCause ?? pluginError?.details);
-        input.onFailure?.({ step, errorClass: cause.success ? cause.data.errorClass
-            : pluginError ? 'PluginError' : diagnostic.errorClass,
-            errorCode: cause.success ? cause.data.errorCode : pluginError?.code ?? diagnostic.errorCode });
-        // Retain the failing boundary, never the exception's message, stack or
-        // opaque details. A dispatch exception cannot establish admission; the
-        // existing idempotency key remains the recovery identity.
-        return 'outcomeUnknown';
-    }
+    return deliverSessionInputV1({
+        execute: input.execute,
+        sessionId: input.sessionId,
+        ...(input.serverId === undefined ? {} : { serverId: input.serverId }),
+        idempotencyKey: input.delivery.idempotencyKey,
+        buildInput: () => planEntrySessionInput(input.delivery),
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+        ...(input.onResult === undefined ? {} : { onResult: input.onResult }),
+        ...(input.onFailure === undefined ? {} : { onFailure: input.onFailure }),
+    });
 }

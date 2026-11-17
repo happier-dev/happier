@@ -1,4 +1,7 @@
 /** @moduleRealm daemon */
+export { runSessionInputHandoffV1, SessionInputHandoffInputV1Schema, SessionInputHandoffResultV1Schema } from '../sessions/inputHandoff.js';
+export type { SessionInputHandoffInputV1, SessionInputHandoffResultV1, SessionInputHandoffDepsV1,
+    SessionInputHandoffExecutionV1 } from '../sessions/inputHandoff.js';
 import type { PluginOperationAvailability } from '../availability.js';
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { JsonValue } from '../identity.js';

@@ -14,6 +14,7 @@ export const PluginSessionInputAttachmentV1Schema = lazyZodSchema(() => z.strict
   value: ComposerAttachmentAuthorValueV1Schema,
 }));
 export type PluginSessionInputAttachmentV1 = z.infer<typeof PluginSessionInputAttachmentV1Schema>;
+export type PluginSessionInputAttachmentAuthoringV1 = z.input<typeof PluginSessionInputAttachmentV1Schema>;
 
 /** The one attachment-list boundary shared by every Session-input surface. */
 export const PluginSessionInputAttachmentsV1Schema = lazyZodSchema(() => z.array(PluginSessionInputAttachmentV1Schema).check(z.minLength(1), z.maxLength(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1)));

@@ -1,4 +1,19 @@
 export type { AgentPermissionIntentV1 } from '../services/sessions.js';
+export { runSessionInputHandoffV1, runSessionInputDestinationV1, sendSessionInputHandoffV1, composeSessionInputHandoffV1, resolveSessionInputHandoffDeliveryV1, resolveSessionInputHandoffSelectionV1,
+    SessionInputHandoffInputV1Schema, SessionInputHandoffResultV1Schema,
+    SessionInputHandoffSessionChoiceV1Schema, SessionInputHandoffDeliveryChoiceV1Schema,
+    SessionInputHandoffSendResultV1Schema, SessionInputHandoffCompositionResultV1Schema } from './inputHandoff.js';
+export type { SessionInputHandoffSessionChoiceV1, SessionInputHandoffSendResultV1,
+    SessionInputHandoffCompositionResultV1, SessionInputHandoffInputV1, SessionInputHandoffResultV1,
+    SessionInputHandoffNewDestinationV1, SessionInputHandoffContentV1, SessionInputHandoffEffectV1,
+    SessionInputHandoffDepsV1, SessionInputHandoffExecutionV1, SessionInputDestinationResultV1 } from './inputHandoff.js';
+export { openSessionInputAuthoringV1, openSessionInputDestinationV1, completeSessionInputLifecycleV1,
+    projectSessionInputLifecycleFailureV1, spawnSessionInputDestinationV1, projectSessionInputSpawnFailureV1 } from './inputLifecycle.js';
+export type { SessionInputAuthoringHostV1, SessionInputAuthoringResultV1, SessionInputOpenInvokerV1,
+    SessionInputLifecycleFailureV1, SessionInputLifecycleDeliveryV1, SessionInputLifecycleResultV1,
+    SessionInputSpawnInvokerV1 } from './inputLifecycle.js';
+export { deliverSessionInputV1, composeSessionInputV1 } from './inputDelivery.js';
+export type { SessionInputDeliveryPlanV1, SessionInputDeliveryFailureV1, SessionInputDeliveryOutcomeV1, SessionInputCompositionPlanV1 } from './inputDelivery.js';
 export { SessionTargetV1Schema, ActionSessionAddressV1Schema } from './sessionTargets.js';
 export type { SessionTargetV1, SessionTargetSelectorV1, ActionSessionTargetDeclarationV1, ActionSessionAddressV1 } from './sessionTargets.js';
 export type { ActionResolvedSessionTargetsV1 } from './sessionTargets.js';
@@ -122,3 +137,5 @@ export type { AgentRequestQuestionSummary, StructuredQuestionAnswerDetailsV1, St
 export { summarizeAgentRequestQuestions, StructuredQuestionAnswerDetailsV1Schema, StructuredQuestionAnswersV1Schema } from '../services/sessions.js';
 export { SessionInputForgeEvidenceV1Schema, renderSessionInputContextPromptV1, readSessionInputForgeEvidenceV1 } from './forgeEvidence.js';
 export type { SessionInputForgeEvidenceV1 } from './forgeEvidence.js';
+export { SessionInputForgeEvidenceAttachmentValueV1Schema, readSessionInputForgeEvidenceAttachmentV1,
+    buildSessionInputForgeEvidenceAttachmentValueV1 } from './forgeEvidence.js';

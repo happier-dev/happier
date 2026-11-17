@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PluginError, type JsonValue, type PluginServices } from '@happier-dev/plugin-sdk';
-import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import { testkitEntryRef, testkitLocator, testkitSnapshot, testkitViewer } from '../corpus/testkit/observations.test-support.js';
 import type { PluginAccountActionContext, PluginClientActionUi } from '@happier-dev/plugin-sdk/actions';
@@ -326,14 +326,11 @@ describe('configured action execution through the shared Session owner', () => {
         const targetKey = buildAgentTargetKeyV2(agentTarget);
         const agents = AgentsBackendsListOutputSchema.parse({ defaultTargetKey: targetKey,
             items: [{ targetKey, label: 'Example Agent', agentTarget, enabled: true }] });
-        const environment = DeploymentEnvironmentGetResultV1Schema.parse({ ok: true, environment: {
-            v: 1, id: 'environment', serverId: 'server-a', projectSourceId: 'project', revision: 1,
-            owner: { kind: 'account', accountId: 'account-a' }, protection: 'nonProduction', purpose: 'standard',
-            deployerMode: 'managers', controllerMachineId, runtimeTargetLinkId: 'runtime',
-            contentArtifactId: 'environment-content', contentHeaderVersion: 1, contentBodyVersion: 1,
-            capabilities: { role: 'manager', read: true, deploy: true, manage: true, manageBindings: true, manageTargets: true, delete: true },
-            createdByAccountId: 'account-a', createdAtMs: 1, updatedAtMs: 1,
-        }, targetLinks: [] });
+        const environment = DeploymentEnvironmentGetResultV1Schema.parse({ ok: true, environment: createDeploymentEnvironmentHeaderV1({
+            id: 'environment', serverId: 'server-a', projectSourceId: 'project',
+            owner: { kind: 'account', accountId: 'account-a' }, controllerMachineId, runtimeTargetLinkId: 'runtime',
+            createdByAccountId: 'account-a',
+        }), targetLinks: [] });
         const source = { kind: 'host', topic: 'service_health', subject: {
             kind: 'environment', environmentId: 'environment', targetLinkId: 'runtime', condition: 'deployment_failed',
         } } as const;
