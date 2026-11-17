@@ -1,5 +1,5 @@
 import { Tx } from "@/storage/inTx";
-import { getDbProviderFromEnv } from "@/config/databaseProvider";
+import { getDbProviderFromEnv, resolveDbSqlDialect } from "@/config/databaseProvider";
 
 const DEFAULT_REPEAT_KEY_TTL_MS = 1000 * 60 * 60 * 24;
 
@@ -19,7 +19,7 @@ export function defaultRepeatKeyExpiresAt(now: Date): Date {
  * providers retain their existing Serializable creation transactions.
  */
 export async function lockPostgresRepeatKeyInTx(tx: Tx, key: string): Promise<void> {
-    if (getDbProviderFromEnv(process.env, 'postgres') === 'postgres') {
+    if (resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres') {
         await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', key);
     }
 }

@@ -13,6 +13,7 @@ import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import type { Tx } from '@/storage/inTx';
 import { getDbProviderFromEnv } from '@/storage/prisma';
+import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { defaultRepeatKeyExpiresAt, fetchRepeatKey, saveRepeatKey } from '@/storage/queue/repeatKey';
 import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
@@ -74,7 +75,7 @@ async function readDeploymentDomainContentRowsInTx(tx: Tx, input: Readonly<{
         const reference = { ...(input.placement ? { placement: input.placement } : {}), [field]: { contentArtifactId: input.artifactId } };
         return [JSON.stringify([reference]), ...(input.placement ? [] : [JSON.stringify({ kind: 'provider', ...reference })])];
     });
-    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    const provider = resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres'));
     let rows: { state: string; capturedPlacements: unknown }[];
     if (provider === 'postgres') rows = await tx.$queryRawUnsafe(
         `SELECT "state", "capturedPlacements" FROM "DeploymentDomain" WHERE "environmentId" = $1 AND "deletedAt" IS NULL AND (${needles.map((_, index) => `"capturedPlacements" @> $${index + 2}::jsonb`).join(' OR ')})`,
@@ -321,7 +322,7 @@ export async function readDeploymentDomainOperationalDestinationsInTx(tx: Tx,
 export async function readDeploymentDomainEnvironmentIdsForMachineInTx(tx: Tx,
     input: Readonly<{ machineId: string; afterEnvironmentId?: string; limit: number }>,
 ): Promise<string[]> {
-    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    const provider = resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres'));
     const needle = JSON.stringify([{ placement: { machineId: input.machineId } }]);
     let rows: { environmentId: string }[];
     if (provider === 'postgres') rows = await tx.$queryRawUnsafe(

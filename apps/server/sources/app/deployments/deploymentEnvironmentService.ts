@@ -24,6 +24,7 @@ import { readSavedSecretResourcesForAccountInTx, validateSavedSecretResourceRefe
 import { defaultRepeatKeyExpiresAt, fetchRepeatKey, lockPostgresRepeatKeyInTx, saveRepeatKey } from '@/storage/queue/repeatKey';
 import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
 import { getDbProviderFromEnv } from '@/storage/prisma';
+import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { Tx } from '@/storage/inTx';
 import type { Prisma } from '@prisma/client';
@@ -57,12 +58,12 @@ export class DeploymentEnvironmentCreationError extends Error {
 
 /** Environment row/revision and creation-intent locks own write exclusion, independently of Account publication. */
 export function deploymentWriteIsolationLevel(): 'ReadCommitted' | 'Serializable' {
-    return getDbProviderFromEnv(process.env, 'postgres') === 'postgres' ? 'ReadCommitted' : 'Serializable';
+    return resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres' ? 'ReadCommitted' : 'Serializable';
 }
 
 /** One Environment row serializes receipt admission across every supported database provider. */
 export async function lockDeploymentEnvironmentInTx(tx: Tx, environmentId: string): Promise<void> {
-    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    const provider = resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres'));
     if (provider === 'postgres') await tx.$queryRawUnsafe('SELECT "id" FROM "DeploymentEnvironment" WHERE "id" = $1 FOR UPDATE', environmentId);
     if (provider === 'mysql') await tx.$queryRawUnsafe('SELECT `id` FROM `DeploymentEnvironment` WHERE `id` = ? FOR UPDATE', environmentId);
     // SQLite's existing serialized writer transaction owns its write exclusion.
