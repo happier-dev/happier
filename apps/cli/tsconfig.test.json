@@ -2279,6 +2279,7 @@
     "src/daemon/sessionEncryption/createRequesterSessionRuntimeContext.idle.integration.test.ts",
     "src/daemon/sessionEncryption/createRequesterSessionRuntimeContext.integration.test.ts",
     "src/daemon/sessionEncryption/ordinaryRequesterSessionAccountCustody.test.ts",
+    "src/daemon/sessionEncryption/requesterAccountActionContext.test.ts",
     "src/daemon/sessionEncryption/requesterAccountActionProjection.test.ts",
     "src/daemon/sessionEncryption/requesterAccountCurrentness.socket.test.ts",
     "src/daemon/sessionEncryption/requesterCurrentness.test.ts",

@@ -749,6 +749,7 @@
     "src/daemon/agentIsolation/sessionPreparation.ts",
     "src/daemon/agentIsolation/supersedeRetirement.ts",
     "src/daemon/agentIsolation/unixAgentIdentityAdapter.ts",
+    "src/daemon/agentIsolation/verifiedExternalActionRequester.ts",
     "src/daemon/agentRuntime/authorizeTrackedRunnerAgentDaemonServiceOperation.ts",
     "src/daemon/agentRuntime/clearTrackedRunnerAgentDaemonServiceAdmission.ts",
     "src/daemon/agentRuntime/createDaemonSessionAccountActionExecutor.ts",
