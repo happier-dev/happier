@@ -886,6 +886,23 @@ it('joins the usage row, ranks/preselects Off skills and writes one real bulk re
     }
 });
 
+it('keeps a successfully read empty selection count through a failed refresh', async () => {
+    let fail = false;
+    const home = await createSeededSkillsHome('https://skills-known-empty-count.test', { skills: [],
+        handleRequest: async path => fail && path === '/v1/account/entity-rows/prompt-library'
+            ? Response.json(PromptLibraryRowsListResponseV1Schema.parse({ status: 'invalid-stored-content' })) : null });
+    const hook = await renderHook(() => useSkillsLibrary(undefined, { skillIds: [] }));
+    try {
+        await vi.waitFor(() => expect(hook.getCurrent().status).toBe('ready'));
+        expect(hook.getCurrent().items).toEqual([]);
+        expect(hook.getCurrent().itemCount).toBe(0);
+        fail = true;
+        await act(async () => hook.getCurrent().retry());
+        await vi.waitFor(() => expect(hook.getCurrent().status).toBe('unavailable'));
+        expect(hook.getCurrent().itemCount).toBe(0);
+    } finally { await hook.unmount(); await home.dispose(); }
+});
+
 it('surfaces a failed rules catalog without a read-refresh-cancel loop and recovers through explicit retry', async () => {
     const catalog = createPromptLibraryCatalogBoundary();
     let unavailable = true;
@@ -927,6 +944,7 @@ it('surfaces a failed rules catalog without a read-refresh-cancel loop and recov
     try {
         hook = await renderHook(() => useSkillsLibrary());
         await vi.waitFor(() => expect(hook!.getCurrent()).toMatchObject({ status: 'unavailable', errorCode: 'invalid-stored-content' }));
+        expect(hook.getCurrent().itemCount).toBeNull();
         const readsAfterFailure = catalogReads;
         await hook.rerender();
         expect(hook.getCurrent().status).toBe('unavailable');
@@ -939,6 +957,7 @@ it('surfaces a failed rules catalog without a read-refresh-cancel loop and recov
             rules: getPromptLibraryCatalogValue({ serverId: home.home.id, accountId: 'artifact-account' }, 'skill-rules'),
         }).toMatchObject({ library: { status: 'ready', errorCode: null }, rules: { status: 'ready' } }), { timeout: 10_000 });
         expect(hook.getCurrent().items.map(item => item.skillId)).toContain('fixture-skill');
+        expect(hook.getCurrent().itemCount).toBe(hook.getCurrent().items.length);
         const failures = [{ skillId: 'unreadable-skill', title: 'Retained unreadable skill', reason: 'skill_content_unavailable' }];
         expect(hook.getCurrent().unavailableItems).toEqual(failures);
         const lastKnown = hook.getCurrent().items;
@@ -947,6 +966,7 @@ it('surfaces a failed rules catalog without a read-refresh-cancel loop and recov
         await vi.waitFor(() => expect(hook!.getCurrent()).toMatchObject({ status: 'unavailable', stale: true }));
         expect(getPromptLibraryCatalogValue({ serverId: home.home.id, accountId: 'artifact-account' }, 'skill-rules').status).toBe('ready');
         expect(hook.getCurrent().items).toBe(lastKnown);
+        expect(hook.getCurrent().itemCount).toBe(lastKnown.length);
         expect(hook.getCurrent().unavailableItems).toEqual(failures);
         miswiredArtifacts = false;
         await act(async () => hook!.getCurrent().retry());
@@ -955,6 +975,7 @@ it('surfaces a failed rules catalog without a read-refresh-cancel loop and recov
         await act(async () => hook!.getCurrent().retry());
         await vi.waitFor(() => expect(hook!.getCurrent()).toMatchObject({ status: 'unavailable', stale: true, errorCode: 'invalid-stored-content' }));
         expect(hook.getCurrent().items).toBe(lastKnown);
+        expect(hook.getCurrent().itemCount).toBe(lastKnown.length);
     } finally {
         await hook?.unmount();
         await home.dispose();

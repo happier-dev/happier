@@ -38,7 +38,7 @@ export function buildDemoSkillsLibrary(): SkillsLibrary {
     ];
     return {
         scope: null, status: 'ready', stale: false, errorCode: null, usageObservedSince: DEMO_NOW_MS - 604_800_000,
-        retry: () => {},
+        retry: () => {}, itemCount: skills.length,
         items: skills.map((skill, index) => SkillListItemV1Schema.parse({
             skillId: skill.id, name: skill.name, description: skill.description, revision: '1:1',
             rules: [{ id: `${skill.id}-everywhere`, skillId: skill.id, target: { t: 'allMachines' },

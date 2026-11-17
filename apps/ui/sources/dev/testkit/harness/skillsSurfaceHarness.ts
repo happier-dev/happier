@@ -15,7 +15,7 @@ export function createSkillsSurfaceItem(skillId: string, overrides: Partial<Skil
 }
 
 export function createSkillsSurfaceLibrary(items: readonly SkillListItemV1[], overrides: Partial<SkillsLibrary> = {}): SkillsLibrary {
-    return { scope: null, status: 'ready', items, stale: false, errorCode: null, usageObservedSince: null, retry: () => {}, ...overrides };
+    return { scope: null, status: 'ready', items, itemCount: items.length, stale: false, errorCode: null, usageObservedSince: null, retry: () => {}, ...overrides };
 }
 
 /** HTTP/native boundaries are installed by the suite before importing the real surface graph. */

@@ -38,6 +38,8 @@ export type SkillsLibrary = Readonly<{
   status: SkillsLibraryStatus;
   /** Last-known items, kept through a refresh and through a failed refresh. */
   items: readonly SkillListItemV1[];
+  /** Available items in the retained read, or unknown before any successful read. */
+  itemCount: number | null;
   /** Known identities with unreadable content; no description, trust or cost is fabricated. */
   unavailableItems?: readonly SkillUnavailableItemV1[];
   /** Items are from an earlier read while a newer one is pending or failed. */
@@ -411,6 +413,7 @@ export function useSkillsLibrary(
       scope,
       status: status === 'loading' && snapshot ? 'ready' : status,
       items: availableItems,
+      itemCount: snapshot === null ? null : availableItems.length,
       unavailableItems: snapshot?.unavailableItems ?? emptyUnavailableItems,
       stale:
         snapshot !== null && (status !== 'ready' || completedRead.current?.observationKey !== observationKey || inventoryComplete

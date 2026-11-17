@@ -408,7 +408,7 @@ export const SkillsListView = React.memo(function SkillsListView(
       }
     : null;
   const filters = viewSwitch ? { targetCount: Math.max(library.items.length, 1), content: viewSwitch } : null;
-  const count = loading ? null : library.items.length;
+  const count = library.itemCount;
 
   if (rail) {
     return (
