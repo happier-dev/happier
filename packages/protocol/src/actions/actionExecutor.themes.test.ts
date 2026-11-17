@@ -2,9 +2,37 @@ import { expect, it } from 'vitest';
 import { createActionExecutor } from './actionExecutor.js';
 import { getActionSpec } from './actionSpecs.js';
 import { parseThemeProfileDocument } from '../account/settings/themeProfiles.js';
-import { THEME_ACTION_IDS, THEME_ACTION_ID_LIST, ThemeActionInputSchemas, ThemeActionOutputSchemas } from './themeActionFamily.js';
+import { THEME_ACTION_IDS, THEME_ACTION_ID_LIST, ThemeActionInputSchemas, ThemeActionOutputSchemas, ThemeSurfacePaintDescriptorSchema } from './themeActionFamily.js';
 import { actionInputValidationFailure } from './executor/actionInputValidation.js';
 import { isAgentInitiatedApprovalRequiredByDefault, resolveActionApprovalRouting } from './actionApprovalPolicy.js';
+
+it('retains direct, derived and fixed surface paint sources through the strict wire descriptor', () => {
+  const descriptor = {
+    address: { surface: 'composer', part: 'root' }, selector: '[data-surface="composer"]', label: 'Composer',
+    paintRoles: [
+      { facet: 'foreground', source: { kind: 'token', ref: 'colors.text.primary' } },
+      { facet: 'background', source: { kind: 'derived', from: ['colors.surface.default', 'colors.accent.primary'] } },
+      { facet: 'border', source: { kind: 'fixed' } },
+    ],
+  };
+  expect(ThemeSurfacePaintDescriptorSchema.parse(descriptor)).toEqual(descriptor);
+});
+
+it('rejects malformed or ambiguous surface paint sources instead of advertising editable tokens', () => {
+  const descriptor = { address: { surface: 'composer', part: 'root' }, selector: '[data-surface="composer"]', label: 'Composer' };
+  for (const role of [
+    { facet: 'background', tokenRef: 'colors.surface.default' },
+    { facet: 'background', source: { kind: 'token' } },
+    { facet: 'background', source: { kind: 'token', ref: 'colors.surface.default', from: [] } },
+    { facet: 'background', source: { kind: 'derived', from: [17] } },
+    { facet: 'background', source: { kind: 'derived', from: [] } },
+    { facet: 'background', source: { kind: 'fixed', ref: 'colors.surface.default' } },
+    { facet: 'background', source: { kind: 'unknown' } },
+    { facet: 'background', source: null },
+  ]) {
+    expect(ThemeSurfacePaintDescriptorSchema.safeParse({ ...descriptor, paintRoles: [role] }).success, JSON.stringify(role)).toBe(false);
+  }
+});
 
 it('asks Agent and MCP for author CSS while colour-only and trusted user/plugin effects stay Direct', () => {
   const raw = { schemaVersion: 1, id: 'theme_css_approval', name: 'CSS approval',

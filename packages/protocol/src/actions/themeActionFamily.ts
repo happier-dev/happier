@@ -67,9 +67,19 @@ export const ThemeCssDetailedCoverageSchema = lazyZodSchema(() => z.extend(Theme
 export type ThemeCssDetailedCoverage<Address extends ThemeSurfaceAddress = ThemeSurfaceAddress> = ThemeCssCoverage<Address> & Readonly<{
   rules: readonly ThemeCssRuleCoverage[]; stripped: readonly Readonly<{ range: ThemeCssRange; reason: string }>[];
 }>;
+export const ThemeSurfacePaintSourceSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('token'), ref: z.string() }),
+  z.strictObject({ kind: z.literal('derived'), from: z.tuple([z.string()], z.string()) }),
+  z.strictObject({ kind: z.literal('fixed') }),
+]));
+export type ThemeSurfacePaintSource = DeepReadonly<z.infer<typeof ThemeSurfacePaintSourceSchema>>;
+export const ThemeSurfacePaintRoleSchema = lazyZodSchema(() => z.strictObject({
+  facet: z.enum(['background', 'foreground', 'border']), source: ThemeSurfacePaintSourceSchema,
+}));
+export type ThemeSurfacePaintRole = DeepReadonly<z.infer<typeof ThemeSurfacePaintRoleSchema>>;
 export const ThemeSurfacePaintDescriptorSchema = lazyZodSchema(() => z.strictObject({
   address: ThemeSurfaceAddressSchema, selector: z.string(), label: z.string(),
-  paintRoles: z.array(z.strictObject({ facet: z.enum(['background', 'foreground', 'border']), tokenRef: z.string() })),
+  paintRoles: z.array(ThemeSurfacePaintRoleSchema),
 }));
 const referenceInput = lazyZodSchema(() => z.strictObject({ ref: ThemeReferenceSchema }));
 const applied = lazyZodSchema(() => z.strictObject({ clientId: z.optional(identifier), mode }));

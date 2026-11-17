@@ -1,8 +1,13 @@
 /** Stable CSS addresses; entries are published together with their owning emission. */
+/** Direct editable token, actual inputs to a computed paint, or paint without editable inputs. */
+export type ThemeSurfacePaintSource =
+  | Readonly<{ kind: 'token'; ref: string }>
+  | Readonly<{ kind: 'derived'; from: readonly [string, ...string[]] }>
+  | Readonly<{ kind: 'fixed' }>;
+
 export type ThemeSurfacePaintRole = Readonly<{
   facet: 'background' | 'foreground' | 'border';
-  /** Editable colour-token reference supplied by the host's token owner. */
-  tokenRef: string;
+  source: ThemeSurfacePaintSource;
 }>;
 
 type Part = Readonly<{ kind: 'view' | 'text' }>;
