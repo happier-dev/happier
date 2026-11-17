@@ -167,7 +167,6 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, preparePluginUi
   const staging = `${baseDir}.tmp-${randomUUID()}`;
   let archivePath;
   try {
-    const inputs = await Promise.all(BASE_COMPONENTS.map(component => readSourceComponentBuildInputs({ repoDir, component })));
     await mkdir(staging, { recursive: true });
     // Tracked bytes never come from a working tree: other lanes edit the shared
     // checkout (and its mirrors) while a base builds. A mirror can carry a `.git`
@@ -181,6 +180,11 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, preparePluginUi
       await requestBaseArchive({ revision: descriptor.revision, path: archivePath, signal });
     }
     await extractRevision({ repoDir, revision: descriptor.revision, outputDir: staging, archivePath });
+    // Descriptors inventory the selected manifests on the Git controller.
+    // An authored-only bootstrap descriptor has no borrowed generated inputs;
+    // inventory its extracted tree rather than consulting the moving checkout.
+    const inputs = await Promise.all(BASE_COMPONENTS.map(component => descriptor.inputsByComponent?.[component]
+      ?? readSourceComponentBuildInputs({ repoDir: staging, component })));
     // Only the declared generated inputs the runtime consumes come from the checkout
     // (never stray ignored files); a Stack's new (untracked) overlay file is its own,
     // never the shared base's.

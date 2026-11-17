@@ -275,6 +275,16 @@ async function createRevisionFixture(t) {
 // Owner 2026-11-14: one shared base per HEAD, each Stack's overlay applied at
 // runtime from source. Stacks on one revision with different overlays must not
 // rebuild anything shared; only their declared files differ.
+test('a described revision base inventories its selected manifests after the live checkout changes', async t => {
+  const { fixture, repoDir } = await createRevisionFixture(t);
+  const revision = await resolveSourceRevision({ repoDir, outputDir: fixture.path('descriptors'), fullTree: true });
+  await writeFile(join(repoDir, 'apps/cli/package.json'), '{"dependencies":');
+  const tree = await prepareStackSourceRevisionTree({ repoDir, treesRoot: fixture.path('trees'),
+    treeDir: fixture.path('stacks/qa/tree'), descriptorPath: revision.descriptorPath });
+  assert.equal(await readFile(join(tree.treeDir, 'packages/shared/src/index.ts'), 'utf8'), COMMITTED_SHARED);
+  assert.equal(JSON.parse(await readFile(join(tree.treeDir, 'apps/cli/package.json'), 'utf8')).name, '@happier-dev/cli');
+});
+
 test('stacks on one revision share one base tree; each runs only its own declared overlay', async t => {
   const { fixture, repoDir } = await createRevisionFixture(t);
   const treesRoot = fixture.path('trees');
