@@ -1,5 +1,6 @@
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { MACHINE_SERVICE_LOGS_READ_ACTION_ID } from '@happier-dev/protocol/local/services/actionIdsV1';
 
 import { ApiMachineClient } from '@/api/apiMachine';
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -8,6 +9,8 @@ import { createDaemonMachineRpcRouteAttachmentCache } from '@/daemon/machineRpcR
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { createInstalledProjectFiniteRuntime } from '@/daemon/startup/createInstalledProjectFiniteRuntime';
 import { createDaemonMachineAdminAccessRoutes } from '@/machines/adminAccess/createDaemonMachineAdminAccessRoutes';
+import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
+import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
 
@@ -25,6 +28,7 @@ export const SETUP_RPC_REGISTRATION_ACTION_IDS = Object.freeze([
     ...ACTION_ID_FAMILIES_V1.local_services_preview,
     ...ACTION_ID_FAMILIES_V1.local_services_actions,
     ...ACTION_ID_FAMILIES_V1.scm_repository,
+    MACHINE_SERVICE_LOGS_READ_ACTION_ID,
 ]);
 
 /** Actual client registration root and daemon attachments; no expected Action rows are supplied. */
@@ -50,6 +54,12 @@ export async function withSetupRpcRegistrations<T>(
         daemonState: null, daemonStateVersion: 0,
     }, undefined, { createProjectFiniteRuntime: finiteRuntime });
     const localServices = createLocalServicesDaemonRuntime({ machineId: 'setup-census', startLoop: false });
+    const managedServices = createManagedServicesOwner({
+        processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
+        // Managed dependencies are external process/service boundaries; registration starts none.
+        dependencies: () => { throw new Error('Unexpected managed dependency in registration census'); },
+        resolveScope: scope => scope,
+    });
     // As in the administrator desired-policy fixture, native OS IO is the boundary;
     // registration must not inspect the host or perform an elevated effect.
     const unavailableNativeIo = async (): Promise<never> => { throw new Error('Unexpected native administrator IO in registration census'); };
@@ -74,6 +84,7 @@ export async function withSetupRpcRegistrations<T>(
         attachments.attachMachineAdminAccessRoutes(adminAccess);
         attachments.attachLocalServicesRoutes({
             machineId: 'setup-census', serverId: 'home',
+            projectManagedServices: managedServices,
             localServicesInventory: localServices.inventoryRoutes,
             localServicesLauncher: localServices.launcherRoutes,
             localServicesPreview: localServices.previewRoutes,
@@ -89,6 +100,8 @@ export async function withSetupRpcRegistrations<T>(
         }>).rpcHandlerManager;
         return await inspect(manager);
     } finally {
-        try { await client.shutdown(); } finally { await localServices.stop(); }
+        try { await client.shutdown(); } finally {
+            try { await localServices.stop(); } finally { await managedServices.dispose(); }
+        }
     }
 }
