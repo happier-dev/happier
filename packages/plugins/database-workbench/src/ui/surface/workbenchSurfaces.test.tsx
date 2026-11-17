@@ -370,8 +370,9 @@ describe('Database workbench surfaces', () => {
     try {
       await settle(20);
       expect(executeAction.mock.calls.some(([call]) => call.action === DATABASE_ROWS_READ_ACTION_ID_V1)).toBe(true);
-      // The row leads with its key, grouped for reading; narrower columns stay in the row pane.
+      // The row leads with its key; on a narrow host the columns that drop still speak in a line under it.
       expect(await fixture.getByText('48212')).toBeTruthy();
+      expect(await fixture.getByText('INV-2026-04812 · open')).toBeTruthy();
       // One structure read serves the page; nothing re-reads it per row or per cell.
       expect(
         executeAction.mock.calls.filter(
