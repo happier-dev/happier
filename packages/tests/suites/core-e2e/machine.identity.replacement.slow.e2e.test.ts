@@ -172,6 +172,69 @@ describe('core e2e: machine installation identity replacement', () => {
     }
   }, 0);
 
+  it('JOURNEYS-A.J8 adopts the published Machine key after a committed registration acknowledgement is lost', async () => {
+    const testDir = run.testDir('machine-registration-lost-ack');
+    const postgres = await startDatabaseWorkbenchPostgres({ preloadStatistics: false });
+    let fixture: Awaited<ReturnType<typeof startTeamSetupFFixture>> | undefined;
+    let ui: Awaited<ReturnType<typeof connectUiActionClient>> | undefined;
+    let loseAcknowledgement = false;
+    let acknowledgementLost = false;
+    let acknowledgementRecovered = false;
+    try {
+      fixture = await startTeamSetupFFixture({ testDir, dbProvider: 'postgres', guestReachableHome: true,
+        serverEnv: { DATABASE_URL: postgres.homeDatabaseUrl, HAPPIER_HOME_IROH_MODE: 'disabled' },
+        async beforeForwardResponse(request) {
+          if (!loseAcknowledgement || request.method !== 'POST' || request.path !== '/v1/machines'
+            || request.statusCode !== 200) return;
+          if (acknowledgementLost) {
+            acknowledgementRecovered = true;
+            return;
+          }
+          acknowledgementLost = true;
+          throw new Error('MK-R2 intentionally lost the committed registration acknowledgement');
+        },
+      });
+      const account = await fixture.createAccount('registration-owner');
+      const enrolled = await fixture.enrollDaemon(account);
+      ui = await connectUiActionClient({ serverUrl: fixture.actionServerApiUrl, addressAnchorUrl: fixture.server.baseUrl,
+        credentials: account.uiCredentials });
+      await waitFor(() => ui!.isAccountReady(), { timeoutMs: 60_000, context: 'registration Account ready' });
+      await writeFile(join(enrolled.workspaceDir, 'registration-sentinel.txt'), 'published key retained');
+      const assertMachineControl = async () => {
+        const input = { rootPath: enrolled.workspaceDir, path: '.' };
+        const externalActionTarget = { kind: 'machine' as const, machineId: enrolled.target.machineId };
+        const cliResult = await account.execute('daemon.filesystem.listDirectory', input, { externalActionTarget });
+        const uiResult = await ui!.executeConfirmed('daemon.filesystem.listDirectory', input, {
+          surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: ui!.serverId, externalActionTarget,
+        });
+        for (const result of [cliResult, uiResult]) {
+          expect(result).toMatchObject({ ok: true, result: { success: true,
+            entries: expect.arrayContaining([expect.objectContaining({ name: 'registration-sentinel.txt' })]) } });
+        }
+      };
+      await assertMachineControl();
+      const readEnvelope = async () => {
+        const response = await fetchJson<{ machine: unknown }>(`${fixture!.server.baseUrl}/v1/machines/${enrolled.target.machineId}`, {
+          headers: { Authorization: `Bearer ${account.auth.token}` },
+        });
+        expect(response.status).toBe(200);
+        return MachinePublishedRowV1Schema.parse(response.data.machine).dataEncryptionKey;
+      };
+      const publishedEnvelope = await readEnvelope();
+      expect(typeof publishedEnvelope).toBe('string');
+      loseAcknowledgement = true;
+      await enrolled.restart();
+      expect(acknowledgementLost).toBe(true);
+      expect(acknowledgementRecovered).toBe(true);
+      expect(await readEnvelope()).toBe(publishedEnvelope);
+      await assertMachineControl();
+    } finally {
+      try { await ui?.close(); } finally {
+        try { await fixture?.stop(); } finally { await postgres.stop(); }
+      }
+    }
+  }, 0);
+
   it('records automatic replacement only when registration includes explicit replacement proof', async () => {
     server = await startServerLight({ testDir: run.testDir('machine-replacement-automatic') });
     const auth = await createTestAuth(server.baseUrl);

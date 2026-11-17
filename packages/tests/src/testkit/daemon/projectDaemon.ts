@@ -56,7 +56,8 @@ export async function startProjectDaemonFixture(params: Readonly<{
     if (!host) throw new Error('Guest Home fixture requires a non-loopback IPv4 interface');
     tls = await createEphemeralTlsServerFixture({ additionalIpAddresses: [host] });
     try {
-      ingress = await startHttpRequestRecordingProxy({ targetBaseUrl: `http://127.0.0.1:${port}`, listenHost: host,
+      ingress = await startHttpRequestRecordingProxy({ ...params.requestObservation,
+        targetBaseUrl: `http://127.0.0.1:${port}`, listenHost: host,
         tls: { key: await readFile(tls.privateKeyPath), cert: await readFile(tls.leafCertificatePath) } });
       // The signed-in Node UI client follows the same published TLS descriptor.
       previousCertificates = getCACertificates('default');

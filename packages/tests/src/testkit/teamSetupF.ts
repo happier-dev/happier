@@ -19,15 +19,17 @@ export async function startTeamSetupFFixture(params: Readonly<{
   /** Observe requested/returned saved-health Trigger locators without exposing envelopes. */
   observeSavedHealthSourceSelections?: boolean;
   beforeHttpRequest?: (request: RecordedHttpProxyRequest) => void | Promise<void>;
+  beforeForwardResponse?: (request: RecordedHttpProxyRequest) => void | Promise<void>;
   captureRequestBody?: (request: RecordedHttpProxyRequest) => boolean;
   requestBodyMaxBytes?: number;
   serverEnv?: Parameters<typeof startProjectDaemonFixture>[0]['serverEnv'];
 }>) {
   const core = await startProjectDaemonFixture({ testDir: params.testDir,
     dbProvider: params.dbProvider, guestReachableHome: params.guestReachableHome, serverEnv: params.serverEnv,
-    ...((params.observeActionRequests || params.observeSavedHealthSourceSelections || params.beforeHttpRequest || params.captureRequestBody)
+    ...((params.observeActionRequests || params.observeSavedHealthSourceSelections || params.beforeHttpRequest || params.beforeForwardResponse || params.captureRequestBody)
       ? { requestObservation: {
         onRequestStart: params.beforeHttpRequest,
+        beforeForwardResponse: params.beforeForwardResponse,
         ...(params.requestBodyMaxBytes === undefined ? {} : { requestBodyMaxBytes: params.requestBodyMaxBytes }),
         captureRequestBody: (request: RecordedHttpProxyRequest) => request.path === AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1
           || (params.observeSavedHealthSourceSelections === true && request.path === '/v3/automations/query')
