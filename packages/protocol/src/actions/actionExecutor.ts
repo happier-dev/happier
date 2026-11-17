@@ -76,7 +76,7 @@ import { materializeSessionCreationActionInput, buildSessionSpawnNewArgs, sameSe
 import { resolveInheritedApprovalProfileIdV1, resolveProfiledActionsSettingsV1 } from './approvalProfiles.js';
 import { parseActionSurfaceKey, isAgentCaller, normalizeActionCallerContext, sessionAttestedContextCallerFailure, createPermissionPolicyResult, causalPermissionAuthorityFailure, resolveAgentEffectivePermission, assertAgentPermission, resolveSessionMessageSendAdmission, resolveAgentExecutionRunPermission, bindAgentExistingExecutionRunAuthority } from './executor/callerContext.js';
 import type { SessionMessageSendAdmission } from './executor/callerContext.js';
-import { resolveExecutionRunLaunchOrigin, buildExecutionRunCallOptions, checkDetachedExecutionRunProtocolV2, normalizeExecutionBackendOptionValue, normalizeExecutionBackendTargetValue, resolveFanoutTeamCredentialModel, resolveFanoutConnectedServicesSelections, buildAvailableExecutionBackendOptionKeys, readReviewRunActionPayload, readFanoutStartError, fanoutStarts, readCompleteExecutionRunStartIdentity, hasExecutionRunStartIdentityEvidence, classifyExecutionRunStartFailure, classifyExecutionRunStartPreDispatchFailure, parseExecutionRunWaitResult, isExecutionRunWaitCancellation } from './executor/executionRuns.js';
+import { resolveExecutionRunLaunchOrigin, buildExecutionRunCallOptions, checkDetachedExecutionRunProtocolV2, normalizeExecutionBackendOptionValue, normalizeExecutionBackendTargetValue, resolveFanoutTeamCredentialModel, resolveFanoutConnectedServicesSelections, buildAvailableExecutionBackendOptionKeys, readReviewRunActionPayload, readFanoutStartError, fanoutStarts, readCompleteExecutionRunStartIdentity, hasExecutionRunStartIdentityEvidence, classifyExecutionRunStartFailure, classifyExecutionRunStartPreDispatchFailure, parseExecutionRunWaitResult, isExecutionRunWaitCancellation, refuseExecutionRunStartOutsideCallerModelsV1 } from './executor/executionRuns.js';
 import type { ExecutionRunCallOptions } from './executor/executionRuns.js';
 import { normalizeId, readNullableString, readOptionalString } from './executor/inputReading.js';
 import { normalizeActionExecutorThrownError, completeActionResult, completeSessionHandoffActionResult, completeExecutionRunServiceActionResult, completeSpawnActionResult, settleActionOutput as projectTerminalActionOutput, invalidActionOutputFailure, isDeferredApprovalResult, carryActionFailureDiagnostic } from './executor/resultProjection.js';
@@ -715,8 +715,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     if (notReady) return notReady;
     const request = { ...input,
       approvalProfileId: resolveInheritedApprovalProfileIdV1(input.approvalProfileId, context.approvalProfileId) };
-    return deps.executionRunStart(sessionId, current
-      ? stampAgentStartSelectionV1(request, { workDepth: context.agentStartWorkDepth ?? 0 }, 'execution_run', current) : request, opts);
+    const admitted = current
+      ? stampAgentStartSelectionV1(request, { workDepth: context.agentStartWorkDepth ?? 0 }, 'execution_run', current) : request;
+    const modelNotGranted = refuseExecutionRunStartOutsideCallerModelsV1(admitted, context);
+    if (modelNotGranted) return modelNotGranted;
+    return deps.executionRunStart(sessionId, admitted, opts);
   };
   const retireOpenSubjectApprovals = async (subject: Readonly<
     { kind: 'managedMachine'; homeId: string; managedId: string }

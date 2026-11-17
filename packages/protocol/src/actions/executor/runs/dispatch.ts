@@ -1,5 +1,5 @@
 import { resolveExecutionRunScope, withoutExecutionRunScope, resolveServerIdForExecutionRunScope } from '../sessionScope.js';
-import { resolveExecutionRunLaunchOrigin, buildExecutionRunCallOptions, checkDetachedExecutionRunProtocolV2, readFanoutStartError, readCompleteExecutionRunStartIdentity, hasExecutionRunStartIdentityEvidence, classifyExecutionRunStartFailure, parseExecutionRunWaitResult, isExecutionRunWaitCancellation } from '../executionRuns.js';
+import { resolveExecutionRunLaunchOrigin, buildExecutionRunCallOptions, checkDetachedExecutionRunProtocolV2, readFanoutStartError, readCompleteExecutionRunStartIdentity, hasExecutionRunStartIdentityEvidence, classifyExecutionRunStartFailure, parseExecutionRunWaitResult, isExecutionRunWaitCancellation, refuseExecutionRunStartOutsideCallerModelsV1 } from '../executionRuns.js';
 import { resolveRunStartModelAndConfig } from '../agentStartAdmission.js';
 import { normalizeConnectedServiceSelectionInput } from '../../../connect/normalizeConnectedServiceSelectionInput.js';
 import { actionInputIssueFailure } from '../actionInputValidation.js';
@@ -399,6 +399,8 @@ export async function dispatchRunsDispatch1(inv: Pick<CoreInvocation, 'actionId'
             if (!capability.ok) return capability;
             dispatchOpts = capability.opts;
             start = { ...start, launchOrigin: resolveExecutionRunLaunchOrigin(ctx) };
+            const modelNotGranted = refuseExecutionRunStartOutsideCallerModelsV1(start, ctx);
+            if (modelNotGranted) return modelNotGranted;
             const executionRunPermission = resolveAgentExecutionRunPermission(
               ctx,
               start.permissionMode,

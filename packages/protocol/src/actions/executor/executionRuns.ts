@@ -17,6 +17,81 @@ import type { ActionExecuteFailure } from './types.js';
 import { projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1 } from '../actionExecutionResult.js';
 import { type ActionId } from '../actionIds.js';
 import { carryActionFailureDiagnostic } from './actionFailureDiagnostic.js';
+import { isModelRefGrantedV1, type CallerInputConstraintsV1 } from '../../auth/apiTokenGrant.js';
+import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2Input } from '../../backends/targets/backendTargetRefV2.js';
+import { ProviderBoundModelRefSchema, type ProviderBoundModelRef } from '../../providers/selection/v1.js';
+import type { SessionModelRefV2 } from '../../providers/selection/v2.js';
+import { resolveInheritedApprovalProfileIdV1 } from '../approvalProfiles.js';
+import { stampAgentStartSelectionV1 } from './agentStartAdmission.js';
+import { refuseAgentStartWhenNotReadyV1 } from './agents/agentBackendReadiness.js';
+
+/** Native Run dispatch consumes the same admitted selection for every start Action. */
+export async function startExecutionRunWithSelectionV1(
+  deps: ActionExecutorDeps,
+  sessionId: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[0],
+  input: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[1],
+  opts: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[2],
+  context: ActionExecutorContext,
+) {
+  if (!deps.executionRunStart) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:execution.run.start' };
+  const resolved = context.agentStartContext;
+  const machineId = opts?.targetMachineId ?? context.executionRunTargetMachineId;
+  const current = resolved && machineId && machineId !== resolved.baseline.machineId
+    ? { ...resolved, baseline: { machineId: resolved.baseline.machineId, directory: resolved.baseline.directory } } : resolved;
+  const notReady = await refuseAgentStartWhenNotReadyV1(deps, {
+    machineId: machineId ?? opts?.exactMachineId ?? resolved?.baseline.machineId ?? normalizeId(context.defaultSessionMachineId),
+    backendTarget: input.backendTarget,
+  }, context);
+  if (notReady) return notReady;
+  const request = { ...input,
+    // An absent root choice remains unset; authored null is an opt-out and attached children inherit.
+    approvalProfileId: sessionId === null && !input.resumeHandle && input.approvalProfileId === undefined
+      && context.approvalProfileId == null ? undefined
+      : resolveInheritedApprovalProfileIdV1(input.approvalProfileId, context.approvalProfileId) };
+  const admitted = current
+    ? stampAgentStartSelectionV1(request, { workDepth: context.agentStartWorkDepth ?? 0 }, 'execution_run', current) : request;
+  const modelNotGranted = refuseExecutionRunStartOutsideCallerModelsV1(admitted, context);
+  if (modelNotGranted) return modelNotGranted;
+  return deps.executionRunStart(sessionId, admitted, { ...opts, approvalProfileTeamOrGroupDerived:
+    input.approvalProfileId === undefined && context.approvalProfileTeamOrGroupDerived === true });
+}
+
+/** The model a Start request names, in the vocabulary the caller-constraint owner reads. */
+function readExecutionRunStartModelRefV1(request: Readonly<Record<string, unknown>>): ProviderBoundModelRef | SessionModelRefV2 | 'automatic' {
+  if (request.teamCredentialModel !== undefined) {
+    const team = TeamCredentialProviderModelSelectionV1Schema.safeParse(request.teamCredentialModel);
+    if (!team.success) return 'automatic';
+    const { kind: _kind, ...teamRef } = team.data;
+    return { source: 'team_resource', ...teamRef };
+  }
+  const selection = ProviderBoundModelRefSchema.safeParse(request.modelSelection);
+  if (selection.success) return selection.data;
+  const modelId = normalizeId(request.modelId);
+  if (!modelId) return 'automatic';
+  try {
+    return { agentTargetKey: buildBackendTargetKeyV2(readBackendTargetRefV2(request.backendTarget as BackendTargetRefV2Input)),
+      providerConnectionId: null, modelId };
+  } catch {
+    return 'automatic';
+  }
+}
+
+/**
+ * The admitted caller's model allowlist binds every Run its invocation starts,
+ * including a nested Start whose model a host resolved from a saved setting.
+ */
+export function refuseExecutionRunStartOutsideCallerModelsV1(
+  request: Readonly<Record<string, unknown>>,
+  context: Pick<ActionExecutorContext, 'callerInputConstraints' | 'externalActionCredential'>,
+): ActionExecuteFailure | null {
+  const constraints = [context.callerInputConstraints, context.externalActionCredential?.grant]
+    .filter((value): value is CallerInputConstraintsV1 => value !== undefined && value.models !== null);
+  if (constraints.length === 0) return null;
+  const ref = readExecutionRunStartModelRefV1(request);
+  if (constraints.every((constraint) => isModelRefGrantedV1(constraint, ref))) return null;
+  return { ok: false, errorCode: 'model_not_granted', error: 'model_not_granted',
+    details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') };
+}
 
 export function resolveExecutionRunLaunchOrigin(ctx: ActionExecutorContext): ExecutionRunLaunchOrigin {
   const mountedOrigin = ExecutionRunLaunchOriginSchema.safeParse(ctx.executionRunLaunchOrigin);
