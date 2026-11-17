@@ -15,6 +15,7 @@ import { machineSharing } from './features/machineSharing.es';
 import { managedMachines } from './features/managedMachines.es';
 import { projectWorkers } from './features/projectWorkers.es';
 import { publicIdentity } from './features/publicIdentity.es';
+import { themeSurfaces } from './features/themeSurfaces.es';
 
 import { terminalWorkspaceKeyboardTranslations } from './terminalWorkspaceTranslations.shared';
 
@@ -19809,6 +19810,7 @@ settingsSession: {
    ...managedMachines,
    ...projectWorkers,
    ...publicIdentity,
+  ...themeSurfaces,
    projectStarters: { staticWebsite: { title: 'Sitio web estático', summary: 'Un pequeño sitio HTML y CSS para alojamiento estático. Tu propio servidor necesita preparación para el despliegue.' } },
    ...sessionPageTranslations.es,
    settingsPlugins: {

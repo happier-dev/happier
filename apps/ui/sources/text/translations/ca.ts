@@ -15,6 +15,7 @@ import { machineSharing } from './features/machineSharing.ca';
 import { managedMachines } from './features/managedMachines.ca';
 import { projectWorkers } from './features/projectWorkers.ca';
 import { publicIdentity } from './features/publicIdentity.ca';
+import { themeSurfaces } from './features/themeSurfaces.ca';
 
 import { terminalWorkspaceKeyboardTranslations } from './terminalWorkspaceTranslations.shared';
 
@@ -18613,6 +18614,7 @@ La meva pregunta: `,
    ...managedMachines,
    ...projectWorkers,
    ...publicIdentity,
+  ...themeSurfaces,
    projectStarters: { staticWebsite: { title: 'Lloc web estàtic', summary: 'Un petit lloc HTML i CSS per a allotjament estàtic. El teu propi servidor necessita preparació per al desplegament.' } },
    ...sessionPageTranslations.ca,
    settingsPlugins: {

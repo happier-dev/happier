@@ -46,6 +46,7 @@ import {
 import { StoreSoftwareRouteListing } from './StoreSoftwarePage';
 import { StoreKindSurface } from './StoreKindSurface';
 import { releaseMcpAddDraftContinuation } from '@/components/settings/mcpServers/add/mcpAddDraftState';
+import { StoreThemeListing } from './StoreThemeListing';
 
 type Presentation = 'pane' | 'page';
 
@@ -55,7 +56,7 @@ const referenceKey = (reference: StoreListingReference) =>
 /** What a listing is (App, MCP server…): the bar or pane header above it says this, while the listing names the item. */
 function storeListingKindWord(reference: StoreListingReference | null): string {
   const kind = reference?.type === 'software' ? 'software' : reference?.type === 'registryItem' ? reference.kind : null;
-  return kind === null ? t('capabilities.store.listingLabel') : t(`capabilities.store.kindWord.${kind}`);
+  return kind === null ? t('capabilities.store.listingLabel') : kind === 'theme' ? t('settingsAppearance.theme') : t(`capabilities.store.kindWord.${kind}`);
 }
 
 /**
@@ -348,6 +349,7 @@ function ListingContent(
     failures?.length ? <RegistrySourcesUnavailable testID="store.listing.failed" size={size}
       failures={failures.map(failure => ({ key: failure.sourceId, message: failure.message, onRetry: failure.onRetry }))} /> : removed;
   switch (state.kind) {
+    case 'theme': return <StoreThemeListing {...state.view} />;
     case 'starter':
     case 'browserExtension':
       if (state.item) return <CapabilityListingDetail config={state.config} item={state.item}

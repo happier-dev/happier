@@ -24,6 +24,7 @@ const passThroughScroller = (children: React.ReactNode) => children;
 /** The kind word on a mixed list's title line ("Playwright  MCP server"). */
 export function storeKindWord(kind: StoreDiscoverKind): string {
     switch (kind) {
+        case 'theme': return t('settingsAppearance.theme');
         case 'app': return t('capabilities.store.kindWord.app');
         case 'browserExtension': return t('capabilities.store.kindWord.browserExtension');
         case 'mcpServer': return t('capabilities.store.kindWord.mcpServer');

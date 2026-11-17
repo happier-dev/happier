@@ -53,6 +53,7 @@ export type StoreThemeListingViewProps = Readonly<{
   description: string | null;
   faces: readonly StoreThemeListingFace[] | null;
   facesState: 'loading' | 'ready' | 'error';
+  facesError?: string | null;
   /** The face this device is trying now, from the shared try-on owner; null when nothing from here is on. */
   tryingFaceId: string | null;
   /** The face Try puts on first: the one for the mode this device shows now. */
@@ -61,13 +62,14 @@ export type StoreThemeListingViewProps = Readonly<{
   here: string;
   installed: boolean;
   facts: readonly StoreThemeListingFact[];
-  busy: 'try' | 'install' | 'revert' | null;
+  busy: 'try' | 'install' | 'revert' | 'uninstall' | null;
   /** Per-face install failures after a partial install (`theme_install_partial`), shown with Retry. */
   installFailures?: readonly Readonly<{ faceName: string; code: string }>[];
   onTryFace: (faceId: string) => void;
   onRevert: () => void;
   onInstall: () => void;
   onRetryFaces: () => void;
+  onUninstall?: () => void;
   testID?: string;
 }>;
 
@@ -76,6 +78,8 @@ export type StoreThemeListingViewProps = Readonly<{
  * One host at a time: the open listing renders the controls itself, so the bar is absent then.
  */
 export type ThemeTryPresentationProps = Readonly<{
+  origin?: 'store' | 'agent' | 'editor';
+  disabled?: boolean;
   visible: boolean;
   faceName: string;
   miniature: ThemeMiniatureData | null;

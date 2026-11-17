@@ -34,6 +34,11 @@ describe('Store kind contribution owner', () => {
         expect(resolveStoreKindContribution('example.themes/themes', model)).toMatchObject({ definition, placement: null });
     });
 
+    it('retains a native theme listing through source-qualified route admission', () => {
+        const reference = { type: 'registryItem', kind: 'theme', sourceId: 'happier:catalog', itemId: 'paper', version: '1.0.0' };
+        expect(readStoreListingReference(reference)).toEqual(reference);
+    });
+
     it('uses the admitted same-plugin app-page placement and preserves a selection when the plugin disappears', () => {
         const wrongTarget = createPluginPagePlacementFixture({ pluginId, localId: 'catalog', title: 'Project themes', targetKind: 'project' });
         const placement = createPluginPagePlacementFixture({ pluginId, localId: 'catalog', title: 'Themes', targetKind: 'app' });

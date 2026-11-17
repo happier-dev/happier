@@ -63,6 +63,7 @@ import { AsyncLock } from '@/utils/system/lock';
 import { useWebUiFontScale } from '@/components/ui/text/useWebUiFontScale';
 import { GlassMaterialRuntime } from '@/components/ui/glass/GlassMaterialRuntime';
 import { ThemeProfileRuntimeSync } from '@/theme/ThemeProfileRuntimeSync';
+import { ThemeTryBarHost } from '@/theme/ThemeTryBarHost';
 import { useWebRootCanvasPresentation } from '@/theme/useWebRootCanvasPresentation';
 import { GlassNavigationThemeProvider } from '@/components/ui/glass/GlassNavigationThemeProvider';
 import { captureExceptionIfEnabled, initializeSentryOnce, wrapWithSentryIfEnabled } from '@/utils/system/sentry';
@@ -879,6 +880,7 @@ function AppBoot() {
                                 </CurrentUiContextProvider>
                                 </MainAppTabStateProvider>
                                 </NewSessionShellHostProvider>
+                                {!embedWindowContext ? <ThemeTryBarHost /> : null}
                                 </WorkspaceAppShellProvider>
                                 </SessionCockpitChromeRegistryProvider>
                                 </ConcurrentSessionCacheRuntime>

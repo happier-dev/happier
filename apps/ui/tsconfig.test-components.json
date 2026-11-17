@@ -3851,6 +3851,7 @@
     "sources/components/ssh/useConfiguredSshHostSuggestions.test.ts",
     "sources/components/store/StoreSearch.test.tsx",
     "sources/components/store/StoreSoftwareInputs.test.ts",
+    "sources/components/store/StoreThemeListing.test.tsx",
     "sources/components/store/catalog/storeAdded.test.tsx",
     "sources/components/store/catalog/storeInstalled.test.tsx",
     "sources/components/store/catalog/storeThemes.test.ts",

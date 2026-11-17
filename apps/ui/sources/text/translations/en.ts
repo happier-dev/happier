@@ -55,6 +55,7 @@ import { machineSharing } from './features/machineSharing.en';
 import { managedMachines } from './features/managedMachines.en';
 import { projectWorkers } from './features/projectWorkers.en';
 import { publicIdentity } from './features/publicIdentity.en';
+import { themeSurfaces } from './features/themeSurfaces.en';
 
 import { terminalWorkspaceKeyboardTranslations } from './terminalWorkspaceTranslations.shared';
 
@@ -24397,6 +24398,7 @@ export const en: TranslationStructure = {
   ...managedMachines,
   ...projectWorkers,
   ...publicIdentity,
+  ...themeSurfaces,
   projectStarters: { staticWebsite: { title: 'Static website', summary: 'A small HTML and CSS site for static hosting. Your own server needs deployment preparation.' } },
   homeDeviceApproval: enHomeDeviceApproval,
   settingsOverview: enSettingsOverview,
@@ -25419,7 +25421,9 @@ type EnglishNamespaces30 = TranslationOverlay<
   typeof publicIdentity
 >;
 
-export type TranslationsEn = EnglishNamespaces30 & Readonly<{ botTemplates: typeof botTemplateTranslations.en; botTemplateRecipient: typeof botTemplateRecipientTranslations.en; projectStarters: { staticWebsite: { title: string; summary: string } }; fileReviewNote: typeof fileReviewNoteTranslations.en; hunkReview: typeof hunkReviewTranslations.en; storeInstalled: typeof storeInstalledTranslations.en; newApp: typeof newAppTranslations.en; composerReferences: typeof composerReferenceTranslations.en; screenCapture: typeof screenCaptureCopy.en }>;
+type EnglishNamespaces31 = TranslationOverlay<EnglishNamespaces30, typeof themeSurfaces>;
+
+export type TranslationsEn = EnglishNamespaces31 & Readonly<{ botTemplates: typeof botTemplateTranslations.en; botTemplateRecipient: typeof botTemplateRecipientTranslations.en; projectStarters: { staticWebsite: { title: string; summary: string } }; fileReviewNote: typeof fileReviewNoteTranslations.en; hunkReview: typeof hunkReviewTranslations.en; storeInstalled: typeof storeInstalledTranslations.en; newApp: typeof newAppTranslations.en; composerReferences: typeof composerReferenceTranslations.en; screenCapture: typeof screenCaptureCopy.en }>;
 
 // Shape contract for all locales: enforce identical key structure without requiring English literal
 // string values. Functions are preserved so parameter lists remain typechecked.

@@ -50,6 +50,7 @@ import { StoreProjectScopeChip } from '../StoreProjectScopeChip';
 import { useStoreDirectoryState } from '@/components/settings/plugins/model/usePluginsOpenItem';
 import { useStoreUpdatesCount } from '../updates/storeUpdatesSummary';
 import { STORE_KIND_ORDER, type StoreKind } from '../catalog/storeKinds';
+import { kindCopy } from '../catalog/storeKindCopy';
 import { BOT_STORE_KIND } from '../catalog/storeKindContributions';
 import { STORE_KIND_GLYPHS, StoreItemMark, storeItemHasArtwork, storeMarkFactsOfReference } from '../catalog/StoreItemMark';
 import { useContributedStoreKinds } from '../StoreKindSurface';
@@ -134,46 +135,10 @@ function useStoreNavigation() {
 }
 
 function kindPlural(kind: ComposedKind): string {
-  switch (kind) {
-    case 'bot': return t('bots.title');
-    case 'app': return t('capabilities.store.kinds.app.title');
-    case 'browserExtension': return t('capabilities.store.kinds.browserExtension.title');
-    case 'mcpServer':
-      return t('capabilities.store.kinds.mcpServer.title');
-    case 'skill':
-      return t('capabilities.store.kinds.skill.title');
-    case 'agent':
-      return t('capabilities.store.kinds.agent.title');
-    case 'provider':
-      return t('capabilities.store.kinds.provider.title');
-    case 'plugin':
-      return t('capabilities.store.kinds.plugin.title');
-    case 'software':
-      return t('capabilities.store.kinds.software.title');
-    case 'starter':
-      return t('capabilities.store.kinds.starter.title');
-  }
+  return kindCopy(kind).title;
 }
 function kindPurpose(kind: ComposedKind): string {
-  switch (kind) {
-    case 'bot': return t('botTemplates.storeDescription');
-    case 'app': return t('capabilities.store.kinds.app.description');
-    case 'browserExtension': return t('capabilities.store.kinds.browserExtension.description');
-    case 'mcpServer':
-      return t('capabilities.store.kinds.mcpServer.description');
-    case 'skill':
-      return t('capabilities.store.kinds.skill.description');
-    case 'agent':
-      return t('capabilities.store.kinds.agent.description');
-    case 'provider':
-      return t('capabilities.store.kinds.provider.description');
-    case 'plugin':
-      return t('capabilities.store.kinds.plugin.description');
-    case 'software':
-      return t('capabilities.store.softwarePage.description');
-    case 'starter':
-      return t('capabilities.store.kinds.starter.description');
-  }
+  return kindCopy(kind).description;
 }
 
 /** "2 ways · MCP server, Skill": only admitted choices are counted. */

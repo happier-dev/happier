@@ -15,6 +15,7 @@ import { machineSharing } from './features/machineSharing.de';
 import { managedMachines } from './features/managedMachines.de';
 import { projectWorkers } from './features/projectWorkers.de';
 import { publicIdentity } from './features/publicIdentity.de';
+import { themeSurfaces } from './features/themeSurfaces.de';
 
 import { terminalWorkspaceKeyboardTranslations } from './terminalWorkspaceTranslations.shared';
 
@@ -19919,6 +19920,7 @@ settingsSession: {
    ...managedMachines,
    ...projectWorkers,
    ...publicIdentity,
+  ...themeSurfaces,
    projectStarters: { staticWebsite: { title: 'Statische Website', summary: 'Eine kleine HTML- und CSS-Website für statisches Hosting. Für deinen eigenen Server muss die Bereitstellung vorbereitet werden.' } },
    ...sessionPageTranslations.de,
    settingsPlugins: {

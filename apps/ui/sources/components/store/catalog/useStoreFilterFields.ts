@@ -5,6 +5,7 @@ import type { RegistryCuration } from '@/registries/useRegistrySuggestions';
 import { t } from '@/text';
 import { storeEditorialGroupKey, type StoreColumnField } from './storeColumnAdapter';
 import { storeKinds, type StoreKind } from './storeKinds';
+import { kindCopy } from './storeKindCopy';
 import { useAppShellPluginUiProjection, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 
 /** Labels for the shared condition owner, from the admitted sources and editorial facts. */
@@ -21,7 +22,7 @@ export function useStoreFilterFields(curation: RegistryCuration['curation'], pre
         }
         return {
             kind: { label: t('capabilities.store.search.kind'), icon: 'squares-four' as const, valueLabel: value => {
-                if (Object.hasOwn(storeKinds, value)) return t(`capabilities.store.kinds.${value as StoreKind}.title`);
+                if (Object.hasOwn(storeKinds, value)) return kindCopy(value as StoreKind).title;
                 const contribution = contributedKinds?.[value];
                 return contribution ? localize(contribution.pluginId, contribution.definition.title) : value;
             } },

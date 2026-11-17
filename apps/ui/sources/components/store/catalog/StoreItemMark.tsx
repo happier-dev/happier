@@ -26,6 +26,7 @@ import type { StoreKind } from './storeKinds';
 export const STORE_KIND_GLYPHS: Readonly<Record<StoreKind | 'bot', IconName>> =
   {
     app: 'rocket-launch',
+    theme: 'palette',
     browserExtension: 'globe',
     mcpServer: 'plug',
     skill: 'book-open',

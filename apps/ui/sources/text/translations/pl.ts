@@ -15,6 +15,7 @@ import { machineSharing } from './features/machineSharing.pl';
 import { managedMachines } from './features/managedMachines.pl';
 import { projectWorkers } from './features/projectWorkers.pl';
 import { publicIdentity } from './features/publicIdentity.pl';
+import { themeSurfaces } from './features/themeSurfaces.pl';
 
 import { terminalWorkspaceKeyboardTranslations } from './terminalWorkspaceTranslations.shared';
 
@@ -19634,6 +19635,7 @@ settingsSession: {
    ...managedMachines,
    ...projectWorkers,
    ...publicIdentity,
+  ...themeSurfaces,
    projectStarters: { staticWebsite: { title: 'Statyczna strona internetowa', summary: 'Mała strona HTML i CSS do hostingu statycznego. Własny serwer wymaga przygotowania do wdrożenia.' } },
    ...sessionPageTranslations.pl,
    settingsPlugins: {

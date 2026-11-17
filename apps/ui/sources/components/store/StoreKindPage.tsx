@@ -59,9 +59,16 @@ import type { SettingsCollectionFilter } from '@/components/settings/shell/setti
 import { StoreDiscover } from './StoreDiscover';
 import { StoreDiscoverItemMark } from './discover/StoreDirectorySection';
 import { StoreDirectoryUnavailable } from './StoreDirectoryUnavailable';
+import { kindCopy } from './catalog/storeKindCopy';
+export { kindCopy } from './catalog/storeKindCopy';
+import { projectStoreThemeCard, themeSummaryMatchesMode } from './catalog/storeThemes';
+import { useStoreThemeCardAnatomy } from './storeThemeCardAnatomy';
+import type { StoreThemeCardView } from './storeThemeViewTypes';
+import type { ThemeProfileMode } from '@/theme/profiles/themeProfileTypes';
 import type { RegistryCuration } from '@/registries/useRegistrySuggestions';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { StoreMachineScopeContext, StoreMachineSelectionContext, useStoreMachineScope } from '@/components/settings/plugins/model/useStoreMachineScope';
 
 export type StoreDirectoryKind = Exclude<StoreKind, 'plugin' | 'software'>;
@@ -152,6 +159,8 @@ function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: bool
   }), [filter.setFilters]);
   const visible = React.useMemo(() => new Set(state.rows), [state.rows]);
   const registryItems = React.useMemo(() => state.rows.filter((row): row is RegistryCatalogItemSummary => 'kind' in row && 'itemId' in row), [state.rows]);
+  const themeItems = React.useMemo(() => state.lists.theme?.items.filter(item => visible.has(item)) ?? EMPTY_CURATED,
+    [state.lists.theme?.items, visible]);
   const browsing = !state.query.trim() && Object.keys(filter.filters).length === 0;
   const frame = (body: React.ReactNode) => (
     <StoreRegistryIdentityProvider items={registryItems}>
@@ -194,6 +203,9 @@ function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: bool
       if (state.lists.app) return frame(<RegistryDirectory kind="app" list={{ ...state.lists.app, curation: [...props.curation, ...state.lists.app.curation],
           sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.app.sourceFailures],
         items: state.lists.app.items.filter(item => visible.has(item)) }} query={state.query} browsing={browsing} onSeeSource={setSourceId} />);
+      break;
+    case 'theme':
+      if (state.lists.theme) return frame(<ThemeDirectory list={{ ...state.lists.theme, items: themeItems }} query={state.query} />);
       break;
     case 'mcpServer':
       if (state.lists.mcpServer) return frame(<McpDirectory list={{ ...state.lists.mcpServer, curation: [...props.curation, ...state.lists.mcpServer.curation],
@@ -259,8 +271,8 @@ export function StoreKindFrame(
     />
   ) : undefined;
   const accessory = props.accessory ?? registrySelect;
-  // Software reads one Machine and Bot templates belong to no project, so a project scope has nothing to narrow there.
-  const scoped = props.kind !== 'software' && props.kind !== 'bot';
+  // Software reads one Machine; Bot templates and portable themes belong to no project.
+  const scoped = props.kind !== 'software' && props.kind !== 'bot' && props.kind !== 'theme';
   return (
     <StoreListingPaneHost title={copy.title} testID={`store.kind.${props.kind}`}>
     <ItemList pageColumn="wide" testID={`store.kind.${props.kind}`}>
@@ -324,21 +336,6 @@ function CatalogSelect(
 
 type RegistryList = StoreKindList<'mcpServer'>;
 
-export function kindCopy(kind: StoreDirectoryKind | 'plugin' | 'software' | 'bot'): Readonly<{ title: string; description: string; search: string }> {
-    switch (kind) {
-        case 'bot': return { title: t('bots.title'), description: t('botTemplates.storeDescription'), search: t('botTemplates.storeSearch') };
-        case 'app': return { title: t('capabilities.store.kinds.app.title'), description: t('capabilities.store.kinds.app.description'), search: t('capabilities.store.kinds.app.search') };
-        case 'starter': return { title: t('capabilities.store.kinds.starter.title'), description: t('capabilities.store.kinds.starter.description'), search: t('capabilities.store.kinds.starter.search') };
-        case 'browserExtension': return { title: t('capabilities.store.kinds.browserExtension.title'), description: t('capabilities.store.kinds.browserExtension.description'), search: t('capabilities.store.kinds.browserExtension.search') };
-        case 'software': return { title: t('capabilities.store.kinds.software.title'), description: t('capabilities.store.softwarePage.description'), search: t('capabilities.store.softwarePage.search') };
-        case 'mcpServer': return { title: t('capabilities.store.kinds.mcpServer.title'), description: t('capabilities.store.kinds.mcpServer.description'), search: t('capabilities.store.kinds.mcpServer.search') };
-        case 'skill': return { title: t('capabilities.store.kinds.skill.title'), description: t('capabilities.store.kinds.skill.description'), search: t('capabilities.store.kinds.skill.search') };
-        case 'agent': return { title: t('capabilities.store.kinds.agent.title'), description: t('capabilities.store.kinds.agent.description'), search: t('capabilities.store.kinds.agent.search') };
-        case 'provider': return { title: t('capabilities.store.kinds.provider.title'), description: t('capabilities.store.kinds.provider.description'), search: t('capabilities.store.kinds.provider.search') };
-        case 'plugin': return { title: t('capabilities.store.kinds.plugin.title'), description: t('capabilities.store.kinds.plugin.description'), search: t('capabilities.store.kinds.plugin.search') };
-    }
-}
-
 /**
  * Browsing a kind with several sections: each catalog's section previews its first rows and keeps the rest behind its
  * All N ›, which narrows this same page to that catalog (lab h:apps). A page whose only section is that catalog stays whole.
@@ -376,6 +373,53 @@ export function previewSourceSections<Row extends Readonly<{ group: string }>>(i
 const SOURCE_GROUP_PREFIX = 'source:';
 const EMPTY_CURATED: readonly RegistryCatalogItemSummary[] = [];
 const curatedIdentity = (item: RegistryCatalogItemSummary) => JSON.stringify([item.sourceId, item.itemId]);
+
+type ThemeDirectoryRow = DirectoryRow & Readonly<{ card: StoreThemeCardView }>;
+
+/** The shared directory owns selection, source failures and pagination; UI-B supplies the card anatomy. */
+function ThemeDirectory(props: Readonly<{ list: StoreKindList<'theme'>; query: string }>) {
+  const [mode, setMode] = React.useState<ThemeProfileMode | null>(null);
+  const phone = useDeviceType() === 'phone';
+  const open = useOpenRegistryItem();
+  const sourceTitle = useSourceTitle();
+  const items = React.useMemo(() => props.list.items.filter(item => themeSummaryMatchesMode(item, mode)), [props.list.items, mode]);
+  const registry = useRegistryRows({ items, curation: props.list.curation }, open, sourceTitle);
+  const cards = React.useMemo(() => new Map(items.map(item => {
+    const card = projectStoreThemeCard(item, sourceTitle(item.sourceId));
+    return [card.key, card] as const;
+  })), [items, sourceTitle]);
+  const rows = React.useMemo(() => registry.rows.flatMap((row): ThemeDirectoryRow[] => {
+    const card = cards.get(row.key);
+    return card ? [{ ...row, card }] : [];
+  }), [registry.rows, cards]);
+  const cardAnatomy = useStoreThemeCardAnatomy();
+  const anatomy = React.useMemo<CollectionAnatomy<ThemeDirectoryRow>>(() => ({
+    glyph: row => cardAnatomy.glyph(row.card),
+    title: row => cardAnatomy.title(row.card),
+    where: row => cardAnatomy.where?.(row.card),
+    reason: row => cardAnatomy.reason?.(row.card),
+    preview: row => cardAnatomy.preview?.(row.card),
+    accessibilityLabel: row => cardAnatomy.accessibilityLabel?.(row.card) ?? row.title,
+    testID: row => cardAnatomy.testID?.(row.card) ?? row.key,
+    columnTitles: cardAnatomy.columnTitles,
+  }), [cardAnatomy]);
+  const modeLabel = mode === null ? t('themeStore.anyMode') : mode === 'light' ? t('themeCard.light') : t('themeCard.dark');
+  return <>
+    {/* Which modes a theme covers is a 2–4 option either-or: the one segmented control (finding 3), kept on phones. */}
+    <View style={[styles.themeModes, phone ? styles.themeModesPhone : null]}>
+      <SegmentedTabBar<'any' | ThemeProfileMode> role="radiogroup" segmentSizing={phone ? 'equal' : 'content'}
+        accessibilityLabel={t('themeStore.modeFilter')} testID="store.theme.modes" activeTabId={mode ?? 'any'}
+        onSelectTab={id => setMode(id === 'any' ? null : id)}
+        tabs={[{ id: 'any', label: t('themeStore.anyMode'), testID: 'store.theme.modes.any' },
+          { id: 'light', label: t('themeCard.light'), testID: 'store.theme.modes.light' },
+          { id: 'dark', label: t('themeCard.dark'), testID: 'store.theme.modes.dark' }]} />
+    </View>
+    <Directory kind="theme" rows={rows} groups={registry.groups} list={props.list} sourceTitle={sourceTitle}
+      query={props.query || (mode === null ? '' : modeLabel)}
+      {...(!props.query && mode !== null ? { onClear: () => setMode(null) } : {})}
+      anatomy={anatomy} presentation="grid" />
+  </>;
+}
 
 /** A kind's curated items as summaries, from the words the catalog's curation already holds. */
 function curatedSummaries(curation: RegistryList['curation'], kind: RegistryCatalogItemSummary['kind']): readonly RegistryCatalogItemSummary[] {
@@ -837,7 +881,7 @@ export type DirectoryList = Readonly<{
 
 const keyOf = (row: DirectoryRow) => row.key;
 
-export function Directory(
+export function Directory<Row extends DirectoryRow = DirectoryRow>(
   props: Readonly<{
     /** The kind page it belongs to, or `search` for the all-kind results. */
     kind: StoreDirectoryKind | 'search' | 'software' | 'bot';
@@ -851,7 +895,10 @@ export function Directory(
     onClear?: () => void;
     /** Beside Load more: what the rows so far cover (a search over loaded pages). */
     moreNote?: string | null;
-    rows: readonly DirectoryRow[];
+    rows: readonly Row[];
+    /** Kind-owned anatomy uses this same directory's source states, selection and paging. */
+    anatomy?: CollectionAnatomy<Row>;
+    presentation?: 'list' | 'grid';
     groups: readonly DirectoryGroup[];
     list: DirectoryList;
     query: string;
@@ -887,10 +934,10 @@ export function Directory(
   );
   // A section titled by its page has no groups of its own.
   const grouping = React.useMemo(
-    () => props.groups.length === 0 ? null : ({ axis: props.groups, groupOf: (row: DirectoryRow) => row.group }),
+    () => props.groups.length === 0 ? null : ({ axis: props.groups, groupOf: (row: Row) => row.group }),
     [props.groups],
   );
-  const model = useHappierCollection<DirectoryRow>({
+  const model = useHappierCollection<Row>({
     items: rows,
     keyOf,
     ...(grouping ? { groups: grouping } : {}),
@@ -900,8 +947,8 @@ export function Directory(
   const addLabel = props.addLabel ?? t('capabilities.store.add');
   const onwardColor = useUnistyles().theme.colors.text.secondary;
   const anatomy = React.useMemo(
-    (): CollectionAnatomy<DirectoryRow> =>
-      buildCapabilityCollectionAnatomy<DirectoryRow>({
+    (): CollectionAnatomy<Row> =>
+      buildCapabilityCollectionAnatomy<Row>({
         title: (row) => row.title,
         description: (row) => row.description,
         mark: (row) => row.mark,
@@ -988,14 +1035,14 @@ export function Directory(
         />
       ) : pageFailure ? null : (
         <CoreCollectionScope renderPageScroller={passThroughScroller}>
-          <Collection<DirectoryRow>
+          <Collection<Row>
             testID={`store.kind.${props.kind}.list`}
             model={model}
-            anatomy={anatomy}
+            anatomy={props.anatomy ?? anatomy}
             accessibilityLabel={
               props.label ?? (props.kind === 'search' ? '' : kindCopy(props.kind).title)
             }
-            presentation="list"
+            presentation={props.presentation ?? 'list'}
             detail="none"
             scroll="page-virtualized"
             minListWidth={280}
@@ -1030,6 +1077,14 @@ export function Directory(
 }
 
 const styles = StyleSheet.create((theme) => ({
+  // The mode choice ends the band under the search on wide pages and takes the row on phones.
+  themeModes: {
+    alignSelf: 'flex-end',
+    marginBottom: theme.space.s12,
+  },
+  themeModesPhone: {
+    alignSelf: 'stretch',
+  },
   body: { gap: theme.space.s16 },
   pageStatus: { paddingTop: theme.space.s12 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },

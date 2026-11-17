@@ -15,6 +15,7 @@ import { machineSharing } from './features/machineSharing.ru';
 import { managedMachines } from './features/managedMachines.ru';
 import { projectWorkers } from './features/projectWorkers.ru';
 import { publicIdentity } from './features/publicIdentity.ru';
+import { themeSurfaces } from './features/themeSurfaces.ru';
 
 import { terminalWorkspaceKeyboardTranslations } from './terminalWorkspaceTranslations.shared';
 
@@ -19762,6 +19763,7 @@ settingsSession: {
    ...managedMachines,
    ...projectWorkers,
    ...publicIdentity,
+  ...themeSurfaces,
    projectStarters: { staticWebsite: { title: 'Статический сайт', summary: 'Небольшой сайт на HTML и CSS для статического хостинга. Для развёртывания на своём сервере нужна подготовка.' } },
    ...sessionPageTranslations.ru,
    settingsPlugins: {

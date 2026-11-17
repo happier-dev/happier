@@ -15,6 +15,7 @@ import { machineSharing } from './features/machineSharing.zh-Hans';
 import { managedMachines } from './features/managedMachines.zh-Hans';
 import { projectWorkers } from './features/projectWorkers.zh-Hans';
 import { publicIdentity } from './features/publicIdentity.zh-Hans';
+import { themeSurfaces } from './features/themeSurfaces.zh-Hans';
 
 import { terminalWorkspaceKeyboardTranslations } from './terminalWorkspaceTranslations.shared';
 
@@ -19428,6 +19429,7 @@ settingsSession: {
    ...managedMachines,
    ...projectWorkers,
    ...publicIdentity,
+  ...themeSurfaces,
    projectStarters: { staticWebsite: { title: '静态网站', summary: '适合静态托管的小型 HTML 和 CSS 网站。在自己的服务器上部署需要先做准备。' } },
    ...sessionPageTranslations['zh-Hans'],
    settingsPlugins: {

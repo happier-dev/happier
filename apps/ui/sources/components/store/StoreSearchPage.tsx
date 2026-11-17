@@ -197,6 +197,7 @@ function useStoreSearchSections(props: SearchSectionsInput) {
     [lists.mcpServer?.items, visible],
   );
   const appItems = React.useMemo(() => pick(lists.app?.items), [lists.app?.items, visible]);
+  const themeItems = React.useMemo(() => pick(lists.theme?.items), [lists.theme?.items, visible]);
   const starterItems = React.useMemo(() => pick(lists.starter?.items), [lists.starter?.items, visible]);
   const browserExtensionItems = React.useMemo(() => pick(lists.browserExtension?.items), [lists.browserExtension?.items, visible]);
   const skillItems = React.useMemo(
@@ -230,6 +231,7 @@ function useStoreSearchSections(props: SearchSectionsInput) {
     addRegistry,
   );
   const app = useRegistryRows({ items: appItems, curation: NO_CURATION, sources }, openRegistry, sourceTitle, undefined, addRegistry);
+  const themes = useRegistryRows({ items: themeItems, curation: NO_CURATION, sources }, openRegistry, sourceTitle);
   const starterRows = useRegistryRows({ items: starterItems, curation: NO_CURATION, sources }, openRegistry, sourceTitle, undefined, addRegistry);
   // A starter's + starts a project from it, as on its kind page.
   const starter = React.useMemo(() => starterRows.rows.map((row): DirectoryRow => ({ ...row, addLabel: t('capabilities.store.startProject') })), [starterRows.rows]);
@@ -289,6 +291,7 @@ function useStoreSearchSections(props: SearchSectionsInput) {
     React.useMemo(
       () => ({
         app: rankByTitleMatch(app.rows, state.query),
+        theme: rankByTitleMatch(themes.rows, state.query),
         starter: rankByTitleMatch(starter, state.query),
         browserExtension: rankByTitleMatch(browserExtension.rows, state.query),
         mcpServer: rankByTitleMatch(mcp.rows, state.query),
@@ -298,7 +301,7 @@ function useStoreSearchSections(props: SearchSectionsInput) {
         plugin: rankByTitleMatch(plugins, state.query),
         software: rankByTitleMatch(software, state.query),
       }),
-      [app.rows, starter, browserExtension.rows, agent.rows, builtIn, mcp.rows, plugins, providers, skill.rows, software, state.query],
+      [app.rows, themes.rows, starter, browserExtension.rows, agent.rows, builtIn, mcp.rows, plugins, providers, skill.rows, software, state.query],
     );
   const sections = KIND_ORDER.filter((kind) => byKind[kind].length > 0);
   const selectedKind =

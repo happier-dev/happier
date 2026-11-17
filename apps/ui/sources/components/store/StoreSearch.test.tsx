@@ -42,6 +42,37 @@ const fields = Object.fromEntries(['kind', 'source', 'category', 'job'].map(id =
     [id, { label: id, icon: 'circle-half' as const, valueLabel: (value: string) => value }])) as Record<
         'kind' | 'source' | 'category' | 'job', { label: string; icon: 'circle-half'; valueLabel: (value: string) => string }>;
 
+it('browses native theme summaries with one request per source and query and no selected content reads', async () => {
+    const serverUrl = 'https://store-theme-demand.test';
+    const sourceId = 'theme-source';
+    const requests: string[] = [];
+    const fixture = await createPlainPromptLibraryCatalogHomeFixture(serverUrl, {
+        key: 'registry-sources', value: { v: 2, disabledSourceIds: [], sources: [{
+            id: sourceId, title: 'Theme source', url: `${serverUrl}/api`, kinds: ['theme'],
+            format: 'open-vsx', enabled: true, addedAt: 1,
+        }] },
+    }, 'updated', { handleRequest: async path => {
+        if (!path.startsWith('/api/')) return null;
+        requests.push(path);
+        if (!path.startsWith('/api/-/search')) return new Response(null, { status: 404 });
+        return Response.json({ offset: 0, totalSize: 32, extensions: Array.from({ length: 32 }, (_, index) => ({
+            namespace: 'publisher', name: `palette${index}`, version: '1.0.0', displayName: `Palette ${index}`,
+        })) });
+    } });
+    onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+    let current!: StoreSearchState;
+    const screen = await renderScreen(<StoreSearch kind="theme" demand={{ presented: true }} sourceIds={[sourceId]}
+        fields={fields}>{state => { current = state; return null; }}</StoreSearch>);
+    await waitForHomeGovernance(() => expect(current.lists.theme?.items).toHaveLength(32));
+    expect(current.rows).toHaveLength(32);
+    expect(requests).toHaveLength(1);
+    expect(requests.every(path => path.startsWith('/api/-/search'))).toBe(true);
+    await act(async () => current.setQuery('Palette'));
+    await waitForHomeGovernance(() => expect(requests).toHaveLength(2));
+    expect(requests.every(path => path.startsWith('/api/-/search'))).toBe(true);
+    await screen.unmount();
+});
+
 it('filters Apps by declared database category without matching database words in unrelated apps', async () => {
     const serverUrl = 'https://store-database-category.test';
     const sourceId = 'database-catalog';

@@ -15,6 +15,7 @@ import { machineSharing } from './features/machineSharing.ja';
 import { managedMachines } from './features/managedMachines.ja';
 import { projectWorkers } from './features/projectWorkers.ja';
 import { publicIdentity } from './features/publicIdentity.ja';
+import { themeSurfaces } from './features/themeSurfaces.ja';
 
 import { terminalWorkspaceKeyboardTranslations } from './terminalWorkspaceTranslations.shared';
 
@@ -19723,6 +19724,7 @@ settingsSession: {
    ...managedMachines,
    ...projectWorkers,
    ...publicIdentity,
+  ...themeSurfaces,
    projectStarters: { staticWebsite: { title: '静的ウェブサイト', summary: '静的ホスティング向けの小さなHTML・CSSサイトです。自分のサーバーでのデプロイには準備が必要です。' } },
    ...sessionPageTranslations.ja,
    settingsPlugins: {

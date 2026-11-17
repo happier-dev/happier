@@ -13,6 +13,7 @@ import { machineSharing } from './features/machineSharing.zh-Hant';
 import { managedMachines } from './features/managedMachines.zh-Hant';
 import { projectWorkers } from './features/projectWorkers.zh-Hant';
 import { publicIdentity } from './features/publicIdentity.zh-Hant';
+import { themeSurfaces } from './features/themeSurfaces.zh-Hant';
 
 import { terminalWorkspaceKeyboardTranslations } from './terminalWorkspaceTranslations.shared';
 
@@ -14495,6 +14496,7 @@ settingsSession: {
   ...managedMachines,
   ...projectWorkers,
   ...publicIdentity,
+  ...themeSurfaces,
    projectStarters: { staticWebsite: { title: '靜態網站', summary: '適合靜態託管的小型 HTML 和 CSS 網站。在自己的伺服器上部署需要先做準備。' } },
   ...sessionPageTranslations['zh-Hant'],
   settingsPlugins: {

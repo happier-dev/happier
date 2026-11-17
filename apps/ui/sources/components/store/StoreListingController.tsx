@@ -24,6 +24,8 @@ import { resolveStoreContributionRoute } from './catalog/useStoreOpenReference';
 import { useStoreStarterListing } from './StoreStarterListing';
 import { StoreItemMark } from './catalog/StoreItemMark';
 import { presentBrowserExtensionInstallForm } from './submitBrowserExtensionMutation';
+import { StoreThemeListingController } from './StoreThemeListingController';
+import type { StoreThemeListingViewProps } from './storeThemeViewTypes';
 
 type BrowserExtensionListingState = Readonly<{
     config: CapabilityListingConfig<RegistryItemV1>;
@@ -69,6 +71,7 @@ function useBrowserExtensionListing(reference: MarketplaceCatalogReferenceV1): B
 }
 
 export type StoreListingState =
+    | Readonly<{ kind: 'theme'; view: StoreThemeListingViewProps }>
     | (Readonly<{ kind: 'mcpServer' }> & StoreMcpListingState)
     | (Readonly<{ kind: 'skill' }> & StoreSkillListingState)
     | (Readonly<{ kind: 'agent' }> & StoreAgentListingState)
@@ -103,6 +106,8 @@ export function StoreListingController(props: Readonly<{
     }
     const key = JSON.stringify([reference.kind, reference.sourceId, reference.itemId, reference.version ?? null]);
     switch (reference.kind) {
+        case 'theme': return <StoreThemeListingController key={key} listing={reference}>
+            {view => children({ kind: 'theme', view })}</StoreThemeListingController>;
         case 'starter': return children({ kind: 'starter', ...starter });
         case 'browserExtension': return children({ kind: 'browserExtension', ...browserExtension });
         case 'mcpServer': return <StoreMcpListing key={key} selection={reference} onClose={onClose} onAdded={openMcp} continuationId={props.continuationId}>
