@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
     RPC_METHODS,
     SessionAgentTransitionResultV1Schema,
+    SessionSpawnNewActionResultV1Schema,
     buildSessionAgentTransitionDividerLocalId,
     isSessionAgentTransitionDividerLocalId,
     readSessionAgentTransitionDividerFromStoredRecordV1,
@@ -28,6 +29,9 @@ import {
 import { callEncryptedMachineRpc } from '../../src/testkit/memoryRpc';
 import { decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
+import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
+import { startProjectDaemonFixture } from '../../src/testkit/daemon/projectDaemon';
+import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import { resolveAcpSdkTestRuntime } from '../../src/testkit/providers/acpSdkTestRuntime';
 import { resolveMachineIdsFromSettings } from '../../src/testkit/providers/scenarios/runtimeHelpers';
 import {
@@ -611,6 +615,99 @@ describe('core e2e: same-Session cross-Agent transition', () => {
             const children = list.data.children ?? [];
             return children.filter((child) => child.happySessionId === sessionId).length <= 1;
         }, { timeoutMs: 60_000, context: 'exactly one tracked runtime for the transitioned Session' });
+    }, 600_000);
+
+    // MATRIX-1110 row 74: continuation after a real alternate-Agent cutover and Stop.
+    it('wakes the current qualified Pi Agent in the same Session after Stop', async () => {
+        const testDir = run.testDir(`current-agent-recovery-${randomUUID()}`);
+        const fakeBinDir = join(testDir, 'fake-bin');
+        await mkdir(fakeBinDir, { recursive: true });
+        const piLog = join(testDir, 'pi.jsonl');
+        const claudeLog = join(testDir, 'claude.jsonl');
+        await writeFakePiCli(join(fakeBinDir, 'pi'), piLog);
+        const database = await startDatabaseWorkbenchPostgres({ preloadStatistics: false });
+        let fixture: Awaited<ReturnType<typeof startProjectDaemonFixture>> | undefined;
+        let person: Awaited<ReturnType<typeof connectUiPersonActionClient>> | undefined;
+        let journeyFailure: unknown;
+        try {
+            fixture = await startProjectDaemonFixture({ testDir, serverEnv: { ...process.env, DATABASE_URL: database.homeDatabaseUrl } });
+            const account = await fixture.createAccount('continuation-owner');
+            const providerEnvironment = {
+                ...process.env,
+                HAPPIER_CLAUDE_PATH: fakeClaudeFixturePath(), HAPPIER_E2E_FAKE_CLAUDE_LOG: claudeLog,
+                HAPPIER_E2E_FAKE_CLAUDE_LOG_FULL_STDIN: '1',
+                PATH: `${fakeBinDir}${delimiter}${process.env.PATH ?? ''}`,
+                PI_CODING_AGENT_DIR: join(testDir, 'pi-agent'), OPENAI_API_KEY: 'synthetic-pi-key',
+                ANTHROPIC_API_KEY: 'synthetic-claude-key',
+            };
+            const machine = await fixture.enrollDaemon(account, { env: providerEnvironment });
+            person = await connectUiPersonActionClient({ serverUrl: fixture.server.baseUrl,
+                accountSecret: account.auth.accountSigningSeed });
+            await waitFor(() => person!.isAccountReady() && person!.isMachineActive(machine.target.machineId),
+                { timeoutMs: 60_000 });
+            const updatedAtMs = Date.now();
+            const capabilitySelection = { mcp: { managedServersEnabled: false, happierToolsEnabled: false,
+                forceIncludeServerIds: [], forceExcludeServerIds: [] } };
+            const spawned = await account.execute('session.spawn_new', {
+                executionTarget: machine.target, directory: { kind: 'path', path: machine.workspaceDir },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+                permissionMode: 'read-only', approvalProfileId: null,
+                configuration: { mode: { value: null, updatedAtMs },
+                    model: { value: null, updatedAtMs, selectionSource: 'explicit' },
+                    permissionIntent: { value: 'read-only', updatedAtMs }, options: {} },
+                connectedServices: { v: 2, bindingsByServiceId: {} }, terminal: { mode: 'plain' }, capabilitySelection,
+                environmentVariables: providerEnvironment,
+            });
+            expect(spawned, JSON.stringify(spawned)).toMatchObject({ ok: true });
+            if (!spawned.ok) throw new Error('Initial Session creation refused');
+            const created = SessionSpawnNewActionResultV1Schema.parse(spawned.result);
+            if (created.type !== 'success') throw new Error(JSON.stringify(created));
+            const { sessionId } = created;
+            const before = await fetchSessionV2(fixture.server.baseUrl, account.auth.token, sessionId);
+            const context = { surface: 'ui' as const, authority: 'present_user' as const,
+                serverId: person.serverId, actionCaller: { kind: 'host' as const }, defaultSessionId: sessionId };
+            const sourceText = `SOURCE_HISTORY_${randomUUID()}`;
+            expect(await person.execute('session.message.send', { sessionId, message: sourceText }, context))
+                .toMatchObject({ ok: true });
+            await waitForFakeClaudeUserText(claudeLog, text => text.includes(sourceText), { timeoutMs: 120_000 });
+            const targetText = `ALTERNATE_AGENT_${randomUUID()}`;
+            const transitioned = await person.executeConfirmed('session.agent.transition', {
+                sessionId, expectedCurrentAgentId: 'claude',
+                selection: { v: 1, agentId: 'happier.agent.pi/pi', modelId: 'openai/fake-model' },
+                input: { text: targetText, localId: `transition-${randomUUID()}`, meta: {} },
+            }, context);
+            expect(transitioned, JSON.stringify(transitioned)).toMatchObject({ ok: true });
+            await waitFor(async () => (await readJsonlEvents(piLog)).some(row => typeof row.text === 'string'
+                && row.text.includes(targetText) && row.text.includes(sourceText)), { timeoutMs: 120_000 });
+            expect(await account.readSessionMetadata(sessionId)).toMatchObject({ flavor: 'pi',
+                mcpSelectionV1: { v: 1, ...capabilitySelection.mcp } });
+            expect(await person.executeConfirmed('session.stop', { sessionId }, context)).toMatchObject({ ok: true });
+            await waitFor(async () => !(await fetchSessionV2(fixture!.server.baseUrl, account.auth.token, sessionId)).active,
+                { timeoutMs: 60_000 });
+            const recoveryText = `CURRENT_AGENT_RECOVERY_${randomUUID()}`;
+            const sent = await person.execute('session.message.send', { sessionId, message: recoveryText }, context);
+            expect(sent, JSON.stringify(sent)).toMatchObject({ ok: true });
+            await waitFor(async () => (await readJsonlEvents(piLog)).some(row => typeof row.text === 'string'
+                && row.text.includes(recoveryText)), { timeoutMs: 120_000 });
+            const after = await fetchSessionV2(fixture.server.baseUrl, account.auth.token, sessionId);
+            expect(after).toMatchObject({ id: sessionId, createdAt: before.createdAt, active: true });
+            expect(await account.readSessionMetadata(sessionId)).toMatchObject({ flavor: 'pi',
+                mcpSelectionV1: { v: 1, ...capabilitySelection.mcp } });
+        } catch (error) {
+            journeyFailure = error;
+            throw error;
+        } finally {
+            const failures: unknown[] = [];
+            for (const cleanup of [() => person?.close(), () => fixture?.stop(), () => database.stop()]) {
+                try { await cleanup(); } catch (error) { failures.push(error); }
+            }
+            if (failures.length) {
+                const errors = [...(journeyFailure ? [journeyFailure] : []), ...failures];
+                const messages = errors.flatMap(error => error instanceof AggregateError ? error.errors : [error])
+                    .map(error => error instanceof Error ? error.message : String(error));
+                throw new AggregateError(errors, `Continuation journey/cleanup failed: ${messages.join('; ')}`);
+            }
+        }
     }, 600_000);
 
     it('returns through the exact Codex app-server thread without duplicating a retried Claude-to-Codex input', async () => {

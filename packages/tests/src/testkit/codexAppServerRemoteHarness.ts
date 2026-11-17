@@ -79,6 +79,8 @@ export async function writeFakeCodexAppServerScript(params: Readonly<{
   requestLogPath: string;
   /** Observe the actual provider process terminal for composed spawn tests. */
   captureTerminalEnvironment?: boolean;
+  /** Canned vendor output for composed structured-task journeys. */
+  assistantReply?: string;
   /** Optional provider-boundary fixture, reread on each model/list request. */
   modelListStatePath?: string;
   /**
@@ -106,6 +108,7 @@ export async function writeFakeCodexAppServerScript(params: Readonly<{
     'import readline from "node:readline";',
     `const requestLogPath = ${JSON.stringify(params.requestLogPath)};`,
     `const captureTerminalEnvironment = ${params.captureTerminalEnvironment === true};`,
+    `const assistantReply = ${JSON.stringify(params.assistantReply ?? null)};`,
     `const modelListStatePath = ${JSON.stringify(params.modelListStatePath ?? null)};`,
     `const expectedResumeThreadId = ${JSON.stringify(expectedResumeThreadId)};`,
     `const goalStatePath = ${JSON.stringify(join(params.dir, 'fake-codex-app-server.goal.json'))};`,
@@ -316,11 +319,11 @@ export async function writeFakeCodexAppServerScript(params: Readonly<{
     '      process.stdout.write(JSON.stringify({ method: "turn/started", params: { threadId, turn: { id: turnId } } }) + "\\n");',
     '    }, turnDelayMs + 5);',
     '    setTimeout(() => {',
-    '      process.stdout.write(JSON.stringify({ method: "item/agentMessage/delta", params: { itemId: messageId, delta: `reply:${promptText}:` } }) + "\\n");',
+    '      process.stdout.write(JSON.stringify({ method: "item/agentMessage/delta", params: { itemId: messageId, delta: assistantReply ?? `reply:${promptText}:` } }) + "\\n");',
     '    }, turnDelayMs + 6);',
     '    setTimeout(() => {',
-    '      if (activeTurn?.id === turnId) activeTurn.items.push({ id: messageId, type: "agentMessage", text: `reply:${promptText}:done` });',
-    '      process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: messageId, type: "agentMessage", text: `reply:${promptText}:done` } } }) + "\\n");',
+    '      if (activeTurn?.id === turnId) activeTurn.items.push({ id: messageId, type: "agentMessage", text: assistantReply ?? `reply:${promptText}:done` });',
+    '      process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: messageId, type: "agentMessage", text: assistantReply ?? `reply:${promptText}:done` } } }) + "\\n");',
     '    }, turnDelayMs + 7);',
     '    setTimeout(() => {',
     '      process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId, turn: { id: turnId } } }) + "\\n");',

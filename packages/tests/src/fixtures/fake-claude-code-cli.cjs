@@ -936,6 +936,18 @@ async function runSdkStreamUntilEof() {
       continue;
     }
 
+    if (scenario === 'scm-summary-json') {
+      const refs = [...new Set(promptText.match(/\bc\d+\b/g) ?? [])];
+      emitSdk(createAssistantMessage([{ type: 'text', text: JSON.stringify({
+        summaryMarkdown: 'Captured change explained.',
+        walkthrough: { title: 'Captured change', intro: '', stops: [{ id: 'change', title: 'Change',
+          explanationMarkdown: 'The captured change.', changeRefs: refs }], otherChangeRefs: [] },
+        commitPlan: { groups: [{ id: 'change', message: 'fix: captured change', rationale: '', changeRefs: refs }], leftOutChangeRefs: [] },
+      }) }]));
+      emitSdk(createResultSuccess());
+      continue;
+    }
+
     if (scenario === 'review-json') {
       const assistant = createAssistantMessage([
         {
