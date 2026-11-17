@@ -36,6 +36,7 @@ import {
 import { workflowSessionOptionRow } from '@/components/workflows/presentation/workflowSessionOptionRow';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 import { useWorkflowActionCatalog } from '@/components/workflows/presentation/useWorkflowActionCatalog';
 import { ActionSubjectSelect, formatActionOperand, isActionOperandSubject, readSubjectOperand } from './ActionSubjectSelect';
 import { t } from '@/text';
@@ -793,7 +794,7 @@ function SessionEventTrackRows(
   }>,
 ) {
   const { when } = props;
-  const sourceSessionId = when.sourceSessionId;
+  const sourceSessionId = when.subject?.kind === 'session' ? when.subject.sessionId : undefined;
   const [open, setOpen] = React.useState(false);
   // The editor's Home, or the active one when the host names none (as "A session…" reads it).
   const activeServerId = useActiveServerAccountScope()?.serverId ?? null;
@@ -875,14 +876,17 @@ function SessionEventTrackRows(
     },
   ];
   const withSource = (sessionId: string | undefined): SessionEventWhen => {
-    if (when.kind === 'turnEnds' && when.sourceTurnId !== undefined && sessionId !== sourceSessionId) {
-      const { sourceSessionId: _previous, sourceTurnId: _turn, ...rest } = when;
-      return { ...rest, ...(sessionId === undefined ? {} : { sourceSessionId: sessionId }), nextTimeOnly: true };
+    if (sessionId === sourceSessionId) return when;
+    const subjectServerId = resolvePortableServerIdentityForRoutingId(serverId);
+    if (sessionId !== undefined && subjectServerId === null) return when;
+    const subject = sessionId === undefined || subjectServerId === null ? undefined
+      : { kind: 'session' as const, serverId: subjectServerId, sessionId };
+    if (when.kind === 'turnEnds' && when.sourceTurnId !== undefined) {
+      const { subject: _previous, sourceTurnId: _turn, ...unbound } = when;
+      return { ...unbound, ...(subject === undefined ? {} : { subject }), nextTimeOnly: true };
     }
-    const { sourceSessionId: _previous, ...rest } = when;
-    return (
-      sessionId === undefined ? rest : { ...rest, sourceSessionId: sessionId }
-    ) as SessionEventWhen;
+    const { subject: _previous, ...rest } = when;
+    return subject === undefined ? rest : { ...rest, subject };
   };
   return (
     <>

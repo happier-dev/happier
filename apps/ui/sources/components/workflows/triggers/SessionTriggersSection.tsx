@@ -21,7 +21,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useActiveServerAccountScope, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
+import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createAdmittedWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
@@ -268,10 +268,10 @@ type SessionTriggersSectionProps = Readonly<{
 export const SessionTriggersSection = React.memo(function SessionTriggersSection(props: SessionTriggersSectionProps) {
     const scope = useActiveServerAccountScope(props.serverId);
     if (scope === null) return null;
-    return <SessionTriggersContent key={`${serverAccountScopeKeySuffix(scope)}:${props.sessionId}`} {...props} />;
+    return <SessionTriggersContent key={`${serverAccountScopeKeySuffix(scope)}:${props.sessionId}`} {...props} scope={scope} />;
 });
 
-function SessionTriggersContent(props: SessionTriggersSectionProps) {
+function SessionTriggersContent(props: SessionTriggersSectionProps & Readonly<{ scope: ServerAccountScope }>) {
     const { theme } = useUnistyles();
     const read = props.read;
     const readRef = React.useRef(read);
@@ -403,14 +403,17 @@ function SessionTriggersContent(props: SessionTriggersSectionProps) {
     const boundTurnId = exactTurn.kind === 'valid' && exactTurn.prefill.sourceSessionId === props.sessionId
         ? exactTurn.prefill.sourceTurnId
         : null;
+    const boundServerId = exactTurn.kind === 'valid'
+        ? resolvePortableServerIdentityForRoutingId(exactTurn.prefill.sourceServerId) : null;
     const consumedTurnRef = React.useRef<string | null>(null);
     const [boundWhen, setBoundWhen] = React.useState<TriggerWhenValue | undefined>(undefined);
     React.useEffect(() => {
-        if (boundTurnId === null || consumedTurnRef.current === boundTurnId || read.status !== 'ready') return;
+        if (boundTurnId === null || boundServerId === null || consumedTurnRef.current === boundTurnId || read.status !== 'ready') return;
         consumedTurnRef.current = boundTurnId;
-        setBoundWhen({ kind: 'turnEnds', sourceTurnId: boundTurnId });
+        setBoundWhen({ kind: 'turnEnds', sourceTurnId: boundTurnId,
+            subject: { kind: 'session', serverId: boundServerId, sessionId: props.sessionId } });
         setPopover({ anchor: addAnchorRef, row: null });
-    }, [boundTurnId, read.status]);
+    }, [boundServerId, boundTurnId, props.sessionId, read.status]);
     const openRow = React.useCallback((openedRow: SessionTriggerRowModel, anchor: React.RefObject<View | null>) => {
         if (openedRow.legacy) {
             void Modal.confirm(t('workflows.triggers.editor.editInWorkflows'), undefined, {
@@ -434,7 +437,7 @@ function SessionTriggersContent(props: SessionTriggersSectionProps) {
     // the list opens the blank trigger popover at the same anchor. Without a known Machine an example cannot
     // be bound here, so "+" goes straight to the blank trigger.
     const [examplesAnchor, setExamplesAnchor] = React.useState<React.RefObject<View | null> | null>(null);
-    const exampleServerId = resolvePortableServerIdentityForRoutingId(props.serverId ?? scope?.serverId);
+    const exampleServerId = resolvePortableServerIdentityForRoutingId(props.serverId ?? props.scope.serverId);
     const exampleSession = React.useMemo(() => (read.machineId && exampleServerId
         ? { sessionId: props.sessionId, machineId: read.machineId, serverId: exampleServerId } : undefined),
         [exampleServerId, props.sessionId, read.machineId]);

@@ -212,7 +212,7 @@ function answer(sets: readonly WorkflowTriggerSetV1[]) {
         ? createWorkflowAutomationTriggerDetailFixture(set.automationId, { triggerId: trigger.id, trigger: {
             kind: trigger.kind, enabled: trigger.enabled, ...(trigger.subject === undefined ? {} : { subject: trigger.subject }),
             events: trigger.events, policy: trigger.policy,
-        } }) : trigger),
+        } }, trigger.revision) : trigger),
   }));
 }
 
@@ -233,7 +233,8 @@ function resetTriggerSets() {
 }
 beforeEach(async () => {
   previousState = getStorage().getState();
-  home = await serveSessionActionHome({ homes: [{ key: 'session', serverUrl: 'https://server-a', accountId: 'account-a', currentAccount: true }],
+  home = await serveSessionActionHome({ homes: [{ key: 'session', serverUrl: 'https://server-a', serverIdentityId: 'srv_session_habit_home',
+    accountId: 'account-a', currentAccount: true }],
     route: request => request.path === '/v1/artifacts' ? Response.json([]) : undefined });
   resetTriggerSets();
   rows = [];
@@ -634,18 +635,30 @@ describe('the Session Info page Triggers section', () => {
     const add = automationHttp.mock.calls.find(([url, init]) => url.pathname === '/v3/automations' && init?.method === 'POST');
     expect(add).toBeDefined();
     const created = AutomationDefinitionCreateRequestSchema.parse(JSON.parse(String(add?.[1]?.body)));
+    const { resolvePortableServerIdentityForRoutingId } = await import('@/sync/domains/server/resolvePortableServerIdentityForRoutingId');
     expect(created).toMatchObject({
       scopeSessionId: 'session-1',
       assignments: [{ machineId: 'machine-a' }],
       triggers: [{ trigger: {
         kind: 'sessionLifecycle',
-        sourceSessionId: 'session-1',
         policy: { kind: 'currentTurn', sourceTurnId: 'turn-7' },
       } }],
       executionRecipe: { v: 2, workflow: { t: 'plain', v: { inlineDefinition: {
         blocks: [{ document: { text: 'Review what changed' } }],
       } } } },
     });
+    const row = created.triggers[0];
+    if (!row || row.trigger.kind !== 'sessionLifecycle' || !('triggerDefinitionEnvelope' in row.trigger)) {
+      throw new Error('Expected the sealed lifecycle write');
+    }
+    const { openAutomationTriggerDefinitionStoredEnvelopeV1 } = await import('@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent');
+    expect(openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, automationId: created.automationId, triggerId: row.triggerId,
+        triggerRevision: 0, triggerKind: 'sessionLifecycle' }, envelope: row.trigger.triggerDefinitionEnvelope,
+    })).toMatchObject({ kind: 'available', definition: {
+      subject: { kind: 'session', serverId: resolvePortableServerIdentityForRoutingId(home.serverId), sessionId: 'session-1' },
+      policy: { kind: 'currentTurn', sourceTurnId: 'turn-7' },
+    } });
     await vi.waitFor(() => expect(getStorage().getState().workflowTriggerSetsById[created.automationId]?.target?.kind).toBe('inline'));
   });
   describe('when the session Machine is offline', () => {

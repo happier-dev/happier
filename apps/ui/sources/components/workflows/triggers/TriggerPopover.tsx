@@ -46,6 +46,7 @@ import { useWorkflowExistingSessionOptions } from '@/components/workflows/screen
 import { resolveWorkflowSessionChoice, WORKFLOW_SESSION_RETRY_ITEM_ID, workflowSessionMenuState, workflowSessionOptionState } from '@/components/workflows/presentation/workflowSessionChoice';
 import { workflowSessionOptionRow } from '@/components/workflows/presentation/workflowSessionOptionRow';
 import { useSessionDisplayNameSource } from '@/sync/store/hooks';
+import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { WorkflowRunInputs } from '@/components/workflows/run/WorkflowRunComposer';
 import { type WorkflowRunInputFieldState } from '@/sync/domains/workflows/workflowAuthoring';
@@ -63,6 +64,7 @@ import {
     buildSessionTriggerWorkflowInputs,
     createDefaultThen,
     createDefaultWhen,
+    isSessionLifecycleWhen,
     type SessionTriggerWhenKind,
     type ExecutableTriggerFormValue,
     type TriggerFormValue,
@@ -70,6 +72,7 @@ import {
     type TriggerThenValue,
     type TriggerWhenValue,
 } from './sessionTriggerForm';
+import { createWorkflowTriggerStartWhen, readWorkflowTriggerStartId } from './workflowTriggerStarts';
 import { buildSimpleScheduleCron, formatScheduleTimeInput, resolveOnceSchedule, SIMPLE_SCHEDULE_REPEATS as REPEATS } from './triggerSchedule';
 import { LocalDateTimeEditor } from '@/components/ui/dateTime/LocalDateTimeEditor';
 import { parseHappierLocalDateTime } from '@happier-dev/plugin-ui/presentation';
@@ -368,10 +371,29 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
     const Shell = props.shell ?? TriggerAnchoredPopoverShell;
     const scope = useActiveServerAccountScope();
     const originServerId = props.serverId ?? scope?.serverId;
+    const contextualServerId = resolvePortableServerIdentityForRoutingId(originServerId);
+    function seedContextualWhen(value: TriggerWhenValue): TriggerWhenValue | null {
+        if (props.creatingSession || props.sessionId === null || !isSessionLifecycleWhen(value) || value.subject !== undefined) return value;
+        return contextualServerId === null ? null
+            : { ...value, subject: { kind: 'session', serverId: contextualServerId, sessionId: props.sessionId } };
+    }
     const isNew = props.initial === null && props.submitRefusal === undefined;
     const [savedWhen] = React.useState(() => props.initial?.when);
-    const [when, setWhen] = React.useState<TriggerWhenValue>(() => savedWhen ?? props.initialWhen
-        ?? createDefaultWhen(props.whenKinds[0] ?? 'turnEnds', props.pullRequestLinks));
+    const [when, setWhen] = React.useState<TriggerWhenValue>(() => {
+        const initial = props.initialWhen ?? createDefaultWhen(props.whenKinds[0] ?? 'turnEnds', props.pullRequestLinks);
+        return savedWhen ?? seedContextualWhen(initial) ?? initial;
+    });
+    const contextualWhen = isNew ? seedContextualWhen(when) : when;
+    function changeWhenKind(kind: SessionTriggerWhenKind): void {
+        const next = createDefaultWhen(kind, props.pullRequestLinks);
+        if (isSessionLifecycleWhen(when) && isSessionLifecycleWhen(next)) {
+            const startId = readWorkflowTriggerStartId(next);
+            setWhen(startId === null ? next : createWorkflowTriggerStartWhen(startId, when) ?? next);
+        } else {
+            const seeded = seedContextualWhen(next);
+            if (seeded !== null) setWhen(seeded);
+        }
+    }
     const triggerScope = props.creatingSession ? 'session' : props.scope ?? (props.sessionId !== null ? 'session' : 'account');
     // Standalone Account enrollment has no executable target. A Session or
     // saved workflow's trigger still belongs to its host's execution contract.
@@ -409,8 +431,8 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
             ? { ...next, input: { ...actionDefault.input, ...next.input } } : next);
     };
 
-    const trigger = React.useMemo(() => props.manual || props.creatingSession ? null
-        : buildTriggerDefinition({ when, enabled, sessionId: props.sessionId }), [props.manual, props.creatingSession, props.sessionId, when, enabled]);
+    const trigger = React.useMemo(() => props.manual || props.creatingSession || contextualWhen === null ? null
+        : buildTriggerDefinition({ when: contextualWhen, enabled, sessionId: props.sessionId }), [props.manual, props.creatingSession, props.sessionId, contextualWhen, enabled]);
     const initialTrigger = React.useMemo(() => props.creatingSession ? buildInitialTriggerDefinition({ when, enabled }) : null,
         [props.creatingSession, when, enabled]);
     const displayedTrigger = props.creatingSession ? initialTrigger : trigger;
@@ -455,12 +477,12 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
         }
         // Confirmation freezes relative text into one instant. Save failures, retries and the
         // workflow's later Save retain this instant rather than starting the delay again.
-        const submittedTrigger = props.manual || props.creatingSession ? null : buildTriggerDefinition({ when, enabled, sessionId: props.sessionId });
+        const submittedTrigger = props.manual || props.creatingSession ? null : buildTriggerDefinition({ when: contextualWhen ?? when, enabled, sessionId: props.sessionId });
         const submittedInitialTrigger = props.creatingSession ? buildInitialTriggerDefinition({ when, enabled }) : null;
         if (!props.manual && !whenUnchanged && (props.creatingSession ? submittedInitialTrigger : submittedTrigger) === null) return;
         const submittedSchedule = submittedTrigger?.kind === 'schedule' ? submittedTrigger.schedule
             : submittedInitialTrigger?.kind === 'schedule' ? submittedInitialTrigger.schedule : null;
-        const submittedWhen = submittedSchedule?.kind === 'once' ? readScheduleWhen(submittedSchedule) : when;
+        const submittedWhen = submittedSchedule?.kind === 'once' ? readScheduleWhen(submittedSchedule) : contextualWhen ?? when;
         if (submittedWhen !== when) setWhen(submittedWhen);
         const inputs = observationOnly ? {} : then.kind === 'runWorkflow' || inlineDefinition !== null ? buildSessionTriggerWorkflowInputs({ when,
             fields: inputFields, declarations: inlineDefinition?.inputs ?? workflow.definition?.inputs ?? [],
@@ -632,7 +654,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                     ? {} : { subtitle: whenDescription(when.kind, sessionScoped) })}
                                 options={whenOptions}
                                 value={when.kind}
-                                onChange={(kind) => setWhen(createDefaultWhen(kind, props.pullRequestLinks))}
+                                onChange={changeWhenKind}
                             /> : <FieldSelect
                                 currentUiContextCommandScope={commandScope === undefined ? undefined : `${commandScope}-when`}
                                 testID={`${props.testID}-when`}
@@ -643,7 +665,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                 selectedId={when.kind}
                                 onSelect={(id) => {
                                     const kind = props.whenKinds.find((candidate) => candidate === id);
-                                    if (kind !== undefined) setWhen(createDefaultWhen(kind, props.pullRequestLinks));
+                                    if (kind !== undefined) changeWhenKind(kind);
                                 }}
                             />}
                             {!props.manual && when.kind === 'schedule' ? <ScheduleRows testID={props.testID}

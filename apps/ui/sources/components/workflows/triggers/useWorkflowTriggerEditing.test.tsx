@@ -13,7 +13,8 @@ import { WorkflowDefinitionArtifactHeaderV1Schema,
     WorkflowDefinitionArtifactBodyV1Schema} from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { AutomationTriggerIdSchema} from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { AutomationTriggerDetailSchema} from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
-import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import { AutomationTriggerDefinitionStoredPayloadV1Schema, sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import { AutomationStoredContentEnvelopeV1Schema } from '@happier-dev/protocol/automations/automationEventV1';
 import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
 import { WorkflowDraftTriggerSnapshotV1Schema } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 import {
@@ -26,10 +27,11 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { selectWorkflowAutomationDetailsFixture } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
+import { createWorkflowAutomationTriggerDetailFixture, selectWorkflowAutomationDetailsFixture } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
 import { createSessionFixture, createSessionListRenderableSessionFixture, createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { WORKFLOW_STARTER_EXAMPLES_V1, materializeWorkflowStarterExample } from '@happier-dev/protocol/workflows/builtins/examples';
 import { WorkflowRunAutomationSummariesResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 
 // Native confirmation is the user-input boundary; these Save/history cases accept it.
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
@@ -108,9 +110,8 @@ function listRows() {
 function persistedTrigger(id: string, value: AutomationTriggerDefinitionInput, revision = 1, automationId = 'set-1'): AutomationDefinitionDetail['triggers'][number] {
     const base = { ...value, id: AutomationTriggerIdSchema.parse(id), revision, createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null };
     if (value.kind === 'schedule') return AutomationTriggerDetailSchema.parse({ ...base, nextRunAt: null });
-    if (value.kind === 'sessionLifecycle') return AutomationTriggerDetailSchema.parse({ ...base,
-        remainingOccurrences: value.policy.kind === 'everyMatch' ? null : value.policy.kind === 'nextMatches' ? value.policy.count : 1,
-        status: { state: 'waiting', runId: null } });
+    if (value.kind === 'sessionLifecycle') return createWorkflowAutomationTriggerDetailFixture(automationId,
+        { triggerId: AutomationTriggerIdSchema.parse(id), trigger: value }, revision);
     // The server boundary stores private Event input in its revision-bound envelope.
     if (value.kind === 'pluginEvent' && 'sourceInstanceId' in value && value.observationTransport.kind !== 'durablePush') {
         const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse('00000000-0000-4000-8000-000000000042');
@@ -151,8 +152,18 @@ function installRow(id: string) {
                 if (!trigger) throw new Error('Missing retained trigger');
                 const updated = value.trigger ? persistedTrigger(trigger.id,
                     { ...value.trigger, enabled: value.enabled ?? trigger.enabled }, trigger.revision + 1, id) : trigger;
+                const revision = trigger.revision + (value.trigger || value.enabled !== undefined ? 1 : 0);
+                // The plain HTTP writer rebinds retained private content when enablement changes its revision.
+                let triggerDefinitionEnvelope = updated.triggerDefinitionEnvelope;
+                if (!value.trigger && value.enabled !== undefined && triggerDefinitionEnvelope) {
+                    const envelope = AutomationStoredContentEnvelopeV1Schema.parse(JSON.parse(triggerDefinitionEnvelope));
+                    if (envelope.t !== 'plain') throw new Error('Expected the plain HTTP fixture');
+                    const payload = AutomationTriggerDefinitionStoredPayloadV1Schema.parse(envelope.v);
+                    triggerDefinitionEnvelope = JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+                        binding: { ...payload.binding, triggerRevision: revision }, definition: payload.definition }));
+                }
                 return { ...updated, ...(value.enabled === undefined ? {} : { enabled: value.enabled }),
-                    revision: trigger.revision + (value.trigger || value.enabled !== undefined ? 1 : 0) };
+                    revision, triggerDefinitionEnvelope };
             }) });
         rows = rows.map(value => value.id === id ? row : value);
         return { body: row };
@@ -855,8 +866,11 @@ describe('workflow trigger editing lifetime', () => {
             await act(async () => { whenPicker!.props.onSelect('turnEnds'); });
             expect(screen.findByTestId('session-work-trigger-popover-submit')?.props.disabled).toBe(false);
             await screen.pressByTestIdAsync('session-work-trigger-popover-submit');
-            await waitForHomeGovernance(() => expect(rows[0]?.triggers[0]).toMatchObject({
-                kind: 'sessionLifecycle', sourceSessionId: 'session-a',
+            const { resolvePortableServerIdentityForRoutingId } = await import('@/sync/domains/server/resolvePortableServerIdentityForRoutingId');
+            await waitForHomeGovernance(() => expect(hook.getCurrent().sets[0]?.triggers[0]).toMatchObject({
+                kind: 'sessionLifecycle', subject: { kind: 'session',
+                    serverId: resolvePortableServerIdentityForRoutingId(serverId), sessionId: 'session-a' },
+                events: AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1.turnEnds, policy: { kind: 'everyMatch' },
             }));
             expect(rows[0]?.scopeSessionId).toBeNull();
             expect(hook.getCurrent().sets[0]?.target).toEqual(originalTarget);

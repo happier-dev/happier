@@ -22,25 +22,25 @@ import { projectAutomationSessionLifecycleStructuralTrigger } from '@happier-dev
 import { initialAutomationSessionLifecycleRemainingOccurrences } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 
 /** The HTTP owner seals plain Event configuration and projects its public observation separately. */
-export function createWorkflowAutomationTriggerDetailFixture(automationId: string, row: AutomationTriggerCreateRequest) {
+export function createWorkflowAutomationTriggerDetailFixture(automationId: string, row: AutomationTriggerCreateRequest, revision?: number) {
     const trigger = row.trigger;
     if (trigger.kind === 'sessionLifecycle') {
         const envelope = 'triggerDefinitionEnvelope' in trigger ? trigger.triggerDefinitionEnvelope
             : sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding: {
-                v: 1, automationId, triggerId: row.triggerId, triggerRevision: 0, triggerKind: 'sessionLifecycle',
+                v: 1, automationId, triggerId: row.triggerId, triggerRevision: revision ?? 0, triggerKind: 'sessionLifecycle',
             }, definition: { kind: trigger.kind, ...(trigger.subject === undefined ? {} : { subject: trigger.subject }),
                 events: trigger.events, policy: trigger.policy } });
         const structural = 'triggerDefinitionEnvelope' in trigger ? trigger : projectAutomationSessionLifecycleStructuralTrigger(trigger);
         return AutomationTriggerDetailSchema.parse({ ...structural, enabled: trigger.enabled, id: row.triggerId,
-            revision: 0, createdAt: 1, updatedAt: 1,
+            revision: revision ?? 0, createdAt: 1, updatedAt: 1,
             remainingOccurrences: initialAutomationSessionLifecycleRemainingOccurrences(trigger.policy),
             status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: JSON.stringify(envelope) });
     }
     if (trigger.kind === 'action' && 'triggerDefinitionEnvelope' in trigger) return AutomationTriggerDetailSchema.parse({ ...trigger, id: row.triggerId,
-        revision: 0, createdAt: 1, updatedAt: 1,
+        revision: revision ?? 0, createdAt: 1, updatedAt: 1,
         triggerDefinitionEnvelope: JSON.stringify(trigger.triggerDefinitionEnvelope) });
     if (trigger.kind !== 'pluginEvent') return AutomationTriggerDetailSchema.parse({ ...trigger, id: row.triggerId,
-        revision: 1, createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null,
+        revision: revision ?? 1, createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null,
         ...(trigger.kind === 'runLifecycle' ? { remainingOccurrences: 1, status: { state: 'waiting', runId: null } }
             : { nextRunAt: null }) });
     const transport = trigger.observationTransport;
@@ -48,11 +48,11 @@ export function createWorkflowAutomationTriggerDetailFixture(automationId: strin
         : AutomationSourceSelectorIdV1Schema.parse('00000000-0000-4000-8000-000000000001');
     const envelope = 'triggerDefinitionEnvelope' in trigger ? trigger.triggerDefinitionEnvelope
         : sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding: {
-            v: 1, automationId, triggerId: row.triggerId, triggerRevision: 0, triggerKind: 'pluginEvent',
+            v: 1, automationId, triggerId: row.triggerId, triggerRevision: revision ?? 0, triggerKind: 'pluginEvent',
             eventRef: trigger.eventRef, sourceSelectorId,
         }, definition: createAutomationPluginEventTriggerDefinitionV1(trigger) });
     return AutomationTriggerDetailSchema.parse({ kind: trigger.kind, id: row.triggerId, enabled: trigger.enabled,
-        revision: 0, createdAt: 1, updatedAt: 1, eventRef: trigger.eventRef,
+        revision: revision ?? 0, createdAt: 1, updatedAt: 1, eventRef: trigger.eventRef,
         sourceSelectorId, sourceContractVersion: 1,
         observation: transport.kind === 'durablePush'
             ? { kind: 'durablePush', webhookEndpointId: transport.webhookEndpointId,

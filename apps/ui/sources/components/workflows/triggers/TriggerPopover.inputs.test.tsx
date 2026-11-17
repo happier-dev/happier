@@ -387,13 +387,19 @@ describe('Run a workflow trigger inputs', () => {
         await removeTrigger(screen, 'event-workflow-trigger:saved:event-row');
         expect(change).toHaveBeenLastCalledWith({ adds: [], updates: {}, removes: ['event-row'] });
     });
-    it('says what a trigger adds with none; a schedule from Add a trigger joins the draft at once, a session event waits for its Session', async () => {
+    it('adds schedules and Any Session starts immediately and keeps an unselected Action incomplete', async () => {
         const change = vi.fn();
         const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="starts-workflow" set={null}
             draft={{ adds: [], updates: {}, removes: [] }} onChangeDraft={change} status="ready" onRetry={vi.fn()}
             stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
         expect(screen.getTextContent()).toContain('workflows.triggers.card.empty');
         await addTrigger(screen, 'starts-workflow', 'session:turnEnds');
+        expect(change).toHaveBeenCalledTimes(1);
+        expect(change.mock.calls[0]?.[0].adds).toMatchObject([{ trigger: { kind: 'sessionLifecycle', enabled: true,
+            events: ['parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled'], policy: { kind: 'everyMatch' } } }]);
+        expect(change.mock.calls[0]?.[0].adds[0].trigger).not.toHaveProperty('subject');
+        change.mockClear();
+        await addTrigger(screen, 'starts-workflow', 'action:before');
         expect(change).not.toHaveBeenCalled();
         expect(screen.getTextContent()).toContain('workflows.triggers.card.incomplete');
         expect(screen.getTextContent()).not.toContain('workflows.triggers.card.empty');
@@ -488,9 +494,9 @@ describe('Run a workflow trigger inputs', () => {
         const { clientId: _sentenceClient, ...fromSentence } = sentence.mock.calls[0]![0].adds[0];
         const { clientId: _cardClient, ...fromCard } = card.mock.calls[0]![0].adds[0];
         expect(fromSentence).toEqual(fromCard);
-        // An incomplete trigger (no Session yet) added in the sentence shows in the card too.
+        // An incomplete trigger (no Action yet) added in the sentence shows in the card too.
         await act(async () => { sentenceAdd().props.onOpenChange(true); });
-        await act(async () => { sentenceAdd().props.onSelect('session:turnEnds'); });
+        await act(async () => { sentenceAdd().props.onSelect('action:before'); });
         expect(screen.findAll(node => typeof node.props.testID === 'string' && /^card-workflow-trigger:new:.+-incomplete$/.test(node.props.testID)).length)
             .toBeGreaterThan(0);
         expect(screen.findAll(node => typeof node.props.testID === 'string' && /^sentence-workflow-sentence-trigger:new:/.test(node.props.testID)).length)
@@ -498,7 +504,8 @@ describe('Run a workflow trigger inputs', () => {
     });
     it('the When select switches a session trigger to another session event and keeps its Session and How often', async () => {
         const change = vi.fn();
-        const trigger = { kind: 'sessionLifecycle' as const, enabled: true, sourceSessionId: 'session-a',
+        const subject = { kind: 'session' as const, serverId, sessionId: 'session-a' };
+        const trigger = { kind: 'sessionLifecycle' as const, enabled: true, subject,
             events: ['parentTurnCompleted' as const, 'parentTurnFailed' as const, 'parentTurnCancelled' as const], policy: { kind: 'firstMatch' as const } };
         const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="when-workflow" set={null}
             draft={{ adds: [{ clientId: 'c1', trigger }], updates: {}, removes: [] }} onChangeDraft={change}
@@ -508,11 +515,11 @@ describe('Run a workflow trigger inputs', () => {
         expect(when.props.selectedId).toBe('session:turnEnds');
         await act(async () => { when.props.onSelect('session:needsYou'); });
         expect(change).toHaveBeenLastCalledWith({ adds: [{ clientId: 'c1', trigger: { kind: 'sessionLifecycle', enabled: true,
-            sourceSessionId: 'session-a', events: ['userActionRequired'], policy: { kind: 'firstMatch' } } }], updates: {}, removes: [] });
+            subject, events: ['userActionRequired'], policy: { kind: 'firstMatch' } } }], updates: {}, removes: [] });
         await screen.pressByTestIdAsync('when-workflow-trigger:new:c1-how-often:everyTime');
         expect(change.mock.lastCall?.[0].adds[0].trigger.policy).toEqual({ kind: 'everyMatch' });
     });
-    it('rebinds This turn to the next turn of a different Session and retains an unchanged Session turn', async () => {
+    it.each([true, false])('rebinds This turn only with a portable Home and retains an unchanged Session turn (portable identity=%s)', async (hasPortableIdentity) => {
         const { WorkflowTriggerBlock } = await import('./WorkflowTriggerBlock');
         const { buildTriggerDefinition } = await import('./sessionTriggerForm');
         const sessions = ['turn-source', 'turn-destination'].map(id => createPlainSessionCurrentProjectionRecordFixture({ id, active: true,
@@ -521,7 +528,9 @@ describe('Run a workflow trigger inputs', () => {
             const session = sessions.find(candidate => request.path === `/v2/sessions/${candidate.id}`);
             return session ? Response.json({ session }) : undefined;
         });
-        const served = await serveAccountHomes({ homes: [{ key: 'turns', serverUrl: 'https://trigger-turns.test', accountId: 'turn-account' }],
+        const portableHome = 'srv_trigger_turn_home';
+        const served = await serveAccountHomes({ homes: [{ key: 'turns', serverUrl: 'https://trigger-turns.test', accountId: 'turn-account',
+            ...(hasPortableIdentity ? { serverIdentityId: portableHome } : {}) }],
             route: request => {
                 if (request.path === '/v2/sessions') return Response.json({ sessions, nextCursor: null, hasNext: false });
                 if (request.path === '/v2/sessions/archived' || request.path === '/v2/sessions/active') {
@@ -530,24 +539,34 @@ describe('Run a workflow trigger inputs', () => {
                 return batch.handle(request);
             } });
         onTestFinished(() => served.dispose());
+        const { resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
+        expect(await resolveServerCredentialAccountScope(served.homes.turns!.profileId)).toMatchObject({ kind: 'bound' });
         getStorage().setState({ isDataReady: true, sessions: {}, sessionListRowsByServerId: {} });
         const change = vi.fn<React.ComponentProps<typeof WorkflowTriggerBlock>['onChangeWhen']>();
+        expect(served.homes.turns!.profileId).not.toBe(portableHome);
+        const subject = { kind: 'session' as const, serverId: portableHome, sessionId: 'turn-source' };
         const screen = await renderScreen(<WorkflowTriggerBlock testID="turn-workflow" title="Turn completion"
-            when={{ kind: 'turnEnds', sourceSessionId: 'turn-source', sourceTurnId: 'turn-a' }} enabled incomplete={false}
+            when={{ kind: 'turnEnds', subject, sourceTurnId: 'turn-a' }} enabled incomplete={false}
             startOptions={[]} onSelectStart={vi.fn()} onChangeWhen={change} onRemove={vi.fn()}
-            machineId={null} serverId={served.homes.turns!.id} />);
+            machineId={null} serverId={served.homes.turns!.profileId} />);
         const menu = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'turn-workflow-session')!;
         await act(async () => { menu().props.onOpenChange(true); });
         await waitForHomeGovernance(() => expect(menu().props.items).toContainEqual(expect.objectContaining({ id: 'turn-destination' })));
         await act(async () => { menu().props.onSelect('turn-source'); });
-        expect(change.mock.lastCall?.[0]).toEqual({ kind: 'turnEnds', sourceSessionId: 'turn-source', sourceTurnId: 'turn-a' });
+        expect(change.mock.lastCall?.[0]).toEqual({ kind: 'turnEnds', subject, sourceTurnId: 'turn-a' });
         await act(async () => { menu().props.onOpenChange(true); });
         await waitForHomeGovernance(() => expect(menu().props.items).toContainEqual(expect.objectContaining({ id: 'turn-destination' })));
         await act(async () => { menu().props.onSelect('turn-destination'); });
         const rebound = change.mock.lastCall![0];
-        expect(rebound).toMatchObject({ sourceSessionId: 'turn-destination' });
+        if (!hasPortableIdentity) {
+            expect(rebound).toEqual({ kind: 'turnEnds', subject, sourceTurnId: 'turn-a' });
+            await screen.unmount();
+            return;
+        }
+        const reboundSubject = { ...subject, sessionId: 'turn-destination' };
+        expect(rebound).toMatchObject({ subject: reboundSubject });
         expect(buildTriggerDefinition({ when: rebound, enabled: true, sessionId: null })).toEqual({
-            kind: 'sessionLifecycle', enabled: true, sourceSessionId: 'turn-destination',
+            kind: 'sessionLifecycle', enabled: true, subject: reboundSubject,
             events: ['parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled'], policy: { kind: 'firstMatch' },
         });
         await screen.unmount();
@@ -790,6 +809,59 @@ describe('Run a workflow trigger inputs', () => {
             onRequestClose={vi.fn()} whenKinds={['turnEnds']} sessionId="session-1" initial={null}
             workflowOptions={[]} onSubmit={vi.fn<ExistingTriggerSubmit>(async () => {})} />);
         expect(screen.findByTestId('floating-overlay-arrow')).toBeTruthy();
+    });
+    it('seeds a new contextual Session subject with its portable Home independently of lifetime', async () => {
+        const contextHome = await home.addHome({ name: 'Contextual trigger Home',
+            serverUrl: 'https://context-trigger-home.test', serverIdentityId: 'srv_context_trigger_home',
+            accountId: 'account-a', active: false });
+        const { resolvePortableServerIdentityForRoutingId } = await import('@/sync/domains/server/resolvePortableServerIdentityForRoutingId');
+        const portableHome = resolvePortableServerIdentityForRoutingId(contextHome);
+        expect(portableHome).toBeTruthy();
+        const submit = vi.fn<ExistingTriggerSubmit>(async () => {});
+        const screen = await renderScreen(<TriggerPopover testID="context-trigger" anchorRef={React.createRef()}
+            onRequestClose={vi.fn()} whenKinds={['turnEnds']} sessionId="watched-session" serverId={contextHome}
+            initial={null} initialWhen={{ kind: 'turnEnds', sourceTurnId: 'turn-one' }} showThen={false}
+            workflowOptions={[]} onSubmit={submit} />);
+        await screen.pressByTestIdAsync('context-trigger-submit');
+        expect(submit.mock.calls[0]?.[1].trigger).toEqual({ kind: 'sessionLifecycle', enabled: true,
+            subject: { kind: 'session', serverId: portableHome, sessionId: 'watched-session' },
+            events: ['parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled'],
+            policy: { kind: 'currentTurn', sourceTurnId: 'turn-one' } });
+    });
+    it('keeps a new contextual lifecycle draft unsaved for an unresolved contextual Home identity', async () => {
+        const unresolvedHome = await home.addHome({ name: 'Unadopted Home', serverUrl: 'https://unadopted-trigger-home.test', accountId: 'account-a' });
+        const { resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
+        expect(await resolveServerCredentialAccountScope(unresolvedHome)).toMatchObject({ kind: 'bound' });
+        const submit = vi.fn<ExistingTriggerSubmit>(async () => {});
+        const screen = await renderScreen(<TriggerPopover testID="unresolved-context-trigger" anchorRef={React.createRef()}
+            onRequestClose={vi.fn()} whenKinds={['turnEnds']} sessionId="watched-session" serverId={unresolvedHome}
+            initial={null} showThen={false} workflowOptions={[]} onSubmit={submit} />);
+        expect(screen.findByTestId('unresolved-context-trigger-submit')?.props.disabled).toBe(true);
+        await screen.pressByTestIdAsync('unresolved-context-trigger-submit');
+        expect(submit).not.toHaveBeenCalled();
+        await home.addHome({ name: 'Resolved Home', serverUrl: 'https://unadopted-trigger-home.test',
+            serverIdentityId: 'srv_resolved_trigger_home', accountId: 'account-a' });
+        await screen.update(<TriggerPopover testID="unresolved-context-trigger" anchorRef={React.createRef()}
+            onRequestClose={vi.fn()} whenKinds={['turnEnds']} sessionId="watched-session" serverId={unresolvedHome}
+            initial={null} showThen={false} workflowOptions={[]} onSubmit={submit} />);
+        await screen.pressByTestIdAsync('unresolved-context-trigger-submit');
+        expect(submit.mock.calls[0]?.[1].trigger).toMatchObject({ kind: 'sessionLifecycle',
+            subject: { kind: 'session', serverId: 'srv_resolved_trigger_home', sessionId: 'watched-session' } });
+    });
+    it.each(['schedule', 'turnEnds'] as const)('retains a saved %s choice for an unresolved contextual Home identity', async (kind) => {
+        const { createDefaultWhen } = await import('./sessionTriggerForm');
+        const unresolvedHome = await home.addHome({ name: 'Unadopted saved Home',
+            serverUrl: 'https://unadopted-saved-trigger-home.test', accountId: 'account-a' });
+        const submit = vi.fn<ExistingTriggerSubmit>(async () => {});
+        const screen = await renderScreen(<TriggerPopover testID="unresolved-saved-trigger" anchorRef={React.createRef()}
+            onRequestClose={vi.fn()} whenKinds={['schedule', 'turnEnds', 'needsYou']} sessionId="watched-session" serverId={unresolvedHome}
+            initial={{ when: createDefaultWhen(kind), enabled: true, then: { kind: 'runWorkflow', ref: null, inputs: {} } }}
+            showThen={false} workflowOptions={[]} onSubmit={submit} />);
+        await screen.pressByTestIdAsync(`unresolved-saved-trigger-when:${kind === 'schedule' ? 'turnEnds' : 'needsYou'}`);
+        await screen.pressByTestIdAsync('unresolved-saved-trigger-submit');
+        expect(submit.mock.calls[0]?.[1].trigger?.kind).toBe(kind === 'schedule' ? 'schedule' : 'sessionLifecycle');
+        if (kind === 'turnEnds') expect(submit.mock.calls[0]?.[1].trigger).toMatchObject({ events: ['userActionRequired'] });
+        expect(submit.mock.calls[0]?.[1].trigger).not.toHaveProperty('subject');
     });
     it('authors a session-start trigger before session birth with a session-scoped prompt', async () => {
         const submit = vi.fn<Extract<React.ComponentProps<typeof TriggerPopover>, { creatingSession: true }>['onSubmit']>(async () => {});
