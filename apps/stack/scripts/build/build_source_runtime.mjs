@@ -412,6 +412,29 @@ function readSourceRetentionStack(stackBaseDir) {
     sharedReferences: pinsSelections ? [...references, ...selections] : references };
 }
 
+/** The source retention owner observes actual commands, including detached Session hosts.
+ * Unavailable observation retains lazy-loadable runtime files. */
+export async function readSourceRuntimeProcessCommands() {
+  let liveCommands = '';
+  try {
+    if (process.platform === 'win32') return null; // No authoritative process command observation here.
+    if (process.platform === 'linux') {
+      for (const pid of (await readdir('/proc')).filter(name => /^\d+$/.test(name))) {
+        try {
+          const status = await readFile(`/proc/${pid}/status`, 'utf8');
+          const uids = /^Uid:[ \t]+(\d+)[ \t]+(\d+)[ \t]+(\d+)[ \t]+(\d+)/m.exec(status);
+          if (uids && !uids.slice(1).some(uid => Number(uid) === process.getuid())) continue;
+          liveCommands += '\n' + await readFile(`/proc/${pid}/cmdline`, 'utf8');
+        } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      }
+    } else liveCommands = await runCapture('ps', ['-ax', '-o', 'command=']);
+  } catch (error) {
+    console.error(`[source-runtime] retaining source runtimes: live process observation unavailable (${error.code ?? error.message})`);
+    return null;
+  }
+  return liveCommands;
+}
+
 function canonicalSourceReferences(references) {
   return references.filter(Boolean).flatMap(path => {
     try { return [realpathSync(path)]; }
@@ -593,23 +616,8 @@ async function retainSourceBundles({ stacksRoot, bundleRoot, newest, dryRun = fa
   }
   // A detached daemon may outlive its Stack owner and its recorded launch.
   // Observe the actual command before reclaiming its lazy-loadable JS tree.
-  let liveCommands = '';
-  try {
-    if (process.platform === 'win32') return { observationUnavailable: true, stacks: [] }; // No authoritative process command observation here.
-    if (process.platform === 'linux') {
-      for (const pid of (await readdir('/proc')).filter(name => /^\d+$/.test(name))) {
-        try {
-          const status = await readFile(`/proc/${pid}/status`, 'utf8');
-          const uids = /^Uid:[ \t]+(\d+)[ \t]+(\d+)[ \t]+(\d+)[ \t]+(\d+)/m.exec(status);
-          if (uids && !uids.slice(1).some(uid => Number(uid) === process.getuid())) continue;
-          liveCommands += '\n' + await readFile(`/proc/${pid}/cmdline`, 'utf8');
-        } catch (error) { if (error.code !== 'ENOENT') throw error; }
-      }
-    } else liveCommands = await runCapture('ps', ['-ax', '-o', 'command=']);
-  } catch (error) {
-    console.error(`[source-bundle] retaining bundles: live process observation unavailable (${error.code ?? error.message})`);
-    return { observationUnavailable: true, stacks: [] };
-  }
+  const liveCommands = await readSourceRuntimeProcessCommands();
+  if (liveCommands === null) return { observationUnavailable: true, stacks: [] };
   // Serving links and managed storage aliases can name the same retained
   // product differently. Compare their actual filesystem authority before
   // reclamation; missing references no longer retain a reader.

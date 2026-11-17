@@ -1,9 +1,11 @@
 // @happier-test-preparation source-condition
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { once } from 'node:events';
+import fs from 'node:fs';
 import { cp, lstat, mkdir, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +18,46 @@ import { prepareSourceTreeRuntimeComponents, prepareStackSourceRevisionTree, rel
 
 const COMMITTED_MAIN = 'export { marker } from "@happier-dev/shared";';
 const COMMITTED_SHARED = 'export const marker = "committed";';
+
+test('source tree release retains a surviving Session host until that process exits', { skip: process.platform === 'win32' }, async t => {
+  const fixture = await createTempFixture(t);
+  const stackBaseDir = fixture.path('stack');
+  const sourceRoot = join(stackBaseDir, 'source-runtime');
+  const incumbent = join(sourceRoot, 'tree-daemon-01234567');
+  const replacement = join(sourceRoot, 'tree-daemon-89abcdef');
+  const entry = join(incumbent, 'session-host.mjs');
+  await mkdir(incumbent, { recursive: true });
+  await mkdir(replacement, { recursive: true });
+  await writeFile(entry, 'process.on("message", () => process.disconnect()); process.send("ready");');
+  await writeFile(join(sourceRoot, 'selected-daemon.json'), JSON.stringify({ entrypoint: join(replacement, 'index.mjs') }));
+  const host = spawn(process.execPath, [entry], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+  t.after(() => { if (host.exitCode === null) host.kill(); });
+  const exited = once(host, 'exit');
+  assert.deepEqual(await once(host, 'message'), ['ready', undefined]);
+  const retained = await releaseStackSourceTrees({ stackBaseDir, components: ['daemon'] });
+  assert.deepEqual(retained, [], 'a surviving host keeps its source and native support available');
+  assert.equal(await releaseStackSourceRevisionTree({ treesRoot: sourceRevisionTreesRoot(stackBaseDir), treeDir: incumbent }), null,
+    'direct release shares the same live-process retention owner');
+  assert.equal(await readFile(entry, 'utf8'), 'process.on("message", () => process.disconnect()); process.send("ready");');
+  host.send('exit');
+  await exited;
+  if (process.platform === 'linux') {
+    const readDirectory = fs.promises.readdir;
+    // Procfs is the OS boundary; the retention owner remains real.
+    t.mock.method(fs.promises, 'readdir', async (path, ...args) => {
+      if (path === '/proc') throw Object.assign(new Error('process observation unavailable'), { code: 'EACCES' });
+      return await readDirectory(path, ...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      assert.deepEqual(await releaseStackSourceTrees({ stackBaseDir, components: ['daemon'] }), []);
+      assert.equal((await lstat(incumbent)).isDirectory(), true, 'unavailable process observation retains the source tree');
+    } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+  }
+  assert.deepEqual(await releaseStackSourceTrees({ stackBaseDir, components: ['daemon'] }), [incumbent]);
+  assert.equal(await lstat(incumbent).catch(error => error.code), 'ENOENT');
+  assert.equal((await lstat(replacement)).isDirectory(), true);
+});
 
 test('daemon revision trees publish voice graphs at their declared plugin roots and reuse unchanged inputs', async t => {
   const { fixture, repoDir } = await createRevisionFixture(t);
@@ -326,7 +368,7 @@ test('reloads at later commits run the existing base plus the commit diff; a dep
 
 // Disk: a base is ~2 GB. Keep one only while a Stack tree, or the host's newest
 // base, references it; release happens on Stack stop and on new-base creation.
-test('a base is deleted when its last Stack reference goes, and the newest base is kept', async t => {
+test('a base is deleted when its last Stack reference goes, and the newest base is kept', { skip: process.platform === 'win32' }, async t => {
   const { fixture, repoDir } = await createRevisionFixture(t);
   const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
   await gitIn('checkout', '--quiet', '--', '.');
@@ -406,7 +448,7 @@ test('a mirror without Git objects builds its base from the revision archive, ne
 
 // agent-qa-perf 2026-11-15 (P03-INFRA-OPS run 2): the restart's stop released the
 // tree the reload had just selected, so the runner refused source_bundle_unavailable.
-test('a restart onto a new tree keeps the tree it selected; stop releases only the incumbent', async t => {
+test('a restart onto a new tree keeps the tree it selected; stop releases only the incumbent', { skip: process.platform === 'win32' }, async t => {
   const { fixture, repoDir } = await createRevisionFixture(t);
   const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
   await gitIn('checkout', '--quiet', '--', '.');

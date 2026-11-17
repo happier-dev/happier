@@ -11,7 +11,7 @@ import { readCliPrivateSourceEntries, readWorkspacePackages } from '../../../../
 import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { isPidAlive } from '../utils/proc/pids.mjs';
-import { captureSourceWebBuildInputs, resolveSourceRuntimeProducerContext, setBundleReadOnly } from './build_source_runtime.mjs';
+import { captureSourceWebBuildInputs, readSourceRuntimeProcessCommands, resolveSourceRuntimeProducerContext, setBundleReadOnly } from './build_source_runtime.mjs';
 import { readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment } from './source_guest_payload.mjs';
 import { run, runCapture } from '../utils/proc/proc.mjs';
 import { resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
@@ -497,9 +497,15 @@ export async function sweepSourceRevisionBases({ treesRoot, signal }) {
   return deleted;
 }
 
-/** Stack stop: remove its tree and reference, then delete bases nobody references. */
-export async function releaseStackSourceRevisionTree({ treesRoot, treeDir, signal }) {
+/** Stack stop: retain live users, otherwise remove the tree and its base reference.
+ * @returns {Promise<string[] | null>} deleted bases, or null when the tree is retained
+ */
+export async function releaseStackSourceRevisionTree({ treesRoot, treeDir, signal, liveCommands }) {
   treeDir = resolve(treeDir);
+  liveCommands = liveCommands === undefined ? await readSourceRuntimeProcessCommands() : liveCommands;
+  if (liveCommands === null) return null;
+  const canonicalTreeDir = await realpath(treeDir).catch(error => error.code === 'ENOENT' ? treeDir : Promise.reject(error));
+  if (liveCommands.includes(treeDir + sep) || liveCommands.includes(canonicalTreeDir + sep)) return null;
   const marker = await readJson(join(treeDir, TREE_MARKER));
   await rm(treeDir, { recursive: true, force: true });
   if (marker?.baseDir) await rm(referencePath(marker.baseDir, treeDir), { force: true });
@@ -755,6 +761,7 @@ export async function releaseStackSourceTrees({ stackBaseDir, components = ['ser
   if (isPidAlive((await readJson(join(sourceRoot, 'start.pending.json')))?.pid)) return [];
   const entries = await readdir(sourceRoot, { withFileTypes: true }).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
   const released = [];
+  let liveCommands;
   for (const component of components) {
     const selected = await readJson(join(sourceRoot, `selected-${component}.json`));
     const selectedEntrypoint = typeof selected?.entrypoint === 'string' ? resolve(selected.entrypoint) : null;
@@ -764,8 +771,11 @@ export async function releaseStackSourceTrees({ stackBaseDir, components = ['ser
       if (!entry.isDirectory() || !pattern.test(entry.name)) continue;
       const treeDir = join(sourceRoot, entry.name);
       if (selectedEntrypoint?.startsWith(treeDir + sep)) continue;
-      await releaseStackSourceRevisionTree({ treesRoot: sourceRevisionTreesRoot(stackBaseDir), treeDir, signal });
-      released.push(treeDir);
+      // One observation per release sweep, shared with the low-level release owner.
+      liveCommands ??= await readSourceRuntimeProcessCommands();
+      if (liveCommands === null) return released;
+      const deletedBases = await releaseStackSourceRevisionTree({ treesRoot: sourceRevisionTreesRoot(stackBaseDir), treeDir, signal, liveCommands });
+      if (deletedBases !== null) released.push(treeDir);
     }
   }
   return released;
