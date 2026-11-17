@@ -118,6 +118,31 @@ function resolvePostgresTls(url: URL): pg.PoolConfig["ssl"] | undefined {
 export type DriverStatement = Readonly<{ query: string; params: readonly unknown[] }>;
 export type DriverStatementObserver = (statement: DriverStatement) => void;
 
+/**
+ * A pool client class that reports each statement before sending it. It lives in the pool's
+ * options: after `$disconnect()` the adapter builds its next pool from those options, so every
+ * later pool keeps the observer (a listener on one pool instance would stop seeing statements).
+ */
+function createObservedPostgresClient(onDriverStatement: DriverStatementObserver): typeof pg.Client {
+    return class ObservedPostgresClient extends pg.Client {
+        constructor(config?: string | pg.ClientConfig) {
+            super(config);
+            // Statement-cost contracts count what reaches PostgreSQL: adapter-pg sends BEGIN and
+            // SET TRANSACTION itself, outside the statements Prisma's query log reports.
+            const query = this.query.bind(this) as (...args: unknown[]) => unknown;
+            (this as unknown as { query: (...args: unknown[]) => unknown }).query = (...args: unknown[]) => {
+                const [config, values] = args;
+                const text = typeof config === "string" ? config : (config as { text?: unknown } | null)?.text;
+                if (typeof text === "string") {
+                    const params = typeof config === "string" ? values : (config as { values?: unknown }).values;
+                    onDriverStatement({ query: text, params: Array.isArray(params) ? params : [] });
+                }
+                return query(...args);
+            };
+        }
+    };
+}
+
 function createPostgresAdapter(databaseUrl: string, onDriverStatement?: DriverStatementObserver): PrismaDriverAdapter {
     const url = new URL(databaseUrl);
     const schema = url.searchParams.get("schema") ?? undefined;
@@ -132,23 +157,8 @@ function createPostgresAdapter(databaseUrl: string, onDriverStatement?: DriverSt
         connectionTimeoutMillis: Math.round(poolTimeoutSeconds * 1000),
         ...(ssl !== undefined ? { ssl } : {}),
         ...(schema ? { options: `-c search_path=${quotePostgresIdentifier(schema)}` } : {}),
+        ...(onDriverStatement ? { Client: createObservedPostgresClient(onDriverStatement) } : {}),
     });
-    if (onDriverStatement) {
-        // Statement-cost contracts count what reaches PostgreSQL: adapter-pg sends BEGIN and
-        // SET TRANSACTION itself, outside the statements Prisma's query log reports.
-        pool.on("connect", (client) => {
-            const query = client.query.bind(client) as (...args: unknown[]) => unknown;
-            (client as unknown as { query: (...args: unknown[]) => unknown }).query = (...args: unknown[]) => {
-                const [config, values] = args;
-                const text = typeof config === "string" ? config : (config as { text?: unknown } | null)?.text;
-                if (typeof text === "string") {
-                    const params = typeof config === "string" ? values : (config as { values?: unknown }).values;
-                    onDriverStatement({ query: text, params: Array.isArray(params) ? params : [] });
-                }
-                return query(...args);
-            };
-        });
-    }
     return {
         factory: new PrismaPg(pool, { ...(schema ? { schema } : {}), disposeExternalPool: true }),
         poolStats: () => ({ open: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount }),
