@@ -250,7 +250,7 @@ const WorkflowEventRow = React.memo(function WorkflowEventRow(
   }>,
 ) {
   const fact = useWorkflowEventFact(props.projection, props.eventKey);
-  const presentation = useWorkflowEventPresentation(fact, props.scope);
+  const presentation = useWorkflowEventPresentation(fact, props.scope, undefined, props.active);
   const occurredAt = fact?.occurredAt ?? null;
   const readNextRefresh = React.useCallback(
     (nowMs: number) =>

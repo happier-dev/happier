@@ -1,6 +1,8 @@
 import * as React from 'react';
 
 import type { IconName } from '@/components/ui/icons/Icon';
+import { resolveExecutionRunTitle } from '@/components/sessions/runs/resolveExecutionRunTitle';
+import { useExecutionRunHeaders } from '@/hooks/session/useExecutionRunHeaders';
 import { TRIGGER_LIFECYCLE_GLYPHS } from '@/components/workflows/triggers/triggerEventGroups';
 import { formatWorkflowRunStateLabel } from '@/components/workflows/run/workflowRunDetailPresentation';
 import {
@@ -8,12 +10,14 @@ import {
   resolveWorkflowRunDisplayName,
 } from '@/components/workflows/presentation/workflowRunDisplayName';
 import {
+  useActiveServerAccountScopeLifetime,
   useServerScopedMachineLabel,
   useSessionListRowSelector,
   useWorkflowRun,
 } from '@/sync/store/hooks';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { ExecutionRunHeaderReference } from '@/sync/runtime/executionRuns/executionRunHeaderReads';
 import type { WorkflowActivityFact } from '@/sync/domains/workflows/workflowActivityTypes';
 import type { WorkflowActivityProjection } from '@/sync/engine/workflows/workflowActivityProjection';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
@@ -44,6 +48,7 @@ export type WorkflowEventPresentation = Readonly<{
 }>;
 
 const NO_RUNS: readonly WorkflowRunSummaryV1[] = Object.freeze([]);
+const NO_EXECUTION_RUN_HEADERS: readonly ExecutionRunHeaderReference[] = Object.freeze([]);
 
 /** One row's fact, subscribed by its own key: a new event elsewhere re-renders only the key list. */
 export function useWorkflowEventFact(
@@ -70,7 +75,9 @@ export function useWorkflowEventPresentation(
   fact: WorkflowActivityFact | undefined,
   scope: ServerAccountScope | null,
   retainedRuns?: readonly WorkflowRunSummaryV1[],
+  active = false,
 ): WorkflowEventPresentation | null {
+  const lifetime = useActiveServerAccountScopeLifetime();
   const serverId = scope?.serverId ?? null;
   const sessionId = fact?.kind === 'session' ? fact.sessionId : '';
   const selectName = React.useCallback(
@@ -98,6 +105,15 @@ export function useWorkflowEventPresentation(
     fact?.kind === 'machine' ? fact.machineId : sessionMachineId,
   );
   const executionSource = fact?.coverage === 'retained_cause' && fact.evidence.source.kind === 'execution_run' ? fact.evidence.source : null;
+  const executionReferences = React.useMemo(() => executionSource === null ? NO_EXECUTION_RUN_HEADERS : [{
+    source: executionSource, demanded: active, refreshKey: String(fact?.sourceRevision),
+  }], [executionSource, active, fact?.sourceRevision]);
+  const executionHeaders = useExecutionRunHeaders(
+    executionSource !== null && areServerAccountScopesEqual(scope, lifetime?.scope) ? lifetime : null,
+    executionReferences,
+  );
+  const executionTitle = executionSource === null ? null
+    : resolveExecutionRunTitle(executionHeaders.owner?.read(executionSource).run ?? {});
   const run = useWorkflowRun(fact?.kind === 'run' && executionSource === null ? fact.runId : null, {
     scope,
   });
@@ -184,7 +200,7 @@ export function useWorkflowEventPresentation(
       }
       case 'run': {
         const executionSource = fact.coverage === 'retained_cause' && fact.evidence.source.kind === 'execution_run' ? fact.evidence.source : null;
-        const workflow = executionSource === null ? workflowName ?? t('workflows.events.someWorkflow') : fact.runId;
+        const workflow = executionSource === null ? workflowName ?? t('workflows.events.someWorkflow') : executionTitle!;
         const result = fact.coverage === 'live' ? formatWorkflowRunStateLabel(fact.state) : null;
         const href = executionSource === null ? createWorkflowRunRoute(fact.runId, serverId)
           : createMachineExecutionRunRoute(serverId ?? '', executionSource.machineId, executionSource.runId);
@@ -216,7 +232,7 @@ export function useWorkflowEventPresentation(
         };
       }
     }
-  }, [fact, machineName, sessionName, sessionPath, workflowName, serverId, retainedRuns]);
+  }, [fact, machineName, sessionName, sessionPath, workflowName, executionTitle, serverId, retainedRuns]);
 }
 
 function readSessionMachineId(

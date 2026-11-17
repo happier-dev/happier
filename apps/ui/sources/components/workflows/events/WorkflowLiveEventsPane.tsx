@@ -146,7 +146,7 @@ const LiveEventBody = React.memo(function LiveEventBody(
 ) {
   const router = useRouter();
   const fact = useWorkflowEventFact(props.projection, props.eventKey);
-  const presentation = useWorkflowEventPresentation(fact, props.scope, props.retainedRuns);
+  const presentation = useWorkflowEventPresentation(fact, props.scope, props.retainedRuns, props.active);
   const seed = !props.active || fact == null ? null : readWorkflowEventDraftIntent(fact);
   if (presentation === null) return null;
   const when: TriggerWhenValue | null = seed?.nativeEvent

@@ -1,0 +1,117 @@
+import 'fake-indexeddb/auto';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
+
+import { ExecutionRunGetResponseSchema, ExecutionRunPublicStateSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema } from '@happier-dev/protocol/sessions';
+import { socketRpcCodec } from '@happier-dev/sync-client';
+import { act, renderHook, standardCleanup } from '@/dev/testkit';
+import { createWorkflowActionHttpTransport } from '@/dev/testkit/fixtures/workflowActionHttpTransport';
+import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
+import { configureConnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
+import type { WorkflowActivityFact } from '@/sync/domains/workflows/workflowActivityTypes';
+import { createMachineExecutionRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { notifyExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
+import { t } from '@/text';
+
+import { useWorkflowEventPresentation } from './useWorkflowEventPresentation';
+
+await initializeRealAppRuntimeForTests();
+
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let disposeExecutor: (() => void) | undefined;
+let reads: unknown[] = [];
+let run = executionRun('Review the deployment changes');
+const source = { kind: 'execution_run', machineId: 'event-machine', runId: 'native-event-run' } as const;
+const fact = {
+  key: 'retained-native-cause', kind: 'run', runId: source.runId, event: 'terminal', sourceRevision: 7,
+  occurredAt: 200, coverage: 'retained_cause',
+  evidence: { v: 1, kind: 'runLifecycle', source, condition: 'terminal', sourceRevision: 7, occurredAt: 200 },
+} as const satisfies WorkflowActivityFact;
+
+function executionRun(title: string) {
+  return ExecutionRunPublicStateSchema.parse({ runId: 'native-event-run', callId: 'call', sidechainId: 'sidechain',
+    intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, display: { title },
+    permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+    status: 'succeeded', startedAtMs: 100, finishedAtMs: 200 });
+}
+
+beforeAll(async () => { disposeExecutor = await installRealActionExecutorModuleLoader(); });
+afterAll(() => disposeExecutor?.());
+beforeEach(async () => {
+  reads = [];
+  run = executionRun('Review the deployment changes');
+  // Only Home HTTP and the Machine Socket SDK are fixtures; lifetime, Action admission and header reads stay real.
+  const relay = await createExternalActionAccountHttpBoundary({ serverUrl: 'http://event-native-run.test',
+    serverIdentityId: 'srv_event_native_run', accountId: 'event-account', machineId: source.machineId,
+    actionId: 'execution.run.get', tokenEpoch: 0, execute: async () => { throw new Error('Detached header reads use Machine RPC'); } });
+  const http = createWorkflowActionHttpTransport({ accountId: () => 'event-account',
+    machineRows: () => [relay.machine],
+    fixtureResponse: async actionId => { throw new Error(`Unexpected Workflow HTTP request: ${actionId}`); } });
+  connection = await restoreServerAccountForTest({ serverUrl: 'http://event-native-run.test',
+    serverIdentityId: 'srv_event_native_run', accountId: 'event-account',
+    credentials: { token: createAccountTokenForTests('event-account', { currentAccount: true }) },
+    configureSocket: socket => {
+      configureConnectedServerSocketBoundary(socket);
+      socket.emitWithAck = vi.fn(async (event: string, payload: unknown) => {
+        if (event === SESSION_CONSUMPTION_REPLACE_EVENT) return { ok: true, ...SessionConsumptionReplaceV1Schema.parse(payload) };
+        expect(event).toBe(SOCKET_RPC_EVENTS.CALL);
+        if (!payload || typeof payload !== 'object' || !('method' in payload) || typeof payload.method !== 'string'
+          || !('params' in payload)) throw new Error('Expected Machine RPC wire request');
+        const request = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, payload.params, payload.method);
+        if (payload.method === `${source.machineId}:${RPC_METHODS.CAPABILITIES_DESCRIBE}`) return {
+          ok: true, result: await socketRpcCodec.encodeResponse({ mode: 'plain' }, EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE, request.callId),
+        };
+        expect(payload.method).toBe(`${source.machineId}:${SESSION_RPC_METHODS.EXECUTION_RUN_GET}`);
+        reads.push(request.params);
+        return { ok: true, result: await socketRpcCodec.encodeResponse({ mode: 'plain' },
+          ExecutionRunGetResponseSchema.parse({ run }), request.callId) };
+      });
+    },
+    request: async (url, init) => await relay.handle(new URL(String(url)), init) ?? await http.fetch(url, init),
+  });
+  await (await import('@/sync/sync')).sync.refreshMachines();
+});
+afterEach(async () => { await standardCleanup(); await connection?.dispose(); connection = undefined; });
+
+it('names a retained native cause through the exact Run header and preserves its frozen evidence and route', async () => {
+  const lifetime = captureActiveServerAccountScopeLifetime()!;
+  // Control: prove this actual Account/Machine read is admitted before attributing the presentation RED.
+  expect(await callWorkflowAction({ actionId: 'execution.run.get', input: { runId: source.runId, sessionId: null,
+    includeStructured: false, includeLatestToolResult: false }, context: { executionRunTargetMachineId: source.machineId },
+    accountLifetime: lifetime, parseResult: value => ExecutionRunGetResponseSchema.parse(value) })).toEqual({ run });
+  reads.length = 0;
+  const hook = await renderHook(() => useWorkflowEventPresentation(fact, lifetime.scope, undefined, true));
+  await expect.poll(() => hook.getCurrent()?.lines[0]?.value).toBe(run.display!.title);
+  expect(hook.getCurrent()).toMatchObject({ fact, subtitle: t('workflows.events.recordedCause'),
+    title: t('workflows.events.runFinished', { workflow: run.display!.title }),
+    open: { href: createMachineExecutionRunRoute(lifetime.scope.serverId, source.machineId, source.runId) } });
+  expect(reads).toEqual([{ runId: source.runId, includeStructured: false, includeLatestToolResult: false }]);
+  run = executionRun('Review the renamed deployment');
+  await act(async () => { notifyExecutionRunActivity({ serverId: lifetime.scope.serverId, machineId: source.machineId }, { runId: source.runId }); });
+  await expect.poll(() => hook.getCurrent()?.lines[0]?.value).toBe(run.display!.title);
+  expect(hook.getCurrent()?.fact).toBe(fact);
+});
+
+it('acquires native names only while the retained row is presented', async () => {
+  const lifetime = captureActiveServerAccountScopeLifetime()!;
+  const hook = await renderHook((active: boolean) => useWorkflowEventPresentation(fact, lifetime.scope, undefined, active),
+    { initialProps: false });
+  expect(reads).toEqual([]);
+  await hook.rerender(true);
+  await expect.poll(() => hook.getCurrent()?.lines[0]?.value).toBe(run.display!.title);
+  await hook.rerender(false);
+  const previousReads = reads.length;
+  run = executionRun('Review changes received while hidden');
+  await act(async () => { notifyExecutionRunActivity({ serverId: lifetime.scope.serverId, machineId: source.machineId }, { runId: source.runId }); });
+  expect(reads.length).toBe(previousReads);
+  await hook.rerender(true);
+  await expect.poll(() => hook.getCurrent()?.lines[0]?.value).toBe(run.display!.title);
+});

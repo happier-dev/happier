@@ -107,7 +107,7 @@ export const WorkflowEventDetailPage = React.memo(
     const presented = useLayoutPresentationActive();
     const { feed, scope } = useWorkflowEventsFeed(presented);
     const fact = useWorkflowEventFact(feed.projection, props.eventKey);
-    const presentation = useWorkflowEventPresentation(fact, scope, feed.retained?.runs);
+    const presentation = useWorkflowEventPresentation(fact, scope, feed.retained?.runs, presented);
     const router = useRouter();
     const automate = useWorkflowEventAutomate(presentation, presented);
     if (presentation === null) {
