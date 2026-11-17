@@ -48,7 +48,7 @@ export const databaseFindingEvent = {
     declaration: { kind: 'event' as const, title: 'Database finding observed',
         description: 'A completed database observation contains finding evidence.',
         payloadSchema: DatabaseFindingEventPayloadV1Schema.jsonSchema,
-        automation: { v: 1 as const, eligible: true as const, source: {
+        automation: { v: 1 as const, eligible: true as const, subjectKinds: ['database' as const], source: {
             sourceContractVersion: DATABASE_FINDING_SOURCE_CONTRACT_VERSION,
             supportedObservationTransports: ['checkpointedPull' as const],
             sourceConfigSchema: DatabaseFindingEventSourceV1Schema.jsonSchema,

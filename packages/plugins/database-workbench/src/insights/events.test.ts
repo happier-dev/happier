@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readAutomationEventSubjectKindsV1 } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
 import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import { decideDatabaseAccessV1 } from '@happier-dev/databases';
 import { createPluginTestkit, createTestResourceInvocationContext, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
@@ -47,6 +48,9 @@ describe('native completed observation admission', () => {
             expect(nativePlugin.manifest.contributes.events).toEqual(expect.arrayContaining([
                 expect.objectContaining({ id: DATABASE_FINDING_EVENT_REF.localId, automation: expect.objectContaining({ eligible: true }) }),
             ]));
+            const event = nativePlugin.manifest.contributes.events?.find(row => row.id === DATABASE_FINDING_EVENT_REF.localId);
+            // Resource trigger authoring consumes this owner result, not the payload's subject field.
+            expect(readAutomationEventSubjectKindsV1(event?.automation)).toEqual(['database']);
         } finally { await kit.dispose(); }
     });
 
