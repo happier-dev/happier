@@ -2,6 +2,7 @@ import { isWorkspaceSyncRelationshipWriteActionId } from '../actions/actionIds.j
 import { readInitiatingActionCallerV1 } from '../actions/invocationAuthority.js';
 import * as zMini from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { ApprovalAutomaticChecksV1Schema, isApprovalRequestExecutionApproved } from './approvalAutomaticChecks.js';
 import { resolveApprovalExecutor } from './resolveApprovalExecutor.js';
 import { ApprovalRequestStatusSchema, ApprovalRequestV2StatusSchema } from './approvalRequestStatus.js';
 export { ApprovalRequestStatusSchema, ApprovalRequestV2StatusSchema, isApprovalRequestV2InFlightStatus, isApprovalRequestV2TerminalStatus, type ApprovalRequestStatus } from './approvalRequestStatus.js';
@@ -575,11 +576,15 @@ function validateApprovalRequestLifecycle(
   const status = value.status as z.infer<typeof ApprovalRequestV2StatusSchema>;
   const decision = value.decision as ApprovalDecisionV1 | undefined;
   const execution = value.execution as ApprovalExecutionV1 | undefined;
-  const requiresDecision = status === 'approved'
+  const automatic = value.v === 2 ? value.automaticChecks as z.infer<typeof ApprovalAutomaticChecksV1Schema> | undefined : undefined;
+  const automaticPass = automatic?.phase === 'passed';
+  const automaticRefusal = automatic?.phase === 'refused' && status === 'failed'
+    && (execution as ApprovalExecutionV2 | undefined)?.effectAttempted === false;
+  const requiresDecision = !automaticPass && !automaticRefusal && (status === 'approved'
     || status === 'executing'
     || status === 'rejected'
     || status === 'executed'
-    || status === 'failed' || status === 'outcome_unknown';
+    || status === 'failed' || status === 'outcome_unknown');
   const requiresExecution = status === 'executed' || status === 'failed' || status === 'outcome_unknown';
 
   if (status === 'open') {
@@ -589,11 +594,22 @@ function validateApprovalRequestLifecycle(
   if (requiresDecision && decision == null) ctx.addIssue({ code: "custom", path: ['decision'], message: `status ${status} requires a decision` });
   if (requiresExecution && execution == null) ctx.addIssue({ code: "custom", path: ['execution'], message: `status ${status} requires execution metadata` });
   if (!requiresExecution && execution != null) ctx.addIssue({ code: "custom", path: ['execution'], message: `status ${status} must not include execution metadata` });
-  if ((status === 'approved' || status === 'executing' || status === 'executed' || status === 'failed' || status === 'outcome_unknown') && decision?.kind !== 'approve') {
+  if ((status === 'approved' || status === 'executing' || status === 'executed' || status === 'failed' || status === 'outcome_unknown')
+    && !automaticRefusal && !isApprovalRequestExecutionApproved({ decision, automaticChecks: automatic })) {
     ctx.addIssue({ code: "custom", path: ['decision'], message: `status ${status} requires an approve decision` });
   }
   if (status === 'rejected' && decision?.kind !== 'reject') ctx.addIssue({ code: "custom", path: ['decision'], message: 'status rejected requires a reject decision' });
   if (status === 'canceled' && decision != null) ctx.addIssue({ code: "custom", path: ['decision'], message: 'canceled approval requests must not include a decision' });
+  if (automatic && status === 'open' && (automatic.phase === 'passed' || automatic.phase === 'refused')) {
+    ctx.addIssue({ code: 'custom', path: ['automaticChecks', 'phase'], message: 'Settled automatic checks must settle the pending request' });
+  }
+  if (automatic && !automaticPass && !automaticRefusal
+    && status !== 'open' && status !== 'canceled' && status !== 'rejected') {
+    ctx.addIssue({ code: 'custom', path: ['automaticChecks', 'phase'], message: 'Pending checks cannot claim the Action effect' });
+  }
+  if (automaticPass && automatic?.results.some(result => result.outcome !== 'passed') && decision?.kind !== 'approve') {
+    ctx.addIssue({ code: 'custom', path: ['decision'], message: 'A failed check requires the ordinary override decision' });
+  }
   if (status === 'executed' && execution?.ok !== true) ctx.addIssue({ code: "custom", path: ['execution'], message: 'status executed requires a successful execution result' });
   if (status === 'failed' && execution?.ok !== false) ctx.addIssue({ code: "custom", path: ['execution'], message: 'status failed requires a failed execution result' });
   if (status === 'outcome_unknown' && (value.v !== 2 || execution?.ok !== false
@@ -700,6 +716,7 @@ export const ApprovalRequestV2Schema = lazyZodSchema(() => z.strictObject({
   sessionCreationDirectoryApproval: zMini.optional(SessionCreationDirectoryApprovalV1Schema),
   handoffTargetReplacementApproval: zMini.optional(HandoffTargetReplacementApprovalV1Schema),
   decision: z.optional(ApprovalDecisionV2Schema),
+  automaticChecks: z.optional(ApprovalAutomaticChecksV1Schema),
   execution: z.optional(ApprovalExecutionV2Schema),
   /** Settled results of new UI retries; original execution and approval authority stay immutable. */
   storageRetryResults: z.optional(z.array(PileApplyResultV1Schema).check(z.minLength(1))),
@@ -795,11 +812,11 @@ export const HistoricalPublishApprovalRequestV2Schema = lazyZodSchema(() => z.st
   validateApprovalRequestLifecycle(value, ctx);
 })));
 /** Update candidates retain strict validation before the stored subject/transition admission. */
-export const ApprovalRequestUpdateSchema = lazyZodSchema(() => z.union([
+export const ApprovalRequestUpdateSchema: z.ZodMiniUnion<[typeof ApprovalRequestSchema, typeof HistoricalPublishApprovalRequestV2Schema]> = lazyZodSchema(() => z.union([
   ApprovalRequestSchema,
   HistoricalPublishApprovalRequestV2Schema,
 ]));
-export const StoredApprovalRequestSchema = createStoredReadSchema(ApprovalRequestUpdateSchema);
+export const StoredApprovalRequestSchema: ReturnType<typeof createStoredReadSchema<typeof ApprovalRequestUpdateSchema>> = createStoredReadSchema(ApprovalRequestUpdateSchema);
 export type ApprovalRequest = z.infer<typeof StoredApprovalRequestSchema>;
 export type StoredApprovalRequestV2 = Extract<ApprovalRequest, { v: 2 }>;
 export type HistoricalPublishApprovalRequestV2 = z.infer<typeof HistoricalPublishApprovalRequestV2Schema>;

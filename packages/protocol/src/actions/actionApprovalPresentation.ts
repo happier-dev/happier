@@ -79,20 +79,35 @@ export function projectApprovalExecutionForObservation(request: ApprovalRequest 
 }
 
 /** Shared by every public approval Action surface; private Artifact readers retain custody. */
+function projectAutomaticChecksForPublicRead(checks: NonNullable<StoredApprovalRequestV2['automaticChecks']>, projectInput: (input: unknown) => unknown) {
+  const { subjects: _subjects, selected, humanDecision: human, ...automaticChecks } = checks;
+  return { ...automaticChecks, selected: selected.map(({ subject: _subject, ...reference }) => reference),
+    ...(human ? { humanDecision: {
+    kind: human.kind, decidedAtMs: human.decidedAtMs,
+    ...(human.authority === 'present_user' ? { authority: 'present_user' } : {}),
+    ...(human.decidedVia === 'voice' ? { decidedVia: 'voice' } : {}),
+    ...(human.narrowedInput === undefined ? {} : { narrowedInput: projectInput(human.narrowedInput) }),
+  } } : {}) };
+}
+
 export function projectApprovalRequestForPublicRead(request: ApprovalRequest | TargetActionApprovalRequestV1): unknown {
   const target = TargetActionApprovalRequestV1Schema.safeParse(request);
-  if (target.success) return {
-    ...target.data,
-    input: target.data.secretInputPaths === undefined ? null
-      : projectTargetActionApprovalInput(target.data.input, target.data.secretInputPaths)?.input ?? null,
-    ...(target.data.executionOriginV1
-      ? { executionOriginV1: projectPublicApprovalExecutionOrigin(target.data.executionOriginV1) } : {}),
-    ...(target.data.decision ? { decision: {
-      kind: target.data.decision.kind, decidedAtMs: target.data.decision.decidedAtMs,
-      ...(target.data.decision.decidedVia === 'voice' ? { decidedVia: 'voice' } : {}),
-    } } : {}),
-    ...(target.data.execution ? { execution: projectApprovalExecutionForObservation(target.data) } : {}),
-  };
+  if (target.success) {
+    const projectInput = (input: unknown) => target.data.secretInputPaths === undefined ? null
+      : projectTargetActionApprovalInput(input, target.data.secretInputPaths)?.input ?? null;
+    return {
+      ...target.data,
+      input: projectInput(target.data.input),
+      ...(target.data.executionOriginV1
+        ? { executionOriginV1: projectPublicApprovalExecutionOrigin(target.data.executionOriginV1) } : {}),
+      ...(target.data.decision ? { decision: {
+        kind: target.data.decision.kind, decidedAtMs: target.data.decision.decidedAtMs,
+        ...(target.data.decision.decidedVia === 'voice' ? { decidedVia: 'voice' } : {}),
+      } } : {}),
+      ...(target.data.execution ? { execution: projectApprovalExecutionForObservation(target.data) } : {}),
+      ...(target.data.automaticChecks ? { automaticChecks: projectAutomaticChecksForPublicRead(target.data.automaticChecks, projectInput) } : {}),
+    };
+  }
   const builtIn = StoredApprovalRequestSchema.parse(request);
   // Released V1 storage preserves unknown fields for forward readability. That
   // custody contract does not publish unknown authority or credential fields.
@@ -118,6 +133,9 @@ export function projectApprovalRequestForPublicRead(request: ApprovalRequest | T
     ...(builtIn.v === 2 && builtIn.decision.decidedVia === 'voice' ? { decidedVia: 'voice' } : {}),
     ...(builtIn.decision.narrowedInput === undefined ? {} : { narrowedInput: projectInput(builtIn.decision.narrowedInput) }),
   };
+  if (builtIn.v === 2 && builtIn.automaticChecks) {
+    disclosed.automaticChecks = projectAutomaticChecksForPublicRead(builtIn.automaticChecks, projectInput);
+  }
   if (builtIn.execution) disclosed.execution = projectApprovalExecutionForObservation(builtIn);
   return disclosed;
 }

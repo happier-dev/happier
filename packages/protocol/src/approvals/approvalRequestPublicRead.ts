@@ -19,6 +19,7 @@ import {
 } from './approvalRequestV1.js';
 import { ApprovalStaleFailureDetailsSchema } from './approvalStaleReason.js';
 import { TargetActionApprovalRequestV1Schema } from './targetActionApprovalRequestV1.js';
+import { ApprovalAutomaticChecksV1Schema, ApprovalAutomaticSelectedTriggerV1Schema } from './approvalAutomaticChecks.js';
 
 /** Matches projectApprovalRequestForPublicRead; never accepts private replay custody. */
 const ApprovalPublicExecutionOriginV1Schema = lazyZodSchema(() => {
@@ -57,6 +58,12 @@ const ApprovalPublicTargetExecutionV1Schema = lazyZodSchema(() => {
   const { details: _details, ...shape } = ApprovalPublicExecutionV2Schema.shape;
   return z.strictObject({ ...shape, details: z.optional(ApprovalStaleFailureDetailsSchema) });
 });
+const ApprovalPublicAutomaticChecksV1Schema = lazyZodSchema(() => {
+  const { subjects: _subjects, ...shape } = ApprovalAutomaticChecksV1Schema.shape;
+  const { subject: _subject, ...selectedShape } = ApprovalAutomaticSelectedTriggerV1Schema.shape;
+  return z.strictObject({ ...shape, selected: z.array(z.strictObject(selectedShape)),
+    humanDecision: z.optional(ApprovalPublicDecisionV2Schema) });
+});
 
 const ApprovalPublicRequestV2Schema = lazyZodSchema(() => z.strictObject({
   ...ApprovalRequestV2Schema.shape,
@@ -65,6 +72,7 @@ const ApprovalPublicRequestV2Schema = lazyZodSchema(() => z.strictObject({
   origin: z.optional(ApprovalPublicOriginV1Schema),
   executionOriginV1: ApprovalPublicExecutionOriginV1Schema,
   decision: z.optional(ApprovalPublicDecisionV2Schema),
+  automaticChecks: z.optional(ApprovalPublicAutomaticChecksV1Schema),
   execution: z.optional(ApprovalPublicExecutionV2Schema),
 }));
 
@@ -82,12 +90,13 @@ type HistoricalPublishPublicRequestV2Shape = Omit<typeof ApprovalPublicRequestV2
   executionOriginV1: typeof HistoricalPublishPublicExecutionOriginV1Schema;
 };
 type ApprovalPublicTargetRequestV1Shape = Omit<typeof TargetActionApprovalRequestV1Schema.shape,
-  'executionOriginV1' | 'decision' | 'execution'> & {
+  'executionOriginV1' | 'decision' | 'execution' | 'automaticChecks'> & {
   executionOriginV1: z.ZodMiniOptional<typeof ApprovalPublicExecutionOriginV1Schema>;
   decision: z.ZodMiniOptional<z.ZodMiniObject<typeof ApprovalPublicDecisionV1Schema.shape & {
     decidedVia: typeof ApprovalDecisionV2Schema.shape.decidedVia;
   }, z.core.$strict>>;
   execution: z.ZodMiniOptional<typeof ApprovalPublicTargetExecutionV1Schema>;
+  automaticChecks: z.ZodMiniOptional<typeof ApprovalPublicAutomaticChecksV1Schema>;
 };
 export type ApprovalRequestPublicReadSchemaType = z.ZodMiniUnion<[
   z.ZodMiniObject<ApprovalPublicRequestV1Shape, z.core.$strict>,
@@ -114,6 +123,7 @@ export const ApprovalRequestPublicReadSchema: ApprovalRequestPublicReadSchemaTyp
   }),
   z.strictObject({
     ...TargetActionApprovalRequestV1Schema.shape,
+    automaticChecks: z.optional(ApprovalPublicAutomaticChecksV1Schema),
     executionOriginV1: z.optional(ApprovalPublicExecutionOriginV1Schema),
     decision: z.optional(z.strictObject({ ...ApprovalPublicDecisionV1Schema.shape,
       decidedVia: ApprovalDecisionV2Schema.shape.decidedVia })),

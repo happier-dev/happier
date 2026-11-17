@@ -16,6 +16,7 @@ import { computeActionInputApprovalDigestV1 } from '../actions/decisionAuthority
 import { AgentRuntimeJsonValueV1Schema } from '../runtime/agentSessionV1.js';
 import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
 import { InputPathSchema } from '../inputs/inputPredicates.js';
+import { ApprovalAutomaticChecksV1Schema, isApprovalRequestExecutionApproved } from './approvalAutomaticChecks.js';
 
 export const TARGET_ACTION_APPROVAL_LIMITS_V1 = Object.freeze({
   artifactJsonBytes: 64 * 1024,
@@ -61,6 +62,7 @@ export const TargetActionApprovalRequestV1Schema = lazyZodSchema(() => z.strictO
   summary: z.string().check(z.minLength(1), maxCodeUnits(TARGET_ACTION_APPROVAL_LIMITS_V1.summaryUtf16Units)),
   detail: z.optional(z.string().check(z.minLength(1), maxCodeUnits(TARGET_ACTION_APPROVAL_LIMITS_V1.detailUtf16Units))),
   decision: z.optional(ApprovalDecisionV2Schema), execution: z.optional(ApprovalExecutionV2Schema),
+  automaticChecks: z.optional(ApprovalAutomaticChecksV1Schema),
 }).check(z.superRefine((value, ctx) => {
   if (value.requesterConfirmation) {
     const invocation = projectTargetActionApprovalInvocationV1(value);
@@ -76,7 +78,10 @@ export const TargetActionApprovalRequestV1Schema = lazyZodSchema(() => z.strictO
     }
   }
   if (value.status === 'open' && (value.decision || value.execution)) ctx.addIssue({ code: 'custom', message: 'open target-action approval cannot contain a decision or execution' });
-  if ((value.status === 'approved' || value.status === 'executing' || value.status === 'executed' || value.status === 'failed' || value.status === 'outcome_unknown') && value.decision?.kind !== 'approve') ctx.addIssue({ code: 'custom', message: `${value.status} target-action approval requires approve` });
+  if (value.status === 'open' && (value.automaticChecks?.phase === 'passed' || value.automaticChecks?.phase === 'refused')) ctx.addIssue({ code: 'custom', path: ['automaticChecks'], message: 'Open target-action approval cannot be settled' });
+  const admitted = isApprovalRequestExecutionApproved(value);
+  const machineRefusal = value.status === 'failed' && value.automaticChecks?.phase === 'refused' && value.execution?.effectAttempted === false;
+  if ((value.status === 'approved' || value.status === 'executing' || value.status === 'executed' || value.status === 'failed' || value.status === 'outcome_unknown') && !admitted && !machineRefusal) ctx.addIssue({ code: 'custom', message: `${value.status} target-action approval requires approval admission` });
   if (value.status === 'rejected' && value.decision?.kind !== 'reject') ctx.addIssue({ code: 'custom', message: 'rejected target-action approval requires reject' });
   if (value.status === 'canceled' && value.decision) ctx.addIssue({ code: 'custom', message: 'canceled target-action approval cannot contain a decision' });
   if ((value.status === 'executed' || value.status === 'failed' || value.status === 'outcome_unknown') !== Boolean(value.execution)) ctx.addIssue({ code: 'custom', message: 'target-action approval execution/status mismatch' });

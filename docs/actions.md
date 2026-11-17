@@ -942,6 +942,11 @@ and the admitted body still decides disclosure.
 Unknown or ungranted subjects are withheld, while unrestricted backend reads
 retain their Account scope.
 
+In 0.3 development source, public approval reads retain automatic-check trigger
+and Run references, but omit admitted subjects, including each selected trigger's
+retained subject, and private human-decision custody. Private Artifact reads
+retain those facts for the existing approval continuation.
+
 Daemon plugin approvals retain the host-stamped caller materialization's Machine
 in the existing execution origin and Artifact header when no explicit Machine
 custody is present. The shared approval-origin builder supplies this default for

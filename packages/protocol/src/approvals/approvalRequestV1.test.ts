@@ -8,6 +8,8 @@ import { getActionSpec } from '../actions/actionSpecs.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { resolveApprovalExecutor } from './resolveApprovalExecutor.js';
 import { projectApprovalRequestForPublicRead } from '../actions/actionApprovalPresentation.js';
+import { ApprovalRequestPublicReadSchema } from './approvalRequestPublicRead.js';
+import { StoredTargetActionApprovalRequestV1Schema, TargetActionApprovalRequestV1Schema } from './targetActionApprovalRequestV1.js';
 import {
   ApprovalRequestSchema,
   ApprovalExecutionV2Schema,
@@ -18,6 +20,69 @@ import {
   requiresExactDaemonApprovalReplay,
   isMountedPluginBlockingApprovalEligibleForLiveClient,
 } from './approvalRequestV1.js';
+
+it.each(['built_in', 'target'] as const)('retains automatic check progress privately while %s public reads omit approval custody', family => {
+  const original = family === 'built_in' ? { v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    createdBy: { surface: 'agent', sessionId: 'session' }, requestedSurface: 'agent',
+    actionId: 'session.title.set', actionArgs: { sessionId: 'session', title: 'Release' }, summary: 'Rename Session',
+    executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent',
+      caller: { kind: 'session', sessionId: 'session', starterDepth: 0, turnDepth: 0 },
+      accountId: 'actor', serverId: 'home', sessionId: 'session', actionId: 'session.title.set', requestId: 'request' } }
+    : { v: 1, kind: 'plugin_target_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli', qualifiedActionId: 'acme.alpha/actions/run',
+      input: { value: 'x' }, sourceCustody: { kind: 'development', registeredRootId: 'root-7' },
+      policyFingerprint: 'b'.repeat(64), subjectFingerprint: 'a'.repeat(64), summary: 'Run' };
+  const parse = family === 'built_in'
+    ? (value: unknown) => StoredApprovalRequestSchema.parse(ApprovalRequestV2Schema.parse(value))
+    : (value: unknown) => StoredTargetActionApprovalRequestV1Schema.parse(TargetActionApprovalRequestV1Schema.parse(value));
+  expect(parse(original)).not.toHaveProperty('automaticChecks');
+  const selected = { automationId: 'automation', triggerId: 'check', triggerRevision: 3, ownerAccountId: 'actor',
+    workflowId: 'workflow', workflowRevision: 7, actionIds: ['session.title.set'], phase: 'before', mode: 'wait', onFailure: 'ask',
+    subject: { kind: 'plugin', serverId: 'home', pluginId: 'example.check', subjectKindId: 'resource',
+      identity: { privateLocator: 'private-selected-subject' } } };
+  const runs = [{ automationId: selected.automationId, triggerId: selected.triggerId, runId: 'run' }];
+  const automaticChecks = { phase: 'checking', humanApprovalRequired: true,
+    humanDecision: { kind: 'approve', authority: 'present_user', decidingAccountId: 'actor', decidedAtMs: 2 },
+    subjects: [{ role: 'context', subject: { kind: 'approvalProfile', serverId: 'home', profileId: 'release' } }],
+    selectionStatus: 'ready', notices: [], selected: [selected], consents: [], runs, results: [] };
+  const stored = parse({ ...original, automaticChecks });
+  expect(stored).toMatchObject({ automaticChecks: { runs, subjects: automaticChecks.subjects,
+    selected: [{ subject: selected.subject }], humanDecision: { decidingAccountId: 'actor' } } });
+  const projection = projectApprovalRequestForPublicRead(stored);
+  expect(projection).not.toHaveProperty('automaticChecks.selected.0.subject');
+  const observed = ApprovalRequestPublicReadSchema.parse(projection);
+  expect(observed).toMatchObject({ automaticChecks: { phase: 'checking', runs,
+    humanDecision: { kind: 'approve', authority: 'present_user', decidedAtMs: 2 } } });
+  expect(observed).not.toHaveProperty('automaticChecks.subjects');
+  expect(observed).not.toHaveProperty('automaticChecks.humanDecision.decidingAccountId');
+  if (!('automaticChecks' in observed) || !observed.automaticChecks) throw new Error('Expected public check progress');
+  expect(ApprovalRequestPublicReadSchema.safeParse({ ...observed,
+    automaticChecks: { ...observed.automaticChecks, selected: [selected] } }).success).toBe(false);
+});
+
+it.each(['absent', 'declared'] as const)('applies the target input disclosure rule to retained human decisions when secret paths are %s', paths => {
+  const input = { title: 'Release', credential: 'private-narrowed-input' };
+  const request = StoredTargetActionApprovalRequestV1Schema.parse(TargetActionApprovalRequestV1Schema.parse({
+    v: 1, kind: 'plugin_target_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    createdBy: { surface: 'cli' }, requestedSurface: 'cli', qualifiedActionId: 'acme.alpha/actions/run', input,
+    ...(paths === 'declared' ? { secretInputPaths: ['credential'] } : {}),
+    sourceCustody: { kind: 'development', registeredRootId: 'root-7' },
+    policyFingerprint: 'b'.repeat(64), subjectFingerprint: 'a'.repeat(64), summary: 'Run',
+    automaticChecks: { phase: 'checking', humanApprovalRequired: true,
+      humanDecision: { kind: 'approve', authority: 'present_user', decidingAccountId: 'actor',
+        decidedAtMs: 2, narrowedInput: input },
+      subjects: [], selectionStatus: 'ready', notices: [], selected: [], consents: [], runs: [], results: [] },
+  }));
+  expect(request.automaticChecks?.humanDecision?.narrowedInput).toEqual(input);
+  const publicRead = ApprovalRequestPublicReadSchema.parse(projectApprovalRequestForPublicRead(request));
+  if (paths === 'absent') {
+    expect(publicRead).toMatchObject({ input: null, automaticChecks: { humanDecision: { narrowedInput: null } } });
+  } else {
+    expect(publicRead).toMatchObject({ input: { title: 'Release' },
+      automaticChecks: { humanDecision: { narrowedInput: { title: 'Release' } } } });
+  }
+  expect(JSON.stringify(publicRead)).not.toContain('private-narrowed-input');
+});
 
 it.each(['ui', 'voice', 'plugin', 'agent', 'mcp', 'cli', 'rpc', 'api'] as const)(
   'routes durable Account approval to the approving app independently of its %s origin', surface => {

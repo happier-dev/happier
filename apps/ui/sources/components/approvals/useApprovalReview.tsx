@@ -752,6 +752,9 @@ export function useApprovalReview(props: ApprovalReviewInput) {
     workspaceSyncReview, requesterContext, requesterConfirmationSection, confidential,
     /** The parsed request this review reads, for a host that presents its facts in its own words. */
     request: parsed.request,
+    /** Automatic-check progress and Run references belong to this existing request. */
+    automaticChecks: parsed.kind === 'target' || parsed.kind === 'built_in' && parsed.request.v === 2
+      ? parsed.request.automaticChecks ?? null : null,
     /** The status the page names (an answer recorded here counts) and, when its effect failed, why. */
     displayStatus, executionFailure,
     /** Its Approve control is shown and enabled right now: the same reading that enables the button. */
