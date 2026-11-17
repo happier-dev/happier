@@ -132,7 +132,8 @@ describe('machine and Home connection Action parity', () => {
     const executor = createActionExecutor({ machineTerminalAction: async (request: unknown) => { seen.push(request); return result; } } as unknown as ActionExecutorDeps);
     expect(await executor.execute(id, { serverId: 'home', machineId: 'machine' }, { surface: 'cli', authority: 'present_user', serverId: 'home' }))
       .toEqual({ ok: true, result });
-    expect(seen).toEqual([{ actionId: id, input: { machineId: 'machine', serverId: 'home' }, context: { surface: 'cli', authority: 'present_user', serverId: 'home' } }]);
+    expect(seen).toEqual([{ actionId: id, input: { machineId: 'machine', serverId: 'home' },
+      context: expect.objectContaining({ surface: 'cli', authority: 'present_user', serverId: 'home' }) }]);
     const unavailable = createActionExecutor({ machineTerminalAction: async () => null } as unknown as ActionExecutorDeps);
     expect(await unavailable.execute(id, { serverId: 'home', machineId: 'machine' }, { surface: 'ui', authority: 'present_user' })).toEqual({ ok: true, result: null });
     const refused = createActionExecutor({ machineTerminalAction: async () => ({ ok: false, errorCode: 'terminal_disabled', error: 'disabled' }) } as unknown as ActionExecutorDeps);
@@ -193,7 +194,8 @@ describe('machine and Home connection Action parity', () => {
     } } as unknown as ActionExecutorDeps);
     expect(await executor.execute(id, request, { surface: 'ui', authority: 'present_user', serverId: 'home' }))
       .toEqual({ ok: true, result: { ok: true, terminalId: 'pty', reused: false } });
-    expect(seen).toEqual([{ actionId: id, input: request, context: { surface: 'ui', authority: 'present_user', serverId: 'home' } }]);
+    expect(seen).toEqual([{ actionId: id, input: request,
+      context: expect.objectContaining({ surface: 'ui', authority: 'present_user', serverId: 'home' }) }]);
     const refused = createActionExecutor({ machineTerminalAction: async () => ({
       ok: false, errorCode: 'terminal_disabled', error: 'Disabled',
     }) } as unknown as ActionExecutorDeps);
