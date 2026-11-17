@@ -15531,6 +15531,10 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
 
     it('projects the active theme and the plugin translation bundle without retiring the live surface', async () => {
         reactNativeSurfaceProps.length = 0;
+        const { Text } = await import('@happier-dev/plugin-ui');
+        const { StyleSheet } = await import('react-native');
+        const selectedTheme = { ...lightTheme, typography: { ...lightTheme.typography, fontFamily: 'Acme Sans' } };
+        surfaceEnvironment.theme = selectedTheme;
         const mounts: string[] = [];
         let inventoryReads = 0;
         function ThemeProbe(context: RenderContext) {
@@ -15539,7 +15543,8 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             // A theme-only context push must not rerun that read.
             React.useEffect(() => { inventoryReads += 1; }, [context.hostApi, translate]);
             React.useEffect(() => { mounts.push('mount'); return () => { mounts.push('unmount'); }; }, []);
-            return React.createElement('View', { testID: 'theme-continuity-probe', accessibilityLabel: context.surface.colorScheme });
+            return React.createElement('View', { testID: 'theme-continuity-probe', accessibilityLabel: context.surface.colorScheme },
+                React.createElement(Text, { testID: 'theme-typeface-probe', variant: 'body', value: 'Plugin body' }));
         }
         reactNativeSurfaceRuntime.enabled = true;
         reactNativeSurfaceRuntime.module = { renderSurface: defineUiSurface(ThemeProbe) };
@@ -15647,7 +15652,8 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         const initial = readMountedSurface();
         const initialContext = (reactNativeSurfaceProps.at(-1) as { renderContext: RenderContext }).renderContext;
         expect(screen.findByTestId('theme-continuity-probe')).toBeTruthy();
-        expect(initial.theme).toEqual(projectPluginUiTheme(lightTheme, initial.theme.spinner));
+        expect(initial.theme).toEqual(projectPluginUiTheme(selectedTheme, initial.theme.spinner));
+        expect(StyleSheet.flatten(screen.findByTestId('theme-typeface-probe')?.props.style)?.fontFamily).toContain('Acme Sans');
         expect(initial.locale).toBe('en');
         expect(initial.translations).toMatchObject({
             'panel.title': 'Native panel',
@@ -15790,13 +15796,14 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         // A theme change moves the projected values, not just `colorScheme`.
         const targetedReadsBeforeTheme = targetedContributionsReadMock.mock.calls.length;
         const inventoryReadsBeforeTheme = inventoryReads;
-        surfaceEnvironment.theme = darkTheme;
+        surfaceEnvironment.theme = { ...darkTheme, typography: { ...darkTheme.typography, fontFamily: 'Other Sans' } };
         surfaceEnvironment.dark = true;
         await screen.update(render());
         const themed = readMountedSurface();
         expect(themed.colorScheme).toBe('dark');
         expect(themed.theme.colors.canvas).toBe(darkTheme.colors.background.canvas);
         expect(themed.theme.colors.canvas).not.toBe(initial.theme.colors.canvas);
+        expect(StyleSheet.flatten(screen.findByTestId('theme-typeface-probe')?.props.style)?.fontFamily).toContain('Other Sans');
         const themedContext = (reactNativeSurfaceProps.at(-1) as { renderContext: RenderContext }).renderContext;
         expect(themedContext.signal).toBe(initialContext.signal);
         expect(themedContext.hostApi).toBe(initialContext.hostApi);

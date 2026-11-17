@@ -215,7 +215,7 @@ import {
     type PluginSurfaceTargetResolution,
 } from './pluginSurfaceContext';
 import { resolvePluginSidebarResourceContext } from './pluginSurfaceMountBinding';
-import { usePluginUiHostPalette } from './pluginUiThemeProjection';
+import { readPluginUiHostTypography, usePluginUiHostPalette } from './pluginUiThemeProjection';
 import { useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
 import { NavigationLargeTitleProvider, useNavigationChromeShowsBack, useNavigationLeavesLargeTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { usePluginPageBackStepArmed } from '@/components/plugins/shared/PluginPageBackStep';
@@ -1239,6 +1239,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
     ), []);
     const canonicalTargetAuthorityKey = getPluginSurfaceTargetAuthorityKey(canonicalRenderIdentity.target);
     const { theme: hostTheme } = useUnistyles();
+    const hostTypography = readPluginUiHostTypography(hostTheme);
     const resolveMaterialColor = useGlassMaterialColorResolver(useContainingGlassSurfaceGroup());
     const projectedHostPalette = usePluginUiHostPalette(hostTheme);
     const hostPaletteRef = React.useRef(projectedHostPalette);
@@ -1352,6 +1353,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
                 isFocusEligible,
                 ...(findRegistrationHost ? { find: findRegistrationHost } : {}),
                 palette: hostPalette,
+                typography: hostTypography,
                 resolveMaterialColor,
                 pageChrome: hostPageChrome,
                 ...(hostStateSize === undefined ? {} : { stateSize: hostStateSize }),
@@ -1372,6 +1374,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
             detailsPaneBinding,
             paneHeaderBinding,
             hostPalette,
+            hostTypography,
             resolveMaterialColor,
             hostPageChrome,
             signal,
@@ -3187,10 +3190,15 @@ function PluginSurfaceHostMount(props: Readonly<(
     }, [controller]);
     entityDragHostControllerRef.current = controller;
     const entityDragBinding = entityDragBindingRef.current;
-    const entityDragPresentationHost = React.useMemo(() => createPluginUiPrivatePresentationHost(undefined, entityDragBinding ? {
+    const { theme: entityDragTheme } = useUnistyles();
+    const entityDragTypography = readPluginUiHostTypography(entityDragTheme);
+    const entityDragPresentationHost = React.useMemo(() => createPluginUiPrivatePresentationHost(undefined, {
+        typography: entityDragTypography,
+        ...(entityDragBinding ? {
         renderDragSource: dragInput => <PluginEntityDragSourceView binding={entityDragBinding} {...dragInput} />,
         renderDropTarget: dropInput => <PluginEntityDropTargetView binding={entityDragBinding} {...dropInput} />,
-    } : undefined), [entityDragBinding]);
+        } : {}),
+    }), [entityDragBinding, entityDragTypography]);
     React.useLayoutEffect(() => {
         // Presentation focus remains available to every renderer, while the
         // existing layout owner separately names the one semantic-current

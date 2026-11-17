@@ -207,6 +207,7 @@ export type PluginDestinationRowInput = NavigationListDestination & Readonly<{
 const PLUGIN_UI_COLLECTION_ROW_NEEDS_YOU = { useFacts: useCollectionRowNeedsYouHostFacts };
 
 export type PluginUiPrivatePresentationHostOptions = Readonly<{
+    typography?: ReturnType<typeof readPluginUiHostTypography>;
     actionControls?: PluginSurfaceActionControls;
     runPress?: import('@happier-dev/plugin-ui/advanced').PluginUiPresentationHost['runPress'];
     /** Canonical mounted plugin identity, supplied by the physical host. */
@@ -758,7 +759,7 @@ export function createPluginUiPrivatePresentationHost(
                 ? <PluginUiMenuPresentation input={{ ...input, menu: input.menu }} controls={options.actionControls} />
                 : PLUGIN_UI_PRIVATE_PRESENTATION_RENDERERS.renderPopover(input),
         } : {}),
-        typography: readPluginUiHostTypography(),
+        typography: options?.typography ?? readPluginUiHostTypography(),
         ...(options?.palette === undefined ? {} : { palette: options.palette }),
         ...(options?.resolveMaterialColor === undefined ? {} : { resolveMaterialColor: options.resolveMaterialColor }),
         ...(options?.pageChrome === undefined ? {} : { pageChrome: options.pageChrome }),
