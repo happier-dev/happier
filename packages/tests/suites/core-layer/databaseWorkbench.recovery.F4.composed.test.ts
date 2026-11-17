@@ -150,11 +150,22 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         const serving = await owner.executeReviewed('deployments.deploy', { serverId: fixture.serverId, environmentId,
             targetLinkId }, { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId },
                 presentUserConfirmation: { actionId: 'deployments.deploy' } });
-        if (!serving.ok) throw new Error(`R6 setup native deployment refused (${serving.errorCode})`);
+        if (!serving.ok) throw new Error(`R6 setup native deployment refused: ${JSON.stringify({
+            errorCode: serving.errorCode, error: serving.error, failureCause: serving.failureCause,
+            details: 'details' in serving ? serving.details : undefined,
+            requestId: serving.requestId, effectAttempted: serving.effectAttempted,
+            failedHttpRequests: failedHttpRequests(),
+        })}`);
         const receipt = DeploymentReceiptResultV1Schema.parse(serving.result);
-        if (!receipt.ok) throw new Error(`R6 setup native deployment failed (${receipt.error})`);
-        if (!('deploymentId' in receipt)) throw new Error('R6 setup native deployment has not settled');
-        expect(receipt.state).toBe('succeeded');
+        if (!receipt.ok) throw new Error(`R6 setup native deployment failed: ${JSON.stringify({
+            receipt, failedHttpRequests: failedHttpRequests(),
+        })}`);
+        if (!('deploymentId' in receipt)) throw new Error(`R6 setup native deployment has not settled: ${JSON.stringify({
+            receipt, failedHttpRequests: failedHttpRequests(),
+        })}`);
+        expect(receipt.state, `R6 setup native deployment receipt: ${JSON.stringify({
+            receipt, failedHttpRequests: failedHttpRequests(),
+        })}`).toBe('succeeded');
 
         // Seed only this product-created deployment. Its admitted receipt, rather
         // than a guessed Compose name, identifies the real native database.
