@@ -37,7 +37,7 @@ describe('filesystem WRITE_FILE handler max-bytes', () => {
   });
 
   it('fails closed when base64 payload exceeds the configured max inline-write bytes', async () => {
-    const { registerFileSystemHandlers } = await import('./fileSystem');
+    const { registerOwnerFilesystemRpcHandlers: registerFileSystemHandlers } = await import('./fileSystem.testkit');
 
     const mgr = createRpcHandlerManager();
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-write-file-max-bytes-'));
@@ -65,7 +65,7 @@ describe('filesystem WRITE_FILE handler max-bytes', () => {
     process.env[envChunkKey] = '1024';
     vi.resetModules();
 
-    const { registerFileSystemHandlers } = await import('./fileSystem');
+    const { registerOwnerFilesystemRpcHandlers: registerFileSystemHandlers } = await import('./fileSystem.testkit');
 
     const mgr = createRpcHandlerManager();
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-write-file-chunk-cap-'));
@@ -94,7 +94,7 @@ describe('filesystem WRITE_FILE handler max-bytes', () => {
     process.env[envChunkKey] = '1024';
     vi.resetModules();
 
-    const { registerFileSystemHandlers } = await import('./fileSystem');
+    const { registerOwnerFilesystemRpcHandlers: registerFileSystemHandlers } = await import('./fileSystem.testkit');
 
     const mgr = createRpcHandlerManager();
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-write-file-expected-hash-size-'));

@@ -2,7 +2,8 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { ProjectDefinitionInspectOutputSchema, ProjectSetupReadinessV1Schema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
@@ -409,6 +410,15 @@ describe('project definition Actions through registered Machine RPC', () => {
     } finally { diagnostic.mockRestore(); }
   });
   it('projects reviewed target-local completion through inspect without evaluating setup or disclosing its basis', async () => {
+    const modeRead = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (url !== 'https://requester.example/v1/account/encryption') throw new Error(`Unexpected requester read: ${url}`);
+      return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+    });
+    const setupRead = vi.spyOn(axios, 'post').mockImplementation(async url => {
+      if (url !== 'https://requester.example/v1/account/project-rows/read') throw new Error(`Unexpected requester row: ${url}`);
+      return { status: 200, data: { status: 'absent' } };
+    });
+    onTestFinished(() => { modeRead.mockRestore(); setupRead.mockRestore(); });
     const reviewInput = (root: string): ProjectSetupPreparationInput => {
       const workspace = { id: 'workspace-a', serverId: 'home-a', machineId: 'machine-a', rootPath: root, projectKey: 'project', createdAtMs: 1 };
       return { workspace, projectAssociation: { workspace, project: { serverId: 'home-a', projectId: 'project' } },
@@ -425,7 +435,8 @@ describe('project definition Actions through registered Machine RPC', () => {
         { kind: 'native', tool: 'make', file: 'Makefile', target: 'bootstrap' },
       ] } }));
     const inspect = handlers.get('daemon.projects.inspect.v1')!;
-    expect(await inspect({ workspace })).toMatchObject({ setupReadiness: { kind: 'unprepared' } });
+    const initialInspection = await inspect({ workspace });
+    expect(initialInspection, JSON.stringify(initialInspection)).toMatchObject({ setupReadiness: { kind: 'unprepared' } });
     const reviewed = await reviewProjectSetupEffect(reviewInput(root));
     if (reviewed.kind !== 'reviewed') throw new Error(reviewed.code);
     await createProjectSetupSuccessStore({ homeDir: root }).recordCompletion({ serverId: workspace.serverId, machineId: workspace.machineId, workspaceRefId: workspace.workspaceId },

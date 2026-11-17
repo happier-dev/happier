@@ -202,10 +202,16 @@ describe('registered workspace replace transport', () => {
       ...personContext(),
       localActionContext: { surface, authority: 'present_user', actionRequestId: 'preview-request' },
     });
-    expect(outcome).toMatchObject({ kind: 'approval_request_created',
-      actionId: 'workspace.files.replace.preview', artifactId: 'preview-approval' });
-    expect(requests).toEqual([expect.objectContaining({ actionId: 'workspace.files.replace.preview',
-      actionArgs: { machineId: 'machine', rootPath: root, ...matcher } })]);
+    if (surface === 'ui') {
+      expect(outcome).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required',
+        details: { reviewDigest: expect.any(String) } });
+      expect(requests).toEqual([]);
+    } else {
+      expect(outcome).toMatchObject({ kind: 'approval_request_created',
+        actionId: 'workspace.files.replace.preview', artifactId: 'preview-approval' });
+      expect(requests).toEqual([expect.objectContaining({ actionId: 'workspace.files.replace.preview',
+        actionArgs: { machineId: 'machine', rootPath: root, ...matcher } })]);
+    }
   });
 
   it('previews raw BOM hashes then applies only selected matches and restores exact bytes through Actions', async () => {
@@ -396,7 +402,7 @@ describe('registered workspace replace transport', () => {
           : kind === 'codeAction' ? 'code.codeAction.apply'
             : kind === 'directory' ? 'daemon.filesystem.createDirectory' : 'workspace.files.replace';
       const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1, actions: {
-        [actionId]: { approvalRequiredSurfaces: ['ui'] },
+        [actionId]: { approvalRequiredSurfaces: ['rpc'] },
       } });
       const accountSettings = accountSettingsParse({ actionsSettingsV1: actionsSettings });
       const features = registerAccountHomeHttp(app, { accountId, serverId: serverIdentityId, settings: accountSettings });
@@ -481,9 +487,9 @@ describe('registered workspace replace transport', () => {
             : { machineId, rootPath: root, operation: restoreOperation
               ?? { kind: 'replace', matcher, files: [{ path: 'a.txt', expectedHash: hash(bytes) }] } };
       try {
-        // A different device owns the proposing UI profile. Do not run that
+        // A different device owns the proposing RPC profile. Do not run that
         // proposal through the deciding daemon's fixed-Home context wrapper.
-        const proposal = await createActionExecutor(deps).execute(actionId, input, { surface: 'ui', authority: 'present_user',
+        const proposal = await createActionExecutor(deps).execute(actionId, input, { surface: 'rpc', authority: 'present_user',
           actionCaller: { kind: 'host' }, serverId: 'ui-home-profile', serverIdentityId, runtimeAccountId: accountId,
           actionRequestId: 'replace-proposal', ...(scenario === 'implicit-target' ? {}
             : { externalActionTarget: { kind: 'machine', machineId } as const }) });
@@ -523,12 +529,17 @@ describe('registered workspace replace transport', () => {
           expect(await readFile(join(root, 'a.txt'))).toEqual(bytes);
           return;
         }
+        if (kind === 'codeAction') {
+          expect(decision).toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'stale_query' } } });
+          expect(readApproval(proposal.result.artifactId)).toMatchObject({ status: 'failed', execution: { ok: false, errorCode: 'stale_query' } });
+          expect(await readFile(join(root, 'a.txt'))).toEqual(bytes);
+          return;
+        }
         expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
         const request = readApproval(proposal.result.artifactId);
         expect(request).toMatchObject({ status: 'executed', execution: { ok: true, result: kind === 'preview'
           ? { files: [{ path: 'a.txt', hash: hash(bytes) }] }
           : kind === 'directory' ? { success: true }
-            : kind === 'codeAction' ? { status: 'error', errorCode: 'stale_query' }
             : { results: [{ path: 'a.txt', status: kind === 'restore' ? 'restored' : 'replaced',
               ...(kind === 'fileRename' ? { renameTo: 'approved-renamed.txt', edits: [] }
                 : kind === 'restore' ? {} : { edits: [{ originalText: 'old', insertText: 'new' }] }),
@@ -543,7 +554,7 @@ describe('registered workspace replace transport', () => {
           expect(await readFile(join(root, 'approved-renamed.txt'))).toEqual(bytes);
           return;
         }
-        expect(await readFile(join(root, 'a.txt'))).toEqual(kind === 'preview' || kind === 'directory' || kind === 'codeAction' ? bytes
+        expect(await readFile(join(root, 'a.txt'))).toEqual(kind === 'preview' || kind === 'directory' ? bytes
           : Buffer.from(kind === 'restore' ? '\uFEFFold\r\n' : '\uFEFFnew\r\n'));
       } finally { await client.shutdown(); restore(); await app.close(); }
     });

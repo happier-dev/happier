@@ -55,9 +55,9 @@ export async function readAcceptedProjectSetupForProject(input: Readonly<{
     serverHttpBaseUrl: string; signal?: AbortSignal;
     organization?: ProjectAccountOrganizationV1 | null;
 }>): Promise<AcceptedProjectSetupResult> {
-    const organization = input.organization === undefined ? (await readProjectAccountRows({ ...input.account,
+    const organization = input.organization === undefined ? (await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => readProjectAccountRows({ ...input.account,
         serverId: input.project.serverId, selection: { key: { kind: 'project-organization', serverId: input.project.serverId,
-            projectKey: input.project.projectId } }, signal: input.signal })).organizations[0]?.value ?? null : input.organization;
+            projectKey: input.project.projectId } }, signal: input.signal }))).organizations[0]?.value ?? null : input.organization;
     // The common no-setup path acquires neither Artifact crypto nor a content reader.
     if (!organization?.setupContent) return readAcceptedProjectSetup({ organization, signal: input.signal, readArtifact: async () => null });
     const authorization = input.account.authorization;

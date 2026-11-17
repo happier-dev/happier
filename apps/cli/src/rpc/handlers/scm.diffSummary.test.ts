@@ -16,6 +16,7 @@ import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { captureScmComparison, deleteCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
+import { runWithScmAccountScope } from '@/scm/accountScope';
 import { createGitWorkspace, createTestGitScmBackendRegistry, runGit } from '@/scm/rpc/__tests__/testRpcHarness';
 
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
@@ -33,7 +34,8 @@ describe('SCM diff-summary RPC admission', () => {
     it.each(['signed-custodian', 'stale-signed-custodian', 'shared-manage', 'session-origin', 'wrong-session',
         'exact-session', 'custodian', 'stale-custodian', 'use-owner', 'wrong-machine'] as const)(
         'uses one admission for captured index and immutable file evidence (%s)', async caller => {
-        await withTempDir('scm-rpc-captured-admission-', async home => {
+        await withTempDir('scm-rpc-captured-admission-', async home => runWithScmAccountScope(
+            caller === 'shared-manage' ? 'member' : 'owner', async () => {
             const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
             const workspace = createGitWorkspace();
             const sessionId = 'c222222222222222222222222';
@@ -48,8 +50,8 @@ describe('SCM diff-summary RPC admission', () => {
                 writeFileSync(join(workspace, 'a.txt'), 'pinned bytes\n');
                 const scoped = await captureScmComparison({ cwd: workspace, sessionId,
                     source: { kind: 'workingTree' }, registry: createTestGitScmBackendRegistry() });
-                const standalone = await captureScmComparison({ cwd: workspace,
-                    source: { kind: 'workingTree' }, registry: createTestGitScmBackendRegistry() });
+                const standalone = await runWithScmAccountScope('owner', () => captureScmComparison({ cwd: workspace,
+                    source: { kind: 'workingTree' }, registry: createTestGitScmBackendRegistry() }));
                 captures.push({ comparisonId: scoped.comparison.id, sessionId }, { comparisonId: standalone.comparison.id });
                 writeFileSync(join(workspace, 'a.txt'), 'mutated live bytes\n');
                 let sessionReads = 0;
@@ -133,20 +135,25 @@ describe('SCM diff-summary RPC admission', () => {
                             .toMatchObject({ success: false });
                     }
                 }
-                if (caller === 'shared-manage' || caller === 'session-origin') expect(sessionReads).toBeGreaterThan(0);
+                if (caller === 'session-origin') expect(sessionReads).toBeGreaterThan(0);
+                // Machine admission selects the member's private shelf directly;
+                // it never reacquires Session authority for each captured read.
+                if (caller === 'shared-manage') expect(sessionReads).toBe(0);
                 if (caller === 'signed-custodian') expect(sessionReads).toBe(0);
                 if (caller === 'custodian') expect(currentChecks).toBe(4);
             } finally {
-                for (const capture of captures) await deleteCapturedScmComparison({ cwd: workspace, ...capture });
+                for (const capture of captures) await runWithScmAccountScope(capture.sessionId
+                    && caller === 'shared-manage' ? 'member' : 'owner', () => deleteCapturedScmComparison({ cwd: workspace, ...capture }));
                 await rm(workspace, { recursive: true, force: true });
                 persistence.credentials = null;
                 vi.restoreAllMocks(); env.restore(); reloadConfiguration();
             }
-        });
+        }));
     });
     it.each(['unrelated-session-proof', 'shared-use', 'exact-session-proof', 'custodian', 'stale-custodian'] as const)(
         'enforces saved-result scope through the default receiving factory (%s)', async caller => {
-        await withTempDir('scm-rpc-result-scope-', async home => {
+        await withTempDir('scm-rpc-result-scope-', async home => runWithScmAccountScope(
+            caller === 'shared-use' ? 'shared-member' : 'owner', async () => {
             const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
             try {
                 env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'rpc-scope-home' });
@@ -240,10 +247,10 @@ describe('SCM diff-summary RPC admission', () => {
                 vi.restoreAllMocks();
                 env.restore(); reloadConfiguration();
             }
-        });
+        }));
     });
     it('keeps custodian results reachable after Session deletion through the registered receiving factory', async () => {
-        await withTempDir('scm-rpc-retained-custody-', async home => {
+        await withTempDir('scm-rpc-retained-custody-', async home => runWithScmAccountScope('owner', async () => {
             const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
             try {
                 env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'rpc-custody-home' });
@@ -285,7 +292,7 @@ describe('SCM diff-summary RPC admission', () => {
                 vi.restoreAllMocks();
                 env.restore(); reloadConfiguration();
             }
-        });
+        }));
     });
     it('rejects unauthenticated saved-result reads and edits through the same Action admission', async () => {
         const handlers = new Map<string, RpcHandler>();
