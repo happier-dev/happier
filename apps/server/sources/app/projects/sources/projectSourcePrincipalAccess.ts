@@ -3,13 +3,11 @@ import { isTeamPrincipalRoleV1 } from '@happier-dev/protocol/teams';
 import type { TeamRole } from '@/storage/enums.generated';
 import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
-import { resolveTeamMembershipCapabilitiesV1 } from '@/app/teams/capabilities';
 import { EFFECTIVE_TEAM_MEMBERSHIP_WHERE } from '@/app/teams/memberships/effectiveMembership';
 import { resolveTeamGroupMembershipsForAccountsInTx } from '@/app/teams/groups/effectiveGroupMembership';
 
 export interface ProjectSourcePrincipalReadContext {
     readonly role: TeamRole;
-    readonly manageSettings: boolean;
     readonly groupIds: ReadonlySet<string>;
 }
 
@@ -27,7 +25,6 @@ export function projectSourcePrincipalCanRead(principal: ProjectSourceGrantV1['p
 ): boolean {
     if (principal.kind === 'account') return principal.accountId === accountId;
     const context = teamContext(principal.teamId);
-    if (context?.manageSettings) return true;
     if (!context) return false;
     return principal.kind === 'team' ? isTeamPrincipalRoleV1(context.role) : context.groupIds.has(principal.groupId);
 }
@@ -68,13 +65,11 @@ export async function admitProjectSourcePrincipalSelectionInTx(tx: Tx,
         for (const ids of portableQueryChunks({ values: teamAccountIds, bindingsPerValue: 1, fixedBindings: 4 })) {
             const memberships = await tx.teamMembership.findMany({ where: { ...EFFECTIVE_TEAM_MEMBERSHIP_WHERE,
                 teamId, accountId: { in: [...ids] } },
-                select: { accountId: true, role: true, status: true, account: { select: { status: true } }, team: { select: { archivedAt: true } } } });
+                select: { accountId: true, role: true } });
             for (const membership of memberships) {
                 let accountContexts = contexts.get(membership.accountId);
                 if (!accountContexts) { accountContexts = new Map(); contexts.set(membership.accountId, accountContexts); }
-                accountContexts.set(teamId, { role: membership.role, groupIds: new Set(),
-                    manageSettings: resolveTeamMembershipCapabilitiesV1({ accountStatus: membership.account.status,
-                        membership, teamArchivedAt: membership.team.archivedAt }).manageSettings });
+                accountContexts.set(teamId, { role: membership.role, groupIds: new Set() });
             }
         }
         const groups = await resolveTeamGroupMembershipsForAccountsInTx(tx, { teamId, accountIds: teamAccountIds });

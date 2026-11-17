@@ -36,7 +36,7 @@ export const DeploymentPreviewTemplateV1Schema = lazyZodSchema(() => z.strictObj
 export type DeploymentPreviewTemplateV1 = z.infer<typeof DeploymentPreviewTemplateV1Schema>;
 
 /** Captured selected TEMPLATE Domain identity, not the allocated child Domain id. */
-export const DeploymentPreviewDomainFactV1Schema = z.strictObject({ domainId: id, url: text });
+export const DeploymentPreviewDomainFactV1Schema = lazyZodSchema(() => z.strictObject({ domainId: id, url: text }));
 export type DeploymentPreviewDomainFactV1 = z.infer<typeof DeploymentPreviewDomainFactV1Schema>;
 
 /** The host admits the actual builder/runtime placement from complete Machine inventory. */

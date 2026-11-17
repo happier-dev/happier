@@ -15,8 +15,8 @@ import { markAccountsChanged } from '@/app/changes/markAccountChanged';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import type { TeamOperationAuthenticationContext } from '@/app/teams/actorContext';
 import type { Tx } from '@/storage/inTx';
-import { getDbProviderFromEnv } from '@/storage/prisma';
-import { readProjectSourceInTx, readProjectSourceCustodyInTx, resolveProjectSourceAudienceInTx } from './sources/projectSourceService';
+import { lockProjectSourceForDefaultsInTx } from './sources/projectSourceWriteLock';
+import { resolveProjectSourceAccessInTx, readProjectSourceCustodyInTx, resolveProjectSourceAudienceInTx } from './sources/projectSourceService';
 
 type ContentReference = NonNullable<ProjectDeploymentDefaultsSetInputV1['content']>;
 export type ProjectDeploymentDefaultsReadInput = ProjectDeploymentDefaultsReadInputV1;
@@ -101,7 +101,7 @@ export async function readProjectDeploymentDefaultsInTx(tx: Tx, actorAccountId: 
             sourceRevision = custody.source.revision;
         }
     } else {
-        const source = await readProjectSourceInTx(tx, actorAccountId, { serverId: input.serverId, sourceId: input.projectSourceId }, authentication);
+        const source = await resolveProjectSourceAccessInTx(tx, actorAccountId, input.projectSourceId, authentication);
         if (!source.ok) return failure('project_defaults_unavailable');
         sourceRevision = source.source.revision;
     }
@@ -139,10 +139,8 @@ export async function setProjectDeploymentDefaultsInTx(tx: Tx, actorAccountId: s
 ): Promise<ProjectDeploymentDefaultsOutputV1> {
     if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return failure('project_defaults_unavailable');
     // Serialize the first leaf insertion with Source authority changes at its existing parent.
-    const provider = getDbProviderFromEnv(process.env, 'postgres');
-    if (provider === 'postgres' || provider === 'pglite') await tx.$queryRawUnsafe('SELECT "id" FROM "ProjectSource" WHERE "id" = $1 FOR UPDATE', input.projectSourceId);
-    if (provider === 'mysql') await tx.$queryRawUnsafe('SELECT `id` FROM `ProjectSource` WHERE `id` = ? FOR UPDATE', input.projectSourceId);
-    const source = await readProjectSourceInTx(tx, actorAccountId, { serverId: input.serverId, sourceId: input.projectSourceId }, authentication);
+    await lockProjectSourceForDefaultsInTx(tx, input.projectSourceId);
+    const source = await resolveProjectSourceAccessInTx(tx, actorAccountId, input.projectSourceId, authentication);
     if (!source.ok) return failure('project_defaults_unavailable');
     if (!source.canManage) return failure('project_defaults_access_denied');
     const row = await tx.projectDeploymentDefaults.findUnique({ where: { projectSourceId: input.projectSourceId } });

@@ -9,6 +9,7 @@ import { SecretReferenceOverlayV1Schema } from '../profiles/secretReferenceOverl
 import { ProjectAtmosphereSchema } from '../account/settings/homeAtmosphere.js';
 import { ProjectAccountWorkspaceRefKeyV1Schema } from './workspaceRefKeyV1.js';
 import { ProjectSetupSelectionV1Schema, ProjectSetupContentRefV1Schema } from './projectSetupV1.js';
+import { ProjectSessionDefaultsV1Schema } from './projectSessionDefaultsV1.js';
 export { ProjectAccountWorkspaceRefKeyV1Schema } from './workspaceRefKeyV1.js';
 
 export const PROJECT_ACCOUNT_ROWS_ROUTE_V1 = '/v1/account/project-rows' as const;
@@ -21,12 +22,15 @@ export const ProjectAccountRelationshipGraphKeyV1Schema = lazyDefinition(() => z
 export const ProjectAccountOrganizationKeyV1Schema = lazyDefinition(() => z.strictObject({ kind: z.literal('project-organization'), serverId: IdSchema, projectKey: IdSchema }));
 /** The person's Services organization on one Home (its pinned services): one private row, outside Project rows. */
 export const ProjectAccountServicesOrganizationKeyV1Schema = lazyDefinition(() => z.strictObject({ kind: z.literal('services-organization'), serverId: IdSchema }));
+export const ProjectAccountSessionDefaultsKeyV1Schema = lazyDefinition(() => z.strictObject({ kind: z.literal('project-session-defaults'), serverId: IdSchema, projectKey: IdSchema }));
 export const ProjectAccountRowKeyV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [
     ProjectAccountWorkspaceRefKeyV1Schema, ProjectAccountRelationshipGraphKeyV1Schema, ProjectAccountOrganizationKeyV1Schema,
-    ProjectAccountServicesOrganizationKeyV1Schema,
+    ProjectAccountServicesOrganizationKeyV1Schema, ProjectAccountSessionDefaultsKeyV1Schema,
 ]));
 /** Every row kind, for the Account's own whole-record work (an encryption-mode migration). */
-export const PROJECT_ACCOUNT_ROW_KINDS_V1 = ['workspace-ref', 'relationship-graph', 'project-organization', 'services-organization'] as const;
+export const PROJECT_ACCOUNT_ROW_KINDS_V1 = ['workspace-ref', 'relationship-graph', 'project-organization', 'services-organization', 'project-session-defaults'] as const;
+/** Project navigation includes Services organization, but never demanded Session choices. */
+export const PROJECT_ACCOUNT_ROW_CENSUS_LIST_KINDS_V1 = PROJECT_ACCOUNT_ROW_KINDS_V1.filter(kind => kind !== 'project-session-defaults');
 /** What a list without `kinds` returns: the Project census an older reader parses. Newer kinds are listed by asking. */
 export const PROJECT_ACCOUNT_ROW_DEFAULT_LIST_KINDS_V1 = ['workspace-ref', 'relationship-graph', 'project-organization'] as const;
 export type ProjectAccountRowKeyV1 = z.infer<typeof ProjectAccountRowKeyV1Schema>;
@@ -63,6 +67,7 @@ export const ProjectAccountRowPayloadV1Schema = lazyDefinition(() => z.union([
     z.strictObject({ key: ProjectAccountRelationshipGraphKeyV1Schema, value: ProjectAccountRelationshipGraphV1Schema }),
     z.strictObject({ key: ProjectAccountOrganizationKeyV1Schema, value: ProjectAccountOrganizationV1Schema }),
     z.strictObject({ key: ProjectAccountServicesOrganizationKeyV1Schema, value: ProjectAccountServicesOrganizationV1Schema }),
+    z.strictObject({ key: ProjectAccountSessionDefaultsKeyV1Schema, value: ProjectSessionDefaultsV1Schema }),
 ]));
 export type ProjectAccountRowPayloadV1 = z.infer<typeof ProjectAccountRowPayloadV1Schema>;
 export const StoredProjectAccountRowPayloadV1Schema = createStoredReadSchema(ProjectAccountRowPayloadV1Schema);
@@ -97,6 +102,7 @@ export function buildProjectAccountRowPhysicalKeyV1(input: ProjectAccountRowKeyV
     if (key.kind === 'relationship-graph') return `${PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1}graph`;
     if (key.kind === 'workspace-ref') return `${PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1}ref/${encodeURIComponent(key.serverId)}/${encodeURIComponent(key.id)}`;
     if (key.kind === 'services-organization') return `${PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1}services/${encodeURIComponent(key.serverId)}`;
+    if (key.kind === 'project-session-defaults') return `${PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1}session-defaults/${encodeURIComponent(key.serverId)}/${encodeURIComponent(key.projectKey)}`;
     return `${PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1}organization/${encodeURIComponent(key.serverId)}/${encodeURIComponent(key.projectKey)}`;
 }
 export function parseProjectAccountRowPhysicalKeyV1(physicalKey: string): ProjectAccountRowKeyV1 | null {
@@ -108,6 +114,7 @@ export function parseProjectAccountRowPhysicalKeyV1(physicalKey: string): Projec
         else if (parts.length === 3 && parts[0] === 'ref') input = { kind: 'workspace-ref', serverId: decodeURIComponent(parts[1]!), id: decodeURIComponent(parts[2]!) };
         else if (parts.length === 2 && parts[0] === 'services') input = { kind: 'services-organization', serverId: decodeURIComponent(parts[1]!) };
         else if (parts.length === 3 && parts[0] === 'organization') input = { kind: 'project-organization', serverId: decodeURIComponent(parts[1]!), projectKey: decodeURIComponent(parts[2]!) };
+        else if (parts.length === 3 && parts[0] === 'session-defaults') input = { kind: 'project-session-defaults', serverId: decodeURIComponent(parts[1]!), projectKey: decodeURIComponent(parts[2]!) };
         else return null;
     } catch { return null; }
     const parsed = ProjectAccountRowKeyV1Schema.safeParse(input);

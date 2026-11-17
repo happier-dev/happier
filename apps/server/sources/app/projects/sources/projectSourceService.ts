@@ -9,7 +9,7 @@ import {
     ProjectSourceGrantV1Schema, ProjectSourceOwnerV1Schema, ProjectSourceV1StoredSchema, PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1,
     ProjectSourcesCreateInputV1Schema, ProjectSourcesReadInputV1Schema,
     ProjectSourcesUpdateInputV1Schema, ProjectSourcesDeleteInputV1Schema, ProjectSourcesListInputV1Schema,
-    type ProjectSourceV1, type ProjectSourceOwnerV1, type ProjectSourceGrantV1, type SourceAttachmentV1,
+    type ProjectSourceV1, type ProjectSourceListItemV1, type ProjectSourceOwnerV1, type ProjectSourceGrantV1, type SourceAttachmentV1,
     type ProjectSourceAttachmentIntentV1, type ProjectSourcesFailureV1,
     type ProjectSourcesReadOutputV1, type ProjectSourcesListOutputV1, type ProjectSourcesDeleteOutputV1,
     type ProjectSourcePublicationPatchV1,
@@ -18,6 +18,7 @@ import { isProjectSourceAttachmentKindV1 } from '@happier-dev/protocol/projects/
 import { applyPromptStackIntentV1 } from '@happier-dev/protocol/prompts/library/promptStacksV1';
 import { isTeamPrincipalRoleV1 } from '@happier-dev/protocol/teams';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
+import { resourceTeamShareScopeV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 import type { Prisma } from '@prisma/client';
 import type { Tx } from '@/storage/inTx';
 import { prismaRuntime, getDbProviderFromEnv } from '@/storage/prisma';
@@ -35,10 +36,12 @@ import { projectSourcePrincipalCanRead, projectSourceAdmitsGroup } from './proje
 import { EFFECTIVE_TEAM_MEMBERSHIP_WHERE, isEffectiveTeamMembership } from '@/app/teams/memberships/effectiveMembership';
 import { resolveShareAccountSubjectsInTx } from '@/app/teams/shareEligibility';
 import {
-    resolveEffectiveTeamGroupIdsForAccountInTx, EFFECTIVE_TEAM_GROUP_MEMBERSHIP_WHERE,
+    resolveEffectiveTeamGroupIdsForAccountInTeamsInTx, EFFECTIVE_TEAM_GROUP_MEMBERSHIP_WHERE,
 } from '@/app/teams/groups/effectiveGroupMembership';
 import { projectSourceAccessCaptureSql, resolveProjectSourceAccessFromCapture, type ProjectSourceAccessCapture } from './projectSourceReadCapture';
-
+import { lockProjectSourceForDefaultsInTx } from './projectSourceWriteLock';
+import { readProjectSourceSessionDefaultsInTx, prepareProjectSourceSessionDefaultsInTx } from './projectSourceSessionDefaults';
+import { projectSourceListFiltersSql, resolveProjectSourceQueryScopeInTx } from './projectSourceQuery';
 import { mayPublishProjectSourceSetupArtifact } from './projectSourceContentReferences';
 
 const storedAudience = createStoredReadSchema(z.array(ProjectSourceGrantV1Schema));
@@ -79,8 +82,8 @@ export async function resolveProjectSourceAdmissionInTx(tx: Tx, actorAccountId: 
         .flatMap(principal => principal.kind === 'account' ? [] : [principal.teamId]))];
     const contexts = await resolveTeamActorContextsInTx(tx, { teamIds, actorAccountId });
     const qualified = await qualifyTeamOperationAuthenticationsInTx(tx, { contexts: [...contexts.values()], ...authentication });
-    const groups = new Map(await Promise.all(teamIds.map(async teamId => [teamId,
-        new Set(await resolveEffectiveTeamGroupIdsForAccountInTx(tx, { teamId, accountId: actorAccountId }))] as const)));
+    const groupIds = await resolveEffectiveTeamGroupIdsForAccountInTeamsInTx(tx, { teamIds, accountId: actorAccountId });
+    const groups = new Map([...groupIds].map(([teamId, ids]) => [teamId, new Set(ids)]));
     return composeProjectSourceAdmission({ actorAccountId, active, contexts, qualified, groups });
 }
 
@@ -103,8 +106,7 @@ export function composeProjectSourceAdmission(input: Readonly<{
             : admittedTeam(owner.teamId)?.teamCapabilities.manageSettings === true);
     const canReadPrincipal = (principal: ProjectSourceGrantV1['principal']) => projectSourcePrincipalCanRead(principal, actorAccountId, teamId => {
         const context = admittedTeam(teamId);
-        return context?.membership ? { role: context.membership.role,
-            manageSettings: context.teamCapabilities.manageSettings, groupIds: groups.get(teamId) ?? new Set<string>() } : undefined;
+        return context?.membership ? { role: context.membership.role, groupIds: groups.get(teamId) ?? new Set<string>() } : undefined;
     });
     return {
         active,
@@ -160,48 +162,28 @@ async function validateAudienceInTx(tx: Tx, actorAccountId: string, audience: re
     return true;
 }
 
-/** One membership census, with a result for every input (including old/new versions of the same Source). */
+/** One reader census, with a result for every input (including old/new versions of the same Source).
+ * It equals read admission: active Accounts, non-guest Team members, members of granted Groups only.
+ * Change notices and E2EE recipient wraps both consume it, so neither reaches someone reads refuse. */
 export async function resolveProjectSourceAudiencesInTx(tx: Tx, sources: readonly ProjectSourceV1[]): Promise<string[][]> {
     const accountIds = new Set<string>();
     const teamIds = new Set<string>();
-    const administratorTeamIds = new Set<string>();
     const groups = new Map<string, Extract<ProjectSourceGrantV1['principal'], { kind: 'group' }>>();
-    for (const source of sources) {
-        const owner = sourceOwner(source);
-        if (owner.kind === 'account') accountIds.add(owner.accountId);
-        else teamIds.add(owner.teamId);
-    }
-    for (const source of sources) for (const { principal } of source.audience) {
+    for (const source of sources) for (const principal of [sourceOwner(source), ...source.audience.map(grant => grant.principal)]) {
         if (principal.kind === 'account') accountIds.add(principal.accountId);
         else if (principal.kind === 'team') teamIds.add(principal.teamId);
-        else {
-            groups.set(JSON.stringify([principal.teamId, principal.groupId]), principal);
-            administratorTeamIds.add(principal.teamId);
-        }
+        else groups.set(JSON.stringify([principal.teamId, principal.groupId]), principal);
     }
-    // Old/new audiences share a fresh membership census. A full Team grant
-    // already includes its administrators; Group-only Teams still notify them.
     const teamAccounts = new Map<string, Set<string>>();
-    const administratorAccounts = new Map<string, Set<string>>();
-    for (const ids of portableQueryChunks({ values: [...new Set([...teamIds, ...administratorTeamIds])],
-        bindingsPerValue: 1, fixedBindings: 5 /* two statuses, two roles, offset */ })) {
-        const fullTeams = ids.filter(id => teamIds.has(id));
-        const administratorTeams = ids.filter(id => !teamIds.has(id));
-        const audience: Prisma.TeamMembershipWhereInput[] = [];
-        if (fullTeams.length) audience.push({ teamId: { in: fullTeams } });
-        if (administratorTeams.length) audience.push({ teamId: { in: administratorTeams }, role: { in: ['owner', 'admin'] } });
-        const members = await tx.teamMembership.findMany({ where: { ...EFFECTIVE_TEAM_MEMBERSHIP_WHERE, OR: audience },
+    for (const ids of portableQueryChunks({ values: [...teamIds], bindingsPerValue: 1, fixedBindings: 3 /* two statuses, offset */ })) {
+        const members = await tx.teamMembership.findMany({ where: { ...EFFECTIVE_TEAM_MEMBERSHIP_WHERE, teamId: { in: [...ids] } },
             select: { accountId: true, teamId: true, role: true } });
         for (const member of members) {
+            if (!isTeamPrincipalRoleV1(member.role)) continue;
             accountIds.add(member.accountId);
             const accounts = teamAccounts.get(member.teamId) ?? new Set<string>();
             accounts.add(member.accountId);
             teamAccounts.set(member.teamId, accounts);
-            if (member.role === 'owner' || member.role === 'admin') {
-                const administrators = administratorAccounts.get(member.teamId) ?? new Set<string>();
-                administrators.add(member.accountId);
-                administratorAccounts.set(member.teamId, administrators);
-            }
         }
     }
     const groupAccounts = new Map<string, Set<string>>();
@@ -218,20 +200,19 @@ export async function resolveProjectSourceAudiencesInTx(tx: Tx, sources: readonl
             groupAccounts.set(key, accounts);
         }
     }
-    const existingAccountIds: string[] = [];
-    for (const ids of portableQueryChunks({ values: [...accountIds], bindingsPerValue: 1, fixedBindings: 1 /* offset */ })) {
-        const existing = await tx.account.findMany({ where: { id: { in: [...ids] } }, select: { id: true } });
-        existingAccountIds.push(...existing.map(account => account.id));
+    const activeAccountIds: string[] = [];
+    for (const ids of portableQueryChunks({ values: [...accountIds], bindingsPerValue: 1, fixedBindings: 2 /* status, offset */ })) {
+        const active = await tx.account.findMany({ where: { id: { in: [...ids] }, status: 'active' }, select: { id: true } });
+        activeAccountIds.push(...active.map(account => account.id));
     }
-    const existing = new Set(existingAccountIds);
+    const active = new Set(activeAccountIds);
     return sources.map(source => {
         const audience = new Set<string>();
         for (const principal of [sourceOwner(source), ...source.audience.map(grant => grant.principal)]) {
             const accounts = principal.kind === 'account' ? [principal.accountId]
                 : principal.kind === 'team' ? teamAccounts.get(principal.teamId) ?? []
-                    : [...(groupAccounts.get(JSON.stringify([principal.teamId, principal.groupId])) ?? []),
-                        ...(administratorAccounts.get(principal.teamId) ?? [])];
-            for (const accountId of accounts) if (existing.has(accountId)) audience.add(accountId);
+                    : groupAccounts.get(JSON.stringify([principal.teamId, principal.groupId])) ?? [];
+            for (const accountId of accounts) if (active.has(accountId)) audience.add(accountId);
         }
         return [...audience];
     });
@@ -451,7 +432,7 @@ export async function createProjectSourceInTx(tx: Tx, actorAccountId: string, in
         const [recordedDigest, sourceId] = recorded.split(':');
         if (recordedDigest !== digest || !sourceId) return { ok: false, error: 'source_conflict' };
         const replay = await resolveProjectSourceAccessInTx(tx, actorAccountId, sourceId, authentication);
-        return replay.ok ? { ok: true, source: replay.source, canManage: replay.canManage }
+        return replay.ok ? { ok: true, source: replay.source, canManage: replay.canManage, canManageSessionDefaults: replay.canManageOwner }
             : { ok: false, error: 'source_conflict' };
     }
     if (!(await validateAudienceInTx(tx, actorAccountId, audience, authentication))) return denied();
@@ -464,7 +445,7 @@ export async function createProjectSourceInTx(tx: Tx, actorAccountId: string, in
     if (!source.success) throw new Error('Canonical Source write failed stored admission');
     await saveRepeatKey(tx, requestKey, `${digest}:${row.id}`, defaultRepeatKeyExpiresAt(now));
     await publishInTx(tx, [source.data]);
-    return { ok: true, source: source.data, canManage: true };
+    return { ok: true, source: source.data, canManage: true, canManageSessionDefaults: true };
 }
 
 /** Read disclosure is admitted from current Account, Team and Group lifetimes. */
@@ -472,7 +453,10 @@ export async function readProjectSourceInTx(tx: Tx, actorAccountId: string, inpu
     const parsed = ProjectSourcesReadInputV1Schema.safeParse(input);
     if (!parsed.success) return invalid();
     const loaded = await resolveProjectSourceAccessInTx(tx, actorAccountId, parsed.data.sourceId, authentication);
-    return loaded.ok ? { ok: true, source: loaded.source, canManage: loaded.canManage } : loaded.failure;
+    if (!loaded.ok) return loaded.failure;
+    const defaults = await readProjectSourceSessionDefaultsInTx(tx, loaded.source.id);
+    return defaults.ok ? { ...defaults, source: loaded.source, canManage: loaded.canManage,
+        canManageSessionDefaults: loaded.canManageOwner } : defaults;
 }
 
 /** Source writes and key preparation admit the same prospective audience and owner. */
@@ -501,8 +485,15 @@ export async function updateProjectSourceInTx(tx: Tx, actorAccountId: string, in
     if (!loaded.ok) return loaded.failure;
     if (!loaded.canManage) return denied();
     const source = loaded.source;
-    if (source.revision !== parsed.data.expectedRevision) return { ok: false, error: 'source_conflict', current: source };
     const patch = parsed.data.patch;
+    // Project Session defaults belong to the Source owner side (OWNER-RULINGS ~19:15Z); audience admins only read them.
+    if (patch.sessionDefaults && !loaded.canManageOwner) return denied();
+    // Admitted writers only serialize first leaf insertion; the leaf CAS re-reads under this lock.
+    if (patch.sessionDefaults) await lockProjectSourceForDefaultsInTx(tx, source.id);
+    const metadataEdit = !patch.sessionDefaults || Object.keys(patch).some(key => key !== 'sessionDefaults');
+    if (metadataEdit && source.revision !== parsed.data.expectedRevision) return { ok: false, error: 'source_conflict', current: source };
+    const previousDefaults = patch.sessionDefaults ? null : await readProjectSourceSessionDefaultsInTx(tx, source.id);
+    if (previousDefaults && !previousDefaults.ok) return previousDefaults;
     const publication = await prepareProjectSourcePublicationInTx(tx, actorAccountId, loaded, patch, authentication);
     if (!publication.ok) return publication;
     const next: ProjectSourceV1 = { ...publication.source, ...(patch.name === undefined ? {} : { name: patch.name }) };
@@ -515,7 +506,17 @@ export async function updateProjectSourceInTx(tx: Tx, actorAccountId: string, in
         next.attachments = applied.attachments;
     }
     const changed = !isDeepStrictEqual(source, next);
-    if (!changed) return { ok: true, source, canManage: loaded.canManage };
+    const defaults = patch.sessionDefaults ? await prepareProjectSourceSessionDefaultsInTx(tx, {
+        sourceId: source.id, patch: patch.sessionDefaults,
+        audience: async () => (await resolveProjectSourceAudiencesInTx(tx, [next]))[0] ?? [],
+    }) : null;
+    if (defaults && !defaults.ok) return defaults;
+    if (!changed) {
+        if (defaults?.ok && defaults.write) { await defaults.write(); await publishInTx(tx, [source]); }
+        const leaf = defaults?.ok ? { ok: true as const, sessionDefaults: defaults.sessionDefaults }
+            : previousDefaults!;
+        return leaf.ok ? { ...leaf, source, canManage: loaded.canManage, canManageSessionDefaults: loaded.canManageOwner } : leaf;
+    }
     const nextOwner = sourceOwner(next);
     const ownerChanged = !isDeepStrictEqual(loaded.owner, nextOwner);
     if (ownerChanged
@@ -537,8 +538,12 @@ export async function updateProjectSourceInTx(tx: Tx, actorAccountId: string, in
         await retireDeploymentPreviewsForSourceReplacementInTx(tx, { projectSourceId: source.id });
     }
     if (changed) { next.revision++; await publishInTx(tx, [source, next]); }
+    if (defaults?.ok && defaults.write) await defaults.write();
     const admission = await resolveProjectSourceAdmissionInTx(tx, actorAccountId, next.audience, authentication, [nextOwner]);
-    return { ok: true, source: next, canManage: admission.canManage(nextOwner, next.audience) };
+    const leaf = defaults?.ok ? { ok: true as const, sessionDefaults: defaults.sessionDefaults }
+        : previousDefaults!;
+    return leaf.ok ? { ...leaf, source: next, canManage: admission.canManage(nextOwner, next.audience),
+        canManageSessionDefaults: admission.canManageOwner(nextOwner) } : leaf;
 }
 
 /** Tombstone metadata uniformly; retained Environment and receipt references keep their identity. */
@@ -560,29 +565,30 @@ export async function deleteProjectSourceInTx(tx: Tx, actorAccountId: string, in
 }
 
 /** Search and coverage are over admitted metadata, not an unfiltered database page. */
-export async function listProjectSourcesInTx(tx: Tx, actorAccountId: string, input: unknown, authentication: Authentication = {}): Promise<Extract<ProjectSourcesListOutputV1, { ok: true }> | (ProjectSourcesFailureV1 & { error: 'source_invalid' | 'source_unavailable' })> {
+export async function listProjectSourcesInTx(tx: Tx, actorAccountId: string, input: unknown, authentication: Authentication = {}): Promise<ProjectSourcesListOutputV1> {
     const parsed = ProjectSourcesListInputV1Schema.safeParse(input);
     if (!parsed.success) return invalid();
-    const rows = await tx.projectSource.findMany({ orderBy: { id: 'asc' }, where: { deletedAt: null,
-        ...(parsed.data.cursor ? { id: { gt: parsed.data.cursor } } : {}) } });
-    const parsedRows = rows.map(row => ({ row, owner: ownerFromRow(row) }));
-    const admission = await resolveProjectSourceAdmissionInTx(tx, actorAccountId, rows.flatMap(row => {
-        const audience = storedAudience.safeParse(row.audience);
-        return audience.success ? audience.data : [];
-    }), authentication, parsedRows.flatMap(({ owner }) => owner.success ? [owner.data] : []));
-    if (!admission.active) return unavailable();
-    const admitted: ProjectSourceV1[] = [];
-    for (const { row, owner } of parsedRows) {
-        const audience = storedAudience.safeParse(row.audience);
-        if (!admission.canRead(owner.success ? owner.data : undefined, audience.success ? audience.data : [])) continue;
+    const scope = await resolveProjectSourceQueryScopeInTx(tx, { actorAccountId, sharedWithTeamId: parsed.data.sharedWithTeamId, authentication });
+    if (!scope.ok) return scope;
+    const table = prismaRuntime.raw(getDbProviderFromEnv(process.env, 'postgres') === 'mysql' ? '`ProjectSource`' : '"ProjectSource"');
+    const limit = parsed.data.limit === undefined ? prismaRuntime.empty : prismaRuntime.sql`LIMIT ${parsed.data.limit + 1}`;
+    const candidates = await tx.$queryRaw<Readonly<{ id: string }>[]>(prismaRuntime.sql`SELECT s.id FROM ${table} s
+        WHERE ${scope.where} AND ${projectSourceListFiltersSql(parsed.data)} ORDER BY s.id ASC ${limit}`);
+    const complete = parsed.data.limit === undefined || candidates.length <= parsed.data.limit;
+    const ids = (complete ? candidates : candidates.slice(0, parsed.data.limit)).map(row => row.id);
+    const rows = ids.length ? await tx.projectSource.findMany({ where: { id: { in: ids } }, orderBy: { id: 'asc' } }) : [];
+    const sources: ProjectSourceListItemV1[] = [];
+    for (const row of rows) {
         const source = sourceFromRow(row);
         if (!source.success) return invalid();
-        admitted.push(source.data);
+        const teamId = parsed.data.sharedWithTeamId;
+        const principals = [sourceOwner(source.data), ...source.data.audience.map(grant => grant.principal)];
+        const sharedWithTeamScope = teamId ? resourceTeamShareScopeV1({
+            team: principals.some(principal => principal.kind === 'team' && principal.teamId === teamId),
+            group: principals.some(principal => principal.kind === 'group' && principal.teamId === teamId
+                && scope.sharedWithTeamGroupIds.has(principal.groupId)),
+        }) : undefined;
+        sources.push({ ...source.data, ...(sharedWithTeamScope ? { sharedWithTeamScope } : {}) });
     }
-    const query = parsed.data.query?.trim().toLocaleLowerCase();
-    const sources = admitted.filter(source => (!parsed.data.audience || source.audience.some(grant => isDeepStrictEqual(grant.principal, parsed.data.audience)))
-        && (!query || [source.name, source.repository?.repository.nameWithOwner, source.defaultRef, source.subdir].some(value => value?.toLocaleLowerCase().includes(query))));
-    const page = parsed.data.limit === undefined ? sources : sources.slice(0, parsed.data.limit);
-    const complete = page.length === sources.length;
-    return { ok: true, sources: page, coverage: { complete, nextCursor: complete ? null : page.at(-1)?.id ?? null } };
+    return { ok: true, sources, coverage: { complete, nextCursor: complete ? null : sources.at(-1)?.id ?? null } };
 }

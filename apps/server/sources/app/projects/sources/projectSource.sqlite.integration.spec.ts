@@ -18,7 +18,7 @@ import { createDbMaintenanceClient, db } from '@/storage/db';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
-import { createProjectSourceInTx, readProjectSourceInTx, updateProjectSourceInTx, deleteProjectSourceInTx, listProjectSourcesInTx } from './projectSourceService';
+import { createProjectSourceInTx, readProjectSourceInTx, updateProjectSourceInTx, deleteProjectSourceInTx, listProjectSourcesInTx, resolveProjectSourceAudiencesInTx } from './projectSourceService';
 import { projectSourceRoutes } from '@/app/api/routes/projects/projectSourceRoutes';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
@@ -327,10 +327,57 @@ describe('Source catalog real SQLite owner', () => {
         await db.teamMembership.create({ data: { teamId: team.id, accountId: administrator.id, role: 'admin' } });
         const changed = await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId: grouped.id, expectedRevision: grouped.revision, patch: { name: 'Group source update' } }));
         expect(changed).toMatchObject({ ok: true });
-        expect(await inTx(tx => readProjectSourceInTx(tx, administrator.id, { serverId, sourceId: grouped.id }))).toMatchObject({ ok: true, canManage: true });
-        expect(await db.accountChange.count({ where: { accountId: administrator.id, entityId: PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } })).toBe(1);
+        expect(await inTx(tx => readProjectSourceInTx(tx, administrator.id, { serverId, sourceId: grouped.id })))
+            .toEqual({ ok: false, error: 'source_unavailable' });
+        // Change notices follow the one reader census, like read admission (SEC-L12-1116-TS-F N1).
+        expect(await db.accountChange.count({ where: { accountId: administrator.id, entityId: PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } })).toBe(0);
         await db.teamGroup.update({ where: { id: group.id }, data: { archivedAt: new Date() } });
         expect(await inTx(tx => readProjectSourceInTx(tx, member.id, { serverId, sourceId: grouped.id }))).toEqual({ ok: false, error: 'source_unavailable' });
+    });
+    it('keeps one Source audience census equal to read admission: Group readers only, never outside Team admins', async () => {
+        const [owner, administrator, member, guest] = await Promise.all([account(), account(), account(), account()]);
+        const team = await db.team.create({ data: { name: 'Defaults audience' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: administrator.id, role: 'admin' } });
+        const memberships = await Promise.all([member, guest].map(value => db.teamMembership.create({
+            data: { teamId: team.id, accountId: value.id, role: 'member' },
+        })));
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Defaults readers') } });
+        await Promise.all(memberships.map(value => db.teamGroupMembership.create({ data: {
+            teamId: team.id, teamGroupId: group.id, teamMembershipId: value.id, nativeContribution: true,
+        } })));
+        await db.teamMembership.update({ where: { id: memberships[1].id }, data: { role: 'guest' } });
+        const row = await source(owner.id, [{ principal: { kind: 'group', teamId: team.id, groupId: group.id }, level: 'view' }]);
+        const selected = { serverId, sourceId: row.id };
+        expect(await inTx(tx => readProjectSourceInTx(tx, administrator.id, selected)))
+            .toEqual({ ok: false, error: 'source_unavailable' });
+        expect(await inTx(tx => readProjectSourceInTx(tx, guest.id, selected))).toMatchObject({ ok: true });
+        const [readers] = await inTx(tx => resolveProjectSourceAudiencesInTx(tx, [row]));
+        expect(new Set(readers)).toEqual(new Set([owner.id, member.id, guest.id]));
+    });
+    it('lets only the Source owner side write project Session defaults; an audience Team admin reads them', async () => {
+        const [ownerAdmin, audienceAdmin] = await Promise.all([account(), account()]);
+        const [ownerTeam, audienceTeam] = await Promise.all([db.team.create({ data: { name: 'Defaults owner' } }),
+            db.team.create({ data: { name: 'Defaults audience' } })]);
+        await db.teamMembership.create({ data: { teamId: ownerTeam.id, accountId: ownerAdmin.id, role: 'owner' } });
+        await db.teamMembership.create({ data: { teamId: audienceTeam.id, accountId: ownerAdmin.id, role: 'owner' } });
+        await db.teamMembership.create({ data: { teamId: audienceTeam.id, accountId: audienceAdmin.id, role: 'admin' } });
+        const created = await inTx(tx => createProjectSourceInTx(tx, ownerAdmin.id, { serverId, requestKey: crypto.randomUUID(),
+            name: 'Team defaults', owner: { kind: 'team', teamId: ownerTeam.id },
+            audience: [{ principal: { kind: 'team', teamId: audienceTeam.id }, level: 'view' }] }));
+        if (!created.ok) throw new Error(created.error);
+        const selected = { serverId, sourceId: created.source.id };
+        const defaults = { approvalProfileId: null };
+        const saved = await inTx(tx => updateProjectSourceInTx(tx, ownerAdmin.id, { ...selected,
+            expectedRevision: created.source.revision, patch: { sessionDefaults: { expectedRevision: 'absent', defaults } } }));
+        expect(saved).toMatchObject({ ok: true, canManageSessionDefaults: true, sessionDefaults: { revision: 1, defaults } });
+        expect(await inTx(tx => readProjectSourceInTx(tx, audienceAdmin.id, selected))).toMatchObject({
+            ok: true, canManage: true, canManageSessionDefaults: false, sessionDefaults: { revision: 1, defaults } });
+        expect(await inTx(tx => updateProjectSourceInTx(tx, audienceAdmin.id, { ...selected,
+            expectedRevision: created.source.revision, patch: { sessionDefaults: { expectedRevision: 1, defaults: null } } })))
+            .toEqual({ ok: false, error: 'source_access_denied' });
+        expect(await db.projectSourceSessionDefaults.findUnique({ where: { sourceId: created.source.id } }))
+            .toMatchObject({ revision: 1, defaults });
     });
     it('keeps overlapping direct and Team access independent and pages only authorized matching metadata', async () => {
         const [owner, member, outsider] = await Promise.all([account(), account(), account()]);
@@ -433,6 +480,28 @@ describe('Source catalog real SQLite owner', () => {
             .toEqual({ ok: false, error: 'artifact_not_found' });
         expect(await inTx(tx => readArtifactHeaderForCallerInTx(tx, { actorAccountId: reader.id, artifactId: artifact.id })))
             .toEqual({ ok: false, error: 'artifact_not_found' });
+    });
+    it('wraps Source setup keys only for admitted readers, never an outside-Group Team admin', async () => {
+        const [publisher, administrator, member] = await Promise.all([0, 1, 2].map(() =>
+            db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } })));
+        const team = await db.team.create({ data: { name: 'Recipient census' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: publisher.id, role: 'owner' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: administrator.id, role: 'admin' } });
+        const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'member' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Setup readers') } });
+        await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true } });
+        const row = await source(publisher.id, [{ principal: { kind: 'group', teamId: team.id, groupId: group.id }, level: 'view' }]);
+        const artifact = await db.artifact.create({ data: { id: crypto.randomUUID(), accountId: publisher.id,
+            kind: PROJECT_SETUP_ARTIFACT_STORED_KIND_V1, header: new Uint8Array([1]), body: new Uint8Array([2]),
+            dataEncryptionKey: new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey: tweetnacl.randomBytes(32),
+                recipientPublicKey: publisher.contentPublicKey!, randomBytes: tweetnacl.randomBytes })),
+            headerVersion: 1, bodyVersion: 1 } });
+        const { readArtifactRecipientCensusInTx } = await import('@/app/artifacts/artifactAccessService');
+        const census = await inTx(tx => readArtifactRecipientCensusInTx(tx, { actorAccountId: publisher.id, artifactId: artifact.id, projectSourceId: row.id }));
+        if (!census.ok) throw new Error(census.error);
+        const recipients = census.value.recipients.map(value => value.recipientAccountId);
+        expect(recipients).toContain(member.id);
+        expect(recipients).not.toContain(administrator.id);
     });
     it('prepares setup recipients before attachment without grants and keeps E2EE reads key-bound', async () => {
         const publisher = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });

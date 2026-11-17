@@ -52,12 +52,12 @@ export async function listProjectAccountRowsInTx(tx: Tx, input: Readonly<{ accou
         // One services row per Home: its key ends at the Home id.
         if (kind === 'services-organization') return input.serverId
             ? buildProjectAccountRowPhysicalKeyV1({ kind, serverId: input.serverId }) : `${PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1}services/`;
-        const family = kind === 'workspace-ref' ? 'ref' : 'organization';
+        const family = kind === 'workspace-ref' ? 'ref' : kind === 'project-session-defaults' ? 'session-defaults' : 'organization';
         return `${PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1}${family}/${input.serverId ? `${encodeURIComponent(input.serverId)}/` : ''}`;
     });
     const result = await listReservedAccountScopedKvRowsInTx(tx, {
         accountId: input.accountId, physicalPrefix: PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1, domain: projectAccountRowStorageDomain(),
-        ...(input.kinds !== undefined || input.serverId !== undefined ? { physicalPrefixes } : {}),
+        physicalPrefixes,
     });
     if (result.status !== 'listed') return result;
     const rows: ProjectAccountRowV1[] = [];

@@ -1,10 +1,11 @@
 import type { ScmHostingRepositorySummary } from '../../scm/repositoryProvisioning.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { ProjectSetupContentRevisionV1Schema } from '../projectSetupV1.js';
+import { ProjectSessionDefaultsPatchV1Schema, ProjectSessionDefaultsLeafV1Schema } from '../projectSessionDefaultsStorageV1.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { ScmCredentialFreeRepositorySelectorV1Schema, ScmRepositoryContainedSubdirV1Schema } from '../../scm/repositoryClone.js';
 import { PrincipalRefV1Schema, TeamPrincipalRefV1Schema } from '../../teams/principal.js';
+import { ResourceTeamShareScopeV1Schema } from '../../teams/resourceGrantAccessV1.js';
 import { ProjectSourceIdentityV1Schema, ProjectSourceOwnerV1Schema } from './projectSourceIdentityV1.js';
 export { ProjectSourceOwnerV1Schema, type ProjectSourceOwnerV1 } from './projectSourceIdentityV1.js';
 import { PromptArtifactRefV1Schema, PromptDocArtifactRefV1Schema } from '../../prompts/library/promptArtifactRefsV1.js';
@@ -15,6 +16,9 @@ import { SharedSavedSecretReferenceSelectionV1Schema } from '../../account/setti
 import { DeploymentArtifactContentReferenceV1Schema } from '../../deployments/deploymentArtifactContentReferenceV1.js';
 import { ArtifactAccessGrantMutationResponseV1Schema } from '../../artifacts/artifactAccessV1.js';
 import { MachineAccessGrantV1Schema, MachineAccessReadinessV1Schema } from '../../machines/machineAccessV1.js';
+import { ProjectSetupContentRevisionV1Schema } from '../projectSetupV1.js';
+import { ProjectSourcesReadInputV1Schema, type ProjectSourcesReadInputV1 } from './projectSourceRefV1.js';
+export { ProjectSourcesReadInputV1Schema, type ProjectSourcesReadInputV1 } from './projectSourceRefV1.js';
 
 export const PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'projects:sources' as const;
 
@@ -61,10 +65,13 @@ export const ProjectSourceV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type ProjectSourceV1 = z.infer<typeof ProjectSourceV1Schema>;
 export const ProjectSourceV1StoredSchema = createStoredReadSchema(ProjectSourceV1Schema);
+export const ProjectSourceListItemV1Schema = lazyZodSchema(() => z.extend(ProjectSourceV1Schema, {
+  sharedWithTeamScope: z.optional(ResourceTeamShareScopeV1Schema),
+}));
+export type ProjectSourceListItemV1 = z.infer<typeof ProjectSourceListItemV1Schema>;
 const id = z.string().check(z.minLength(1));
 const revision = z.number().check(z.int(), z.positive());
-export const ProjectSourcesListInputV1Schema = lazyZodSchema(() => z.strictObject({ serverId: id, query: z.optional(z.string()), audience: z.optional(PrincipalRefV1Schema), cursor: z.optional(id), limit: z.optional(z.number().check(z.int(), z.positive())) }));
-export const ProjectSourcesReadInputV1Schema = lazyZodSchema(() => z.strictObject({ serverId: id, sourceId: id }));
+export const ProjectSourcesListInputV1Schema = lazyZodSchema(() => z.strictObject({ serverId: id, query: z.optional(z.string()), audience: z.optional(PrincipalRefV1Schema), sharedWithTeamId: z.optional(id), cursor: z.optional(id), limit: z.optional(z.number().check(z.int(), z.positive())) }));
 export const ProjectSourcesCreateInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.pick(ProjectSourceV1Schema, { name: true, repository: true, owner: true, defaultRef: true, subdir: true }), { serverId: id, requestKey: id, audience: z.optional(z.array(ProjectSourceGrantV1Schema)) })));
 export const ProjectSourceAttachmentIntentV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ kind: z.literal('attach'), attachment: SourceAttachmentAuthoringV1Schema }),
@@ -78,6 +85,7 @@ export const ProjectSourceAttachmentIntentV1Schema = lazyZodSchema(() => z.union
 ]));
 export type ProjectSourceAttachmentIntentV1 = z.infer<typeof ProjectSourceAttachmentIntentV1Schema>;
 export const ProjectSourcePatchV1Schema = lazyZodSchema(() => z.strictObject({
+  sessionDefaults: z.optional(ProjectSessionDefaultsPatchV1Schema),
   name: z.optional(ProjectSourceV1Schema.shape.name), repository: z.optional(z.nullable(ProjectSourceRepositorySelectorV1Schema)),
   owner: z.optional(ProjectSourceOwnerV1Schema),
   defaultRef: z.optional(z.nullable(ProjectSourceV1Schema.shape.defaultRef._zod.def.innerType)),
@@ -92,16 +100,18 @@ export const ProjectSourcesDeleteInputV1Schema = lazyZodSchema(() => z.strictObj
 export const ProjectSourcesMoveToTeamInputV1Schema = lazyZodSchema(() => z.strictObject({
   serverId: id, sourceId: id, expectedRevision: revision, teamId: id, requestKey: id,
 }));
-export const ProjectSourcesFailureV1Schema = lazyZodSchema(() => z.strictObject({ ok: z.literal(false), error: z.enum(['source_unavailable', 'source_access_denied', 'source_invalid', 'source_conflict', 'artifact_unavailable', 'artifact_wrong_kind', 'source_backend_unavailable']), effectAttempted: z.optional(z.boolean()), current: z.optional(ProjectSourceV1Schema) }));
+export const ProjectSourcesFailureV1Schema = lazyZodSchema(() => z.strictObject({ ok: z.literal(false), error: z.enum(['source_unavailable', 'source_access_denied', 'source_invalid', 'source_conflict', 'artifact_unavailable', 'artifact_wrong_kind', 'source_backend_unavailable', 'managed_default_machine_not_member_usable']), effectAttempted: z.optional(z.boolean()), current: z.optional(ProjectSourceV1Schema) }));
 export type ProjectSourcesFailureV1 = z.infer<typeof ProjectSourcesFailureV1Schema>;
-export const ProjectSourcesReadOutputV1Schema = lazyZodSchema(() => z.union([z.strictObject({ ok: z.literal(true), source: ProjectSourceV1Schema, canManage: z.boolean() }), ProjectSourcesFailureV1Schema]));
+export const ProjectSourcesReadOutputV1Schema = lazyZodSchema(() => z.union([z.strictObject({ ok: z.literal(true), source: ProjectSourceV1Schema, canManage: z.boolean(),
+  /** Source owner side only (the Account owner, or the owning Team's settings managers); audience admins never write defaults. Absent = no authority. */
+  canManageSessionDefaults: z.optional(z.boolean()), sessionDefaults: z.optional(ProjectSessionDefaultsLeafV1Schema) }), ProjectSourcesFailureV1Schema]));
 export const ProjectSourcesCreateOutputV1Schema = ProjectSourcesReadOutputV1Schema;
 export const ProjectSourcesUpdateOutputV1Schema = ProjectSourcesReadOutputV1Schema;
 export const ProjectSourcesDeleteOutputV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ok: z.literal(true), sourceId: id, revision }),
   ProjectSourcesFailureV1Schema,
 ]));
-export const ProjectSourcesListOutputV1Schema = lazyZodSchema(() => z.union([z.strictObject({ ok: z.literal(true), sources: z.array(ProjectSourceV1Schema), coverage: z.strictObject({ complete: z.boolean(), nextCursor: z.nullable(id) }) }), ProjectSourcesFailureV1Schema]));
+export const ProjectSourcesListOutputV1Schema = lazyZodSchema(() => z.union([z.strictObject({ ok: z.literal(true), sources: z.array(ProjectSourceListItemV1Schema), coverage: z.strictObject({ complete: z.boolean(), nextCursor: z.nullable(id) }) }), ProjectSourcesFailureV1Schema]));
 // Existing Action-operation addresses are observations, never transfer custody.
 const ProjectSourceMoveChildOperationV1Schema = lazyZodSchema(() => z.strictObject({
   serverId: id, machineId: id, operationId: ActionOperationIdentifierV1Schema,
@@ -129,7 +139,6 @@ export const ProjectSourcesMoveToTeamOutputV1Schema = lazyZodSchema(() => z.unio
   ProjectSourcesFailureV1Schema,
 ]));
 export type ProjectSourcesListInputV1 = z.infer<typeof ProjectSourcesListInputV1Schema>;
-export type ProjectSourcesReadInputV1 = z.infer<typeof ProjectSourcesReadInputV1Schema>;
 export type ProjectSourcesCreateInputV1 = z.infer<typeof ProjectSourcesCreateInputV1Schema>;
 export type ProjectSourcesUpdateInputV1 = z.infer<typeof ProjectSourcesUpdateInputV1Schema>;
 export type ProjectSourcesDeleteInputV1 = z.infer<typeof ProjectSourcesDeleteInputV1Schema>;
