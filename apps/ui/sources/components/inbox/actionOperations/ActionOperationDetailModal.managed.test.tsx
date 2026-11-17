@@ -7,10 +7,11 @@ import {
 } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { act } from 'react-test-renderer';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { renderAccountScreen } from '@/dev/testkit/render/renderAccountScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import type { ActionOperationSnapshotV1, ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
 
 // The managed Home's HTTP answers are the external boundary; the operation store, naming owner and modal are real.
 installApprovalCommonModuleMocks();
@@ -117,6 +118,40 @@ describe('Action details for a managed power operation', () => {
   afterEach(() => {
     standardCleanup();
     actionOperationStore.reset();
+  });
+
+  it.each([
+    { kind: 'ssh.trustHost', message: 'Review the new guest host key', host: 'studio.example', keyType: 'ssh-ed25519',
+      fingerprint: 'SHA256:studio', existingFingerprint: null },
+    { kind: 'ssh.replaceHostKey', message: 'Review the changed guest host key', host: 'studio.example', keyType: 'ssh-ed25519',
+      fingerprint: 'SHA256:replacement', existingFingerprint: 'SHA256:previous' },
+    { kind: 'auth.approveRemoteProvisioning', message: 'Approve signing this guest into the Account' },
+    { kind: 'daemon.replaceRemoteBackgroundServices', message: 'Replace the guest background services' },
+    { kind: 'administrator.establish', message: 'Set the guest administrator password', promptId: 'admin-password',
+      administratorUsername: 'studio.admin' },
+  ] satisfies ManagedMachineBootstrapPromptV1[])('shows the current managed installer question in Inbox without granting answer authority ($kind)', async prompt => {
+    const { home, machine } = await seedManagedPowerOperation({
+      actionId: 'machines.managed.acquire',
+      domainRef: { kind: 'managedMachine', id: 'managed-guest',
+        bootstrapTask: { id: 'installer-task', taskKind: 'remote.ssh.bootstrapMachine.v1', prompt } },
+    });
+    const screen = await renderScreen(<ActionOperationDetailModal serverId={home} operationId="power-operation"
+      onClose={vi.fn()} setChrome={vi.fn()} />);
+    await flushHookEffects();
+    expect(screen.getTextContent()).toContain(prompt.message);
+    expect(screen.findByTestId('action-operation-managed-question')).not.toBeNull();
+    expect(screen.findByTestId('action-operation-ssh-review')).toBeNull();
+    expect(screen.findByTestId('managed-machine.installation-prompt-approve')).toBeNull();
+
+    const snapshot = [...actionOperationStore.getSnapshot().operationsByKey.values()][0]!.snapshot;
+    await act(async () => actionOperationStore.mergeSnapshots({ serverId: home, snapshots: [{ ...snapshot,
+      revision: snapshot.revision + 1, state: 'succeeded', settledAt: 1200,
+      domainRef: { kind: 'managedMachine', id: machine.id, bootstrapTask: { id: 'installer-task',
+        taskKind: 'remote.ssh.bootstrapMachine.v1', prompt } },
+    }] }));
+    expect(screen.findByTestId('action-operation-managed-question')).toBeNull();
+    expect(screen.getTextContent()).not.toContain(prompt.message);
+    await screen.unmount();
   });
 
   it('shares one demanded managed-resource read across operation rows, details and a Home refresh', async () => {
@@ -228,7 +263,7 @@ describe('Action details for a managed power operation', () => {
         },
       ],
     });
-    const failed = await renderScreen(
+    const failed = await renderAccountScreen(
       <ActionOperationDetailModal
         serverId={home}
         operationId="power-failed"
@@ -257,7 +292,7 @@ describe('Action details for a managed power operation', () => {
       settledAt: 2_000,
       error: { errorCode, error },
     });
-    const screen = await renderScreen(
+    const screen = await renderAccountScreen(
       <ActionOperationDetailModal
         serverId={home}
         operationId="power-operation"

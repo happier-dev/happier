@@ -69,6 +69,7 @@ import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRec
 import { ActionOperationSudoQuestion } from './ActionOperationSudoQuestion';
 import { ActionOperationSshQuestion } from './ActionOperationSshQuestion';
 import { readActionOperationSudoPrompt } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { readManagedInstallationPromptSnapshot } from '@/sync/domains/actionOperations/managedMachineOperation';
 
 function translateDetailField(field: ActionOperationDetailField): string {
   switch (field.id) {
@@ -279,6 +280,7 @@ export const ActionOperationDetailModal = React.memo(
       readActionOperationDestinationSessionId(snapshot);
     const terminal = isActionOperationTerminal(snapshot.state);
     const sudoPrompt = readActionOperationSudoPrompt(snapshot);
+    const managedPrompt = readManagedInstallationPromptSnapshot(snapshot);
     const isolationUnknown = isAgentIsolationOutcomeUnknown(operation);
     // The receipt only states what happened, as one quiet line; the CHECK's row beneath is the one status
     // (checking, can't check yet, still applying, nothing left, or what to apply again).
@@ -425,6 +427,12 @@ export const ActionOperationDetailModal = React.memo(
         ) : null}
         {snapshot.domainRef?.kind === 'systemTask' && snapshot.domainRef.prompt ? (
           <ActionOperationSshQuestion key={snapshot.domainRef.id} operation={operation} />
+        ) : null}
+        {managedPrompt ? (
+          <ItemGroup>
+            <Item testID="action-operation-managed-question" mode="info" title={managedPrompt.message}
+              titleLines={0} showChevron={false} />
+          </ItemGroup>
         ) : null}
 
         <ItemGroup title={t('inbox.actionOperations.details')}>
