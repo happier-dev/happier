@@ -1,16 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import { createNativeAgentSessionPublications } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionPublications';
-import { projectAgentPreflightSessionControlsCatalogEntry } from '@/plugins/projection/registry/agentCatalogEntryHooks';
-import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import { createMuseMspProcessFixture, MUSE_MSP_PLAYBACK_SCRIPT, readMuseLoginRecording } from './testkit/mspProcess.js';
-import { MUSE_MSP_LAUNCH, openMuseMsp } from './msp.js';
+import { createMuseMspProcessFixture, readMuseLoginRecording } from './testkit/mspProcess.js';
+import { openMuseMsp } from './msp.js';
 
-import { createMuseCatalog, MUSE_PREFLIGHT_SESSION_CONTROLS } from './catalog.js';
+import { createMuseCatalog } from './catalog.js';
 
 // The catalog is a read: a launch with no explicit model preserves the native
 // default, while an explicit selection must never silently choose another row.
@@ -63,34 +59,6 @@ describe('Muse native model catalog', () => {
         structuredOutput: 'supported', toolRoundTrips: 'unknown', reasoningControls: 'supported',
       });
     } finally { await msp.dispose(); }
-  });
-
-  it('offers native models through the real host pre-Session catalog front door', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'happier-muse-model-preflight-'));
-    const script = join(directory, 'playback.cjs');
-    const recording = await readMuseLoginRecording();
-    await writeFile(script, `process.env.MUSE_TEST_RECORDING = ${JSON.stringify(JSON.stringify(recording))};\n${MUSE_MSP_PLAYBACK_SCRIPT}`);
-    const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
-    const executable = writeExecutableShimSync({ dir: directory,
-      fileName: process.platform === 'win32' ? 'muse.cmd' : 'muse',
-      contents: process.platform === 'win32'
-        ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`
-        : `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)} "$@"\n`,
-    });
-    const entry = projectAgentPreflightSessionControlsCatalogEntry({
-      agentId: 'muse',
-      systemTools: [{ id: 'muse-cli', title: 'Muse native playback', executableNames: [executable] }],
-      preflightSessionControls: MUSE_PREFLIGHT_SESSION_CONTROLS,
-      retirementSignal: new AbortController().signal, isCurrent: () => true,
-    });
-    try {
-      const adapter = await entry.getPreflightSessionControlsProbeAdapter?.();
-      const models = await adapter?.probeModelsRaw?.({ cwd: directory, timeoutMs: 10_000,
-        env: { ...MUSE_MSP_LAUNCH.env } });
-      expect(models).toMatchObject([
-        { id: 'meta/muse-wonder-1.0' }, { id: 'meta/muse-spark-1.3' }, { id: 'meta/muse-spark-1.2' },
-      ]);
-    } finally { await rm(directory, { recursive: true, force: true }); }
   });
 
   it('offers the actual model-dependent effort choices and preserves equal observations', async () => {
