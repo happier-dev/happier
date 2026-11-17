@@ -883,7 +883,8 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
     expect(brokerOpens).toBe(0);
     expect(boundary.responseStatus).toBe(200);
     expect(boundary.responseBody).toEqual({ ok: false, error: {
-      code: 'team_credential_provider_selection_not_current', message: 'team_credential_provider_selection_not_current' } });
+      code: 'team_credential_provider_selection_not_current', message: 'team_credential_provider_selection_not_current',
+      failureCause: { phase: 'providers.team_credential.binding', errorClass: 'Error', errorCode: 'team_credential_provider_selection_not_current', httpStatus: null } } });
     expect(refused).toMatchObject({ code: 'team_credential_provider_selection_not_current' });
     expect(readSessionPreparationFailureDiagnostic(refused).originalCode).toBe('team_credential_provider_selection_not_current');
     return;
@@ -912,14 +913,26 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
     const expectedCode = metadata === 'typed non-204' ? 'session_not_active'
       : httpRefusal || metadata === 'refresh refused' ? 'broker_unavailable' : 'provider_endpoint_unavailable';
     expect(boundary.responseBody).toEqual({ ok: false,
-      error: { code: expectedCode, message: expectedCode } });
+      error: { code: expectedCode, message: expectedCode,
+        failureCause: metadata === 'socket closed' || metadata === 'refresh refused'
+          ? { phase: 'dispatch', errorClass: metadata === 'socket closed' ? 'TypeError' : 'Error', errorCode: null, httpStatus: null }
+          : { phase: 'providers.team_credential.binding', errorClass: 'Error', errorCode: expectedCode, httpStatus: null } } });
     expect(refused).toMatchObject({ code: expectedCode, message: expectedCode });
     if (httpRefusal || metadata === 'refresh refused') {
       expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: refused }))
         .toMatchObject({ source: 'team_credential', code: expectedCode });
     }
+    // e8b2b962d72/fd466f5ab91: runtime causes wrap retained Action causes;
+    // an endpoint transport failure alone is not a typed runtime cause.
     expect(readSessionPreparationFailureDiagnostic(refused)).toEqual({
-      originalCode: expectedCode, reason: expectedCode === 'provider_endpoint_unavailable' ? expectedCode : 'unknown', contextSource: 'unknown' });
+      originalCode: expectedCode, reason: expectedCode === 'provider_endpoint_unavailable' ? expectedCode : 'unknown', contextSource: 'unknown',
+      ...(httpRefusal || metadata === 'refresh refused' ? { failureCause: {
+        phase: 'authentication', code: expectedCode, failureReason: 'unknown',
+        ...(metadata === 'refresh refused' ? {} : { providerErrorCode: expectedCode }),
+        actionCause: { phase: metadata === 'refresh refused' ? 'dispatch' : 'providers.team_credential.binding',
+          errorClass: 'Error', errorCode: metadata === 'refresh refused' ? null : expectedCode, httpStatus: null },
+      } } : {}),
+    });
     return;
   }
   const opened = await openThroughRunner();
