@@ -74,7 +74,8 @@ async function mount(phone = true, referenceTargets?: readonly unknown[],
   }
   const screen = await renderScreen(<ModalProvider><ListPresentationProvider value="page"><Page /></ListPresentationProvider></ModalProvider>, {
     // Test Renderer has no layout engine; this is the platform's measured anchor.
-    createNodeMock: () => ({ offsetTop: 0, offsetHeight: 44, scrollTo() {}, getBoundingClientRect: () => new DOMRect(0, 0, 320, 44) }),
+    createNodeMock: element => element.type === 'div' ? document.createElement('div')
+      : ({ offsetTop: 0, offsetHeight: 44, scrollTo() {}, getBoundingClientRect: () => new DOMRect(0, 0, 320, 44) }),
   });
   await act(async () => refreshSavedSecretCatalog(scope, { includeMaterial: false }));
   await measureMountedCollections(screen);

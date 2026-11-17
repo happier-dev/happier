@@ -1516,8 +1516,8 @@ describe('Environment → Settings: checks, backups, previews', () => {
       const text = screen.getTextContent();
       expect(text).toContain('On for new pull requests');
       expect(text).toContain('A branch of the database');
-      // The template runs on this Environment's own runtime link: the production-Machine warning shows.
-      expect(text).toContain('Previews share the production Machine');
+      // The template runs on this Environment's own runtime link: the production-target warning shows.
+      expect(text).toContain('Previews share the production target');
       expect(screen.findByTestId(`${id}.forks`)).not.toBeNull();
       // A manager edits the template; each change saves the whole template once through environments.update.
       await screen.pressByTestIdAsync(`${id}.enabled`);
