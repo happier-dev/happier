@@ -44,4 +44,20 @@ describe('shouldDenyAgentSessionTitleToolCall', () => {
       input: {},
     })).toBe(false);
   });
+
+  it('recognizes nested title actions through the shell bridge without denying unrelated actions', () => {
+    const shellCall = (actionId: string) => ({
+      toolName: 'Bash',
+      input: { command: `happier tools call --source happier --tool action_execute --args-json '${JSON.stringify({ actionId, input: { title: 'Renamed' } })}' --json` },
+    });
+    expect(shouldDenyAgentSessionTitleToolCall({
+      settings: settingsFor('initial'), sessionMetadata: titled, ...shellCall('session.title.set'),
+    })).toBe(true);
+    expect(shouldDenyAgentSessionTitleToolCall({
+      settings: settingsFor('initial'), sessionMetadata: titled, ...shellCall('session.list'),
+    })).toBe(false);
+    expect(shouldDenyAgentSessionTitleToolCall({
+      settings: settingsFor('ongoing'), sessionMetadata: titled, ...shellCall('session.title.set'),
+    })).toBe(false);
+  });
 });

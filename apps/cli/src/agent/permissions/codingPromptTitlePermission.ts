@@ -27,7 +27,9 @@ function isShellBridgeTitleCall(toolName: string, input: unknown): boolean {
   const parsed = parseHappierToolsShellBridgeCommand(command);
   if (!parsed || parsed.kind !== 'call') return false;
   if (parsed.source !== 'happier') return false;
-  return parsed.tool === 'change_title' || parsed.tool === 'session_title_set';
+  return parsed.tool === 'change_title'
+    || parsed.tool === 'session_title_set'
+    || isTitleActionExecute(parsed.tool, parsed.args);
 }
 
 export function isAgentSessionTitleToolCall(toolName: string, input: unknown): boolean {
