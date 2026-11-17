@@ -6,6 +6,7 @@ import {
   PluginActionSurfaceV2Schema,
 } from '../actions/vocabulary.js';
 import {
+  admitCanonicalProtocolComposableSchema,
   rehydrateCanonicalProtocolComposableSchema,
   cloneStrictPluginJsonValue,
   type ProtocolComposableSchema,
@@ -162,41 +163,50 @@ export type RehydratedPluginContributionPointSemanticsV1 = Readonly<{
 export function rehydratePluginContributionPointSemanticsV1(
   protocol: PluginContributionPointProtocolV1,
 ): RehydratedPluginContributionPointSemanticsV1 | null {
-  const descriptor = protocol.descriptor === undefined
-    ? undefined
-    : rehydrateCanonicalProtocolComposableSchema(protocol.descriptor);
-  if (descriptor === null) return null;
+  // Validity is decided here, as admission needs it; each parser is built on its first read
+  // (most daemons never invoke most contribution points) and then kept by its owner.
+  const admitted = (schema: PluginJsonSchemaV2) => admitCanonicalProtocolComposableSchema(schema);
+  // The rehydrator owns the parser once built; the admitted document is immutable, so it
+  // always rehydrates to the same parser.
+  const parserOf = (document: PluginJsonSchemaV2) => () => {
+    const parser = rehydrateCanonicalProtocolComposableSchema(document);
+    if (!parser) throw new Error('An admitted canonical contribution schema no longer rehydrates');
+    return parser;
+  };
+  const withParser = <T extends object>(target: T, key: string, document: PluginJsonSchemaV2): T => {
+    Object.defineProperty(target, key, { get: parserOf(document), enumerable: true, configurable: false });
+    return target;
+  };
+
+  const descriptorDocument = protocol.descriptor === undefined ? undefined : admitted(protocol.descriptor);
+  if (descriptorDocument === null) return null;
 
   const operations: RehydratedPluginContributionPointOperationV1[] = [];
   for (const role of Object.keys(protocol.operations).sort()) {
     const operation = protocol.operations[role]!;
-    const input = operation.input.kind === 'contributorDefined'
+    const inputDocument = operation.input.kind === 'contributorDefined' ? undefined : admitted(operation.input.schema);
+    const resultDocument = admitted(operation.resultSchema);
+    if (inputDocument === null || resultDocument === null) return null;
+    const input = inputDocument === undefined
       ? Object.freeze({ kind: 'contributorDefined' as const })
-      : (() => {
-        const schema = rehydrateCanonicalProtocolComposableSchema(operation.input.schema);
-        return schema === null
-          ? null
-          : Object.freeze({ kind: 'protocolDefined' as const, schema });
-      })();
-    const resultSchema = rehydrateCanonicalProtocolComposableSchema(operation.resultSchema);
-    if (input === null || resultSchema === null) return null;
-    operations.push(Object.freeze({ role, input, resultSchema }));
+      : Object.freeze(withParser({ kind: 'protocolDefined' as const }, 'schema', inputDocument));
+    operations.push(Object.freeze(withParser({ role, input }, 'resultSchema', resultDocument)) as RehydratedPluginContributionPointOperationV1);
   }
 
   const surfaces: RehydratedPluginContributionPointSurfaceV1[] = [];
   for (const role of Object.keys(protocol.surfaces ?? {}).sort()) {
     const surface = protocol.surfaces?.[role];
     if (!surface) return null;
-    const inputSchema = rehydrateCanonicalProtocolComposableSchema(surface.inputSchema);
-    if (inputSchema === null) return null;
-    surfaces.push(Object.freeze({ role, inputSchema, presentation: surface.presentation }));
+    const inputDocument = admitted(surface.inputSchema);
+    if (inputDocument === null) return null;
+    surfaces.push(Object.freeze(withParser({ role, presentation: surface.presentation }, 'inputSchema', inputDocument)) as RehydratedPluginContributionPointSurfaceV1);
   }
 
-  return Object.freeze({
-    ...(descriptor === undefined ? {} : { descriptor }),
+  const semantics = descriptorDocument === undefined ? {} : withParser({}, 'descriptor', descriptorDocument);
+  return Object.freeze(Object.assign(semantics, {
     operations: Object.freeze(operations),
     surfaces: Object.freeze(surfaces),
-  });
+  })) as RehydratedPluginContributionPointSemanticsV1;
 }
 
 export const PluginContributionPointV1Schema = lazyZodSchema(() => z.strictObject({

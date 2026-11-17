@@ -1451,16 +1451,16 @@ function readCanonicalComposableSchemaProjection(
   return null;
 }
 
-const rehydratedCanonicalSchemas = new WeakMap<object, CanonicalComposableSchema | null>();
+// One entry per normalized canonical document: its retained parser, its refusal (null), or
+// VALIDATED when a validity check admitted it without keeping the parser (the first real read
+// builds and keeps it).
+const VALIDATED = Symbol('validatedCanonicalComposableSchema');
+const rehydratedCanonicalSchemas = new WeakMap<object, CanonicalComposableSchema | null | typeof VALIDATED>();
 
-/**
- * Rehydrates only the exact JSON Schema grammar emitted by this module's
- * composable-schema constructors. It is deliberately not a general JSON
- * Schema compiler: unsupported or hand-authored shapes return `null`.
- */
-export function rehydrateCanonicalProtocolComposableSchema(
+function readCanonicalComposableSchema(
   schema: object,
-): CanonicalComposableSchema | null {
+  retainParser: boolean,
+): Readonly<{ normalized: PluginJsonSchemaV2; parser: CanonicalComposableSchema | typeof VALIDATED }> | null {
   let normalized: PluginJsonSchemaV2;
   try {
     normalized = normalizePluginJsonSchema(schema);
@@ -1471,13 +1471,38 @@ export function rehydrateCanonicalProtocolComposableSchema(
   // canonical, recursively immutable snapshot owns a reusable parser tree;
   // changed declarations receive a new identity and retired ones stay weak.
   const cached = rehydratedCanonicalSchemas.get(normalized);
-  if (cached !== undefined) return cached;
+  if (cached === null) return null;
+  if (cached !== undefined && (cached !== VALIDATED || !retainParser)) return { normalized, parser: cached };
   if (normalized.$schema !== CANONICAL_PLUGIN_JSON_SCHEMA_DIALECT) return null;
   const { $schema: _dialect, ...projection } = normalized;
   const rehydrated = readCanonicalComposableSchemaProjection(projection);
-  const result = rehydrated && pluginJsonValuesEqual(rehydrated.jsonSchema, normalized)
-    ? rehydrated
-    : null;
-  rehydratedCanonicalSchemas.set(normalized, result);
-  return result;
+  if (!rehydrated || !pluginJsonValuesEqual(rehydrated.jsonSchema, normalized)) {
+    rehydratedCanonicalSchemas.set(normalized, null);
+    return null;
+  }
+  const parser = retainParser ? rehydrated : VALIDATED;
+  rehydratedCanonicalSchemas.set(normalized, parser);
+  return { normalized, parser };
+}
+
+/**
+ * Rehydrates only the exact JSON Schema grammar emitted by this module's
+ * composable-schema constructors. It is deliberately not a general JSON
+ * Schema compiler: unsupported or hand-authored shapes return `null`.
+ */
+export function rehydrateCanonicalProtocolComposableSchema(
+  schema: object,
+): CanonicalComposableSchema | null {
+  const read = readCanonicalComposableSchema(schema, true);
+  return read && read.parser !== VALIDATED ? read.parser : null;
+}
+
+/**
+ * Decides exactly what `rehydrateCanonicalProtocolComposableSchema` would, without keeping the
+ * parser: returns the immutable normalized document to rehydrate on the first real read, or
+ * null for a schema that is not this DSL's exact projection. For declarations whose parsers
+ * most processes never run (targeted contribution point semantics).
+ */
+export function admitCanonicalProtocolComposableSchema(schema: object): PluginJsonSchemaV2 | null {
+  return readCanonicalComposableSchema(schema, false)?.normalized ?? null;
 }
