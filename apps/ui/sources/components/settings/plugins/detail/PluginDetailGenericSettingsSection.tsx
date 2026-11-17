@@ -32,6 +32,7 @@ import { useMountedPluginSettingsActionAdapter } from '@/components/settings/plu
 import { projectAccountDeclaredPluginSettingsGroups } from '@/sync/domains/plugins/settings/accountDeclaredPluginSettings';
 import {
     formatPluginSettingsAdministrationRevision,
+    readScopedPluginSettingValue,
     resolveScopedPluginSettingsTarget,
     type ScopedPluginSettingsAccountTarget,
     type ScopedPluginSettingsDaemonTarget,
@@ -1005,9 +1006,10 @@ function isSameSettingValue(value: unknown, fallback: unknown): boolean {
 function countChangedSettings(
     fields: readonly PluginProjectionEditableSettingField[],
     values: Readonly<Record<string, unknown>>,
+    serverIdentityId: string | null,
 ): number {
     return fields.filter((field) => !isSameSettingValue(
-        values[field.key],
+        readScopedPluginSettingValue({ values, field: projectScopedPluginSettingsField(field), serverIdentityId }),
         field.defaultValue ?? field.defaultBooleanValue,
     )).length;
 }
@@ -1488,7 +1490,7 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
                         }),
                 ];
                 if (asDisclosures) {
-                    const changed = countChangedSettings(fields, values);
+                    const changed = countChangedSettings(fields, values, props.perActiveServerIdentityId ?? null);
                     return (
                         <PluginSettingsSectionDisclosure
                             key={group.id}

@@ -79,12 +79,12 @@ await vi.hoisted(async () => {
         },
         text: async () => {
             const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-            // Keys render as themselves. The secret-deletion prompt is the one
-            // exception: its interpolated name carries the record-owner label under
-            // test, so that single key keeps its argument.
+            // Keep the interpolated facts asserted by secret custody and section summaries.
             return createTextModuleMock({
                 translate: (key, params) => {
                     const name = (params as Readonly<{ name?: unknown }> | undefined)?.name;
+                    const count = (params as Readonly<{ count?: unknown }> | undefined)?.count;
+                    if (key === 'settingsPlugins.genericSettingsChangedCount') return `${key}:${count}`;
                     return key === 'secrets.prompts.deleteConfirm' && typeof name === 'string'
                         ? `${key}:${name}`
                         : key;
@@ -929,6 +929,65 @@ describe('PluginDetailGenericSettingsSection', () => {
         expect(header()?.props.accessibilityState).toEqual({ expanded: true });
         expect(screen.findByTestId(ENDPOINT_INPUT_ID)).toBeTruthy();
         expect(screen.findByTestId(disclosureId)).toBeTruthy();
+    });
+
+    it.each([
+        {
+            name: 'active Home override',
+            values: { opencodeServerBaseUrl: '', opencodeServerBaseUrlByServerIdV1: { srv_settings: 'https://active.example.test' } },
+            expected: 'https://active.example.test', changed: true,
+        },
+        {
+            name: 'another Home override',
+            values: { opencodeServerBaseUrl: '', opencodeServerBaseUrlByServerIdV1: { srv_other: 'https://other.example.test' } },
+            expected: '', changed: false,
+        },
+        {
+            name: 'active Home default over a changed fallback',
+            values: { opencodeServerBaseUrl: 'https://fallback.example.test', opencodeServerBaseUrlByServerIdV1: { srv_settings: '' } },
+            expected: '', changed: false,
+        },
+        {
+            name: 'fallback without an active Home override',
+            values: { opencodeServerBaseUrl: 'https://fallback.example.test', opencodeServerBaseUrlByServerIdV1: { srv_other: 'https://other.example.test' } },
+            expected: 'https://fallback.example.test', changed: true,
+        },
+    ])('summarises the bound value shown by the control: $name', async ({ values, expected, changed }) => {
+        scopedSettingsReadMock.mockResolvedValue({
+            ...readyOpenCodeAccountSettings(''),
+            snapshot: { ...readyOpenCodeAccountSettings('').snapshot, values },
+        });
+        const projection = createOpenCodeProjection();
+        const { screen } = await renderSection({
+            ...projection,
+            editableSettingsGroups: projection.editableSettingsGroups.map(group => ({
+                ...group,
+                fields: group.fields.filter(field => field.key === 'opencodeServerBaseUrl'),
+            })),
+        }, { presentation: { kind: 'disclosures', title: 'Plugin settings' } });
+        const header = screen.findAll(node => (
+            node.props?.title === 'OpenCode' && node.props?.accessibilityState !== undefined
+        ))[0];
+        expect(header?.props.detail).toBe(changed
+            ? 'settingsPlugins.genericSettingsChangedCount:1'
+            : 'settingsPlugins.genericSettingsDefaults');
+        await act(async () => { header?.props.onPress(); });
+        expect(screen.findByTestId(`settings.plugins.detail.${OPENCODE_PLUGIN_ID}.settings.${OPENCODE_GROUP_ID}.opencodeServerBaseUrl.input`)?.props.value).toBe(expected);
+    });
+
+    it('summarises direct storage aliases without counting an unset switch as a change', async () => {
+        machinePluginSettingsGetMock.mockResolvedValue(settingsResult({ storedEndpoint: 'https://alias.example.test' }, []));
+        const { screen } = await renderSection(createProjection(1, [
+            { ...SETTINGS_FIELDS[0]!, presentation: { binding: { kind: 'direct', settingId: 'storedEndpoint' } } },
+            { ...SETTINGS_FIELDS[2]!, defaultBooleanValue: undefined },
+        ]), { presentation: { kind: 'disclosures', title: 'Plugin settings' } });
+        const header = screen.findAll(node => (
+            node.props?.title === 'Acme hook settings' && node.props?.accessibilityState !== undefined
+        ))[0];
+        expect(header?.props.detail).toBe('settingsPlugins.genericSettingsChangedCount:1');
+        await act(async () => { header?.props.onPress(); });
+        expect(screen.findByTestId(ENDPOINT_INPUT_ID)?.props.value).toBe('https://alias.example.test');
+        expect(findSwitch(screen)?.props.value).toBe(false);
     });
 
     it('refreshes mounted generic and declarative Settings consumers from one shared record watch', async () => {
