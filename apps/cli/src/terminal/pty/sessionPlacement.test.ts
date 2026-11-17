@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, stat } from 'node:fs/promises';
 import { constants } from 'node:os';
 import { join } from 'node:path';
 import { Duplex } from 'node:stream';
@@ -24,7 +24,7 @@ describe.skipIf(process.platform !== 'linux' || !holderPath)('placed Session PTY
   beforeAll(async () => { directory = await mkdtemp('/tmp/session-pty-'); });
   afterAll(async () => { await rm(directory, { recursive: true, force: true }); });
 
-  it.each(['daemon', 'native-host', 'native-host-target-cwd', 'native-host-missing'] as const)('routes a %s Session terminal through its target without local fallback', async mode => {
+  it.each(['daemon', 'native-host', 'native-host-target-cwd'] as const)('routes a %s Session terminal through its target without local fallback', async mode => {
     const root = join(directory, `workspace-${mode}`);
     await mkdir(root);
     const lifetime = new AbortController();
@@ -48,7 +48,8 @@ describe.skipIf(process.platform !== 'linux' || !holderPath)('placed Session PTY
         return channel;
       },
     };
-    const agent = mode === 'native-host-missing' ? undefined
+    // A daemon machine terminal attaches beside the Session's held Agent; a native-host terminal Agent IS that held Agent.
+    const agent = mode !== 'daemon' ? undefined
       : spawnSessionHolderChild({ executablePath: holderPath!, socketPath, command: '/bin/sleep', args: ['600'], cwd: root, target });
     if (agent) await new Promise<void>((resolve, reject) => { agent.once('spawn', resolve); agent.once('error', reject); });
     registerSessionTargetWorkspace({ sessionId: 'session-target-terminal', lifetime: lifetime.signal,
@@ -79,20 +80,14 @@ describe.skipIf(process.platform !== 'linux' || !holderPath)('placed Session PTY
             expect(await service.resolve({ preference })).toMatchObject({ status: 'resolved', hostKind: 'windows_console' });
           }
           const adapter = createPtyTerminalHostAdapter({ ptyProvider: { spawn: localSpawn, prepare: localPrepare }, inputStabilityDelayMs: 0 });
-          if (!agent) {
-            await expect(adapter.createOrAttachHost({ sessionName: 'missing-primary', workingDirectory: '/host/session-workspace',
-              spawnArgv: ['/bin/sh', '-c', command], spawnEnv: {}, isolatedEnv: false }))
-              .rejects.toMatchObject({ code: 'agent_cli_target_unavailable' });
-            expect(localSpawn).not.toHaveBeenCalled();
-            expect(localPrepare).not.toHaveBeenCalled();
-            return;
-          }
           const handle = await adapter.createOrAttachHost({ sessionName: 'placed-native', workingDirectory,
             spawnArgv: ['/bin/sh', '-c', command], spawnEnv: {}, isolatedEnv: false });
           try {
             await expect.poll(async () => (await adapter.captureInputState?.(handle))?.currentInput).toContain(`TARGET:${root}:unset`);
             expect(localSpawn).not.toHaveBeenCalled();
             expect(localPrepare).not.toHaveBeenCalled();
+            // The terminal Agent is the target's held primary Agent at the placement's primary address.
+            await expect(stat(socketPath)).resolves.toBeTruthy();
           } finally { await adapter.dispose(handle); }
           await expect(adapter.createOrAttachHost({ sessionName: 'unmapped-agent', workingDirectory: '/host/session-workspace',
             spawnArgv: ['/host-only-agent'], spawnEnv: {}, isolatedEnv: true }))

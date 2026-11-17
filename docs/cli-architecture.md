@@ -7635,13 +7635,23 @@ channels and exits when the holder closes that connection.
   qualification; ordinary unplaced helpers keep their local behavior. The Exec
   owner (`spawnAuthorizedHostExecLaunchForHost`), native Agent terminals, MCP stdio
   adapters and pre-launch probes consume this decision. Workspace shells and
-  tools use the admitted holder workspace source; native Agent PTYs consume the
-  same target executable, credential and cwd mapping. A native Agent PTY needs an
-  existing primary target holder; without one, it refuses with
-  `agent_cli_target_unavailable`. Host jobs, cgroups and
+  tools use the admitted holder workspace source. Host jobs, cgroups and
   service-output wrappers cannot replace target custody. A missing holder executable is the typed launch refusal
   `session_holder_unavailable`; there is no direct-spawn path. A Windows verbatim
   command line is passed with `serve --windows-verbatim` and appended unquoted.
+- Terminal-mode Agents (the PTY terminal host, `terminal/pty/hostAdapter.ts`) are
+  held the same way: the host adapter starts the Session's primary Agent through
+  `resolveAgentSessionHolderLaunch` with `serve --pty <cols>x<rows>`, so the holder
+  runs it as the session leader of a pseudo-terminal. Its terminal output is the
+  `o` stream on the same outbox (replayed on reattach), input is `i`, and the
+  primary client resizes it with `resize {cols, rows}` (no `stream`; workspace
+  clients cannot). It stores `{role:'primary', terminal:'pty'}` as its adopt state,
+  so the daemon spares it on a runner crash, and the respawned runner's host
+  adapter adopts it through the same launch decision. On adopt the screen is
+  rebuilt by a resize nudge (one row smaller, then back on the TUI's first redraw).
+  In a placed Session this Agent is the target's primary holder at the placement's
+  primary address (not a workspace-client stream). Windows (ConPTY) is not yet held:
+  an unplaced Windows terminal Agent still runs on the in-runner node-pty provider.
 - One spawn owner: the ACP transport (`AcpBackend`) starts its Agent through
   `spawnSupervisedPluginProcess` like every Exec launch (detached POSIX group,
   stdout/stderr read by ACP and not retained by the supervisor), and Stop and

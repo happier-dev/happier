@@ -70,21 +70,17 @@ fn dimension(request: &Value, key: &str, fallback: u16) -> u16 {
     request.get(key).and_then(Value::as_u64).and_then(|value| u16::try_from(value).ok()).filter(|value| *value > 0).unwrap_or(fallback)
 }
 
+/// Starts `command` as the session leader of a new pseudo-terminal of `cols` x `rows`
+/// (its own process group, the terminal as its controlling tty). Returns the child and
+/// the master descriptor; the holder keeps no slave descriptor, so reading the master
+/// ends (EIO) once the last process holding the terminal is gone.
 #[cfg(unix)]
-pub fn spawn_pty(streams: &Arc<Streams>, request: &Value, outbox: &Arc<Outbox>) -> Result<Value, &'static str> {
-    use std::fs::File;
-    use std::io::Read;
+pub(crate) fn spawn_in_pty(command: &mut std::process::Command, cols: u16, rows: u16) -> Result<(std::process::Child, i32), &'static str> {
     use std::os::fd::{FromRawFd, OwnedFd};
     use std::os::unix::process::CommandExt;
-    use std::process::{Command, Stdio};
-    use std::thread;
+    use std::process::Stdio;
 
-    let argv = argv_of(request);
-    if argv.is_empty() {
-        return Err("invalid_request");
-    }
-    let cwd = crate::streams::resolve_cwd(request.get("cwd").and_then(Value::as_str).unwrap_or(""))?;
-    let size = libc::winsize { ws_row: dimension(request, "rows", 24), ws_col: dimension(request, "cols", 80), ws_xpixel: 0, ws_ypixel: 0 };
+    let size = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
     // posix_openpt/grantpt/unlockpt/ptsname: libc proper on glibc and musl (no libutil).
     let master = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC) };
     if master < 0 || unsafe { libc::grantpt(master) } != 0 || unsafe { libc::unlockpt(master) } != 0 {
@@ -102,15 +98,7 @@ pub fn spawn_pty(streams: &Arc<Streams>, request: &Value, outbox: &Arc<Outbox>) 
     }
     unsafe { libc::ioctl(master, libc::TIOCSWINSZ, &size) };
     let stdio = |fd: i32| -> Stdio { Stdio::from(unsafe { OwnedFd::from_raw_fd(libc::dup(fd)) }) };
-    let mut command = Command::new(&argv[0]);
-    command.args(&argv[1..]).current_dir(cwd).stdin(stdio(slave)).stdout(stdio(slave)).stderr(stdio(slave));
-    if let Some(env) = request.get("env").and_then(Value::as_object) {
-        for (key, value) in env {
-            if let Some(value) = value.as_str() {
-                command.env(key, value);
-            }
-        }
-    }
+    command.stdin(stdio(slave)).stdout(stdio(slave)).stderr(stdio(slave));
     unsafe {
         command.pre_exec(|| {
             // Session leader with the terminal as its controlling tty: its own process group.
@@ -121,14 +109,52 @@ pub fn spawn_pty(streams: &Arc<Streams>, request: &Value, outbox: &Arc<Outbox>) 
         });
     }
     let spawned = command.spawn();
+    // The command keeps its slave duplicates until dropped: release them now, or the master
+    // never ends while the caller keeps the command (the held Agent's lives as long as the holder).
+    command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     unsafe { libc::close(slave) };
-    let mut child = match spawned {
-        Ok(child) => child,
+    match spawned {
+        Ok(child) => Ok((child, master)),
         Err(error) => {
             unsafe { libc::close(master) };
-            return Err(if error.kind() == std::io::ErrorKind::NotFound { "ENOENT" } else { "spawn_failed" });
+            Err(if error.kind() == std::io::ErrorKind::NotFound { "ENOENT" } else { "spawn_failed" })
         }
-    };
+    }
+}
+
+/// Sets a terminal's size; the kernel signals its foreground group (SIGWINCH) when it changed.
+#[cfg(unix)]
+pub(crate) fn set_size(master: i32, cols: u16, rows: u16) -> Result<(), &'static str> {
+    let size = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
+    if unsafe { libc::ioctl(master, libc::TIOCSWINSZ, &size) } != 0 {
+        return Err("resize_failed");
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+pub fn spawn_pty(streams: &Arc<Streams>, request: &Value, outbox: &Arc<Outbox>) -> Result<Value, &'static str> {
+    use std::fs::File;
+    use std::io::Read;
+    use std::os::fd::FromRawFd;
+    use std::process::Command;
+    use std::thread;
+
+    let argv = argv_of(request);
+    if argv.is_empty() {
+        return Err("invalid_request");
+    }
+    let cwd = crate::streams::resolve_cwd(request.get("cwd").and_then(Value::as_str).unwrap_or(""))?;
+    let mut command = Command::new(&argv[0]);
+    command.args(&argv[1..]).current_dir(cwd);
+    if let Some(env) = request.get("env").and_then(Value::as_object) {
+        for (key, value) in env {
+            if let Some(value) = value.as_str() {
+                command.env(key, value);
+            }
+        }
+    }
+    let (mut child, master) = spawn_in_pty(&mut command, dimension(request, "cols", 80), dimension(request, "rows", 24))?;
     let stream = streams.allocate();
     let mut reader = unsafe { File::from_raw_fd(libc::dup(master)) };
     let writer = unsafe { File::from_raw_fd(master) };
@@ -194,11 +220,7 @@ pub fn resize(streams: &Streams, request: &Value) -> Result<(), &'static str> {
     let master = streams.live.lock().unwrap().get(&stream).and_then(|entry| entry.pty).ok_or("stream_absent")?;
     #[cfg(unix)]
     {
-        let size = libc::winsize { ws_row: dimension(request, "rows", 24), ws_col: dimension(request, "cols", 80), ws_xpixel: 0, ws_ypixel: 0 };
-        if unsafe { libc::ioctl(master, libc::TIOCSWINSZ, &size) } != 0 {
-            return Err("resize_failed");
-        }
-        Ok(())
+        set_size(master, dimension(request, "cols", 80), dimension(request, "rows", 24))
     }
     #[cfg(not(unix))]
     {

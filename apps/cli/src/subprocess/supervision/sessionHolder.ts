@@ -3,7 +3,7 @@ import { isPidPresent } from '@happier-dev/cli-common/process';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
-import { basename, dirname, join, posix } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { Readable, Writable, type Duplex } from 'node:stream';
 import { constants as osConstants } from 'node:os';
 import { clearTimeout, setTimeout } from 'node:timers';
@@ -195,6 +195,8 @@ export type SessionHolderLaunch = Readonly<{
     signal?: AbortSignal;
     /** Windows: the args are a rendered command-line tail, appended unquoted. */
     windowsVerbatimArguments?: boolean;
+    /** A terminal-mode Agent: the holder runs it in a pseudo-terminal of this size, not on pipes. */
+    terminal?: Readonly<{ cols: number; rows: number }>;
     /** Placement: the holder and the Agent run in this target, not on this Machine. */
     target?: SessionHolderTarget;
 }>;
@@ -246,14 +248,12 @@ export function resolveSessionProcessHolderLaunch(input: Readonly<{ role?: Sessi
 export type SessionProcessPtyTarget = Readonly<{
     rootPath: string;
     openHolder(): SessionHolderChild;
-    /** Agent PTYs use the same executable/credential mapping as other Agent launches. */
-    prepareAgentLaunch(request: Readonly<{ command: string; args: readonly string[]; cwd?: string; env?: NodeJS.ProcessEnv;
-        requiredFiles?: readonly string[]; signal?: AbortSignal }>): Readonly<{
-        argv: readonly string[]; cwd?: string; env: Readonly<Record<string, string>>;
-    }> | Promise<Readonly<{ argv: readonly string[]; cwd?: string; env: Readonly<Record<string, string>> }>>;
 }>;
 
-/** Workspace PTYs attach beside the Session Agent, under the same admitted placement. */
+/**
+ * Workspace PTYs attach beside the Session Agent, under the same admitted placement. The Session's
+ * own terminal-mode Agent is not one of them: it is the target holder's held primary Agent.
+ */
 export function resolveSessionProcessPtyTarget(): SessionProcessPtyTarget | null {
     const placement = readSessionTargetPlacement(sessionProcessEnvironment());
     if (!placement) return null;
@@ -265,12 +265,7 @@ export function resolveSessionProcessPtyTarget(): SessionProcessPtyTarget | null
     const workspace = placement.launch.workspace;
     const target = connectSessionTarget(placement);
     return { rootPath: workspace.hostRoot,
-        openHolder: () => openSessionHolderWorkspaceClient(socketPath, target),
-        prepareAgentLaunch: async request => {
-            const launch = await target.prepareLaunch!(request);
-            return { argv: [launch.command, ...launch.args], env: launch.env,
-                ...(launch.cwd === undefined ? {} : { cwd: posix.relative(workspace.targetRoot, launch.cwd) }) };
-        } };
+        openHolder: () => openSessionHolderWorkspaceClient(socketPath, target) };
 }
 
 /** Native process adapters share Exec's placement decision; the OS spawn is only for unplaced work. */
@@ -728,6 +723,13 @@ export class SessionHolderChild extends ChildProcess {
         this.socket = null;
     }
 
+    /** A terminal-mode Agent (`terminal` launch): its terminal's new size in character cells. */
+    async resizeTerminal(cols: number, rows: number): Promise<boolean> {
+        if (this.exitSeen || this.closed) return false;
+        const reply = await this.request({ op: 'resize', cols: Math.trunc(cols), rows: Math.trunc(rows) });
+        return reply.ok === true;
+    }
+
     /**
      * Stores the adopt state in the holder for the next runner. Fire-and-forget on
      * the same socket as the Agent's input, so it is written before input sent after it.
@@ -996,6 +998,13 @@ function connectHolder(child: SessionHolderChild, onHello: (hello: SessionHolder
     channel.once('error', onError);
 }
 
+/** `serve --pty <cols>x<rows>` for a terminal-mode Agent. */
+function holderTerminalArgs(launch: Pick<SessionHolderLaunch, 'terminal'>): string[] {
+    if (!launch.terminal) return [];
+    const size = (value: number) => Math.max(1, Math.min(0xffff, Math.trunc(value)));
+    return ['--pty', `${size(launch.terminal.cols)}x${size(launch.terminal.rows)}`];
+}
+
 /**
  * Starts the holder, which starts the Agent. Emits `spawn` once the holder
  * reported the Agent's pid and the client is attached, or `error` with the
@@ -1008,7 +1017,7 @@ export function spawnSessionHolderChild(
     if (launch.target) return spawnTargetSessionHolderChild(launch, launch.target);
     const child = new SessionHolderChild(launch.socketPath, launch.role);
     const holder = spawn(launch.executablePath, ['serve', '--socket', launch.socketPath,
-        ...(launch.windowsVerbatimArguments ? ['--windows-verbatim'] : []), '--', launch.command, ...launch.args], {
+        ...(launch.windowsVerbatimArguments ? ['--windows-verbatim'] : []), ...holderTerminalArgs(launch), '--', launch.command, ...launch.args], {
         ...spawnOptions,
         ...(launch.cwd ? { cwd: launch.cwd } : {}),
         ...(launch.env ? { env: launch.env } : {}),
@@ -1088,7 +1097,7 @@ function spawnTargetSessionHolderChild(launch: SessionHolderLaunch & Readonly<{ 
         const command = ['umask 077', `rm -f ${q(ready)}`, `mkfifo ${q(ready)}`,
             ...(prepared.cwd ? [`cd ${q(prepared.cwd)}`] : []),
             // Every held Agent's Session MCP relays reach this Machine through its own holder (`--session-mcp`).
-            `nohup ${q(target.holderPath)} serve --socket ${q(launch.socketPath)} --session-mcp -- ${argv.map(q).join(' ')} >${q(ready)} 2>/dev/null </dev/null &`,
+            `nohup ${[target.holderPath, 'serve', '--socket', launch.socketPath, '--session-mcp', ...holderTerminalArgs(launch), '--', ...argv].map(q).join(' ')} >${q(ready)} 2>/dev/null </dev/null &`,
             `head -n 1 ${q(ready)}`, `rm -f ${q(ready)}`].join('\n');
         launch.signal?.throwIfAborted();
         return target.exec(command);

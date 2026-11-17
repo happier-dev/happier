@@ -1,7 +1,8 @@
 //! happier-session-holder: one Session's Agent custody process.
 //!
 //! `serve --socket <path> -- <argv...>` starts the Agent with piped stdio in its own
-//! process group, prints one readiness JSON line on stdout, closes stdout and then
+//! process group (with `--pty <cols>x<rows>`: as the session leader of a pseudo-terminal,
+//! for terminal-mode Agents), prints one readiness JSON line on stdout, closes stdout and then
 //! serves one client at a time on a same-user local socket (Unix socket created 0600,
 //! or a Windows named pipe with an owner-only DACL that rejects remote clients). No
 //! network port is ever opened. A new client replaces the old one and receives the
@@ -34,7 +35,7 @@ use outbox::Outbox;
 use serde_json::{json, Value};
 
 fn usage() -> ! {
-    eprintln!("usage: happier-session-holder serve --socket <path> [--session-mcp] [--windows-verbatim] -- <argv...>\n       happier-session-holder attach --socket <path>\n       happier-session-holder workspace --root <path>\n       happier-session-holder mcp-relay [--tool-name-max-length <n>]");
+    eprintln!("usage: happier-session-holder serve --socket <path> [--session-mcp] [--windows-verbatim] [--pty <cols>x<rows>] -- <argv...>\n       happier-session-holder attach --socket <path>\n       happier-session-holder workspace --root <path>\n       happier-session-holder mcp-relay [--tool-name-max-length <n>]");
     std::process::exit(2);
 }
 
@@ -69,6 +70,8 @@ struct ServeArgs {
     verbatim: bool,
     /// Carry the Agent tree's Session MCP relays on the client channel (`session_mcp.rs`).
     session_mcp: bool,
+    /// Hold the Agent in a pseudo-terminal of this size (cols, rows) instead of pipes.
+    pty: Option<(u16, u16)>,
     argv: Vec<String>,
 }
 
@@ -82,15 +85,24 @@ fn parse_serve(args: &[String]) -> Option<ServeArgs> {
     if flag != "--socket" {
         return None;
     }
-    let (mut verbatim, mut session_mcp) = (false, false);
-    for option in options {
+    let (mut verbatim, mut session_mcp, mut pty) = (false, false, None);
+    let mut options = options.iter();
+    while let Some(option) = options.next() {
         match option.as_str() {
             "--windows-verbatim" if !verbatim => verbatim = true,
             "--session-mcp" if !session_mcp => session_mcp = true,
+            "--pty" if pty.is_none() => pty = Some(parse_size(options.next()?)?),
             _ => return None,
         }
     }
-    Some(ServeArgs { socket: socket.clone(), verbatim, session_mcp, argv })
+    Some(ServeArgs { socket: socket.clone(), verbatim, session_mcp, pty, argv })
+}
+
+/// `<cols>x<rows>`, both positive.
+fn parse_size(value: &str) -> Option<(u16, u16)> {
+    let (cols, rows) = value.split_once('x')?;
+    let (cols, rows) = (cols.parse::<u16>().ok()?, rows.parse::<u16>().ok()?);
+    (cols > 0 && rows > 0).then_some((cols, rows))
 }
 
 fn ready_line(value: Value) {
@@ -113,20 +125,33 @@ fn serve(args: &ServeArgs) {
     let session_mcp = if args.session_mcp { session_mcp::bind(socket) } else { None };
     let mut command = Command::new(&argv[0]);
     platform::add_agent_args(&mut command, &argv[1..], verbatim);
-    command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    platform::configure_agent_command(&mut command);
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            listener.remove();
-            remove_session_mcp_paths(socket);
-            ready_line(json!({
+    let spawned = match args.pty {
+        Some((cols, rows)) => spawn_terminal_agent(&mut command, cols, rows),
+        None => {
+            command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+            platform::configure_agent_command(&mut command);
+            command.spawn().map(|mut child| {
+                let stdin = child.stdin.take().map(|pipe| Box::new(pipe) as Box<dyn Write + Send>);
+                let outputs: Vec<(Box<dyn Read + Send>, u8)> = vec![
+                    (Box::new(child.stdout.take().expect("piped stdout")), b'o'),
+                    (Box::new(child.stderr.take().expect("piped stderr")), b'e'),
+                ];
+                (child, stdin, outputs)
+            }).map_err(|error| json!({
                 "ready": false,
                 "code": "agent_spawn_failed",
                 "errno": error.raw_os_error(),
                 "kind": format!("{:?}", error.kind()),
                 "message": error.to_string(),
-            }));
+            }))
+        }
+    };
+    let (mut child, agent_stdin, outputs) = match spawned {
+        Ok(spawned) => spawned,
+        Err(refusal) => {
+            listener.remove();
+            remove_session_mcp_paths(socket);
+            ready_line(refusal);
             std::process::exit(1);
         }
     };
@@ -137,9 +162,8 @@ fn serve(args: &ServeArgs) {
     platform::detach_standard_streams();
 
     let outbox = Arc::new(Outbox::new());
-    let stdin = Arc::new(Mutex::new(child.stdin.take()));
-    let stdout_pump = pump(child.stdout.take().expect("piped stdout"), b'o', outbox.clone());
-    let stderr_pump = pump(child.stderr.take().expect("piped stderr"), b'e', outbox.clone());
+    let stdin = Arc::new(Mutex::new(agent_stdin));
+    let pumps: Vec<_> = outputs.into_iter().map(|(reader, kind)| pump(reader, kind, outbox.clone())).collect();
     let exit: Arc<Mutex<Option<Value>>> = Arc::new(Mutex::new(None));
     // Opaque client state kept for the next attachment (`meta` op); see frame.rs.
     let meta: Arc<Mutex<Value>> = Arc::new(Mutex::new(Value::Null));
@@ -154,8 +178,9 @@ fn serve(args: &ServeArgs) {
             let status = platform::exit_json(child.wait());
             *exit.lock().unwrap() = Some(status.clone());
             outbox.send(b'x', status.to_string().as_bytes());
-            let _ = stdout_pump.join();
-            let _ = stderr_pump.join();
+            for pump in pumps {
+                let _ = pump.join();
+            }
             outbox.send_if_attached(b'z', b"{}");
             outbox.wait_exit_acknowledged();
             streams.terminate_all();
@@ -211,6 +236,29 @@ fn serve(args: &ServeArgs) {
 }
 
 static SOCKET_PATH: Mutex<Option<String>> = Mutex::new(None);
+/// The held Agent's terminal master (`--pty`), for the primary client's `resize`.
+static AGENT_TERMINAL: Mutex<Option<i32>> = Mutex::new(None);
+
+type HeldAgent = (std::process::Child, Option<Box<dyn Write + Send>>, Vec<(Box<dyn Read + Send>, u8)>);
+
+/// The Agent as the session leader of a new terminal: its output is one stream (`o`),
+/// input goes to the terminal (`i`), and the primary client resizes it (`resize`).
+#[cfg(unix)]
+fn spawn_terminal_agent(command: &mut Command, cols: u16, rows: u16) -> Result<HeldAgent, Value> {
+    use std::fs::File;
+    use std::os::fd::FromRawFd;
+    let (child, master) = terminal::spawn_in_pty(command, cols, rows)
+        .map_err(|code| json!({ "ready": false, "code": "agent_spawn_failed", "kind": code, "message": format!("terminal Agent start failed: {code}") }))?;
+    let reader = unsafe { File::from_raw_fd(libc::dup(master)) };
+    let writer = unsafe { File::from_raw_fd(master) };
+    *AGENT_TERMINAL.lock().unwrap() = Some(master);
+    Ok((child, Some(Box::new(writer)), vec![(Box::new(reader), b'o')]))
+}
+
+#[cfg(not(unix))]
+fn spawn_terminal_agent(_: &mut Command, _: u16, _: u16) -> Result<HeldAgent, Value> {
+    Err(json!({ "ready": false, "code": "agent_spawn_failed", "kind": "unsupported", "message": "terminal Agents are not supported on this platform yet" }))
+}
 static OPS_SOCKET_PATH: Mutex<Option<String>> = Mutex::new(None);
 
 pub(crate) fn workspace_ops_socket_path(socket: &str) -> String {
@@ -303,7 +351,7 @@ fn serve_client(
     mut reader: Box<dyn Read + Send>,
     generation: u64,
     outbox: Arc<Outbox>,
-    stdin: Arc<Mutex<Option<std::process::ChildStdin>>>,
+    stdin: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
     agent_pid: u32,
     exit: Arc<Mutex<Option<Value>>>,
     meta: Arc<Mutex<Value>>,
@@ -374,6 +422,12 @@ fn operation(
             Ok(value) => json!({ "id": id, "ok": true, "value": value }),
             Err(code) => json!({ "id": id, "ok": false, "code": code }),
         },
+        // Without a stream: the held Agent's own terminal (primary client only; a
+        // workspace client has no Agent, `agent_pid` 0).
+        Some("resize") if request.get("stream").is_none() && agent_pid != 0 => match resize_agent_terminal(&request) {
+            Ok(()) => json!({ "id": id, "ok": true }),
+            Err(code) => json!({ "id": id, "ok": false, "code": code }),
+        },
         Some("resize") => match terminal::resize(streams, &request) {
             Ok(()) => json!({ "id": id, "ok": true }),
             Err(code) => json!({ "id": id, "ok": false, "code": code }),
@@ -388,6 +442,21 @@ fn operation(
             "value": request.get("command").and_then(Value::as_str).and_then(streams::which),
         }),
         _ => json!({ "id": id, "ok": false, "error": "unknown_op" }),
+    }
+}
+
+fn resize_agent_terminal(request: &Value) -> Result<(), &'static str> {
+    let master = AGENT_TERMINAL.lock().unwrap().ok_or("agent_terminal_absent")?;
+    let size = |key: &str| request.get(key).and_then(Value::as_u64).and_then(|value| u16::try_from(value).ok()).filter(|value| *value > 0);
+    let (Some(cols), Some(rows)) = (size("cols"), size("rows")) else { return Err("invalid_request") };
+    #[cfg(unix)]
+    {
+        terminal::set_size(master, cols, rows)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (master, cols, rows);
+        Err("unsupported")
     }
 }
 
@@ -452,6 +521,15 @@ mod tests {
         assert!(parse_serve(&args(&["--socket", "/s", "--session-mcp", "--session-mcp", "--", "agent"])).is_none());
         assert!(parse_serve(&args(&["--socket", "/s", "--other", "--", "agent"])).is_none());
         assert!(parse_serve(&args(&["--socket", "/s", "--"])).is_none());
+        let parsed = parse_serve(&args(&["--socket", "/s", "--pty", "120x40", "--", "agent"])).unwrap();
+        assert_eq!(parsed.pty, Some((120, 40)));
+        let refusals: [&[&str]; 4] = [&["--pty", "0x40"], &["--pty", "120"], &["--pty"], &["--pty", "1x1", "--pty", "1x1"]];
+        for refused in refusals {
+            let mut items = vec!["--socket", "/s"];
+            items.extend_from_slice(refused);
+            items.extend_from_slice(&["--", "agent"]);
+            assert!(parse_serve(&args(&items)).is_none(), "{refused:?}");
+        }
     }
 }
 

@@ -29,13 +29,13 @@ import {
 import { buildTerminalControlCapture } from '@/integrations/terminalHost/controlCapture';
 import { TERMINAL_SHIFT_TAB_SEQUENCE } from '@/integrations/terminalHost/controlTypes';
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
-import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { bindToHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { Disposable, PtyProcess, PtyProvider } from './provider';
 import { createNodePtyProvider } from './provider';
 import { delay } from '@/utils/time';
 import { createVirtualTerminalScreen, type VirtualTerminalScreen } from './virtualTerminalScreen';
 import { resolveSessionProcessPtyTarget, type SessionProcessPtyTarget } from '@/subprocess/supervision/sessionHolder';
-import { spawnHolderPtyProcess } from './holderProcess';
+import { startHeldAgentPtyProcess } from './holderProcess';
 import { createTerminalNativeLaunch } from './nativeLaunch';
 
 const DEFAULT_COLS = 120;
@@ -135,9 +135,15 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
   now?: () => number;
   /** The terminal service retains the canonical lazy placement selected for this Session. */
   sessionTarget?: SessionProcessPtyTarget | null;
+  platform?: NodeJS.Platform;
 }>): TerminalHostAdapter {
   const environment = sessionProcessEnvironment();
   const sessionTarget = params?.sessionTarget === undefined ? resolveSessionProcessPtyTarget() : params.sessionTarget;
+  // The Agent is the Session holder's held primary Agent in a terminal, so it survives this
+  // runner. Unplaced Windows keeps the in-runner ConPTY until the holder has ConPTY.
+  const heldAgent = sessionTarget !== null || (!params?.ptyProvider && (params?.platform ?? process.platform) !== 'win32');
+  // Launches may run outside the registering Session's scope (its environment, placement, identity).
+  const startHeldAgent = bindToHostedSessionScope(startHeldAgentPtyProcess);
   const ptyProvider = params?.ptyProvider ?? createNodePtyProvider({ env: environment });
   const cols = Math.max(2, Math.trunc(params?.cols ?? DEFAULT_COLS));
   const rows = Math.max(2, Math.trunc(params?.rows ?? DEFAULT_ROWS));
@@ -317,11 +323,16 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
       const term = spawnEnv.TERM ?? 'xterm-256color';
       const screen = createVirtualTerminalScreen({ cols, rows });
       let pty: PtyProcess;
-      if (sessionTarget) {
-        const launch = await sessionTarget.prepareAgentLaunch({ command, args: opts.spawnArgv.slice(1), cwd: opts.workingDirectory,
-          env: spawnEnv, ...(opts.requiredFiles ? { requiredFiles: opts.requiredFiles } : {}) });
-        const holder = sessionTarget.openHolder();
-        pty = await spawnHolderPtyProcess(holder, { ...launch, cols, rows }, () => holder.detach());
+      let startHeldDelivery: (() => void) | undefined;
+      if (heldAgent) {
+        const held = await startHeldAgent({ command, args: opts.spawnArgv.slice(1), cwd: opts.workingDirectory,
+          env: { ...spawnEnv, TERM: term }, cols, rows,
+          ...(opts.requiredFiles ? { requiredFiles: opts.requiredFiles } : {}),
+          ...(opts.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) });
+        pty = held.pty;
+        startHeldDelivery = held.start;
+        // An adopted Agent consumed its launch preamble when the previous runner started it.
+        if (held.adopted) stdinPreamble = undefined;
       } else {
         await ptyProvider.prepare?.();
         pty = ptyProvider.spawn({
@@ -363,6 +374,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
         cleanupSession(opts.sessionName, session, { kill: false, retainExitState: true });
       }));
       sessions.set(opts.sessionName, session);
+      startHeldDelivery?.();
 
       return {
         kind: 'windows_console',
