@@ -1,5 +1,5 @@
 import { BotMotionSchema } from '@happier-dev/protocol/account/settings/accountSettings';
-import { useThemeProfiles } from '@/sync/store/useThemeProfiles';
+import { useThemeLibraryEntries, useThemeProfiles } from '@/sync/store/useThemeProfiles';
 import { SettingAnchor, SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
 import { UI_FONT_SCALE_PRESETS } from '@/components/ui/text/uiFontScale';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
@@ -51,7 +51,8 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { ItemDensityChoiceRow } from '@/components/settings/appearance/ItemDensityPreview';
-import { buildThemePresetSourceOptions } from '@/components/settings/appearance/themeProfiles/themeProfilePresetOptions';
+import { readThemeProfileReferenceSelection } from '@/theme/profiles/themeProfilePersistence';
+import { buildThemePresetSourceOptions, getThemePresetSourceReferenceId } from '@/components/settings/appearance/themeProfiles/themeProfilePresetOptions';
 import { Modal } from '@/modal';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t, getLanguageNativeName, SUPPORTED_LANGUAGES } from '@/text';
@@ -107,6 +108,9 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
     const [wrapChatCodeBlocks, setWrapChatCodeBlocks] = useSettingMutable('wrapChatCodeBlocks');
     const [themePreference] = useLocalSettingMutable('themePreference');
     const themeProfiles = useThemeProfiles();
+    const entries = useThemeLibraryEntries();
+    const [storedSelection] = useLocalSettingMutable('themeProfileSelection');
+    const selection = React.useMemo(() => readThemeProfileReferenceSelection(storedSelection), [storedSelection]);
     const [uiFontScale, setUiFontScale] = useLocalSettingMutable('uiFontScale');
     const previewUiFontScale = useLocalSettingPreview('uiFontScale');
     const [uiContentWidthMode, setUiContentWidthMode] = useLocalSettingMutable('uiContentWidthMode');
@@ -136,7 +140,7 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
     // The Themes row summarizes the library: which theme each mode uses and how many there are. The
     // library screen owns choosing them.
     const themesSummary = React.useMemo(() => {
-        const options = buildThemePresetSourceOptions(themeProfiles);
+        const options = buildThemePresetSourceOptions(entries);
         const nameFor = (profileId: string | null) => {
             const option = profileId ? options.find((candidate) => candidate.id === profileId) : null;
             return option?.title ?? t('common.default');
@@ -146,11 +150,11 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
             slots: <Text style={styles.themesSummary}>{t('settingsAppearance.themesSummary', {
                 light: '{light}', dark: '{dark}',
             }).split(/(\{light\}|\{dark\})/).map((part, index) => part === '{light}' || part === '{dark}'
-                ? <Text key={index} style={styles.themeName}>{nameFor(themeProfiles.activeProfileIds[part === '{light}' ? 'light' : 'dark'])}</Text>
+                ? <Text key={index} style={styles.themeName}>{nameFor(selection[part === '{light}' ? 'light' : 'dark'] ? getThemePresetSourceReferenceId(selection[part === '{light}' ? 'light' : 'dark']!) : null)}</Text>
                 : part)}</Text>,
             count: t('settingsAppearance.themesCount', { builtIn: options.length - custom, custom }),
         };
-    }, [themeProfiles]);
+    }, [entries, selection]);
     const gitBadgeMenuItems = React.useMemo((): readonly DropdownMenuItem[] => {
         return [
             { id: 'changedFiles', title: t('settingsAppearance.tabBarBadges.gitChangedFiles') },

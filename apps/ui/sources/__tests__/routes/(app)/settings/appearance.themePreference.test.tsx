@@ -111,6 +111,7 @@ afterEach(() => {
     resetSessionSettingsEntryState();
     shared.settingsState.themePreference = 'light';
     shared.settingsState.themeProfiles = { activeProfileIds: { light: null, dark: null }, profiles: [] };
+    delete shared.settingsState.themeProfileSelection;
     shared.setAdaptiveThemes.mockClear();
     shared.setTheme.mockClear();
     shared.setRootViewBackgroundColor.mockClear();
@@ -144,7 +145,7 @@ describe('Appearance settings theme preference', () => {
 
     it('summarizes which theme each mode uses and how many themes exist, without an embedded preview', async () => {
         shared.settingsState.themePreference = 'dark';
-        shared.settingsState.themeProfiles = { activeProfileIds: { light: null, dark: 'nightDark' }, profiles: [] };
+        shared.settingsState.themeProfileSelection = { light: null, dark: { kind: 'built-in', presetId: 'nightDark' } };
         const { default: Appearance } = await import('@/app/(app)/settings/appearance');
         const screen = await renderAppearance(<Appearance />);
 

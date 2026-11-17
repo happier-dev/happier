@@ -100,7 +100,13 @@ export const themeModeStorageBinding = {
         await commitThemeSelection({ currentPreference: local.themePreference, nextPreference: preference,
             nextThemeProfiles: initial, resolveSelection: () => {
                 const latest = context?.readLocalSettings?.() ?? local;
-                return { themePreference: preference, themeProfiles: readThemeSettingStateSnapshot(latest, context).themeProfiles };
+                const themeProfiles = readThemeSettingStateSnapshot(latest, context).themeProfiles;
+                const activatedProfile = selection.kind === 'activation' ? selection.activation.document?.profile : undefined;
+                return { themePreference: selection.kind === 'activation' && selection.activation.nextThemePreference === undefined
+                    ? latest.themePreference : preference,
+                    themeProfiles: activatedProfile ? { ...themeProfiles,
+                        profiles: [...themeProfiles.profiles.filter(profile => profile.id !== activatedProfile.id), activatedProfile],
+                    } : themeProfiles };
             }, reduceMotion: readReducedMotionPreference() || (selection.kind === 'activation' && selection.reduceMotion === true),
             ...(selection.kind === 'activation' ? { forceAnimate: selection.forceAnimate } : {}),
             writeLocal: delta => {

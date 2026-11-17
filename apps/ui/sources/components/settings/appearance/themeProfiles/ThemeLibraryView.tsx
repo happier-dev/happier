@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { Collection, type CollectionAnatomy, useHappierCollection } from '@happier-dev/plugin-ui';
+import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -41,15 +43,18 @@ import type {
   ThemeLibraryViewProps,
 } from './themeLibraryViewTypes';
 
+const themeTileKey = (tile: ThemeLibraryTile) => tile.key;
+const passThroughScroller = (children: React.ReactNode) => children;
+
 const THEME_MODES: readonly ThemeProfileMode[] = ['light', 'dark'];
 
-/** Wide: four themes across the reading column; a phone: two. Proportions of a small window, or a phone screen. */
+/** Miniatures follow the device form; Collection owns the responsive grid geometry. */
 const GRID = {
-  wide: { columns: 4, aspect: 1.6, form: 'window' },
-  phone: { columns: 2, aspect: 1.1, form: 'phone' },
+  wide: { aspect: 1.6, form: 'window' },
+  phone: { aspect: 1.1, form: 'phone' },
 } as const satisfies Record<
   string,
-  { columns: number; aspect: number; form: ThemeMiniatureForm }
+  { aspect: number; form: ThemeMiniatureForm }
 >;
 const PHONE_SLOT_PREVIEW_ASPECT = 1.25;
 
@@ -91,20 +96,19 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
     [phone, props.slots],
   );
 
-  const tileOptions = React.useMemo(
-    (): Array<SelectionTile<string>> =>
-      props.tiles.map((tile) => ({
-        id: tile.key,
-        title: tile.name,
-        subtitle: tile.sourceLabel,
-        preview: <LibraryPreview preview={tile.preview} form={grid.form} />,
-      })),
-    [grid.form, props.tiles],
-  );
-  const tilesByKey = React.useMemo(
-    () => new Map(props.tiles.map((tile) => [tile.key, tile])),
-    [props.tiles],
-  );
+  const model = useHappierCollection<ThemeLibraryTile>({
+    items: props.tiles, keyOf: themeTileKey, openKey: null, onOpenChange: key => { if (key) onChooseTheme(key); },
+  });
+  const anatomy = React.useMemo<CollectionAnatomy<ThemeLibraryTile>>(() => ({
+    glyph: () => null,
+    title: tile => tile.name,
+    where: tile => tile.sourceLabel,
+    preview: tile => <View style={{ aspectRatio: grid.aspect }}><LibraryPreview preview={tile.preview} form={grid.form} /></View>,
+    action: tile => tile.menu.length > 0 ? <TileMenu tile={tile} /> : null,
+    accessibilityLabel: tile => tile.name,
+    testID: tile => `settings-theme-${mode}:${tile.key}`,
+    columnTitles: { title: modeTitle(mode) },
+  }), [grid, mode]);
 
   const addMenu = <ThemeAddMenu items={props.addMenu} compact={phone} />;
   return (
@@ -164,26 +168,22 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
                 }}
               />
             )}
-            <SelectionTiles
-              variant="visual"
-              tileSizing="fill"
-              maximumColumns={grid.columns}
-              previewAspectRatio={grid.aspect}
-              labelLines={1}
-              accessibilityLabel={modeTitle(mode)}
-              testIdPrefix={`settings-theme-${mode}`}
-              value={props.selectedKey}
-              onChange={(next) => {
-                if (next) onChooseTheme(next);
-              }}
-              options={tileOptions}
-              renderOptionAccessory={({ option, revealed }) => {
-                const tile = tilesByKey.get(option.id);
-                return tile && tile.menu.length > 0 && revealed ? (
-                  <TileMenu tile={tile} />
-                ) : null;
-              }}
-            />
+            <CoreCollectionScope renderPageScroller={passThroughScroller}>
+              <Collection<ThemeLibraryTile>
+                testID={`settings-theme-${mode}-library`}
+                model={model}
+                anatomy={anatomy}
+                accessibilityLabel={modeTitle(mode)}
+                presentation="grid"
+                detail="none"
+                // Collection's page grid windows against ItemList's physical page tracker.
+                scroll="page"
+                minListWidth={280}
+                minDetailWidth={280}
+                preferredListRatio={1}
+                selection={{ single: { value: props.selectedKey, onValueChange: next => { if (next) onChooseTheme(next); } } }}
+              />
+            </CoreCollectionScope>
           </View>
         </SettingAnchor>
       </ItemGroup>

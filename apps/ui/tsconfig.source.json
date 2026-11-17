@@ -2044,8 +2044,6 @@
     "sources/components/settings/appearance/themeProfiles/ThemeProfileEditorView.tsx",
     "sources/components/settings/appearance/themeProfiles/ThemeProfileExportScreen.tsx",
     "sources/components/settings/appearance/themeProfiles/ThemeProfileImportScreen.tsx",
-    "sources/components/settings/appearance/themeProfiles/ThemeProfilePresetDropdown.tsx",
-    "sources/components/settings/appearance/themeProfiles/ThemeProfilePreviewPane.tsx",
     "sources/components/settings/appearance/themeProfiles/ThemeProfilesSettingsScreen.tsx",
     "sources/components/settings/appearance/themeProfiles/index.ts",
     "sources/components/settings/appearance/themeProfiles/themeDevicePickerViewTypes.ts",

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { ThemePresetSourceOption } from './themeProfilePresetOptions';
 import { buildThemePresetSourceOptions, getThemePresetSourceReferenceId, readThemePresetSourceReferenceId, resolveThemePresetSourcePreferredMode, themeProfileDraftMatchesPresetSource } from './themeProfilePresetOptions';
 import type { ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
+import type { ThemeLibraryEntry } from '@happier-dev/protocol/account/settings/themeProfiles';
 
 const profile = (overrides: ThemeProfileV1['overrides']): ThemeProfileV1 => ({
     schemaVersion: 1,
@@ -14,14 +15,6 @@ const profile = (overrides: ThemeProfileV1['overrides']): ThemeProfileV1 => ({
     overrides,
 });
 
-const withAssetAppearance = (
-    sourceProfile: ThemeProfileV1,
-    assetAppearance: 'light' | 'dark',
-): ThemeProfileV1 & { assetAppearance: 'light' | 'dark' } => ({
-    ...sourceProfile,
-    assetAppearance,
-});
-
 const source = (sourceProfile: ThemeProfileV1): ThemePresetSourceOption => ({
     id: sourceProfile.id,
     kind: 'custom',
@@ -29,6 +22,7 @@ const source = (sourceProfile: ThemeProfileV1): ThemePresetSourceOption => ({
     subtitle: 'Custom theme',
     profile: sourceProfile,
     preferredMode: 'light',
+    reference: { kind: 'artifact', id: sourceProfile.id },
 });
 
 describe('themeProfilePresetOptions', () => {
@@ -43,7 +37,20 @@ describe('themeProfilePresetOptions', () => {
         expect(readThemePresetSourceReferenceId('premiumDark')).toEqual({ kind: 'built-in', presetId: 'premiumDark' });
         expect(readThemePresetSourceReferenceId('["plugin","missing"]')).toBeNull();
     });
-
+    it('projects header entries as selectable references without inventing profile bodies', () => {
+        const entry: ThemeLibraryEntry = { id: 'theme-header', reference: { kind: 'artifact', id: 'theme-header' }, name: 'Header theme',
+            mode: 'dark', source: { kind: 'yours' }, editable: true, deletable: true,
+            compatibility: { status: 'supported', unsupportedPaths: [] },
+            miniature: { mode: 'dark', canvas: '#111111', raised: '#222222', text: '#ffffff', mutedText: '#aaaaaa', accent: '#123456', border: '#333333', radius: 'soft' } };
+        const plugin = (pluginId: string): ThemeLibraryEntry => ({ ...entry,
+            reference: { kind: 'plugin', pluginId, contributionId: 'night' },
+            source: { kind: 'plugin', pluginId, contributionId: 'night' }, editable: false, deletable: false });
+        const custom = buildThemePresetSourceOptions([entry, plugin('first.theme'), plugin('second.theme')]).filter(candidate => candidate.kind === 'custom');
+        expect(new Set(custom.map(candidate => candidate.id)).size).toBe(3);
+        const option = custom.find(candidate => candidate.reference === entry.reference);
+        expect(option).toMatchObject({ title: entry.name, reference: entry.reference, miniature: entry.miniature, preferredMode: 'dark' });
+        expect(option?.profile).toBeNull();
+    });
     it('matches preset values independent of override key insertion order', () => {
         const draft = profile({
             light: { 'text.primary': '#111111', 'background.canvas': '#FFFFFF' },
@@ -68,31 +75,8 @@ describe('themeProfilePresetOptions', () => {
         }))).toBe('light');
     });
 
-    it('uses the inferred custom mode in preset source options', () => {
-        const options = buildThemePresetSourceOptions({
-            activeProfileIds: { light: null, dark: null },
-            profiles: [profile({ light: {}, dark: { 'background.canvas': '#08080A' } })],
-        });
-        const custom = options.find((option) => option.id === 'theme_order');
-
-        expect(custom?.preferredMode).toBe('dark');
-    });
-
-    it('uses explicit custom asset appearance instead of inferring from color override counts', () => {
-        const options = buildThemePresetSourceOptions({
-            activeProfileIds: { light: null, dark: null },
-            profiles: [withAssetAppearance(profile({
-                light: { 'background.canvas': '#FFFFFF' },
-                dark: {},
-            }), 'dark')],
-        });
-        const custom = options.find((option) => option.id === 'theme_order');
-
-        expect(custom?.preferredMode).toBe('dark');
-    });
-
     it('uses built-in preset metadata for curated theme modes', () => {
-        const options = buildThemePresetSourceOptions({ activeProfileIds: { light: null, dark: null }, profiles: [] });
+        const options = buildThemePresetSourceOptions([]);
 
         expect(options.find((option) => option.id === 'premiumDark')?.preferredMode).toBe('dark');
         expect(options.find((option) => option.id === 'pitchDark')?.preferredMode).toBe('dark');

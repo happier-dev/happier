@@ -1,20 +1,20 @@
-import { useThemeProfilesSnapshot } from '@/sync/store/useThemeProfiles';
+import { useThemeLibraryEntries, useThemeProfileDocument, useThemeProfilesSnapshot } from '@/sync/store/useThemeProfiles';
+import { mergeThemeProfileDocumentEdit, parseThemeProfileDocument, type ThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
+import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import * as React from 'react';
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
 
-import { Item } from '@/components/ui/lists/Item';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { BUNDLED_THEME_TYPEFACES } from '@/constants/bundledFonts';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import type { CodeEditorHandle } from '@/components/ui/code/editor/codeEditorTypes';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
-import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
-import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
-import { Text } from '@/components/ui/text/Text';
-import { ThemePalettePreview } from '@/components/settings/appearance/ThemeModePreview';
-import { useApplyThemeSelection } from '@/components/settings/appearance/useApplyThemeSelection';
+import type { PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
 import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { resolveThemeProfile } from '@/theme/profiles/resolveThemeProfile';
@@ -24,24 +24,29 @@ import { useLocalSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { BUILT_IN_THEME_PROFILES } from '@/theme/profiles/builtInThemeProfiles';
 import { createThemeProfileDraft, resetThemeProfileDraftMode, resetThemeProfileDraftToken, updateThemeProfileDraftColor } from '@/theme/profiles/createThemeProfileDraft';
-import { THEME_PROFILE_MAX_PROFILES } from '@/theme/profiles/themeProfileConstants';
 import { sanitizeThemeProfileName } from '@/theme/profiles/themeProfileImportExport';
 import { isThemeProfileAssetAppearance, resolveThemeProfileAssetAppearance } from '@/theme/profiles/themeProfileAssetAppearance';
-import { applyThemeRuntimeSelection, readSystemTheme } from '@/theme/profiles/themeProfileRuntime';
+import { readSystemTheme } from '@/theme/profiles/themeProfileRuntime';
+import { getThemeTryOnOwner } from '@/theme/profiles/themeTryOnRuntime';
 import {
-    clearActiveThemeProfileReferences,
-    findActiveThemeProfileForMode,
+    readThemeProfileReferenceSelection,
     isThemeProfileActive,
-    setActiveThemeProfileForMode,
 } from '@/theme/profiles/themeProfilePersistence';
 import type { ThemeProfileMode, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
-import { ThemeColorTokenRow } from './ThemeColorTokenRow';
-import { ThemeProfilePresetDropdown } from './ThemeProfilePresetDropdown';
-import { ThemeProfilePreviewPane } from './ThemeProfilePreviewPane';
+import type { ThemeRadiusScaleName } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { prepareThemeCss } from '@/theme/css/prepareThemeCss';
+import { ThemeProfileEditorView } from './ThemeProfileEditorView';
+import { useThemeActionExecution } from './useThemeActionExecution';
+import { createThemeProfileEditorActions } from './themeProfileEditorActions';
+import { useThemeProfileEditorPreview } from './useThemeProfileEditorPreview';
+import { useThemePluginShare } from './useThemePluginShare';
+import type { ThemeEditorView, ThemeProfileEditorViewProps } from './themeProfileEditorViewTypes';
 import { THEMES_SETTINGS } from './themesSettings';
-import { buildThemeProfileTokenGroups, getThemeProfileRecentColors, resolveThemeProfileEditorTarget } from './themeProfileEditorModel';
+import { buildThemeProfileTokenGroups, getThemeProfileRecentColors } from './themeProfileEditorModel';
 import {
     buildThemePresetSourceOptions,
+    getThemePresetSourceReferenceId,
+    readThemePresetSourceReferenceId,
     replaceThemeProfileDraftFromPresetSource,
     resolveThemePresetSourcePreferredMode,
     themeProfileDraftMatchesPresetSource,
@@ -49,8 +54,6 @@ import {
 import {
     createThemeProfileId,
     nowThemeProfileTimestamp,
-    removeThemeProfile,
-    upsertThemeProfile,
 } from './themeProfileScreenUtils';
 
 const groupTitleKeys = {
@@ -105,103 +108,92 @@ const createNewProfileRouteId = 'new';
 const themesListRoute = '/settings/appearance/themes' as const;
 
 export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorScreen() {
-    const styles = stylesheet;
     const router = useRouter();
     const params = useLocalSearchParams();
     const reduceMotion = useReducedMotionPreference();
     const themePreference = useLocalSetting('themePreference');
-    const themeProfilesSnapshot = useThemeProfilesSnapshot();
-    const { themeProfiles, legacyProfileIds } = themeProfilesSnapshot;
+    const { themeProfiles } = useThemeProfilesSnapshot();
+    const entries = useThemeLibraryEntries();
+    const storedSelection = useLocalSetting('themeProfileSelection');
+    const selection = React.useMemo(() => readThemeProfileReferenceSelection(storedSelection), [storedSelection]);
     const { setSetting } = useSettingActionFeedback();
+    const scope = useAccountSettingsScope();
+    const { execute } = useMountedActionExecution(scope);
+    const executeTheme = useThemeActionExecution();
+    const share = useThemePluginShare(executeTheme);
     const profileId = getProfileIdParam(params.profileId);
     const isNewProfile = profileId === createNewProfileRouteId;
-    const builtInDefinition = BUILT_IN_THEME_PROFILES.find((definition) => definition.profile.id === profileId);
-    const legacyProfileId = profileId === null ? undefined : legacyProfileIds[profileId];
-    const origin = {
-        routeId: profileId,
-        loaded: isNewProfile || builtInDefinition !== undefined || themeProfiles.profiles.some(profile => profile.id === profileId),
-        legacySource: profileId !== null && legacyProfileId !== undefined
-            ? { displayedId: profileId, legacyProfileId, snapshot: themeProfilesSnapshot } : null,
-    };
-    const originRef = React.useRef(origin);
-    if (originRef.current.routeId !== profileId || (!originRef.current.loaded && origin.loaded)) originRef.current = origin;
-    const legacySource = originRef.current.legacySource;
-    const mutationSnapshot = legacySource?.snapshot ?? themeProfilesSnapshot;
-    const editorProfileId = resolveThemeProfileEditorTarget({ routeId: profileId,
-        capturedLegacyProfileId: legacySource?.legacyProfileId, legacyProfileIds });
-    const previousEditorRouteRef = React.useRef(profileId);
-    const previousEditorProfileIdRef = React.useRef(editorProfileId);
-    const storedProfile = themeProfiles.profiles.find((profile) => profile.id === editorProfileId) ?? null;
-    const sourceProfile = storedProfile ?? builtInDefinition?.profile ?? null;
-    const readonly = builtInDefinition !== undefined && !isNewProfile;
-    const persisted = storedProfile !== null || legacySource !== null;
-    const presetOptions = React.useMemo(() => buildThemePresetSourceOptions(themeProfiles), [themeProfiles]);
-    const resolveInitialPresetId = React.useCallback((): string => {
-        if (isNewProfile) {
-            const activeProfile = findActiveThemeProfileForMode(themeProfiles, resolveInitialEditorMode(themePreference));
-            if (activeProfile) return activeProfile.id;
-            return resolveInitialEditorMode(themePreference);
-        }
-        return sourceProfile?.id ?? resolveInitialEditorMode(themePreference);
-    }, [isNewProfile, sourceProfile?.id, themePreference, themeProfiles]);
-    const initialPresetIdRef = React.useRef<string | null>(null);
-    if (initialPresetIdRef.current === null) {
-        initialPresetIdRef.current = resolveInitialPresetId();
-    }
-    const resolveInitialMode = React.useCallback((): ThemeProfileMode => {
-        const initialPreset = presetOptions.find((option) => option.id === initialPresetIdRef.current) ?? null;
-        if (initialPreset?.profile && !profileHasAnyColorOverrides(initialPreset.profile)) {
-            return resolveInitialEditorMode(themePreference);
-        }
-        if (initialPreset) return initialPreset.preferredMode;
-        if (sourceProfile && profileHasAnyColorOverrides(sourceProfile)) return resolveThemePresetSourcePreferredMode(sourceProfile);
-        return resolveInitialEditorMode(themePreference);
-    }, [presetOptions, sourceProfile, themePreference]);
-    const [selectedPresetId, setSelectedPresetId] = React.useState(initialPresetIdRef.current);
-    const selectedPreset = React.useMemo(() => (
-        presetOptions.find((option) => option.id === selectedPresetId) ?? presetOptions[0] ?? null
-    ), [presetOptions, selectedPresetId]);
-    const [mode, setMode] = React.useState<ThemeProfileMode>(() => resolveInitialMode());
-    const [draft, setDraft] = React.useState<ThemeProfileV1 | null>(() => {
-        if (!isNewProfile) return sourceProfile;
-        const now = nowThemeProfileTimestamp();
-        const initialPreset = presetOptions.find((option) => option.id === initialPresetIdRef.current) ?? null;
-        const draft = createThemeProfileDraft({
-            id: createThemeProfileId(),
-            name: createProfileName(themeProfiles.profiles.length + 1),
-            now,
-            sourceProfile: initialPreset?.profile ?? undefined,
-        });
-        // The same owner that applies a chosen "Starts from" theme sets the draft's light or dark, so the
-        // first draft already agrees with the theme it says it starts from.
-        return initialPreset ? replaceThemeProfileDraftFromPresetSource(draft, initialPreset, now) : draft;
-    });
-    const [presetMenuOpen, setPresetMenuOpen] = React.useState(false);
-    const [invalidByToken, setInvalidByToken] = React.useState<Readonly<Record<string, boolean>>>({});
-    const previewAppliedRef = React.useRef(false);
-    const committedRef = React.useRef(false);
-    const stableSelectionRef = React.useRef({ themePreference, themeProfiles });
-
+    const previewRef = isNewProfile ? getProfileIdParam(params.previewRef) : null;
+    const previewSource = React.useMemo(() => {
+        try { return { snapshot: previewRef ? getThemeTryOnOwner().read(previewRef) : null, error: null }; }
+        catch (error) { return { snapshot: null, error }; }
+    }, [previewRef]);
+    const routeKey = previewRef ? `${profileId}:${previewRef}` : profileId;
+    const startFromParam = isNewProfile ? getProfileIdParam(params.from) : null;
+    const initialMode = resolveInitialEditorMode(themePreference);
+    const reference = previewRef ? null : isNewProfile
+        ? startFromParam ? readThemePresetSourceReferenceId(startFromParam) : selection[initialMode]
+        : readThemePresetSourceReferenceId(profileId);
+    const initialSource = React.useRef({ routeId: routeKey, reference });
+    if (initialSource.current.routeId !== routeKey) initialSource.current = { routeId: routeKey, reference };
+    const sourceRead = useThemeProfileDocument(initialSource.current.reference);
+    const sourceDocument = previewSource.snapshot?.document ?? sourceRead.document;
+    const sourceProfile = sourceDocument?.profile ?? null;
+    const builtInPresetId = initialSource.current.reference?.kind === 'built-in' ? initialSource.current.reference.presetId : null;
+    const builtInDefinition = BUILT_IN_THEME_PROFILES.find(definition => definition.presetId === builtInPresetId);
+    const readonly = !isNewProfile && sourceProfile?.source !== undefined && sourceProfile.source.kind !== 'yours';
+    const persisted = !isNewProfile && sourceDocument !== null;
+    const presetOptions = React.useMemo(() => buildThemePresetSourceOptions(entries), [entries]);
+    const initialPresetId = initialSource.current.reference ? getThemePresetSourceReferenceId(initialSource.current.reference) : initialMode;
+    const [selectedPresetId, setSelectedPresetId] = React.useState(initialPresetId);
+    const selectedPreset = React.useMemo(() => presetOptions.find(option => option.id === selectedPresetId) ?? null,
+        [presetOptions, selectedPresetId]);
+    const [mode, setMode] = React.useState<ThemeProfileMode>(() => sourceProfile && (sourceProfile.assetAppearance !== undefined || profileHasAnyColorOverrides(sourceProfile))
+        ? resolveThemePresetSourcePreferredMode(sourceProfile) : initialMode);
+    const [draft, setDraft] = React.useState<ThemeProfileV1 | null>(null);
+    const retainedDocument = React.useRef<ThemeProfileDocument | null>(null);
+    const initializedRoute = React.useRef<string | null>(null);
     React.useEffect(() => {
-        const routeChanged = previousEditorRouteRef.current !== profileId;
-        previousEditorRouteRef.current = profileId;
-        if (isNewProfile) return;
-        if (legacySource && !routeChanged) {
-            if (editorProfileId === null) return;
-            const previousId = previousEditorProfileIdRef.current;
-            setDraft(current => current === null ? sourceProfile
-                : current.id === editorProfileId ? current : { ...current, id: editorProfileId });
-            setSelectedPresetId(current => current === previousId ? editorProfileId : current);
-        } else {
+        if (initializedRoute.current === routeKey) return;
+        if (previewRef && !previewSource.snapshot?.document) return;
+        if (initialSource.current.reference && !sourceDocument && (!isNewProfile || sourceRead.state !== 'missing')) return;
+        initializedRoute.current = routeKey;
+        retainedDocument.current = sourceDocument;
+        if (previewSource.snapshot?.document) {
+            setDraft({ ...previewSource.snapshot.document.profile, assetAppearance: previewSource.snapshot.mode });
+            setMode(previewSource.snapshot.mode);
+            return;
+        }
+        if (!isNewProfile) {
             setDraft(sourceProfile);
-            if (routeChanged) setSelectedPresetId(editorProfileId ?? resolveInitialEditorMode(themePreference));
+            if (sourceProfile && (sourceProfile.assetAppearance !== undefined || profileHasAnyColorOverrides(sourceProfile)))
+                setMode(resolveThemePresetSourcePreferredMode(sourceProfile));
+            return;
         }
-        previousEditorProfileIdRef.current = editorProfileId;
-    }, [editorProfileId, isNewProfile, legacySource, profileId, sourceProfile, themePreference]);
-
-    React.useEffect(() => {
-        stableSelectionRef.current = { themePreference, themeProfiles };
-    }, [themePreference, themeProfiles]);
+        const profile = createThemeProfileDraft({ id: createThemeProfileId(),
+            name: createProfileName(entries.filter(entry => entry.source.kind === 'yours').length + 1),
+            now: nowThemeProfileTimestamp() });
+        const next = sourceDocument ? mergeThemeProfileDocumentEdit(sourceDocument, {
+            id: profile.id, name: profile.name, createdAt: profile.createdAt, updatedAt: profile.updatedAt, source: { kind: 'yours' },
+        }).profile : { ...profile, assetAppearance: initialMode };
+        setDraft(next);
+        if (sourceDocument) setMode(resolveThemePresetSourcePreferredMode(sourceDocument.profile));
+    }, [entries, initialMode, isNewProfile, routeKey, previewRef, previewSource, sourceDocument, sourceProfile, sourceRead.state]);
+    const draftDocument = React.useCallback((profile: ThemeProfileV1): ThemeProfileDocument => {
+        const retained = retainedDocument.current;
+        if (retained) {
+            // A full editor draft replaces supported optional fields; canonical merge retains unknown children.
+            const cleared = mergeThemeProfileDocumentEdit(retained, { id: profile.id }, { removeKnownFields: ['seeds', 'style', 'css'] });
+            return mergeThemeProfileDocumentEdit(cleared, profile, { retainedPresentation: retained });
+        }
+        const parsed = parseThemeProfileDocument(profile);
+        if (!parsed.ok) throw new Error(parsed.error);
+        return parsed.document;
+    }, []);
+    const [view, setView] = React.useState<ThemeEditorView>('colors');
+    const [colorQuery, setColorQuery] = React.useState('');
+    const codeEditorRef = React.useRef<CodeEditorHandle>(null);
+    const [invalidByToken, setInvalidByToken] = React.useState<Readonly<Record<string, boolean>>>({});
 
     const profileDisplayName = builtInDefinition ? t(builtInDefinition.translationKey) : draft?.name;
     const assetAppearance = React.useMemo(() => (
@@ -211,51 +203,59 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
     const recentColors = React.useMemo(() => (draft ? getThemeProfileRecentColors(draft) : []), [draft]);
     const hasInvalidColor = Object.values(invalidByToken).some(Boolean);
     const hasInvalidProfileName = !readonly && draft ? sanitizeThemeProfileName(draft.name) === null : false;
-    const hasProfileLimitReached = !readonly && isNewProfile
-        && !themeProfiles.profiles.some(profile => profile.id === draft?.id)
-        && themeProfiles.profiles.length >= THEME_PROFILE_MAX_PROFILES;
-    const saveDisabled = hasInvalidColor || hasInvalidProfileName || hasProfileLimitReached;
+    const saveDisabled = hasInvalidColor || hasInvalidProfileName;
 
     const selectPreset = React.useCallback(async (presetId: string) => {
         if (!draft || readonly) return;
-        const nextPreset = presetOptions.find((option) => option.id === presetId);
-        if (!nextPreset) return;
-
-        if (selectedPreset && !themeProfileDraftMatchesPresetSource(draft, selectedPreset)) {
-            const confirmed = await Modal.confirm(
-                t('settingsAppearance.themeProfiles.replacePresetTitle'),
+        const option = presetOptions.find(candidate => candidate.id === presetId);
+        if (!option) return;
+        const currentSource = selectedPreset ? { ...selectedPreset,
+            profile: selectedPreset.profile ?? retainedDocument.current?.profile ?? null } : null;
+        if (currentSource && !themeProfileDraftMatchesPresetSource(draft, currentSource)) {
+            if (!await Modal.confirm(t('settingsAppearance.themeProfiles.replacePresetTitle'),
                 t('settingsAppearance.themeProfiles.replacePresetSubtitle'),
-                { confirmText: t('common.continue'), destructive: true },
-            );
-            if (!confirmed) return;
+                { confirmText: t('common.continue'), destructive: true })) return;
         }
-
-        setSelectedPresetId(nextPreset.id);
-        setMode(nextPreset.preferredMode);
+        let document: ThemeProfileDocument | null = null;
+        try {
+            const reference = option.reference;
+            document = reference ? await getSyncSingleton().withThemeProfileLibrary(library => library.get(reference)) : null;
+            if (reference && !document) { Modal.alert(t('common.error'), t('settingsAppearance.themeProfiles.missingProfileDescription')); return; }
+        } catch (error) {
+            Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, t('common.requestFailed')));
+            return;
+        }
+        const source = { ...option, profile: document?.profile ?? option.profile };
+        const next = replaceThemeProfileDraftFromPresetSource(draft, source, nowThemeProfileTimestamp());
+        // Starts from takes the chosen theme's presentation while retaining this draft's identity.
+        const { seeds: _seeds, style: _style, css: _css, ...envelope } = next;
+        const replacement = { ...envelope, ...(source.profile?.seeds ? { seeds: source.profile.seeds } : {}),
+            ...(source.profile?.style ? { style: source.profile.style } : {}),
+            ...(source.profile?.css !== undefined ? { css: source.profile.css } : {}) };
+        retainedDocument.current = document ? mergeThemeProfileDocumentEdit(document, {
+            id: draft.id, name: draft.name, createdAt: draft.createdAt, updatedAt: replacement.updatedAt, source: { kind: 'yours' },
+        }) : null;
+        setDraft(replacement);
+        setSelectedPresetId(option.id);
+        setMode(option.preferredMode);
         setInvalidByToken({});
-        setDraft(replaceThemeProfileDraftFromPresetSource(draft, nextPreset, nowThemeProfileTimestamp()));
     }, [draft, presetOptions, readonly, selectedPreset]);
 
     const cloneProfile = React.useCallback(async () => {
-        if (!draft || themeProfiles.profiles.length >= THEME_PROFILE_MAX_PROFILES) return;
-        const id = createThemeProfileId();
+        if (!draft) return;
         const now = nowThemeProfileTimestamp();
-        const profile = createThemeProfileDraft({
-            id,
+        const document = draftDocument({ ...draft, id: createThemeProfileId(),
             name: t('settingsAppearance.themeProfiles.cloneName', { name: profileDisplayName ?? draft.name }),
-            now,
-            sourceProfile: draft,
-        });
+            createdAt: now, updatedAt: now, source: { kind: 'yours' } });
         if (!await setSetting(THEMES_SETTINGS.settings.yourThemes,
-            SettingsDeclarationValueV1Schema.parse({ edit: { before: mutationSnapshot.themeProfiles, next: upsertThemeProfile(mutationSnapshot.themeProfiles, profile),
-                legacyProfileIds: mutationSnapshot.legacyProfileIds } }))) return;
-        router.push(profileEditorRoute(id));
-    }, [draft, mutationSnapshot, profileDisplayName, router, setSetting, themeProfiles.profiles.length]);
+            SettingsDeclarationValueV1Schema.parse({ saveDocument: document.raw }))) return;
+        router.push(profileEditorRoute(getThemePresetSourceReferenceId({ kind: 'artifact', id: document.profile.id })));
+    }, [draft, draftDocument, profileDisplayName, router, setSetting]);
 
     const exportProfile = React.useCallback(() => {
-        if (!draft) return;
-        router.push(profileExportRoute(draft.id));
-    }, [draft, router]);
+        if (!initialSource.current.reference) return;
+        router.push(profileExportRoute(getThemePresetSourceReferenceId(initialSource.current.reference)));
+    }, [router]);
 
     const updateColor = React.useCallback((tokenId: string, value: string) => {
         if (readonly) return;
@@ -274,10 +274,12 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
     }, [mode, readonly]);
 
     const resetMode = React.useCallback(() => {
-        if (readonly) return;
+        if (readonly || !draft) return;
+        const cleared = mergeThemeProfileDocumentEdit(draftDocument(draft), {}, { removeKnownFields: ['seeds', 'style', 'css'] });
+        retainedDocument.current = cleared;
         setInvalidByToken((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${mode}:`))));
-        setDraft((current) => current ? resetThemeProfileDraftMode(current, mode, nowThemeProfileTimestamp()) : current);
-    }, [mode, readonly]);
+        setDraft(resetThemeProfileDraftMode(cleared.profile, mode, nowThemeProfileTimestamp()));
+    }, [draft, draftDocument, mode, readonly]);
 
     const updateAssetAppearance = React.useCallback((nextAssetAppearance: string) => {
         if (readonly || !isThemeProfileAssetAppearance(nextAssetAppearance)) return;
@@ -291,27 +293,31 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
 
     const saveAndActivate = React.useCallback(async () => {
         if (!draft || readonly || saveDisabled) return;
-        const profile = { ...draft, id: legacySource?.displayedId ?? draft.id, assetAppearance };
+        // The code field's latest bytes, even when its debounced change has not reached the draft yet.
+        await codeEditorRef.current?.flushPendingChange();
+        const css = codeEditorRef.current?.getValue() ?? draft.css;
+        const profile = { ...draft, ...(css !== undefined ? { css } : {}), assetAppearance };
+        const document = draftDocument(profile);
         const applied = await setSetting({ anchor: 'appearance.themeMode' }, SettingsDeclarationValueV1Schema.parse({
-            activation: { profileId: profile.id, profileMode: assetAppearance, profile,
-                before: mutationSnapshot.themeProfiles, legacyProfileIds: mutationSnapshot.legacyProfileIds },
+            activation: { profileId: profile.id, profileMode: assetAppearance, saveDocument: document.raw },
             forceAnimate: true,
             reduceMotion,
         }));
         if (!applied) return;
-        committedRef.current = true;
         // From the list, not "back": an Ask-first review opened above this editor would otherwise land here again.
         router.dismissTo(themesListRoute);
-    }, [assetAppearance, draft, legacySource, mutationSnapshot, readonly, reduceMotion, router, saveDisabled, setSetting]);
+    }, [assetAppearance, draft, draftDocument, readonly, reduceMotion, router, saveDisabled, setSetting]);
 
-    const applyThemeSelection = useApplyThemeSelection();
     const deactivate = React.useCallback(async () => {
         if (!draft) return;
-        // Returning a mode to its default goes through the one theme-selection owner.
-        if (!await applyThemeSelection(themePreference, clearActiveThemeProfileReferences(themeProfiles, draft.id))) return;
-        committedRef.current = true;
+        for (const slotMode of ['light', 'dark'] as const) {
+            if (selection[slotMode]?.kind !== 'artifact' || selection[slotMode]?.id !== draft.id) continue;
+            if (!await setSetting({ anchor: 'appearance.themeMode' }, SettingsDeclarationValueV1Schema.parse({
+                themePreference, select: { mode: slotMode, reference: null },
+            }))) return;
+        }
         router.back();
-    }, [applyThemeSelection, draft, router, themePreference, themeProfiles]);
+    }, [draft, router, selection, setSetting, themePreference]);
 
     const deleteProfile = React.useCallback(async () => {
         if (!draft || readonly) return;
@@ -328,40 +334,24 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
             { confirmText: t('common.delete'), destructive: true },
         );
         if (!confirmed) return;
-        const nextThemeProfiles = removeThemeProfile(mutationSnapshot.themeProfiles, legacySource?.displayedId ?? draft.id);
-        if (!await setSetting(THEMES_SETTINGS.settings.yourThemes, SettingsDeclarationValueV1Schema.parse({
-            edit: { before: mutationSnapshot.themeProfiles, next: nextThemeProfiles,
-                legacyProfileIds: mutationSnapshot.legacyProfileIds },
-        }))) return;
-        committedRef.current = true;
+        const result = await execute(THEME_ACTION_IDS.delete, { ref: { kind: 'artifact', id: draft.id } });
+        if (!result.ok) {
+            alertActionFailure({ reason: resolveActionExecutionFailureMessage(result, t('common.requestFailed')) ?? t('common.requestFailed'),
+                code: result.errorCode, requestId: result.requestId });
+            return;
+        }
         router.back();
-    }, [draft, legacySource, mutationSnapshot, readonly, router, setSetting, themeProfiles.activeProfileIds]);
+    }, [draft, execute, readonly, router, themeProfiles.activeProfileIds]);
 
-    React.useEffect(() => {
-        if (!draft || readonly || hasInvalidColor || hasInvalidProfileName || hasProfileLimitReached
-            || (legacySource !== null && editorProfileId === null)) return;
-        const timeout = setTimeout(() => {
-            previewAppliedRef.current = true;
-            const profile = legacySource && editorProfileId !== null ? { ...draft, id: editorProfileId } : draft;
-            applyThemeRuntimeSelection({
-                themePreference: assetAppearance,
-                themeProfiles: setActiveThemeProfileForMode(upsertThemeProfile(themeProfiles, profile), assetAppearance, profile.id),
-                systemTheme: readSystemTheme(),
-            });
-        }, 150);
-
-        return () => clearTimeout(timeout);
-    }, [assetAppearance, draft, editorProfileId, hasInvalidColor, hasInvalidProfileName, hasProfileLimitReached, legacySource, readonly, themeProfiles]);
-
-    React.useEffect(() => () => {
-        if (!previewAppliedRef.current || committedRef.current) return;
-        const stableSelection = stableSelectionRef.current;
-        applyThemeRuntimeSelection({
-            themePreference: stableSelection.themePreference,
-            themeProfiles: stableSelection.themeProfiles,
-            systemTheme: readSystemTheme(),
-        });
+    const editorActions = React.useMemo(() => createThemeProfileEditorActions(executeTheme), [executeTheme]);
+    const previewDraft = React.useMemo(() => draft && !readonly && !hasInvalidColor && !hasInvalidProfileName
+        ? { document: draftDocument(draft), draft, mode: assetAppearance } : null,
+    [assetAppearance, draft, draftDocument, hasInvalidColor, hasInvalidProfileName, readonly]);
+    const reportPreviewFailure = React.useCallback((error: unknown) => {
+        Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, t('common.requestFailed')));
     }, []);
+    useThemeProfileEditorPreview({ owner: getThemeTryOnOwner(), draft: previewDraft,
+        preview: editorActions.preview, onFailure: reportPreviewFailure });
 
     const inUse = persisted && draft !== null && isThemeProfileActive(themeProfiles, draft.id);
     const menuActions = React.useMemo((): readonly PageHeaderMenuAction[] => [
@@ -371,24 +361,100 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
             {
                 id: 'duplicate',
                 title: t('settingsAppearance.themeProfiles.duplicateTheme'),
-                disabled: themeProfiles.profiles.length >= THEME_PROFILE_MAX_PROFILES,
                 onSelect: cloneProfile,
             },
-            { id: 'export', title: t('settingsAppearance.themeProfiles.exportProfile'), onSelect: exportProfile },
+            { id: 'export', title: t('settingsAppearance.themeProfiles.exportFile'), onSelect: exportProfile },
         ] : []),
         ...(inUse && !readonly ? [{ id: 'deactivate', title: t('settingsAppearance.themeProfiles.deactivateProfile'), onSelect: deactivate }] : []),
         ...(persisted && !readonly ? [{ id: 'delete', title: t('settingsAppearance.themeProfiles.deleteTheme'), onSelect: deleteProfile }] : []),
     ], [cloneProfile, deactivate, deleteProfile, exportProfile, inUse, isNewProfile, persisted, readonly, resetMode, themeProfiles.profiles.length]);
     const markPalette = React.useMemo(() => resolveThemeProfile({ mode: assetAppearance, profile: draft }), [assetAppearance, draft]);
 
+    const updateSeed = React.useCallback((seed: 'canvas' | 'accent', value: string) => {
+        if (readonly) return;
+        setDraft((current) => {
+            if (!current) return current;
+            const base = resolveThemeProfile({ mode: assetAppearance, profile: { ...current, seeds: undefined } }).colors;
+            const seeds = current.seeds ?? { canvas: base.background.canvas, accent: base.button.primary.background };
+            return { ...current, seeds: { ...seeds, [seed]: value }, updatedAt: nowThemeProfileTimestamp() };
+        });
+    }, [assetAppearance, readonly]);
+    const resetSeed = React.useCallback((seed: 'canvas' | 'accent') => {
+        if (readonly) return;
+        setInvalidByToken((current) => ({ ...current, [`${mode}:seed:${seed}`]: false }));
+        setDraft((current) => {
+            if (!current?.seeds) return current;
+            const base = resolveThemeProfile({ mode: assetAppearance, profile: { ...current, seeds: undefined } }).colors;
+            const seeds = { ...current.seeds, [seed]: seed === 'canvas' ? base.background.canvas : base.button.primary.background };
+            const baseSeeds = { canvas: base.background.canvas, accent: base.button.primary.background };
+            const unchanged = seeds.canvas === baseSeeds.canvas && seeds.accent === baseSeeds.accent;
+            const { seeds: _previous, ...rest } = current;
+            return unchanged ? { ...rest, updatedAt: nowThemeProfileTimestamp() } : { ...current, seeds, updatedAt: nowThemeProfileTimestamp() };
+        });
+    }, [assetAppearance, mode, readonly]);
+    const updateRadius = React.useCallback((radius: ThemeRadiusScaleName) => {
+        if (readonly) return;
+        setDraft((current) => current ? { ...current, style: { ...current.style, radius }, updatedAt: nowThemeProfileTimestamp() } : current);
+    }, [readonly]);
+    const updateTypeface = React.useCallback((fontFamily: string | null) => {
+        if (readonly || !draft) return;
+        const { fontFamily: _previous, ...style } = draft.style ?? {};
+        const next = { ...draft, style: { ...style, ...(fontFamily ? { fontFamily } : {}) }, updatedAt: nowThemeProfileTimestamp() };
+        if (fontFamily === null) {
+            const cleared = mergeThemeProfileDocumentEdit(draftDocument(next), {}, { removeKnownFields: ['style'] });
+            retainedDocument.current = mergeThemeProfileDocumentEdit(cleared, { style });
+        }
+        setDraft(next);
+    }, [draft, draftDocument, readonly]);
+    const updateCss = React.useCallback((css: string) => {
+        if (readonly) return;
+        setDraft((current) => current && (current.css ?? '') !== css ? { ...current, css, updatedAt: nowThemeProfileTimestamp() } : current);
+    }, [readonly]);
+    const updateName = React.useCallback((name: string) => {
+        setDraft((current) => current ? { ...current, name, updatedAt: nowThemeProfileTimestamp() } : current);
+    }, []);
+    const startOptions = React.useMemo(() => presetOptions
+        .filter((option) => option.preferredMode === assetAppearance)
+        .map((option) => ({
+            key: option.id,
+            name: option.kind === 'base' ? t('settingsAppearance.themeProfiles.defaultTheme') : option.title,
+            sourceLabel: t(option.kind === 'custom' ? 'settingsAppearance.themeProfiles.sourceYours' : 'settingsAppearance.themeProfiles.builtInTheme'),
+            preview: option.miniature ? { kind: 'miniature' as const, miniature: option.miniature }
+                : { kind: 'palette' as const, palette: resolveThemeProfile({ mode: assetAppearance, profile: option.profile }) },
+        })), [assetAppearance, presetOptions]);
+    const tokenGroups = React.useMemo(() => groups.map((group) => ({
+        id: group.group,
+        title: t(groupTitleKeys[group.group as keyof typeof groupTitleKeys] ?? 'settingsAppearance.themeProfiles.groups.background'),
+        tokens: group.tokens,
+    })), [groups]);
+
+    // CSS coverage for the CSS view: compiled once per changed draft CSS, and only while that view is open.
+    const draftCss = draft?.css ?? '';
+    const cssCoverage = React.useMemo(() => {
+        if (view !== 'css' || draftCss.trim().length === 0) return null;
+        const prepared = prepareThemeCss(draftCss);
+        return {
+            counts: { total: prepared.coverage.total, native: prepared.coverage.native, webOnly: prepared.coverage.webOnly },
+            webOnlyRules: prepared.detailedCoverage.rules.filter(rule => !rule.native)
+                .map(rule => ({ line: rule.range.line, selector: rule.selector })),
+        };
+    }, [draftCss, view]);
+    const revealCssLine = React.useCallback((line: number) => {
+        codeEditorRef.current?.revealLine(line, { focus: true, select: true });
+    }, []);
+
     if (!draft) {
         return (
             <ItemList testID="settings-theme-profile-editor" style={{ paddingTop: 0 }}>
                 <PageHeader
                     alwaysShowTitle
-                    title={t('settingsAppearance.themeProfiles.missingProfile')}
-                    description={t('settingsAppearance.themeProfiles.missingProfileDescription')}
+                    title={t(sourceRead.state === 'loading' ? 'common.loading' : 'settingsAppearance.themeProfiles.missingProfile')}
+                    description={sourceRead.state === 'loading' ? undefined : t('settingsAppearance.themeProfiles.missingProfileDescription')}
                 />
+                {previewSource.error || sourceRead.state === 'failed' ? <SurfaceStateCard kind="error"
+                    reason={resolveActionExecutionErrorMessage(previewSource.error ?? sourceRead.failure, t('artifacts.browser.loadFailedBody'), { safeToRetry: true })}
+                    {...(!previewSource.error ? { action: { label: t('common.retry'), onPress: sourceRead.retry } } : {})}
+                    accessibilitySemantics="alert" /> : null}
             </ItemList>
         );
     }
@@ -399,138 +465,70 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         { key: 'kind', text: t(readonly ? 'settingsAppearance.themeProfiles.builtInTheme' : 'settingsAppearance.themeProfiles.customTheme') },
         ...(inUse ? [{ key: 'inUse', text: t('settingsAppearance.themeProfiles.inUse') }] : []),
     ];
-
-    return (
-        <ItemList testID="settings-theme-profile-editor" style={{ paddingTop: 0 }} keyboardShouldPersistTaps="handled">
-            <PageHeader
-                testID="settings-theme-profile-header"
-                alwaysShowTitle
-                title={title}
-                description={t(readonly
-                    ? 'settingsAppearance.themeProfiles.builtInThemeDescription'
-                    : 'settingsAppearance.themeProfiles.editorDescription')}
-                meta={meta}
-                details={hasProfileLimitReached ? (
-                    <Text
-                        testID="settings-theme-profile-limit-error"
-                        accessibilityRole="alert"
-                        style={styles.headerError}
-                    >
-                        {t('settingsAppearance.themeProfiles.themeLimitDescription', { count: THEME_PROFILE_MAX_PROFILES })}
-                    </Text>
-                ) : undefined}
-                leading={(
-                    <View style={styles.markPreview}>
-                        <ThemePalettePreview palette={markPalette} />
-                    </View>
-                )}
-                primaryAction={!readonly ? {
-                    testID: 'settings-theme-profile-save',
-                    title: t('settingsAppearance.themeProfiles.saveAndUse'),
-                    disabled: saveDisabled,
-                    onPress: saveAndActivate,
-                } : undefined}
-                actions={(
-                    <View style={styles.headerActions}>
-                        <PageHeaderMenu testID="settings-theme-profile-menu" actions={menuActions} />
-                    </View>
-                )}
-            />
-
-            {!readonly ? (
-                <ItemGroup
-                    title={t('settingsAppearance.themeProfiles.detailsGroup')}
-                    description={t('settingsAppearance.themeProfiles.detailsDescription')}
-                >
-                    <Item
-                        title={t('settingsAppearance.themeProfiles.themeName')}
-                        accessoryLayout="adaptive"
-                        showChevron={false}
-                        rightElement={(
-                            <FieldTextInput
-                                testID="settings-theme-profile-name"
-                                value={draft.name}
-                                onChangeText={(name) => setDraft({ ...draft, name, updatedAt: nowThemeProfileTimestamp() })}
-                                accessibilityLabel={t('settingsAppearance.themeProfiles.themeName')}
-                                autoCapitalize="words"
-                                autoFocus={isNewProfile}
-                                error={hasInvalidProfileName ? t('settingsAppearance.themeProfiles.invalidProfileName') : null}
-                            />
-                        )}
-                    />
-                    <ThemeProfilePresetDropdown
-                        open={presetMenuOpen}
-                        onOpenChange={setPresetMenuOpen}
-                        options={presetOptions}
-                        selectedOption={selectedPreset}
-                        onSelect={(presetId) => { void selectPreset(presetId); }}
-                    />
-                    <SegmentedChoiceItem<ThemeProfileMode>
-                        testID="settings-theme-profile-asset-appearance"
-                        testIDPrefix="settings-theme-profile-asset-appearance"
-                        title={t('settingsAppearance.themeProfiles.themeAppearance')}
-                        subtitle={t('settingsAppearance.themeProfiles.themeAppearanceDescription')}
-                        subtitleLines={0}
-                        options={[
-                            { id: 'light', label: t('settingsAppearance.themeOptions.light') },
-                            { id: 'dark', label: t('settingsAppearance.themeOptions.dark') },
-                        ]}
-                        value={assetAppearance}
-                        onChange={updateAssetAppearance}
-                    />
-                </ItemGroup>
-            ) : null}
-
-            <ItemGroup title={t('settingsAppearance.themeProfiles.previewSection')}>
-                <SectionContentRow>
-                    <ThemeProfilePreviewPane profile={draft} mode={mode} />
-                </SectionContentRow>
-            </ItemGroup>
-
-            {groups.map((group, index) => (
-                <ItemGroup
-                    key={group.group}
-                    title={t(groupTitleKeys[group.group as keyof typeof groupTitleKeys] ?? 'settingsAppearance.themeProfiles.groups.background')}
-                    description={index === 0 ? t(readonly
-                        ? 'settingsAppearance.themeProfiles.colorsReadOnlyDescription'
-                        : 'settingsAppearance.themeProfiles.colorsDescription') : undefined}
-                >
-                    {group.tokens.map((token) => (
-                        <ThemeColorTokenRow
-                            key={token.id}
-                            profile={draft}
-                            mode={mode}
-                            token={token}
-                            invalid={invalidByToken[`${mode}:${token.id}`] === true}
-                            readonly={readonly}
-                            recentColors={recentColors}
-                            onChange={updateColor}
-                            onInvalidChange={updateInvalid}
-                            onReset={resetToken}
-                        />
-                    ))}
-                </ItemGroup>
-            ))}
-        </ItemList>
-    );
+    const radius = draft.style?.radius ?? 'soft';
+    const preview = { kind: 'palette' as const, palette: markPalette, radius };
+    const viewProps: ThemeProfileEditorViewProps = {
+        header: {
+            title,
+            description: t(readonly
+                ? 'settingsAppearance.themeProfiles.builtInThemeDescription'
+                : 'settingsAppearance.themeProfiles.editorDescription'),
+            meta,
+            mark: preview,
+            ...(!readonly ? { save: { disabled: saveDisabled, onPress: () => { void saveAndActivate(); } } } : {}),
+            menu: menuActions,
+            ...(persisted && !readonly && reference ? { onShare: () => share([reference]) } : {}),
+        },
+        readonly,
+        view,
+        onViewChange: setView,
+        ...(!readonly ? {
+            details: {
+                name: draft.name,
+                nameInvalid: hasInvalidProfileName,
+                autoFocus: isNewProfile,
+                onNameChange: updateName,
+                appearance: assetAppearance,
+                onAppearanceChange: updateAssetAppearance,
+            },
+            startFrom: { options: startOptions, selectedKey: selectedPreset?.id ?? null, onChoose: (key: string) => { void selectPreset(key); } },
+        } : {}),
+        seeds: {
+            canvas: draft.seeds?.canvas ?? markPalette.colors.background.canvas,
+            accent: draft.seeds?.accent ?? markPalette.colors.button.primary.background,
+            canvasChanged: draft.seeds !== undefined,
+            accentChanged: draft.seeds !== undefined,
+            onChange: updateSeed,
+            onReset: resetSeed,
+        },
+        colors: {
+            draft,
+            mode,
+            groups: tokenGroups,
+            invalidByToken,
+            recentColors,
+            query: colorQuery,
+            onQueryChange: setColorQuery,
+            onChange: updateColor,
+            onInvalidChange: updateInvalid,
+            onReset: resetToken,
+        },
+        preview,
+        style: {
+            radius,
+            onRadiusChange: updateRadius,
+            radiusPreview: (choice) => ({ kind: 'palette', palette: markPalette, radius: choice }),
+            typefaces: BUNDLED_THEME_TYPEFACES,
+            typeface: BUNDLED_THEME_TYPEFACES.find(face => face.id === draft.style?.fontFamily)?.id ?? null,
+            onTypefaceChange: updateTypeface,
+        },
+        css: {
+            value: draft.css ?? '',
+            resetKey: draft.id,
+            onChange: updateCss,
+            editorRef: codeEditorRef,
+            ...(cssCoverage ? { coverage: cssCoverage.counts, webOnlyRules: cssCoverage.webOnlyRules, onRevealLine: revealCssLine } : {}),
+        },
+    };
+    return <ThemeProfileEditorView {...viewProps} />;
 });
-
-const stylesheet = StyleSheet.create((theme) => ({
-    headerActions: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s8,
-    },
-    headerError: {
-        color: theme.colors.state.danger.foreground,
-        fontSize: 13,
-        lineHeight: 18,
-    },
-    // The theme preview owns its shape; entity marks do not provide a backing tile.
-    markPreview: {
-        width: 44,
-        height: 44,
-        borderRadius: 11,
-        overflow: 'hidden',
-    },
-}));

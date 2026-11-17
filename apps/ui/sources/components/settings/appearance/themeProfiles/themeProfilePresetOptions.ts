@@ -1,9 +1,8 @@
-import { ThemeReferenceSchema } from '@happier-dev/protocol/account/settings/themeProfiles';
-import type { ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { t } from '@/text';
 import { BUILT_IN_THEME_PROFILES } from '@/theme/profiles/builtInThemeProfiles';
 import { resolveThemeProfileAssetAppearance } from '@/theme/profiles/themeProfileAssetAppearance';
-import type { BuiltInThemeProfileDefinition, ThemeProfileMode, ThemeProfilesLocalStateV1, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
+import { ThemeReferenceSchema, type ThemeLibraryEntry, type ThemeMiniatureData, type ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
+import type { BuiltInThemeProfileDefinition, ThemeProfileMode, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
 
 export type ThemePresetSourceKind = 'base' | 'builtIn' | 'custom';
 
@@ -15,6 +14,9 @@ export type ThemePresetSourceOption = Readonly<{
     profile: ThemeProfileV1 | null;
     preferredMode: ThemeProfileMode;
     builtInDefinition?: BuiltInThemeProfileDefinition;
+    reference: ThemeReference | null;
+    miniature?: ThemeMiniatureData;
+    entry?: ThemeLibraryEntry;
 }>;
 
 /** Stable selection identity includes the reference namespace and contribution owner. */
@@ -43,7 +45,6 @@ export function readThemePresetSourceReferenceId(value: string | null): ThemeRef
     return parsed.success ? parsed.data : null;
 }
 
-
 export const resolveThemePresetSourcePreferredMode = (profile: ThemeProfileV1): ThemeProfileMode => {
     return resolveThemeProfileAssetAppearance(profile);
 };
@@ -61,8 +62,19 @@ const sortOverrides = (overrides: ThemeProfileV1['overrides']): ThemeProfileV1['
 });
 
 export const buildThemePresetSourceOptions = (
-    themeProfiles: ThemeProfilesLocalStateV1,
+    entries: readonly ThemeLibraryEntry[],
 ): readonly ThemePresetSourceOption[] => [
+    ...entries.filter(entry => entry.source.kind !== 'built-in').map((entry): ThemePresetSourceOption => ({
+        id: getThemePresetSourceReferenceId(entry.reference),
+        kind: 'custom',
+        title: entry.name,
+        subtitle: t('settingsAppearance.themeProfiles.customProfileSubtitle'),
+        profile: null,
+        preferredMode: entry.mode,
+        reference: entry.reference,
+        miniature: entry.miniature,
+        entry,
+    })),
     {
         id: 'light',
         kind: 'base',
@@ -70,6 +82,7 @@ export const buildThemePresetSourceOptions = (
         subtitle: t('settingsAppearance.themeDescriptions.light'),
         profile: null,
         preferredMode: 'light',
+        reference: null,
     },
     {
         id: 'dark',
@@ -78,6 +91,7 @@ export const buildThemePresetSourceOptions = (
         subtitle: t('settingsAppearance.themeDescriptions.dark'),
         profile: null,
         preferredMode: 'dark',
+        reference: null,
     },
     ...BUILT_IN_THEME_PROFILES.map((definition): ThemePresetSourceOption => ({
         id: definition.profile.id,
@@ -87,15 +101,9 @@ export const buildThemePresetSourceOptions = (
         profile: definition.profile,
         preferredMode: definition.preferredMode,
         builtInDefinition: definition,
+        reference: { kind: 'built-in', presetId: definition.presetId },
     })),
-    ...themeProfiles.profiles.map((profile): ThemePresetSourceOption => ({
-        id: profile.id,
-        kind: 'custom',
-        title: profile.name,
-        subtitle: t('settingsAppearance.themeProfiles.customProfileSubtitle'),
-        profile,
-        preferredMode: resolveThemePresetSourcePreferredMode(profile),
-    })),
+
 ];
 
 const valuesSignature = (profile: Pick<ThemeProfileV1, 'base' | 'assetAppearance' | 'overrides'> | null): string => JSON.stringify({
