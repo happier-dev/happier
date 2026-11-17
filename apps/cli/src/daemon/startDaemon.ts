@@ -171,6 +171,7 @@ import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import type { ConnectedServiceId } from '@happier-dev/protocol';
 import { trimProcessAllocator } from '@happier-dev/iroh-native/node';
+import { releaseDaemonAllocatorEnvironment } from './runtime/daemonAllocatorEnvironment';
 import { resolveDaemonServiceIrohRelayConfig } from './service/resolveDaemonServiceIrohRelayConfig';
 import { readHomeApplicationCarrierEligibilityFromEnv } from '@happier-dev/cli-common/homeEnrollment';
 import { readOrCreateInstallationIdentity } from './identity/store';
@@ -424,6 +425,8 @@ export async function startDaemon(
 ): Promise<void> {
   process.env[PROCESS_OWNER_ENV_KEY] = formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir,
     owner: { kind: 'happier' } });
+  // glibc already applied the daemon's allocator settings at exec; no child process inherits them.
+  releaseDaemonAllocatorEnvironment(process.env);
   // This process is the daemon its Session hosts admit on the same-machine Session RPC channel.
   enableLocalSessionRpcCalls();
   // We don't have cleanup function at the time of server construction

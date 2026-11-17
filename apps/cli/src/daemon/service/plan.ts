@@ -1,5 +1,6 @@
 import { basename, join, win32 as win32Path } from 'node:path';
 
+import { withDaemonAllocatorEnvironment } from '../runtime/daemonAllocatorEnvironment';
 import { getReleaseRingCatalogEntry, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import {
   IROH_RELAY_POLICY_ENV_KEY,
@@ -536,11 +537,11 @@ export function planDaemonServiceInstall(params: Readonly<{
     description: targetMode === 'default-following' ? 'Happier CLI daemon (default)' : `Happier CLI daemon (${instanceId})`,
     execStart: programArgs,
     workingDirectory: mode === 'system' ? params.userHomeDir : '%h',
-    env: {
+    env: withDaemonAllocatorEnvironment({
       PATH: buildServicePath({ execPath: params.nodePath, homeDir: params.userHomeDir, platform: 'linux' }),
       ...baseEnv,
       ...pinnedTargetEnv,
-    },
+    }, 'linux'),
     killMode: 'process',
     umask: '0002',
     // The managed Linux guest provisions this user slice with a bounded

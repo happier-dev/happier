@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'child_process';
+import { withDaemonAllocatorEnvironment } from './daemonAllocatorEnvironment';
 import { randomUUID } from 'node:crypto';
 import { closeSync, mkdirSync, openSync } from 'node:fs';
 import { join } from 'node:path';
@@ -129,10 +130,10 @@ export async function spawnDetachedDaemonStartSync(
   const { startupSource, ...spawnOptions } = options;
   const requestedEnv = spawnOptions.env ?? process.env;
   const launchSpec = await resolveDaemonLaunchSpec(['daemon', 'start-sync'], requestedEnv);
-  const env = withProcessOwnerEnvironment(stripDaemonServiceInstallRequestEnv({
+  const env = withProcessOwnerEnvironment(stripDaemonServiceInstallRequestEnv(withDaemonAllocatorEnvironment({
     ...requestedEnv,
     ...(launchSpec.env ?? {}),
-  }), { kind: 'happier' }, requestedEnv.HAPPIER_HOME_DIR);
+  }, process.platform)), { kind: 'happier' }, requestedEnv.HAPPIER_HOME_DIR);
 
   // Detached daemon is typically spawned via `node <entry> daemon start-sync`, so argv no longer encodes
   // the shim name (`hprev`/`hdev`). Force the lane into the child environment so daemon state files are

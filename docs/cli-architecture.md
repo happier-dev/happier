@@ -1113,6 +1113,15 @@ no-op result; macOS and Windows do not schedule this maintenance. This changes
 allocator residency, without forcing V8 garbage collection or changing live
 Session state.
 
+The Linux daemon process also starts with glibc allocator settings (two arenas,
+64 KiB trim and mmap thresholds; `daemon/runtime/daemonAllocatorEnvironment.ts`).
+The launch owners add `GLIBC_TUNABLES` (the systemd service definition and the
+detached `daemon start-sync` launch) unless the person already set it, and the
+daemon removes its own value from its environment at start, so Session hosts,
+workers and Agents never inherit it. glibc reads it once at exec; musl ignores it;
+macOS and Windows launches do not carry it. An existing service definition keeps
+starting the daemon without it until the definition is next written.
+
 - **Entry point:** `src/index.ts` parses subcommands and routes execution.
 - **API client:** `src/api` handles HTTP + Socket.IO, encryption, and RPC.
 - **Daemon:** `src/daemon` runs in the background, spawns sessions, and maintains machine state.
