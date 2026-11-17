@@ -3474,6 +3474,7 @@
     "sources/components/store/StoreMcpListing.tsx",
     "sources/components/store/StorePluginKindSurface.tsx",
     "sources/components/store/StorePluginListing.tsx",
+    "sources/components/store/StorePluginThemeListingController.tsx",
     "sources/components/store/StoreProjectScopeChip.tsx",
     "sources/components/store/StoreSearch.tsx",
     "sources/components/store/StoreSkillListing.tsx",

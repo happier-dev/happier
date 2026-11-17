@@ -38,7 +38,12 @@ function nativeReference(row: StoreSearchRow): MarketplaceCatalogReferenceV1 | n
         case 'plugin': return row.summary.ref.itemId ? { type: 'registryItem', kind: 'plugin',
             sourceId: row.summary.ref.sourceId, itemId: row.summary.ref.itemId,
             ...(row.summary.ref.version ? { version: row.summary.ref.version } : {}) } : null;
-        case 'app': case 'theme': case 'browserExtension': case 'mcpServer': case 'skill': case 'starter': return { type: 'registryItem', kind: row.summary.ref.kind,
+        case 'theme': {
+            const item = row.summary.ref;
+            return item.kind === 'pluginTheme' ? null : { type: 'registryItem', kind: item.kind,
+                sourceId: item.sourceId, itemId: item.itemId, ...(item.version ? { version: item.version } : {}) };
+        }
+        case 'app': case 'browserExtension': case 'mcpServer': case 'skill': case 'starter': return { type: 'registryItem', kind: row.summary.ref.kind,
             sourceId: row.summary.ref.sourceId, itemId: row.summary.ref.itemId,
             ...(row.summary.ref.version ? { version: row.summary.ref.version } : {}) };
     }
@@ -69,7 +74,8 @@ export function storeRowFacts(rows: readonly StoreSearchRow[], curation: Registr
             : row.kind === 'app' ? row.summary.ref.appMetadata?.category?.split(',').map(category => category.trim()).filter(Boolean) ?? []
             : [];
         return { key: row.key, title: row.summary.title, context: row.summary.description ?? null, status: null,
-            fields: { kind: [row.kind], source: ref?.type === 'registryItem' ? [ref.sourceId] : null,
+            fields: { kind: [row.kind], source: row.kind === 'theme' && row.summary.ref.kind === 'pluginTheme' ? [row.summary.ref.pluginId]
+                : ref?.type === 'registryItem' ? [ref.sourceId] : null,
                 category: complete || nativeCategories.length ? [...nativeCategories, ...editorial.flatMap(item => item.category)] : null,
                 job: complete ? editorial.flatMap(item => item.job) : null } };
     });

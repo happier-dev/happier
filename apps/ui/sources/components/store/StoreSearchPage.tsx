@@ -49,6 +49,7 @@ import {
   useOpenRegistryItem,
   useProviderRows,
   useRegistryRows,
+  useStoreThemeRows,
   useSourceCatalog,
   STORE_SECTION_PREVIEW_ROWS,
   type DirectoryGroup,
@@ -231,7 +232,7 @@ function useStoreSearchSections(props: SearchSectionsInput) {
     addRegistry,
   );
   const app = useRegistryRows({ items: appItems, curation: NO_CURATION, sources }, openRegistry, sourceTitle, undefined, addRegistry);
-  const themes = useRegistryRows({ items: themeItems, curation: NO_CURATION, sources }, openRegistry, sourceTitle);
+  const themes = useStoreThemeRows({ items: themeItems, curation: NO_CURATION }, openRegistry, sourceTitle);
   const starterRows = useRegistryRows({ items: starterItems, curation: NO_CURATION, sources }, openRegistry, sourceTitle, undefined, addRegistry);
   // A starter's + starts a project from it, as on its kind page.
   const starter = React.useMemo(() => starterRows.rows.map((row): DirectoryRow => ({ ...row, addLabel: t('capabilities.store.startProject') })), [starterRows.rows]);

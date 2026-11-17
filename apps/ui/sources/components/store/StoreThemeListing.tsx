@@ -118,7 +118,7 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
               />
               <RoundButton
                 size={phone ? 'normal' : 'small'}
-                title={t('themeStore.install')}
+                title={props.installLabel ?? t('themeStore.install')}
                 onPress={props.onInstall}
                 loading={props.busy === 'install'}
                 disabled={props.busy !== null}
@@ -129,7 +129,7 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
             <View style={styles.installed}>
               <Icon name="check" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
               <Text variant="body" style={styles.meta}>
-                {t('themeStore.installed')}
+                {props.installedLabel ?? t('themeStore.installed')}
               </Text>
             </View>
           ) : (
@@ -157,8 +157,10 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
             />
           ) : null}
         </View>
-        {props.onCheckUpdates || props.onDuplicate || props.onUpdate ? (
+        {props.onCheckUpdates || props.onDuplicate || props.onUpdate || props.onManageSource ? (
           <View style={[styles.actions, phone ? styles.actionsPhone : null]}>
+            {props.onManageSource ? <RoundButton size={phone ? 'normal' : 'small'} display="secondary"
+              title={t('settingsPlugins.managePlugin')} onPress={props.onManageSource} disabled={props.busy !== null} testID={id('plugin')} /> : null}
             {props.onCheckUpdates ? <RoundButton size={phone ? 'normal' : 'small'} display="secondary"
               title={t('capabilities.store.updates.checkNow')} onPress={props.onCheckUpdates}
               loading={props.busy === 'check'} disabled={props.busy !== null} testID={id('check')} /> : null}
@@ -176,7 +178,7 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
           wordKey={trying ? `trying:${props.tryingFaceId}` : 'idle'}
         >
           <Text variant="meta" style={styles.meta}>
-            {trying && tryingFace
+            {props.decisionHelp ?? (trying && tryingFace
               ? t('themeStore.installConsequence', {
                   face: tryingFace.name,
                   here: props.here,
@@ -184,7 +186,7 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
                 })
               : props.installed
                 ? t('themeStore.installedHelp')
-                : t('themeStore.tryHelp', { here: props.here })}
+                : t('themeStore.tryHelp', { here: props.here }))}
           </Text>
         </WordCrossFade>
         {(props.installFailures ?? []).length > 0 ? (

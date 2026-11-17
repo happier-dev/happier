@@ -63,6 +63,10 @@ export type StoreThemeListingViewProps = Readonly<{
   /** How this device is named ("this Mac"). */
   here: string;
   installed: boolean;
+  installLabel?: string;
+  installedLabel?: string;
+  decisionHelp?: string;
+  onManageSource?: () => void;
   facts: readonly StoreThemeListingFact[];
   busy: 'try' | 'install' | 'revert' | 'uninstall' | 'acquire' | 'check' | 'update' | 'duplicate' | null;
   updateAvailable?: boolean;

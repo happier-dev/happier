@@ -98,7 +98,11 @@ export function createThemeActionExecute(host: ThemeActionHost): NonNullable<Act
                         previewOrigin = { kind: origin.kind };
                     }
                     await prepareThemeProfileCssAsync(input.document.profile);
-                    const preview = runtime.preview.begin({ ...input, origin: previewOrigin });
+                    const source = input.document.profile.source;
+                    const selection = source?.kind === 'plugin' ? { kind: 'plugin' as const,
+                        pluginId: source.pluginId, contributionId: source.contributionId } : undefined;
+                    const preview = runtime.preview.begin({ ...input, origin: previewOrigin,
+                        ...(selection ? { selection } : {}) });
                     return { previewRef: preview.previewRef, coverage: runtime.coverage(request.input.document), compatibility: request.input.document.compatibility };
                 }
                 case THEME_ACTION_IDS.revert:

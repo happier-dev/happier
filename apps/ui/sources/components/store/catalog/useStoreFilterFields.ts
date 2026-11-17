@@ -7,10 +7,12 @@ import { storeEditorialGroupKey, type StoreColumnField } from './storeColumnAdap
 import { storeKinds, type StoreKind } from './storeKinds';
 import { kindCopy } from './storeKindCopy';
 import { useAppShellPluginUiProjection, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { usePluginThemeList } from '@/theme/profiles/usePluginThemeList';
 
 /** Labels for the shared condition owner, from the admitted sources and editorial facts. */
 export function useStoreFilterFields(curation: RegistryCuration['curation'], presented: boolean): Readonly<Record<StoreColumnField, SettingsColumnFilterField>> {
     const sources = useRegistrySources(undefined, presented).sources;
+    const pluginThemes = usePluginThemeList(presented);
     const contributedKinds = useAppShellPluginUiProjection(value => value.pluginUiProjection?.storeKindsById);
     const localize = useProjectedPluginLocalizedTextResolver();
     return React.useMemo(() => {
@@ -26,9 +28,10 @@ export function useStoreFilterFields(curation: RegistryCuration['curation'], pre
                 const contribution = contributedKinds?.[value];
                 return contribution ? localize(contribution.pluginId, contribution.definition.title) : value;
             } },
-            source: { label: t('capabilities.store.catalogLabel'), icon: 'cloud' as const, valueLabel: value => sources.find(source => source.id === value)?.title ?? value },
+            source: { label: t('capabilities.store.catalogLabel'), icon: 'cloud' as const, valueLabel: value => sources.find(source => source.id === value)?.title
+                ?? pluginThemes.find(theme => theme.pluginId === value)?.pluginName ?? value },
             category: { label: t('capabilities.store.search.category'), icon: 'stack' as const, valueLabel: value => categories.get(value) ?? value },
             job: { label: t('capabilities.store.discover.jobsTitle'), icon: 'list-checks' as const, valueLabel: value => jobs.get(value) ?? value },
         };
-    }, [curation, sources, contributedKinds, localize]);
+    }, [curation, sources, pluginThemes, contributedKinds, localize]);
 }

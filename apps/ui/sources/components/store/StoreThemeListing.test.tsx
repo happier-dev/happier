@@ -80,6 +80,94 @@ async function createRegistryThemeListingFixture(options: Readonly<{ failAcquisi
     return { sourceId, preview, artifacts, state };
 }
 
+it('browses an admitted plugin theme through the joined library and keeps its reference from the shared Store listing', async () => {
+    const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+    const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+    const { createThemeProfileDraft } = await import('@/theme/profiles/createThemeProfileDraft');
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const externalReads: string[] = [];
+    const catalog = createPromptLibraryCatalogBoundary();
+    const fixture = await createArtifactInventoryDemandHarness({ handleRequest: async (url, init) => {
+        if (url.hostname !== 'artifact-demand.example.test') externalReads.push(url.href);
+        return catalog.handle(`${url.pathname}${url.search}`, init);
+    } });
+    fixture.inventory = [];
+    const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => fixture.accountId, encryptionMode: 'plain' });
+    fixture.artifactStore = artifacts;
+    onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+    const reference = { kind: 'plugin', pluginId: 'sample.palette', contributionId: 'night' } as const;
+    const selection = { type: 'pluginTheme', reference } as const;
+    routeParams = { selection: JSON.stringify(selection) };
+    const route = readStoreListingRoute(routeParams);
+    expect(route).toEqual({ kind: 'store', reference: selection });
+    if (route?.kind !== 'store') throw new Error('Expected admitted Store theme route');
+    const projected = { ...EMPTY_PLUGIN_UI_PROJECTION, themesById: { 'sample.palette/night': {
+        id: 'sample.palette/night', pluginId: reference.pluginId, pluginVersion: '1.2.3', pluginName: 'Palette studio',
+        definition: { id: reference.contributionId, theme: { ...createThemeProfileDraft({ id: 'night', name: 'Night sky', now: '2026-11-16' }), assetAppearance: 'dark' as const } },
+    } } };
+    const value = { pluginUiProjection: projected, pluginBrowserProjection: null, phase: 'current' as const,
+        interactionEnabled: true, machineId: null, serverId: null, platform: 'web' as const, accountLifetime: captureActiveServerAccountScopeLifetime(),
+        connectedAccountProjectionRevision: 0, reloadConnectedAccountProjection: () => {},
+        clientExecutableActivation: { status: 'ready' as const }, reloadClientExecutables: () => {} };
+    let admitted: typeof EMPTY_PLUGIN_UI_PROJECTION = projected;
+    const wrap = (body: React.ReactNode) => <AppShellPluginUiProjectionValueProvider value={{ ...value, pluginUiProjection: admitted }}>
+        <PluginSurfaceFocusEligibilityProvider focused>{body}</PluginSurfaceFocusEligibilityProvider>
+    </AppShellPluginUiProjectionValueProvider>;
+    const browseInput = { query: '', sourceIds: [reference.pluginId] };
+    const browse = await renderHook((input: typeof browseInput) => storeKinds.theme.useList(input, { presented: true }),
+        { initialProps: browseInput, wrapper: ({ children }) => wrap(children) });
+    await vi.waitFor(() => expect(browse.getCurrent().items).toHaveLength(1));
+    expect(storeKinds.theme.summary(browse.getCurrent().items[0]!).title).toBe('Night sky');
+    const item = browse.getCurrent().items[0]!;
+    const { themeSummaryMatchesMode } = await import('./catalog/storeThemes');
+    const { storeRowFacts } = await import('./catalog/storeColumnAdapter');
+    expect(themeSummaryMatchesMode(item, 'dark')).toBe(true);
+    expect(themeSummaryMatchesMode(item, 'light')).toBe(false);
+    expect(storeRowFacts([{ key: 'night', kind: 'theme', summary: storeKinds.theme.summary(item) }], [], true)[0]?.fields.source).toEqual([reference.pluginId]);
+    const { StoreSearch } = await import('./StoreSearch');
+    const { useStoreFilterFields } = await import('./catalog/useStoreFilterFields');
+    let searchRows: readonly unknown[] = [];
+    function SearchHarness() {
+        const fields = useStoreFilterFields([], true);
+        return <StoreSearch kind="theme" demand={{ presented: true }} fields={fields}
+            initialFilters={{ source: { include: [reference.pluginId], exclude: [] } }}>
+            {state => { searchRows = state.rows; return null; }}
+        </StoreSearch>;
+    }
+    const search = await renderScreen(wrap(<SearchHarness />));
+    await vi.waitFor(() => expect(searchRows).toHaveLength(1));
+    await browse.rerender({ ...browseInput, query: 'missing' });
+    expect(browse.getCurrent().items).toHaveLength(0);
+    await browse.rerender({ ...browseInput, query: 'palette' });
+    expect(browse.getCurrent().items).toHaveLength(1);
+    await browse.rerender({ ...browseInput, sourceIds: ['another.plugin'] });
+    expect(browse.getCurrent().items).toHaveLength(0);
+    await browse.rerender(browseInput);
+    expect(fixture.bodyReads).toEqual([]);
+    const screen = await renderScreen(wrap(<StoreListingBody reference={route.reference} presentation="page" onClose={() => {}} />));
+    await vi.waitFor(() => expect(screen.findAllByType(StoreThemeListing)[0]?.props.facesState).toBe('ready'));
+    const view = () => screen.findAllByType(StoreThemeListing)[0]!.props;
+    expect(view().meta).toContain('Palette studio');
+    expect(view().meta).toContain('1.2.3');
+    expect(view().faces?.map(face => face.name)).toEqual(['Night sky']);
+    await act(async () => { await view().onTryFace('night'); });
+    await vi.waitFor(() => expect(getThemeTryOnOwner().read()?.selection).toEqual(reference));
+    expect(storage.getState().localSettings.themeProfileSelection).not.toMatchObject({ dark: reference });
+    await act(async () => { await view().onInstall(); });
+    await vi.waitFor(() => expect(storage.getState().localSettings.themeProfileSelection).toMatchObject({ dark: reference }));
+    expect(fixture.bodyReads).toEqual([]);
+    expect(fixture.artifactWrites).toEqual([]);
+    expect(artifacts.list()).toEqual([]);
+    expect(getThemeTryOnOwner().read()).toBeNull();
+    admitted = { ...projected, themesById: {} };
+    await browse.rerender(browseInput);
+    await vi.waitFor(() => expect(browse.getCurrent().items).toHaveLength(0));
+    await screen.update(wrap(<StoreListingBody reference={selection} presentation="page" onClose={() => {}} />));
+    await vi.waitFor(() => expect(view().facesState).toBe('error'));
+    await search.update(wrap(<SearchHarness />));
+    await vi.waitFor(() => expect(searchRows).toHaveLength(0));
+    expect(externalReads).toEqual([]);
+});
 it('opens one theme acquisition through the shared listing body and retries Keep without losing the tried face', async () => {
     const { sourceId, preview, artifacts, state } = await createRegistryThemeListingFixture();
     const browse = await renderHook(() => useRegistryItems({ kind: 'theme', sourceIds: [sourceId] }));

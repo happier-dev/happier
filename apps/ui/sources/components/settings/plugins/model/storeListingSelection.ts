@@ -2,12 +2,14 @@ import { MarketplaceCatalogReferenceV1Schema, type MarketplaceCatalogReferenceV1
 import { PluginStoreItemReferenceV1Schema, type PluginStoreItemReferenceV1 } from '@happier-dev/protocol/plugins/contributions/storeKinds';
 import { MachineAdministrationTargetV1Schema, type MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 import { createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { ThemeReferenceSchema, type ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
 
 export type StoreSoftwareListingReference = Extract<MarketplaceCatalogReferenceV1, { type: 'software' }> & Readonly<{
     target?: Readonly<{ scope: ServerAccountScope; machine: MachineAdministrationTargetV1 }>;
 }>;
 /** Host navigation only; Software retains its native P20 identity, without a registry kind. */
-export type StoreListingReference = Exclude<MarketplaceCatalogReferenceV1, { type: 'software' }> | StoreSoftwareListingReference | PluginStoreItemReferenceV1;
+export type StorePluginThemeListingReference = Readonly<{ type: 'pluginTheme'; reference: Extract<ThemeReference, { kind: 'plugin' }> }>;
+export type StoreListingReference = Exclude<MarketplaceCatalogReferenceV1, { type: 'software' }> | StoreSoftwareListingReference | PluginStoreItemReferenceV1 | StorePluginThemeListingReference;
 
 function record(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value)
@@ -23,6 +25,10 @@ export function readStoreSoftwareTarget(value: unknown): NonNullable<StoreSoftwa
 
 /** Router envelope admission delegates every native leaf to its canonical schema. */
 export function readStoreListingReference(value: unknown): StoreListingReference | null {
+    if (record(value, ['type', 'reference']) && value.type === 'pluginTheme') {
+        const reference = ThemeReferenceSchema.safeParse(value.reference);
+        return reference.success && reference.data.kind === 'plugin' ? { type: 'pluginTheme', reference: reference.data } : null;
+    }
     const contributed = PluginStoreItemReferenceV1Schema.safeParse(value);
     if (contributed.success) return contributed.data;
     if (record(value, ['type', 'target', 'value']) && value.type === 'software') {

@@ -16,6 +16,32 @@ vi.mock('react-native', async () => {
 
 const actionContext = { surface: 'ui' as const, authority: 'present_user' as const };
 describe('theme Actions through real library and try-on owners', () => {
+    it('keeps a tried plugin theme as its admitted reference without copying it into Artifacts', async () => {
+        const { createThemeProfileLibrary } = await import('@/theme/profiles/themeProfileLibrary');
+        const { projectThemeLibraryEntry } = await import('@/theme/profiles/themeProfilePresentation');
+        const { createThemeTryOnOwner } = await import('@/theme/profiles/themeTryOn');
+        const f = setup();
+        const reference = { kind: 'plugin', pluginId: 'sample.palette', contributionId: 'night' } as const;
+        const plugin = mergeThemeProfileDocumentEdit(document('night'), { source: reference });
+        const library = createThemeProfileLibrary({ ...f.context,
+            pluginProfiles: { list: () => [projectThemeLibraryEntry(plugin)], get: async () => plugin } });
+        const owner = createThemeTryOnOwner({ captureScope: () => ({ serverId: 'home', accountId: 'account' }),
+            select: input => library.select(input), keep: input => library.keep(input),
+            installStore: async () => { throw new Error('Plugin themes do not use registry installation'); } });
+        const execute = createActionExecutor({ themeAction: createThemeActionExecute({
+            withLibrary: async operation => operation(library), readSelection: () => f.selection, clientId: () => 'this-app',
+            runtime: { preview: owner, coverage: value => prepareThemeCss(value.profile.css ?? '').coverage,
+                detailedCoverage: value => prepareThemeCss(value.profile.css ?? '').detailedCoverage },
+        }) });
+        expect(await execute.execute(THEME_ACTION_IDS.apply, { ref: null, mode: 'dark' }, actionContext)).toMatchObject({ ok: true });
+        expect(await execute.execute(THEME_ACTION_IDS.tryOn, { document: plugin, mode: 'dark', origin: { kind: 'editor' } }, actionContext))
+            .toMatchObject({ ok: true });
+        expect(f.writes()).toBe(0);
+        expect(owner.read()?.selection).toEqual(reference);
+        expect(await execute.execute(THEME_ACTION_IDS.keep, { previewRef: owner.read()!.previewRef }, actionContext)).toMatchObject({ ok: true });
+        expect(f.selection.dark).toEqual(reference);
+        expect(f.writes()).toBe(0);
+    });
     it('preserves immutable-source refusals for installed Artifact saves and deletes through the Action receiver', async () => {
         const f = setup();
         const execute = createActionExecutor({ themeAction: createThemeActionExecute({

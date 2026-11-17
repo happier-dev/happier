@@ -20,6 +20,9 @@ import { useInstalledApps } from './storeApps';
 import { useInstalledBrowserExtensions } from './storeBrowserExtensions';
 import { useInstalledThemes } from './storeThemesInstalled';
 import { APP_STORE_KIND } from './storeKindContributions';
+import { useThemeLibraryInventory } from '@/sync/store/useThemeProfiles';
+import { usePluginThemeList } from '@/theme/profiles/usePluginThemeList';
+import { storeThemeSummary, type StoreThemeItem } from './storeThemes';
 export type { InstalledAppRow } from './storeApps';
 export type { InstalledBrowserExtensionRow } from './storeBrowserExtensions';
 export type { InstalledRow, InstalledMcpServerRow, InstalledSkillRow, InstalledAgentRow, InstalledProviderRow, InstalledPluginRow } from './storeInstalled';
@@ -56,8 +59,23 @@ type RegistryList = ReturnType<typeof useRegistryItems>;
 function useAppList(input: StoreListInput, demand: StoreDemand): RegistryList {
     return useRegistryItems({ kind: 'app', query: input.query, sourceIds: input.sourceIds }, demand.presented);
 }
-function useThemeList(input: StoreListInput, demand: StoreDemand): RegistryList {
-    return useRegistryItems({ kind: 'theme', query: input.query, sourceIds: input.sourceIds }, demand.presented);
+function useThemeList(input: StoreListInput, demand: StoreDemand): Omit<RegistryList, 'items'> & Readonly<{ items: readonly StoreThemeItem[] }> {
+    const registry = useRegistryItems({ kind: 'theme', query: input.query, sourceIds: input.sourceIds }, demand.presented);
+    const library = useThemeLibraryInventory(demand.presented);
+    const plugins = usePluginThemeList(demand.presented);
+    const items = React.useMemo<readonly StoreThemeItem[]>(() => {
+        const metadata = new Map(plugins.map(item => [JSON.stringify([item.pluginId, item.contributionId]), item]));
+        const query = input.query.trim().toLocaleLowerCase();
+        return [...registry.items, ...library.entries.flatMap((entry): StoreThemeItem[] => {
+            const source = entry.source;
+            if (source.kind !== 'plugin' || input.sourceIds !== undefined && !input.sourceIds.includes(source.pluginId)) return [];
+            const plugin = metadata.get(JSON.stringify([source.pluginId, source.contributionId]));
+            if (!plugin || !`${entry.name} ${plugin.pluginName}`.toLocaleLowerCase().includes(query)) return [];
+            return [{ kind: 'pluginTheme', entry, pluginId: source.pluginId, contributionId: source.contributionId,
+                pluginName: plugin.pluginName }];
+        })];
+    }, [registry.items, library.entries, plugins, input.query, input.sourceIds]);
+    return { ...registry, items };
 }
 function useStarterList(input: StoreListInput, demand: StoreDemand): RegistryList {
     return useRegistryItems({ kind: 'starter', query: input.query, sourceIds: input.sourceIds }, demand.presented);
@@ -155,7 +173,7 @@ function pluginSummary(item: PluginMarketplaceCatalogEntry): StoreItemSummary<Pl
 /** Closed host UI adapters. Each kind is mounted by a static leaf; never iterate this map to call hooks. */
 export const storeKinds = {
     app: { ...APP_STORE_KIND, summary: registrySummary, useList: useAppList, useInstalled: useInstalledApps },
-    theme: { summary: registrySummary, useList: useThemeList, useInstalled: useInstalledThemes },
+    theme: { summary: storeThemeSummary, useList: useThemeList, useInstalled: useInstalledThemes },
     // Software second: what a Machine runs sits beside the Apps it hosts (S40-R02).
     software: { summary: softwareSummary, useList: useSoftwareList, useInstalled: useInstalledSoftware },
     starter: { summary: registrySummary, useList: useStarterList, useInstalled: undefined },

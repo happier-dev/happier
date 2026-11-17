@@ -8,10 +8,21 @@ import { serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/
 import type { StoreThemeCardView } from '../storeThemeViewTypes';
 
 const NO_FACES: readonly ThemeMiniatureData[] = [];
+export type StorePluginThemeItem = Readonly<{ kind: 'pluginTheme'; entry: ThemeLibraryEntry;
+    pluginId: string; contributionId: string; pluginName: string }>;
+export type StoreThemeItem = RegistryCatalogItemSummary | StorePluginThemeItem;
+
+export function storeThemeSummary(item: StoreThemeItem) {
+    return item.kind === 'pluginTheme'
+        ? { key: JSON.stringify(['pluginTheme', item.pluginId, item.contributionId]), ref: item,
+            title: item.entry.name, description: item.pluginName, mark: undefined }
+        : { key: JSON.stringify([item.kind, item.sourceId, item.itemId]), ref: item,
+            title: item.title, description: item.description, mark: item.brandMark };
+}
 
 /** Mode filtering consumes only facts already present in the browse summary. */
-export function themeSummaryMatchesMode(item: RegistryCatalogItemSummary, mode: ThemeProfileMode | null): boolean {
-    return mode === null || item.themeMetadata?.includes.some(face => face.mode === mode) === true;
+export function themeSummaryMatchesMode(item: StoreThemeItem, mode: ThemeProfileMode | null): boolean {
+    return mode === null || (item.kind === 'pluginTheme' ? item.entry.mode === mode : item.themeMetadata?.includes.some(face => face.mode === mode) === true);
 }
 
 /** Which modes a listing covers, said once (lab C1/C2 "Light and dark"), for its card and its listing kicker. */
@@ -22,7 +33,9 @@ export function describeStoreThemeModes(modes: Iterable<ThemeProfileMode>): stri
     return covered.has('dark') ? t('themeCard.dark') : '';
 }
 
-export function projectStoreThemeCard(item: RegistryCatalogItemSummary, sourceTitle: string): StoreThemeCardView {
+export function projectStoreThemeCard(item: StoreThemeItem, sourceTitle: string): StoreThemeCardView {
+    if (item.kind === 'pluginTheme') return { key: storeThemeSummary(item).key, name: item.entry.name,
+        byline: item.pluginName, summary: describeStoreThemeModes([item.entry.mode]), faces: [item.entry.miniature] };
     return {
         key: `theme|${item.sourceId}|${item.itemId}`,
         name: item.title,

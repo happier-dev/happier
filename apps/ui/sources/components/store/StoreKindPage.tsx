@@ -61,7 +61,7 @@ import { StoreDiscoverItemMark } from './discover/StoreDirectorySection';
 import { StoreDirectoryUnavailable } from './StoreDirectoryUnavailable';
 import { kindCopy } from './catalog/storeKindCopy';
 export { kindCopy } from './catalog/storeKindCopy';
-import { projectStoreThemeCard, themeSummaryMatchesMode } from './catalog/storeThemes';
+import { projectStoreThemeCard, storeThemeSummary, themeSummaryMatchesMode, type StoreThemeItem } from './catalog/storeThemes';
 import { useStoreThemeCardAnatomy } from './storeThemeCardAnatomy';
 import type { StoreThemeCardView } from './storeThemeViewTypes';
 import type { ThemeProfileMode } from '@/theme/profiles/themeProfileTypes';
@@ -71,6 +71,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { THEME_MINIATURE_CARD_MIN_WIDTH } from '@/components/settings/appearance/ThemeModePreview';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { StoreMachineScopeContext, StoreMachineSelectionContext, useStoreMachineScope } from '@/components/settings/plugins/model/useStoreMachineScope';
+import { usePluginThemeList } from '@/theme/profiles/usePluginThemeList';
 
 export type StoreDirectoryKind = Exclude<StoreKind, 'plugin' | 'software'>;
 /** The catalog row's mark box draws a bare logo at this size inside it (S10 catalogRow). */
@@ -183,7 +184,8 @@ function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: bool
   // A retry after a settled failure is not a first arrival: the rows already shown stay (never flash back to loading).
   const curationSettled = React.useRef(false);
   if (!props.curationRead.loading) curationSettled.current = true;
-  if (kindPageWaitsForCuration({ browsing, kind: props.kind, curationRead: props.curationRead, settled: curationSettled.current })) return frame(
+  if (!(props.kind === 'theme' && state.lists.theme?.items.some(item => item.kind === 'pluginTheme'))
+    && kindPageWaitsForCuration({ browsing, kind: props.kind, curationRead: props.curationRead, settled: curationSettled.current })) return frame(
     <SkeletonRows testID={`store.kind.${props.kind}.loading`} rows={5} accessibilityLabel={t('common.loading')} />);
   switch (props.kind) {
     case 'browserExtension':
@@ -316,7 +318,9 @@ function CatalogSelect(
   }>,
 ): React.ReactNode {
   const registry = useRegistrySources(props.kind, props.presented);
-  const sources = registry.sources.filter((source) => source.enabled);
+  const pluginThemes = usePluginThemeList(props.presented && props.kind === 'theme');
+  const sources = [...registry.sources.filter((source) => source.enabled),
+    ...new Map(pluginThemes.map(item => [item.pluginId, { id: item.pluginId, title: item.pluginName }])).values()];
   // Held in place while the catalogs load, so the search beside it never changes width on arrival.
   if (registry.hasValue && sources.length < 2 && props.sourceId === null) return null;
   return (
@@ -330,7 +334,7 @@ function CatalogSelect(
       ],
       selectedId: props.sourceId ?? 'all',
       onChange: (id) => props.onSourceChange(id === 'all' ? null : id),
-      disabled: !registry.hasValue,
+      disabled: !registry.hasValue && pluginThemes.length === 0,
     }} />
   );
 }
@@ -377,6 +381,27 @@ const curatedIdentity = (item: RegistryCatalogItemSummary) => JSON.stringify([it
 
 type ThemeDirectoryRow = DirectoryRow & Readonly<{ card: StoreThemeCardView }>;
 
+/** Both Store entry points compose registry rows with the joined library's plugin references. */
+export function useStoreThemeRows(list: Readonly<{ items: readonly StoreThemeItem[]; curation: RegistryList['curation'] }>,
+  openRegistry: (item: RegistryCatalogItemSummary) => void, sourceTitle: (sourceId: string) => string) {
+  const open = useOpenStoreListing();
+  const registryItems = React.useMemo(() => list.items.filter((item): item is RegistryCatalogItemSummary => item.kind !== 'pluginTheme'), [list.items]);
+  const registry = useRegistryRows({ items: registryItems, curation: list.curation }, openRegistry, sourceTitle);
+  return React.useMemo(() => {
+    const plugins = list.items.flatMap((item): ThemeDirectoryRow[] => {
+      if (item.kind !== 'pluginTheme') return [];
+      const summary = storeThemeSummary(item);
+      return [{ key: summary.key, title: summary.title, description: item.pluginName, mark: null,
+        group: `plugin:${item.pluginId}`, card: projectStoreThemeCard(item, item.pluginName),
+        open: () => open({ type: 'pluginTheme', reference: { kind: 'plugin', pluginId: item.pluginId, contributionId: item.contributionId } }) }];
+    });
+    const cards = new Map(registryItems.map(item => { const card = projectStoreThemeCard(item, sourceTitle(item.sourceId)); return [card.key, card] as const; }));
+    const rows = registry.rows.flatMap((row): ThemeDirectoryRow[] => { const card = cards.get(row.key); return card ? [{ ...row, card }] : []; });
+    const groups = new Map(plugins.map(row => [row.group, { key: row.group, title: row.card.byline }]));
+    return { rows: [...plugins, ...rows], groups: [...groups.values(), ...registry.groups] };
+  }, [list.items, registryItems, registry.rows, registry.groups, sourceTitle, open]);
+}
+
 /** The shared directory owns selection, source failures and pagination; UI-B supplies the card anatomy. */
 function ThemeDirectory(props: Readonly<{ list: StoreKindList<'theme'>; query: string }>) {
   const [mode, setMode] = React.useState<ThemeProfileMode | null>(null);
@@ -384,15 +409,8 @@ function ThemeDirectory(props: Readonly<{ list: StoreKindList<'theme'>; query: s
   const open = useOpenRegistryItem();
   const sourceTitle = useSourceTitle();
   const items = React.useMemo(() => props.list.items.filter(item => themeSummaryMatchesMode(item, mode)), [props.list.items, mode]);
-  const registry = useRegistryRows({ items, curation: props.list.curation }, open, sourceTitle);
-  const cards = React.useMemo(() => new Map(items.map(item => {
-    const card = projectStoreThemeCard(item, sourceTitle(item.sourceId));
-    return [card.key, card] as const;
-  })), [items, sourceTitle]);
-  const rows = React.useMemo(() => registry.rows.flatMap((row): ThemeDirectoryRow[] => {
-    const card = cards.get(row.key);
-    return card ? [{ ...row, card }] : [];
-  }), [registry.rows, cards]);
+  const registry = useStoreThemeRows({ items, curation: props.list.curation }, open, sourceTitle);
+  const rows = registry.rows;
   const cardAnatomy = useStoreThemeCardAnatomy();
   const anatomy = React.useMemo<CollectionAnatomy<ThemeDirectoryRow>>(() => ({
     glyph: row => cardAnatomy.glyph(row.card),
@@ -711,6 +729,7 @@ export function useAddRegistryItem(): (item: RegistryCatalogItemSummary) => void
 
 /** The directory key of the selected listing, so the row its pane shows reads selected. */
 export function directoryKeyOf(reference: StoreListingReference | null): string | null {
+  if (reference?.type === 'pluginTheme') return JSON.stringify(['pluginTheme', reference.reference.pluginId, reference.reference.contributionId]);
   return reference?.type === 'registryItem' ? `${reference.kind}|${reference.sourceId}|${reference.itemId}` : null;
 }
 
