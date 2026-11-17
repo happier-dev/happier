@@ -116,6 +116,7 @@ import {
   PluginDynamicResourceExecutionV1Schema,
   PluginResourceKindV2Schema,
   PluginWorkflowContributionV1Schema,
+  PluginSystemToolContributionV1Schema,
   PluginInputTypeContributionV1Schema,
   PluginAtmospherePictureContributionV1Schema,
   PluginThemeContributionV1Schema,
@@ -2972,8 +2973,19 @@ export const PluginProjectedNotificationCategoryEntryV1Schema = lazyZodSchema(()
 })));
 export type PluginProjectedNotificationCategoryEntryV1 = z.infer<typeof PluginProjectedNotificationCategoryEntryV1Schema>;
 
+export const PluginProjectedSystemToolEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  ...PluginProjectedFamilyEntryBaseV2Shape,
+  pluginId: PluginIdSchema,
+  pluginVersion: z.optional(z.string().check(z.minLength(1))),
+  definition: PluginSystemToolContributionV1Schema,
+}).check(z.superRefine((entry, context) => {
+  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'System tool identity must match its declaration and producer' });
+})));
+export type PluginProjectedSystemToolEntryV1 = z.infer<typeof PluginProjectedSystemToolEntryV1Schema>;
+
 export const PluginProjectedFamilyEntryV2Schema: z.ZodMiniUnion<readonly [
   typeof PluginProjectedSubjectKindEntryV1Schema,
+  typeof PluginProjectedSystemToolEntryV1Schema,
   typeof PluginProjectedHealthCheckKindEntryV1Schema,
   typeof PluginProjectedStoreKindEntryV1Schema,
   typeof PluginProjectedMachineRecipeEntryV1Schema,
@@ -3008,6 +3020,7 @@ export const PluginProjectedFamilyEntryV2Schema: z.ZodMiniUnion<readonly [
   typeof PluginProjectedUiEntryV2Schema,
 ]> = lazyZodSchema(() => z.union([
   PluginProjectedSubjectKindEntryV1Schema,
+  PluginProjectedSystemToolEntryV1Schema,
   PluginProjectedHealthCheckKindEntryV1Schema,
   PluginProjectedStoreKindEntryV1Schema,
   PluginProjectedMachineRecipeEntryV1Schema,
@@ -3056,6 +3069,7 @@ function projectedFamilySchema<
   });
 }
 
+const PluginProjectedSystemToolsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('systemTools', PluginProjectedSystemToolEntryV1Schema));
 const PluginProjectedProvidersFamilyV2Schema = lazyZodSchema(() => projectedFamilySchema('providers', PluginProjectedProviderEntryV2Schema));
 const PluginProjectedConnectedAccountsFamilyV2Schema = lazyZodSchema(() => projectedFamilySchema('connectedAccounts', ConnectedAccountUiProjectionEntryV1Schema));
 const PluginProjectedScmHostingProvidersFamilyV2Schema = lazyZodSchema(() => projectedFamilySchema('scmHostingProviders', PluginProjectedScmHostingProviderEntryV2Schema));
@@ -3094,6 +3108,7 @@ const PluginProjectedComposerControlsFamilyV1Schema = lazyZodSchema(() => projec
 const PluginProjectedComposerRegionsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('composerRegions', PluginProjectedComposerRegionEntryV1Schema));
 
 type PluginProjectedFamiliesByIdV2Shape = {
+  systemTools: z.ZodMiniOptional<typeof PluginProjectedSystemToolsFamilyV1Schema>;
   machineRecipes: z.ZodMiniOptional<typeof PluginProjectedMachineRecipesFamilyV1Schema>;
   machineSetupPresets: z.ZodMiniOptional<typeof PluginProjectedMachineSetupPresetsFamilyV1Schema>;
   notificationCategories: z.ZodMiniOptional<typeof PluginProjectedNotificationCategoriesFamilyV1Schema>;
@@ -3135,6 +3150,7 @@ type PluginProjectedFamiliesByIdV2Shape = {
 const PluginProjectedFamiliesByIdV2Schema: z.ZodMiniDefault<
   z.ZodMiniObject<PluginProjectedFamiliesByIdV2Shape, z.core.$strict>
 > = lazyZodSchema(() => z._default(z.strictObject({
+  systemTools: z.optional(PluginProjectedSystemToolsFamilyV1Schema),
   machineRecipes: z.optional(PluginProjectedMachineRecipesFamilyV1Schema),
   machineSetupPresets: z.optional(PluginProjectedMachineSetupPresetsFamilyV1Schema),
   notificationCategories: z.optional(PluginProjectedNotificationCategoriesFamilyV1Schema),
@@ -3175,6 +3191,7 @@ const PluginProjectedFamiliesByIdV2Schema: z.ZodMiniDefault<
 assertPluginProjectionFamilyIdsV2(Object.keys(PluginProjectedFamiliesByIdV2Schema._zod.def.innerType.shape));
 
 export const PluginProjectedFamilyV2Schema: z.ZodMiniUnion<readonly [
+  typeof PluginProjectedSystemToolsFamilyV1Schema,
   typeof PluginProjectedMachineRecipesFamilyV1Schema,
   typeof PluginProjectedMachineSetupPresetsFamilyV1Schema,
   typeof PluginProjectedNotificationCategoriesFamilyV1Schema,
@@ -3212,6 +3229,7 @@ export const PluginProjectedFamilyV2Schema: z.ZodMiniUnion<readonly [
   typeof PluginProjectedComposerControlsFamilyV1Schema,
   typeof PluginProjectedComposerRegionsFamilyV1Schema,
 ]> = lazyZodSchema(() => z.union([
+  PluginProjectedSystemToolsFamilyV1Schema,
   PluginProjectedMachineRecipesFamilyV1Schema,
   PluginProjectedMachineSetupPresetsFamilyV1Schema,
   PluginProjectedNotificationCategoriesFamilyV1Schema,

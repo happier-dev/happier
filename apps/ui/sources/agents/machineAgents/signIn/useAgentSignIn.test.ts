@@ -47,6 +47,67 @@ describe('shared Agent sign-in', () => {
     standardCleanup(); vi.useRealTimers(); boundary.rpc.mockReset(); vi.restoreAllMocks();
     vi.mocked(React.useSyncExternalStore).mockImplementation(actualReact.useSyncExternalStore);
   });
+  it('lists qualified Machine CLIs with daemon sign-in state only while presented and keeps connected choice in its owner', async () => {
+    const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+    clearDaemonMergedProjectionCacheForTests();
+    const { PLUGIN_MANIFEST: github } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
+    const { PLUGIN_MANIFEST: onepassword } = await import('../../../../../../packages/plugins/onepassword/src/manifest');
+    const tools = [github, onepassword].flatMap(manifest => manifest.contributes?.systemTools?.map(definition => ({
+      id: `${manifest.id}/${definition.id}`, pluginId: manifest.id, pluginVersion: manifest.version, definition,
+    })) ?? []);
+    const toolId = 'happier.scm.forge.github/gh';
+    const command = { operation: 'beginConnect', service: { pluginId: github.id, localId: 'github-account' }, modeId: 'token' };
+    boundary.rpc.mockImplementation(async ({ method, payload }: { method: string; payload: { agentId?: string; method?: string } }) => {
+      if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return {
+        protocolVersion: 1, projection: { v: 2, generation: 1,
+          installedPackagesById: Object.fromEntries([github, onepassword].map(manifest => [manifest.id, {
+            id: manifest.id, displayName: manifest.displayName, version: manifest.version, enabled: true,
+            source: { kind: 'path', locator: `/plugins/${manifest.id}` }, occurrenceId: manifest.id,
+          }])),
+          agentsById: { 'acme/helper': { id: 'helper', title: 'Helper' } },
+          familiesById: { systemTools: { family: 'systemTools', entriesById: Object.fromEntries(tools.map(tool => [tool.id, tool])) } },
+        },
+      };
+      if (method === 'daemon.agents.signIn.status') return { status: payload.agentId === toolId ? 'signedIn' : 'signedOut',
+        accountLabel: payload.agentId === toolId ? 'GitHub work' : null, checkedAt: Date.now(), nativeLogin: 'login_terminal',
+        connectedServices: payload.agentId === toolId ? [{ serviceId: `${github.id}/github-account`, title: 'GitHub' }] : [] };
+      if (method === 'daemon.agents.signIn.prepare') return payload.method === 'connected' ? { method: 'connected', command }
+        : { method: 'native', launch: { kind: 'agent_login', agentId: payload.agentId } };
+      if (method === 'daemon.connectedAccounts.authentication.command') return { status: 'unavailable', code: 'connected_account_daemon_runtime_unavailable' };
+      if (method === 'daemon.terminal.ensure') return { ok: true, terminalId: 'machine-cli-login', reused: false };
+      throw new Error(method);
+    });
+    // Known-good status control uses the same Home, RPC and daemon status body.
+    const { checkAgentSignInRpc } = await import('./api');
+    expect(await checkAgentSignInRpc({ serverId, machineId: 'cli-list' }, toolId)).toMatchObject({ status: 'signedIn' });
+    boundary.rpc.mockClear();
+    const { useMachineCliSignIns } = await import('./useAgentSignIn');
+    const { flushHookEffects } = await import('@/dev/testkit');
+    const mounted = await renderHook((props: { presented: boolean }) => useMachineCliSignIns({
+      serverId, machineId: 'cli-list', presented: props.presented,
+    }), { initialProps: { presented: false } });
+    try {
+      expect(boundary.rpc).not.toHaveBeenCalled();
+      await mounted.rerender({ presented: true });
+      for (let attempt = 0; attempt < 50 && mounted.getCurrent().phase !== 'ready'; attempt++) await flushHookEffects();
+      expect(mounted.getCurrent()).toMatchObject({ phase: 'ready', items: expect.arrayContaining([
+        expect.objectContaining({ id: 'acme/helper', kind: 'agent', authentication: expect.objectContaining({ status: 'signedOut' }) }),
+        expect.objectContaining({ id: toolId, kind: 'systemTool', authentication: expect.objectContaining({ status: 'signedIn', accountLabel: 'GitHub work' }) }),
+        expect.objectContaining({ id: 'happier.secret-source.onepassword/op', kind: 'systemTool', authentication: expect.objectContaining({ status: 'signedOut' }) }),
+      ]) });
+      expect(boundary.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)).toHaveLength(1);
+      expect(boundary.rpc.mock.calls.filter(([request]) => request.method === 'daemon.agents.signIn.status')).toHaveLength(3);
+      await act(async () => { await mounted.getCurrent().start(toolId, { method: 'connected', serviceId: `${github.id}/github-account` }); });
+      expect(boundary.rpc.mock.calls.map(([request]) => request)).toContainEqual(expect.objectContaining({
+        method: 'daemon.agents.signIn.prepare', payload: { agentId: toolId, method: 'connected', serviceId: `${github.id}/github-account` },
+      }));
+      const beforeHide = boundary.rpc.mock.calls.length;
+      await mounted.rerender({ presented: false });
+      await flushHookEffects();
+      expect(boundary.rpc.mock.calls).toHaveLength(beforeHide);
+    } finally { await mounted.unmount(); clearDaemonMergedProjectionCacheForTests(); }
+  });
   it('publishes no notifications for thirty equal waiting polls and publishes a real sign-in change', async () => {
     vi.useFakeTimers();
     let signedIn = false;

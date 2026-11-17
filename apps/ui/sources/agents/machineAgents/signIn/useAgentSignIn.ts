@@ -1,4 +1,8 @@
 import * as React from 'react';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { readPublishedDaemonProjectionFamily } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { machineAgentSignInTerminalKey, type AgentSignInStatusResponse, type MachinesAgentsSignInStartOutput, type MachinesAgentsSignInCancelOutput } from '@happier-dev/protocol/daemon/agentSignIn';
 import type { DaemonTerminalStreamEventUrl } from '@happier-dev/protocol/daemon/terminal';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -16,6 +20,8 @@ const IDLE: MachineAgentSignInSession = Object.freeze({ phase: 'idle', terminalK
 type BoundTarget = Readonly<{ serverId: string; machineId: string; agentId: string; lifetime: ServerAccountScopeLifetime }>;
 type Entry = {
   state: MachineAgentSignInSession; accountLabel: string | null;
+  authentication: Omit<AgentSignInStatusResponse, 'checkedAt'> | null;
+  authenticationListeners: Set<() => void>;
   targets: Set<BoundTarget>; listeners: Set<() => void>;
   timer: ReturnType<typeof setTimeout> | null;
   opening: Promise<MachinesAgentsSignInStartOutput | undefined> | null; checking: Promise<AgentSignInStatusResponse | null> | null;
@@ -27,7 +33,7 @@ const entries = new Map<string, Entry>();
 function getEntry(key: string): Entry {
   let entry = entries.get(key);
   if (!entry) {
-    entry = { state: IDLE, accountLabel: null, targets: new Set(), listeners: new Set(), timer: null,
+    entry = { state: IDLE, accountLabel: null, authentication: null, authenticationListeners: new Set(), targets: new Set(), listeners: new Set(), timer: null,
       opening: null, checking: null, openAbort: null, probeAbort: null, terminalExited: false, terminalId: null };
     entries.set(key, entry);
   }
@@ -67,6 +73,12 @@ function checkAgain(entry: Entry, requestedTarget?: BoundTarget, signal?: AbortS
     try {
       const result = await checkAgentSignInRpc({ ...target, signal: abort.signal }, target.agentId);
       if (abort.signal.aborted || !target.lifetime.isCurrent()) return null;
+      const { checkedAt: _checkedAt, ...authentication } = result;
+      const retained = retainDeep(entry.authentication, authentication);
+      if (retained !== entry.authentication) {
+        entry.authentication = retained;
+        for (const listener of entry.authenticationListeners) listener();
+      }
       const accountLabel = result.accountLabel ?? null;
       if (result.status === 'signedIn') {
         const wasSignedIn = entry.state.phase === 'signedIn';
@@ -268,4 +280,74 @@ export function useAgentSignIn(target: Readonly<{ serverId?: string | null; mach
   return { ...state, state, terminalId: state.terminalKey ? entry?.terminalId ?? null : null,
     available: Boolean(boundTarget?.lifetime.isCurrent()), elapsedMs: state.startedAtMs === null ? 0 : Math.max(0, now - state.startedAtMs),
     accountLabel: entry?.accountLabel ?? null, ...actions };
+}
+
+export type MachineCliSignInRow = Readonly<{
+  id: string;
+  title: string;
+  kind: 'agent' | 'systemTool';
+  authentication: Omit<AgentSignInStatusResponse, 'checkedAt'> | null;
+  signIn: MachineAgentSignInSession;
+}>;
+const EMPTY_CLI_SIGN_INS: readonly MachineCliSignInRow[] = Object.freeze([]);
+const CLI_SIGN_IN_SECTIONS = ['agentsById', 'familiesById.systemTools'] as const;
+
+/** A demanded Machine catalog, with state produced by the existing sign-in Actions and shared process owner. */
+export function useMachineCliSignIns(target: Readonly<{
+  serverId?: string | null; machineId: string | null; presented: boolean;
+}>) {
+  const activeServer = useActiveServerSnapshot(!target.serverId);
+  const serverId = target.serverId?.trim() || activeServer.serverId;
+  const { binding, execute } = useMountedActionExecution(serverId);
+  const projection = useDaemonMergedProjectionInputs({ accountLifetime: binding, serverId, machineId: target.machineId,
+    enabled: target.presented, sections: CLI_SIGN_IN_SECTIONS });
+  const rows = React.useMemo(() => {
+    const inputs = projection.inputs;
+    if (!binding || !target.machineId || !inputs) return [];
+    const agents = Object.entries(inputs.pluginProjectionV2?.agentsById ?? {}).map(([id, agent]) => ({
+      id, title: agent.title ?? id, kind: 'agent' as const,
+    }));
+    const tools = Object.values(readPublishedDaemonProjectionFamily(inputs, 'systemTools')?.entriesById ?? {})
+      .filter(tool => tool.definition.authentication)
+      .map(tool => ({ id: tool.id, title: resolvePluginLocalizedStringV2Text(tool.definition.title), kind: 'systemTool' as const }));
+    return [...agents, ...tools].map(row => ({ ...row,
+      entry: getEntry(serverAccountScopedResourceKey(binding.scope, 'agent-sign-in', target.machineId!, row.id)),
+      boundTarget: { serverId, machineId: target.machineId!, agentId: row.id, lifetime: binding },
+    }));
+  }, [binding, projection.inputs, serverId, target.machineId]);
+  const held = React.useRef<readonly MachineCliSignInRow[]>(EMPTY_CLI_SIGN_INS);
+  const subscribe = React.useCallback((listener: () => void) => {
+    if (!target.presented || !binding) return () => {};
+    for (const row of rows) {
+      row.entry.targets.add(row.boundTarget);
+      row.entry.listeners.add(listener); row.entry.authenticationListeners.add(listener);
+      schedulePoll(row.entry);
+    }
+    const retirement = binding.onRetire(listener);
+    return () => {
+      retirement.dispose();
+      for (const row of rows) {
+        row.entry.targets.delete(row.boundTarget);
+        row.entry.listeners.delete(listener); row.entry.authenticationListeners.delete(listener);
+        if (!currentTarget(row.entry)) stopPolling(row.entry);
+      }
+    };
+  }, [binding, rows, target.presented]);
+  const read = React.useCallback(() => {
+    if (!binding?.isCurrent()) return EMPTY_CLI_SIGN_INS;
+    return held.current = retainDeep(held.current, rows.map(({ entry, boundTarget: _boundTarget, ...row }) => ({ ...row,
+      authentication: entry.authentication, signIn: entry.state,
+    })).filter(row => !row.authentication || row.authentication.nativeLogin !== 'unsupported' || row.authentication.connectedServices.length > 0));
+  }, [binding, rows]);
+  const items = React.useSyncExternalStore(subscribe, read, read);
+  const refresh = React.useCallback(async () => {
+    if (!target.presented || !target.machineId || projection.phase !== 'ready') return;
+    await Promise.all(rows.map(row => execute('machines.agents.signIn.status', { machineId: target.machineId, agentId: row.id })));
+  }, [execute, projection.phase, rows, target.machineId, target.presented]);
+  React.useEffect(() => { fireAndForget(refresh(), { tag: 'MachineCliSignIns.refresh' }); }, [refresh]);
+  const startSignIn = React.useCallback((id: string, choice: Readonly<{ method: 'native' | 'connected'; serviceId?: string }>) =>
+    execute('machines.agents.signIn.start', { machineId: target.machineId, agentId: id, ...choice }), [execute, target.machineId]);
+  const phase = projection.phase === 'ready' && items.some(row => row.authentication === null && row.signIn.phase !== 'failed')
+    ? 'loading' : projection.phase;
+  return { phase, items, refresh, start: startSignIn };
 }

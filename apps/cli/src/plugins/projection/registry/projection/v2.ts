@@ -50,6 +50,7 @@ import { providerProjectionFamily } from '../providers';
 import { connectedAccountProjectionFamily } from '../connectedAccounts';
 import { voiceModelPackProjectionFamily, voiceProviderProjectionFamily } from '../voiceDeclarations';
 import { rolesProjectionFamily } from '../roles';
+import { systemToolsProjectionFamily } from '../systemTools';
 import { workflowsProjectionFamily } from '../workflows';
 import { inputTypesProjectionFamily } from '../inputTypes';
 import { botTemplatesProjectionFamily } from '../botTemplates';
@@ -1141,6 +1142,7 @@ export function buildPluginProjectionV2(params: Readonly<{
         pluginBrowserProjectionFamily,
         voiceModelPackProjectionFamily,
         rolesProjectionFamily,
+        systemToolsProjectionFamily,
         workflowsProjectionFamily,
         botTemplatesProjectionFamily,
         inputTypesProjectionFamily,
