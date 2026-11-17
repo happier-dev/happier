@@ -116,7 +116,7 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
     } finally { setBusy(false); }
   };
   const footer = <ModalCardFooterActions cancel={{ onPress: props.onClose, disabled: busy }}>
-    <RoundButton testID="project-deployments.move.copy" size="normal" title={t('common.review')}
+    <RoundButton testID="project-deployments.move.copy" size="normal" title={t('projects.deployments.databaseMoveReview')}
       disabled={busy || !selection} loading={busy} onPress={() => { void reviewDestination(); }} />
   </ModalCardFooterActions>;
   const { setChrome } = props;
