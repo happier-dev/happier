@@ -7,11 +7,13 @@ import { createWorktreeDatabaseTargets } from './worktreeTargets.js';
 import { createDatabaseConnectionResourceRuntime, DATABASE_CONNECTION_RESOURCE_ID_V1 } from './resources.js';
 import { createDatabaseRuntime } from './runtime.js';
 import { createDatabaseInsightProducers } from './insights/findings.js';
+import { createDatabaseWorkbenchPlacements } from './ui/placements.js';
 import { DATABASE_FINDING_EVENT_REF, DATABASE_FINDING_SETUP_LOCAL_ID, databaseFindingEvent,
     databaseFindingEventSetupAction } from './insights/events.js';
 import {
     WORKBENCH_PAGE_ARTIFACT_ID, WORKBENCH_PAGE_RENDERER_ID, WORKBENCH_PAGE_VIEW_ID,
     WORKBENCH_PANEL_ARTIFACT_ID, WORKBENCH_PANEL_RENDERER_ID, WORKBENCH_PANEL_VIEW_ID,
+    WORKBENCH_RAIL_ARTIFACT_ID, WORKBENCH_RAIL_RENDERER_ID,
 } from './ui/surface/views.js';
 
 function manualTargets(context: PluginInvocationContext) {
@@ -73,7 +75,10 @@ export const plugin = definePlugin({
             id: WORKBENCH_PAGE_VIEW_ID, container: 'appPage', target: { kind: 'app' }, renderer: WORKBENCH_PAGE_RENDERER_ID,
             title: { key: 'plugins.database.page.title', fallback: 'Database' },
             description: { key: 'plugins.database.page.description', fallback: 'Browse tables, run SQL and review changes before they’re applied.' },
-        },
+        }, ...createDatabaseWorkbenchPlacements({
+            databaseRenderer: WORKBENCH_RAIL_RENDERER_ID,
+            insightsRenderer: WORKBENCH_RAIL_RENDERER_ID,
+        }),
         ],
         renderers: [{
             id: WORKBENCH_PANEL_RENDERER_ID, kind: 'reactNative', artifact: WORKBENCH_PANEL_ARTIFACT_ID,
@@ -81,6 +86,9 @@ export const plugin = definePlugin({
         }, {
             id: WORKBENCH_PAGE_RENDERER_ID, kind: 'reactNative', artifact: WORKBENCH_PAGE_ARTIFACT_ID,
             requiredHostMethods: ['executeAction', 'actionControl', 'replacePageLocation', 'setUnsavedChanges', 'deviceState', 'notify'],
+        }, {
+            id: WORKBENCH_RAIL_RENDERER_ID, kind: 'reactNative', artifact: WORKBENCH_RAIL_ARTIFACT_ID,
+            requiredHostMethods: ['executeAction', 'readResource', 'watchResource', 'openSurface', 'actionControl', 'setUnsavedChanges', 'deviceState', 'notify'],
         }],
     },
     events: { [DATABASE_FINDING_EVENT_REF.localId]: databaseFindingEvent },

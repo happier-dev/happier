@@ -2,6 +2,24 @@ import { expect, it } from 'vitest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 import { createDatabaseWorkbenchPlacements } from './placements.js';
+import { PLUGIN_MANIFEST } from '../manifest.js';
+import { WORKBENCH_RAIL_RENDERER_ID, WORKBENCH_RAIL_ARTIFACT_ID } from './surface/views.js';
+
+it('publishes Database and Insights rail and details destinations through the committed rail renderer', () => {
+    const ui = PLUGIN_MANIFEST.contributes.ui;
+    expect(ui?.renderers.find(renderer => renderer.id === WORKBENCH_RAIL_RENDERER_ID)).toMatchObject({
+        kind: 'reactNative', artifact: WORKBENCH_RAIL_ARTIFACT_ID,
+    });
+    for (const kind of ['session', 'project']) {
+        for (const name of ['database', 'insights']) {
+            const destinations = ui?.views.filter(view => view.target.kind === kind
+                && view.id.startsWith(`${name}-${kind}-`)) ?? [];
+            expect(destinations.map(view => view.container).sort()).toEqual(['detailsPane', 'rightSidebarTab']);
+            expect(destinations.every(view => view.renderer === WORKBENCH_RAIL_RENDERER_ID)).toBe(true);
+            expect(destinations.find(view => view.container === 'rightSidebarTab')).toMatchObject({ defaultPlacement: 'overflow' });
+        }
+    }
+});
 
 it('admits project and Session rail tabs and details destinations with the same renderer', () => {
     const plugin = definePlugin({
