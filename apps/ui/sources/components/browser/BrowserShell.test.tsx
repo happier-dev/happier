@@ -633,12 +633,19 @@ describe('BrowserShell', () => {
     expect(await menuItemIds(true)).toEqual(expect.arrayContaining(['new-tab', 'close-tab']));
   });
 
-  it('keeps the Session annotation owner after a second Browser panel for the same page closes', async () => {
+  it('keeps annotation ownership and its hit area clear of presence after a second Browser panel closes', async () => {
     const { BrowserShell } = await import('./BrowserShell');
     const { useSessionBrowserContextRuntime } = await import('@/components/sessions/browser/sessionBrowserContextRuntime');
     const scope = { serverId: (await addBrowserHome('https://browser-panel-context.example.test')).id, accountId: 'viewer-account' };
-    const shellState = await createAnnotationCapableShellState();
-    const view = shellState.viewsById.view_1!;
+    const initialState = await createAnnotationCapableShellState();
+    const view = { ...initialState.viewsById.view_1!, adapterKind: 'chromiumSidecar' as const,
+      engineKind: 'streamedSurface' as const,
+      target: { kind: 'externalUrl' as const, targetId: 'fixture', url: 'http://127.0.0.1:50825/a' },
+      adapterCapabilities: buildBrowserAdapterCapabilities({ adapterKind: 'chromiumSidecar',
+        supportedTargetKinds: ['externalUrl'], supportedRenderEngines: ['streamedSurface'] }), automationController: {
+      browserSessionId: 'browser_session_1', viewId: 'view_1', controller: 'human' as const, controlEpoch: 1,
+    } };
+    const shellState = { ...initialState, viewsById: { ...initialState.viewsById, [view.viewId]: view } };
     const captureScreenshot = vi.fn(async () => ({ ok: true as const,
       snapshot: { bytes: new Uint8Array([1, 2, 3]), mimeType: 'image/png' as const, width: 40, height: 30, sizeBytes: 3 } }));
     const captureProvider = createBrowserAnnotationCaptureProvider({ captureScreenshot });
@@ -668,6 +675,12 @@ describe('BrowserShell', () => {
       await flushHookEffects();
       expect(runtime!.state.annotationDraftByViewId[view.viewId]?.document.image).toMatchObject({ width: 40, height: 30 });
       expect(captureScreenshot).toHaveBeenCalledOnce();
+      // The frozen editor fills the page region. A presence footer inside that region
+      // can intercept its bottom-row Attach, even though the footer is itself in flow.
+      expect(screen.findHostByTestId('browser-main-presence-frame')).not.toBeNull();
+      expect(screen.findByTestId('browser-main-page-region')!.findAllByProps({
+        testID: 'browser-main-presence-frame',
+      })).toHaveLength(0);
       const result = await runtime!.browserShellContext.annotationRuntimeActionExecute!({
         actionId: 'browser.context.annotation.cancel', input: { browserSessionId: view.browserSessionId, viewId: view.viewId },
         context: { surface: 'ui', serverId: scope.serverId, expectedAccountId: scope.accountId },

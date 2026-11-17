@@ -222,7 +222,8 @@ describe('browser live capture', () => {
                     .find(event => event.kind === 'navigationStateChanged' && event.viewId === view.viewId);
                 expect(metadata[0].events.find(event => event.kind === 'navigationStateChanged')).toEqual(current);
                 expect(metadata[0].interactionState).toEqual(interactions.getState(view));
-                expect(metadata[0].viewerInput).toEqual({ controlling: false, controlEpoch: automation.getStatus(view).controlEpoch });
+                expect(metadata[0].viewerInput).toEqual({ controlling: automation.getStatus(view).controller === 'human',
+                    controlEpoch: automation.getStatus(view).controlEpoch });
             };
             expectSnapshot();
             metadata.length = 0;

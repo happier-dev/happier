@@ -171,6 +171,15 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
     }
   }
 
+  function adoptSoleHumanViewer(runtime: ViewRuntime): boolean {
+    if (runtime.humanViewerId !== null || runtime.humanViewers.size !== 1
+      || runtime.inputControl.getStatus().controller !== 'human') return false;
+    // Toolbar commands take human control without a stream id. Once there is only
+    // one connected presentation, it is the unambiguous owner of that human hold.
+    runtime.humanViewerId = runtime.humanViewers.values().next().value ?? null;
+    return true;
+  }
+
   function controllerState(view: BrowserAutomationViewRef, runtime: ViewRuntime): BrowserAutomationControllerStateV1 {
     return { ...owners.getControllerState(view, { activeAutomationRequestId: runtime.activeAutomationRequestId,
       ...(runtime.activeController ? { controller: runtime.activeController } : {}) }),
@@ -384,6 +393,7 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
     const runtime = runtimeFor(cancelInput);
     const activeRequesterRef = runtime.activeRequesterRef;
     const interruption = runtime.inputControl.takeOver();
+    adoptSoleHumanViewer(runtime);
     runtime.activeTarget = null;
     emitController(cancelInput);
     // Provenance is stored atomically with admission. Routes retain the authenticated
@@ -528,13 +538,16 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
       return runtime?.humanViewerId === view.viewerId && controllerState(view, runtime).controller === 'human';
     },
     registerViewer(view) {
-      runtimeFor(view).humanViewers.add(view.viewerId);
+      const runtime = runtimeFor(view);
+      runtime.humanViewers.add(view.viewerId);
+      if (adoptSoleHumanViewer(runtime)) emitController(view);
     },
     async releaseViewerInput(view) {
       const runtime = runtimes.get(browserViewKey(view));
       if (!runtime) return;
       const wasConnected = runtime.humanViewers.delete(view.viewerId);
       const wasControlling = runtime.humanViewerId === view.viewerId;
+      if (!wasControlling && wasConnected && adoptSoleHumanViewer(runtime)) emitController(view);
       // Toolbar commands can hold human control before this viewer sends stream input.
       // Its last stream disconnect is the same withdrawal boundary as a claimed viewer.
       if (!wasControlling && !(wasConnected && runtime.humanViewers.size === 0 && runtime.humanViewerId === null)) return;

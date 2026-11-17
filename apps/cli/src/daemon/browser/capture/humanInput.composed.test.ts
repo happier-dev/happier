@@ -88,9 +88,15 @@ describe('human browser input relay', () => {
     try {
       await result.adapter.dispatchCommand({ ...view, kind: 'openView', commandId: 'open', platform: 'web', focus: true,
         target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test/' } });
-      for (const [stream, authority] of [['one', 'present_user'], ['two', 'present_user'], ['readonly', 'present_user'], ['agent', 'account_automation']] as const) {
+      expect(await start('readonly', 'present_user')).toMatchObject({ ok: true });
+      // A view-only observer must not adopt the toolbar's human hold while the
+      // input-capable presentation is still connecting.
+      await automation.recordHumanInput({ ...view, authority: 'present_user' });
+      for (const [stream, authority] of [['one', 'present_user'], ['two', 'present_user'], ['agent', 'account_automation']] as const) {
         expect(await start(stream, authority)).toMatchObject({ ok: true });
       }
+      expect(automation.isViewerControlling({ ...view, viewerId: 'one' })).toBe(true);
+      expect(automation.isViewerControlling({ ...view, viewerId: 'readonly' })).toBe(false);
       for (const listener of [...listeners]) listener({ method: 'Page.screencastFrame', sessionId: 'cdp-page',
         params: { sessionId: 1, data: 'AQID', metadata: { deviceWidth: 400, deviceHeight: 200 } } });
       expect(envelopes.some(envelope => envelope.message.kind === 'frame' && envelope.message.frame.streamId === 'readonly'
@@ -104,7 +110,7 @@ describe('human browser input relay', () => {
       } } })).toEqual({ ok: false, reasonCode: 'capture_source_denied' });
       expect(commands.filter(command => command.method === 'Input.dispatchMouseEvent')).toHaveLength(0);
       expect(input('agent', 0, 'agent')).toEqual({ ok: false, reasonCode: 'input_not_supported' });
-      expect(input('one', 0, 'first')).toEqual({ ok: true });
+      expect(input('one', automation.getStatus(view).controlEpoch, 'first')).toEqual({ ok: true });
       await vi.waitFor(() => expect(commands.filter(command => command.method === 'Input.dispatchMouseEvent'))
         .toContainEqual(expect.objectContaining({ params: expect.objectContaining({ type: 'mouseWheel', x: 200, y: 50, deltaX: 12, deltaY: 240 }) })));
       const epoch = automation.getStatus(view).controlEpoch;

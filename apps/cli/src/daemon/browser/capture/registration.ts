@@ -137,12 +137,12 @@ export function registerBrowserLiveCapture(input: Readonly<{
                             const interactionState = input.contextCapture.interactions?.getState(view);
                             if (interactionState) emitMetadata({ events: [], interactionState });
                         }) : undefined;
-                        if (humanViewer) input.automation()?.registerViewer({ ...view, viewerId: startInput.streamId });
+                        if (humanViewer && canDrive) input.automation()?.registerViewer({ ...view, viewerId: startInput.streamId });
                         emitSnapshot();
                         return {
                             stop: async () => {
                                 stopped = true; unsubscribeEngine?.(); unsubscribeController?.(); unsubscribeInteractions?.(); unsubscribeViewport?.();
-                                if (humanViewer) await input.automation()?.releaseViewerInput({ ...view, viewerId: startInput.streamId });
+                                if (humanViewer && canDrive) await input.automation()?.releaseViewerInput({ ...view, viewerId: startInput.streamId });
                                 await subscription.stop();
                             },
                             pause: () => { paused = true; return { ok: true }; },

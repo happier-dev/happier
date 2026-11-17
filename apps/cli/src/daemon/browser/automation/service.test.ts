@@ -114,6 +114,25 @@ describe('browser automation daemon service', () => {
     } finally { finishRelease(); service.dispose(); }
   });
 
+  it.each([false, true])('keeps the sole presentation in control after the second closes (opened before takeover: %s)', async secondBeforeTakeover => {
+    const service = createBrowserAutomationDaemonService({ adapter: readOnlyAdapter() });
+    const first = { ...view, viewerId: 'first-presentation' };
+    const second = { ...view, viewerId: 'second-presentation' };
+    try {
+      service.registerViewer(first);
+      if (secondBeforeTakeover) service.registerViewer(second);
+      // Navigation takes human control before either presentation sends stream input.
+      await service.recordHumanInput({ ...view, authority: 'present_user' });
+      if (!secondBeforeTakeover) service.registerViewer(second);
+      await service.releaseViewerInput(second);
+      expect(service.isViewerControlling(first)).toBe(true);
+      expect(service.claimViewerInput(first)).toEqual({ ok: true });
+      await service.releaseViewerInput(first);
+      expect(service.isViewerControlling(first)).toBe(false);
+      expect(service.getStatus(view).controller).toBe('none');
+    } finally { service.dispose(); }
+  });
+
   it('retains human control when the physical pointer release is unknown so hand back can be retried', async () => {
     let releaseFails = true;
     const service = createBrowserAutomationDaemonService({ adapter: { ...readOnlyAdapter(), releaseInput: async () => {

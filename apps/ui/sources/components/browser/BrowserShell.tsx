@@ -176,6 +176,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         minHeight: 0,
         overflow: 'hidden',
     },
+    pageContent: {
+        flex: 1,
+        minHeight: 0,
+        overflow: 'hidden',
+    },
     // Phone (lab `browser` Qp): the host capsule alone at the top, no rule under it — the page begins
     // where the capsule's breathing room ends.
     phoneTopBar: {
@@ -879,7 +884,8 @@ export function BrowserShell(props: Readonly<{
                     {overflowMenu}
                 </View>
             )}
-            <View testID={`${testID}-page-region`} style={stylesheet.viewHost}>
+            <View style={stylesheet.viewHost}>
+                <View testID={`${testID}-page-region`} style={stylesheet.pageContent}>
                 <BrowserLoadProgressBar
                     testID={`${testID}-load-progress`}
                     progress={activeView?.loadingProgress ?? null}
@@ -945,6 +951,7 @@ export function BrowserShell(props: Readonly<{
                 {annotating ? (
                     <BrowserAnnotatorStage annotator={annotator} session={annotatorSession} phone={phone} control={annotatorControl} />
                 ) : null}
+                </View>
                 {activeView && (isDaemonAuthoritativeBrowserView(activeView)
                     || (props.browserAutomation && props.browserAutomation.enabled !== false)) ? (
                     <BrowserShellPresence
