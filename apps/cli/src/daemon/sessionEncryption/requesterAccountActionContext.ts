@@ -1,4 +1,6 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { readRetainedVerifiedExternalActionRequester, retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/verifiedExternalActionRequester';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import type { ExternalActionExecutionAuthorizationV1, ExternalActionRequesterAccountProjectionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -93,9 +95,16 @@ export function rebindRequesterAccountActionContext(
     ...Object.getOwnPropertyDescriptors(authorization),
     requesterAccountProjection: { value: projection, enumerable: false },
   });
+  const verifiedRequester = readRetainedVerifiedExternalActionRequester(previous);
+  // Enriching private Account ports keeps the admitted root's proof. A copied
+  // descriptor, a different token or a changed signed binding cannot confer it.
+  const bound = verifiedRequester && authorization.token === previous.token
+    && sameStrictJsonValue(authorization.binding, previous.binding)
+    ? retainVerifiedExternalActionRequester({ authorization: carrier, isCurrent: verifiedRequester.isCurrent })
+    : carrier;
   Object.defineProperty(projection, requesterActionContext, {
-    value: Object.freeze({ ...context, authorization: carrier }), enumerable: false,
+    value: Object.freeze({ ...context, authorization: bound }), enumerable: false,
   });
   Object.freeze(projection);
-  return Object.freeze(carrier);
+  return Object.freeze(bound);
 }
