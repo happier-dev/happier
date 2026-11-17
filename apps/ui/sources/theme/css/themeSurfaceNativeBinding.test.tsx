@@ -38,6 +38,7 @@ const { GlassMaterialSettingsProvider } = await import('@/components/ui/glass/us
 const { glassPresetMaterials } = await import('@/components/ui/glass/glassMaterial');
 const { UserMessageBubble } = await import('@/components/sessions/transcript/UserMessageBubble');
 const { PrimaryCircleIconButton } = await import('@/components/ui/buttons/PrimaryCircleIconButton');
+const { HappierThemeSurfaceScope } = await import('@happier-dev/plugin-ui/presentation');
 afterEach(standardCleanup);
 
 function hex(value: unknown) {
@@ -45,6 +46,20 @@ function hex(value: unknown) {
 }
 
 describe('compiled native surface styles at their painted owners', () => {
+    it('retains ordinary native paint inside the existing recovery scope', async () => {
+        const screen = await renderScreen(<HappierThemeSurfaceScope enabled={false}>
+            <GlassSurface testID="recovery-surface" themeSurface={{ surface: 'composer', part: 'root' }} style={{ borderRadius: 40 }}><></></GlassSurface>
+            <UserMessageBubble testID="recovery-bubble"><></></UserMessageBubble>
+            <UserMessageBubble testID="recovery-attention-bubble" attention={{ sessionAddress: null, radius: 40 }}><></></UserMessageBubble>
+        </HappierThemeSurfaceScope>);
+        const surface = flattenTestStyle(screen.findHostByTestId('recovery-surface')!.props.style);
+        expect(surface.borderRadius).toBe(40);
+        expect(surface.borderTopLeftRadius).toBeUndefined();
+        for (const id of ['recovery-bubble', 'recovery-attention-bubble']) {
+            expect(flattenTestStyle(screen.findHostByTestId(id)!.props.style).borderTopLeftRadius).toBeUndefined();
+        }
+    });
+
     it('reshapes the composer send at its painted circle without painting the authored alpha twice', async () => {
         const screen = await renderScreen(<PrimaryCircleIconButton active accessibilityLabel="Send" onPress={() => {}}
             themeSurface={{ surface: 'composer', part: 'send' }}><></></PrimaryCircleIconButton>);

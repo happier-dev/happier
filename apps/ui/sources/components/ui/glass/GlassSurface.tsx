@@ -1,4 +1,5 @@
 import type { SurfaceAddress } from '@happier-dev/plugin-ui';
+import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { Platform, StyleSheet, View, type StyleProp, type ViewStyle, type ViewProps } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -159,7 +160,8 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
     const runtimeEnvironment = useGlassRuntimeEnvironment();
     const group = props.surfaceGroup ?? 'floating';
     const resolveMaterialColor = useGlassMaterialColorResolver(group, props.plane === true);
-    const surfaceStyle = themeSurfaceStyles.surface(props.themeSurface);
+    const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
+    const surfaceStyle = surfaceOverridesEnabled ? themeSurfaceStyles.surface(props.themeSurface) : undefined;
     const effectiveStyle = [props.style, surfaceStyle];
     const styleBackground = readSurfaceStyleProperty(props.style, 'backgroundColor');
     const borderRadius = readSurfaceStyleProperty(effectiveStyle, 'borderRadius');
