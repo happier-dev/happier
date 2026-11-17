@@ -8,9 +8,8 @@ import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { Text } from '@/components/ui/text/Text';
 import { ThemeColorPicker } from '@/components/ui/forms/color/ThemeColorPicker';
 import { t } from '@/text';
-import type { ThemeProfileMode, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
+import type { ThemeProfileMode } from '@/theme/profiles/themeProfileTypes';
 import type { ThemeProfileTokenDefinition } from '@/theme/profiles/themeProfileTokenRegistry';
-import { getThemeProfileContrastAnalysis, readDraftTokenValue } from './themeProfileEditorModel';
 
 /**
  * One colour of a theme: its name, what it follows or that it changed, the colour field, and Reset when
@@ -101,7 +100,10 @@ export const ThemeColorRow = React.memo(function ThemeColorRow(props: Readonly<{
 
 /** A token of the colour registry, read from the draft for one mode. */
 export const ThemeColorTokenRow = React.memo(function ThemeColorTokenRow(props: Readonly<{
-    profile: ThemeProfileV1;
+    value: string;
+    changed: boolean;
+    contrastWarning: boolean;
+    contrastFix: string | null;
     mode: ThemeProfileMode;
     token: ThemeProfileTokenDefinition;
     invalid: boolean;
@@ -113,21 +115,20 @@ export const ThemeColorTokenRow = React.memo(function ThemeColorTokenRow(props: 
     onReset: (tokenId: string) => void;
 }>) {
     const { token, onChange, onInvalidChange, onReset } = props;
-    const changed = Object.prototype.hasOwnProperty.call(props.profile.overrides[props.mode], token.id);
-    const contrast = getThemeProfileContrastAnalysis(props.profile, props.mode, token);
+    const { changed, contrastFix } = props;
     const fixContrast = React.useCallback(() => {
-        if (contrast.fix !== null) onChange(token.id, contrast.fix);
-    }, [contrast.fix, onChange, token.id]);
+        if (contrastFix !== null) onChange(token.id, contrastFix);
+    }, [contrastFix, onChange, token.id]);
     return (
         <ThemeColorRow
             rowId={`${props.mode}-${token.id}`}
             title={token.labelKey ? t(token.labelKey) : token.label}
             subtitle={changed ? t('settingsAppearance.themeProfiles.colorChanged') : token.descriptionKey ? t(token.descriptionKey) : token.description}
-            value={readDraftTokenValue(props.profile, props.mode, token)}
+            value={props.value}
             changed={changed}
             invalid={props.invalid}
-            warning={contrast.warnings.length ? t('settingsAppearance.themeProfiles.contrastWarning') : undefined}
-            onFixContrast={contrast.fix === null ? undefined : fixContrast}
+            warning={props.contrastWarning ? t('settingsAppearance.themeProfiles.contrastWarning') : undefined}
+            onFixContrast={contrastFix === null ? undefined : fixContrast}
             readonly={props.readonly}
             recentColors={props.recentColors}
             highlighted={props.highlighted}

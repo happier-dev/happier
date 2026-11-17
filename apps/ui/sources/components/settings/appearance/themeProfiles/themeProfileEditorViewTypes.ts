@@ -7,12 +7,10 @@ import type { ThemePreviewPalette } from '@/components/settings/appearance/Theme
 import type { CodeEditorHandle } from '@/components/ui/code/editor/codeEditorTypes';
 import type { PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
 import type { PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
-import type {
-  ThemeProfileMode,
-  ThemeProfileV1,
-} from '@/theme/profiles/themeProfileTypes';
+import type { ThemeProfileMode } from '@/theme/profiles/themeProfileTypes';
 import type { ThemeProfileTokenDefinition } from '@/theme/profiles/themeProfileTokenRegistry';
 import type { ThemeLibraryPreview } from './themeLibraryViewTypes';
+import type { ResolvedThemeProfileEditorDraft } from './themeProfileEditorModel';
 
 /**
  * The presentation seam of the theme editor (plan-6 U4, lab D1–D4). The controller
@@ -81,7 +79,7 @@ export type ThemeProfileEditorViewProps = Readonly<{
     onReset: (seed: 'canvas' | 'accent') => void;
   }>;
   colors: Readonly<{
-    draft: ThemeProfileV1;
+    resolvedDraft: ResolvedThemeProfileEditorDraft;
     mode: ThemeProfileMode;
     groups: readonly ThemeEditorColorGroup[];
     invalidByToken: Readonly<Record<string, boolean>>;
@@ -90,6 +88,8 @@ export type ThemeProfileEditorViewProps = Readonly<{
     onQueryChange: (query: string) => void;
     /** The token the picker found in the app, highlighted and scrolled to. */
     highlightedTokenId?: string | null;
+    /** Named paint roles returned by the picker; the existing rows offer each choice. */
+    pickedTokenIds?: readonly string[];
     onChange: (tokenId: string, value: string) => void;
     onInvalidChange: (tokenId: string, invalid: boolean) => void;
     onReset: (tokenId: string) => void;
@@ -116,6 +116,8 @@ export type ThemeProfileEditorViewProps = Readonly<{
     resetKey: string;
     onChange: (value: string) => void;
     editorRef?: React.Ref<CodeEditorHandle>;
+    onReady?: () => void;
+    onInsertSelector?: (surface: SurfaceId) => void;
     /** The compiled coverage of the draft's CSS (present once the CSS owner reports it). */
     /** The CSS owner's counts for the draft (`ThemeCssCoverage`): rules in all, rules phones apply, web-only rules. */
     coverage?: Readonly<{ total: number; native: number; webOnly: number }>;

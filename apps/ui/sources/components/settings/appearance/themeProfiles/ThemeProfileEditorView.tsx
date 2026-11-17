@@ -104,7 +104,7 @@ export const ThemeProfileEditorView = React.memo(
     const aside =
       props.view === 'css' ? (
         props.css.surfaces?.length ? (
-          <SurfaceReference surfaces={props.css.surfaces} />
+          <SurfaceReference surfaces={props.css.surfaces} onInsertSelector={props.readonly ? undefined : props.css.onInsertSelector} />
         ) : null
       ) : (
         <PreviewAside preview={props.preview} picker={props.picker} />
@@ -295,19 +295,20 @@ function ColorsView(props: ThemeProfileEditorViewProps) {
   const query = colors.query.trim().toLowerCase();
   const groups = React.useMemo(
     () =>
-      query.length === 0
+      query.length === 0 && colors.pickedTokenIds === undefined
         ? colors.groups
         : colors.groups
             .map((group) => ({
               ...group,
               tokens: group.tokens.filter((token) =>
-                [token.id, token.label, token.description].some((text) =>
+                (colors.pickedTokenIds === undefined || colors.pickedTokenIds.includes(token.id))
+                && [token.id, token.label, token.description].some((text) =>
                   text.toLowerCase().includes(query),
                 ),
               ),
             }))
             .filter((group) => group.tokens.length > 0),
-    [colors.groups, query],
+    [colors.groups, colors.pickedTokenIds, query],
   );
   return (
     <>
@@ -385,7 +386,10 @@ function ColorsView(props: ThemeProfileEditorViewProps) {
             {group.tokens.map((token) => (
               <ThemeColorTokenRow
                 key={token.id}
-                profile={colors.draft}
+                value={colors.resolvedDraft.tokens[token.id]!.value}
+                changed={colors.resolvedDraft.tokens[token.id]!.changed}
+                contrastWarning={colors.resolvedDraft.tokens[token.id]!.contrast.warnings.length > 0}
+                contrastFix={colors.resolvedDraft.tokens[token.id]!.contrast.fix}
                 mode={colors.mode}
                 token={token}
                 invalid={
@@ -628,6 +632,7 @@ function CssView(props: ThemeProfileEditorViewProps) {
             readOnly={props.readonly}
             testID="settings-theme-profile-css"
             onChange={css.onChange}
+            onReady={css.onReady}
           />
         </View>
       </SectionContentRow>
@@ -665,6 +670,7 @@ function WebOnlyRules(props: Readonly<{
 function SurfaceReference(
   props: Readonly<{
     surfaces: NonNullable<ThemeProfileEditorViewProps['css']['surfaces']>;
+    onInsertSelector?: ThemeProfileEditorViewProps['css']['onInsertSelector'];
   }>,
 ) {
   return (
@@ -683,6 +689,7 @@ function SurfaceReference(
               : surface.id
           }
           mode="info"
+          onPress={props.onInsertSelector ? () => props.onInsertSelector?.(surface.id) : undefined}
           showChevron={false}
         />
       ))}

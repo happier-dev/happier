@@ -37,7 +37,7 @@ import { createThemeProfileEditorActions } from './themeProfileEditorActions';
 import { useThemeProfileEditorPreview } from './useThemeProfileEditorPreview';
 import { useThemePluginShare } from './useThemePluginShare';
 import type { ThemeEditorView, ThemeProfileEditorViewProps } from './themeProfileEditorViewTypes';
-import { buildThemeProfileTokenGroups, getThemeProfileRecentColors } from './themeProfileEditorModel';
+import { buildThemeProfileTokenGroups, getThemeProfileRecentColors, resolveThemeProfileEditorDraft } from './themeProfileEditorModel';
 import {
     buildThemePresetSourceOptions,
     getThemePresetSourceReferenceId,
@@ -377,7 +377,8 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         ...(inUse && !readonly ? [{ id: 'deactivate', title: t('settingsAppearance.themeProfiles.deactivateProfile'), onSelect: deactivate }] : []),
         ...(persisted && !readonly ? [{ id: 'delete', title: t('settingsAppearance.themeProfiles.deleteTheme'), onSelect: deleteProfile }] : []),
     ], [cloneProfile, deactivate, deleteProfile, exportProfile, inUse, isNewProfile, persisted, readonly, resetMode]);
-    const markPalette = React.useMemo(() => resolveThemeProfile({ mode: assetAppearance, profile: draft }), [assetAppearance, draft]);
+    const resolvedDraft = React.useMemo(() => draft ? resolveThemeProfileEditorDraft(draft, mode) : null, [draft, mode]);
+    const markPalette = resolvedDraft?.theme;
 
     const updateSeed = React.useCallback((seed: 'canvas' | 'accent', value: string) => {
         if (readonly) return;
@@ -452,7 +453,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         codeEditorRef.current?.revealLine(line, { focus: true, select: true });
     }, []);
 
-    if (!draft) {
+    if (!draft || !resolvedDraft || !markPalette) {
         return (
             <ItemList testID="settings-theme-profile-editor" style={{ paddingTop: 0 }}>
                 <PageHeader
@@ -511,7 +512,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
             onReset: resetSeed,
         },
         colors: {
-            draft,
+            resolvedDraft,
             mode,
             groups: tokenGroups,
             invalidByToken,

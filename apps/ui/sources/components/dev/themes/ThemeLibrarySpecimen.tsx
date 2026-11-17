@@ -11,7 +11,7 @@ import type {
   ThemeEditorView,
   ThemeProfileEditorViewProps,
 } from '@/components/settings/appearance/themeProfiles/themeProfileEditorViewTypes';
-import { buildThemeProfileTokenGroups } from '@/components/settings/appearance/themeProfiles/themeProfileEditorModel';
+import { buildThemeProfileTokenGroups, resolveThemeProfileEditorDraft } from '@/components/settings/appearance/themeProfiles/themeProfileEditorModel';
 import type {
   ThemeMiniatureData,
   ThemeProfileMode,
@@ -202,7 +202,6 @@ function LibraryScene(props: Readonly<{ scene: string }>) {
         onSelect: NOOP,
       },
     ],
-    onNewTheme: NOOP,
     onChooseMode: setMode,
     onChooseTheme: (key) =>
       setSelected((current) => ({ ...current, [mode]: key })),
@@ -249,6 +248,7 @@ const GROUPS = buildThemeProfileTokenGroups()
     title: group.group,
     tokens: group.tokens.slice(0, 4),
   }));
+const RESOLVED_DRAFT = resolveThemeProfileEditorDraft(DRAFT, 'dark');
 
 function EditorScene(props: Readonly<{ scene: string }>) {
   const initial: ThemeEditorView =
@@ -324,7 +324,7 @@ function EditorScene(props: Readonly<{ scene: string }>) {
       onReset: NOOP,
     },
     colors: {
-      draft: DRAFT,
+      resolvedDraft: RESOLVED_DRAFT,
       mode: 'dark',
       groups: GROUPS,
       invalidByToken: {},
