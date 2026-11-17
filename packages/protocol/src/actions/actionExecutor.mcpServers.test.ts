@@ -5,7 +5,7 @@ import { createActionExecutor } from './actionExecutor.js';
 import { ACTION_IDS, ActionIdSchema } from './actionIds.js';
 import { MCP_SERVER_ACTION_IDS_V1 } from '../mcp/servers/serverActionIdsV1.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
-import { normalizeActionsSettingsV1 } from './actionSettings.js';
+import { normalizeActionsSettingsV1, setActionApprovalOverride } from './actionSettings.js';
 import { createMcpServerActionExecuteV1 } from '../mcp/servers/serverActionsV1.js';
 import { applyMcpServerCatalogMutationV1, loadMcpServerCatalogV1 } from '../mcp/servers/serverCatalogV1.js';
 import type { McpServerCatalogV1 } from '../mcp/servers/serverRowsV1.js';
@@ -16,7 +16,7 @@ import { buildClaudePermissionChoices } from '../../../plugins/claude/src/agent/
 import { NativePermissionChoicesV1Schema } from '../sessions/permissions/nativeChoicesV1.js';
 
 describe('MCP catalog Actions', () => {
-  it('runs the same stored follow-up after a source-scoped remote native answer', async () => {
+  it('runs the same stored follow-up after a source-scoped remote native answer with an autoapproved catalog policy', async () => {
     const trace: string[] = [];
     const followUp = { actionId: 'mcp.servers.tools.set', input: { serverId: 'docs', tools: { write: 'allow' } } };
     const offer = { requirementId: 'occurrence', source: 'test-agent', choices: [{ id: 'remember', label: 'Remember',
@@ -24,6 +24,8 @@ describe('MCP catalog Actions', () => {
     let catalog: McpServerCatalogV1 = { v: 1, bindings: [], servers: [{ id: 'docs', name: 'docs', transport: 'stdio',
       stdio: { command: 'docs-mcp', args: [] }, env: {}, createdAt: 1, updatedAt: 1 }] };
     const executor = createActionExecutor({
+      readActionsSettings: () => setActionApprovalOverride({ settings: normalizeActionsSettingsV1(null),
+        actionId: 'mcp.servers.tools.set', surface: 'plugin', approvalRequired: false }),
       sessionPermissionRemoteAction: async args => {
         if (args.actionId === 'session.permission.remote.pending.list') {
           expect(args.input).toMatchObject({ sessionId: 'session', sourceRef: 'source', sourceRevisionOrEpoch: 'revision' });
@@ -43,7 +45,7 @@ describe('MCP catalog Actions', () => {
       sourceRef: 'source', sourceRevisionOrEpoch: 'revision', idempotencyKey: 'remote-answer', actor: { namespace: 'chat', principalId: 'person' },
       nativeChoice: { requirementId: 'occurrence', choiceId: 'remember' } }, { surface: 'plugin', authority: 'account_automation',
         runtimeAccountId: 'account', serverId: 'home', actionCaller: { kind: 'plugin', pluginId: 'acme.chat', contributionLocalId: 'chat' } });
-    expect(result).toMatchObject({ ok: true, result: { status: 'applied' } });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'applied' } });
     expect(trace).toEqual(['native', 'save']);
     expect(catalog.servers[0]).toMatchObject({ tools: { overrides: { write: 'allow' } } });
   });
@@ -135,6 +137,9 @@ describe('MCP catalog Actions', () => {
     ['mcp.found.list', { machineId: 'machine', directory: '/workspace' }, 'internal_error'],
   ] as const)('keeps a typed %s failure in the public approval receipt without disclosing diagnostics', async (actionId, input, errorCode) => {
     let stored: ApprovalRequest | null = null;
+    // The Machine adapter has already sanitized its declared public reason;
+    // transport diagnostics remain private metadata beside that response.
+    const publicReason = 'The MCP server could not be reached.';
     const executor = createActionExecutor({
       readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
       // Artifact persistence and Machine RPC are system boundaries; admission,
@@ -153,7 +158,7 @@ describe('MCP catalog Actions', () => {
         readCatalog: async () => { throw new Error('Test uses the Machine RPC'); },
         mutate: async () => { throw new Error('Test uses the Machine RPC'); },
         machine: async () => ({ ok: false, errorCode, durationMs: 10,
-          error: 'private remote diagnostic', stderrTail: 'private bridge diagnostic',
+          error: publicReason, stderrTail: 'private bridge diagnostic',
           authorization: 'private bearer' }),
       }),
     });
@@ -165,7 +170,7 @@ describe('MCP catalog Actions', () => {
       artifactId: 'mcp-test-approval', decision: 'approve',
     }, { surface: 'ui', authority: 'present_user', serverId: 'home', runtimeAccountId: 'account' });
     expect(receipt).toMatchObject({ ok: true, result: { status: 'failed', execution: {
-      ok: false, errorCode,
+      ok: false, errorCode, error: publicReason,
     } } });
     expect(JSON.stringify(receipt)).not.toContain('private');
     const publicRead = await executor.execute('approval.request.get', { artifactId: 'mcp-test-approval' },
@@ -173,7 +178,7 @@ describe('MCP catalog Actions', () => {
     if (!publicRead.ok) throw new Error(`Approval read failed: ${JSON.stringify(publicRead)}`);
     const publicRequest = ApprovalRequestV2Schema.parse(readRecord(publicRead.result).request);
     expect(readApprovalExecutionFailure(publicRequest)).toEqual({ ok: false,
-      errorCode, error: errorCode });
+      errorCode, error: publicReason });
     expect(JSON.stringify(publicRead)).not.toContain('private');
     expect(getActionSpec('mcp.servers.test').projectObservationOutput?.({ ok: false,
       errorCode: 'private arbitrary error', error: 'private diagnostic' })).toEqual({ ok: false });
@@ -206,7 +211,7 @@ describe('MCP catalog Actions', () => {
       expect(resolveActionApprovalRouting(args).required, actionId).toBe(false);
       expect(resolveActionApprovalRouting(args).uiConfirmationRequired === true, actionId)
         .toBe(getActionSpec(actionId).approvalPolicy?.uiConfirmation !== 'direct');
-      for (const surface of ['cli', 'agent', 'mcp'] as const) {
+      for (const surface of ['cli', 'agent', 'mcp', 'plugin'] as const) {
         expect(resolveActionApprovalRouting({ ...args, context: { surface, authority: 'account_automation' } }).required, `${actionId}:${surface}`).toBe(true);
       }
       expect(resolveActionApprovalRouting({ ...args, settings: normalizeActionsSettingsV1({ v: 1,
