@@ -144,6 +144,8 @@ type MachinePresetClientInput<T extends MachinePresetHttpActionIdV1> =
         : T extends 'machines.presets.update' ? MachinePresetUpdateDraftInput
             : MachinePresetActionInputV1<T>;
 
+export type MachinePresetCollectionFilter = Pick<MachinePresetActionInputV1<'machines.presets.list'>, 'sharedWithTeamId'>;
+
 export type MachinePresetCollectionOptions<T> = Readonly<{
     signal?: AbortSignal;
     /** Client-side filter applied after the envelope has been opened. */
@@ -893,11 +895,13 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         }).finally(() => { if (awaitingApproval) options?.onApprovalSettled?.(); });
     }
 
-    async function list(options?: MachinePresetCollectionOptions<readonly ManagedMachinePresetListEntryV1[]>): Promise<MachinePresetCollectionSettledResult<readonly ManagedMachinePresetListEntryV1[]>> {
+    async function list(options?: MachinePresetCollectionOptions<readonly ManagedMachinePresetListEntryV1[]> & MachinePresetCollectionFilter): Promise<MachinePresetCollectionSettledResult<readonly ManagedMachinePresetListEntryV1[]>> {
         const presets: ManagedMachinePresetListEntryV1[] = [];
         let cursor: string | undefined;
         do {
-            const result = await read('machines.presets.list', { homeId, includeArchived: true, ...(cursor ? { cursor } : {}) }, {
+            const result = await read('machines.presets.list', { homeId, includeArchived: true,
+                ...(options?.sharedWithTeamId === undefined ? {} : { sharedWithTeamId: options.sharedWithTeamId }),
+                ...(cursor ? { cursor } : {}) }, {
                 signal: options?.signal, onApprovalPending: options?.onApprovalPending, onApprovalSettled: options?.onApprovalSettled,
             });
             if (result.kind === 'failed') return result;

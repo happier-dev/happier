@@ -57,6 +57,29 @@ const resource = ManagedMachinePublicFullV1Schema.parse({ id: 'resource', homeId
     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, archivedAt: 0 });
 
 describe('preset collection and history through Actions', () => {
+    it('keeps selected-Team preset lists separate from the Account collection through every page', async () => {
+        const serverId = await addPresetHome({ name: 'History', serverUrl: 'https://history.example',
+            serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
+        const personal = createPlainManagedMachinePresetFixture(preset);
+        const shared = createPlainManagedMachinePresetFixture({ ...preset, id: 'team-preset' });
+        const second = createPlainManagedMachinePresetFixture({ ...preset, id: 'team-next' });
+        harness.answer(serverId, '/v1/machines/presets/list', { select: input => {
+            const query = input as Readonly<{ sharedWithTeamId?: string; cursor?: string }>;
+            return { body: query.sharedWithTeamId === 'selected-team'
+                ? { kind: 'listed', presets: [query.cursor ? second : shared], ...(query.cursor ? {} : { cursor: 'next-page' }) }
+                : { kind: 'listed', presets: [personal] } };
+        } });
+        const all = await renderHook(() => useMachinePresets([serverId]));
+        await waitForHomeGovernance(() => expect(all.getCurrent().presetsByServerId[serverId]).toEqual([personal.opened]));
+        const team = await renderHook(() => useMachinePresets([serverId], undefined, { sharedWithTeamId: 'selected-team' }));
+        await waitForHomeGovernance(() => expect(team.getCurrent().presetsByServerId[serverId]).toEqual([shared.opened, second.opened]));
+        expect(all.getCurrent().presetsByServerId[serverId]).toEqual([personal.opened]);
+        expect(harness.requestsFor('/v1/machines/presets/list').map(request => request.input)).toEqual([
+            expect.not.objectContaining({ sharedWithTeamId: expect.anything() }),
+            expect.objectContaining({ sharedWithTeamId: 'selected-team' }),
+            expect.objectContaining({ sharedWithTeamId: 'selected-team', cursor: 'next-page' }),
+        ]);
+    });
     it('shares one preset list across concurrent and repeated Store, Software and Add-to-preset visits', async () => {
         const serverId = await addPresetHome({ name: 'History', serverUrl: 'https://history.example',
             serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });

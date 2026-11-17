@@ -8,6 +8,7 @@ import { MachinePresenceReadInputV1Schema, MachinePresenceReadResultV1Schema } f
 
 export const MachinesListInputSchema = lazyZodSchema(() => z.strictObject({
   serverId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  sharedWithTeamId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   limit: z.optional(z.number().check(z.int(), z.minimum(1))),
   refresh: z.optional(z.boolean()),
 }));

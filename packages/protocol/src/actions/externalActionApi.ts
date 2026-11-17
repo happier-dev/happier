@@ -1,3 +1,4 @@
+import { ResourceTeamShareScopeV1Schema } from '../teams/resourceGrantAccessV1.js';
 import { ManagedMachinePresetPrepareInputV1Schema, ManagedMachinePresetRevisionInputV1Schema } from '../machines/managed/managedMachinePresetRevisionV1.js';
 import { MACHINE_PRESET_PREPARE_ACTION_ID_V1, MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '../machines/managed/machinePresetActionIdsV1.js';
 import { ExternalActionRequestIdV1Schema, ExternalActionPreOpenFailureCodeSchema, ExternalActionTargetRefusalPhaseSchema } from './externalActionHttpError.js';
@@ -662,6 +663,7 @@ export const ExternalActionMachineBootstrapV1Schema = lazyZodSchema(() => z.stri
   runnerContentKeyBinding: z._default(z.nullable(RunnerMachineContentKeyBindingV1Schema), null),
   /** Safe target resource facts; this is discovery, never effect authority. */
   access: z.optional(AccessibleMachineAccessV1Schema),
+  sharedWithTeamScope: z.optional(ResourceTeamShareScopeV1Schema),
 }));
 export type ExternalActionMachineBootstrapV1 = z.infer<
   typeof ExternalActionMachineBootstrapV1Schema

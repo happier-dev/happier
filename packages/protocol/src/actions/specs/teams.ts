@@ -84,6 +84,12 @@ import {
   TEAM_CREDENTIAL_ACTION_METHODS_V1,
   type TeamCredentialHomeActionIdV1,
 } from '../../teams/credentials/actionsV1.js';
+import {
+  isTeamCredentialMcpActionIdV1,
+  isTeamCredentialDeferredApprovalActionIdV1,
+  isTeamCredentialDirectConfirmationActionIdV1,
+  isTeamCredentialNativeDisclosureActionIdV1,
+} from '../../teams/credentials/actionIdsV1.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import {
   homeDomainActionRow,
@@ -221,10 +227,9 @@ function teamCredentialActionRow<TActionId extends TeamCredentialHomeActionIdV1>
     ...(input.id === 'teams.credentials.externalKeys.revoke' || input.id === 'teams.credentials.externalKeys.revokeAll'
       ? { confirmVerb: { key: 'files.reviewComments.durable.directWriteGrant.revoke', fallback: 'Revoke' }, irreversible: true as const }
       : input.id === 'teams.credentials.delete' ? { confirmVerb: { key: 'common.delete', fallback: 'Delete' }, irreversible: true as const } : {}),
-    ...(['teams.credentials.limits.upsert', 'teams.credentials.limits.delete', 'teams.credentials.test',
-      'teams.credentials.externalKeys.authorize'].includes(input.id)
+    ...(isTeamCredentialDirectConfirmationActionIdV1(input.id)
       ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
-    ...(['teams.credentials.create', 'teams.credentials.update', 'teams.credentials.audience.set'].includes(input.id) ? {
+    ...(isTeamCredentialNativeDisclosureActionIdV1(input.id) ? {
       approvalPresentation: { summary: (value: unknown) => teamCredentialNativeDisclosureApprovalSummary(input.id, value) },
       approvalPolicy: {
       uiConfirmation: 'direct' as const,
@@ -381,14 +386,8 @@ function createTeamActionSpecs(): TeamActionSpecs {
     bindings: { mcpToolName: 'teams_members_history_prepare' },
   },
   ...TEAM_CREDENTIAL_HOME_ACTION_IDS_V1.map((id) => teamCredentialActionRow({
-    mcp: id === 'teams.credentials.preparation.get' || id === 'teams.credentials.create'
-      || id === 'teams.credentials.entitled.list' || id === 'teams.credentials.delete'
-      || id === 'teams.credentials.limits.delete' || id === 'teams.credentials.externalKeys.revoke'
-      || id === 'teams.credentials.externalKeys.revokeAll' || id === 'teams.credentials.update'
-      || id === 'teams.credentials.audience.set' || id === 'teams.credentials.test'
-      || id === 'teams.credentials.limits.upsert' || id === 'teams.credentials.externalKeys.create'
-      || id === 'teams.credentials.externalKeys.authorize',
-    id, approval: ['teams.credentials.create', 'teams.credentials.update', 'teams.credentials.audience.set', 'teams.credentials.delete', 'teams.credentials.limits.upsert', 'teams.credentials.limits.delete', 'teams.credentials.externalKeys.revoke', 'teams.credentials.externalKeys.revokeAll'].includes(id) ? { result: 'required', flow: 'deferred' } : { result: 'required' },
+    mcp: isTeamCredentialMcpActionIdV1(id),
+    id, approval: isTeamCredentialDeferredApprovalActionIdV1(id) ? { result: 'required', flow: 'deferred' } : { result: 'required' },
     title: {
       'teams.credentials.list': 'List Team credentials',
       'teams.credentials.sources.list': 'List offerable credential sources',
@@ -565,6 +564,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
   }),
   homeDomainActionRow({
     id: 'teams.policy.set', approval: {result: 'required',flow: 'deferred'},
+    mcp: true,
     approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Set Team policy',
     description: 'Change a Team\'s Session, sharing, history and admission policy. These decide who may reach Team work.',

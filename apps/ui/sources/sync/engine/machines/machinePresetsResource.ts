@@ -4,7 +4,7 @@ import type { ActionApprovalRegistration } from '@/components/approvals/actionAp
 import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { retainDeep, retainKeyedRows, retainShallow } from '@/sync/domains/state/structuralSharing';
-import { createMachinePresetCollectionClient, type ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
+import { createMachinePresetCollectionClient, type ManagedMachinePresetListEntryV1, type MachinePresetCollectionFilter } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 export type MachinePresetQueryState<T> = Readonly<{
@@ -20,6 +20,7 @@ type PendingRead = { controller: AbortController; awaitingApproval: boolean; con
 type Entry = {
     lifetime: ServerAccountScopeLifetime;
     homeId: string;
+    sharedWithTeamId?: string;
     snapshot: Snapshot;
     revisions: RevisionSnapshot;
     contentStale: boolean;
@@ -34,6 +35,8 @@ const emptyRevisions: RevisionSnapshot = { value: null, loading: true, error: nu
 const entries = new Map<string, Entry>();
 const listeners = new Map<string, Set<() => void>>();
 const scopeId = (serverId: string) => resolveServerProfileScopeIdForIdentifier(serverId) || serverId;
+const queryKey = (serverId: string, filter?: MachinePresetCollectionFilter) => JSON.stringify([scopeId(serverId), filter?.sharedWithTeamId ?? null]);
+const homeEntries = (serverId: string) => [...entries.values()].filter(entry => scopeId(entry.lifetime.scope.serverId) === scopeId(serverId));
 let stopObserving: (() => void) | undefined;
 let stopDemanding: (() => void) | undefined;
 let demandedHomes = '';
@@ -73,6 +76,7 @@ function load(serverId: string, entry: Entry) {
     const current = () => !read.controller.signal.aborted && entry.lifetime.isCurrent() && entry.read === read;
     const client = createMachinePresetCollectionClient(entry.lifetime.scope, entry.homeId);
     const options = {
+        ...(entry.sharedWithTeamId === undefined ? {} : { sharedWithTeamId: entry.sharedWithTeamId }),
         signal: read.controller.signal,
         onApprovalPending: (approval: ActionApprovalRegistration) => {
             if (!current()) return;
@@ -88,7 +92,9 @@ function load(serverId: string, entry: Entry) {
         let cursor: string | undefined;
         do {
             const result = await client.read('machines.presets.list', { homeId: entry.homeId,
-                projection: 'revisions', includeArchived: true, ...(cursor ? { cursor } : {}) }, options);
+                projection: 'revisions', includeArchived: true,
+                ...(entry.sharedWithTeamId === undefined ? {} : { sharedWithTeamId: entry.sharedWithTeamId }),
+                ...(cursor ? { cursor } : {}) }, options);
             if (result.kind === 'failed') return result;
             if (result.value.kind === 'refused') return { kind: 'failed' as const, code: result.value.code };
             if (result.value.kind !== 'revisions') return { kind: 'failed' as const, code: 'invalid_action_output' };
@@ -132,14 +138,15 @@ function load(serverId: string, entry: Entry) {
 
 export function invalidateMachinePresets(serverId: string): void {
     const id = scopeId(serverId);
-    const entry = entries.get(id);
-    // An approved read has not executed yet; its eventual answer covers this change.
-    if (!entry || entry.read?.awaitingApproval) return;
-    entry.stale = true;
-    entry.contentStale = true;
-    entry.read?.controller.abort();
-    entry.read = null;
-    load(id, entry);
+    for (const entry of homeEntries(id)) {
+        // An approved read has not executed yet; its eventual answer covers this change.
+        if (entry.read?.awaitingApproval) continue;
+        entry.stale = true;
+        entry.contentStale = true;
+        entry.read?.controller.abort();
+        entry.read = null;
+        load(id, entry);
+    }
 }
 
 function reconcileObservation() {
@@ -154,7 +161,8 @@ function reconcileObservation() {
         stopObserving?.();
         stopObserving = undefined;
     }
-    const homes = [...entries].filter(([, entry]) => entry.consumers.size > 0).map(([id]) => id).sort();
+    const homes = [...new Set([...entries.values()].filter(entry => entry.consumers.size > 0)
+        .map(entry => scopeId(entry.lifetime.scope.serverId)))].sort();
     const key = JSON.stringify(homes);
     if (key === demandedHomes) return;
     stopDemanding?.();
@@ -162,40 +170,42 @@ function reconcileObservation() {
         && (entry.revisions.value === null || entry.revisions.error !== null);
     // The incumbent reconnect owner retries failed reads; settled content follows the feed.
     stopDemanding = homes.length ? subscribeHomeAccountChange(event => {
-        if (event.source === 'connected' && readNotCurrent(entries.get(scopeId(event.serverId)))) {
+        if (event.source === 'connected' && homeEntries(event.serverId).some(readNotCurrent)) {
             invalidateMachinePresets(event.serverId);
         }
-    }, { serverIds: homes, reconnect: { readNotCurrent: () => homes.some(id => readNotCurrent(entries.get(id))) } }) : undefined;
+    }, { serverIds: homes, reconnect: { readNotCurrent: () => homes.some(id => homeEntries(id).some(readNotCurrent)) } }) : undefined;
     demandedHomes = key;
 }
 
-function retire(serverId: string, entry: Entry) {
+function retire(key: string, entry: Entry) {
     entry.read?.controller.abort();
     entry.retirement.dispose();
-    if (entries.get(serverId) !== entry) return;
-    entries.delete(serverId);
+    if (entries.get(key) !== entry) return;
+    entries.delete(key);
     reconcileObservation();
-    notify(serverId);
+    notify(scopeId(entry.lifetime.scope.serverId));
 }
 
 /** Account-owned settled content survives page bindings; credential retirement withdraws it synchronously. */
 export function retainMachinePresets(lifetime: ServerAccountScopeLifetime, homeId: string,
     onApprovalPending?: (approval: ActionApprovalRegistration) => void,
-    options?: Readonly<{ projection?: 'content' | 'revisions' }>): () => void {
+    options?: MachinePresetCollectionFilter & Readonly<{ projection?: 'content' | 'revisions' }>): () => void {
     const projection = options?.projection ?? 'content';
     const owner = readServerAccountScopeOwnerLifetime(lifetime);
     if (!owner.isCurrent()) return () => {};
     const id = scopeId(owner.scope.serverId);
-    let entry = entries.get(id);
+    const key = queryKey(id, options);
+    let entry = entries.get(key);
     if (entry && (entry.homeId !== homeId || entry.lifetime !== owner)) {
-        retire(id, entry);
+        retire(key, entry);
         entry = undefined;
     }
     if (!entry) {
-        const created: Entry = { lifetime: owner, homeId, snapshot: empty, revisions: emptyRevisions, contentStale: true, consumers: new Set(),
+        const created: Entry = { lifetime: owner, homeId, sharedWithTeamId: options?.sharedWithTeamId,
+            snapshot: empty, revisions: emptyRevisions, contentStale: true, consumers: new Set(),
             retirement: { dispose() {} }, read: null, stale: true };
-        entries.set(id, created);
-        created.retirement = owner.onRetire(() => retire(id, created));
+        entries.set(key, created);
+        created.retirement = owner.onRetire(() => retire(key, created));
         entry = created;
     }
     const retained = entry;
@@ -222,15 +232,15 @@ export function retainMachinePresets(lifetime: ServerAccountScopeLifetime, homeI
     };
 }
 
-export function readMachinePresetsSnapshot(serverId: string, homeId: string, accountId?: string): Snapshot {
-    const entry = entries.get(scopeId(serverId));
+export function readMachinePresetsSnapshot(serverId: string, homeId: string, accountId?: string, filter?: MachinePresetCollectionFilter): Snapshot {
+    const entry = entries.get(queryKey(serverId, filter));
     return entry?.lifetime.isCurrent() && entry.homeId === homeId
         && getServerProfileById(serverId)?.serverIdentityId === homeId
         && (accountId === undefined || entry.lifetime.scope.accountId === accountId) ? entry.snapshot : empty;
 }
 
 export function readMachinePresetRevisionsSnapshot(serverId: string, homeId: string, accountId?: string): RevisionSnapshot {
-    const entry = entries.get(scopeId(serverId));
+    const entry = entries.get(queryKey(serverId));
     return entry?.lifetime.isCurrent() && entry.homeId === homeId
         && getServerProfileById(serverId)?.serverIdentityId === homeId
         && (accountId === undefined || entry.lifetime.scope.accountId === accountId) ? entry.revisions : emptyRevisions;

@@ -19,6 +19,16 @@ import { isActionDiscoverableOnToolSurface } from './actionToolExposure.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 
 describe('Team credential Action contracts', () => {
+  it('discovers credential metadata reads on MCP without asking', () => {
+    for (const id of ['teams.credentials.list', 'teams.credentials.get'] as const) {
+      const spec = getActionSpec(id);
+      expect.soft(isActionDiscoverableOnToolSurface(spec, 'mcp'), id).toBe(true);
+      expect.soft(serializeActionSpec(spec).surfaces.mcp, id).toBe(true);
+      expect(spec).toMatchObject({ safety: 'safe', sideEffectClass: 'read', requiredAuthority: 'account_automation' });
+      expect(resolveActionApprovalRouting({ actionId: id, spec,
+        context: { surface: 'mcp', authority: 'account_automation' } }).required, id).toBe(false);
+    }
+  });
   it('makes credential edits discoverable through the real MCP catalog without bypassing approval or authority', () => {
     for (const id of ['teams.credentials.update', 'teams.credentials.audience.set', 'teams.credentials.test',
       'teams.credentials.limits.upsert', 'teams.credentials.externalKeys.create', 'teams.credentials.externalKeys.authorize'] as const) {
@@ -69,13 +79,6 @@ describe('Team credential Action contracts', () => {
         ui: true,
         cli: true,
         agent: true,
-        mcp: id === 'teams.credentials.test' || String(id) === 'teams.credentials.preparation.get'
-          || id === 'teams.credentials.create' || id === 'teams.credentials.entitled.list'
-          || id === 'teams.credentials.delete' || id === 'teams.credentials.limits.delete'
-          || id === 'teams.credentials.externalKeys.revoke' || id === 'teams.credentials.externalKeys.revokeAll'
-          || id === 'teams.credentials.update' || id === 'teams.credentials.audience.set'
-          || id === 'teams.credentials.limits.upsert' || id === 'teams.credentials.externalKeys.create'
-          || id === 'teams.credentials.externalKeys.authorize',
         api: id !== 'teams.credentials.test',
         plugin: true,
       });

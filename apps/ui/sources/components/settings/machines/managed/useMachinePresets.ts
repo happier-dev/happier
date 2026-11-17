@@ -18,7 +18,7 @@ import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { retainShallow } from '@/sync/domains/state/structuralSharing';
 import { invalidateMachinePresets, isMachinePresetAccessLost, readMachinePresetsSnapshot, retainMachinePresets, subscribeMachinePresets, type MachinePresetQueryState } from '@/sync/engine/machines/machinePresetsResource';
 export { isMachinePresetAccessLost, type MachinePresetQueryState } from '@/sync/engine/machines/machinePresetsResource';
-import { createMachinePresetCollectionClient, type MachinePresetHistoryData, type MachinePresetCollectionResult, type MachinePresetCollectionSettledResult, type MachinePresetCollectionOptions } from './machinePresetCollectionClient';
+import { createMachinePresetCollectionClient, type MachinePresetHistoryData, type MachinePresetCollectionResult, type MachinePresetCollectionSettledResult, type MachinePresetCollectionOptions, type MachinePresetCollectionFilter } from './machinePresetCollectionClient';
 import { buildManagedPresetHistory } from './managedPresetHistory';
 import type { createManagedProvisionerClient } from './managedProvisionerClient';
 import { createManagedConfiguratorDraft, refreshManagedConfiguratorProvisioner, beginManagedConfiguratorRead, settleManagedConfiguratorRead, managedConfiguratorFacts, managedConfiguratorOptionsSelectors, type ManagedConfiguratorDraft } from './managedConfiguratorModel';
@@ -38,6 +38,7 @@ import { canRequestActionOperationStop } from '@/components/inbox/actionOperatio
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 
 const NO_PREPARATION_APPROVAL_REFRESH = () => {};
+const EMPTY_TEAM_DEMO_PRESETS: readonly ManagedMachinePresetListEntryV1[] = [];
 
 /** Last-reported private preparation and the canonical admitted Action lifecycle, without freshness inference. */
 export function useMachinePresetPreparation(input: Readonly<{
@@ -326,7 +327,9 @@ export function useMachinePresetConfiguration(input: Readonly<{
 }
 
 /** Every collection surface projects the one Account-owned machines-sync resource. */
-export function useMachinePresets(serverIds: readonly string[], onApprovalPending?: (approval: ActionApprovalRegistration, serverId: string) => void) {
+export function useMachinePresets(serverIds: readonly string[], onApprovalPending?: (approval: ActionApprovalRegistration, serverId: string) => void,
+    filter?: MachinePresetCollectionFilter) {
+    const sharedWithTeamId = filter?.sharedWithTeamId;
     const presented = useLayoutPresentationActive();
     const accountScopes = useServerCredentialAccountScopeStates(serverIds);
     const requestedIdsKey = JSON.stringify(serverIds);
@@ -342,17 +345,17 @@ export function useMachinePresets(serverIds: readonly string[], onApprovalPendin
             const scope = accountScopes.get(resolveServerProfileScopeIdForIdentifier(serverId) || serverId);
             const resolution = scope?.resolution;
             let entry: MachinePresetQueryState<readonly ManagedMachinePresetListEntryV1[]>;
-            if (demo) entry = { value: demo, loading: false, error: null };
+            if (demo) entry = { value: sharedWithTeamId === undefined ? demo : EMPTY_TEAM_DEMO_PRESETS, loading: false, error: null };
             else if (!homeId) entry = { value: null, loading: false, error: 'server_identity_unavailable' };
             else if (resolution && resolution.kind !== 'bound' && resolution.kind !== 'resolving') {
                 entry = { value: null, loading: false, error: resolution.kind };
             } else entry = readMachinePresetsSnapshot(serverId, homeId,
-                resolution?.kind === 'bound' ? resolution.scope.accountId : undefined);
+                resolution?.kind === 'bound' ? resolution.scope.accountId : undefined, { sharedWithTeamId });
             next[serverId] = retainShallow(snapshots.current[serverId], entry);
         }
         snapshots.current = retainShallow(snapshots.current, next);
         return snapshots.current;
-    }, [requestedIds, accountScopes]);
+    }, [requestedIds, accountScopes, sharedWithTeamId]);
     const subscribe = React.useCallback((notify: () => void) => presented
         ? subscribeMachinePresets(requestedIds, notify) : () => {}, [presented, requestedIds]);
     const statesByServerId = React.useSyncExternalStore(subscribe, readSnapshot, readSnapshot);
@@ -362,11 +365,11 @@ export function useMachinePresets(serverIds: readonly string[], onApprovalPendin
         for (const [serverId, scope] of accountScopes) {
             const homeId = getServerProfileById(serverId)?.serverIdentityId;
             if (scope.binding?.isCurrent() && homeId && !getDemoMachinePresets(serverId)) {
-                releases.push(retainMachinePresets(scope.binding, homeId, approval => approvalRef.current?.(approval, serverId)));
+                releases.push(retainMachinePresets(scope.binding, homeId, approval => approvalRef.current?.(approval, serverId), { sharedWithTeamId }));
             }
         }
         return () => { for (const release of releases) release(); };
-    }, [presented, accountScopes]);
+    }, [presented, accountScopes, sharedWithTeamId]);
     const refresh = React.useCallback(() => {
         for (const serverId of requestedIds) invalidateMachinePresets(serverId);
     }, [requestedIds]);

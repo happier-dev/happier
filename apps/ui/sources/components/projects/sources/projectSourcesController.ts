@@ -2,7 +2,7 @@ import { z } from 'zod/mini';
 import {
     ProjectSourcesListOutputV1Schema, ProjectSourcesReadOutputV1Schema, ProjectSourcesCreateInputV1Schema,
     ProjectSourcesCreateOutputV1Schema, ProjectSourcesUpdateOutputV1Schema, ProjectSourcesDeleteOutputV1Schema,
-    type ProjectSourceV1, type ProjectSourcesCreateInputV1, type ProjectSourcesUpdateInputV1,
+    type ProjectSourceV1, type ProjectSourceListItemV1, type ProjectSourcesCreateInputV1, type ProjectSourcesUpdateInputV1,
     type ProjectSourcesListInputV1,
 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -26,7 +26,7 @@ export type ProjectSourceCreationDraft = Readonly<{
 }>;
 type CreationFields = Pick<ProjectSourceCreationDraft, 'name' | 'address' | 'defaultRef' | 'subdir' | 'audience'>;
 export type ProjectSourcesState = Readonly<{
-    rows: readonly ProjectSourceV1[];
+    rows: readonly ProjectSourceListItemV1[];
     query: string;
     audience: ProjectSourcesListInputV1['audience'];
     catalogQuery: string;
@@ -46,6 +46,7 @@ export type ProjectSourcesState = Readonly<{
     addressResolution: ProjectSourceAddressResolution;
     addressSaveDisabledReason: ProjectSourceSaveDisabledReason | null;
 }>;
+
 type Execute = (actionId: ActionId, input: unknown, context?: UiActionExecutorContext) => Promise<ActionExecuteResult>;
 export type ProjectSourcesCatalog = Readonly<{
     getSnapshot(): ProjectSourcesState;
@@ -153,10 +154,14 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
         return code === 'source_unavailable' || code === 'source_access_denied'
             || code === 'action_home_signed_out' || code === 'action_forbidden';
     }
-    function reconcileRows(incoming: readonly ProjectSourceV1[], append = false) {
+    function reconcileRows(incoming: readonly ProjectSourceListItemV1[], append = false) {
         const previous = new Map(state.rows.map((row) => [row.id, row]));
-        const merged = append ? new Map(previous) : new Map<string, ProjectSourceV1>();
-        for (const row of incoming) merged.set(row.id, (previous.get(row.id)?.revision ?? 0) >= row.revision ? previous.get(row.id)! : row);
+        const merged = append ? new Map(previous) : new Map<string, ProjectSourceListItemV1>();
+        for (const row of incoming) {
+            const retained = previous.get(row.id);
+            merged.set(row.id, retained && (retained.revision > row.revision || retained.revision === row.revision
+                && retained.sharedWithTeamScope === row.sharedWithTeamScope) ? retained : row);
+        }
         const rows = [...merged.values()];
         return rows.length === state.rows.length && rows.every((row, index) => row === state.rows[index]) ? state.rows : rows;
     }
@@ -208,7 +213,10 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
         uncertainSources.delete(source.id);
         const listed = state.rows.some((row) => row.id === source.id);
         if (listed || (created && sharedWithTeamId === undefined && state.catalogQuery === '' && state.catalogAudience === undefined)) {
-            publish({ rows: listed ? reconcileRows(state.rows.map((row) => row.id === source.id ? source : row))
+            // Detail and mutation DTOs carry content metadata, not this list's
+            // grant projection. Its next scoped page remains the scope authority.
+            publish({ rows: listed ? reconcileRows(state.rows.map((row) => row.id === source.id
+                ? { ...source, sharedWithTeamScope: row.sharedWithTeamScope } : row))
                 : [...state.rows, source] });
         }
         if (state.selectedId === source.id) publish({ current: source, canManage, detailStatus: 'ready', conflict: null, issue: null });

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from 'vitest';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { storage } from '@/sync/domains/state/storageStore';
 import { captureMachinePresenceObservation, clearMachineRequestReachabilityForTest, recordMachineRequestFailed, withdrawMachinePresenceForScope } from '@/sync/domains/machines/reachability/machineReachability';
@@ -45,6 +45,24 @@ it('retains a shared Use target installation in the Action inventory without sto
     expect(result).toMatchObject({ items: [{ machineId: 'shared', installationId: 'other-installation' }] });
     expect(result).not.toHaveProperty('items.0.metadata');
     expect(result).not.toHaveProperty('items.0.dataEncryptionKey');
+});
+
+it('uses the selected Team server list rather than the retained Machine inventory', async () => {
+    const { serverId, accountId } = account.scope;
+    const retained = createMachineFixture({ id: 'unrelated-retained' });
+    storage.setState({ machineListByServerId: { [serverId]: [retained] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    const request = account.request.getMockImplementation();
+    if (!request) throw new Error('Expected Account HTTP boundary');
+    account.request.mockImplementation(async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        if (url.pathname === '/v1/machines' && url.searchParams.get('sharedWithTeamId') === 'selected-team') {
+            return Response.json([{ ...createPlainMachineRowFixture({ id: 'team-machine', accountId }), sharedWithTeamScope: 'group' }]);
+        }
+        return request(input, init);
+    });
+    const input = { serverId, purpose: 'input' as const, sharedWithTeamId: 'selected-team' };
+    expect(await listMachinesForVoiceTool(input)).toMatchObject({ items: [{ machineId: 'team-machine', sharedWithTeamScope: 'group' }] });
+    expect(storage.getState().machineListByServerId[serverId]).toEqual([retained]);
 });
 
 it('keeps retained input presence unknown until admitted activity arrives, including a fresh offline row', async () => {

@@ -6282,6 +6282,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
           const res = await deps.machinesList({
             ...(requestedServerId || currentServerId ? { serverId: requestedServerId || currentServerId } : {}),
+            ...(typeof data.sharedWithTeamId === 'string' ? { sharedWithTeamId: data.sharedWithTeamId } : {}),
             ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),
             ...(typeof data.refresh === 'boolean' ? { refresh: data.refresh } : {}),
             ...(data.refresh === true && ctx.surface === 'ui' ? { purpose: 'input' as const } : {}),

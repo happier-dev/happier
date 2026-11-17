@@ -47,7 +47,7 @@ export type HomeDomainActionExecutor = NonNullable<ActionExecutorDeps['homeDomai
  * post-dispatch uncertainty is the canonical unprefixed `outcome_unknown`, and
  * failures proven not to have reached the Home retain the Home-unreachable code.
  */
-function toActionFailure(actionId: string, failure: HomeDomainFailure<string>): ActionExecuteFailure {
+export function homeDomainActionFailureFromDomainFailure(actionId: string, failure: HomeDomainFailure<string>): ActionExecuteFailure {
     const details = failure.httpStatus === undefined ? failure.details : {
         ...(typeof failure.details === 'object' && failure.details !== null ? failure.details : {}),
         httpStatus: failure.httpStatus,
@@ -254,6 +254,6 @@ export function createHomeDomainActionExecutorForScope(
                 }
             } } : {}),
         });
-        return result.ok ? result.value : toActionFailure(actionId, result.failure);
+        return result.ok ? result.value : homeDomainActionFailureFromDomainFailure(actionId, result.failure);
     };
 }

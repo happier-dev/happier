@@ -1,4 +1,5 @@
 import { z } from '../zodRuntimePolicy.js';
+import { ResourceTeamShareScopeV1Schema } from '../teams/resourceGrantAccessV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { AccessibleMachineAccessV1Schema } from './machineAccessV1.js';
@@ -71,6 +72,7 @@ const MachinePublishedRowCanonicalV1Schema = lazyZodSchema(() => z.strictObject(
   keyBasis: z.optional(MachineKeyBasisV1Schema),
   storageMode: z.optional(z.enum(['plain', 'e2ee'])),
   access: z.optional(AccessibleMachineAccessV1Schema),
+  sharedWithTeamScope: z.optional(ResourceTeamShareScopeV1Schema),
   recipientWorkPending: z.optional(z.boolean()),
   recipientWorkCursor: z.optional(z.number().check(z.int(), z.nonnegative())),
   kind: z.optional(MachineKindFromLegacyProjectionSchema),

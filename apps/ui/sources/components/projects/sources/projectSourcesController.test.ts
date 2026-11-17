@@ -34,6 +34,29 @@ const answer = (body: unknown, status = 200) => new Response(JSON.stringify(
 ), { status });
 
 describe('Project Sources controller through Source Actions', () => {
+    it('retains scoped grant projection through detail updates and replaces it on an equal-revision scoped reload', async () => {
+        let revision = 1;
+        let sharedWithTeamScope: 'group' | 'team' = 'group';
+        const controller = harness(async path => {
+            const current = { ...source(revision), name: revision === 1 ? 'Repository' : 'Renamed' };
+            return path.includes('/sources?') ? answer({ ok: true,
+                sources: [{ ...current, sharedWithTeamScope }], coverage: { complete: true, nextCursor: null } })
+                : answer({ ok: true, source: current });
+        }, undefined, 'team-a');
+        try {
+            await controller.load();
+            expect(controller.getSnapshot().rows[0]?.sharedWithTeamScope).toBe('group');
+            revision = 2;
+            await controller.select('source-a');
+            expect(controller.getSnapshot().rows[0]).toMatchObject({ revision: 2, name: 'Renamed', sharedWithTeamScope: 'group' });
+            sharedWithTeamScope = 'team';
+            await controller.load();
+            expect(controller.getSnapshot().rows[0]).toMatchObject({ revision: 2, sharedWithTeamScope: 'team' });
+            const rows = controller.getSnapshot().rows;
+            await controller.load();
+            expect(controller.getSnapshot().rows).toBe(rows);
+        } finally { controller.dispose(); }
+    });
     it('keeps Team-filtered coverage separate from the Account catalog and selected details', async () => {
         const first = { ...source(), id: 'team-source' };
         const outside = { ...source(), id: 'outside-source' };

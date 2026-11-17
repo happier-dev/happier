@@ -48,6 +48,7 @@ export type CurrentAccountMachineInventoryItem = Readonly<{
   arch?: string;
   agentInventory?: MachinePublishedMetadataV1['agentInventory'];
   access?: AccessibleMachineAccessV1;
+  sharedWithTeamScope?: ExternalActionMachineBootstrapV1['sharedWithTeamScope'];
   operationProtocolCapabilities?: unknown;
   operationProtocolCapabilitiesRevision?: unknown;
   devcontainerChild?: DevcontainerChildProjectionV1;
@@ -88,6 +89,7 @@ export async function listCurrentAccountMachines(params: Readonly<{
   /** Host selection consumes identity, current access and presence, never private metadata. */
   projection?: 'hostFacts';
   machineIds?: readonly string[];
+  sharedWithTeamId?: string;
 }>): Promise<readonly CurrentAccountMachineInventoryItem[]> {
   params.signal?.throwIfAborted();
   try {
@@ -111,6 +113,7 @@ export async function listCurrentAccountMachines(params: Readonly<{
     }) : { Authorization: `Bearer ${params.token}` };
     if (!headers) throw new Error('Requester Machine inventory authority is unavailable');
     const config = {
+      ...(params.sharedWithTeamId ? { params: { sharedWithTeamId: params.sharedWithTeamId } } : {}),
       headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...headers,
         ...(params.projection === 'hostFacts' ? { Accept: 'application/json;happier-machine-projection=host-facts' } : {}) },
       timeout: 20_000,
@@ -168,6 +171,7 @@ export async function listCurrentAccountMachines(params: Readonly<{
           ...(metadata ? { platform: metadata.platform, homeDir: metadata.homeDir, ...(metadata.arch === undefined ? {} : { arch: metadata.arch }) } : {}),
           ...(metadata?.agentInventory ? { agentInventory: metadata.agentInventory } : {}),
           ...(row.access ? { access: row.access } : {}),
+          ...(row.sharedWithTeamScope ? { sharedWithTeamScope: row.sharedWithTeamScope } : {}),
           ...(params.projection !== 'hostFacts' && row.devcontainerChild ? { devcontainerChild: row.devcontainerChild } : {}),
           ...(params.projection === 'hostFacts' || row.operationProtocolCapabilities === undefined ? {} : { operationProtocolCapabilities: row.operationProtocolCapabilities }),
           ...(params.projection === 'hostFacts' || row.operationProtocolCapabilitiesRevision === undefined ? {} : { operationProtocolCapabilitiesRevision: row.operationProtocolCapabilitiesRevision }),

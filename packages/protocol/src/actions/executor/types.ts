@@ -2278,7 +2278,7 @@ export type ActionExecutorDeps = Readonly<{
   projectsWorkspaceForget?: (args: import('../../projects/projectWorkspaceActionsV1.js').ProjectWorkspaceForgetInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/projectWorkspaceActionsV1.js').ProjectWorkspaceForgetOutputV1>;
   promptInvocationsList?: (args: Readonly<{ limit?: number; signal?: AbortSignal }>) => Promise<unknown>;
   promptInvocationResolve?: (args: Readonly<{ invocationId: string; argsText?: string; sessionId?: string | null; signal?: AbortSignal }>) => Promise<unknown>;
-  machinesList?: (args: Readonly<{ serverId?: string; limit?: number; refresh?: boolean; purpose?: 'input' }>) => Promise<unknown>;
+  machinesList?: (args: Readonly<{ serverId?: string; sharedWithTeamId?: string; limit?: number; refresh?: boolean; purpose?: 'input' }>) => Promise<unknown>;
   /** Inert declarations or the exact target's cold recipe family; neither grants installation authority. */
   machineRecipesRead?: (args: Readonly<({ offerings: true; homeId?: never; machineId?: never }
     | { offerings?: never; homeId: string; machineId: string }) & {

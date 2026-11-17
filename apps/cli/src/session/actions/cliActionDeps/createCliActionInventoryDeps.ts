@@ -576,7 +576,8 @@ export function createCliActionInventoryDeps(params: Readonly<{
       // CLI home's profile id, which another Machine on the same Home spells differently.
       const serverId = params.serverIdentityId ?? args.serverId ?? params.serverId ?? configuration.activeServerId;
       const items = (await listCurrentAccountMachines({ token: params.token, credentials: params.credentials,
-        serverHttpBaseUrl: params.serverHttpBaseUrl })).map((machine) => ({
+        serverHttpBaseUrl: params.serverHttpBaseUrl,
+        ...(args.sharedWithTeamId ? { sharedWithTeamId: args.sharedWithTeamId } : {}) })).map((machine) => ({
         serverId, id: machine.id, value: machine.id, label: machine.label, machineId: machine.id,
         installationId: machine.installationId,
         kind: machine.kind, active: machine.active,
@@ -586,6 +587,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
         ...(machine.arch === undefined ? {} : { arch: machine.arch }),
         ...(machine.homeDir === undefined ? {} : { homeDir: machine.homeDir }),
         ...(machine.access ? { access: machine.access } : {}),
+        ...(machine.sharedWithTeamScope ? { sharedWithTeamScope: machine.sharedWithTeamScope } : {}),
       }));
       return {
         items: limitItems(items, args.limit),

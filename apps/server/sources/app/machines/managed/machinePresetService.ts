@@ -963,12 +963,20 @@ export async function listMachinePresets(params: PresetContext & Readonly<{ inpu
         const readRows = (where: Prisma.ManagedMachinePresetWhereInput) => input.projection === 'revisions'
             ? tx.managedMachinePreset.findMany({ where, select: revisionSelect, orderBy: { id: 'asc' } })
             : tx.managedMachinePreset.findMany({ where, orderBy: { id: 'asc' } });
-        const projectRows = (rows: Awaited<ReturnType<typeof readRows>>): ManagedMachinePresetListResultV1 =>
+        const projectRows = (rows: Awaited<ReturnType<typeof readRows>>,
+            sharedWithTeamScope?: 'team'): ManagedMachinePresetListResultV1 =>
             input.projection === 'revisions' ? { kind: 'revisions', presets: rows.map(row => ({
                 id: row.id, homeId: row.homeId, revision: row.revision, setupRevision: row.setupRevision,
                 ...(row.archivedAt === null ? {} : { archivedAt: row.archivedAt.getTime() }),
-            })) } : { kind: 'listed', presets: rows.flatMap(row => 'launch' in row ? [projectPreset(row)] : []) };
+            })) } : { kind: 'listed', presets: rows.flatMap(row => 'launch' in row ? [{ ...projectPreset(row),
+                ...(sharedWithTeamScope ? { sharedWithTeamScope } : {}) }] : []) };
         if ((await tx.account.findUnique({ where: { id: params.accountId }, select: { status: true } }))?.status !== AccountStatus.active) return projectRows([]);
+        if (input.sharedWithTeamId) {
+            const scope = await scopedPresetListWhereInTx(tx, params, { ...input, sharedWithTeamId: input.sharedWithTeamId });
+            const rows = await readRows({ ...scope.where,
+                ...(input.cursor ? { id: { gt: input.cursor } } : {}) });
+            return projectRows(rows.map(row => inheritPresetOwnerArchive(row, scope.teamArchivedAt)), 'team');
+        }
         const memberships = await tx.teamMembership.findMany({ where: { accountId: params.accountId, status: TeamMembershipStatus.active,
             ...(input.owner?.kind === "team" ? { teamId: input.owner.teamId } : {}) }, select: { teamId: true } });
         const contexts = await resolveTeamActorContextsInTx(tx, { actorAccountId: params.accountId, teamIds: memberships.map(member => member.teamId) });

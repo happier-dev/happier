@@ -37,3 +37,64 @@ export const TEAM_CREDENTIAL_ACTION_IDS_V1 = [
   ...TEAM_CREDENTIAL_HOST_ACTION_IDS_V1,
 ] as const;
 export type TeamCredentialActionIdV1 = typeof TEAM_CREDENTIAL_ACTION_IDS_V1[number];
+
+/** MCP exposes the consumed credential workflows; owner-source administration
+ * and usage/export remain on their existing surfaces. This is not the set of
+ * every safe credential read. */
+const TEAM_CREDENTIAL_MCP_ACTION_IDS_V1: ReadonlySet<TeamCredentialHomeActionIdV1> = new Set([
+  'teams.credentials.list',
+  'teams.credentials.get',
+  'teams.credentials.preparation.get',
+  TEAM_CREDENTIAL_CREATE_ACTION_ID_V1,
+  'teams.credentials.entitled.list',
+  'teams.credentials.delete',
+  'teams.credentials.limits.delete',
+  'teams.credentials.externalKeys.revoke',
+  'teams.credentials.externalKeys.revokeAll',
+  'teams.credentials.update',
+  'teams.credentials.audience.set',
+  'teams.credentials.test',
+  'teams.credentials.limits.upsert',
+  'teams.credentials.externalKeys.create',
+  'teams.credentials.externalKeys.authorize',
+]);
+
+const TEAM_CREDENTIAL_DEFERRED_APPROVAL_ACTION_IDS_V1: ReadonlySet<TeamCredentialHomeActionIdV1> = new Set([
+  TEAM_CREDENTIAL_CREATE_ACTION_ID_V1,
+  'teams.credentials.update',
+  'teams.credentials.audience.set',
+  'teams.credentials.delete',
+  'teams.credentials.limits.upsert',
+  'teams.credentials.limits.delete',
+  'teams.credentials.externalKeys.revoke',
+  'teams.credentials.externalKeys.revokeAll',
+]);
+
+const TEAM_CREDENTIAL_DIRECT_CONFIRMATION_ACTION_IDS_V1: ReadonlySet<TeamCredentialHomeActionIdV1> = new Set([
+  'teams.credentials.limits.upsert',
+  'teams.credentials.limits.delete',
+  'teams.credentials.test',
+  'teams.credentials.externalKeys.authorize',
+]);
+
+const TEAM_CREDENTIAL_NATIVE_DISCLOSURE_ACTION_IDS_V1: ReadonlySet<TeamCredentialHomeActionIdV1> = new Set([
+  TEAM_CREDENTIAL_CREATE_ACTION_ID_V1,
+  'teams.credentials.update',
+  'teams.credentials.audience.set',
+]);
+
+export function isTeamCredentialMcpActionIdV1(id: TeamCredentialHomeActionIdV1): boolean {
+  return TEAM_CREDENTIAL_MCP_ACTION_IDS_V1.has(id);
+}
+
+export function isTeamCredentialDeferredApprovalActionIdV1(id: TeamCredentialHomeActionIdV1): boolean {
+  return TEAM_CREDENTIAL_DEFERRED_APPROVAL_ACTION_IDS_V1.has(id);
+}
+
+export function isTeamCredentialDirectConfirmationActionIdV1(id: TeamCredentialHomeActionIdV1): boolean {
+  return TEAM_CREDENTIAL_DIRECT_CONFIRMATION_ACTION_IDS_V1.has(id);
+}
+
+export function isTeamCredentialNativeDisclosureActionIdV1(id: TeamCredentialHomeActionIdV1): boolean {
+  return TEAM_CREDENTIAL_NATIVE_DISCLOSURE_ACTION_IDS_V1.has(id);
+}

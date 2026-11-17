@@ -10,6 +10,7 @@ import {
   type HomeDomainActionErrorCodeV1,
 } from './homeDomainActionFamily.js';
 import { serializeActionSpec } from './actionCatalog.js';
+import { isActionDiscoverableOnToolSurface } from './actionToolExposure.js';
 import { getActionSpec, listActionSpecs, PublicActionIdSchema } from './actionSpecs.js';
 import { PluginInvocableActionIdSchema } from './pluginActionSurface.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
@@ -20,6 +21,18 @@ import { deriveActionInputHints } from './schemaInputHints.js';
 import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 
 describe('Home runtime Action parity', () => {
+  it('discovers Team resource reads and policy changes on MCP with the owning approval policy', () => {
+    for (const id of ['projects.sessionDefaults.get', 'teams.sharedResources.summary', 'teams.policy.set'] as const) {
+      const spec = getActionSpec(id);
+      expect.soft(isActionDiscoverableOnToolSurface(spec, 'mcp'), id).toBe(true);
+      expect.soft(serializeActionSpec(spec).surfaces.mcp, id).toBe(true);
+      expect(resolveActionApprovalRouting({ actionId: id, spec,
+        context: { surface: 'mcp', authority: 'account_automation' } }).required, id).toBe(id === 'teams.policy.set');
+    }
+    expect(getActionSpec('teams.policy.set')).toMatchObject({
+      safety: 'danger', requiredAuthority: 'account_automation', approval: { result: 'required', flow: 'deferred' },
+    });
+  });
   it('exposes invitation admission and Team selection to MCP while retaining dangerous Ask', () => {
     for (const id of ['teams.invitations.preview', 'teams.invitations.accept', 'teams.get', 'teams.list'] as const) {
       expect(getActionSpec(id).surfaces.mcp, id).toBe(true);
@@ -462,7 +475,7 @@ describe('Home and Teams Action family', () => {
   });
 
   it('exposes the consumed Team lifecycle and invitation intents on MCP', () => {
-    const mcpActions = new Set(['teams.create', 'teams.archive', 'teams.restore', 'teams.members.add',
+    const mcpActions = new Set(['teams.create', 'teams.archive', 'teams.restore', 'teams.members.add', 'teams.policy.set',
       'teams.invitations.create', 'teams.invitations.reissue', 'teams.invitations.preview',
       'teams.invitations.accept', 'teams.get', 'teams.list']);
     for (const actionId of LANE_01_ACTION_IDS) {

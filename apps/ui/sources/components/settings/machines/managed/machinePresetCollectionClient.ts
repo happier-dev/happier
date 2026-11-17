@@ -10,4 +10,5 @@ export {
     prepareManagedMachineResizeInputForSnapshot,
     readManagedMachineReadForSnapshot,
 } from '@/sync/ops/machines/machinePresetCollectionClient';
+export type { MachinePresetCollectionFilter } from '@/sync/ops/machines/machinePresetCollectionClient';
 export type * from '@/sync/ops/machines/machinePresetCollectionClient';

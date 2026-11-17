@@ -67,6 +67,7 @@ import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/m
 import { registerMachineAccessRoutes } from './machineAccessRoutes';
 import {
     listMachineCandidatesInTx,
+    listScopedTeamMachineCandidatesInTx,
     readAccessibleMachineOpeningsInTx,
 } from '@/app/machines/machineAccess';
 
@@ -880,7 +881,8 @@ export function machinesRoutes(app: Fastify) {
     app.get('/v1/machines', {
         preHandler: app.authenticate,
         schema: {
-            querystring: z.object({ includeRevoked: z.optional(z.enum(['true', 'false'])) }),
+            querystring: z.object({ includeRevoked: z.optional(z.enum(['true', 'false'])),
+                sharedWithTeamId: z.optional(z.string().check(z.minLength(1))) }),
         },
         config: {
             allowApiToken: true,
@@ -899,8 +901,12 @@ export function machinesRoutes(app: Fastify) {
         // is still owner-only; persistent shared targets use current access.
         const isApiTokenCaller = request.authTokenKind === "api_token";
         const projection = readMachineProjection(request);
+        let sharedWithTeamScopes: Awaited<ReturnType<typeof listScopedTeamMachineCandidatesInTx>> | undefined;
         const accessible = await inReadSnapshot(async (tx) => {
-            const ids = await listMachineCandidatesInTx(tx, userId, { includeRevokedOwned });
+            sharedWithTeamScopes = request.query.sharedWithTeamId
+                ? await listScopedTeamMachineCandidatesInTx(tx, userId, request.query.sharedWithTeamId) : undefined;
+            const ids = sharedWithTeamScopes ? [...sharedWithTeamScopes.keys()]
+                : await listMachineCandidatesInTx(tx, userId, { includeRevokedOwned });
             const machines: Array<{ id: string; lastActiveAt: Date }> = [];
             for (const selectedIds of portableQueryChunks({ values: ids, bindingsPerValue: 1,
                 fixedBindings: isApiTokenCaller ? 0 : 1 })) machines.push(...await tx.machine.findMany({
@@ -931,14 +937,14 @@ export function machinesRoutes(app: Fastify) {
                 activations.map((activation) => [activation.machineId, activation.claim]),
             );
             return accessible.map(({ machine, owned, access, callerDataEncryptionKey }) => {
-                return serializeExternalActionMachineBootstrapRow({
+                return { ...serializeExternalActionMachineBootstrapRow({
                     ...machine,
                     activationClaim: claimByMachineId.get(machine.id) ?? null,
                     access,
                     ...(!owned ? {
                         dataEncryptionKey: access.accessState === 'ready' ? callerDataEncryptionKey : null,
                     } : {}),
-                });
+                }), ...(sharedWithTeamScopes?.has(machine.id) ? { sharedWithTeamScope: sharedWithTeamScopes.get(machine.id) } : {}) };
             });
         }
         if (
@@ -953,7 +959,9 @@ export function machinesRoutes(app: Fastify) {
             return;
         }
 
-        return accessible.map(({ projection }) => projection);
+        return accessible.map(({ machine, projection }) => ({ ...projection,
+            ...(sharedWithTeamScopes?.has(machine.id) ? { sharedWithTeamScope: sharedWithTeamScopes.get(machine.id) } : {}),
+        }));
     });
 
     app.post('/v1/machines/read-batch', {

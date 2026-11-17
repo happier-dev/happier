@@ -4,6 +4,7 @@ export { ManagedMachinePresetRevisionInputV1Schema } from './managedMachinePrese
 import * as mini from '../../zodRuntimePolicy.js';
 
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { ResourceTeamShareScopeV1Schema } from '../../teams/resourceGrantAccessV1.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { AccountPrincipalRefV1Schema, TeamPrincipalRefV1Schema } from '../../teams/principal.js';
 import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.js';
@@ -188,6 +189,7 @@ export type AccountEncryptionMigrateManagedMachinePresetsDirectiveV1 = Readonly<
 export function createManagedMachinePresetV1BaseShape<Choices extends z.core.$ZodType>(_choices: Choices) {
   return {
     id: id(), homeId: id(), revision: revision(),
+    sharedWithTeamScope: z.optional(ResourceTeamShareScopeV1Schema),
     /** Client-maintained launch/setup change counter; absent legacy rows mean zero. */
     configurationRevision: z.optional(revision()),
     /** Author-owned setup-only counter; metadata and launch edits leave it unchanged. */
@@ -266,11 +268,12 @@ export type ManagedMachinePresetAcquireOriginV1 = Pick<ManagedMachinePresetV1,
   'id' | 'homeId' | 'revision' | 'controller' | 'controllerPoolId' | 'retention' | 'wakeOnAcceptedMessage'>;
 
 export const ManagedMachinePresetCreateInputV1Schema = lazyZodSchema(() => z.omit(
-  createManagedMachinePresetV1BaseSchema(PluginJsonValueV2Schema), { revision: true, archivedAt: true },
+  createManagedMachinePresetV1BaseSchema(PluginJsonValueV2Schema), { revision: true, archivedAt: true, sharedWithTeamScope: true },
 ).check(z.refine(hasValidPresetParts, { message: 'A Preset requires complete creation or setup.' })));
 export const ManagedMachinePresetGetInputV1Schema = lazyZodSchema(() => z.strictObject({ homeId: id(), id: id() }));
 export const ManagedMachinePresetListInputV1Schema = lazyZodSchema(() => z.strictObject({
   homeId: id(), owner: z.optional(ManagedMachinePresetOwnerV1Schema),
+  sharedWithTeamId: z.optional(id()),
   projection: z.optional(z.literal('revisions')),
   includeArchived: z.optional(z.boolean()), cursor: z.optional(id()),
 }));

@@ -1,5 +1,8 @@
 import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
-import type { MachinePublishedRowV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
+import { MachinePublishedRowWireV1Schema, type MachinePublishedRowV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
+import { z } from 'zod/mini';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { requestHomeDomain, type HomeDomainResult } from '@/sync/api/home/homeServerActionTransport';
 import { createServerHttpRequestBodyItemBudgetV1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
 import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 import type { CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
@@ -173,6 +176,16 @@ export async function readMachineCensus(params: Readonly<{
     return censusReads.run(JSON.stringify(['machine-census-include-revoked-v1', transportKey]), signal => params.readTransport!.read(path,
         { method: 'GET', headers, signal }, undefined, consume),
     { scope: params.readTransport.scope ?? transportKey, signal: params.signal, fresh: params.fresh });
+}
+
+/** Team discovery is an authoritative server query, separate from the Account census. */
+export function readTeamSharedMachineRows(params: Readonly<{
+    scope: ServerAccountScope; sharedWithTeamId: string; signal?: AbortSignal;
+}>): Promise<HomeDomainResult<readonly MachinePublishedRowV1[]>> {
+    return requestHomeDomain({ scope: params.scope,
+        path: `/v1/machines?sharedWithTeamId=${encodeURIComponent(params.sharedWithTeamId)}`,
+        method: 'GET', input: undefined, schema: z.array(MachinePublishedRowWireV1Schema),
+        effect: 'read', signal: params.signal });
 }
 
 export function resetMachineRowReadsForTests(): void {
