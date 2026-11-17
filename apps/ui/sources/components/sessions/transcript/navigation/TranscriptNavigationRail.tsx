@@ -4,7 +4,6 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import {
     useTranscriptNavigationCurrentAnchorId,
-    useTranscriptNavigationVisibleAnchorIds,
 } from '@/components/sessions/transcript/viewport/visibility/transcriptNavigationVisibilityStore';
 import {
     deriveTranscriptNavigationRailLayout,
@@ -143,12 +142,11 @@ export function TranscriptNavigationRail(props: TranscriptNavigationRailProps) {
         transcriptContentWidthPx: props.transcriptContentWidthPx,
         transcriptMaxWidthPx: props.transcriptMaxWidthPx,
     });
-    // Two narrow subscriptions off the ONE visibility store: the current anchor
-    // changes at turn-boundary rate and the visible set at frame rate. Reading
-    // them here (instead of accepting a host-published snapshot) keeps an anchor
-    // change inside the rail rather than re-rendering the whole transcript host.
+    // The ONE visibility store, read where each fact changes: the current anchor
+    // here (turn-boundary rate), each marker's visibility in that marker (scroll
+    // rate), so a scrolling transcript redraws only the markers it crosses —
+    // never the rail, its scroller, or the transcript host.
     const currentAnchorId = useTranscriptNavigationCurrentAnchorId(props.sessionId, { enabled: layout.visible });
-    const visibleAnchorIdList = useTranscriptNavigationVisibleAnchorIds(props.sessionId, { enabled: layout.visible });
     const entryIndexById = React.useMemo(() => {
         const map = new Map<string, number>();
         props.entries.forEach((entry, index) => map.set(entry.id, index));
@@ -157,10 +155,6 @@ export function TranscriptNavigationRail(props: TranscriptNavigationRailProps) {
     const activeIndex = currentAnchorId !== null
         ? entryIndexById.get(currentAnchorId) ?? -1
         : -1;
-    const visibleAnchorIds = React.useMemo(
-        () => new Set(visibleAnchorIdList),
-        [visibleAnchorIdList],
-    );
     const [focusedIndex, setFocusedIndex] = React.useState<number | null>(null);
     const [previewHeightPx, setPreviewHeightPx] = React.useState<number | null>(null);
     const keyboardIndexRef = React.useRef(activeIndex >= 0 ? activeIndex : 0);
@@ -627,7 +621,8 @@ export function TranscriptNavigationRail(props: TranscriptNavigationRailProps) {
                                     focusIndex: focusedIndex,
                                     markerIndex: index,
                                     reducedMotion,
-                                    visible: visibleAnchorIds.has(entry.id),
+                                    // Each marker applies its own visibility (it subscribes to its anchor at scroll rate).
+                                    visible: false,
                                 })}
                                 onFocusFromPointer={handleMarkerPointerEnter}
                                 onPress={activateEntryAtIndex}
@@ -635,7 +630,8 @@ export function TranscriptNavigationRail(props: TranscriptNavigationRailProps) {
                                 reducedMotion={reducedMotion}
                                 tone={resolveTranscriptNavigationRailMarkerTone(entry)}
                                 topPx={index * (layout.markerHeightPx + layout.markerSpacingPx)}
-                                visible={visibleAnchorIds.has(entry.id)}
+                                sessionId={props.sessionId}
+                                visibilityEnabled={layout.visible}
                             />
                             );
                         })}

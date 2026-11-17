@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import {
+    applyTranscriptNavigationRailMarkerVisibility,
     resolveTranscriptNavigationRailMarkerTransitionStyle,
     transcriptNavigationRailMarkerMotionEquals,
     type TranscriptNavigationRailMarkerMotion,
@@ -10,6 +11,7 @@ import {
 import { isTranscriptNavigationEntryWaiting } from './transcriptNavigationFilters';
 import type { TranscriptNavigationEntry } from './transcriptNavigationTypes';
 import { useTranscriptNavigationEntryText } from './useTranscriptNavigationEntryText';
+import { useTranscriptNavigationAnchorVisible } from '@/components/sessions/transcript/viewport/visibility/transcriptNavigationVisibilityStore';
 
 /** The trail speaks the pane's marker language: amber waits for you, red ended in failure. */
 export type TranscriptNavigationRailMarkerTone = 'waiting' | 'failed' | null;
@@ -36,6 +38,7 @@ export type TranscriptNavigationRailMarkerProps = Readonly<{
     label: string;
     entry?: TranscriptNavigationEntry;
     markerHeightPx: number;
+    /** Focus and active motion; the marker applies its own visibility (`applyTranscriptNavigationRailMarkerVisibility`). */
     motion: TranscriptNavigationRailMarkerMotion;
     onFocusFromPointer: (index: number, event: unknown) => void;
     onPress: (index: number) => void;
@@ -43,12 +46,16 @@ export type TranscriptNavigationRailMarkerProps = Readonly<{
     reducedMotion: boolean;
     tone?: TranscriptNavigationRailMarkerTone;
     topPx: number;
-    visible: boolean;
+    /** The Session's navigation visibility store, read per marker at scroll rate. */
+    sessionId: string;
+    visibilityEnabled: boolean;
 }>;
 
 function TranscriptNavigationRailMarkerComponent(props: TranscriptNavigationRailMarkerProps) {
     const styles = stylesheet;
     const entry = useTranscriptNavigationEntryText(props.entry);
+    const visible = useTranscriptNavigationAnchorVisible(props.sessionId, props.anchorId, { enabled: props.visibilityEnabled });
+    const motion = applyTranscriptNavigationRailMarkerVisibility(props.motion, visible);
     const { index, onFocusFromPointer, onPress } = props;
     const handlePointerEnter = React.useCallback((event: unknown) => {
         onFocusFromPointer(index, event);
@@ -81,15 +88,15 @@ function TranscriptNavigationRailMarkerComponent(props: TranscriptNavigationRail
                 style={[
                     styles.markerLine,
                     props.active ? styles.markerLineActive : null,
-                    props.visible && !props.active ? styles.markerLineVisible : null,
+                    visible && !props.active ? styles.markerLineVisible : null,
                     !props.active && props.tone === 'waiting' ? styles.markerLineWaiting : null,
                     !props.active && props.tone === 'failed' ? styles.markerLineFailed : null,
                     resolveTranscriptNavigationRailMarkerTransitionStyle(props.reducedMotion),
                     {
                         height: props.markerHeightPx,
-                        opacity: props.motion.opacity,
-                        transform: [{ translateY: props.motion.translateYPx }],
-                        width: props.motion.widthPx,
+                        opacity: motion.opacity,
+                        transform: [{ translateY: motion.translateYPx }],
+                        width: motion.widthPx,
                     },
                 ]}
             />
@@ -122,7 +129,8 @@ export const TranscriptNavigationRailMarker = React.memo(
         left.reducedMotion === right.reducedMotion &&
         (left.tone ?? null) === (right.tone ?? null) &&
         left.topPx === right.topPx &&
-        left.visible === right.visible
+        left.sessionId === right.sessionId &&
+        left.visibilityEnabled === right.visibilityEnabled
     ),
 );
 

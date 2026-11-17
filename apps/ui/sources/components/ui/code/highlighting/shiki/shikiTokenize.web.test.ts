@@ -14,6 +14,10 @@ vi.mock('shiki/langs', () => ({
     bundledLanguages: { javascript: {}, js: {}, text: {}, typescript: {}, ts: {} },
 }));
 
+// Grammar assets are Metro bundle files (`*.json.bundle`) that only the app bundler loads; the
+// highlighter factory below is the mocked engine, so it never reads them.
+vi.mock('./loadShikiLanguages', () => ({ loadShikiLanguages: async () => ({}) }));
+
 vi.mock('shiki/core', () => ({
     createBundledHighlighter: () => createHighlighterSpy,
 }));
@@ -105,6 +109,28 @@ describe('shikiTokenizeLines dynamic theme cache', () => {
 
         expect(createHighlighterSpy).toHaveBeenCalledTimes(1);
         expect(codeToTokensSpy).toHaveBeenCalledTimes(2);
+    });
+
+    // A code block mounting under a warm highlighter (a transcript scrolled back over code) paints its
+    // tokens in its first render: no plain-text commit followed by a redraw of the whole block.
+    it('tokenizes synchronously once the language highlighter is warm, and never starts one', async () => {
+        const { shikiTokenizeLines, readShikiTokenizedLinesSync } = await importFreshModule();
+        const colors = makeColors('#123456');
+        const input = (value: number) => ({ isDark: false, language: 'typescript', lines: [`const value = ${value};`], colors });
+
+        expect(readShikiTokenizedLinesSync(input(1))).toBeNull();
+        expect(createHighlighterSpy).toHaveBeenCalledTimes(0);
+        await shikiTokenizeLines(input(1));
+
+        const fresh = readShikiTokenizedLinesSync(input(2));
+        expect(fresh?.tokensByLine).toEqual([[{ text: expect.stringMatching(/^happier-light-/), color: '#222222' }]]);
+        expect(readShikiTokenizedLinesSync(input(2))).toBe(fresh);
+        expect(await shikiTokenizeLines(input(2))).toBe(fresh);
+        expect(createHighlighterSpy).toHaveBeenCalledTimes(1);
+        expect(codeToTokensSpy).toHaveBeenCalledTimes(2);
+        // Another language's highlighter is not warm: no synchronous result, no engine start.
+        expect(readShikiTokenizedLinesSync({ ...input(3), language: 'javascript' })).toBeNull();
+        expect(createHighlighterSpy).toHaveBeenCalledTimes(1);
     });
 
     it('evicts least recently used dynamic highlighters beyond the cache cap', async () => {

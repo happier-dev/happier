@@ -225,3 +225,21 @@ export function useTranscriptNavigationVisibleAnchorIds(
     );
     return React.useSyncExternalStore(enabled ? store.subscribe : noopSubscribe, read, read);
 }
+
+/**
+ * Scroll-rate subscription for ONE anchor: a rail marker redraws only when its own anchor enters or
+ * leaves the visible set, so a scrolling transcript never redraws the rail or the other markers.
+ */
+export function useTranscriptNavigationAnchorVisible(
+    storeOrSessionId: NavigationVisibilityStore | string,
+    anchorId: string,
+    options: Readonly<{ enabled?: boolean }> = {},
+): boolean {
+    const enabled = options.enabled !== false;
+    const store = resolveStore(storeOrSessionId);
+    const read = React.useCallback(
+        () => enabled && store.get().visibleAnchorIds.includes(anchorId),
+        [anchorId, enabled, store],
+    );
+    return React.useSyncExternalStore(enabled ? store.subscribe : noopSubscribe, read, read);
+}

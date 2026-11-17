@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { createCommittedFiberRenderCounter, readTestRendererRoot } from '@/dev/testkit/performance/committedFiberCounts';
 import { GlassPanel } from '@/components/ui/glass/GlassPanel';
 import { TRANSCRIPT_NAVIGATION_RAIL_SOFT_EXIT_MS } from './useTranscriptNavigationRailSoftPresence';
 import { TranscriptNavigationRailPreview } from './TranscriptNavigationRailPreview';
@@ -464,6 +465,35 @@ describe('TranscriptNavigationRail', () => {
 
         expect(readSelected('turn-1')).toBe(false);
         expect(readSelected('turn-2')).toBe(true);
+    });
+
+    // A transcript scroll moves the visible set every few frames while the current turn stays put:
+    // only the markers whose visibility changed may redraw, never the rail and its scroller.
+    it('redraws only the markers whose visibility changed while the transcript scrolls', async () => {
+        const { TranscriptNavigationRail } = await import('./TranscriptNavigationRail');
+        const { TranscriptNavigationRailMarker } = await import('./TranscriptNavigationRailMarker');
+        const counts = createCommittedFiberRenderCounter();
+        let readRoot: (() => ReturnType<ReturnType<typeof readTestRendererRoot>>) | null = null;
+        const many = buildEntries(40);
+        const store = getTranscriptNavigationVisibilityStore(RAIL_SESSION_ID);
+        act(() => { store.set({ currentAnchorId: 'turn-1', visibleAnchorIds: ['turn-1', 'turn-2'] }); });
+        const screen = await renderScreen(<React.Profiler id="rail" onRender={() => { if (readRoot) counts.onCommitRoot(readRoot()); }}>
+            <TranscriptNavigationRail {...baseProps()} entries={many} />
+        </React.Profiler>);
+        readRoot = readTestRendererRoot(screen.tree.root);
+        counts.start();
+        for (let step = 2; step <= 11; step += 1) {
+            await act(async () => {
+                store.set({ currentAnchorId: 'turn-1', visibleAnchorIds: [`turn-${step}`, `turn-${step + 1}`] });
+            });
+        }
+        counts.stop();
+        const read = counts.read();
+        expect(read.rendersFor(TranscriptNavigationRail)).toBe(0);
+        // Each step hides one marker and shows another.
+        expect(read.rendersFor(TranscriptNavigationRailMarker)).toBe(20);
+        expect(readStyleNumber(screen.findByTestId('transcript-navigation-rail.marker-line:turn-12')?.props.style, 'opacity'))
+            .toBeGreaterThan(readStyleNumber(screen.findByTestId('transcript-navigation-rail.marker-line:turn-2')?.props.style, 'opacity'));
     });
 
     it('fades the rail out softly when it drops below the width threshold', async () => {

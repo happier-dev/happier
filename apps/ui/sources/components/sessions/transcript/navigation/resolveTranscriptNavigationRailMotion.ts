@@ -65,6 +65,19 @@ export function resolveTranscriptNavigationRailMarkerMotion(
 }
 
 /**
+ * The visible-set floor applied by the marker that subscribes to its own visibility. The rail resolves
+ * focus and active motion with `visible: false` (it renders at hover/turn rate); the marker raises it here
+ * at scroll rate, so the result equals resolving with the marker's visibility directly.
+ */
+export function applyTranscriptNavigationRailMarkerVisibility(
+    motion: TranscriptNavigationRailMarkerMotion,
+    visible: boolean,
+): TranscriptNavigationRailMarkerMotion {
+    if (!visible || motion.opacity >= VISIBLE_OPACITY_FLOOR) return motion;
+    return { ...motion, opacity: Math.min(1, VISIBLE_OPACITY_FLOOR) };
+}
+
+/**
  * The rail's easing lives in CSS on the marker's own stable class, so React stays
  * the single owner of every motion channel: it renders the resolved target and
  * the browser interpolates. Reduced motion collapses the duration to zero rather
