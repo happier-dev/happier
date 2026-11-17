@@ -218,7 +218,7 @@ const AccountDirectoryKeyLoginFormBody = React.memo(function AccountDirectoryKey
     if (props.mode === 'provision') {
         if (provisionFailed) {
             return <SurfaceStateCard testID="account-directory-key-provision-failed" kind="error"
-                title={t('welcome.signInServiceUnavailableTitle')} reason={t('errors.operationFailed')}
+                title={t('common.error')} reason={t('errors.operationFailed')}
                 accessibilitySemantics="alert"
                 action={{ label: t('common.retry'), onPress: () => {
                     generatedProvisionRef.current = false;

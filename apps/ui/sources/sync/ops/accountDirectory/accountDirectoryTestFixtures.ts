@@ -11,6 +11,9 @@ import { encryptBox } from '@/encryption/libsodium';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { AccountEncryptionCurrentnessResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { sealSavedSecretResourceRecipientEnvelopeV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 
 /** Project the fixture's client-opened Home model at the Account Directory wire boundary. */
 export function toAccountDirectoryHomeWire(home: AccountDirectoryHomeEntryV1): WireAccountDirectoryHomeEntryV1 {
@@ -20,7 +23,14 @@ export function toAccountDirectoryHomeWire(home: AccountDirectoryHomeEntryV1): W
     };
 }
 
-export function createDirectoryHttpFixture(options: Readonly<{ sameServiceHome?: boolean }> = {}) {
+export function createDirectoryHttpFixture(options: Readonly<{
+    sameServiceHome?: boolean;
+    /** Match a real key login's retained E2EE custody without changing the Home Account mode. */
+    directoryRecoverySecret?: Uint8Array;
+}> = {}) {
+    const directoryContentPublicKey = options.directoryRecoverySecret
+        ? tweetnacl.box.keyPair.fromSecretKey(deriveAccountMachineKeyFromRecoverySecret(options.directoryRecoverySecret)).publicKey
+        : null;
     const homeRecoverySecret = new Uint8Array(32).fill(7);
     const endpoint = 'https://directory.test';
     const identity = 'srv_directory';
@@ -54,6 +64,21 @@ export function createDirectoryHttpFixture(options: Readonly<{ sameServiceHome?:
         } as AccountDirectoryMeResponseV1,
         calls: [] as Array<{ endpoint: string; path: string; init?: RequestInit }>,
     };
+    const directoryMode = () => directoryContentPublicKey ? 'e2ee' : state.mode;
+    const directoryHomeWire = (entry: AccountDirectoryHomeEntryV1): WireAccountDirectoryHomeEntryV1 => {
+        if (!directoryContentPublicKey) return toAccountDirectoryHomeWire(entry);
+        const dataKey = tweetnacl.randomBytes(32);
+        return { ...entry, label: projectPrivateLabelForRecipientV1({
+            recipientAccountId: state.me.accountId,
+            stored: sealPrivateLabelV1({
+                mode: 'e2ee', binding: { entity: 'account_directory_home', field: 'label', id: entry.homeServerIdentityId },
+                value: entry.label, dataKey, randomBytes: tweetnacl.randomBytes,
+                recipients: [{ accountId: state.me.accountId, envelope: sealSavedSecretResourceRecipientEnvelopeV1({
+                    resourceDataKey: dataKey, recipientContentPublicKey: directoryContentPublicKey, randomBytes: tweetnacl.randomBytes,
+                }) }],
+            }),
+        }) };
+    };
     const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: options.sameServiceHome ? 'account-directory' : 'account-home' })), 'base64')}.signature`;
     const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
     const request = async (requestEndpoint: string, path: string, init?: RequestInit): Promise<Response> => {
@@ -72,13 +97,19 @@ export function createDirectoryHttpFixture(options: Readonly<{ sameServiceHome?:
                 origin: 'home', presentation: { displayName: 'Account key' } }],
         } satisfies AuthEntryProjectionV1);
         if (path === '/v1/account-directory/private-labels/recipient-census') return json({
-            contentEncryptionMode: state.mode, recipients: [],
+            contentEncryptionMode: directoryMode(), recipients: directoryContentPublicKey ? [{
+                account: { kind: 'account', accountId: state.me.accountId, name: state.me.displayName,
+                    firstName: null, lastName: null, username: null, avatarUrl: state.me.avatar },
+                readiness: { status: 'available', contentPublicKey: encodeBase64(directoryContentPublicKey, 'base64'),
+                    contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(directoryContentPublicKey) },
+                envelopeStatus: 'missing',
+            }] : [],
         });
         if (path === '/v1/account-directory/homes') return json(
-            state.directoryStatus === 200 ? { v: 1, homes: state.homes.map(toAccountDirectoryHomeWire), preferredHomeServerIdentityId: state.preferredHomeServerIdentityId }
+            state.directoryStatus === 200 ? { v: 1, homes: state.homes.map(directoryHomeWire), preferredHomeServerIdentityId: state.preferredHomeServerIdentityId }
                 : { error: 'invalid_token' }, state.directoryStatus);
         if (path === '/v1/account-directory/me') return json(
-            state.directoryStatus === 200 ? { ...state.me, encryptionMode: state.mode } : { error: 'invalid_token' }, state.directoryStatus);
+            state.directoryStatus === 200 ? { ...state.me, encryptionMode: directoryMode() } : { error: 'invalid_token' }, state.directoryStatus);
         if (path.includes('/login-assertion')) {
             if (state.loginAssertionStatus !== 200) {
                 return json({ error: 'invalid_token' }, state.loginAssertionStatus);

@@ -18,6 +18,8 @@ import type { AccountPostAuthInput } from '@/sync/ops/accountDirectory/completeA
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { AccountServiceHomeAuthenticationAdapter } from './AccountServiceHomeAuthenticationAdapter';
 import { HomeAuthenticationFlow } from './HomeAuthenticationFlow';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { t } from '@/text';
 
 installTokenStorageWebPlatformMocks();
 installTerminalRouteCommonModuleMocks();
@@ -36,7 +38,7 @@ afterEach(async () => {
     localStorage.restore();
 });
 
-type EntryAnswer = 'ready' | 'unsupported' | 'incompatible' | 'unavailable';
+type EntryAnswer = 'ready' | 'unsupported' | 'incompatible' | 'unavailable' | 'update_required';
 
 // The saved Home publishes a released feature catalog (github) that differs from its
 // contextual auth-entry projection (key), so the test can tell which one won.
@@ -59,6 +61,10 @@ async function createSavedHome(entry: EntryAnswer) {
             if (entry === 'ready') return fixture.request(url.origin, url.pathname + url.search, init);
             if (entry === 'unsupported') return new Response('{}', { status: 404 });
             if (entry === 'incompatible') return Response.json({ v: 999 });
+            if (entry === 'update_required') return Response.json({
+                v: 1, state: 'update_required', scope: { kind: 'home' },
+                reason: 'client_update_required', autoRedirect: null,
+            });
             return new Response('{}', { status: 503 });
         }
         return new Response('{}', { status: 404 });
@@ -125,7 +131,7 @@ describe('AccountServiceHomeAuthenticationAdapter', () => {
         ]);
     });
 
-    it.each(['incompatible', 'unavailable'] as const)(
+    it.each(['incompatible', 'unavailable', 'update_required'] as const)(
         'fails closed when the contextual endpoint is %s',
         async (kind) => {
             const { fixture, input } = await createSavedHome(kind);
@@ -133,6 +139,10 @@ describe('AccountServiceHomeAuthenticationAdapter', () => {
 
             await vi.waitFor(() => expect(screen.findByTestId('account-service-home-auth-unavailable')).not.toBeNull());
             expect(screen.findAllByType(HomeAuthenticationFlow)).toHaveLength(0);
+            expect(screen.findByType(SurfaceStateCard).props.title).toBe(t('common.error'));
+            expect(screen.getTextContent()).toContain(t('errors.operationFailed'));
+            expect(screen.getTextContent()).not.toContain(t('welcome.serverUnavailableTitle'));
+            expect(screen.getTextContent()).not.toContain(t('welcome.signInServiceUnavailableTitle'));
         },
     );
 });

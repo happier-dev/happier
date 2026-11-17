@@ -97,7 +97,7 @@ export function AccountServiceAuthenticationFlow(props: AccountServiceAuthentica
     }
     if (launchFailed) {
         return <SurfaceStateCard testID="account-service-auth-launch-failed" kind="error"
-            title={t('welcome.signInServiceUnavailableTitle')} reason={t('errors.operationFailed')}
+            title={t('common.error')} reason={t('errors.operationFailed')}
             accessibilitySemantics="alert"
             action={{ label: t('common.retry'), onPress: () => setLaunchFailed(false) }} />;
     }

@@ -4,10 +4,17 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
 import { cancelPendingDirectoryHomeEnrollment } from '@/sync/ops/accountDirectory/enrollDirectoryHome';
 
 installTokenStorageWebPlatformMocks();
+const keyLoginSecret = vi.hoisted(() => new Uint8Array(32));
+// Only generated key randomness is fixed; login, credential custody and label opening stay real.
+vi.mock('@/platform/cryptoRandom', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/platform/cryptoRandom')>(),
+    getRandomBytesAsync: async () => keyLoginSecret.slice(),
+}));
 const boundary = vi.hoisted(() => ({ request: vi.fn() }));
 const modalBoundary = vi.hoisted(() => ({ show: vi.fn(() => 'generated-key-backup') }));
 vi.mock('@/sync/http/client', () => ({
@@ -27,14 +34,42 @@ vi.mock('@/modal', async () => {
 });
 
 import { AccountDirectoryKeyLoginForm } from './AccountDirectoryKeyLoginForm';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { t } from '@/text';
 
 let restore: () => void;
 let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
 beforeEach(() => { restore = installLocalStorageMock().restore; modalBoundary.show.mockClear(); boundary.request.mockReset(); });
 afterEach(async () => { await screen?.unmount(); screen = undefined; await cancelPendingDirectoryHomeEnrollment(); restore(); });
 
-it('retains the chosen Home through exact Account reauthentication', async () => {
+it.each(['login', 'provision'] as const)('keeps a reached service refusal distinct from unreachability during %s', async (mode) => {
     const fixture = createDirectoryHttpFixture();
+    boundary.request.mockImplementation(async (_endpoint: string, path: string) => {
+        if (path === '/v1/auth/account-directory/challenge') return Response.json({
+            challengeId: 'directory-challenge', nonce: 'nonce', issuedAt: new Date().toISOString(),
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            audience: { origin: fixture.service.canonicalServerUrl, serverIdentityId: fixture.service.serverIdentityId },
+        });
+        return Response.json({ error: 'invalid_request' }, { status: 409 });
+    });
+    const onResult = vi.fn();
+    screen = await renderScreen(<AccountDirectoryKeyLoginForm service={fixture.service} serviceName="Directory"
+        mode={mode} intent={{ kind: 'refresh' }} onBack={() => {}} onResult={onResult} />);
+    if (mode === 'login') {
+        await act(async () => { screen!.changeTextByTestId('restore-manual-secret-input', 'A'.repeat(43)); });
+        await screen.pressByTestIdAsync('restore-manual-submit');
+    }
+    await vi.waitFor(() => expect(onResult).toHaveBeenCalledWith(expect.objectContaining({ kind: 'relink_required' })));
+    expect(screen.getTextContent()).toContain(t('errors.operationFailed'));
+    expect(screen.getTextContent()).not.toContain(t('welcome.serverUnavailableTitle'));
+    expect(screen.getTextContent()).not.toContain(t('welcome.signInServiceUnavailableTitle'));
+    if (mode === 'provision') {
+        expect(screen.findByType(SurfaceStateCard).props.title).toBe(t('common.error'));
+    }
+});
+
+it('retains the chosen Home through exact Account reauthentication', async () => {
+    const fixture = createDirectoryHttpFixture({ directoryRecoverySecret: keyLoginSecret });
     fixture.state.homes.push({ ...fixture.home, homeServerIdentityId: 'srv_other', label: 'Other Home',
         canonicalServerUrl: 'https://other.test',
         connectionDescriptor: { ...fixture.home.connectionDescriptor, homeServerIdentityId: 'srv_other',
@@ -48,7 +83,7 @@ it('retains the chosen Home through exact Account reauthentication', async () =>
             expiresAt: new Date(Date.now() + 60_000).toISOString(),
             audience: { origin: fixture.service.canonicalServerUrl, serverIdentityId: fixture.service.serverIdentityId },
         }));
-        if (path === '/v1/auth/account-directory') return new Response(JSON.stringify({ token: 'directory-token' }));
+        if (path === '/v1/auth/account-directory') return Response.json({ token: createAccountTokenForTests('account-directory') });
         return fixture.request(endpoint, path, init);
     });
     const onResult = vi.fn();
@@ -71,14 +106,14 @@ it('retains the chosen Home through exact Account reauthentication', async () =>
 });
 
 it('authenticates a generated key and continues without an extra success tap', async () => {
-    const fixture = createDirectoryHttpFixture();
+    const fixture = createDirectoryHttpFixture({ directoryRecoverySecret: keyLoginSecret });
     boundary.request.mockImplementation(async (endpoint: string, path: string, init?: RequestInit) => {
         if (path === '/v1/auth/account-directory/challenge') return new Response(JSON.stringify({
             challengeId: 'directory-challenge', nonce: 'nonce', issuedAt: new Date().toISOString(),
             expiresAt: new Date(Date.now() + 60_000).toISOString(),
             audience: { origin: fixture.service.canonicalServerUrl, serverIdentityId: fixture.service.serverIdentityId },
         }));
-        if (path === '/v1/auth/account-directory') return new Response(JSON.stringify({ token: 'directory-token' }));
+        if (path === '/v1/auth/account-directory') return Response.json({ token: createAccountTokenForTests('account-directory') });
         return fixture.request(endpoint, path, init);
     });
     const onResult = vi.fn();
@@ -91,14 +126,14 @@ it('authenticates a generated key and continues without an extra success tap', a
 });
 
 it('keeps an account-only success visible for the invoking surface to acknowledge', async () => {
-    const fixture = createDirectoryHttpFixture();
+    const fixture = createDirectoryHttpFixture({ directoryRecoverySecret: keyLoginSecret });
     boundary.request.mockImplementation(async (endpoint: string, path: string, init?: RequestInit) => {
         if (path === '/v1/auth/account-directory/challenge') return new Response(JSON.stringify({
             challengeId: 'directory-challenge', nonce: 'nonce', issuedAt: new Date().toISOString(),
             expiresAt: new Date(Date.now() + 60_000).toISOString(),
             audience: { origin: fixture.service.canonicalServerUrl, serverIdentityId: fixture.service.serverIdentityId },
         }));
-        if (path === '/v1/auth/account-directory') return new Response(JSON.stringify({ token: 'directory-token' }));
+        if (path === '/v1/auth/account-directory') return Response.json({ token: createAccountTokenForTests('account-directory') });
         return fixture.request(endpoint, path, init);
     });
     const onResult = vi.fn();

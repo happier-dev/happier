@@ -103,7 +103,7 @@ export const SecretKeyEntryForm = React.memo(function SecretKeyEntryForm(props: 
             } else if (result.error instanceof HappyError && result.error.kind === 'auth') {
                 setError(authenticationErrorMessage(result.error, result.home));
             } else {
-                setError(result.error === undefined || result.error instanceof TypeError
+                setError(result.error instanceof TypeError
                     || result.error instanceof HappyError && (result.error.kind === 'network' || result.error.kind === 'server')
                     ? t('welcome.serverUnavailableTitle') : t('errors.operationFailed'));
             }

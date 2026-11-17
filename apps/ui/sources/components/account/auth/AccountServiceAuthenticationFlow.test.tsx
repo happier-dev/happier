@@ -29,6 +29,7 @@ vi.mock('@/text', async () => {
 
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { AccountServiceAuthenticationFlow } = await import('./AccountServiceAuthenticationFlow');
+const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 
 const capability = {
     version: 1 as const,
@@ -114,6 +115,25 @@ describe('AccountServiceAuthenticationFlow', () => {
 
         expect(screen.findByTestId('restore-manual-secret-input')).toBeNull();
         expect(screen.findByTestId('account-directory-key-provision-pending') ?? screen.findByTestId('account-directory-key-provision-failed')).not.toBeNull();
+    });
+
+    it('shows a neutral launch error when the service starts OAuth but the browser handoff rejects', async () => {
+        vi.stubGlobal('window', { location: null });
+        linking.openURL.mockRejectedValueOnce(new Error('OS rejected URL handoff'));
+        const onExternalAuthStarted = vi.fn();
+        const screen = await renderScreen(<AccountServiceAuthenticationFlow service={service} intent={intent}
+            onPostAuthContinuation={() => {}} returnTo="/setup/wizard" onResult={vi.fn()}
+            onExternalAuthStarted={onExternalAuthStarted} onBack={vi.fn()} />);
+
+        await screen.pressByTestIdAsync('account-service-auth-github-login-keyless');
+
+        expect(linking.openURL).toHaveBeenCalledWith('https://oauth.example.test/start');
+        expect(onExternalAuthStarted).not.toHaveBeenCalled();
+        expect(await TokenStorage.getPendingAccountDirectoryAuth(target)).toBeNull();
+        expect(screen.findByType(SurfaceStateCard).props.title).toBe('common.error');
+        expect(screen.getTextContent()).toContain('errors.operationFailed');
+        expect(screen.getTextContent()).not.toContain('welcome.serverUnavailableTitle');
+        expect(screen.getTextContent()).not.toContain('welcome.signInServiceUnavailableTitle');
     });
 
     it('admits one sibling ceremony and releases the guard after a failed launch', async () => {

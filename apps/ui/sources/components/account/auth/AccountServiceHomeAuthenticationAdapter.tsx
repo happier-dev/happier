@@ -24,7 +24,7 @@ export function AccountServiceHomeAuthenticationAdapter(props: Readonly<{
 
     if (resolved.kind !== 'resolved' || catalog.state === 'unavailable') {
         return <SurfaceStateCard testID="account-service-home-auth-unavailable" kind="error"
-            title={t('welcome.serverUnavailableTitle')} reason={t('errors.operationFailed')}
+            title={t('common.error')} reason={t('errors.operationFailed')}
             accessibilitySemantics="alert" action={{ label: t('common.back'), onPress: props.onBack }} />;
     }
     if (catalog.state === 'loading') {
