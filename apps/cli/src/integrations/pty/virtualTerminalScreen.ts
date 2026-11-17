@@ -9,6 +9,7 @@ export type VirtualTerminalScreen = Readonly<{
 type ParserState =
   | { kind: 'normal' }
   | { kind: 'escape' }
+  | { kind: 'escapeIntermediate' }
   | { kind: 'csi'; buffer: string }
   | { kind: 'osc'; buffer: string; sawEscape: boolean };
 
@@ -46,6 +47,31 @@ export function createVirtualTerminalScreen(params?: Readonly<{ cols?: number; r
   let cursorRow = 0;
   let cursorCol = 0;
   let state: ParserState = { kind: 'normal' };
+  let savedCursor: { row: number; col: number } | null = null;
+  // Main screen kept while the alternate screen (1047/1049) is active; Claude's
+  // fullscreen renderer enters it at startup and leaves it on exit.
+  let mainScreen: { lines: string[][]; cursorRow: number; cursorCol: number } | null = null;
+
+  const saveCursor = (): void => {
+    savedCursor = { row: cursorRow, col: cursorCol };
+  };
+
+  const restoreCursor = (): void => {
+    cursorRow = clamp(savedCursor?.row ?? 0, 0, rows - 1);
+    cursorCol = clamp(savedCursor?.col ?? 0, 0, cols - 1);
+  };
+
+  const setAlternateScreen = (enabled: boolean): void => {
+    if (enabled && !mainScreen) {
+      mainScreen = { lines, cursorRow, cursorCol };
+      clearAll();
+    } else if (!enabled && mainScreen) {
+      lines = mainScreen.lines;
+      cursorRow = clamp(mainScreen.cursorRow, 0, rows - 1);
+      cursorCol = clamp(mainScreen.cursorCol, 0, cols - 1);
+      mainScreen = null;
+    }
+  };
 
   const scrollIfNeeded = (): void => {
     while (cursorRow >= rows) {
@@ -174,10 +200,17 @@ export function createVirtualTerminalScreen(params?: Readonly<{ cols?: number; r
         else clearLineRange(cursorRow, cursorCol, cols - 1);
         break;
       }
+      case 'r':
+        // DECSTBM: Claude only resets the scroll region; the reset homes the cursor.
+        if (!parsed.privateMarker) {
+          cursorRow = 0;
+          cursorCol = 0;
+        }
+        break;
       case 'h':
       case 'l':
         if (parsed.privateMarker.includes('?') && parsed.params.some((param) => param === '1049' || param === '1047')) {
-          clearAll();
+          setAlternateScreen(parsed.final === 'h');
         }
         break;
     }
@@ -226,11 +259,23 @@ export function createVirtualTerminalScreen(params?: Readonly<{ cols?: number; r
           } else if (char === ']') {
             state = { kind: 'osc', buffer: '', sawEscape: false };
           } else if (char === 'c') {
+            mainScreen = null;
+            savedCursor = null;
             clearAll();
             state = { kind: 'normal' };
+          } else if (char >= ' ' && char <= '/') {
+            // Intermediate bytes (charset designations such as ESC ( B) run to a final byte.
+            state = { kind: 'escapeIntermediate' };
           } else {
+            if (char === '7') saveCursor();
+            else if (char === '8') restoreCursor();
             state = { kind: 'normal' };
           }
+          continue;
+        }
+        if (state.kind === 'escapeIntermediate') {
+          if (char === '\u001b') state = { kind: 'escape' };
+          else if (char < ' ' || char > '/') state = { kind: 'normal' };
           continue;
         }
         if (state.kind === 'osc') {
@@ -263,15 +308,16 @@ export function createVirtualTerminalScreen(params?: Readonly<{ cols?: number; r
     resize(nextCols: number, nextRows: number): void {
       const safeCols = Math.max(2, Math.trunc(nextCols));
       const safeRows = Math.max(2, Math.trunc(nextRows));
-      const nextLines = Array.from({ length: safeRows }, (_, row) => {
-        const existing = lines[row] ?? [];
+      const resizeLines = (source: string[][]): string[][] => Array.from({ length: safeRows }, (_, row) => {
+        const existing = source[row] ?? [];
         const line = Array.from({ length: safeCols }, (_, col) => existing[col] ?? ' ');
         if (existing[safeCols] === '') line[safeCols - 1] = ' ';
         return line;
       });
       cols = safeCols;
       rows = safeRows;
-      lines = nextLines;
+      lines = resizeLines(lines);
+      if (mainScreen) mainScreen = { ...mainScreen, lines: resizeLines(mainScreen.lines) };
       cursorRow = clamp(cursorRow, 0, rows - 1);
       cursorCol = clamp(cursorCol, 0, cols - 1);
     },
