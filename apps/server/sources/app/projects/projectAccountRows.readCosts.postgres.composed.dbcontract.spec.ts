@@ -152,6 +152,70 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Project row nar
         });
     });
 
+    it('sessionDefaults.personalCensusIsolation: excludes defaults from census and opens only the demanded key', async () => {
+        const { readProjectAccountRows, readProjectSessionDefaults, getActiveProjectAccountRowsSnapshot,
+            subscribeActiveProjectAccountRowsSnapshot, withdrawActiveProjectAccountRowsSnapshot } = await import('../../../../cli/src/workspaces/projectAccountRows');
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const key = { kind: 'project-session-defaults', serverId: 'home', projectKey: 'selected' } as const;
+        const defaults = { defaultAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } as const;
+        const workspaceKey = { kind: 'workspace-ref', serverId: 'home', id: 'workspace' } as const;
+        const workspace = { id: 'workspace', serverId: 'home', machineId: 'machine', rootPath: '/work', createdAtMs: 1 };
+        const row = (key: ProjectAccountRowKeyV1, value: unknown) => ({ accountId: account.id,
+            key: buildProjectAccountRowPhysicalKeyV1(key), version: 0,
+            value: decodeBase64(encodeAccountScopedKvJson({ t: 'plain', v: { key, value } })!) });
+        await db.userKVStore.createMany({ data: [row(workspaceKey, workspace), row(key, defaults),
+            ...Array.from({ length: 1024 }, (_, index) => row({ ...key, projectKey: `unopened-${index}` }, defaults))] });
+        await withAuthenticatedTestApp(registerProjectAccountRowRoutes, async app => {
+            const credentials = { token: 'test-defaults-reader', encryption: null };
+            const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+                const response = await app.inject({ method: 'POST', url: new URL(url).pathname,
+                    headers: { 'x-test-user-id': account.id }, payload: body });
+                return { status: response.statusCode, data: response.json() };
+            });
+            const get = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
+            const rowReads = () => statements.filter(event => /^SELECT\b/i.test(event.query.trimStart())
+                && event.query.includes('"UserKVStore"'));
+            let publications = 0;
+            const unsubscribe = subscribeActiveProjectAccountRowsSnapshot(() => { publications++; });
+            try { await runWithServerHttpBaseUrl('https://defaults-test.invalid', async () => {
+                loadedRows = 0;
+                statements.length = 0;
+                const census = await readProjectAccountRows({ credentials, serverId: 'home', publication: 'installed' });
+                expect(census.workspaceRefs).toEqual([workspace]);
+                expect(census.rows.map(row => row.key)).toEqual([workspaceKey]);
+                expect(loadedRows).toBe(1);
+                expect(rowReads()).toHaveLength(1);
+                const installed = getActiveProjectAccountRowsSnapshot();
+                publications = 0;
+                statements.length = 0;
+                for (let repeat = 0; repeat < 3; repeat++) {
+                    await readProjectAccountRows({ credentials, serverId: 'home', publication: 'installed', changedKeys: [key] });
+                }
+                expect(rowReads()).toHaveLength(0);
+                expect(statements.filter(event => /^(INSERT|UPDATE|DELETE)\b/i.test(event.query.trimStart()))).toHaveLength(0);
+                expect(getActiveProjectAccountRowsSnapshot()).toBe(installed);
+                expect(publications).toBe(0);
+                statements.length = 0;
+                expect(await readProjectSessionDefaults({ credentials, serverId: 'home', projectKey: key.projectKey }))
+                    .toEqual({ revision: 0, defaults });
+                expect(rowReads()).toHaveLength(1);
+                expect(JSON.parse(rowReads()[0].params)).toContain(buildProjectAccountRowPhysicalKeyV1(key));
+                expect(getActiveProjectAccountRowsSnapshot()).toBe(installed);
+                expect(publications).toBe(0);
+                const changedDefaults = { defaultAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } as const;
+                await db.userKVStore.update({ where: { accountId_key: { accountId: account.id,
+                    key: buildProjectAccountRowPhysicalKeyV1(key) } }, data: { version: 1,
+                    value: row(key, changedDefaults).value } });
+                statements.length = 0;
+                expect(await readProjectSessionDefaults({ credentials, serverId: 'home', projectKey: key.projectKey }))
+                    .toEqual({ revision: 1, defaults: changedDefaults });
+                expect(rowReads()).toHaveLength(1);
+                expect(getActiveProjectAccountRowsSnapshot()).toBe(installed);
+                expect(publications).toBe(0);
+            }); } finally { unsubscribe(); get.mockRestore(); post.mockRestore(); withdrawActiveProjectAccountRowsSnapshot(); }
+        });
+    });
+
     it('prepares through the real CLI and HTTP row owners without organization census or serial endpoint reads', async () => {
         const { readWorkspaceSyncWorkerTargetSnapshot, prepareWorkspaceSyncBetween } = await import('../../../../cli/src/workspaces/sync/workspaceSyncPreparation');
         const { mutateProjectAccountOrganization, readProjectAccountRows, getActiveProjectAccountRowsSnapshot,

@@ -21,6 +21,7 @@ import { readDeploymentEnvironmentInTx, listDeploymentEnvironmentsInTx, readDepl
 import { projectSourceRoutes } from '@/app/api/routes/projects/projectSourceRoutes';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
+import { countScopedTeamProjectSourcesInTx } from './projectSourceQuery';
 import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 
 const repository = { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
@@ -148,6 +149,19 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
             contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1,
         }));
         if (!environment.ok) throw new Error(environment.error);
+        expect(await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId: created.source.id,
+            expectedRevision: created.source.revision, patch: { sessionDefaults: { expectedRevision: 'absent',
+                defaults: { defaultAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } } } })))
+            .toMatchObject({ ok: true, sessionDefaults: { revision: 1 } });
+        const detailStatements: Prisma.QueryEvent[] = [];
+        const detailClient = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(detailClient, event => detailStatements.push(event));
+        await detailClient.$connect();
+        try {
+            expect(await detailClient.$transaction(tx => readDeploymentEnvironmentInTx(tx, owner.id,
+                { serverId, environmentId: environment.environmentId }))).toMatchObject({ ok: true });
+            expect(detailStatements.filter(event => event.query.includes('"ProjectSourceSessionDefaults"'))).toHaveLength(0);
+        } finally { await detailClient.$disconnect(); }
         await withAuthenticatedTestApp(projectSourceRoutes, async app => {
             const response = await app.inject({ method: 'DELETE', url: `/v1/projects/sources/${created.source.id}`,
                 headers: { 'x-test-user-id': owner.id },
@@ -220,7 +234,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         });
     });
 
-    it('preserves Source defaults revisions and publications for identical writes', async () => {
+    it('sessionDefaults.leafIsolation: reads only demanded leaves and publishes only changed defaults', async () => {
         const serverId = `srv_${'f'.repeat(32)}`;
         process.env.HAPPIER_SERVER_IDENTITY_ID = serverId;
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -242,8 +256,21 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         db.$transaction = new Proxy(transaction, { apply(_target, _receiver, args) {
             return Reflect.apply(client.$transaction, client, args);
         } });
+        const leafReads = () => statements.filter(event => /^SELECT\b/i.test(event.query.trimStart())
+            && event.query.includes('"ProjectSourceSessionDefaults"'));
         const mutations = () => statements.filter(event => /^(INSERT|UPDATE|DELETE)\b/i.test(event.query.trimStart()));
         try {
+            const listed = await inTx(tx => listProjectSourcesInTx(tx, owner.id, { serverId }));
+            expect(listed).toMatchObject({ ok: true, sources: [expect.objectContaining({ id: sourceId })] });
+            expect(await inTx(tx => countScopedTeamProjectSourcesInTx(tx, {
+                actorAccountId: owner.id, sharedWithTeamId: team.id,
+            }))).toEqual({ ok: true, count: 1 });
+            expect(leafReads()).toHaveLength(0);
+            statements.length = 0;
+            expect(await inTx(tx => readProjectSourceInTx(tx, owner.id, { serverId, sourceId })))
+                .toMatchObject({ ok: true, sessionDefaults: { revision: 1, defaults } });
+            expect(leafReads()).toHaveLength(1);
+            expect(JSON.parse(leafReads()[0].params)).toContain(sourceId);
             const before = await db.accountChange.findMany({ where: { accountId: owner.id,
                 entityId: PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } });
             statements.length = 0;
@@ -263,6 +290,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
                 patch: { sessionDefaults: { expectedRevision: 1, defaults: changedDefaults } } })))
                 .toMatchObject({ ok: true, source: { revision: created.source.revision },
                     sessionDefaults: { revision: 2, defaults: changedDefaults } });
+            expect(leafReads()).toHaveLength(1);
             expect(mutations().filter(event => event.query.includes('"ProjectSourceSessionDefaults"'))).toHaveLength(1);
             expect(mutations().filter(event => event.query.includes('"ProjectSource"'))).toHaveLength(0);
             const after = await db.accountChange.findMany({ where: { accountId: owner.id,
