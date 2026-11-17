@@ -8859,6 +8859,7 @@ const machineDetailPageTranslations = { fr: translated({
                     emptyAction: "Ajouter un bac à sable",
                     unavailable: "Impossible de lire les bacs à sable de cette machine.",
                     untilArchived: "Jusqu’à l’archivage",
+                    offline: ({ machine }: { machine: string }) => `${machine} est hors ligne. Vous pourrez ajouter une sandbox dès son retour.`,
                 },
             },
             roles: {

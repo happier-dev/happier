@@ -117,6 +117,7 @@ export const english = {
                 emptyAction: "Add a sandbox",
                 unavailable: "Couldn’t read the sandboxes on this machine.",
                 untilArchived: "Until archived",
+                offline: ({ machine }: { machine: string }) => `${machine} is offline. You can add a sandbox once it’s back.`,
             },
         },
         roles: {

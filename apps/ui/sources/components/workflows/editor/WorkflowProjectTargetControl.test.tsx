@@ -23,6 +23,7 @@ import { configureConnectedServerSocketBoundary, installDisconnectedServerSocket
 import { recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
 import type { SelectionListStep } from '@/components/ui/selectionList';
 import { storage } from '@/sync/domains/state/storage';
+import { t } from '@/text';
 import { authoringMemoryDefaults } from '@/sync/store/domains/authoringMemory';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -414,6 +415,22 @@ describe('workflow project target control', () => {
         expect(onWorkspace).toHaveBeenLastCalledWith({ kind: 'project_checkout' });
     });
 
+    it('says the workflow waits for an offline Machine, from the reachability verdict New Session reads (J6)', async () => {
+        const { Text } = await import('@/components/ui/text/Text');
+        const { recordMachineRequestFailed } = await import('@/sync/domains/machines/reachability/machineReachability');
+        const screen = await renderControl({
+            target: { machineId: 'machine-1', directory: '/repo/payments', workspaceRefId: 'ref-main' },
+            onChange: vi.fn(),
+            presentation: 'rows',
+            renderRow: (row: string, label: string, control: React.ReactNode) => <React.Fragment key={row}><Text>{label}</Text>{control}</React.Fragment>,
+            workspace: { value: undefined, onChange: vi.fn() },
+        });
+        const outcome = () => screen.findByTestId('session-placement-isolation-outcome');
+        await vi.waitFor(() => expect(outcome()).not.toBeNull());
+        expect(screen.getTextContent()).not.toContain(t('machineDetailPage.isolation.outcome.offline', { machine: 'Mac Studio' }));
+        await act(async () => { recordMachineRequestFailed({ serverId: HOME_ID, accountId: 'account-a', machineId: 'machine-1' }); });
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('machineDetailPage.isolation.outcome.offline', { machine: 'Mac Studio' })));
+    });
     it('starts a newly selected Machine in its default folder without the previous binding', async () => {
         const onChange = vi.fn();
         const screen = await renderControl({

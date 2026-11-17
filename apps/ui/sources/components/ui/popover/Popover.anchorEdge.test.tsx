@@ -121,4 +121,31 @@ describe('Popover: a field-width picker keeps a readable minimum', () => {
             { matchAnchorWidth: true, anchoredMinWidth: 420 });
         expect(wide).toEqual({ left: 100, width: 480 });
     });
+
+    it('paints a field picker first where it settles: under the field at the minimum width, never moved after', async () => {
+        const portalRootNode = { measureInWindow: (cb: any) => cb(0, 0, 1000, 800), measure: (cb: any) => cb(0, 0, 1000, 800, 0, 0) } as any;
+        const portalTarget = { rootRef: { current: portalRootNode }, layout: { width: 1000, height: 800 } } as const;
+        const screen = await renderScreen(
+            <PopoverPortalTargetContextProvider value={portalTarget}>
+                <OverlayPortalProvider>
+                    <Popover open backdrop={false} anchor={{ kind: 'rect', rect: { left: 200, top: 300, width: 280, height: 32 } }}
+                        portal={{ native: true, matchAnchorWidth: true, anchoredMinWidth: 420, anchorAlign: 'start' }}
+                        placement="bottom" flip gap={8} maxHeightCap={420} edgePadding={{ horizontal: 0, vertical: 0 }}>
+                        {() => React.createElement('Picker')}
+                    </Popover>
+                    <OverlayPortalHost />
+                </OverlayPortalProvider>
+            </PopoverPortalTargetContextProvider>,
+        );
+        const place = () => {
+            const style = flattenStyle(findPopoverContentView(screen, 'Picker')?.props?.style);
+            const padding = Number(style.paddingLeft ?? 0);
+            return { left: Number(style.left) + padding, top: Number(style.top), width: Number(style.width) - padding * 2 };
+        };
+        await act(async () => { await flushHookEffects({ cycles: 1, turns: 1, frames: 1 }); });
+        const first = place();
+        await act(async () => { await flushHookEffects({ cycles: 2, turns: 6, frames: 2 }); });
+        expect(first).toEqual(place());
+        expect(first).toMatchObject({ left: 200, width: 420 });
+    });
 });

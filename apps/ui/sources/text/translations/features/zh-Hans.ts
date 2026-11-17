@@ -8744,6 +8744,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                     emptyAction: "添加沙盒",
                     unavailable: "无法读取这台机器上的沙盒。",
                     untilArchived: "直到归档",
+                    offline: ({ machine }: { machine: string }) => `${machine} 已离线。它恢复后即可添加沙盒。`,
                 },
             },
             roles: {

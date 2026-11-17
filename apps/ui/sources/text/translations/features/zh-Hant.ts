@@ -8743,6 +8743,7 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                     emptyAction: "新增沙箱",
                     unavailable: "無法讀取這台機器上的沙箱。",
                     untilArchived: "直到封存",
+                    offline: ({ machine }: { machine: string }) => `${machine} 已離線。它恢復後即可新增沙盒。`,
                 },
             },
             roles: {

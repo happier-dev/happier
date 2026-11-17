@@ -182,18 +182,22 @@ function OutcomeRow(
         {props.mark ?? <Icon name={props.glyph} size={OUTCOME_MARK_SIZE}
           color={props.warning ? theme.colors.state.warning.foreground : theme.colors.text.secondary} />}
       </View>
-      <Text style={props.warning ? styles.warning : styles.text}>
-        {props.text}
-      </Text>
-      {props.link ? (
-        <TextLinkButton
-          testID={`${props.testID}.link`}
-          label={props.link.label}
-          onPress={props.link.onPress}
-          tone="quiet"
-          size="meta"
-        />
-      ) : null}
+      {/* The mark keeps its column; the sentence and its link wrap beside it, so a narrow field (a workflow's
+          Machine) never drops the sentence under a lone mark. */}
+      <View style={styles.body}>
+        <Text style={props.warning ? styles.warning : styles.text}>
+          {props.text}
+        </Text>
+        {props.link ? (
+          <TextLinkButton
+            testID={`${props.testID}.link`}
+            label={props.link.label}
+            onPress={props.link.onPress}
+            tone="quiet"
+            size="meta"
+          />
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -201,13 +205,20 @@ function OutcomeRow(
 const styles = StyleSheet.create((theme) => ({
   row: {
     flexDirection: 'row',
+    alignItems: 'flex-start',
+    columnGap: theme.space.s8,
+    marginTop: theme.space.s8,
+  },
+  body: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
     columnGap: theme.space.s8,
     rowGap: theme.space.s2,
-    marginTop: theme.space.s8,
   },
-  mark: { alignSelf: 'center' },
+  mark: { height: Typography.variant('meta').lineHeight, justifyContent: 'center' },
   text: { ...Typography.variant('meta'), color: theme.colors.text.secondary, flexShrink: 1 },
   warning: {
     ...Typography.variant('meta'),

@@ -8837,6 +8837,7 @@ const machineDetailPageTranslations = { pt: translated({
                     emptyAction: "Adicionar sandbox",
                     unavailable: "Não foi possível ler os sandboxes desta máquina.",
                     untilArchived: "Até arquivar",
+                    offline: ({ machine }: { machine: string }) => `${machine} está offline. Você poderá adicionar uma sandbox quando ela voltar.`,
                 },
             },
             roles: {

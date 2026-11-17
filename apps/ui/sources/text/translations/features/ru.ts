@@ -8875,6 +8875,7 @@ const machineDetailPageTranslations = { ru: translated({
                     emptyAction: "Добавить песочницу",
                     unavailable: "Не удалось прочитать песочницы этой машины.",
                     untilArchived: "До архивации",
+                    offline: ({ machine }: { machine: string }) => `${machine} не в сети. Добавить песочницу можно будет, когда она вернётся.`,
                 },
             },
             roles: {

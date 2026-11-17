@@ -8740,6 +8740,7 @@ const machineDetailPageTranslations = { es: translated({
                     emptyAction: "Añadir un sandbox",
                     unavailable: "No se pudieron leer los sandboxes de esta máquina.",
                     untilArchived: "Hasta archivarlo",
+                    offline: ({ machine }: { machine: string }) => `${machine} está sin conexión. Podrás añadir un sandbox cuando vuelva.`,
                 },
             },
             roles: {

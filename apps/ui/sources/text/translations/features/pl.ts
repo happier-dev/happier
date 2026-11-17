@@ -8876,6 +8876,7 @@ const machineDetailPageTranslations = { pl: translated({
                     emptyAction: "Dodaj piaskownicę",
                     unavailable: "Nie udało się odczytać piaskownic tej maszyny.",
                     untilArchived: "Do archiwizacji",
+                    offline: ({ machine }: { machine: string }) => `${machine} jest offline. Sandbox dodasz, gdy wróci.`,
                 },
             },
             roles: {

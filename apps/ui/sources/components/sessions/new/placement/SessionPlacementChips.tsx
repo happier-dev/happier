@@ -221,9 +221,14 @@ export function SessionPlacementChips(
 ): React.ReactElement {
   const isolationSnapshot = React.useMemo(() => readSyncedMachineIsolationPolicy(props.machine ?? null), [props.machine]);
   const isolationOutcome = useMachineIsolationProposedOutcome(isolationSnapshot, props.isolationWorkKind ?? 'sessions');
+  // Offline is the reachability owner's verdict for this Machine, the one New Session reads: the line then says the
+  // work waits for it instead of where it would run.
+  const presence = useMachinePresenceSummary(props.serverId || null, props.isolationWorkKind ? props.machine?.id ?? null : null,
+    undefined, sameReachability);
   const outcomeLine = props.isolationWorkKind && props.machine ? (
     <SessionIsolationOutcomeLine serverId={props.serverId || null} machineName={props.machine ? getMachineDisplayName(props.machine) : null}
-      snapshot={isolationSnapshot} outcome={isolationOutcome} testID="session-placement-isolation-outcome" />
+      snapshot={isolationSnapshot} outcome={isolationOutcome} offline={presence.reachability === 'unreachable'}
+      testID="session-placement-isolation-outcome" />
   ) : null;
   const machineAnchor = React.useRef<View | null>(null);
   const folderAnchor = React.useRef<View | null>(null);
@@ -377,6 +382,11 @@ export function SessionPlacementChips(
 }
 
 /** A chip row with the isolation outcome under it; without one, the row alone (no extra wrapper). */
+/** The outcome line reads only whether the Machine answers; other presence facts changing wake nothing. */
+function sameReachability(left: Readonly<{ reachability: string }>, right: Readonly<{ reachability: string }>): boolean {
+  return left.reachability === right.reachability;
+}
+
 function withOutcome(outcomeLine: React.ReactNode, row: React.ReactElement): React.ReactElement {
   return outcomeLine ? <View>{row}{outcomeLine}</View> : row;
 }

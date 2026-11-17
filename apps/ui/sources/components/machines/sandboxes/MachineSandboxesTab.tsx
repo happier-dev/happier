@@ -85,10 +85,11 @@ function MachineSandboxesEmpty(props: Readonly<{
     const { readOnlyReason, offline } = props.availability;
     return (
         <>
-            {/* Offline: the same one line the Isolation page says, with its Retry; the invite waits for the Machine. */}
-            {offline && readOnlyReason ? (
+            {/* Offline: the shared offline line with its Retry, in this page's words (adding waits); the invite waits too. */}
+            {offline ? (
                 <MachineTabSubHead title={null} back={null} notice={<MachineIsolationOfflineLine testID="machine-sandboxes-offline"
-                    serverId={props.serverId} machine={props.machine} reason={readOnlyReason} />} />
+                    serverId={props.serverId} machine={props.machine}
+                    reason={t('machineDetailPage.isolation.host.offline', { machine: props.machineName })} />} />
             ) : null}
             <EmptyState testID="machine-sandboxes-empty" layout="page" scene={NO_SANDBOXES_SCENE}
                 title={t('machineDetailPage.isolation.host.emptyTitle', { machine: props.machineName })}

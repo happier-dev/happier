@@ -8843,6 +8843,7 @@ const machineDetailPageTranslations = { ca: translated({
                     emptyAction: "Afegeix un sandbox",
                     unavailable: "No s’han pogut llegir els sandboxes d’aquesta màquina.",
                     untilArchived: "Fins que s’arxivi",
+                    offline: ({ machine }: { machine: string }) => `${machine} està fora de línia. Podràs afegir un sandbox quan torni.`,
                 },
             },
             roles: {

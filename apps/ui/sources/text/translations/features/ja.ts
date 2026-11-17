@@ -8799,6 +8799,7 @@ const machineDetailPageTranslations = { ja: translated({
                     emptyAction: "サンドボックスを追加",
                     unavailable: "このマシンのサンドボックスを読み取れませんでした。",
                     untilArchived: "アーカイブまで",
+                    offline: ({ machine }: { machine: string }) => `${machine} はオフラインです。復帰したらサンドボックスを追加できます。`,
                 },
             },
             roles: {
