@@ -2320,6 +2320,25 @@ actual input before invoking the target, so one mixed read/write Action can
 admit its read operands while refusing its mutation operands. The result keeps
 the ordinary Action success/failure envelope and existing permission checks.
 
+Contributed Action discovery reserves the static `sideEffectClass: 'read'` for
+an unconditional `readOnly: true` declaration. A predicate remains input-sensitive
+and is described as `external` in the static catalog, just like `readOnly: false`.
+The Protocol invoker's `pluginActionDeclarationIsReadOnlyForInput` evaluates that
+predicate once against normalized invocation input. Preparation carries the
+result to host admission and cancellation settlement. Mutation inputs select
+Action automations using the qualified contributed Action id; read inputs skip
+that selection. A nested SDK Action selects independently, while approval replay
+retains its prepared selection. Omitting `readOnly` does not manufacture a
+static effect declaration. Neither discovery nor invocation infers read behavior
+from `dangerLevel: 'safe'`.
+
+The UI-hosted contributed Action dispatcher consumes that same prepared effect
+fact and the Account's existing Action automation index. A reverse CLI, agent or
+MCP invocation carries its existing host Action request id to the answering UI;
+the reverse transport carries no automation admission token. Native success and
+failure responses retain the canonical optional `automationNotices` beside the
+ordinary result.
+
 Terminal target-Action receipts erase live-only input, narrowed human input and
 the original Action envelope after transition admission. They retain the subject
 fingerprints, requester binding and execution outcome. The Artifact writer sends

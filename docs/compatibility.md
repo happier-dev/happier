@@ -23,6 +23,36 @@ Protocol, CLI and UI readers reload together; older strict readers reject the
 new union arm. No migration, store or compatibility adapter is introduced.
 
 
+## Action Workflow triggers (unreleased 0.3, implementation in progress)
+
+The existing trigger union adds `action`: a canonical Action set, `before` or
+`after`, and one optional qualified subject. Before checks optionally select
+`wait` or `notify`; only waiting checks accept `onFailure`. Actor consent uses
+the same discriminator with a `consentFor` reference and reviewed Workflow
+revision, rather than another matching trigger. The Account host keeps authored
+subjects in the existing private trigger-definition envelope; the Home index
+receives structural kind/key facts. Action occurrence evidence excludes raw
+input, output, exception text and raw execution-origin objects.
+
+The public Action result optionally carries `automationNotices` for unchecked
+automations and skipped triggers. These typed notices preserve the original
+Action outcome and contain code/reference facts rather than private failure
+text. Matching result readers must preserve them through deferred approval and
+terminal result projection; presentation stays with the Action message owner.
+The closed external Action HTTP and reverse client-invocation response schemas
+carry the same optional notice array on success and failure. Their matching
+development readers reload together; no separate notice vocabulary or adapter
+is introduced. The reverse request optionally retains the sending host's existing
+`actionRequestId` so the answering UI settles that invocation. It carries no
+automation admission token or caller authority.
+
+Protocol, Home, CLI and UI strict readers need the matching development union.
+These are unpublished development contracts, with composed validation still in
+progress; they do not establish released availability. Existing trigger kinds
+retain their meanings. The ordinary Automation Run occurrence and cause owners
+admit Action events; an Action declaring deferred completion uses its terminal
+domain event instead of treating its accepted handle as completion.
+
 ## Workflow authoring discovery (unreleased 0.3)
 
 The existing Action discovery read accepts optional `purpose: 'workflow_step' |
@@ -119,7 +149,13 @@ The closed Workflow value-reference union adds `trigger_event`, and the private
 accepted snapshot optionally carries sealed `triggerEventValues`. Existing
 snapshots without the field read unchanged. Closed create/update inputs optionally
 carry intended trigger locators, and private Event declaration reads expose the
-current payload schema. Matching Protocol, Home, CLI and editor consumers reload
+current payload schema. The Event identity accepts qualified plugin refs or
+`{ kind: 'action', phase: 'before' | 'after' }`. Action declarations share the
+canonical safe Run-evidence schema across the trigger's selected Action ids;
+the payload retains the actual invoked Action id. Admitted Action causes supply
+only those safe scalar values to the existing private snapshot materializer.
+Raw operands, output and exception text have no declared Event path.
+Matching Protocol, Home, CLI and editor consumers reload
 together under the unpublished 0.3 direct cut; older strict development readers
 reject these new fields. No epoch, migration, gate or compatibility adapter is
 added. The scoped-clean 0.2 frontier at

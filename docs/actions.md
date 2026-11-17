@@ -6024,6 +6024,15 @@ even when their triggers are not copied.
 Inline definitions supplied to trigger add or update use the same validator
 against the Event being enrolled, including retained inline references.
 
+Action triggers use `event: { kind: 'action', phase: 'before' | 'after' }`;
+plugin Events retain their qualified `{ pluginId, localId }` identity. One Action
+phase declaration covers the trigger's whole Action set, and its payload retains
+the actual invoked `actionId`. The declaration projects the canonical safe
+`AutomationActionRunEvidenceV1Schema`: a reference such as `path: ['requestId']`
+reads invocation provenance, while raw input, output and exception text have no
+declared path. After evidence includes its terminal status. The trigger owner
+supplies the same declaration to stored, intended and inline validation.
+
 In 0.3 development source, the Home derives shared Action-trigger reach when
 the trigger is written, using the subject's existing edit/manage owner. It
 recomputes that decision on later trigger edits; a caller's `reachesOthers`
