@@ -138,4 +138,4 @@ export { summarizeAgentRequestQuestions, StructuredQuestionAnswerDetailsV1Schema
 export { SessionInputForgeEvidenceV1Schema, renderSessionInputContextPromptV1, readSessionInputForgeEvidenceV1 } from './forgeEvidence.js';
 export type { SessionInputForgeEvidenceV1 } from './forgeEvidence.js';
 export { SessionInputForgeEvidenceAttachmentValueV1Schema, readSessionInputForgeEvidenceAttachmentV1,
-    buildSessionInputForgeEvidenceAttachmentValueV1 } from './forgeEvidence.js';
+    buildSessionInputForgeEvidenceAttachmentValueV1, SESSION_INPUT_FORGE_EVIDENCE_ATTACHMENT_IDENTITY_V1 } from './forgeEvidence.js';

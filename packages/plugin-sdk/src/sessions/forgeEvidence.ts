@@ -12,6 +12,8 @@ import {
 import { buildSessionInputForgeEvidenceAttachmentValueV1 as canonicalBuildAttachment }
     from '@happier-dev/protocol/sessions/messages/sessionInputForgeEvidenceAttachmentV1';
 import type { ComposerAttachmentAuthorValueV1 } from '../ui/publicContract.js';
+export { SESSION_INPUT_FORGE_EVIDENCE_ATTACHMENT_IDENTITY_V1 }
+    from '@happier-dev/protocol/sessions/messages/sessionInputForgeEvidenceAttachmentV1';
 
 /** Source labels describe evidence; neither text nor identity grants authority. */
 export type SessionInputForgeEvidenceV1 = NonNullable<Extract<PluginActionInputById['session.message.send'], { message: string }>['forgeEvidence']>;

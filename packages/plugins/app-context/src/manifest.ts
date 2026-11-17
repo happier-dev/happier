@@ -1,4 +1,5 @@
 import { defineComposerAttachment, definePlugin, type PluginJsonValueV2 } from '@happier-dev/plugin-sdk';
+import { SessionInputForgeEvidenceAttachmentValueV1Schema, SESSION_INPUT_FORGE_EVIDENCE_ATTACHMENT_IDENTITY_V1 } from '@happier-dev/plugin-sdk/sessions';
 import {
   CURRENT_UI_CONTEXT_ATTACHMENT_IDENTITY_V1,
   ProtocolCurrentUiContextSnapshotV1Schema,
@@ -12,6 +13,25 @@ function encodeContextText(text: string): string {
 }
 
 const annotationLocales = ['en', 'de', 'ru', 'pl', 'es', 'fr', 'it', 'pt', 'ca', 'zh-Hans', 'zh-Hant', 'ja'] as const;
+
+const descriptiveEvidence = defineComposerAttachment({
+  title: 'Selected evidence', icon: 'file', cardinality: 'many', display: { kind: 'badge' },
+  value: SessionInputForgeEvidenceAttachmentValueV1Schema,
+  runtime: {
+    async prepareForSend(request) {
+      return { attachments: request.attachments.map(attachment => ({
+        instanceId: attachment.instanceId, status: 'ready' as const, value: attachment.value,
+        forgeEvidence: attachment.value.forgeEvidence,
+      })) };
+    },
+    async resolveForDispatch(request) {
+      return { attachments: request.attachments.map(attachment => ({
+        instanceId: attachment.instanceId, status: 'ready' as const,
+        forgeEvidence: attachment.value.forgeEvidence,
+      })) };
+    },
+  },
+});
 
 const currentScreen = defineComposerAttachment({
   title: 'Current screen', icon: 'file', cardinality: 'one', display: { kind: 'badge' },
@@ -69,6 +89,7 @@ export const APP_CONTEXT_PLUGIN = definePlugin({
   composer: { attachments: {
     [CURRENT_UI_CONTEXT_ATTACHMENT_IDENTITY_V1.localId]: currentScreen,
     [TRANSCRIPT_ANNOTATION_ATTACHMENT_IDENTITY_V1.localId]: transcriptAnnotation,
+    [SESSION_INPUT_FORGE_EVIDENCE_ATTACHMENT_IDENTITY_V1.localId]: descriptiveEvidence,
   } },
 });
 

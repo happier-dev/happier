@@ -19,6 +19,8 @@ import { NativePermissionChoicesV1Schema, NativePermissionChoiceAnswerV1Schema, 
 import { NativePermissionChoiceV1Schema } from '../../sessions/permissions/nativeChoicesV1.js';
 import { PendingLocalIdSchema } from '../../sessions/pending/pendingLocalId.js';
 import { SessionDirectoryIntentV1Schema } from '../../sessions/creation/sessionDirectoryIntentV1.js';
+import { SessionInputForgeEvidenceV1Schema } from '../../sessions/messages/sessionInputForgeEvidenceV1.js';
+import { buildSessionInputForgeEvidenceAttachmentValueV1 } from '../../sessions/messages/sessionInputForgeEvidenceAttachmentV1.js';
 
 import {
   PluginContributionIdentityV1Schema,
@@ -827,6 +829,11 @@ export const PluginUiNewSessionSeedV1Schema = lazyZodSchema(() => z.strictObject
     value => ComposerAttachmentValueV1Schema.safeParse(value).success,
     { message: 'Current-screen context must fit the Composer attachment value contract.' },
   ))),
+  /** Descriptive data admitted through the declared native evidence attachment, never prompt text. */
+  forgeEvidence: z.optional(asProtocolZod(SessionInputForgeEvidenceV1Schema).check(z.refine(
+    value => ComposerAttachmentAuthorValueV1Schema.safeParse(buildSessionInputForgeEvidenceAttachmentValueV1(value)).success,
+    { message: 'Descriptive evidence must fit the Composer attachment value contract.' },
+  ))),
   profileId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   agentTarget: z.optional(AgentExecutionTargetV1Schema),
   origin: zMini.optional(PluginUiNewSessionSeedOriginV1Schema),
@@ -861,7 +868,7 @@ export const PluginUiNewSessionSeedV1Schema = lazyZodSchema(() => z.strictObject
    * consumes the seed read-only and freezes the parsed array.
    */
   attachments: z.optional(z.readonly(z.array(PluginUiNewSessionSeedAttachmentV1Schema).check(z.minLength(1), z.maxLength(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1)))),
-}).check(z.refine(seed => (seed.attachments?.length ?? 0) + (seed.currentUiContext ? 1 : 0) <= MAX_COMPOSER_ATTACHMENT_INSTANCES_V1,
+}).check(z.refine(seed => (seed.attachments?.length ?? 0) + (seed.currentUiContext ? 1 : 0) + (seed.forgeEvidence ? 1 : 0) <= MAX_COMPOSER_ATTACHMENT_INSTANCES_V1,
   { message: 'Seeded attachments must fit the Composer attachment instance contract.' }),
   z.refine(seed => !seed.directoryIntent || seed.placement?.directory === undefined
     && (seed.directoryIntent.kind !== 'managed' || seed.checkoutIntent === undefined || seed.checkoutIntent === 'none'),

@@ -10073,6 +10073,16 @@ depend on receiving that reader through their local React ancestry.
 Existing attachment value and instance bounds apply before the seed is written;
 an invalid attachment rejects the seed rather than silently dropping its context.
 
+Native Session input authors may supply typed `forgeEvidence` in the same
+`session.authoring.open` seed, without plugin caller credit. The Session owner
+converts it into the declared `happier.app-context/descriptive-evidence`
+attachment. Ordinary edits, badge removal and Send retain the Composer lifecycle;
+preparation and dispatch return typed evidence metadata, never trusted prompt
+context. Existing-Session `session.input.handoff` compose uses the same mounted
+attachment transaction and returns `composerUnavailable` if that target or
+declaration is unavailable. Generic plugin-authored attachments still need their
+own caller identity; this native compose binding refuses them without mutation.
+
 `VoiceClientToolDefinition` describes the sanitized,
 attempt-bound host tools supplied to providers; it is not an author registration
 owner, and effects still deliver canonical `tool_calls` through the Action barrier.

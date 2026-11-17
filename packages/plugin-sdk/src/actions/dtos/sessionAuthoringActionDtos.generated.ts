@@ -86,6 +86,21 @@ export type SessionAuthoringActionInputById = {
                 };
                 detail?: JsonValue | undefined;
             };
+            forgeEvidence?: undefined | {
+                v: 1;
+                items: readonly {
+                    source: {
+                        kind: 'alert' | 'databaseFinding' | 'entry' | 'hostedCi' | 'localTerminal' | 'pullRequest' | 'releaseNotes';
+                        label: string;
+                        url?: string;
+                    };
+                    author: {
+                        kind: 'bot' | 'person' | 'process' | 'unknown';
+                        label?: string;
+                    };
+                    text: string;
+                }[];
+            };
             profileId?: string | undefined;
             agentTarget?: undefined | {
                 kind: 'agent';
@@ -387,6 +402,21 @@ export type SessionAuthoringActionInputById = {
                     reference?: JsonValue | undefined;
                 };
                 detail?: JsonValue | undefined;
+            };
+            forgeEvidence?: undefined | {
+                v: 1;
+                items: readonly {
+                    source: {
+                        kind: 'alert' | 'databaseFinding' | 'entry' | 'hostedCi' | 'localTerminal' | 'pullRequest' | 'releaseNotes';
+                        label: string;
+                        url?: string;
+                    };
+                    author: {
+                        kind: 'bot' | 'person' | 'process' | 'unknown';
+                        label?: string;
+                    };
+                    text: string;
+                }[];
             };
             profileId?: string | undefined;
             agentTarget?: undefined | {
@@ -764,6 +794,21 @@ export type SessionAuthoringActionInputById = {
                             reference?: JsonValue | undefined;
                         };
                         detail?: JsonValue | undefined;
+                    };
+                    forgeEvidence?: undefined | {
+                        v: 1;
+                        items: readonly {
+                            source: {
+                                kind: 'alert' | 'databaseFinding' | 'entry' | 'hostedCi' | 'localTerminal' | 'pullRequest' | 'releaseNotes';
+                                label: string;
+                                url?: string;
+                            };
+                            author: {
+                                kind: 'bot' | 'person' | 'process' | 'unknown';
+                                label?: string;
+                            };
+                            text: string;
+                        }[];
                     };
                     profileId?: string | undefined;
                     agentTarget?: undefined | {
@@ -3454,6 +3499,21 @@ export type SessionAuthoringActionInputById = {
                         reference?: JsonValue | undefined;
                     };
                     detail?: JsonValue | undefined;
+                };
+                forgeEvidence?: undefined | {
+                    v: 1;
+                    items: readonly {
+                        source: {
+                            kind: 'alert' | 'databaseFinding' | 'entry' | 'hostedCi' | 'localTerminal' | 'pullRequest' | 'releaseNotes';
+                            label: string;
+                            url?: string;
+                        };
+                        author: {
+                            kind: 'bot' | 'person' | 'process' | 'unknown';
+                            label?: string;
+                        };
+                        text: string;
+                    }[];
                 };
                 profileId?: string | undefined;
                 agentTarget?: undefined | {

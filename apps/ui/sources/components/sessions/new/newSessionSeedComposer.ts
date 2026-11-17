@@ -5,6 +5,8 @@ import {
     type SessionNewSessionSeedOutcome,
 } from '@happier-dev/protocol/plugins/ui';
 import { MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { buildSessionInputForgeEvidenceAttachmentValueV1, SESSION_INPUT_FORGE_EVIDENCE_ATTACHMENT_IDENTITY_V1 }
+    from '@happier-dev/protocol/sessions/messages/sessionInputForgeEvidenceAttachmentV1';
 
 import { randomUUID } from '@/platform/randomUUID';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -144,6 +146,12 @@ export function seedAndOpenNewSession(params: Readonly<{
     // requests therefore wait in the Account + draft keyed pre-admission owner;
     // they never enter destructively consumed route data.
     const attachmentSeeds: readonly NewSessionComposerAttachmentSeedV1[] = [
+        ...(seed.forgeEvidence ? [{
+            instanceId: randomUUID(),
+            pluginId: SESSION_INPUT_FORGE_EVIDENCE_ATTACHMENT_IDENTITY_V1.pluginId,
+            attachmentLocalId: SESSION_INPUT_FORGE_EVIDENCE_ATTACHMENT_IDENTITY_V1.localId,
+            value: buildSessionInputForgeEvidenceAttachmentValueV1(seed.forgeEvidence),
+        }] : []),
         ...(seed.attachments ?? []).map((attachment) => ({
             instanceId: randomUUID(),
             pluginId: pluginId ?? '',

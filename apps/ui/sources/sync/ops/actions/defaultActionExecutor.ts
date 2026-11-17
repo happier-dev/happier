@@ -63,6 +63,7 @@ import { admitProjectWorkspaceCensusForSubject } from '@/sync/domains/workspaces
 import { createWidgetRefreshActionDepsV1 } from './widgetRefreshActionDeps';
 import { createWidgetDefinitionActionDepsV1 } from './widgetDefinitionActionDeps';
 import { executeComposerIngressAction } from './composerIngressActionRuntime';
+import { composeSessionInputHandoff } from './sessionInputHandoffCompose';
 import { createWidgetCompanionActionDepsV1 } from './widgetCompanionActionDeps';
 import { readWidgetEntityMovementAdmission } from './widgetEntityMovement';
 import { isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, readWidgetActionSurfacePortV1, flattenWidgetLayoutWidgetsV1, type WidgetInstanceRefV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
@@ -2665,6 +2666,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }
     },
     composerIngress: executeComposerIngressAction,
+    sessionInputHandoffCompose: composeSessionInputHandoff,
     mediaAnnotation: async (args) => {
       const { executeMediaAnnotationAction } = await import('./mediaAnnotationActionRuntime');
       return executeMediaAnnotationAction(args);

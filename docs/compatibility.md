@@ -444,6 +444,16 @@ release wire epoch, migration or compatibility adapter changes. The inspected
 
 ## Session authoring open (unreleased 0.3)
 
+The optional `seed.forgeEvidence` uses the closed Session descriptive-evidence
+schema. The seed owner admits it as the declared App context descriptive-evidence
+attachment, using the existing attachment value and instance bounds. Existing
+seed inputs remain valid. Matching development Protocol, SDK, App context and UI
+readers load together; preceding strict seed readers refuse the unknown field
+before opening a draft. No released wire epoch or persisted draft format changes.
+Evidence stays separate from editable work and uses the existing attachment
+preparation and dispatch metadata path. Existing-Session compose uses the same
+mounted attachment admission; an unavailable declaration refuses the operation.
+
 `session.authoring.open` remains the admission owner for first-party, agent and
 MCP New Session entry points. Its source-Session input additionally accepts a
 `seed` of editable changes, a `replay` cutoff using `SessionForkPointSchema`, and

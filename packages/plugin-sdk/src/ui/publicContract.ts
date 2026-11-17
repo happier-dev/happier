@@ -340,6 +340,7 @@ export type PluginUiNewSessionSeedV1 = DeepReadonly<{
     promptStack?: SessionServerStartSpawnDraftV1['promptStack'];
     prompt?: string;
     currentUiContext?: CurrentUiContextSnapshotV1;
+    forgeEvidence?: import('../sessions/forgeEvidence.js').SessionInputForgeEvidenceV1;
     profileId?: string;
     agentTarget?: SessionServerStartSpawnDraftV1['agentTarget'];
     origin?: SessionSpawnNewInputV2['authoringOrigin'];
