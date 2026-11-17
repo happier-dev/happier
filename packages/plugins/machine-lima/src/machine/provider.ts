@@ -383,9 +383,9 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
         const result = await deleteLimaInstance({ executor, ...resource });
         return { kind: result.kind === 'absent' ? 'confirmed' as const : 'unknown' as const };
       } catch (error) {
-        return projectMachineProvisionerActionFailure(error, () => ({
+        return {
           kind: refusalCode(error) === 'resource_mismatch' || refusalCode(error) === 'LIMA_IDENTITY_MISMATCH' ? 'refused' as const : 'unknown' as const,
-          code: refusalCode(error) }));
+          code: refusalCode(error), ...nativeFailure(error) };
       }
     },
     async exec(rawResource: LimaResource, argv: readonly string[], input?: Uint8Array) {

@@ -7,6 +7,7 @@ import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/e
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import { changeLimaPower, execLimaGuest, inspectLimaInstance, limaAcquisitionIdentity, openLimaGuestChannel, putLimaGuestFile } from '@happier-dev/plugin-sdk/machine-provisioners/lima';
 import { createLimaSdkExecutor } from './nativeExecutor.js';
+import { createLimaProvider } from './provider.js';
 
 const executable: ManagedExecutableRef = { kind: 'managedDependency', id: { pluginId: 'happier.machine.lima', localId: 'lima-cli' } };
 const testDirectory = mkdtempSync(join(process.platform === 'win32' ? tmpdir() : '/tmp', 'hpl-'));
@@ -21,6 +22,21 @@ function success(stdout = new Uint8Array()): PluginProcessResult {
 
 // The native filesystem store contract is POSIX; Lima supports Darwin and Linux hosts.
 describe.skipIf(process.platform === 'win32')('public Lima process transport', () => {
+  it('retains the native Delete cause while leaving an undeleted disk under cleanup custody', async () => {
+    const exec: Pick<ExecService, 'run'> = { run: async request => {
+      if (request.args?.[0] === 'list') return success(new TextEncoder().encode(JSON.stringify({ ...native, status: 'Stopped' })));
+      expect(request.args).toEqual(['delete', '--force', identity.instance]);
+      return { ...success(), termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } },
+        stderr: new TextEncoder().encode('disk busy') };
+    } };
+    const executor = createLimaSdkExecutor({ exec, executable, signal: new AbortController().signal });
+    await expect(createLimaProvider(executor).destroy({ ...identity, arch: 'x86_64', vmType: 'qemu',
+      cpus: 1, memoryBytes: 1024 ** 3, diskBytes: 1024 ** 3, image: 'https://example.test/lima.img', mounts: [] }))
+      .resolves.toEqual({ kind: 'unknown', code: 'lima_delete_failed', nativeCause: {
+        localCause: 'native_command_failed', command: 'delete', exitCode: 1, stderr: 'disk busy',
+      } });
+  });
+
   it('keeps the retained instance in the VZ usernet Unix URL for a short store', async () => {
     const exec: Pick<ExecService, 'run'> = { run: async request => {
       // Lima 2.2.1 usernet passes this endpoint through transport.Listen's URL parser.
