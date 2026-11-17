@@ -648,6 +648,8 @@ export type AdmittedClientActionContext = ActionExecutorContext & Readonly<{
 }>;
 
 export type ActionExecutorContext = Readonly<{
+  /** Opened requester registry-read operand; never part of public Action input. */
+  registryThemeContent?: import('../externalActionApi.js').ExternalActionRequestEnvelopeV1['registryThemeContent'];
   /** Exact host-local Preset selection for initial Pool binding; never Action/RPC input or admission authority. */
   managedPresetOrigin?: import('../../machines/managed/managedMachinePresetV1.js').ManagedMachinePresetAcquireOriginV1;
   /** Mounted recipient-catalog facts, scoped to their Home. Host-only presentation; never Action/RPC input. */

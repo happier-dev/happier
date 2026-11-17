@@ -462,7 +462,8 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     }
     return response.files.map(file => ({ path: file.path, unixMode: file.unixMode, bytes: decodeBase64(file.contentBase64) }));
   };
-  const execute = async (actionId: RegistryActionIdV1, input: unknown): Promise<unknown> => {
+  const execute = async (actionId: RegistryActionIdV1, input: unknown,
+    readIntent?: Pick<Extract<RegistryFetchRequestV1, { op: 'read' }>, 'themeContent'>): Promise<unknown> => {
     const value = REGISTRY_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input);
     let output: unknown;
     switch (actionId) {
@@ -583,7 +584,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       }
       case 'registries.items.read': {
         const args = REGISTRY_ACTION_INPUT_SCHEMAS_V1[actionId].parse(value);
-        const response = await fetchRequest({ op: 'read', ...args });
+        const response = await fetchRequest({ op: 'read', ...args, ...readIntent });
         if (response.op !== 'read') {
           throw new RegistryFetchErrorV1(response.op === 'error' && response.status.state !== 'ok'
             ? response.status : { state: 'invalid_source' });

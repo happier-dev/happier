@@ -130,7 +130,7 @@ export function createCliPromptsActionDeps(
         updates: filter => createCliRegistryUpdateCheck({ credentials: params.credentials!, serverId: params.serverId,
           serverHttpBaseUrl: params.serverHttpBaseUrl, signal: context.signal, operationContext: params.savedSecretOperationContext,
           readEnvironment: environmentId => readRegistryAppEnvironment(environmentId, context) }).checkNow(filter),
-      }).execute(actionId,input);
+      }).execute(actionId,input,context.registryThemeContent?{themeContent:context.registryThemeContent}:undefined);
     },
     promptDocGet: async ({ artifactId, signal }, context) => {
       if (!approvalsStore) return notSupported();

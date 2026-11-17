@@ -103,6 +103,7 @@ const requestShape = () => ({
   resourceContinuation: z.optional(MachineServiceLogsResourceContinuationV1Schema),
   machineServiceLogsGeneration: z.optional(MachineServiceLogsGenerationV1Schema),
 });
+  registryThemeContent: ExternalActionRequestEnvelopeV1Schema.shape.registryThemeContent,
 const RequestSchema = lazyZodSchema(() => z.union([
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ApiTokenBindingSchema, { ...requestShape(), apiTokenContentAccess: z.optional(ApiTokenContentAccessSchema) })), (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AccountBindingSchema, requestShape())),
 ]).check(z.superRefine((value, context) => {
@@ -157,12 +158,14 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
   resourceContinuation?: z.infer<typeof MachineServiceLogsResourceContinuationV1Schema>;
   machineServiceLogsGeneration?: z.infer<typeof MachineServiceLogsGenerationV1Schema>;
   apiTokenContentAccess?: ExternalActionApiTokenContentAccessV2;
+  registryThemeContent?: z.infer<typeof ExternalActionRequestEnvelopeV1Schema>['registryThemeContent'];
   sessionSpawnAdmission?: ExternalActionRequestEnvelopeV2['sessionSpawnAdmission'];
   pluginInvocation?: ExternalActionRequestEnvelopeV2['pluginInvocation'];
 }>): ExternalActionRequestEnvelopeV2 {
   const operands = { ...(params.workflowPreparation ? { workflowPreparation: params.workflowPreparation } : {}),
     ...(params.resourceContinuation ? { resourceContinuation: params.resourceContinuation } : {}),
-    ...(params.machineServiceLogsGeneration ? { machineServiceLogsGeneration: params.machineServiceLogsGeneration } : {}) };
+    ...(params.machineServiceLogsGeneration ? { machineServiceLogsGeneration: params.machineServiceLogsGeneration } : {}),
+    ...(params.registryThemeContent ? { registryThemeContent: params.registryThemeContent } : {}) };
   const payload = RequestSchema.parse({ ...params.binding, v: 2, direction: 'request', input: params.input, ...operands,
     ...(params.apiTokenContentAccess ? { apiTokenContentAccess: params.apiTokenContentAccess } : {}) });
   if (params.material.type !== 'dataKey' || params.material.machineKey.length !== 32) throw new TypeError('Invalid external Action material');
@@ -234,6 +237,7 @@ export function openExternalActionRequestV2(params: Readonly<{
   apiTokenContentAccess?: ExternalActionApiTokenContentAccessV2 }> | null {
   let phase: Parameters<NonNullable<typeof params.onFailure>>[0]['phase'] = 'envelope_parse';
   const refused = (error?: unknown): null => {
+  registryThemeContent?: z.infer<typeof ExternalActionRequestEnvelopeV1Schema>['registryThemeContent'];
     // Observability must not change cryptographic admission, even if a host's
     // diagnostic sink itself fails. No decoded value is sent to the witness.
     try { params.onFailure?.({ phase, ...(error === undefined ? {} : { error }) }); } catch { /* Best-effort witness. */ }
@@ -306,7 +310,8 @@ export function openExternalActionRequestV2(params: Readonly<{
     phase = 'plaintext_limit';
     const operands = { ...(decoded.data.workflowPreparation ? { workflowPreparation: decoded.data.workflowPreparation } : {}),
       ...(decoded.data.resourceContinuation ? { resourceContinuation: decoded.data.resourceContinuation } : {}),
-      ...(decoded.data.machineServiceLogsGeneration ? { machineServiceLogsGeneration: decoded.data.machineServiceLogsGeneration } : {}) };
+      ...(decoded.data.machineServiceLogsGeneration ? { machineServiceLogsGeneration: decoded.data.machineServiceLogsGeneration } : {}),
+      ...(decoded.data.registryThemeContent ? { registryThemeContent: decoded.data.registryThemeContent } : {}) };
     return isExternalActionRequestWithinLimit({ v: 1, requestId: decoded.data.requestId,
       target: decoded.data.target, input: decoded.data.input, ...operands }) ? { input: decoded.data.input, ...operands,
         ...('apiTokenContentAccess' in decoded.data && decoded.data.apiTokenContentAccess

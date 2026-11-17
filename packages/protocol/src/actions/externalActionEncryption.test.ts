@@ -40,6 +40,17 @@ const binding = {
 const randomBytes = (length: number) => new Uint8Array(length).fill(2);
 
 describe('whole external Action encryption', () => {
+  it('keeps the finite theme-content read intent inside its authenticated requester envelope', () => {
+    const themeBinding = { ...binding, actionId: 'registries.items.read' };
+    const input = { kind: 'theme', sourceId: 'private-open-vsx', itemId: 'sample/palette' };
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: themeBinding, input, registryThemeContent: true, material, randomBytes });
+    expect(Reflect.has(request, 'registryThemeContent')).toBe(false);
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      envelope: request, binding: themeBinding, material })).toEqual({ input, registryThemeContent: true });
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      envelope: request, binding: { ...themeBinding, requestId: 'other' }, material })).toBeNull();
+  });
   it.each(['machines.presets.prepare', 'machines.presets.archive'])('authenticates the exact %s scope while keeping its payload encrypted', actionId => {
     const prepareBinding = { ...binding, actionId };
     const input = { homeId: binding.serverIdentityId, id: 'private-preset', expectedRevision: 7,

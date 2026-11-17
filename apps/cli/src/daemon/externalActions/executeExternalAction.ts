@@ -423,6 +423,7 @@ async function executeExternalActionRequest(input: Readonly<{
   try {
   let decodedInput: unknown;
   let decodedWorkflowPreparation: ActionExecutorContext['workflowPreparation'];
+  let registryThemeContent: ActionExecutorContext['registryThemeContent'];
   let decodedTokenContentAccess: NonNullable<ReturnType<typeof openExternalActionRequestV2>>['apiTokenContentAccess'];
   let hasProtectedLogsOperands = false;
   let logsOperands: Pick<NonNullable<ReturnType<typeof openExternalActionRequestV2>>, 'resourceContinuation' | 'machineServiceLogsGeneration'> = {};
@@ -487,6 +488,7 @@ async function executeExternalActionRequest(input: Readonly<{
     }
     decodedInput = opened.input;
     decodedWorkflowPreparation = opened.workflowPreparation;
+    registryThemeContent = opened.registryThemeContent;
     // Whole-Action transport encryption does not imply Account content custody.
     decodedTokenContentAccess = doesExternalActionConsumeRequesterAccountContentV1({ actionId: actionId.data,
       input: opened.input, target: binding.target })
@@ -507,6 +509,7 @@ async function executeExternalActionRequest(input: Readonly<{
     diagnoseSessionInput('strict_envelope_open', 'plain_v1');
     decodedInput = envelope.data.input;
     decodedWorkflowPreparation = envelope.data.workflowPreparation;
+    registryThemeContent = envelope.data.registryThemeContent;
     logsOperands = envelope.data;
     hasProtectedLogsOperands = envelope.data.resourceContinuation !== undefined || envelope.data.machineServiceLogsGeneration !== undefined;
   }
@@ -974,6 +977,7 @@ async function executeExternalActionRequest(input: Readonly<{
             accountId: apiTokenPrincipal.accountId,
             principalId: apiTokenPrincipal.principalId,
             credentialId: apiTokenPrincipal.credentialId,
+    ...(registryThemeContent ? { registryThemeContent } : {}),
             grant: executionAuthorization?.success && 'grant' in executionAuthorization.data.binding
               ? executionAuthorization.data.binding.grant
               : apiTokenPrincipal.grant,
