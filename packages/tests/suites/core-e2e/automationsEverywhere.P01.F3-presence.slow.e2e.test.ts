@@ -10,6 +10,7 @@ import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibili
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
+import { readWorkflowChildSession } from '../../src/testkit/workflowChildSession';
 
 let fixture: TeamSetupFFixture | undefined;
 afterEach(async () => { await fixture?.stop(); fixture = undefined; }, 0);
@@ -62,7 +63,9 @@ it('P01.F3 server presence admits one ordinary Run without a daemon observer', a
   expect(await runs()).toEqual([]);
   await producer.daemon.stop();
   await waitFor(async () => { const current = await runs(); expect(current.length).toBeLessThanOrEqual(1);
-    return current.length === 1 && typeof current[0]!.producedSessionId === 'string';
+    if (current.length !== 1) return false;
+    return await readWorkflowChildSession({ execute: actor.execute, serverBaseUrl: fixture!.server.baseUrl,
+      token: actor.credentials.token, runId: current[0]!.id, blockId: 'diagnose' }) !== null;
   }, { failFast: true, context: 'The committed server presence transition admits an ordinary diagnosis Run' });
   expect((await runs())[0]!.cause).toMatchObject({ kind: 'trigger', triggerKind: 'pluginEvent',
     triggerId: trigger.triggerId, evidence: { eventRef: event.event.identity } });

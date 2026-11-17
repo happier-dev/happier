@@ -12,6 +12,7 @@ import { AutomationV3RunListResponseSchema, DeploymentReceiptListResultV1Schema,
 import { startAutomationsEverywhereDeploymentFixture } from '../../src/testkit/automationsEverywhereDeployment';
 import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
+import { readWorkflowChildSession } from '../../src/testkit/workflowChildSession';
 
 let setup: Awaited<ReturnType<typeof startAutomationsEverywhereDeploymentFixture>> | undefined;
 afterEach(async () => { await setup?.fixture.stop(); setup = undefined; }, 0);
@@ -37,8 +38,7 @@ it('P01.F3 remote resource event reaches ordinary effects', async () => {
   expect(configured.ok, JSON.stringify(configured)).toBe(true);
   if (!configured.ok) throw new Error(configured.errorCode);
   const source = PluginEventAutomationSetupResultV1Schema.parse(configured.result);
-  const linked = await actor.execute('workflow.trigger.add', {
-    name: 'Diagnose any remote deployment failure',
+  const linked = await actor.executeAsPerson('workflow.trigger.add', {
     target: { kind: 'inline', definition: { version: 1,
       defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
       blocks: [{ kind: 'step', id: 'diagnose', document: { text: 'Diagnose the failed remote deployment.', references: [], attachments: [] },
@@ -65,7 +65,9 @@ it('P01.F3 remote resource event reaches ordinary effects', async () => {
   await actor.execute(DEPLOYMENT_DEPLOY_ACTION_ID_V1, deployInput,
     { presentUserConfirmation: { actionId: DEPLOYMENT_DEPLOY_ACTION_ID_V1 } });
   await waitFor(async () => { const current = await runs(); expect(current.length).toBeLessThanOrEqual(1);
-    return current.length === 1 && typeof current[0]!.producedSessionId === 'string';
+    if (current.length !== 1) return false;
+    return await readWorkflowChildSession({ execute: actor.execute, serverBaseUrl: fixture.server.baseUrl,
+      token: actor.credentials.token, runId: current[0]!.id, blockId: 'diagnose' }) !== null;
   }, { failFast: true, context: 'The second Machine receipt reaches one ordinary Run and diagnosis Session' });
   expect((await runs())[0]!.cause).toMatchObject({ kind: 'trigger', triggerKind: 'pluginEvent',
     triggerId: trigger.triggerId, evidence: { eventRef: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed } });
