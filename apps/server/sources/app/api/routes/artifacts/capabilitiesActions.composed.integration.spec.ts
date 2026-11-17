@@ -50,6 +50,7 @@ import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1, McpServerCatalogRowReadResponseV1Sche
 import { PromptBundleArtifactHeaderV1Schema, PromptBundleBodyV1Schema } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryRowReadResponseV1Schema, openPromptLibraryContentV1,
     PromptLibraryRowMutationV1Schema, PromptLibraryRowMutationResponseV1Schema, PromptLibraryRowsListResponseV1Schema,
+    PromptLibraryRowsInitializationV1Schema, PromptLibraryRowsInitializationResponseV1Schema,
     sealPromptLibraryContentV1, type PromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { loadPromptLibraryCatalogV1, readPromptLibraryCatalogRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { removeSkillRulesV1 } from '@happier-dev/protocol/prompts/library/skillRulesActionsV1';
@@ -291,10 +292,18 @@ describe('capability Actions through the production CLI host, HTTP, SQLite and S
             expect(response.status, await response.clone().text()).toBe(200);
             return PromptLibraryRowMutationResponseV1Schema.parse(await response.json());
         };
+        // First activation goes through the batched row route, as the production clients do.
+        const initializeRecords = async (input: { records: readonly PromptLibraryRecordV1[]; sourceSettingsVersion: number }) => {
+            const initialization = PromptLibraryRowsInitializationV1Schema.parse({ sourceSettingsVersion: input.sourceSettingsVersion,
+                rows: input.records.map(record => ({ key: record.key, content: sealPromptLibraryContentV1({ mode: 'plain', material: null, record }) })) });
+            const response = await fetch(`${origin}${PROMPT_LIBRARY_ROWS_ROUTE_V1}`, { method: 'POST', headers, body: JSON.stringify(initialization) });
+            expect(response.status, await response.clone().text()).toBe(200);
+            return PromptLibraryRowsInitializationResponseV1Schema.parse(await response.json());
+        };
         let artifactsAvailable = true;
         const load = () => loadPromptLibraryCatalogV1({ mode: 'plain', material: null, readRows,
             transfer: { readSourceSnapshot: async () => ({ raw: { promptStacksV1: capturedPickerStack.stacks }, version: 0 }),
-                initializeRecord: writeRecord },
+                initializeRecords },
             skillMigration: { writeRecord, readArtifact: async ref => artifactsAvailable || ref.artifactId !== 'session-control-skill'
                 ? capturedPickerStack.artifacts.find(artifact => artifact.id === ref.artifactId) ?? null : null },
         });

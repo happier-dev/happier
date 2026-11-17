@@ -7,7 +7,7 @@ import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/act
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { buildPromptLibraryPhysicalKeyV1, PromptLibraryCatalogKeyV1Schema, PromptLibraryRecordV1Schema,
   StoredPromptLibraryRecordV1Schema, PromptLibraryRowMutationV1Schema, PromptLibraryRowMutationResponseV1Schema,
-  PROMPT_LIBRARY_ROWS_ROUTE_V1, openPromptLibraryContentV1, sealPromptLibraryContentV1,
+  PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryRowsInitializationV1Schema, openPromptLibraryContentV1, sealPromptLibraryContentV1,
   type PromptLibraryCatalogKeyV1, type PromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { PromptBundleArtifactHeaderV1Schema, PromptBundleBodyV1Schema } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
@@ -325,7 +325,7 @@ describe('Prompt catalog captured Account mutation publication', () => {
       if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
       if (path === '/v2/account/settings') return Response.json({ version: 7, content: { t: 'plain', v: {} } });
       if (path === '/v1/artifacts') return Response.json([]);
-      if (path === '/v1/account/entity-rows/prompt-library') {
+      if (path === '/v1/account/entity-rows/prompt-library' && (init?.method ?? 'GET') === 'GET') {
         catalogReads += 1;
         // A duplicate autonomous read must remain observable even if it forms
         // a microtask loop; fail this HTTP response rather than starving timers.
@@ -334,9 +334,9 @@ describe('Prompt catalog captured Account mutation publication', () => {
           key, revision, content: { t: 'plain', v: emptyPromptLibraryRecordV1(key) },
         })) });
       }
-      if (path === `${PROMPT_LIBRARY_ROWS_ROUTE_V1}/skill-usage` && init?.method === 'POST') {
-        const mutation = PromptLibraryRowMutationV1Schema.parse(JSON.parse(String(init.body)));
-        expect(mutation.expectedRevision).toBe('absent');
+      if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1 && init?.method === 'POST') {
+        const initialization = PromptLibraryRowsInitializationV1Schema.parse(JSON.parse(String(init.body)));
+        expect(initialization.rows.map(row => row.key)).toEqual(['skill-usage']);
         initializationAttempts += 1;
         return Response.json({ statusCode: 400, code: 'FST_ERR_VALIDATION', error: 'Bad Request',
           message: 'params/key Value does not match the canonical Protocol schema' }, { status: 400 });
@@ -386,6 +386,56 @@ describe('Prompt catalog captured Account mutation publication', () => {
         expect(getPromptLibraryCatalogValue(scope, 'role-overrides')).toMatchObject({ status: 'ready', revision, stale: false });
       }
     } finally { release(); }
+  });
+
+  // A fresh Account's first catalog read (the composer's first `/`) activates every row: one write
+  // with one Account admission, not one write plus its encryption witnesses per row.
+  it('activates every absent row of a fresh Account in one write', async () => {
+    const accountId = 'account-prompt-first-activation';
+    const rows = new Map<PromptLibraryCatalogKeyV1, PromptLibraryRecordV1>();
+    const requests = new Map<string, number>();
+    setRuntimeFetch(async (url, init) => {
+      const path = new URL(String(url)).pathname;
+      const key = `${init?.method ?? 'GET'} ${path}`;
+      requests.set(key, (requests.get(key) ?? 0) + 1);
+      if (path === '/health' || path === '/v1/auth/ping') return Response.json({ ok: true });
+      if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+      if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+      if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+      if (path === '/v2/account/settings') return Response.json({ version: 7, content: { t: 'plain', v: {} } });
+      if (path === '/v2/account/settings/history') return Response.json({ snapshots: [] });
+      if (path === '/v1/artifacts') return Response.json([]);
+      if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1 && (init?.method ?? 'GET') === 'GET') return Response.json({ status: 'listed',
+        rows: [...rows.values()].map(record => ({ key: record.key, revision: 1, content: { t: 'plain', v: record } })) });
+      if (path.startsWith(`${PROMPT_LIBRARY_ROWS_ROUTE_V1}/`) && init?.method === 'POST') {
+        const mutation = PromptLibraryRowMutationV1Schema.parse(JSON.parse(String(init.body)));
+        if (mutation.content?.t === 'plain') rows.set(mutation.content.v.key, mutation.content.v);
+        return Response.json({ status: 'updated', revision: 1, cursor: 1 });
+      }
+      if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1 && init?.method === 'POST') {
+        const initialization = PromptLibraryRowsInitializationV1Schema.parse(JSON.parse(String(init.body)));
+        expect(initialization.sourceSettingsVersion).toBe(7);
+        for (const row of initialization.rows) if (row.content.t === 'plain') rows.set(row.key, row.content.v);
+        return Response.json({ status: 'updated', rows: initialization.rows.map(row => ({ key: row.key, revision: 1, cursor: 1 })) });
+      }
+      return Response.json({ error: 'not_found' }, { status: 404 });
+    });
+    await disconnectActiveServerConnection();
+    const home = await upsertAndActivateServer({ serverUrl: 'https://prompt-first-activation.example.test', name: 'First activation' });
+    const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature` };
+    await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, credentials);
+    await restoreConnectionToActiveServer(credentials);
+    const scope = { serverId: home.id, accountId };
+    getStorage().setState({ profileScope: scope, settingsScope: scope });
+    await vi.waitFor(() => expect(getStorage().getState().settingsVersion).toBe(7));
+    requests.clear();
+    const projection = await readPromptLibraryCatalogProjection(scope);
+    expect(projection.catalog.status).toBe('ready');
+    expect([...rows.keys()].sort()).toEqual([...PromptLibraryCatalogKeyV1Schema.options].sort());
+    const writes = [...requests].filter(([key]) => key.startsWith('POST ')).reduce((sum, [, count]) => sum + count, 0);
+    expect(writes).toBe(1);
+    // One fresh-authority admission for the whole activation (was one per row).
+    expect(requests.get(`GET /v1/account/encryption/currentness`) ?? 0).toBeLessThanOrEqual(3);
   });
 
   it('withdraws stale Role authority and publishes the durable receipt despite caller cancellation', async () => {

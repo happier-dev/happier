@@ -3,6 +3,19 @@ import { emptyPromptLibraryRecordV1, loadPromptLibraryCatalogV1, readPromptLibra
 import { PromptLibraryCatalogKeyV1Schema, sealPromptLibraryContentV1, type PromptLibraryRowsListResponseV1Schema } from './promptLibraryRowsV1.js';
 import { retainLegacyRoleArtifactsV1, type RoleArtifactStoreV1 } from '../roles/accountRoleActions.js';
 
+/** Test adapter: drive the batched first-activation write through a per-record fake. */
+function initializeEach(write: (input: Readonly<{ record: any; expectedRevision: 'absent'; sourceSettingsVersion: number }>) => Promise<any>) {
+  return async (input: Readonly<{ records: readonly any[]; sourceSettingsVersion: number }>): Promise<any> => {
+    const rows: Array<{ key: any; revision: number; cursor: number }> = [];
+    for (const record of input.records) {
+      const receipt = await write({ record, expectedRevision: 'absent', sourceSettingsVersion: input.sourceSettingsVersion });
+      if (receipt.status !== 'updated') return receipt;
+      rows.push({ key: record.key, revision: receipt.revision, cursor: receipt.cursor });
+    }
+    return { status: 'updated', rows };
+  };
+}
+
 describe('Prompt library destination authority', () => {
   it('activates retained rows for a finite read without source cleanup, then respects destination deletion', async () => {
     const rows: Extract<ReturnType<typeof PromptLibraryRowsListResponseV1Schema.parse>, { status: 'listed' }>['rows'] = [];
@@ -13,12 +26,12 @@ describe('Prompt library destination authority', () => {
           sourceReads++;
           return { raw: { promptFoldersV1: { v: 1, folders: [{ id: 'retained', name: 'Retained' }] } }, version: 7 };
         },
-        initializeRecord: async input => {
+        initializeRecords: initializeEach(async input => {
           expect(input.sourceSettingsVersion).toBe(7);
           rows.push({ key: input.record.key, revision: 1,
             content: sealPromptLibraryContentV1({ record: input.record, mode: 'plain', material: null }) });
           return { status: 'updated', revision: 1, cursor: 1 };
-        },
+        }),
         replaceSource: async () => { throw new Error('Finite read must leave source cleanup to hydration'); },
         normalizeHistory: async () => { throw new Error('Finite read must not read history'); },
       } });
@@ -53,7 +66,7 @@ describe('Prompt library destination authority', () => {
           rows[index] = { key: record.key, revision: 2, content: { t: 'plain', v: record } };
           return { status: 'updated', revision: 2, cursor: 2 }; } },
       transfer: { readSourceSnapshot: async () => ({ raw: {}, version: 7 }),
-        initializeRecord: async () => { throw new Error('Complete received authority must not initialize'); },
+        initializeRecords: initializeEach(async () => { throw new Error('Complete received authority must not initialize'); }),
         replaceSource: async () => ({ status: 'applied', settingsVersion: 8 }) } });
     try { await classificationStarted; expect(published).toBe(false); } finally { release(); }
     const final = await loading;
@@ -74,11 +87,11 @@ describe('Prompt library destination authority', () => {
       contextSelectionsV1: { v: 1, selectionsByKey: {} }, rolesV1: { v: 1, overrides: {} } };
     const load = () => loadPromptLibraryCatalogV1({ mode: 'plain', material: null, readRows: async () => ({ status: 'listed', rows }), transfer: {
       readSourceSnapshot: async () => ({ raw, version: 7 }),
-      initializeRecord: async input => {
+      initializeRecords: initializeEach(async input => {
         initialized.push(input.record);
         rows.push({ key: input.record.key, revision: 1, content: { t: 'plain', v: input.record } });
         return { status: 'updated', revision: 1, cursor: 1 };
-      },
+      }),
       replaceSource: async input => { raw = input.raw; return { status: 'applied', settingsVersion: 8 }; },
       normalizeHistory: async input => { retired = input.activeTransferredRoots; return { status: 'complete' }; },
     } });
@@ -110,7 +123,7 @@ describe('Prompt library destination authority', () => {
         readable = readPromptLibraryCatalogRecordV1({ catalog, key: 'role-overrides' }).status === 'ready';
       }, transfer: {
         readSourceSnapshot: async () => { reachedSource(); await source; return { raw: {}, version: 7 }; },
-        initializeRecord: async () => { throw new Error('Existing authority cannot reseed'); },
+        initializeRecords: initializeEach(async () => { throw new Error('Existing authority cannot reseed'); }),
         replaceSource: async () => ({ status: 'applied', settingsVersion: 8 }),
       } });
     try {
@@ -124,11 +137,11 @@ describe('Prompt library destination authority', () => {
     const catalog = await loadPromptLibraryCatalogV1({ mode: 'plain', material: null, readRows: async () => response,
       transfer: {
         readSourceSnapshot: async () => ({ raw: { promptFoldersV1: retained }, version: 7 }),
-        initializeRecord: async input => {
+        initializeRecords: initializeEach(async input => {
           const content = sealPromptLibraryContentV1({ record: input.record, mode: 'plain', material: null });
           response.rows.push({ key: input.record.key, revision: 1, content });
           return { status: 'updated', revision: 1, cursor: 1 };
-        },
+        }),
       },
     });
     expect(readPromptLibraryCatalogRecordV1({ catalog, key: 'folders' })).toMatchObject({ status: 'ready',
@@ -160,7 +173,7 @@ describe('Prompt library destination authority', () => {
     const load = () => loadPromptLibraryCatalogV1({ mode: 'plain', material: null,
       readRows: async () => ({ status: 'listed', rows }), transfer: {
         readSourceSnapshot: async () => ({ raw, version: sourceVersion }),
-        initializeRecord: async () => { throw new Error('Existing rows cannot reseed'); },
+        initializeRecords: initializeEach(async () => { throw new Error('Existing rows cannot reseed'); }),
         retainLegacyRoleArtifacts: rawSettings => retainLegacyRoleArtifactsV1({ rawSettings, accountId: 'account', artifactStore }),
         replaceSource: async input => { raw = input.raw; sourceVersion += 1; return { status: 'applied', settingsVersion: sourceVersion }; },
         normalizeHistory: async input => {
@@ -183,7 +196,7 @@ describe('Prompt library destination authority', () => {
         content: { t: 'plain', v: emptyPromptLibraryRecordV1('role-overrides') } }] }),
       transfer: {
         readSourceSnapshot: async () => { throw new Error('Home Settings read unavailable'); },
-        initializeRecord: async () => { throw new Error('Unobserved source cannot initialize'); },
+        initializeRecords: initializeEach(async () => { throw new Error('Unobserved source cannot initialize'); }),
       },
     });
     expect(readPromptLibraryCatalogRecordV1({ catalog, key: 'role-overrides' })).toMatchObject({ status: 'ready', authority: 'active', revision: 4 });
@@ -195,7 +208,7 @@ describe('Prompt library destination authority', () => {
         content: { t: 'plain', v: emptyPromptLibraryRecordV1('role-overrides') } }] }),
       transfer: {
         readSourceSnapshot: async () => ({ raw: {}, version: 7 }),
-        initializeRecord: async () => { throw new Error('Home mutation transport unavailable'); },
+        initializeRecords: initializeEach(async () => { throw new Error('Home mutation transport unavailable'); }),
       },
     });
     expect(readPromptLibraryCatalogRecordV1({ catalog, key: 'role-overrides' })).toMatchObject({ status: 'ready', authority: 'active', revision: 4 });
@@ -208,7 +221,7 @@ describe('Prompt library destination authority', () => {
     const catalog = await loadPromptLibraryCatalogV1({ mode: 'plain', material: null, readRows: async () => ({ status: 'listed', rows }),
       transfer: {
         readSourceSnapshot: async () => { throw new Error('Home Settings read unavailable'); },
-        initializeRecord: async () => { throw new Error('Existing authority cannot be reseeded'); },
+        initializeRecords: initializeEach(async () => { throw new Error('Existing authority cannot be reseeded'); }),
         replaceSource: async () => { throw new Error('Unavailable source cannot be removed'); },
       },
     });
@@ -225,7 +238,7 @@ describe('Prompt library destination authority', () => {
     await loadPromptLibraryCatalogV1({ mode: 'plain', material: null, readRows: async () => ({ status: 'listed', rows }),
       transfer: {
         readSourceSnapshot: async () => ({ raw, version: 7 }),
-        initializeRecord: async () => ({ status: 'conflict', revision: 4 }),
+        initializeRecords: initializeEach(async () => ({ status: 'conflict', revision: 4 })),
         replaceSource: async input => {
           if (input.expectedVersion !== 7) return { status: 'conflict', currentSettingsVersion: 7 };
           raw = input.raw;
@@ -241,11 +254,11 @@ describe('Prompt library destination authority', () => {
     const catalog = await loadPromptLibraryCatalogV1({ mode: 'plain', material: null, readRows: async () => response,
       transfer: {
         readSourceSnapshot: async () => ({ raw: { promptStacksV1: { v: 1, surfaces: { coding: [stack], voice: [], profilesById: {} } } }, version: 7 }),
-        initializeRecord: async input => {
+        initializeRecords: initializeEach(async input => {
           if (input.sourceSettingsVersion !== 7) return { status: 'settings-conflict', revision: 7 };
           response.rows.push({ key: input.record.key, revision: 1, content: { t: 'plain', v: input.record } });
           return { status: 'updated', revision: 1, cursor: 1 };
-        },
+        }),
       },
     });
     const coding = readPromptLibraryCatalogRecordV1({ catalog, key: 'coding' });
@@ -262,7 +275,7 @@ describe('Prompt library destination authority', () => {
       readRows: async () => ({ status: 'listed', rows }),
       transfer: {
         readSourceSnapshot: async () => ({ raw: {}, version: 4 }),
-        initializeRecord: async input => { imported.push(input.record.key); return { status: 'conflict', revision: 2 }; },
+        initializeRecords: initializeEach(async input => { imported.push(input.record.key); return { status: 'conflict', revision: 2 }; }),
       },
     });
     expect(imported).toContain('coding');
@@ -308,10 +321,10 @@ describe('Prompt library destination authority', () => {
       const load = () => loadPromptLibraryCatalogV1({ mode: 'plain', material: null,
         readRows: async () => ({ status: 'listed', rows }), transfer: {
           readSourceSnapshot: async () => ({ raw, version: 7 }),
-          initializeRecord: async ({ record }) => {
+          initializeRecords: initializeEach(async ({ record }) => {
             rows.push({ key: record.key, revision: 1, content: sealPromptLibraryContentV1({ record, mode: 'plain', material: null }) });
             return { status: 'updated', revision: 1, cursor: 1 };
-          },
+          }),
           replaceSource: async input => { raw = input.raw; return { status: 'applied', settingsVersion: 8 }; },
           normalizeHistory: async input => { normalizedRoots.push(...input.activeTransferredRoots); return { status: 'complete' }; },
         } });

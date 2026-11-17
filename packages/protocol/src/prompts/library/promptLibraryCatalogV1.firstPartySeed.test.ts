@@ -4,6 +4,19 @@ import { PromptLibraryCatalogKeyV1Schema, type PromptLibraryRecordV1, type Promp
 import { mutateSkillRulesV1 } from './skillRulesActionsV1.js';
 import { readSkillLibraryCatalog } from './skills/readSkillLibraryCatalog.js';
 
+/** Test adapter: drive the batched first-activation write through a per-record fake. */
+function initializeEach(write: (input: Readonly<{ record: any; expectedRevision: 'absent'; sourceSettingsVersion: number }>) => Promise<any>) {
+  return async (input: Readonly<{ records: readonly any[]; sourceSettingsVersion: number }>): Promise<any> => {
+    const rows: Array<{ key: any; revision: number; cursor: number }> = [];
+    for (const record of input.records) {
+      const receipt = await write({ record, expectedRevision: 'absent', sourceSettingsVersion: input.sourceSettingsVersion });
+      if (receipt.status !== 'updated') return receipt;
+      rows.push({ key: record.key, revision: receipt.revision, cursor: receipt.cursor });
+    }
+    return { status: 'updated', rows };
+  };
+}
+
 describe('first-party skill rules initial content', () => {
   it('seeds only an absent row; reload, Off, removal, pre-existing empty row and deletion never reseed', async () => {
     const rows: Extract<ReturnType<typeof PromptLibraryRowsListResponseV1Schema.parse>, { status: 'listed' }>['rows'] =
@@ -11,10 +24,10 @@ describe('first-party skill rules initial content', () => {
         content: { t: 'plain', v: emptyPromptLibraryRecordV1(key) } }));
     const writes: PromptLibraryRecordV1[] = [];
     const load = () => loadPromptLibraryCatalogV1({ mode: 'plain', material: null, readRows: async () => ({ status: 'listed', rows }),
-      transfer: { readSourceSnapshot: async () => ({ raw: {}, version: 7 }), initializeRecord: async input => {
+      transfer: { readSourceSnapshot: async () => ({ raw: {}, version: 7 }), initializeRecords: initializeEach(async input => {
         writes.push(input.record); rows.push({ key: input.record.key, revision: 1, content: { t: 'plain', v: input.record } });
         return { status: 'updated', revision: 1, cursor: 1 };
-      } } });
+      }) } });
     const first = await load();
     expect(readPromptLibraryCatalogRecordV1({ catalog: first, key: 'skill-rules' })).toMatchObject({ status: 'ready',
       record: { value: { rules: [{ id: 'first-party:happier:happier', skillId: 'happier:happier', target: { t: 'allMachines' }, enabled: true }] } } });

@@ -10,7 +10,7 @@ import { readStackSkillIdsV1, convertStackSkillEntriesV1, migrateStackSkillRules
 import { isPromptStackSystemAppendPlacementV1 } from './promptPlacementV1.js';
 import { PromptLibraryCatalogKeyV1Schema, StoredPromptLibraryRecordV1Schema, openPromptLibraryContentV1,
   type PromptLibraryCatalogKeyV1, type PromptLibraryRecordV1, type PromptLibraryRowsListResponseV1Schema,
-  type PromptLibraryRowMutationResponseV1Schema } from './promptLibraryRowsV1.js';
+  type PromptLibraryRowMutationResponseV1Schema, type PromptLibraryRowsInitializationResponseV1 } from './promptLibraryRowsV1.js';
 
 export type PromptLibraryCatalogUnavailableReasonV1 = 'account-not-found' | 'account-inconsistent' | 'account-mode-mismatch'
   | 'encryption-material-unavailable' | 'invalid-stored-content' | 'unauthorized' | 'forbidden' | 'unsupported'
@@ -30,8 +30,9 @@ export type PromptLibraryCatalogSnapshotV1 =
 
 export type PromptLibrarySourceTransferV1 = Readonly<{
   readSourceSnapshot(): Promise<Readonly<{ raw: Readonly<Record<string, unknown>>; version: number }>>;
-  initializeRecord(input: Readonly<{ record: PromptLibraryRecordV1; expectedRevision: 'absent'; sourceSettingsVersion: number }>):
-    Promise<ReturnType<typeof PromptLibraryRowMutationResponseV1Schema.parse>>;
+  /** Every absent row's first authority in one Account write (one fence, one source-version check). */
+  initializeRecords(input: Readonly<{ records: readonly PromptLibraryRecordV1[]; sourceSettingsVersion: number }>):
+    Promise<PromptLibraryRowsInitializationResponseV1>;
   replaceSource?(input: Readonly<{ raw: Readonly<Record<string, unknown>>; expectedVersion: number }>): Promise<
     Readonly<{ status: 'applied'; settingsVersion: number }> | Readonly<{ status: 'conflict'; currentSettingsVersion: number }>
     | Readonly<{ status: 'outcomeUnknown'; lastKnownSettingsVersion: number }> | Readonly<{ status: 'rejected' }>
@@ -120,18 +121,19 @@ export async function loadPromptLibraryCatalogV1(input: PromptLibraryLoadInputV1
   const malformed: PromptLibraryCatalogDiagnosticV1[] = [];
   const attempted: PromptLibraryCatalogKeyV1[] = [];
   const failures = new Map<PromptLibraryCatalogKeyV1, PromptLibraryCatalogDiagnosticV1['reason']>();
+  const records: PromptLibraryRecordV1[] = [];
   for (const key of missing) {
     const retained = readRetainedPromptLibraryRecordV1(source.raw, key);
     if (retained.status !== 'ready') { malformed.push({ key, revision: 'absent', reason: retained.reason }); continue; }
     attempted.push(key);
-    let receipt: Awaited<ReturnType<PromptLibrarySourceTransferV1['initializeRecord']>>;
-    try { receipt = await transfer.initializeRecord({ record: retained.record, expectedRevision: 'absent', sourceSettingsVersion: source.version }); }
-    catch {
-      failures.set(key, input.signal?.aborted ? 'cancelled' : 'unreachable');
-      continue;
-    }
+    records.push(retained.record);
+  }
+  if (records.length) {
+    let receipt: PromptLibraryRowsInitializationResponseV1 | null = null;
+    try { receipt = await transfer.initializeRecords({ records, sourceSettingsVersion: source.version }); }
+    catch { for (const key of attempted) failures.set(key, input.signal?.aborted ? 'cancelled' : 'unreachable'); }
     if (input.signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
-    if (receipt.status === 'settings-conflict') failures.set(key, 'source-version-conflict');
+    if (receipt?.status === 'settings-conflict') for (const key of attempted) failures.set(key, 'source-version-conflict');
   }
   if (attempted.length) {
     // A receipt is not readable authority. Admit the actual resulting census, including concurrent winners.

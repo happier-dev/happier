@@ -3,7 +3,8 @@ import { applyRoleOverrideMutationV1, type RoleOverrideMutationV1 } from '@happi
 import { createRoleArtifactStoreV1, retainLegacyRoleArtifactsV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryRowsListResponseV1Schema, PromptLibraryRowMutationV1Schema,
     PromptLibraryRowMutationResponseV1Schema, PromptLibraryRowReadResponseV1Schema, sealPromptLibraryContentV1,
-    type PromptLibraryCatalogKeyV1, type PromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+    PromptLibraryRowsInitializationV1Schema, PromptLibraryRowsInitializationResponseV1Schema,
+    type PromptLibraryCatalogKeyV1, type PromptLibraryRecordV1, type PromptLibraryRowsInitializationResponseV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
@@ -122,7 +123,7 @@ async function readPromptLibraryCatalogWithMaintenanceInContext(context: PromptL
                     context.assertCurrent();
                     return { raw: source.value.raw ?? {}, version: source.value.version };
                 },
-                initializeRecord: input => writePromptLibraryRecordInContext(context, input, signal),
+                initializeRecords: input => initializePromptLibraryRecordsInContext(context, input, signal),
                 replaceSource: async input => {
                     context.assertCurrent();
                     const result = await context.mutateRawSettings(() => ({ ...input.raw }), {
@@ -210,20 +211,62 @@ export async function readPromptLibraryCatalogRowsProjection(scope: ServerAccoun
     } catch (error) { return { projection: { catalog: failure(error), rawSettings: {}, sourceSettingsVersion: 0 }, isAccountCurrent: () => true }; }
 }
 
+/** One admitted Account's sealed row content and saved-secret reference proofs. */
+async function sealPromptLibraryRecordInAdmission(context: PromptLibraryAccountContext, mode: 'plain' | 'e2ee',
+    material: AccountScopedCryptoMaterial | null, input: Pick<PromptLibraryRecordWriteInput, 'record' | 'savedSecretRevisions' | 'pendingResourceIds'>,
+    signal?: AbortSignal) {
+    const references=input.record.key==='registry-sources'?listSavedSecretReferenceCatalogRefsV1({profileRecords:[],registrySources:input.record.value}).map(ref=>ref.secretId):[];
+    const proofs=references.length?await captureSavedSecretReferenceRevisionsInContext(context,{references:references.filter(ref=>parseSavedSecretRefV1(ref).kind==='shared_resource'),
+        savedSecretRevisions:input.savedSecretRevisions,pendingResourceIds:input.pendingResourceIds,signal}):null;
+    return { content: sealPromptLibraryContentV1({ mode, material, record: input.record, randomBytes: getRandomBytes }),
+        ...(proofs?{referencedSavedSecretIds:references,savedSecretRevisions:proofs.savedSecretRevisions}:{}) };
+}
 /** Preparation is shared by the sole row writer and atomic credential promotion. */
 export function preparePromptLibraryRecordMutationInContext(context: PromptLibraryAccountContext, input: PromptLibraryRecordWriteInput, signal?:AbortSignal) {
     return admit(context, 'fresh-authority', async (mode, material) => {
         if (input.expectedRevision === 'absent' && input.sourceSettingsVersion === undefined) throw new PromptLibraryRowOperationError('source-currentness-unavailable');
-        const references=input.record.key==='registry-sources'?listSavedSecretReferenceCatalogRefsV1({profileRecords:[],registrySources:input.record.value}).map(ref=>ref.secretId):[];
-        const proofs=references.length?await captureSavedSecretReferenceRevisionsInContext(context,{references:references.filter(ref=>parseSavedSecretRefV1(ref).kind==='shared_resource'),
-            savedSecretRevisions:input.savedSecretRevisions,pendingResourceIds:input.pendingResourceIds,signal}):null;
         const mutation = PromptLibraryRowMutationV1Schema.parse({ expectedRevision: input.expectedRevision,
-            content: sealPromptLibraryContentV1({ mode, material, record: input.record, randomBytes: getRandomBytes }),
-            ...(proofs?{referencedSavedSecretIds:references,savedSecretRevisions:proofs.savedSecretRevisions}:{}),
+            ...await sealPromptLibraryRecordInAdmission(context, mode, material, input, signal),
             ...(input.sourceSettingsVersion === undefined ? {} : { sourceSettingsVersion: input.sourceSettingsVersion }) });
         context.assertCurrent();
         return mutation;
     });
+}
+/** A subsequent read must not join a pre-write request, even when the issued mutation's response is lost. */
+function invalidatePromptLibraryReads(context: PromptLibraryAccountContext): void {
+    finiteCatalogAcquisitions.invalidate(context);
+    const transport = context.readTransport;
+    if (transport) {
+        const scope = transport.scope ? [transport.scope, transport.key] : transport.key;
+        catalogReads.invalidate(scope);
+        rowReads.invalidate(scope);
+    }
+}
+/**
+ * First activation writes every absent row in one Account write: one admission (encryption currentness),
+ * one request and one change publication instead of one of each per row.
+ */
+async function initializePromptLibraryRecordsInContext(context: PromptLibraryAccountContext,
+    input: Readonly<{ records: readonly PromptLibraryRecordV1[]; sourceSettingsVersion: number }>,
+    signal?: AbortSignal): Promise<PromptLibraryRowsInitializationResponseV1> {
+    const body = await admit(context, 'fresh-authority', async (mode, material) => {
+        const rows = [];
+        for (const record of input.records) rows.push({ key: record.key, ...await sealPromptLibraryRecordInAdmission(context, mode, material, { record }, signal) });
+        const initialization = PromptLibraryRowsInitializationV1Schema.parse({ sourceSettingsVersion: input.sourceSettingsVersion, rows });
+        context.assertCurrent();
+        return initialization;
+    });
+    let response: Response;
+    try {
+        response = await context.request(PROMPT_LIBRARY_ROWS_ROUTE_V1, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
+        }, { retry: 'none' });
+    } catch (error) {
+        throw new PromptLibraryRowOperationError(classifyHttpMutationRequestFailure({ error, issued: true, signal }), error);
+    } finally { invalidatePromptLibraryReads(context); }
+    const parsed = PromptLibraryRowsInitializationResponseV1Schema.safeParse(await response.json().catch(() => null));
+    if (!parsed.success) throw new PromptLibraryRowOperationError(response.ok ? 'outcome_unknown' : `prompt_library_row_http_${response.status}`);
+    return parsed.data;
 }
 /** Every screen/Action uses the same captured Account CAS; ambiguity is never replayed blindly. */
 export function writePromptLibraryRecordInContext(context: PromptLibraryAccountContext, input: PromptLibraryRecordWriteInput,
@@ -249,17 +292,7 @@ export function writePromptLibraryRecordInContext(context: PromptLibraryAccountC
             }, { retry: 'none' });
         } catch (error) {
             throw new PromptLibraryRowOperationError(classifyHttpMutationRequestFailure({ error, issued: true, signal }), error);
-        } finally {
-            // A subsequent read must not join a pre-write request, even when
-            // the issued mutation's response is lost or cannot be admitted.
-            finiteCatalogAcquisitions.invalidate(context);
-            const transport = context.readTransport;
-            if (transport) {
-                const scope = transport.scope ? [transport.scope, transport.key] : transport.key;
-                catalogReads.invalidate(scope);
-                rowReads.invalidate(scope);
-            }
-        }
+        } finally { invalidatePromptLibraryReads(context); }
         const parsed = PromptLibraryRowMutationResponseV1Schema.safeParse(await response.json().catch(() => null));
         if (!parsed.success) throw new PromptLibraryRowOperationError(response.ok ? 'outcome_unknown' : `prompt_library_row_http_${response.status}`);
         return parsed.data;

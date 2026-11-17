@@ -180,6 +180,33 @@ describe('Account prompt-library reserved rows (SQLite)', () => {
         } finally { await app.close(); }
     });
 
+    // A fresh Account's first catalog read activates every absent row: one request admits them all
+    // against the captured source version, instead of one write (and its witnesses) per row.
+    it('initializes every absent row in one write against the captured source Settings version', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const app = createAuthenticatedTestApp() as Fastify;
+        accountRoutes(app);
+        const keys = ['coding', 'voice', 'folders', 'invocations', 'contexts'] as const;
+        const body = (sourceSettingsVersion: number) => ({ sourceSettingsVersion,
+            rows: keys.map(key => ({ key, content: sealPromptLibraryContentV1({ mode: 'plain', material: null, record: emptyPromptLibraryRecordV1(key) }) })) });
+        const post = (payload: unknown) => app.inject({ method: 'POST', url: '/v1/account/entity-rows/prompt-library',
+            headers: { 'x-test-user-id': account.id }, payload });
+        try {
+            const { settingsVersion } = await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { settingsVersion: true } });
+            const stale = await post(body(settingsVersion + 1));
+            expect(stale.json()).toEqual({ status: 'settings-conflict', revision: settingsVersion });
+            const initialized = await post(body(settingsVersion));
+            expect(initialized.statusCode).toBe(200);
+            expect(initialized.json()).toMatchObject({ status: 'updated',
+                rows: keys.map(key => ({ key, revision: expect.any(Number), cursor: expect.any(Number) })) });
+            const listed = PromptLibraryRowsListResponseV1Schema.parse((await app.inject({ method: 'GET',
+                url: '/v1/account/entity-rows/prompt-library', headers: { 'x-test-user-id': account.id } })).json());
+            expect(listed.status === 'listed' ? listed.rows.map(row => row.key).sort() : listed).toEqual([...keys].sort());
+            // Presence never reseeds: a second activation (a concurrent reader) loses the whole CAS.
+            expect((await post(body(settingsVersion))).json()).toMatchObject({ status: 'conflict', key: expect.any(String) });
+        } finally { await app.close(); }
+    });
+
     it('refuses mode changes without resealing the registered prompt namespace', async () => {
         // A retained row must participate in the existing all-domain transition,
         // including the older empty-only PATCH ingress.

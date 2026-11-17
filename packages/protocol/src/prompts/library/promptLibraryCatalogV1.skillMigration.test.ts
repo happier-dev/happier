@@ -6,6 +6,19 @@ import capturedPicker from '../../../fixtures/0.2-picker-skill-instructions-stac
 import { resolvePromptStackSystemAppendBlocksV1 } from './resolvePromptStackSystemAppendBlocksV1.js';
 import { resolveSessionCapabilitiesV1 } from '../../reach/resolveSessionCapabilitiesV1.js';
 
+/** Test adapter: drive the batched first-activation write through a per-record fake. */
+function initializeEach(write: (input: Readonly<{ record: any; expectedRevision: 'absent'; sourceSettingsVersion: number }>) => Promise<any>) {
+  return async (input: Readonly<{ records: readonly any[]; sourceSettingsVersion: number }>): Promise<any> => {
+    const rows: Array<{ key: any; revision: number; cursor: number }> = [];
+    for (const record of input.records) {
+      const receipt = await write({ record, expectedRevision: 'absent', sourceSettingsVersion: input.sourceSettingsVersion });
+      if (receipt.status !== 'updated') return receipt;
+      rows.push({ key: record.key, revision: receipt.revision, cursor: receipt.cursor });
+    }
+    return { status: 'updated', rows };
+  };
+}
+
 // Observed ../0.2 cd2bb4d853: promptLibrary/promptStacksV1.ts stores editPolicy
 // and both placements; bundle headers identify the schema (not the placement).
 const predecessor = {
@@ -52,7 +65,7 @@ function harness(options: { unreadableRules?: boolean; interruptVoice?: boolean;
         v: 1, kind: 'prompt_bundle.v2', title: ref.artifactId,
         bundleSchemaId: ref.artifactId === 'generic' ? 'bundle.generic_v1' : 'skills.skill_md_v1', futureHeader: true,
       } }),
-    }, transfer: { readSourceSnapshot: async () => ({ raw, version: 7 }), initializeRecord: writeRecord,
+    }, transfer: { readSourceSnapshot: async () => ({ raw, version: 7 }), initializeRecords: initializeEach(writeRecord),
       replaceSource: async input => { raw = input.raw; return { status: 'applied', settingsVersion: 8 }; },
       normalizeHistory: async () => ({ status: 'complete' }),
     },
@@ -67,7 +80,7 @@ describe('predecessor stack → canonical skill destinations', () => {
     const load = () => loadPromptLibraryCatalogV1({ mode: 'plain', material: null, nowMs: () => 100,
       readRows: async () => ({ status: 'listed', rows }),
       transfer: { readSourceSnapshot: async () => ({ raw: { promptStacksV1: capturedPicker.stacks }, version: 7 }),
-        initializeRecord: writeRecord },
+        initializeRecords: initializeEach(writeRecord) },
       skillMigration: { writeRecord, readArtifact: async ref => capturedPicker.artifacts.find(artifact => artifact.id === ref.artifactId) ?? null },
     });
     async function writeRecord(input: { record: PromptLibraryRecordV1; expectedRevision: number | 'absent'; sourceSettingsVersion?: number }) {

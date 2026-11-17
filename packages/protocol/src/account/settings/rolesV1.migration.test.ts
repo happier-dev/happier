@@ -9,6 +9,19 @@ import { emptyPromptLibraryRecordV1, loadPromptLibraryCatalogV1, readRetainedPro
 import { PromptLibraryCatalogKeyV1Schema } from '../../prompts/library/promptLibraryRowsV1.js';
 import { RoleOverrideRecordV1Schema } from '../../prompts/roles/roleOverrideRecordV1.js';
 
+/** Test adapter: drive the batched first-activation write through a per-record fake. */
+function initializeEach(write: (input: Readonly<{ record: any; expectedRevision: 'absent'; sourceSettingsVersion: number }>) => Promise<any>) {
+  return async (input: Readonly<{ records: readonly any[]; sourceSettingsVersion: number }>): Promise<any> => {
+    const rows: Array<{ key: any; revision: number; cursor: number }> = [];
+    for (const record of input.records) {
+      const receipt = await write({ record, expectedRevision: 'absent', sourceSettingsVersion: input.sourceSettingsVersion });
+      if (receipt.status !== 'updated') return receipt;
+      rows.push({ key: record.key, revision: receipt.revision, cursor: receipt.cursor });
+    }
+    return { status: 'updated', rows };
+  };
+}
+
 // V1 vectors copied from ../0.2 packages/protocol/src/prompts/executionRunsGuidanceV1.test.ts
 // at 17ba05df68d4d3d4cad1c1241b58e63805db37ed; the entry carrier is declared by
 // apps/ui/sources/sync/domains/settings/registry/account/accountRuntimeSettingDefinitions.ts.
@@ -53,7 +66,7 @@ describe('rolesV1 Account settings', () => {
         readRows: async () => ({ status: 'listed', rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: 2,
           content: { t: 'plain', v: emptyPromptLibraryRecordV1(key) } })) }),
         transfer: { readSourceSnapshot: async () => ({ raw, version: 7 }),
-          initializeRecord: async () => { throw new Error('Actual destination rows already exist'); },
+          initializeRecords: initializeEach(async () => { throw new Error('Actual destination rows already exist'); }),
           retainLegacyRoleArtifacts: async source => { retained = await retainLegacyRoleArtifactsV1({ rawSettings: source, accountId: 'account-one', artifactStore }); },
           replaceSource: async input => { expect(input.expectedVersion).toBe(7); raw = input.raw; return { status: 'applied', settingsVersion: 8 }; },
           normalizeHistory: async () => ({ status: 'complete' }),

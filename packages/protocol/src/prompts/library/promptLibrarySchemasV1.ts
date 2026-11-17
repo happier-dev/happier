@@ -117,6 +117,32 @@ export const PromptLibraryRowMutationResponseV1Schema = lazyZodSchema(() => z.un
   z.strictObject({ status: z.literal('settings-conflict'), revision }),
   z.strictObject({ status: z.literal('invalid-reference') }),
 ]));
+/** First destination authority for every absent row, admitted together against one captured source version. */
+export const PromptLibraryRowsInitializationV1Schema = lazyZodSchema(() => z.strictObject({
+  sourceSettingsVersion: revision,
+  rows: z.array(z.strictObject({
+    key: PromptLibraryCatalogKeyV1Schema, content: PromptLibraryContentV1Schema,
+    referencedSavedSecretIds: z.optional(McpServerCatalogRowMutationV1Schema.shape.referencedSavedSecretIds._zod.def.innerType),
+    savedSecretRevisions: z.optional(McpServerCatalogRowMutationV1Schema.shape.savedSecretRevisions._zod.def.innerType),
+  })).check(z.minLength(1)),
+}).check(z.superRefine((initialization, context) => {
+  const keys = new Set<string>();
+  for (const [index, row] of initialization.rows.entries()) {
+    if (keys.has(row.key) || (row.content.t === 'plain' && row.content.v.key !== row.key)) {
+      context.addIssue({ code: 'custom', path: ['rows', index, 'key'], message: 'Prompt catalog identity must be unique and match its content' });
+    }
+    keys.add(row.key);
+  }
+})));
+export type PromptLibraryRowsInitializationV1 = z.infer<typeof PromptLibraryRowsInitializationV1Schema>;
+export const PromptLibraryRowsInitializationResponseV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ status: z.literal('updated'), rows: z.array(z.strictObject({ key: PromptLibraryCatalogKeyV1Schema, revision, cursor: revision })) }),
+  z.strictObject({ status: z.literal('conflict'), key: PromptLibraryCatalogKeyV1Schema, revision: z.number().check(z.int(), z.minimum(-1)) }),
+  PromptLibraryRowFailureV1Schema,
+  z.strictObject({ status: z.literal('settings-conflict'), revision }),
+  z.strictObject({ status: z.literal('invalid-reference') }),
+]));
+export type PromptLibraryRowsInitializationResponseV1 = z.infer<typeof PromptLibraryRowsInitializationResponseV1Schema>;
 export const PromptLibraryRowsListResponseV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ status: z.literal('listed'), rows: z.array(z.strictObject({
     key: PromptLibraryCatalogKeyV1Schema, revision, content: z.nullable(readContent),

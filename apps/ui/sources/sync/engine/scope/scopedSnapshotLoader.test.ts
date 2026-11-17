@@ -494,7 +494,7 @@ describe('createScopedSnapshotLoader', () => {
                             if (++sourceReads === 1) await initialCleanup;
                             return { raw: {}, version: 1 };
                         },
-                        initializeRecord: async () => { throw new Error('Deleted row already owns authority'); },
+                        initializeRecords: async () => { throw new Error('Deleted row already owns authority'); },
                         replaceSource: async () => { throw new Error('No source to replace'); },
                         normalizeHistory: async () => ({ status: 'complete' }),
                     },

@@ -3,6 +3,7 @@ import { recordPromptPreparationFailure } from '@/agent/prompts/library/homeRead
 import { loadPromptLibraryCatalogV1, readPromptLibraryCatalogRecordV1, type PromptLibraryCatalogSnapshotV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { applyRoleOverrideMutationV1, type RoleOverrideMutationV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryRowsListResponseV1Schema, PromptLibraryRowMutationV1Schema,
+  PromptLibraryRowsInitializationV1Schema, PromptLibraryRowsInitializationResponseV1Schema,
   PromptLibraryRowMutationResponseV1Schema, PromptLibraryRowReadResponseV1Schema, sealPromptLibraryContentV1,
   type PromptLibraryCatalogKeyV1, type PromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
@@ -30,6 +31,7 @@ import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/sa
 import type { ArtifactFolderActionPortV1 } from '@happier-dev/protocol/prompts/library/promptFolderActionsV1';
 
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 /** Captures the incumbent Home/Account/key lifetime, without a parallel Settings publication. */
 export function createCliPromptLibraryStore(input: Readonly<{
@@ -52,7 +54,7 @@ export function createCliPromptLibraryStore(input: Readonly<{
       || operation.credentials.token !== input.credentials.token
       : usesActiveSnapshot && (getActiveAccountSettingsSnapshot()?.scopeKey !== scopeKey
         || getActiveAccountSettingsSnapshotLifetimeToken() !== lifetimeToken)) {
-      throw Object.assign(new Error('Captured Prompt library Account retired'), { code: 'scope-retired' });
+      throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'Captured Prompt library Account retired' });
     }
   };
   const assertCredentialCurrent = async () => {
@@ -134,7 +136,7 @@ export function createCliPromptLibraryStore(input: Readonly<{
       })() } : {}),
       transfer: {
         readSourceSnapshot: () => (readSourceSnapshot)(),
-        initializeRecord: value => (() => writeRecord(value))(),
+        initializeRecords: value => (() => initializeRecords(value))(),
         replaceSource: async value => (async () => {
           const current = await readStorageContext();
           if (current.mode !== context.mode) throw Object.assign(new Error('Account mode changed'), { code: 'account-mode-mismatch' });
@@ -207,20 +209,35 @@ export function createCliPromptLibraryStore(input: Readonly<{
     await publishObservedSource(source.raw, source.version);
     return { ...source, ...context };
   };
+  const sealRecord = async (context: Awaited<ReturnType<typeof readStorageContext>>, record: PromptLibraryRecordV1) => {
+      const references=record.key==='registry-sources'?listSavedSecretReferenceCatalogRefsV1({profileRecords:[],registrySources:record.value}).map(ref=>ref.secretId):[];
+      const proofs=references.length?await runWithServerHttpBaseUrl(base,()=>captureSavedSecretReferencesForOperation({expectedScopeKey:scopeKey,
+        references:references.filter(ref=>parseSavedSecretRefV1(ref).kind==='shared_resource'),operationContext:operation,signal:input.signal})):null;
+      return { content: sealPromptLibraryContentV1({ ...context, record }),
+        ...(proofs?{referencedSavedSecretIds:references,savedSecretRevisions:proofs.savedSecretRevisions}:{}) };
+  };
   const writeRecord = async (value: Readonly<{ record: PromptLibraryRecordV1; expectedRevision: number | 'absent'; sourceSettingsVersion?: number }>) => {
       const context = await readStorageContext();
       if (value.expectedRevision === 'absent' && value.sourceSettingsVersion === undefined) throw new Error('source-currentness-unavailable');
-      const references=value.record.key==='registry-sources'?listSavedSecretReferenceCatalogRefsV1({profileRecords:[],registrySources:value.record.value}).map(ref=>ref.secretId):[];
-      const proofs=references.length?await runWithServerHttpBaseUrl(base,()=>captureSavedSecretReferencesForOperation({expectedScopeKey:scopeKey,
-        references:references.filter(ref=>parseSavedSecretRefV1(ref).kind==='shared_resource'),operationContext:operation,signal:input.signal})):null;
+      const sealed = await sealRecord(context, value.record);
       await assertCredentialCurrent();
-      const mutation = PromptLibraryRowMutationV1Schema.parse({ expectedRevision: value.expectedRevision,
-        content: sealPromptLibraryContentV1({ ...context, record: value.record }),
-        ...(proofs?{referencedSavedSecretIds:references,savedSecretRevisions:proofs.savedSecretRevisions}:{}),
+      const mutation = PromptLibraryRowMutationV1Schema.parse({ expectedRevision: value.expectedRevision, ...sealed,
         ...(value.sourceSettingsVersion === undefined ? {} : { sourceSettingsVersion: value.sourceSettingsVersion }) });
       const response = PromptLibraryRowMutationResponseV1Schema.safeParse(await request(
         `${PROMPT_LIBRARY_ROWS_ROUTE_V1}/${encodeURIComponent(value.record.key)}`, mutation));
       if (!response.success) throw Object.assign(new Error('Prompt library mutation outcome is unknown'), { code: 'outcome_unknown' });
+      if (response.data.status === 'updated') catalogReads.clear();
+      return response.data;
+  };
+  /** Every absent row's first authority in one Account write. */
+  const initializeRecords = async (value: Readonly<{ records: readonly PromptLibraryRecordV1[]; sourceSettingsVersion: number }>) => {
+      const context = await readStorageContext();
+      const rows = [];
+      for (const record of value.records) rows.push({ key: record.key, ...await sealRecord(context, record) });
+      await assertCredentialCurrent();
+      const initialization = PromptLibraryRowsInitializationV1Schema.parse({ sourceSettingsVersion: value.sourceSettingsVersion, rows });
+      const response = PromptLibraryRowsInitializationResponseV1Schema.safeParse(await request(PROMPT_LIBRARY_ROWS_ROUTE_V1, initialization));
+      if (!response.success) throw Object.assign(new Error('Prompt library initialization outcome is unknown'), { code: 'outcome_unknown' });
       if (response.data.status === 'updated') catalogReads.clear();
       return response.data;
   };
