@@ -2,6 +2,7 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { HappierUiPlatformProvider } from '@happier-dev/plugin-ui/environment';
+import { StyleSheet } from 'react-native';
 
 vi.mock('react-native', async () => {
   const { createReactNativeNativeMock } =
@@ -55,6 +56,24 @@ describe('ContextGaugeInstrument', () => {
   it('names the share of context a session has used', async () => {
     const screen = await renderGauge(CONTEXT);
     expect(screen.getTextContent()).toContain('25%');
+  });
+
+  it('keeps the last reported breakdown readable when opening cannot report refresh activity', async () => {
+    const screen = await renderGauge({
+      ...CONTEXT,
+      categories: [{ key: 'messages', label: 'Messages', tokens: 50_000 }],
+    });
+    await screen.pressByTestIdAsync('session-instrument-context-gauge');
+    const popover = screen.findHostByTestId('session-instrument-context-popover');
+    expect(popover).not.toBeNull();
+    // Dimming is a visible pending claim. A void refresh request supplies no pending lifecycle.
+    const dimmedContent = popover!.findAll((node) => {
+      if (typeof node.type !== 'string') return false;
+      const opacity = StyleSheet.flatten(node.props.style)?.opacity;
+      return typeof opacity === 'number' && opacity < 1;
+    });
+    expect(dimmedContent).toHaveLength(0);
+    expect(screen.getTextContent()).toContain('50,000');
   });
 
   // Beside the quota ring a bare "0%" read as a second "0% left" (FIN-DESIGN-REVIEW M8): with nothing

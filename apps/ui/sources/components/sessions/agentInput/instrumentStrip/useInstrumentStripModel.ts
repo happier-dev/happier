@@ -74,7 +74,7 @@ export function useInstrumentStripModel(params: Readonly<{
         sessionActive,
         currentRunnerProcessIdentity,
     } = params;
-    const usage = useSessionUsage(sessionId ?? '') as SessionUsageLike;
+    const usage = useSessionUsage(sessionId ?? '', serverId ? { serverId } : undefined) as SessionUsageLike;
     // The git instrument counts this Session's changed files, so it reads the Home the strip was
     // mounted for rather than whichever Home a bare id happens to resolve to.
     const scmSnapshot = useSessionProjectScmSummarySnapshot(sessionId ?? null, serverId ?? null);
@@ -167,11 +167,12 @@ export function useInstrumentStripModel(params: Readonly<{
         // Toggle a monotonically-changing value so a repeated open re-triggers.
         void sync.publishSessionAcpConfigOptionOverrideToMetadata({
             sessionId,
+            serverId,
             configId: CONTEXT_USAGE_REFRESH_CONFIG_OPTION_ID,
             value: String(nowServerMs()),
             updatedAt: nowServerMs(),
         });
-    }, [sessionId]);
+    }, [sessionId, serverId]);
 
     return React.useMemo(
         () => ({ context, git, refreshContextUsage }),

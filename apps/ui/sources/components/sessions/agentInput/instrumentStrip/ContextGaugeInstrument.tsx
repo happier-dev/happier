@@ -13,8 +13,6 @@ import { AgentInputContentPopover } from '../components/AgentInputContentPopover
 import { instrumentStripStyles, useInstrumentStripHitReach } from './instrumentStripStyles';
 import type { InstrumentStripContextModel } from './useInstrumentStripModel';
 
-const REFRESH_SHIMMER_MS = 300;
-
 export type ContextGaugeInstrumentProps = Readonly<{
     model: InstrumentStripContextModel;
     /** Show the trailing `%` label (≥360px available width). */
@@ -37,21 +35,11 @@ export const ContextGaugeInstrument = React.memo(function ContextGaugeInstrument
     const anchorRef = React.useRef(null);
     const hitReach = useInstrumentStripHitReach();
     const [open, setOpen] = React.useState(false);
-    const [refreshing, setRefreshing] = React.useState(false);
-    const refreshTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-    React.useEffect(() => () => {
-        if (refreshTimer.current) clearTimeout(refreshTimer.current);
-    }, []);
-
     const handlePress = React.useCallback(() => {
         setOpen((previous) => {
             const next = !previous;
             if (next) {
                 props.onRefresh();
-                setRefreshing(true);
-                if (refreshTimer.current) clearTimeout(refreshTimer.current);
-                refreshTimer.current = setTimeout(() => setRefreshing(false), REFRESH_SHIMMER_MS);
             }
             return next;
         });
@@ -92,7 +80,7 @@ export const ContextGaugeInstrument = React.memo(function ContextGaugeInstrument
                 maxWidthCap={340}
                 scrollEnabled={false}
                 testID="session-instrument-context-popover"
-                content={<ContextGaugePopoverContent model={model} refreshing={refreshing} />}
+                content={<ContextGaugePopoverContent model={model} />}
             />
         </>
     );
@@ -100,12 +88,10 @@ export const ContextGaugeInstrument = React.memo(function ContextGaugeInstrument
 
 const ContextGaugePopoverContent = React.memo(function ContextGaugePopoverContent(props: Readonly<{
     model: InstrumentStripContextModel;
-    refreshing: boolean;
 }>) {
     const { model } = props;
     const { theme } = useUnistyles();
     const styles = popoverStyles;
-    const dimmed = props.refreshing ? styles.shimmer : null;
 
     const percentText = model.stale ? t('instrument.contextGauge.staleNote') : formatPercent(model.usedPct);
     const windowText = typeof model.windowTokens === 'number'
@@ -129,7 +115,7 @@ const ContextGaugePopoverContent = React.memo(function ContextGaugePopoverConten
         <View style={styles.root}>
             <Text style={styles.title}>{t('instrument.contextGauge.popoverTitle')}</Text>
 
-            <View style={[styles.rows, dimmed]}>
+            <View style={styles.rows}>
                 <PopoverRow label={t('instrument.contextGauge.percentRow')} value={percentText} />
                 <PopoverRow
                     label={t('instrument.contextGauge.usedRow')}
@@ -159,7 +145,7 @@ const ContextGaugePopoverContent = React.memo(function ContextGaugePopoverConten
             </View>
 
             {model.categories && model.categories.length > 0 && categoriesTotal > 0 ? (
-                <View style={[styles.categories, dimmed]}>
+                <View style={styles.categories}>
                     <Text style={styles.subTitle}>{t('instrument.contextGauge.categoriesTitle')}</Text>
                     <View
                         style={styles.stackedBar}
@@ -217,9 +203,6 @@ const popoverStyles = StyleSheet.create((theme) => ({
         paddingVertical: 14,
         gap: theme.space.s12,
         minWidth: 200,
-    },
-    shimmer: {
-        opacity: 0.45,
     },
     title: {
         fontSize: 11,

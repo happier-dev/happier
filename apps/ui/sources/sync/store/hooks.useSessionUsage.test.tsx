@@ -18,6 +18,37 @@ afterEach(() => {
 });
 
 describe('useSessionUsage context snapshot integration', () => {
+    it('reads persisted usage from the exact Home without requiring a supplied Session', async () => {
+        const previousState = storage.getState();
+        const previousActiveServerId = getActiveServerId();
+        const activeHome = await upsertServerProfile({ serverUrl: 'https://usage-bare-active.example.test' });
+        const targetHome = await upsertServerProfile({ serverUrl: 'https://usage-bare-target.example.test' });
+        const sessionId = 'exact-home-persisted-usage';
+        const latestUsage = {
+            inputTokens: 30, outputTokens: 10, cacheCreation: 0, cacheRead: 0,
+            contextSize: 40, timestamp: 1_000,
+        };
+        try {
+            await setActiveServerId(activeHome.id, { scope: 'device' });
+            storage.setState((state) => ({
+                ...state,
+                sessions: {
+                    ...state.sessions,
+                    [sessionId]: createSessionFixture({ id: sessionId, serverId: targetHome.id, latestUsage }),
+                },
+            }));
+            const hook = await renderHook(() => useSessionUsage(sessionId, { serverId: targetHome.id }));
+            expect(hook.getCurrent()).toEqual(latestUsage);
+            await hook.unmount();
+        } finally {
+            await standardCleanup();
+            storage.setState(previousState);
+            if (previousActiveServerId) await setActiveServerId(previousActiveServerId, { scope: 'device' });
+            await removeServerProfile(activeHome.id);
+            await removeServerProfile(targetHome.id);
+        }
+    });
+
     it('exposes a canonical snapshot from a raw token_count transcript record', async () => {
         const previousState = storage.getState();
         const contextSnapshot = {

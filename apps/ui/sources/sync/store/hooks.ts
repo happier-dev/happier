@@ -2264,7 +2264,7 @@ export function useMessagesByIds(sessionId: string, messageIds: readonly string[
 
 export type ExactSessionUsageScope = Readonly<{
   serverId: string;
-  session: Pick<Session, 'id' | 'serverId' | 'latestUsage'>;
+  session?: Pick<Session, 'id' | 'serverId' | 'latestUsage'>;
 }>;
 
 /**
@@ -2272,7 +2272,8 @@ export type ExactSessionUsageScope = Readonly<{
  * Session surfaces. The transcript reducer is intentionally keyed by the
  * legacy bare Session id because it belongs to the active Home; an exact
  * caller may consume it only while that active Home is equivalent to its
- * target. Its supplied Session remains the fallback for an inactive Home.
+ * target. The Home-qualified Session carrier supplies persisted usage; an
+ * explicitly supplied Session remains its fallback for an inactive Home.
  */
 export function useSessionUsage(sessionId: string, exactScope?: ExactSessionUsageScope) {
   const normalizedSessionId = normalizeSessionId(sessionId);
@@ -2286,11 +2287,15 @@ export function useSessionUsage(sessionId: string, exactScope?: ExactSessionUsag
     exactScope
     && normalizedSessionId
     && targetServerId
-    && normalizeSessionId(suppliedSession?.id) === normalizedSessionId
     && (
-      suppliedSessionServerId
-        ? areServerProfileIdentifiersEquivalent(suppliedSessionServerId, targetServerId)
-        : areServerProfileIdentifiersEquivalent(activeServerId, targetServerId)
+      !suppliedSession || (
+        normalizeSessionId(suppliedSession.id) === normalizedSessionId
+        && (
+          suppliedSessionServerId
+            ? areServerProfileIdentifiersEquivalent(suppliedSessionServerId, targetServerId)
+            : areServerProfileIdentifiersEquivalent(activeServerId, targetServerId)
+        )
+      )
     )
   );
   const activeHomeMatches = exactSessionMatches

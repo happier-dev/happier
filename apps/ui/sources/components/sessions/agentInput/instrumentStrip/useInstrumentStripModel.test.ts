@@ -73,7 +73,7 @@ describe('useInstrumentStripModel', () => {
     let renderCount = 0;
 
     function Probe() {
-        latest = useInstrumentStripModel({ sessionId: 's1', agentId: 'claude' as never, metadata: null });
+        latest = useInstrumentStripModel({ sessionId: 's1', serverId: 'home-one', agentId: 'claude' as never, metadata: null });
         renderCount += 1;
         return null;
     }
@@ -138,12 +138,13 @@ describe('useInstrumentStripModel', () => {
         expect(latest?.git?.hasLineChanges).toBe(true);
     });
 
-    it('publishes a context_usage_refresh override when refresh is invoked', () => {
+    it('publishes a context_usage_refresh override to the strip Home when refresh is invoked', () => {
         act(() => { tree = create(React.createElement(Probe)); });
         act(() => latest?.refreshContextUsage());
         expect(publishSpy).toHaveBeenCalledTimes(1);
         expect(publishSpy.mock.calls[0]?.[0]).toMatchObject({
             sessionId: 's1',
+            serverId: 'home-one',
             configId: 'context_usage_refresh',
         });
     });
