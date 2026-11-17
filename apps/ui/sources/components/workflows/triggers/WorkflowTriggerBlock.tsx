@@ -109,10 +109,10 @@ type SessionEventWhen = Extract<
   Readonly<{ kind: SessionEventKind }>
 >;
 type ScheduleWhen = Extract<TriggerWhenValue, Readonly<{ kind: 'schedule' }>>;
-type ActionWhen = Extract<TriggerWhenValue, Readonly<{ kind: 'action' }>>;
+export type ActionWhen = Extract<TriggerWhenValue, Readonly<{ kind: 'action' }>>;
 
 /** One label/value row on the card's label track (the step cards' `WorkflowFieldPair`). */
-function TrackRow(
+export function TrackRow(
   props: Readonly<{
     label: string;
     trackKey: string;
@@ -365,8 +365,6 @@ function ActionTrackRows(
     const title = readActionTriggerSummaryFacts({ phase: when.phase, actionIds: [selectedId] }).actions[0]?.title ?? selectedId;
     return [{ id: selectedId, title }, ...offered];
   }, [catalog.specs, selectedId, theme.colors.text.secondary, when.phase]);
-  const waits = when.phase === 'before' && when.mode !== 'notify';
-  const asks = when.onFailure === 'ask';
   return (
     <>
       <TrackRow
@@ -389,6 +387,28 @@ function ActionTrackRows(
           />
         </View>
       </TrackRow>
+      <ActionWaitPolicyRows testID={props.testID} when={when} onChange={props.onChange} />
+    </>
+  );
+}
+
+/**
+ * A before trigger's wait policy, said the same wherever a before trigger is authored (the editor's trigger
+ * card, a resource's Link): **While it runs** (Wait for its result · Just notify) and, while it waits,
+ * **If it fails** (Refuse · Let a person approve), each with the line that says what it does. After has none.
+ */
+export function ActionWaitPolicyRows(
+  props: Readonly<{
+    testID: string;
+    when: ActionWhen;
+    onChange: (next: ActionWhen) => void;
+  }>,
+) {
+  const { when } = props;
+  const waits = when.phase === 'before' && when.mode !== 'notify';
+  const asks = when.onFailure === 'ask';
+  return (
+    <>
       {when.phase === 'before' ? (
         <TrackRow
           label={t('workflows.triggers.card.whileItRuns')}

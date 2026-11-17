@@ -32,6 +32,7 @@ import {
   type SubjectTriggerStarter,
 } from './subjectTriggerStarters';
 import { TriggerRow, type TriggerRowOutcome } from './TriggerRow';
+import { ResourceLinkWorkflowSheet } from './ResourceLinkWorkflowSheet';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 import { resolveUnknownAccountActorName } from '@/sync/domains/account/accountActorPresentation';
@@ -63,6 +64,8 @@ type Opening =
   | Readonly<{ kind: 'scheduledJob' | 'deployOnPush'; anchor: React.RefObject<View | null> }>
   /** Add a check: the New trigger editor opened at the subject's own health form (the bound health-setup seed). */
   | Readonly<{ kind: 'check'; anchor: React.RefObject<View | null> }>
+  /** Link workflow: an existing workflow, a When from this resource's starts, and the same-step share question (D8). */
+  | Readonly<{ kind: 'link'; anchor: React.RefObject<View | null> }>
   /** Automate… and the sentence starters: the builder, seeded with this resource's place and the starter's When (D10). */
   | Readonly<{ kind: 'sentence'; anchor: React.RefObject<View | null>; intent: WorkflowSentenceEditorIntent;
       lifetime: ServerAccountScopeLifetime; key: number }>;
@@ -92,7 +95,10 @@ export const SubjectTriggersSection = React.memo(
       pushSetup?: DeploymentPushSetupConfig;
     }>,
   ) {
-    const { accountLifetime, read, editor, rows, also, skippedNotSharedCount, project } = useResourceAutomationsSection(props);
+    const { accountLifetime, read, editor, rows, also, skippedNotSharedCount, project, link } = useResourceAutomationsSection(props);
+    const linkAnchor = React.useRef<View>(null);
+    // Link is offered once this resource's starts can be read; a resource with none never shows a form that cannot succeed.
+    const linkOffered = link.whenStatus === 'ready' ? link.whenOptions.length > 0 : link.whenStatus === 'loading';
     const router = useRouter();
     const { status } = read;
     const legacy = 'serverId' in props.subject ? null : props.subject;
@@ -149,6 +155,17 @@ export const SubjectTriggersSection = React.memo(
               title={t('workflows.triggers.section.automate')}
               onPress={() => openSentence(null, addAnchor)}
             />
+            {linkOffered ? (
+              <View ref={linkAnchor} collapsable={false}>
+                <SectionActionButton
+                  testID="subject-triggers-link"
+                  icon="link"
+                  title={t('workflows.triggers.section.link')}
+                  expanded={opening?.kind === 'link'}
+                  onPress={() => setOpening({ kind: 'link', anchor: linkAnchor })}
+                />
+              </View>
+            ) : null}
           </View>
         }
       >
@@ -214,6 +231,12 @@ export const SubjectTriggersSection = React.memo(
         {section}
         {alsoSection}
         {editor.popover}
+        {opening?.kind === 'link' ? (
+          <ResourceLinkWorkflowSheet anchorRef={opening.anchor} resourceName={props.subjectName} link={link}
+            serverId={accountLifetime?.scope.serverId ?? props.serverId ?? null}
+            machineId={project?.machineId ?? (legacy ? legacy.machineId : null)} accountLifetime={accountLifetime}
+            onRequestClose={close} onLinked={() => { close(); read.retry(); }} />
+        ) : null}
         {opening?.kind === 'check' ? (
           <NewAccountTriggerPopover
             anchorRef={opening.anchor}
