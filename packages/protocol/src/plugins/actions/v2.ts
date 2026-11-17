@@ -530,6 +530,21 @@ const PluginActionCliV2Schema = lazyZodSchema(() => z.strictObject({
   tmux: z.optional(z.enum(['inherit', 'required', 'forbidden'])),
 }));
 
+/** One declared operand projection shared by Action input and Event payload. */
+export const PluginSubjectProjectionV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('plugin'),
+  subjectKindId: asProtocolZod(PluginContributionLocalIdSchema),
+  identityField: ActionInputPathSchema,
+}));
+export type PluginSubjectProjectionV1 = z.infer<typeof PluginSubjectProjectionV1Schema>;
+
+export const PluginActionApprovalScopeV2Schema = lazyZodSchema(() => z.union([
+  z.literal('environment'),
+  z.literal('healthCheck'),
+  PluginSubjectProjectionV1Schema,
+]));
+export type PluginActionApprovalScopeV2 = z.infer<typeof PluginActionApprovalScopeV2Schema>;
+
 export const PluginActionContributionV2Schema = lazyZodSchema(() => z.strictObject({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
@@ -538,8 +553,8 @@ export const PluginActionContributionV2Schema = lazyZodSchema(() => z.strictObje
   description: z.optional(PluginLocalizedStringV2Schema),
   icon: z.optional(PluginActionIconV2Schema),
   scopes: z.array(PluginActionScopeV2Schema).check(z.minLength(1)),
-  /** Resolve per-Action approval against the input Environment (a preview uses its template). */
-  approvalScope: z.optional(z.literal('environment')),
+  /** Declares the admitted Environment or plugin-owned operand for this Action. */
+  approvalScope: z.optional(PluginActionApprovalScopeV2Schema),
   surfaces: z.array(PluginActionSurfaceV2Schema).check(z.minLength(1)),
   execution: PluginActionDeclaredExecutionV2Schema,
   operation: z.optional(ActionOperationDeclarationV1Schema),

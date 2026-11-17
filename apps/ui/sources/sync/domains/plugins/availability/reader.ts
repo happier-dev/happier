@@ -34,6 +34,7 @@ import { samePluginUiMaterializationFacts, normalizePluginInstalledUiDeclaration
 import { preparePluginUiProjectionOrigins } from '@/sync/domains/plugins/ui/projectionOrigins';
 import { projectPluginRegistrySourceDeclarationV1 } from '@happier-dev/protocol/registries';
 import { projectPluginSkillDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/skills';
+import { projectPluginSubjectKindDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/subjectKinds';
 import { projectPluginStoreKindDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/storeKinds';
 import { readAutomationEligibleEventContributionV1, type AutomationEligibleEventContributionV1 } from '@happier-dev/protocol/plugins/contributions/events';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -1003,6 +1004,9 @@ function readInstalledPluginRows(state: AvailabilityProjectionState, scope: Serv
             const skills = declaration ? (declaration.contributes?.skills ?? []).map(definition =>
                 projectPluginSkillDeclarationV1({ pluginId: materialization.pluginId,
                     pluginVersion: declaration.version, definition })) : [];
+            const subjectKinds = declaration ? (declaration.contributes?.subjectKinds ?? []).map(definition =>
+                projectPluginSubjectKindDeclarationV1({ pluginId: materialization.pluginId,
+                    pluginVersion: declaration.version, definition })) : [];
             const storeKinds = declaration ? (declaration.contributes?.storeKinds ?? []).map(definition =>
                 projectPluginStoreKindDeclarationV1({ pluginId: materialization.pluginId,
                     pluginVersion: declaration.version, definition })) : [];
@@ -1014,7 +1018,7 @@ function readInstalledPluginRows(state: AvailabilityProjectionState, scope: Serv
                 source: { kind: materialization.sourceClass, locator: materialization.materializationId },
                 ...(declaration?.executionTarget ? { executionTarget: declaration.executionTarget } : {}),
                 ...(declaration ? { declaredExecution: readManifestDeclaredExecution(declaration) } : {}),
-            }, registrySources, skills, storeKinds);
+            }, registrySources, skills, storeKinds, subjectKinds);
             // A new declaration (a full manifest replacing its summary) often
             // carries the same UI facts; keep the incumbent model whole then.
             uiModel = retainIfEqual(incumbent?.uiModel, preparePluginUiProjectionOrigins(uiModel));
@@ -2031,6 +2035,7 @@ function deriveAccountUiProjection(input: Readonly<{
     const accountUiOrigins = new Map(selections.map(({ manifest, custodyId, sourceCustody }) => [manifest.id,
         Object.freeze({ ...input.scope, custodyId, sourceCustody }),
     ] as const));
+    const subjectKinds: Record<string, PluginUiProjectionModel['subjectKindsById'][string]> = {};
     const actions: Record<string, PluginUiActionProjection> = {};
     const resources: Record<string, PluginUiProjectionModel['resourcesById'][string]> = {};
     const workItems: Record<string, PluginUiProjectionModel['workItemsById'][string]> = {};
@@ -2047,6 +2052,10 @@ function deriveAccountUiProjection(input: Readonly<{
     for (const selected of selections) {
         const { manifest, custodyId } = selected;
         const hostAccountOrigin = accountUiOrigins.get(manifest.id)!;
+        for (const definition of manifest.contributes.subjectKinds) {
+            const entry = projectPluginSubjectKindDeclarationV1({ pluginId: manifest.id, pluginVersion: manifest.version, definition });
+            subjectKinds[entry.id] = Object.freeze({ ...entry, occurrenceId: custodyId });
+        }
         const graphs = accountActionArtifactGraphs(selected, candidates);
         const projectAccountArtifact = (contributionId: string, executable: Readonly<{ artifactId: string; exportName: string }>) => {
             const matching = graphs.filter(graph => graph.tier === 'reactNative' && graph.artifactId === executable.artifactId
@@ -2153,6 +2162,7 @@ function deriveAccountUiProjection(input: Readonly<{
         || Object.keys(connectedAccountDescriptors).length > 0 || Object.keys(workItems).length > 0
         || Object.keys(dragSources).length > 0 || Object.keys(dropTargets).length > 0 ? Object.freeze({ ...projection,
         actionsById: Object.freeze(actions),
+        subjectKindsById: Object.freeze(subjectKinds),
         workItemsById: Object.freeze(workItems),
         dragSourcesById: Object.freeze(dragSources),
         dropTargetsById: Object.freeze(dropTargets),

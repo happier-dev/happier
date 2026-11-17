@@ -909,6 +909,11 @@ export type DefinePluginInput<
             PluginContributionLocalId,
             Omit<NonNullable<NonNullable<PluginManifest['contributes']>['workflows']>[number], 'id'>
         >>;
+        /** Domain identity declarations; listAction remains an ordinary same-plugin read Action. */
+        subjectKinds?: Readonly<Record<
+            PluginContributionLocalId,
+            Omit<NonNullable<NonNullable<PluginManifest['contributes']>['subjectKinds']>[number], 'id'>
+        >>;
         inputTypes?: Readonly<Record<
             PluginContributionLocalId,
             Omit<NonNullable<NonNullable<PluginManifest['contributes']>['inputTypes']>[number], 'id'>
@@ -2315,6 +2320,7 @@ const COMPOSER_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
 const TRANSCRIPT_ACTIVITIES_ADAPTER = descriptorFamilyAdapter('transcriptActivities');
 const SESSION_INFO_SECTIONS_ADAPTER = descriptorFamilyAdapter('sessionInfoSections');
 const SESSION_HEADER_ACTIONS_ADAPTER = descriptorFamilyAdapter('sessionHeaderActions');
+const SUBJECT_KINDS_ADAPTER = descriptorFamilyAdapter('subjectKinds');
 const SEARCH_PROVIDERS_ADAPTER = descriptorFamilyAdapter('searchProviders');
 const BROWSER_TARGETS_ADAPTER = descriptorFamilyAdapter('browserTargets');
 const BROWSER_ACTIONS_ADAPTER = descriptorFamilyAdapter('browserActions');
@@ -2555,6 +2561,7 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     executionRunProfiles: { classification: 'descriptor-only', authorKey: 'executionRunProfiles', inputShape: 'descriptor', adapter: EXECUTION_RUN_PROFILES_ADAPTER },
     roles: { classification: 'descriptor-only', authorKey: 'roles', inputShape: 'descriptor', adapter: ROLES_ADAPTER },
     workflows: { classification: 'descriptor-only', authorKey: 'workflows', inputShape: 'descriptor', adapter: WORKFLOWS_ADAPTER },
+    subjectKinds: { classification: 'descriptor-only', authorKey: 'subjectKinds', inputShape: 'descriptor', adapter: SUBJECT_KINDS_ADAPTER },
     inputTypes: { classification: 'descriptor-only', authorKey: 'inputTypes', inputShape: 'descriptor', adapter: INPUT_TYPES_ADAPTER },
     atmospherePictures: { classification: 'descriptor-only', authorKey: 'atmospherePictures', inputShape: 'descriptor', adapter: ATMOSPHERE_PICTURES_ADAPTER },
     registrySources: { classification: 'descriptor-only', authorKey: 'registrySources', inputShape: 'descriptor', adapter: REGISTRY_SOURCES_ADAPTER },

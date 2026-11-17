@@ -1,5 +1,7 @@
 export type { AutomationIdV1 } from '../automations.js';
 export type { AutomationSubjectV1, AutomationSubjectKind } from '../automations.js';
+export type { PluginSubjectKindContributionV1, PluginSubjectProjectionV1, PluginSubjectKindListInputV1, PluginSubjectKindListResultV1 } from '../automations.js';
+export { PluginSubjectKindListInputV1Schema, PluginSubjectKindListResultV1Schema } from '../automations.js';
 export { AutomationIdV1Schema } from '../automations.js';
 export type { AutomationConversationAdmitInputV1 } from '../automations.js';
 export { AutomationConversationAdmitInputV1Schema } from '../automations.js';

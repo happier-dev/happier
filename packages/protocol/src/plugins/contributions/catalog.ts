@@ -198,6 +198,7 @@ const REFERENCE_RULES: Readonly<Record<string, readonly PluginContributionRefere
     { field: 'eventIds', targetFamily: 'events', many: true },
     { field: 'defaultChannels', targetFamily: 'notificationChannels', many: true },
   ],
+  subjectKinds: [{ field: 'listAction', targetFamily: 'actions' }],
   searchProviders: [{ field: 'action', targetFamily: 'actions' }],
   openableContentViewers: [{ field: 'destination', targetFamily: 'ui.views' }],
   webhooks: [{ field: 'handlerAction', targetFamily: 'actions' }],
@@ -222,6 +223,7 @@ const FAMILY_POLICIES = {
   accessProviders: { identityField: 'id', disposition: 'reshaped', activationDemand: 'declarative', projectionFamily: 'accessProviders', allowedRuntimeRegistration: null, consumer: 'machine-reachability', platforms: CLI_PLATFORMS },
   actions: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'actions', registrationHost: 'discriminated', consumer: 'action-dispatch', platforms: ALL_PLATFORMS },
   resources: { identityField: 'id', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'resources', registrationHost: 'discriminated', consumer: 'resource-service', platforms: ALL_PLATFORMS },
+  subjectKinds: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'subjectKinds', allowedRuntimeRegistration: null, consumer: 'automation-subject-picker', platforms: ALL_PLATFORMS },
   inputTypes: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'inputTypes', allowedRuntimeRegistration: null, consumer: 'input-fields', platforms: ALL_PLATFORMS },
   atmospherePictures: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'atmospherePictures', allowedRuntimeRegistration: null, consumer: 'atmosphere-picture-catalog', platforms: ALL_PLATFORMS },
   themes: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'theme-library', platforms: ALL_PLATFORMS },
@@ -345,14 +347,21 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
   if (family === 'actions' || (family === 'resources' && isDynamicPluginResourceContributionV2(value))) {
     const parsed = family === 'resources' ? PluginDynamicResourceExecutionV1Schema.safeParse(value.execution)
       : PluginActionDeclaredExecutionV2Schema.safeParse(value.execution);
-    if (!parsed.success || parsed.data.target === 'daemon') return [];
-    const execution = parsed.data;
-    const artifact = execution.target === 'account' ? execution.account : execution.client;
-    return [{
-      targetFamily: 'generated.uiArtifacts',
-      reference: artifact.artifactId,
-      path: ['execution', execution.target, 'artifactId'],
-    }];
+    const references: PluginContributionReferenceCandidateV2[] = [];
+    if (family === 'actions') {
+      const scope = value.approvalScope as Readonly<{ kind?: unknown; subjectKindId?: unknown }> | undefined;
+      if (scope?.kind === 'plugin') references.push({
+        targetFamily: 'subjectKinds', reference: scope.subjectKindId,
+        path: ['approvalScope', 'subjectKindId'], allowQualifiedCrossPlugin: false,
+      });
+    }
+    if (parsed.success && parsed.data.target !== 'daemon') {
+      const execution = parsed.data;
+      const artifact = execution.target === 'account' ? execution.account : execution.client;
+      references.push({ targetFamily: 'generated.uiArtifacts', reference: artifact.artifactId,
+        path: ['execution', execution.target, 'artifactId'] });
+    }
+    return references;
   }
   if (family === 'backupDestinations') {
     const actions = value.actions as BackupDestinationContributionV1['actions'];
@@ -686,8 +695,15 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
     const source = automation?.source && typeof automation.source === 'object' && !Array.isArray(automation.source)
       ? automation.source as Readonly<Record<string, unknown>>
       : null;
-    if (!source) return [];
+    const subjects = Array.isArray(automation?.subjects) ? automation.subjects : [];
+    const subjectReferences: PluginContributionReferenceCandidateV2[] = subjects.flatMap((subject, index) => {
+      const projection = subject as Readonly<{ kind?: unknown; subjectKindId?: unknown }>;
+      return projection.kind === 'plugin' ? [{ targetFamily: 'subjectKinds', reference: projection.subjectKindId,
+        path: ['automation', 'subjects', index, 'subjectKindId'], allowQualifiedCrossPlugin: false }] : [];
+    });
+    if (!source) return subjectReferences;
     return [
+      ...subjectReferences,
       {
         targetFamily: 'actions',
         allowQualifiedCrossPlugin: false,

@@ -193,6 +193,7 @@ export type PluginContributionRegistry = Readonly<{
   backupDestinations: readonly PluginOwnedContribution<import('@happier-dev/protocol').BackupDestinationContributionV1>[];
   machineRoles: readonly PluginOwnedContribution<import('@happier-dev/protocol/machines/roles/machineRolesV1').MachineRoleDeclarationV1>[];
   deploymentTargets: readonly PluginOwnedContribution<import('@happier-dev/protocol').DeploymentTargetContributionV1>[];
+  subjectKinds: readonly PluginOwnedContribution<import('@happier-dev/protocol').PluginSubjectKindContributionV1>[];
   healthCheckKinds: readonly PluginOwnedContribution<import('@happier-dev/protocol').HealthCheckKindContributionV1>[];
   storeKinds: readonly PluginOwnedContribution<import('@happier-dev/protocol').PluginStoreKindContributionV1>[];
   machineRecipes: readonly PluginOwnedContribution<import('@happier-dev/protocol').MachineRecipeV1>[];
@@ -423,6 +424,7 @@ export function projectPluginContributionRegistry(params: Readonly<{
   const backupDestinations: PluginOwnedContribution<import('@happier-dev/protocol').BackupDestinationContributionV1>[] = [];
   const machineRoles: PluginOwnedContribution<import('@happier-dev/protocol/machines/roles/machineRolesV1').MachineRoleDeclarationV1>[] = [];
   const deploymentTargets: PluginOwnedContribution<import('@happier-dev/protocol').DeploymentTargetContributionV1>[] = [];
+  const subjectKinds: PluginOwnedContribution<import('@happier-dev/protocol').PluginSubjectKindContributionV1>[] = [];
   const healthCheckKinds: PluginOwnedContribution<import('@happier-dev/protocol').HealthCheckKindContributionV1>[] = [];
   const storeKinds: PluginOwnedContribution<import('@happier-dev/protocol').PluginStoreKindContributionV1>[] = [];
   const machineRecipes: PluginOwnedContribution<import('@happier-dev/protocol').MachineRecipeV1>[] = [];
@@ -1122,6 +1124,15 @@ export function projectPluginContributionRegistry(params: Readonly<{
         sourceSpec: plugin.sourceSpec, definition,
       });
     }
+    for (const definition of readSemanticDefinitions<import('@happier-dev/protocol').PluginSubjectKindContributionV1>('subjectKinds')) {
+      subjectKinds.push({
+        pluginId: plugin.pluginId, pluginVersion: plugin.manifest.version,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
+        pluginRootPath: plugin.pluginRootPath, manifestPath: plugin.manifestPath,
+        daemonEntryPath: plugin.daemonEntryPath, devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec, definition,
+      });
+    }
     for (const definition of readSemanticDefinitions<import('@happier-dev/protocol').HealthCheckKindContributionV1>('healthCheckKinds')) {
       healthCheckKinds.push({
         pluginId: plugin.pluginId, pluginVersion: plugin.manifest.version,
@@ -1320,6 +1331,7 @@ export function projectPluginContributionRegistry(params: Readonly<{
     backupDestinations: Object.freeze(backupDestinations),
     machineRoles: Object.freeze(machineRoles),
     deploymentTargets: Object.freeze(deploymentTargets),
+    subjectKinds: Object.freeze(subjectKinds),
     healthCheckKinds: Object.freeze(healthCheckKinds),
     storeKinds: Object.freeze(storeKinds),
     machineRecipes: Object.freeze(machineRecipes),

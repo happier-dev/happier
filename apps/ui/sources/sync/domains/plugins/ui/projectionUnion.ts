@@ -22,6 +22,7 @@ import {
     type PluginUiInputTypeProjection,
     type PluginUiAtmospherePictureProjection,
     type PluginUiRegistrySourceProjection,
+    type PluginUiSubjectKindProjection,
     type PluginUiStoreKindProjection,
     type PluginUiBackupDestinationProjection,
     type PluginUiMachineRecipeProjection,
@@ -322,6 +323,7 @@ function deriveInstalledPluginUiProjection(
         voiceProvidersById: merge(model => model.voiceProvidersById),
         atmospherePicturesById: merge(model => model.atmospherePicturesById),
         registrySourcesById: merge(model => model.registrySourcesById),
+        subjectKindsById: merge(model => model.subjectKindsById),
         storeKindsById: merge(model => model.storeKindsById),
         backupDestinationsById: merge(model => model.backupDestinationsById),
         machineRecipesById: merge(model => model.machineRecipesById),
@@ -1862,6 +1864,7 @@ function derivePluginUiProjectionUnion(
     const inputTypesById: Record<string, PluginUiInputTypeProjection> = {};
     const atmospherePicturesById: Record<string, PluginUiAtmospherePictureProjection> = {};
     const registrySourcesById: Record<string, PluginUiRegistrySourceProjection> = {};
+    const subjectKindsById: Record<string, PluginUiSubjectKindProjection> = {};
     const storeKindsById: Record<string, PluginUiStoreKindProjection> = {};
     const backupDestinationsById: Record<string, PluginUiBackupDestinationProjection> = {};
     const machineRecipesById: Record<string, PluginUiMachineRecipeProjection> = {};
@@ -2036,6 +2039,13 @@ function derivePluginUiProjectionUnion(
             // once the whole UI is current). Conflicting suppliers still drop it.
             if (origin) publishFirstAdmitted(member, registrySourcesById, id, entry, origin, true);
         }
+        for (const [id, entry] of families.subjectKindsById) {
+            const representative = selectedMembersByPluginId.get(entry.pluginId)?.projection.subjectKindsById[id]
+                ?? subjectKindsById[id];
+            if (representative && !sameDeclarationContent(entry.definition, representative.definition, comparisons)) continue;
+            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry) : null;
+            if (origin) publishFirstAdmitted(member, subjectKindsById, id, entry, origin);
+        }
         for (const [id, entry] of families.storeKindsById) {
             const representative = selectedMembersByPluginId.get(entry.pluginId)?.projection.storeKindsById[id]
                 ?? storeKindsById[id];
@@ -2092,7 +2102,7 @@ function derivePluginUiProjectionUnion(
     // keep their reported supplies for Administration's origin picker.
     const publishedMaps: readonly Record<string, unknown>[] = [translationsByPluginId, sessionHeaderActionsById, searchProvidersById,
         hostedWebById, reactNativeBundlesById, surfacePlacementsById, settingsGroupsById, settingsPagesById, actionsById,
-        voiceProvidersById, dragSourcesById, workItemsById, dropTargetsById, atmospherePicturesById, registrySourcesById, storeKindsById, backupDestinationsById, machineRecipesById, machineSetupPresetsById, notificationCategoriesById, skillsById, listExtensionsById, unknownEntriesById, inputTypesById,
+        voiceProvidersById, dragSourcesById, workItemsById, dropTargetsById, atmospherePicturesById, registrySourcesById, subjectKindsById, storeKindsById, backupDestinationsById, machineRecipesById, machineSetupPresetsById, notificationCategoriesById, skillsById, listExtensionsById, unknownEntriesById, inputTypesById,
         composerControlsById, composerRegionsById, composerReferencesById, resourcesById];
     for (const [index, map] of publishedMaps.entries()) {
         for (const [key, entry] of Object.entries(map)) {
@@ -2125,6 +2135,7 @@ function derivePluginUiProjectionUnion(
         + Object.keys(inputTypesById).length
         + Object.keys(atmospherePicturesById).length
         + Object.keys(registrySourcesById).length
+        + Object.keys(subjectKindsById).length
         + Object.keys(storeKindsById).length
         + Object.keys(backupDestinationsById).length
         + Object.keys(machineRecipesById).length
@@ -2184,6 +2195,7 @@ function derivePluginUiProjectionUnion(
         inputTypesById: Object.freeze(inputTypesById),
         atmospherePicturesById: Object.freeze(atmospherePicturesById),
         registrySourcesById: Object.freeze(registrySourcesById),
+        subjectKindsById: Object.freeze(subjectKindsById),
         storeKindsById: Object.freeze(storeKindsById),
         backupDestinationsById: Object.freeze(backupDestinationsById),
         machineRecipesById: Object.freeze(machineRecipesById),

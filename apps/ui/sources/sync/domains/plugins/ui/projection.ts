@@ -85,6 +85,7 @@ export type PluginUiInputTypeProjection = NonNullable<DaemonContributionRegistry
 export type PluginUiNotificationCategoryProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['notificationCategories']>['entriesById'][string];
 export type PluginUiAtmospherePictureProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['atmospherePictures']>['entriesById'][string];
 export type PluginUiRegistrySourceProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['registrySources']>['entriesById'][string];
+export type PluginUiSubjectKindProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['subjectKinds']>['entriesById'][string];
 export type PluginUiStoreKindProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['storeKinds']>['entriesById'][string];
 export type PluginUiBackupDestinationProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['backupDestinations']>['entriesById'][string];
 export type PluginUiMachineRecipeProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['machineRecipes']>['entriesById'][string];
@@ -470,6 +471,7 @@ export type PluginUiProjectionModel = Readonly<{
     notificationCategoriesById: Readonly<Record<string, PluginUiNotificationCategoryProjection>>;
     atmospherePicturesById: Readonly<Record<string, PluginUiAtmospherePictureProjection>>;
     registrySourcesById: Readonly<Record<string, PluginUiRegistrySourceProjection>>;
+    subjectKindsById: Readonly<Record<string, PluginUiSubjectKindProjection>>;
     storeKindsById: Readonly<Record<string, PluginUiStoreKindProjection>>;
     backupDestinationsById: Readonly<Record<string, PluginUiBackupDestinationProjection>>;
     machineRecipesById: Readonly<Record<string, PluginUiMachineRecipeProjection>>;
@@ -509,6 +511,7 @@ export const EMPTY_PLUGIN_UI_PROJECTION: PluginUiProjectionModel = Object.freeze
     notificationCategoriesById: Object.freeze({}),
     atmospherePicturesById: Object.freeze({}),
     registrySourcesById: Object.freeze({}),
+    subjectKindsById: Object.freeze({}),
     storeKindsById: Object.freeze({}),
     backupDestinationsById: Object.freeze({}),
     machineRecipesById: Object.freeze({}),
@@ -985,6 +988,7 @@ export function normalizePluginInstalledUiDeclarations(
     registrySources?: readonly PluginUiRegistrySourceProjection[],
     skills?: readonly PluginUiSkillProjection[],
     storeKinds?: readonly PluginUiStoreKindProjection[],
+    subjectKinds?: readonly PluginUiSubjectKindProjection[],
 ): PluginUiProjectionModel {
     return normalizePluginUiProjection({
         v: 2, generation: null,
@@ -996,6 +1000,8 @@ export function normalizePluginInstalledUiDeclarations(
             family: 'skills' as const, entriesById: Object.fromEntries(skills.map(entry => [entry.id, entry])),
         } } : {}), ...(storeKinds ? { storeKinds: {
             family: 'storeKinds' as const, entriesById: Object.fromEntries(storeKinds.map(entry => [entry.id, entry])),
+        } } : {}), ...(subjectKinds ? { subjectKinds: {
+            family: 'subjectKinds' as const, entriesById: Object.fromEntries(subjectKinds.map(entry => [entry.id, entry])),
         } } : {}) }, diagnostics: [],
     }, platform);
 }
@@ -1085,6 +1091,7 @@ export function normalizePluginUiProjection(
     const notificationCategoriesById = previous && sameFamily('notificationCategories') ? previous.notificationCategoriesById : Object.freeze({ ...(projection.familiesById.notificationCategories?.entriesById ?? {}) });
     const atmospherePicturesById = previous && sameFamily('atmospherePictures') ? previous.atmospherePicturesById : Object.freeze({ ...(projection.familiesById.atmospherePictures?.entriesById ?? {}) });
     const registrySourcesById = previous && sameFamily('registrySources') ? previous.registrySourcesById : Object.freeze({ ...(projection.familiesById.registrySources?.entriesById ?? {}) });
+    const subjectKindsById = previous && sameFamily('subjectKinds') ? previous.subjectKindsById : Object.freeze({ ...(projection.familiesById.subjectKinds?.entriesById ?? {}) });
     const storeKindsById = previous && sameFamily('storeKinds') ? previous.storeKindsById : Object.freeze({ ...(projection.familiesById.storeKinds?.entriesById ?? {}) });
     const backupDestinationsById = previous && sameFamily('backupDestinations') ? previous.backupDestinationsById : Object.freeze({ ...(projection.familiesById.backupDestinations?.entriesById ?? {}) });
     const machineRecipesById = previous && sameFamily('machineRecipes') ? previous.machineRecipesById : Object.freeze({ ...(projection.familiesById.machineRecipes?.entriesById ?? {}) });
@@ -1169,6 +1176,7 @@ export function normalizePluginUiProjection(
             notificationCategoriesById,
             atmospherePicturesById,
             registrySourcesById,
+            subjectKindsById,
             storeKindsById,
             backupDestinationsById,
             machineRecipesById,
@@ -1368,6 +1376,7 @@ export function normalizePluginUiProjection(
         notificationCategoriesById,
         atmospherePicturesById,
         registrySourcesById,
+        subjectKindsById,
         storeKindsById,
         backupDestinationsById,
         machineRecipesById,

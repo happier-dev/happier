@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { PluginSubjectKindContributionV1Schema } from '../plugins/contributions/subjectKinds.js';
 import { PluginLocalizedStringV2Schema } from '../plugins/contributions/publicTypes.js';
 import { z } from '../zodRuntimePolicy.js';
 
@@ -19,6 +20,7 @@ import { ActionContextualDefaultsSchema } from './contextualDefaults.js';
 import { ActionSessionTargetDeclarationV1Schema } from './sessionTargetV1.js';
 import { PluginLooseJsonObjectSchema, PluginOptionalStringSchema } from '../plugins/_shared.js';
 import { ActionCompletionContractV1Schema } from './actionCompletion.js';
+import { PluginActionApprovalScopeV2Schema } from '../plugins/actions/v2.js';
 
 const LooseJsonObjectSchema = PluginLooseJsonObjectSchema;
 const OptionalStringSchema = PluginOptionalStringSchema;
@@ -106,6 +108,8 @@ export const ActionDefinitionSummaryV1Schema = lazyZodSchema(() => z.looseObject
     description: z.nullable(z.string().check(z.minLength(1))),
     safety: ActionSafetySchema,
     approval: z.optional(ActionApprovalSchema),
+    approvalScope: z.optional(z.union([z.literal('machine'), PluginActionApprovalScopeV2Schema])),
+    subjectKindDefinition: z.optional(PluginSubjectKindContributionV1Schema),
     requiredAuthority: z.optional(ActionRequiredAuthoritySchema),
     executionPlacement: z.optional(ActionExecutionPlacementSchema),
     placements: z.array(ActionUiPlacementSchema),

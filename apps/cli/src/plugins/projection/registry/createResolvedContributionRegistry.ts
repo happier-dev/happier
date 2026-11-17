@@ -246,6 +246,7 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     const backupDestinations = freezeQualifiedContributions(inputs.backupDestinations ?? []);
     const machineRoles = freezeQualifiedContributions(inputs.machineRoles ?? []);
     const deploymentTargets = freezeQualifiedContributions(inputs.deploymentTargets ?? []);
+    const subjectKinds = freezeQualifiedContributions(inputs.subjectKinds ?? []);
     const healthCheckKinds = freezeQualifiedContributions(inputs.healthCheckKinds ?? []);
     const storeKinds = freezeQualifiedContributions(inputs.storeKinds ?? []);
     const machineRecipes = freezeQualifiedContributions(inputs.machineRecipes ?? []);
@@ -531,6 +532,7 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         backupDestinations,
         machineRoles,
         deploymentTargets,
+        subjectKinds,
         healthCheckKinds,
         storeKinds,
         machineRecipes,
@@ -1078,6 +1080,7 @@ export function createMergedContributionRegistry(
         backupDestinations: Object.freeze([...(builtIn.backupDestinations ?? []), ...(plugin.backupDestinations ?? [])]),
         machineRoles: Object.freeze([...(builtIn.machineRoles ?? []), ...(plugin.machineRoles ?? [])]),
         deploymentTargets: Object.freeze([...(builtIn.deploymentTargets ?? []), ...(plugin.deploymentTargets ?? [])]),
+        subjectKinds: Object.freeze([...(builtIn.subjectKinds ?? []), ...(plugin.subjectKinds ?? [])]),
         healthCheckKinds: Object.freeze([...(builtIn.healthCheckKinds ?? []), ...(plugin.healthCheckKinds ?? [])]),
         storeKinds: Object.freeze([...(builtIn.storeKinds ?? []), ...(plugin.storeKinds ?? [])]),
         machineRecipes: Object.freeze([...(builtIn.machineRecipes ?? []), ...(plugin.machineRecipes ?? [])]),

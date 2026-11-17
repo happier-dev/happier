@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readPluginAutomationSubjectV1, projectPluginAutomationSubjectsV1 } from './automationPluginSubjectV1.js';
 import { automationSubjectKeyV1, automationSubjectSharedKeyV1, automationSubjectKeyMatchesV1, automationSubjectMatchesV1, type AutomationSubjectV1 } from './automationSubjectV1.js';
 
 // Canonical serialization order and framing cannot be controlled through UI authoring.
@@ -37,5 +38,30 @@ describe('automation subject identity', () => {
         expect(automationSubjectKeyMatchesV1(key, context, 'workflow-a', 'machine')).toBe(false);
         expect(automationSubjectKeyMatchesV1(key, [{ role: 'operand', subject: profile }], 'workflow-a')).toBe(false);
         expect(automationSubjectKeyMatchesV1(key, [{ role: 'context', subject: { ...profile, serverId: 'other' } }], 'workflow-a')).toBe(false);
+    });
+});
+
+
+describe('declared plugin subject ingress', () => {
+    const kind = { pluginId: 'example.tickets', definition: { id: 'ticket', label: 'Ticket',
+        identitySchema: { type: 'object', properties: { ticketId: { type: 'string' } },
+            required: ['ticketId'], additionalProperties: false }, listAction: 'list-tickets' } } as const;
+    const subject = { serverId: 'home', pluginId: kind.pluginId, subjectKindId: 'ticket', identity: { ticketId: 'one' } };
+
+    it('admits only the qualified declaration and its identity schema', () => {
+        expect(readPluginAutomationSubjectV1({ ...subject, subjectKinds: [kind] })).toEqual({ ok: true, subject: { kind: 'plugin', ...subject } });
+        expect(readPluginAutomationSubjectV1({ ...subject, pluginId: 'example.other', subjectKinds: [kind] }))
+            .toEqual({ ok: false, code: 'subject_kind_unavailable' });
+        expect(readPluginAutomationSubjectV1({ ...subject, identity: { ticketId: 1 }, subjectKinds: [kind] }))
+            .toEqual({ ok: false, code: 'invalid_subject_identity' });
+        expect(readPluginAutomationSubjectV1({ ...subject, identity: { ticketId: 'one', arbitrary: true }, subjectKinds: [kind] }))
+            .toEqual({ ok: false, code: 'invalid_subject_identity' });
+    });
+
+    it('projects the declared payload operand rather than an unrelated identity', () => {
+        const read = projectPluginAutomationSubjectsV1({ ...subject, subjectKinds: [kind],
+            projections: [{ kind: 'plugin', subjectKindId: 'ticket', identityField: 'ticket' }],
+            value: { ticket: { ticketId: 'two' }, identity: subject.identity } });
+        expect(read).toEqual({ ok: true, subjects: [{ role: 'operand', subject: { kind: 'plugin', ...subject, identity: { ticketId: 'two' } } }] });
     });
 });

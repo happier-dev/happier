@@ -13,6 +13,7 @@ export const PluginContributionFamilyV2Schema = z.enum([
   'machineSetupPresets',
   'actions',
   'resources',
+  'subjectKinds',
   'inputTypes',
   'atmospherePictures',
   'themes',

@@ -57,6 +57,7 @@ import { atmospherePicturesProjectionFamily } from '../atmospherePictures';
 import { registrySourcesProjectionFamily } from '../registrySources';
 import { backupDestinationsProjectionFamily } from '../backupDestinations';
 import { deploymentTargetsProjectionFamily } from '../deploymentTargets';
+import { subjectKindsProjectionFamily } from '../subjectKinds';
 import { healthCheckKindsProjectionFamily } from '../healthCheckKinds';
 import { storeKindsProjectionFamily } from '../storeKinds';
 import { machineRecipesProjectionFamily, machineSetupPresetsProjectionFamily } from '../machineRecipes';
@@ -1143,6 +1144,7 @@ export function buildPluginProjectionV2(params: Readonly<{
         registrySourcesProjectionFamily,
         backupDestinationsProjectionFamily,
         deploymentTargetsProjectionFamily,
+        subjectKindsProjectionFamily,
         healthCheckKindsProjectionFamily,
         storeKindsProjectionFamily,
         machineRecipesProjectionFamily,

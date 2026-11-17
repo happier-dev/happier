@@ -47,6 +47,7 @@ import { PluginNotificationCategoryContributionV2Schema } from '../plugins/contr
 import { PluginSessionInboxResourceBindingV1Schema } from '../plugins/contributions/ui/sessionInbox.js';
 import { PluginCollectionListExtensionV1Schema } from '../plugins/contributions/ui/v2.js';
 import { DeploymentTargetContributionV1Schema } from '../plugins/contributions/deploymentTargets.js';
+import { PluginSubjectKindContributionV1Schema } from '../plugins/contributions/subjectKinds.js';
 import { HealthCheckKindContributionV1Schema } from '../plugins/contributions/healthCheckKinds.js';
 import { PluginStoreKindContributionV1Schema } from '../plugins/contributions/storeKinds.js';
 import { PluginBotTemplateContributionV1Schema } from '../plugins/contributions/botTemplates.js';
@@ -221,7 +222,7 @@ import {
 import { ConnectedAccountUiProjectionEntryV1Schema } from '../connect/connectedAccountUiProjectionV1.js';
 import { AgentProviderRequirementsV1Schema } from '../providers/compatibility/v1.js';
 import { ProviderContributionV1Schema } from '../providers/contributions/v1.js';
-import { parseQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
+import { buildQualifiedPluginContributionKey, createPluginContributionIdentity, parseQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
 import {
   PluginContributionIntrospectionProjectionV1Schema,
   PluginDiagnosticRecordV1Schema,
@@ -2850,6 +2851,17 @@ export const PluginProjectedDeploymentTargetEntryV1Schema = lazyZodSchema(() => 
 })));
 export type PluginProjectedDeploymentTargetEntryV1 = z.infer<typeof PluginProjectedDeploymentTargetEntryV1Schema>;
 
+export const PluginProjectedSubjectKindEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
+  occurrenceId: z.optional(PluginUiRuntimeOccurrenceIdV1Schema),
+  executionOrigin: z.optional(PluginMachineExecutionOriginV1Schema),
+  definition: PluginSubjectKindContributionV1Schema,
+}).check(z.superRefine((entry, context) => {
+  if (entry.id !== buildQualifiedPluginContributionKey(createPluginContributionIdentity({ pluginId: entry.pluginId, localId: entry.definition.id }))) context.addIssue({ code: 'custom', path: ['id'], message: 'Subject kind identity must match its descriptor.' });
+  if (entry.executionOrigin && !entry.occurrenceId) context.addIssue({ code: 'custom', path: ['occurrenceId'], message: 'Subject kind origin requires its serving occurrence.' });
+  validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
+})));
+export type PluginProjectedSubjectKindEntryV1 = z.infer<typeof PluginProjectedSubjectKindEntryV1Schema>;
 export const PluginProjectedHealthCheckKindEntryV1Schema = lazyZodSchema(() => z.strictObject({
   id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
   occurrenceId: z.optional(PluginUiRuntimeOccurrenceIdV1Schema),
@@ -2949,6 +2961,7 @@ export const PluginProjectedNotificationCategoryEntryV1Schema = lazyZodSchema(()
 export type PluginProjectedNotificationCategoryEntryV1 = z.infer<typeof PluginProjectedNotificationCategoryEntryV1Schema>;
 
 export const PluginProjectedFamilyEntryV2Schema: z.ZodMiniUnion<readonly [
+  typeof PluginProjectedSubjectKindEntryV1Schema,
   typeof PluginProjectedHealthCheckKindEntryV1Schema,
   typeof PluginProjectedStoreKindEntryV1Schema,
   typeof PluginProjectedMachineRecipeEntryV1Schema,
@@ -2981,6 +2994,7 @@ export const PluginProjectedFamilyEntryV2Schema: z.ZodMiniUnion<readonly [
   typeof PluginProjectedBrowserEntryV2Schema,
   typeof PluginProjectedUiEntryV2Schema,
 ]> = lazyZodSchema(() => z.union([
+  PluginProjectedSubjectKindEntryV1Schema,
   PluginProjectedHealthCheckKindEntryV1Schema,
   PluginProjectedStoreKindEntryV1Schema,
   PluginProjectedMachineRecipeEntryV1Schema,
@@ -3045,6 +3059,7 @@ const PluginProjectedAtmospherePicturesFamilyV1Schema = lazyZodSchema(() => proj
 const PluginProjectedRegistrySourcesFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('registrySources', PluginProjectedRegistrySourceEntryV1Schema));
 const PluginProjectedBackupDestinationsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('backupDestinations', PluginProjectedBackupDestinationEntryV1Schema));
 const PluginProjectedDeploymentTargetsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('deploymentTargets', PluginProjectedDeploymentTargetEntryV1Schema));
+const PluginProjectedSubjectKindsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('subjectKinds', PluginProjectedSubjectKindEntryV1Schema));
 const PluginProjectedHealthCheckKindsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('healthCheckKinds', PluginProjectedHealthCheckKindEntryV1Schema));
 const PluginProjectedStoreKindsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('storeKinds', PluginProjectedStoreKindEntryV1Schema));
 const PluginProjectedMachineRecipesFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('machineRecipes', PluginProjectedMachineRecipeEntryV1Schema));
@@ -3084,6 +3099,7 @@ type PluginProjectedFamiliesByIdV2Shape = {
   registrySources: z.ZodMiniOptional<typeof PluginProjectedRegistrySourcesFamilyV1Schema>;
   backupDestinations: z.ZodMiniOptional<typeof PluginProjectedBackupDestinationsFamilyV1Schema>;
   deploymentTargets: z.ZodMiniOptional<typeof PluginProjectedDeploymentTargetsFamilyV1Schema>;
+  subjectKinds: z.ZodMiniOptional<typeof PluginProjectedSubjectKindsFamilyV1Schema>;
   healthCheckKinds: z.ZodMiniOptional<typeof PluginProjectedHealthCheckKindsFamilyV1Schema>;
   storeKinds: z.ZodMiniOptional<typeof PluginProjectedStoreKindsFamilyV1Schema>;
   languageServers: z.ZodMiniOptional<typeof PluginProjectedLanguageServersFamilyV1Schema>;
@@ -3123,6 +3139,7 @@ const PluginProjectedFamiliesByIdV2Schema: z.ZodMiniDefault<
   registrySources: z.optional(PluginProjectedRegistrySourcesFamilyV1Schema),
   backupDestinations: z.optional(PluginProjectedBackupDestinationsFamilyV1Schema),
   deploymentTargets: z.optional(PluginProjectedDeploymentTargetsFamilyV1Schema),
+  subjectKinds: z.optional(PluginProjectedSubjectKindsFamilyV1Schema),
   healthCheckKinds: z.optional(PluginProjectedHealthCheckKindsFamilyV1Schema),
   storeKinds: z.optional(PluginProjectedStoreKindsFamilyV1Schema),
   languageServers: z.optional(PluginProjectedLanguageServersFamilyV1Schema),
@@ -3162,6 +3179,7 @@ export const PluginProjectedFamilyV2Schema: z.ZodMiniUnion<readonly [
   typeof PluginProjectedRegistrySourcesFamilyV1Schema,
   typeof PluginProjectedBackupDestinationsFamilyV1Schema,
   typeof PluginProjectedDeploymentTargetsFamilyV1Schema,
+  typeof PluginProjectedSubjectKindsFamilyV1Schema,
   typeof PluginProjectedHealthCheckKindsFamilyV1Schema,
   typeof PluginProjectedStoreKindsFamilyV1Schema,
   typeof PluginProjectedLanguageServersFamilyV1Schema,
@@ -3197,6 +3215,7 @@ export const PluginProjectedFamilyV2Schema: z.ZodMiniUnion<readonly [
   PluginProjectedRegistrySourcesFamilyV1Schema,
   PluginProjectedBackupDestinationsFamilyV1Schema,
   PluginProjectedDeploymentTargetsFamilyV1Schema,
+  PluginProjectedSubjectKindsFamilyV1Schema,
   PluginProjectedHealthCheckKindsFamilyV1Schema,
   PluginProjectedStoreKindsFamilyV1Schema,
   PluginProjectedLanguageServersFamilyV1Schema,

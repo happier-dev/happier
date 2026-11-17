@@ -135,6 +135,7 @@ export type ResolvedBackupDestinationContribution = ResolvedTargetUiContribution
 /** Machine roles a plugin adds or (`partOf`) joins; the daemon roles runtime resolves them with core roles. */
 export type ResolvedMachineRoleContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol/machines/roles/machineRolesV1').MachineRoleDeclarationV1>;
 export type ResolvedDeploymentTargetContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').DeploymentTargetContributionV1>;
+export type ResolvedSubjectKindContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').PluginSubjectKindContributionV1>;
 export type ResolvedHealthCheckKindContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').HealthCheckKindContributionV1>;
 export type ResolvedStoreKindContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').PluginStoreKindContributionV1>;
 export type ResolvedMachineRecipeContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').MachineRecipeV1>;
@@ -864,6 +865,7 @@ export type ResolvedContributionInputs = Readonly<{
     backupDestinations?: readonly ResolvedBackupDestinationContribution[];
     machineRoles?: readonly ResolvedMachineRoleContribution[];
     deploymentTargets?: readonly ResolvedDeploymentTargetContribution[];
+    subjectKinds?: readonly ResolvedSubjectKindContribution[];
     healthCheckKinds?: readonly ResolvedHealthCheckKindContribution[];
     storeKinds?: readonly ResolvedStoreKindContribution[];
     machineRecipes?: readonly ResolvedMachineRecipeContribution[];
@@ -942,6 +944,7 @@ export type ResolvedContributionRegistry = Readonly<{
     backupDestinations: readonly ResolvedBackupDestinationContribution[];
     machineRoles?: readonly ResolvedMachineRoleContribution[];
     deploymentTargets?: readonly ResolvedDeploymentTargetContribution[];
+    subjectKinds?: readonly ResolvedSubjectKindContribution[];
     healthCheckKinds?: readonly ResolvedHealthCheckKindContribution[];
     storeKinds?: readonly ResolvedStoreKindContribution[];
     machineRecipes?: readonly ResolvedMachineRecipeContribution[];

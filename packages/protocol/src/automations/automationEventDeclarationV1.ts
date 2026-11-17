@@ -29,6 +29,7 @@ import {
 } from '../plugins/actions/v2.js';
 import { PluginUiRendererChainBindingV1Schema } from '../plugins/contributions/ui/rendererChainBinding.js';
 import { AutomationObservationOnlyIntentV1Schema } from './automationEventSetupResultV1.js';
+import { PluginSubjectProjectionV1Schema } from '../plugins/actions/v2.js';
 import { ScmHostingProviderKindSchema } from '../scm/pullRequests.js';
 
 export const AutomationQualifiedPluginContributionRefV1Schema =
@@ -55,6 +56,7 @@ export type AutomationObservationTransportKindV1 = z.infer<
 export const PluginEventAutomationDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   eligible: z.literal(true),
+  subjects: z.optional(z.array(PluginSubjectProjectionV1Schema)),
   /** Native adapter identities; plugin support is derived from its validated subject projections. */
   subjectKinds: z.optional(z.array(AutomationSubjectKindV1Schema.check(z.refine(kind => kind !== 'plugin')))),
   source: z.strictObject({

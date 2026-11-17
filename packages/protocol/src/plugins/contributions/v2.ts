@@ -28,6 +28,8 @@ export * from './accessProviders.js';
 import { PluginServiceLaunchEnvironmentContributionV1Schema } from './serviceLaunchEnvironments.js';
 import { PluginProjectNativeAdapterContributionV1Schema } from './projectNativeAdapters.js';
 import { PluginWorkItemsContributionV1Schema } from './workItems.js';
+import { PluginSubjectKindContributionV1Schema, validatePluginSubjectKindContributionsV1 } from './subjectKinds.js';
+export * from './subjectKinds.js';
 import { PluginSessionInboxResourceBindingV1Schema } from './ui/sessionInbox.js';
 export { PluginProjectNativeAdapterContributionV1Schema, type PluginProjectNativeAdapterContributionV1 } from './projectNativeAdapters.js';
 export { PluginCaptureSourceContributionV1Schema, type PluginCaptureSourceContributionV1 } from './captureSources.js';
@@ -919,6 +921,7 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.machineSetupPresets, schema: MachineSetupPresetContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.actions, schema: PluginActionContributionV2Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.resources, schema: PluginResourceContributionV2Schema }),
+  definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.subjectKinds, schema: PluginSubjectKindContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.inputTypes, schema: PluginInputTypeContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.atmospherePictures, schema: PluginAtmospherePictureContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.themes, schema: PluginThemeContributionV1Schema }),
@@ -1038,6 +1041,7 @@ function createPluginContributesV2SchemaWithoutDefault(): z.ZodMiniObject<
       });
     }
   });
+  validatePluginSubjectKindContributionsV1(value, ctx);
   validatePluginSearchProviderContributionsV1(value, ctx);
   validateMachineProvisionerContributionsV1(value, ctx);
   validateAccessProviderContributionsV1(value, ctx);

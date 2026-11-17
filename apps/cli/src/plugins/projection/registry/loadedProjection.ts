@@ -297,6 +297,7 @@ export function projectLoadedPluginRegistry(
     const backupDestinationCandidates: import('./types').ResolvedBackupDestinationContribution[] = [];
     const machineRoleCandidates: import('./types').ResolvedMachineRoleContribution[] = [];
     const deploymentTargetCandidates: import('./types').ResolvedDeploymentTargetContribution[] = [];
+    const subjectKindCandidates: import('./types').ResolvedSubjectKindContribution[] = [];
     const healthCheckKindCandidates: import('./types').ResolvedHealthCheckKindContribution[] = [];
     const storeKindCandidates: import('./types').ResolvedStoreKindContribution[] = [];
     const machineRecipeCandidates: import('./types').ResolvedMachineRecipeContribution[] = [];
@@ -896,6 +897,11 @@ export function projectLoadedPluginRegistry(
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
+    for (const contribution of pluginRegistry.subjectKinds) {
+        subjectKindCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
+            manifestPath: contribution.manifestPath, definition: contribution.definition });
+    }
     for (const contribution of pluginRegistry.healthCheckKinds) {
         healthCheckKindCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
@@ -1083,6 +1089,7 @@ export function projectLoadedPluginRegistry(
         backupDestinations: Object.freeze(backupDestinationCandidates),
         machineRoles: Object.freeze(machineRoleCandidates),
         deploymentTargets: Object.freeze(deploymentTargetCandidates),
+        subjectKinds: Object.freeze(subjectKindCandidates),
         healthCheckKinds: Object.freeze(healthCheckKindCandidates),
         storeKinds: Object.freeze(storeKindCandidates),
         machineRecipes: Object.freeze(machineRecipeCandidates),
