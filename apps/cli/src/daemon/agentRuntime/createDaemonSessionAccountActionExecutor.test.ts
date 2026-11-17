@@ -57,6 +57,7 @@ import { splitReviewCommentV1, sealReviewCommentSensitiveEnvelopeV1 } from '@hap
 import { ReviewCommentV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
 import { createHappierMcpServer } from '@/mcp/createHappierMcpServer';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -106,11 +107,22 @@ const operation: Operation = {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); processIdentityBoundary.mockReset();
   resetActiveAccountSettingsSnapshotForTests(); });
 
+const harnessCredentials = { token: 'alice-daemon-token', encryption: null } as const;
+
+/** Bob's plain Session as Home returns it; its owner metadata carries the approval profile. */
+function ownedSessionRecord(owner: Readonly<{ approvalProfileId?: string }> = {}) {
+  const fields = buildSessionMetadataEnvelopeCreateFields({ credentials: harnessCredentials, accountEncryptionMode: 'plain',
+    storedContentMode: 'plain', metadata: { ...createTestMetadata({ machineId: 'alice-machine' }), ...owner }, agentState: null });
+  return { ...createSessionRecordFixture({ id: 'bob-session', share: null }), encryptionMode: 'plain',
+    metadataLayoutVersion: fields.metadataLayoutVersion, metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata };
+}
+
 function createHarness(prepareExternalActionAuthorization?: Parameters<typeof createDaemonSessionAccountActionExecutor>[0]['prepareExternalActionAuthorization']) {
   const delivered: unknown[] = [];
   let current: (() => Promise<boolean>) | undefined;
   const params = {
     serverId: 'alice-home', serverHttpBaseUrl: 'https://alice-home.test', token: 'alice-daemon-token',
+    credentials: harnessCredentials, readAccountEncryptionMode: async () => 'plain' as const,
     ...(prepareExternalActionAuthorization ? { prepareExternalActionAuthorization } : {}),
     createExecutor: (_depth: (turnId?: string) => number | undefined, isCallerCurrent: () => Promise<boolean>) => {
       current = isCallerCurrent;
@@ -155,7 +167,7 @@ describe('daemon Session Account authority', () => {
   it('projects native input admission into the real Action executor context and preserves its effect currentness', async () => {
     const refusalDiagnostics = vi.spyOn(logger, 'warnLocalFile');
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
-      data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } });
+      data: { session: ownedSessionRecord() } });
     const harness = createHarness();
     const admission = { admissionId: 'native-input', occurrenceId: 'realtime-occurrence', attemptId: 'attempt' };
     const nativeOperation: Operation = { ...operation, witness: { ...operation.witness,
@@ -192,7 +204,7 @@ describe('daemon Session Account authority', () => {
         throw Object.assign(new Error('Home read timed out'), { code: 'ECONNABORTED', isAxiosError: true });
       }
       if (path.startsWith('/v2/sessions/')) return { status: 200,
-        data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } };
+        data: { session: ownedSessionRecord() } };
       return { status: 200, data: AccountProfileResponseSchema.parse({ id: 'owner' }) };
     });
     const harness = createHarness(async () => {
@@ -231,7 +243,7 @@ describe('daemon Session Account authority', () => {
         current = false;
         throw new axios.AxiosError('Requester Home read timed out', 'ECONNABORTED');
       }
-      return { status: 200, data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } };
+      return { status: 200, data: { session: ownedSessionRecord() } };
     });
     const harness = createHarness();
     expect(await harness.execute(operation, { sessionId: 'bob-session', isCurrent: async () => current,
@@ -292,7 +304,7 @@ describe('daemon Session Account authority', () => {
         artifactId: artifact.id, ownerAccountId: 'owner', access: 'owner', grants: [],
       } };
       if (path === '/v2/sessions/bob-session') return { status: 200,
-        data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } };
+        data: { session: ownedSessionRecord() } };
       throw new Error(`Unexpected Doc custody GET ${path}`);
     });
     const http = vi.spyOn(axios, 'request').mockImplementation(async request => {
@@ -403,7 +415,7 @@ describe('daemon Session Account authority', () => {
     const reads: string[] = [];
     vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
       const path = new URL(String(url)).pathname;
-      if (path === '/v2/sessions/bob-session') return { status: 200, data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } };
+      if (path === '/v2/sessions/bob-session') return { status: 200, data: { session: ownedSessionRecord() } };
       if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       if (path === '/v1/reviews/comments/comment-1') {
         const header = ReviewCommentPrincipalHeaderV1Schema.parse(JSON.parse(Buffer.from(String(config?.headers?.[REVIEW_COMMENT_PRINCIPAL_HEADER_V1]), 'base64url').toString()));
@@ -451,7 +463,7 @@ describe('daemon Session Account authority', () => {
       provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
     const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(31));
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
-      data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } });
+      data: { session: ownedSessionRecord() } });
     // Home HTTP is the boundary. Keep the real authored-input producer and
     // installation proof; a refused Home must remain an authority refusal.
     let produced: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse> | undefined;
@@ -496,7 +508,7 @@ describe('daemon Session Account authority', () => {
     { label: 'invalid directory discriminator', input: { directory: { kind: 'local', path: '/private/submitted-path' } } },
   ])('reports malformed Session spawn input before attempting external authorization: $label', async ({ input: invalidInput }) => {
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
-      data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } });
+      data: { session: ownedSessionRecord() } });
     const execute = createDaemonSessionAccountActionExecutor({ serverId: 'alice-home',
       serverHttpBaseUrl: 'https://alice-home.test', token: 'alice-daemon-token', machineId: 'machine',
       prepareExternalActionAuthorization: async ({ operation: action }) => {
@@ -734,7 +746,7 @@ describe('daemon Session Account authority', () => {
 
   it('requires original Home creator proof before a Session visual can use Account execution', async () => {
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
-      data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } });
+      data: { session: ownedSessionRecord() } });
     const execute = createDaemonSessionAccountActionExecutor({ serverId: 'alice-home',
       serverHttpBaseUrl: 'https://alice-home.test', token: 'alice-daemon-token',
       createExecutor: () => createActionExecutor(createCliActionDeps({ token: 'alice-daemon-token', sessionId: '', mode: 'plain', ctx: null })),
@@ -753,7 +765,7 @@ describe('daemon Session Account authority', () => {
     const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0,
       provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
-      data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } });
+      data: { session: ownedSessionRecord() } });
     vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
       if (String(url).endsWith('/verify')) return { status: 200, data: { ok: true } };
       const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
@@ -1337,7 +1349,7 @@ describe('daemon Session Account authority', () => {
 
   it('binds a native client Home approval to the authenticated daemon Machine without public API authorization', async () => {
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
-      data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } });
+      data: { session: ownedSessionRecord() } });
     let persisted: ApprovalRequest | undefined;
     let delivered = 0;
     const execute = createDaemonSessionAccountActionExecutor({ serverId: 'alice-home', serverHttpBaseUrl: 'https://alice-home.test',
@@ -1453,7 +1465,7 @@ describe('daemon Session Account authority', () => {
         return artifact ? { status: 200, data: artifact } : { status: 404, data: { error: 'not_found' } };
       }
       return String(url).endsWith('/v2/account/settings') ? { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } }
-        : { status: 200, data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } };
+        : { status: 200, data: { session: ownedSessionRecord() } };
     });
     vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Expected HTTP object body');
@@ -1591,7 +1603,7 @@ describe('daemon Session Account authority', () => {
     const handoff: Operation = { ...operation, actionId: 'session.handoff',
       input: { sessionId: 'bob-session', targetMachineId: 'target-machine', targetPath: '/target' } };
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
-      data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } });
+      data: { session: ownedSessionRecord() } });
     const network = vi.spyOn(axios, 'post').mockImplementation(async (_url, body) => {
       const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
       expect(request.envelope.handoffAdmission).toEqual({ sessionId: 'bob-session',
@@ -1641,7 +1653,7 @@ describe('daemon Session Account authority', () => {
       settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
       scopeKey: runWithServerHttpBaseUrl(serverHttpBaseUrl, () => resolveAccountSettingsScopeKeyForToken(token)) });
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
-      data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } });
+      data: { session: ownedSessionRecord() } });
     const network = vi.spyOn(axios, 'post');
     const admitted: string[] = [];
     const acquire: Operation = { ...operation, actionId: 'machines.managed.acquire', input: { enrollmentIdentity: { kind: 'existingUser', role: 'personal' }, selection: {
@@ -1673,7 +1685,7 @@ describe('daemon Session Account authority', () => {
     const target = { kind: 'machine' as const, machineId: 'alice-machine' };
     const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: operation.requestId, target, input: operation.input });
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
-      data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } });
+      data: { session: ownedSessionRecord() } });
     const network = vi.spyOn(axios, 'post').mockImplementation(async (url, _body, config) => {
       if (String(url).endsWith('/verify')) return { status: 200, data: { ok: true } };
       expect(config?.headers).toMatchObject({ Authorization: 'Bearer bob-session-token' });
@@ -1728,7 +1740,7 @@ describe('daemon Session Account authority', () => {
 
   it('diagnoses a refused client Action proof without disclosing its input or credentials', async () => {
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
-      data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } });
+      data: { session: ownedSessionRecord() } });
     // File logging and authenticated Home reads are genuine system boundaries.
     const logged = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
     const network = vi.spyOn(axios, 'post').mockResolvedValue({ status: 403, data: {} });
@@ -1760,7 +1772,7 @@ describe('daemon Session Account authority', () => {
 
   it('admits the Session owner once per Action and applies a changed owner at the next admission', async () => {
     const read = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
-      data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } });
+      data: { session: ownedSessionRecord() } });
     const preparedCurrentness: boolean[] = [];
     // The installed preparer consults caller currentness before and after its
     // Home reads and again at the mint; none of these is a new admission.
@@ -1792,7 +1804,7 @@ describe('daemon Session Account authority', () => {
 
   it('preserves each admitted requester at the real daemon Action effect while keeping owner credentials', async () => {
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
-      data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } });
+      data: { session: ownedSessionRecord() } });
     const harness = createHarness();
     for (const accountId of ['bob', 'carol']) {
       const actionRequestAttributionV1 = { requestRef: `${accountId}-input`,
@@ -1824,7 +1836,7 @@ describe('daemon Session Account authority', () => {
     let live = true;
     vi.spyOn(axios, 'get').mockImplementation(async () => {
       live = false;
-      return { status: 200, data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } };
+      return { status: 200, data: { session: ownedSessionRecord() } };
     });
     const harness = createHarness();
     expect(await harness.execute(operation, { sessionId: 'bob-session', isCurrent: async () => live }))

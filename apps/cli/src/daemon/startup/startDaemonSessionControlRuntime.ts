@@ -570,6 +570,7 @@ import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { readTerminalHostAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
+import { readAccountEncryptionCurrentnessForRead } from '@/api/client/accountEncryptionCurrentnessObservation';
 
 import {
   persistUsageLimitRecoveryFieldDurably,
@@ -11772,6 +11773,10 @@ export async function startDaemonSessionControlRuntime(
             serverHttpBaseUrl,
             token: credentials.token,
             credentials,
+            // A requester's mode was admitted with its bootstrap; the daemon's own Account reads its currentness.
+            readAccountEncryptionMode: async signal => requesterRuntime?.bootstrap.accountEncryptionMode
+              ?? (await readAccountEncryptionCurrentnessForRead({ credentials, token: credentials.token,
+                serverBaseUrl: serverHttpBaseUrl, ...(signal ? { signal } : {}) })).mode,
             resolveServerFeaturesSnapshot: params.resolveServerFeaturesSnapshot,
             machineId: params.machineId,
             initialStartDiagnostic: { phase: 'requester_runtime',

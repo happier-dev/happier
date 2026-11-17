@@ -12,6 +12,8 @@ import { ActionIdSchema, ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/act
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import type { AgentRuntimeDaemonServiceRequestV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import { resolveSessionApprovalProfileReferenceV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import { resolveSessionRoleRpcOrigin } from '@/session/actions/sessionRoleRpcOrigin';
 import { resolveActionOriginationPreferenceFailureV1 } from '@happier-dev/protocol/actions/executor/actionOriginationPreferences';
 import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
@@ -91,6 +93,8 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
   serverHttpBaseUrl: string;
   token: string;
   credentials?: StoredCredentials;
+  /** The admitted Account encryption mode of `credentials`; opens the admitted Session's owner metadata once. */
+  readAccountEncryptionMode?: (signal?: AbortSignal) => Promise<import('@happier-dev/protocol').AccountEncryptionCurrentnessResponse['mode']>;
   /** Existing observation of this daemon's bound Home, distinct from its local profile. */
   resolveServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined | Promise<CliServerFeaturesSnapshot | undefined>;
   /** The installed daemon producer, independent of optional public-API proof. */
@@ -187,17 +191,26 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     // admitted requester execution channel. Later steps of the admitted Action
     // use runtime custody and cancellation; a changed owner applies at the next
     // Action admission.
+    // The same owner read admits the Session's approval profile once; the executor's
+    // profile reader does not read the Session again for this Action.
+    const admitted: { approvalProfile?: Readonly<{ approvalProfileId: string | null; approvalProfileTeamOrGroupDerived: boolean }> | null } = {};
     const callerRefusal = await runTracedExternalActionStage(
       operation.actionId, operation.requestId, 'session_action.caller_currentness', async (): Promise<SessionAccountActionRefusalReason | null> => {
       try {
         return await readRequesterHomeWithinActionLifetime(async (): Promise<SessionAccountActionRefusalReason | null> => {
           if (authority.signal?.aborted || !await authority.isCurrent()) return 'runtime_authority_unavailable';
-          const session = await fetchSessionById({ reason: 'session-action',
+          const credentials = params.credentials;
+          const [session, accountEncryptionMode] = await Promise.all([fetchSessionById({ reason: 'session-action',
             token: params.token, serverUrl: params.serverHttpBaseUrl, sessionId: authority.sessionId,
             ...(authority.signal ? { signal: authority.signal } : {}),
-          });
+          }), credentials && params.readAccountEncryptionMode ? params.readAccountEncryptionMode(authority.signal) : undefined]);
           if (!session || session.id !== authority.sessionId) return 'session_owner_missing';
           if (readSessionAccessProjectionRoleV1(session) !== 'owner') return 'session_not_owner';
+          if (credentials && accountEncryptionMode) {
+            const metadata = tryDecryptSessionOwnerMetadataView({ credentials, accountEncryptionMode, rawSession: session });
+            admitted.approvalProfile = metadata ? { approvalProfileId: resolveSessionApprovalProfileReferenceV1(metadata),
+              approvalProfileTeamOrGroupDerived: metadata.approvalProfileTeamOrGroupDerived === true } : null;
+          }
           return !authority.signal?.aborted && await authority.isCurrent() ? null : 'runtime_authority_unavailable';
         }, authority.signal);
       } catch {
@@ -206,6 +219,9 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     });
     const isCallerCurrent = async (): Promise<boolean> => !authority.signal?.aborted && await authority.isCurrent();
     if (callerRefusal) return refuse(callerRefusal, authority.signal?.aborted ? 'cancelled' : 'target_unavailable');
+    if (admitted.approvalProfile === null) {
+      return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
+    }
     const reviewCommentPrincipal = operation.reviewCommentPrincipal;
     if (reviewCommentPrincipal && (reviewCommentPrincipal.actor.kind !== 'agent'
       || reviewCommentPrincipal.actor.sessionId !== authority.sessionId
@@ -252,6 +268,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       ...(reviewCommentPrincipal ? { reviewCommentPrincipal } : {}),
       ...(params.machineId ? { defaultSessionMachineId: params.machineId } : {}),
       defaultSessionId: authority.sessionId, actionRequestId: operation.requestId,
+      ...admitted.approvalProfile,
       callerPermissionMode: witness.callerPermissionMode ?? null,
       causalPermissionAuthority: witness.causalPermissionAuthority ?? null,
       ...(witness.actionRequestAttributionV1 ? {

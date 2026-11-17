@@ -294,6 +294,8 @@ export type AdmittedRequesterSessionBootstrap = Readonly<{
   /** Retained actual Home at birth; attribution.serverId remains the saved profile. */
   homeServerIdentityId?: string;
   serverHttpBaseUrl: string;
+  /** The Account encryption mode admitted with this bootstrap; its currentness owner retires a change. */
+  accountEncryptionMode: import('@happier-dev/protocol').AccountEncryptionCurrentnessResponse['mode'];
   accountSettingsContext: AccountSettingsContext;
   savedSecretOperationContext: SavedSecretOperationContextV1;
   ensureAccountSettingsCurrent(signal?: AbortSignal): Promise<boolean>;
@@ -487,7 +489,7 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
       allowNativeAccountCredentials: machineAdmission?.actorAccountId === attribution.accountId
         && isCustodianMachineAdmission(machineAdmission),
       attribution, ...(homeServerIdentityId ? { homeServerIdentityId } : {}),
-      serverHttpBaseUrl: input.boundary.serverHttpBaseUrl, accountSettingsContext,
+      serverHttpBaseUrl: input.boundary.serverHttpBaseUrl, accountEncryptionMode: currentness.mode, accountSettingsContext,
       savedSecretOperationContext, isCurrent, dispose, getBoundSessionId: () => bound?.sessionId ?? null, bindSession, bindExistingSession,
       ensureAccountSettingsCurrent: settingsPublication.ensureCurrent, subscribeAccountSettings: settingsPublication.subscribe,
       subscribeSessionFollowRules: accountObservation.subscribeSessionFollowRules,
