@@ -122,6 +122,7 @@ export function useExecutableParticipantSections(
     modelOptions: input.modelOptions,
   });
   const machines = useMachineListForServer(serverId, input.enabled);
+  const machinesLoaded = machines != null;
   const presence = useMachinePresenceSummaries(serverId, input.enabled ? (machines ?? []).map(machine => machine.id) : [], input.accountLifetime);
   const { onChoose, sessionsContext, onReadinessSessionChange } = input;
   const [recipe, setRecipe] = React.useState<Readonly<{
@@ -236,18 +237,23 @@ export function useExecutableParticipantSections(
     // Nothing of the viewer's can answer (lab flOpinion:emptyP): every Machine of theirs is not ready and every
     // listed Session of theirs runs on one of them. Said once, leading the list, from the facts the rows already
     // carry; Bots run with their Team's setup and stay choosable. Unknown readiness never counts as not ready.
-    const nothingCanAnswer = needle.length === 0 && status === 'ready' && launchMachines.length > 0
+    // A viewer with no Machine at all and nothing else to choose gets the same line, naming how to add one; a
+    // Machine list that has not loaded is unknown, not empty.
+    const noMachineToAnswer = needle.length === 0 && status === 'ready' && machinesLoaded && launchMachines.length === 0
+      && candidates.candidates.length === 0;
+    const nothingCanAnswer = noMachineToAnswer || (needle.length === 0 && status === 'ready' && launchMachines.length > 0
       && [...readinessByMachineId.values()].every((readiness) => readinessCause(readiness) !== null)
       && candidates.candidates.every((candidate) => candidate.kind === 'session'
         ? candidate.bot === true || (candidate.machineId != null && machineById.has(candidate.machineId))
-        : candidate.kind !== 'model' || readinessCause(candidate.readiness) !== null);
+        : candidate.kind !== 'model' || readinessCause(candidate.readiness) !== null));
     if (nothingCanAnswer) {
       const showModels = models.length > 0 && (!input.people || input.people.includeModels);
       (showModels ? models : sessions).unshift(stateRow(
         'unavailable',
         t('session.collaboration.discussion.secondOpinion.nothingCanAnswer'),
         <Icon name="cloud-slash" size={ICON_SIZE.md} color={theme.colors.text.tertiary} />,
-        { subtitle: t('session.collaboration.discussion.secondOpinion.nothingCanAnswerBody'), disabled: true },
+        { subtitle: noMachineToAnswer ? t('addFlows.addMachineDescription')
+          : t('session.collaboration.discussion.secondOpinion.nothingCanAnswerBody'), disabled: true },
       ));
     }
     const sections: ExecutableParticipantSection[] = [];
@@ -286,6 +292,7 @@ export function useExecutableParticipantSections(
     input.enabled,
     input.people,
     launchMachines,
+    machinesLoaded,
     query,
     onChoose,
     onReadinessSessionChange,

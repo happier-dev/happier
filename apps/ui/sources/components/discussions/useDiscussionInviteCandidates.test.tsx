@@ -293,6 +293,26 @@ describe('Discussion Invite source composition', () => {
             clearMachineRequestReachabilityForTest();
         }
     });
+    it('says nothing of the viewer\'s can answer, and how to add a Machine, once their loaded Machine list is empty', async () => {
+        const home = boundary.serverIds[1]!;
+        const accountLifetime = await captureHome(home);
+        boundary.http.answer(home, '/v1/teams/list', { body: { items: [], nextCursor: null } });
+        boundary.setRows(home, []);
+        const statusRows = (hook: { getCurrent: () => ReturnType<typeof useExecutableParticipantSections> }) => hook.getCurrent().sections
+            .flatMap(section => section.options).filter(option => option.testID === 'discussion-invite-sessions-unavailable');
+        // A list that has not loaded is unknown, never "nothing can answer".
+        storage.setState({ machineListByServerId: { [home]: null } });
+        const hook = await renderHook(() => useExecutableParticipantSections({ accountLifetime, enabled: true,
+            sessionsContext: 'Reviewer', onChoose: vi.fn() }));
+        await vi.waitFor(() => expect(hook.getCurrent().sessions.status).toBe('ready'));
+        expect(statusRows(hook)).toHaveLength(0);
+        // Loaded and empty: one line, not a choice, naming the next step instead of a Machine that isn't there.
+        await act(async () => { storage.setState({ machineListByServerId: { [home]: [] } }); });
+        await vi.waitFor(() => expect(statusRows(hook)).toHaveLength(1));
+        expect(statusRows(hook)[0]).toMatchObject({ disabled: true,
+            label: t('session.collaboration.discussion.secondOpinion.nothingCanAnswer'),
+            subtitle: t('addFlows.addMachineDescription') });
+    });
     it('projects encrypted title readability from the exact Home title owner and tracks unlock without label heuristics', async () => {
         const [focusedHome, home] = boundary.serverIds as [string, string, string];
         const accountLifetime = await captureHome(home);
