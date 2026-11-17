@@ -19,7 +19,7 @@ import { artifactUpdateHandler } from "@/app/api/socket/artifactUpdateHandler";
 import { createFakeSocket, getSocketHandler } from "@/app/api/testkit/socketHarness";
 import { deleteArtifact, migrateArtifactAccountEncryptionInTx, updateArtifactTx } from "./artifactWriteService";
 import { applyArtifactRecipientKeyEnvelopesInTx, readArtifactHeaderForCallerInTx,
-    isArtifactAudienceContainedInTx, setArtifactAccessGrantInTx } from './artifactAccessService';
+    isArtifactAudienceContainedInTx, setArtifactAccessGrantInTx, removeArtifactAccessGrantInTx } from './artifactAccessService';
 import { observePrismaReads } from '@/testkit/observePrismaReads';
 import { withSqliteReadSnapshot } from '@/storage/prisma';
 import { buildWidgetSurfaceArtifactHeaderV1, buildWidgetSurfaceArtifactIdV1, readWidgetSurfaceArtifactHeaderV1 } from '@happier-dev/protocol/widgets';
@@ -53,6 +53,23 @@ describe("Artifact document grants (real SQLite)", () => {
     }
 
     const protocolHeaders = { "x-happier-account-stored-content-protocol": String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION) };
+
+    it('keeps required Review Team grants while ordinary Team grants remain removable', async () => {
+        const owner = await plainAccount();
+        const team = await db.team.create({ data: { name: 'Required Review audience' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
+        const required = await plainArtifact(owner.id);
+        const optional = await plainArtifact(owner.id);
+        await db.artifactGrant.createMany({ data: [
+            { artifactId: required.id, principalKind: 'team', teamId: team.id, accessLevel: 'edit', createdByAccountId: owner.id, requiredByTeamPolicy: true },
+            { artifactId: optional.id, principalKind: 'team', teamId: team.id, accessLevel: 'edit', createdByAccountId: owner.id },
+        ] });
+        const input = { actorAccountId: owner.id, principal: { kind: 'team' as const, teamId: team.id } };
+        expect(await inTx(tx => removeArtifactAccessGrantInTx(tx, { ...input, artifactId: required.id }))).toMatchObject({ ok: false, error: 'artifact_access_forbidden' });
+        expect(await inTx(tx => setArtifactAccessGrantInTx(tx, { ...input, artifactId: required.id, accessLevel: 'view' }))).toMatchObject({ ok: false, error: 'artifact_access_forbidden' });
+        expect(await inTx(tx => removeArtifactAccessGrantInTx(tx, { ...input, artifactId: optional.id }))).toMatchObject({ ok: true });
+        expect(await db.artifactGrant.findFirst({ where: { artifactId: required.id, teamId: team.id } })).toMatchObject({ accessLevel: 'edit', requiredByTeamPolicy: true });
+    });
 
     it('reviews missing Workflow audience through effective Team and Group access without writing grants', async () => {
         const owner = await plainAccount();

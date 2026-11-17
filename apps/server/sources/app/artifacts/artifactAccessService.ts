@@ -999,6 +999,9 @@ export async function setArtifactAccessGrantInTx(tx: Tx, input: ArtifactAccessGr
     if (!access) return { ok: false, error: "artifact_not_found" };
     if (!mayManageResourceGrants(access, input.accessLevel)) return { ok: false, error: "artifact_access_forbidden" };
     const mutation = await readArtifactGrantMutationInTx(tx, input);
+    if (mutation.previous?.requiredByTeamPolicy && isResourceAccessLevelIncrease(input.accessLevel, 'edit')) {
+        return { ok: false, error: 'artifact_access_forbidden' };
+    }
     const principalError = await validateResourceGrantPrincipalInTx(tx, { actorAccountId: input.actorAccountId,
         ownerAccountId: access.ownerAccountId, principal: input.principal, hasExistingGrant: mutation.previous !== null });
     if (principalError) return { ok: false, error: `artifact_${principalError}` };
@@ -1097,17 +1100,19 @@ export async function removeArtifactAccessGrantInTx(tx: Tx, input: ArtifactAcces
     const access = await resolveArtifactAccessInTx(tx, input);
     if (!access) return { ok: false, error: "artifact_not_found" };
     if (!mayManageResourceGrants(access)) return { ok: false, error: "artifact_access_forbidden" };
-    const previousAudience = await resolveArtifactAudienceInTx(tx, input.artifactId);
     const principal = input.principal;
     if (principal.kind === "group") {
         const group = await tx.teamGroup.findUnique({ where: { id: principal.groupId }, select: { teamId: true } });
         if (!group || group.teamId !== principal.teamId) return { ok: false, error: "artifact_subject_not_found" };
     }
-    const deleted = principal.kind === "account"
-        ? await tx.artifactGrant.deleteMany({ where: { principalKind: 'account', artifactId: input.artifactId, accountId: principal.accountId } })
-        : principal.kind === "team"
-            ? await tx.artifactGrant.deleteMany({ where: { principalKind: 'team', artifactId: input.artifactId, teamId: principal.teamId } })
-            : await tx.artifactGrant.deleteMany({ where: { principalKind: 'group', artifactId: input.artifactId, teamGroupId: principal.groupId } });
+    const where: Prisma.ArtifactGrantWhereInput = { artifactId: input.artifactId,
+        ...(principal.kind === 'account' ? { principalKind: 'account', accountId: principal.accountId }
+            : principal.kind === 'team' ? { principalKind: 'team', teamId: principal.teamId }
+                : { principalKind: 'group', teamGroupId: principal.groupId }) };
+    const grant = await tx.artifactGrant.findFirst({ where, select: { requiredByTeamPolicy: true } });
+    if (grant?.requiredByTeamPolicy) return { ok: false, error: 'artifact_access_forbidden' };
+    const previousAudience = await resolveArtifactAudienceInTx(tx, input.artifactId);
+    const deleted = await tx.artifactGrant.deleteMany({ where });
     const audience = await resolveArtifactAudienceInTx(tx, input.artifactId);
     await tx.artifactKeyEnvelope.deleteMany({ where: { artifactId: input.artifactId, recipientAccountId: { notIn: audience } } });
     if (deleted.count > 0) {
