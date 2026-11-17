@@ -11502,6 +11502,15 @@ export async function startDaemonSessionControlRuntime(
       machine, purpose, context, runApproved, serverId: params.serverId,
       createExecutor: overrides => createExternalActionExecutor(params.credentials, undefined, undefined, undefined, undefined, overrides),
     }),
+    waitForActionOperationCompletion: async (...args: Parameters<ApiMachineClient['waitForActionOperationCompletion']>) => {
+      const currentApiMachine = params.getApiMachineForSessions();
+      if (!currentApiMachine) {
+        throw Object.assign(new Error('target_unavailable'), {
+          code: 'target_unavailable',
+        });
+      }
+      return await currentApiMachine.waitForActionOperationCompletion(...args);
+    },
     observeActionExecution: async (request) => {
       const currentApiMachine = params.getApiMachineForSessions();
       if (!currentApiMachine) {

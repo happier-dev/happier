@@ -39,24 +39,15 @@ import { ManagedMachinePresetGetResultV1Schema } from '@happier-dev/protocol/mac
 import { ManagedAcceptedV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import type { ManagedMachineExecutionOptions } from '@/machines/managed/acquire';
+import { managedCreationAcquisition, readManagedWorkflowContinuationResultPort,
+    type ManagedCreationAcquisitionOptions, type ManagedCreationAcquisitionContext } from '@/machines/managed/creationContinuation';
 import axios from 'axios';
 import { prepareMachinePresetOnHost } from './machinePresetPreparation';
 import { WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
-import type { WorkflowRunStartRequestV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import { WorkflowRunStartResultV1Schema, type WorkflowRunStartRequestV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import type { ManagedWorkflowContinuationResult } from '../actionOperations/actionOperationTypes';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
-
-const managedCreationAcquisition = Symbol('managedCreationAcquisition');
-type ManagedCreationAcquisitionOptions = Pick<ManagedMachineExecutionOptions,
-    'acquisitionMode' | 'reuseIdle' | 'expectedProvisioner' | 'onLocalSessionPlacement' | 'runCreationContinuation'>
-    & Partial<Pick<ManagedMachineExecutionOptions, 'requestId'>>;
-type ManagedCreationAcquisitionContext = ActionExecutorContext & Readonly<{
-    [managedCreationAcquisition]?: Readonly<{
-        input: ReturnType<typeof ManagedAcquireInputV1Schema.parse>;
-        take(): ManagedCreationAcquisitionOptions;
-    }>;
-}>;
 
 /** The incumbent daemon factory binds the current controller to its driver. */
 type ManagedMachineActionAdapterParams = Readonly<{
@@ -240,7 +231,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
             || !isHostAdmittedReviewedChildPolicyV1(readHostReviewedChildOperationV1(context, actionId, input), actionId, input))) {
             throw new ManagedMachineControllerError('admission_unavailable');
         }
-        const isolationOptions = isolation?.take();
+        const isolationOptions = isolation?.take(context);
         const result = await withBoundDriver(params, signal, async (driver, controllerCredentials) => await driver.execute(actionId, input, { requestId, context, signal,
                 ...isolationOptions,
                 ...(params.subscribeEnvironmentSetupChanges ? { subscribeEnvironmentSetupChanges: callbacks => params.subscribeEnvironmentSetupChanges!(context, callbacks) } : {}),
@@ -302,7 +293,9 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
         // port; it remains read-only and creates no operation of its own.
         if (!context.operationAcceptance && (observesNativeSettlement || (getActionSpec(actionId).operation && (runId || observe)))) {
             if (!context.actionRequestId || !observe) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
+            const workflowContinuationResult = readManagedWorkflowContinuationResultPort(context);
             const observed = await observe({ actionId, input, actionRequestId: context.actionRequestId,
+                ...(workflowContinuationResult ? { workflowContinuationResult } : {}),
                 execute: async operation => {
                     if (runId && actionId !== 'machines.managed.inspect' && !operation.operationAcceptance) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
                     // A detached Ask replay is only the admission carrier. Once
@@ -385,35 +378,42 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
             if (!preparation || !authorization || !executeChild || !executeWorkflow || !waitForCompletion) {
                 return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
             }
-            let workflowResult: ActionExecuteResult | undefined;
+            let workflowResult: ManagedWorkflowContinuationResult | undefined;
+            let continuationContext = request.context;
             let consumed = false;
             const acquisition = preparation.acquisition;
             const options: ManagedCreationAcquisitionOptions = { requestId: request.start.runId,
                 runCreationContinuation: async ({ machine }) => {
                     if (!machine.enrolledMachineId) throw new ManagedMachineControllerError('intent_changed');
                     const { workspaceRefId: _previousWorkspace, ...authoredProject } = preparation.project;
-                    workflowResult = await executeWorkflow({ ...request.start, managedCreation: {
-                        homeId: machine.homeId, managedId: machine.id, controller: machine.controller,
-                    } }, { ...authoredProject, machineId: machine.enrolledMachineId }, request.context, machine);
+                    const result = await executeWorkflow({ ...request.start,
+                        managedCreation: { homeId: machine.homeId, managedId: machine.id, controller: machine.controller },
+                    }, { ...authoredProject, machineId: machine.enrolledMachineId }, continuationContext, machine);
+                    workflowResult = result.ok ? { ...result, result: WorkflowRunStartResultV1Schema.parse(result.result) } : result;
                     if (!workflowResult.ok) throw ManagedMachineControllerError.fromActionFailure(workflowResult, WORKFLOW_RUN_START_ACTION_ID_V1);
                 } };
             const acquired = await invokeHostReviewedChildV1({
                 parent: { actionId: WORKFLOW_RUN_START_ACTION_ID_V1, input: projectNativeJsonValueForTransport(request.start) as Record<string, JsonValue> },
                 context: request.context,
                 child: { action: MANAGED_ACQUIRE_ACTION_ID_V1, role: 'acquire-workflow-placement', input: projectNativeJsonValueForTransport(acquisition) },
-                execute: (_input, context) => executeChild(MANAGED_ACQUIRE_ACTION_ID_V1, acquisition, { ...context,
-                    [managedCreationAcquisition]: { input: acquisition, take: () => {
-                        if (consumed) throw new ManagedMachineControllerError('admission_unavailable');
-                        consumed = true;
-                        return options;
-                    } },
-                } as ManagedCreationAcquisitionContext),
+                execute: (_input, context) => {
+                    return executeChild(MANAGED_ACQUIRE_ACTION_ID_V1, acquisition, { ...context,
+                        [managedCreationAcquisition]: { input: acquisition, workflowContinuationResult: {
+                            read: () => workflowResult, restore: result => { workflowResult = result; },
+                        }, take: admittedContext => {
+                            if (consumed) throw new ManagedMachineControllerError('admission_unavailable');
+                            continuationContext = admittedContext;
+                            consumed = true;
+                            return options;
+                        } },
+                    } as ManagedCreationAcquisitionContext);
+                },
             });
-            if (!acquired.ok) return acquired;
+            if (!acquired.ok) return workflowResult ?? acquired;
             const accepted = ManagedAcceptedV1Schema.parse(acquired.result);
             if (accepted.operation) {
                 const completed = await waitForCompletion({ accountId: authorization.binding.accountId, machineId: params.machineId },
-                    accepted.operation.operationId);
+                    accepted.operation.operationId, result => { workflowResult = result; });
                 if (!workflowResult && completed) {
                     const failure = readActionOperationTerminalResultV1(completed);
                     if (failure && !failure.ok) return failure;

@@ -7,8 +7,13 @@ import type {
 import type { ActionOperationObservationV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ProjectSetupConsentFailureDetailsV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { WorkflowRunStartResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { ExternalSessionOperationAccountAdmission } from '@/session/actions/externalSessions/operationRecordStore';
+
+/** Actual guest continuation outcome, retained privately with its acquisition invocation. */
+export type ManagedWorkflowContinuationResult = ActionExecuteResult &
+  (Readonly<{ ok: false }> | Readonly<{ ok: true; result: WorkflowRunStartResultV1 }>);
 
 export type HostActionOperationExecute = (context: Readonly<{
   actionRequestId?: string;

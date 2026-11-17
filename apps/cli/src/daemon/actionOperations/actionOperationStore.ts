@@ -10,7 +10,8 @@ import type {
 } from '@happier-dev/protocol/actions';
 import type { ActionOperationListV2Request } from '@happier-dev/protocol/actions/operations/v1';
 
-import type { ActionOperationQueryScope, ActionOperationScope, DeploymentTokenOperationOrigin } from './actionOperationTypes';
+import type { ActionOperationQueryScope, ActionOperationScope, DeploymentTokenOperationOrigin, ManagedWorkflowContinuationResult } from './actionOperationTypes';
+import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 import type { LiveWorkCategoryV1, LiveWorkItemV1, LiveWorkInventoryV1, LiveWorkListenerV1 } from '@/daemon/lifecycle/managedActivity';
 import { isDeepStrictEqual } from 'node:util';
@@ -148,7 +149,8 @@ export function createActionOperationStore(options?: Readonly<{
   };
   const invocationMetadata = new Map<string, Readonly<{ inputIdentity: string; deploymentChildIdentity?: string;
     deploymentTokenOrigin?: DeploymentTokenOperationOrigin; requesterWorkAttributionV1?: RequesterWorkAttributionV1;
-    backupInput?: DeploymentBackupOperation['input']; backupTargetKey?: string; retainedTeardown?: RetainedTeardownExecution }>>();
+    backupInput?: DeploymentBackupOperation['input']; backupTargetKey?: string; retainedTeardown?: RetainedTeardownExecution;
+    workflowContinuationResult?: ManagedWorkflowContinuationResult }>>();
   // Derived from this owner's authored invocation input; imported history cannot
   // manufacture backup or restore evidence. No separate persisted receipt ledger.
   const backupOperationIds = new Map<string, Set<string>>();
@@ -441,6 +443,17 @@ export function createActionOperationStore(options?: Readonly<{
       const snapshot = snapshots.get(operationId), metadata = invocationMetadata.get(operationId);
       if (snapshot && inScope(snapshot, scope) && snapshot.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1
         && metadata && !metadata.retainedTeardown) retainInvocation(snapshot, { ...metadata, retainedTeardown: execution });
+    },
+    retainWorkflowContinuationResult(scope: ActionOperationQueryScope, operationId: string, result: ManagedWorkflowContinuationResult): void {
+      const snapshot = snapshots.get(operationId), metadata = invocationMetadata.get(operationId);
+      if (snapshot && inScope(snapshot, scope) && snapshot.actionId === MANAGED_ACQUIRE_ACTION_ID_V1 && metadata) {
+        retainInvocation(snapshot, { ...metadata, workflowContinuationResult: result });
+      }
+    },
+    readWorkflowContinuationResult(scope: ActionOperationQueryScope, operationId: string): ManagedWorkflowContinuationResult | undefined {
+      const snapshot = snapshots.get(operationId);
+      return snapshot && inScope(snapshot, scope) && snapshot.actionId === MANAGED_ACQUIRE_ACTION_ID_V1
+        ? invocationMetadata.get(operationId)?.workflowContinuationResult : undefined;
     },
     readRetainedTeardownExecution(scope: ActionOperationQueryScope, operationId: string): RetainedTeardownExecution | undefined {
       const snapshot = snapshots.get(operationId);
