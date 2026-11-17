@@ -5,7 +5,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { WorkflowActionInputSchemasV1, WorkflowActionOutputSchemasV1, type WorkflowActionIdV1 } from '../../workflows/actionsV1.js';
-import { WORKFLOW_ACTION_IDS_V1 } from '../actionIds.js';
+import { WORKFLOW_ACTION_IDS_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from '../actionIds.js';
 import { WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1 } from '../actionIds.js';
 import { getWorkflowInputHints, WORKFLOW_AUTOMATION_REMOVAL_WARNING } from './workflowInputHints.js';
 
@@ -20,6 +20,7 @@ export const WORKFLOW_DANGER_ACTION_IDS = new Set<WorkflowActionIdV1>([
 export const WORKFLOW_ACTION_TITLES: Readonly<Record<WorkflowActionIdV1, string>> = {
   'workflow.validate': 'Validate workflow',
   'workflow.run.start': 'Start workflow Run',
+  [WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1]: 'List workflow activity',
   'workflow.run.list': 'List workflow Runs',
   'workflow.run.summaries': 'Summarize workflow Runs',
   'workflow.run.get': 'Get workflow Run',
@@ -77,6 +78,7 @@ export const WORKFLOW_ACTION_DESCRIPTIONS: Readonly<Partial<Record<WorkflowActio
   'workflow.definition.list': 'List saved workflows in this Home Account and available plugin workflows. Returns summaries: metadata, step count, content availability and trigger summaries, plus pluginWorkflows when available. Summaries do not include the definition body or its destinations. Follow nextCursor to read later pages; use workflow.definition.get to read a saved definition in full.',
   'workflow.definition.get': 'Read one saved workflow definition, its metadata, revision and destinations using a definitionId from workflow.definition.list.',
   'workflow.definition.create': 'Save an authored workflow definition without running it. Supply a UUID definitionId for the new Artifact; reuse that UUID only to rejoin the same create. For named starter templates, first execute workflow.starters.list and workflow.starters.resolve. Block kinds describe workflow syntax; eligible trigger events come from workflow.events.list.',
+  [WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1]: 'Read recent public Run summaries in this Home Account without opening private Workflow content. Live Session, Machine and Run observations belong to an open Events view in the observing UI; this Account read explicitly reports that live coverage as unavailable. Open a selected retained cause through workflow.run.get. workflow.events.list remains the declaration catalog.',
   'workflow.run.list': 'List started workflow Runs and their progress in this Home Account. Run history can be empty while saved definitions exist; use workflow.definition.list for the workflow library. Use execution.run.list for agent execution runs.',
   'workflow.definition.edit': 'Prefer this typed operation batch for partial workflow changes; workflow.definition.update replaces the whole definition.',
   'workflow.run.invocations.publish_draft': "Publish a private draft value validated against the invocation's exact frozen result contract. Prose does not publish a result. Publication does not complete or advance the invocation. Resolve a held review explicitly through workflow.run.invocations.complete_review and its ordinary Action approval policy.",
@@ -95,7 +97,7 @@ export function bindWorkflowInvocationRetryCliInputV1(value: unknown): unknown {
 }
 
 export const WORKFLOW_READ_ACTION_IDS: ReadonlySet<WorkflowActionIdV1> = new Set([
-  'workflow.validate', 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',
+  'workflow.validate', WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1, 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',
   'workflow.run.invocations.list', 'workflow.run.invocations.get',
   'workflow.definition.list', 'workflow.definition.get', 'workflow.definition.import', 'workflow.definition.export', 'workflow.definition.capture',
   WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1, 'workflow.trigger.list', 'session.trigger.list',
@@ -118,7 +120,9 @@ export const WORKFLOW_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = lazy
   const deletesRetainedContent = actionId === 'workflow.run.delete' || actionId === 'workflow.definition.delete';
   return {
     id: actionId,
-    ...(actionId === 'workflow.run.list' ? {
+    ...(actionId === WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 ? {
+      requesterAccountContentDemandForInput: () => false,
+    } : actionId === 'workflow.run.list' ? {
       requesterAccountContentDemandForInput: (input: unknown) => readRecord(input).projection !== 'membership',
     } : actionId === 'workflow.run.resume' ? {
       requesterAccountContentDemandForInput: (input: unknown, context: ActionExecutorContext) =>

@@ -6,6 +6,7 @@ import type { WorkflowActionIdV1, WorkflowIngressContextV1 } from '../../workflo
 import type { WorkflowTriggerActions } from './workflowTriggerActions.js';
 import { WorkflowActionFailureV1Schema, type WorkflowActionFailureV1 } from '../../workflows/workflowProgressV1.js';
 import { getActionSpec } from '../actionSpecs.js';
+import { WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from '../actionIds.js';
 import { projectConfirmedActionHttpRefusal, readActionFailureEnvelope } from './actionFailureEnvelope.js';
 import { resolveWorkflowActionContext } from './callerContext.js';
 import { readActionFailureCauseV1, projectActionFailureCauseV1 } from '../actionExecutionResult.js';
@@ -309,6 +310,15 @@ export function createWorkflowActionExecutor(deps: Readonly<{
       if (actionId === 'session.trigger.remove') {
         return deps.triggers ? await deps.triggers.sessionRemove(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), rawArgs.context)
           : { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+      }
+      if (actionId === WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1) {
+        const input = parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input);
+        const retained = await deps.runs.execute({ actionId: 'workflow.run.list',
+          input: { ...input, projection: 'membership' }, context: rawArgs.context,
+          ...(rawArgs.signal ? { signal: rawArgs.signal } : {}),
+        }, context);
+        const failure = readActionFailureEnvelope(retained);
+        return failure ?? { retained, live: { kind: 'unavailable', reason: 'ui_local_only' } };
       }
       if (!isWorkflowRunActionArgs(rawArgs)) {
         return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };

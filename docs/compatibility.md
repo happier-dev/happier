@@ -3585,6 +3585,14 @@ narrows the existing Run audience and is bound into the paging cursor. Opening
 History acquires that trigger's occurrences, including frozen save attribution;
 closed trigger rows do not acquire Run history. Matching development server and
 client code is required for this closed request and summary extension.
+The development `workflow.activity.list` Action is additive and delegates to the
+existing public Run-membership reader. `workflow.run.list` membership no longer
+requires an attention filter; its private Session/provenance selectors remain
+rejected. The new Action reports UI-local live coverage as unavailable rather than
+inventing a retained event history. UI clients share transient acquisition within
+the active Home Account; no persisted format, migration or compatibility adapter
+is introduced. An older Action catalog does not expose this new read.
+
 The V2 recipe's optional outer `visibleTeamId` is emitted by the Account seal for
 plain and encrypted context. Retained plain recipes can project their existing
 audience; encrypted predecessors without it remain private until re-saved.

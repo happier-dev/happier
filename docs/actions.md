@@ -6286,6 +6286,20 @@ configured-sources list. Missing eligibility support is unavailable; an explicit
 supported empty catalog is valid. This development read neither configures a
 source nor admits an event occurrence.
 
+In 0.3 development source, `workflow.activity.list` reads Account-visible retained
+Run membership through the existing Run list owner. It returns `{ retained, live }`;
+`live` is `{ kind: 'unavailable', reason: 'ui_local_only' }` for Action callers.
+Private Session/provenance selectors are not accepted by this read. Open a selected
+Run with `workflow.run.get` for its authorized frozen cause and evidence.
+
+The Events column and editor companion acquire one UI-local source per active
+Home Account. It observes existing Session, Machine and Run sync facts only while
+one host is open, records when listening began, and starts with a baseline rather
+than reconstructing history. Both hosts share the demanded retained page and live
+facts; unchanged updates and closed hosts produce no activity reads. Frame and
+window application belongs to the shared Events projection. `workflow.events.list`
+continues to describe eligible declarations, independently of activity.
+
 Saved Secret MCP sharing is selectively projected for `secrets.shared.promote`
 and `secrets.shared.grants.set`; this is not a Home-family-wide exposure. The
 existing human approval default retains the exact envelope and audience input

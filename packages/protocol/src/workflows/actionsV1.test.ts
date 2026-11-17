@@ -53,12 +53,12 @@ describe('workflow Action contracts', () => {
     expect(schema.safeParse({ runs: [] }).success).toBe(false);
     expect(schema.safeParse({ runs: [], metadataByRunId: {} }).success).toBe(true);
   });
-  it('restricts content-free membership to public attention queries and identifies its result', () => {
+  it('admits content-free activity membership while rejecting private selection and identifies its result', () => {
     const input = WorkflowActionInputSchemasV1['workflow.run.list'];
     const request = { attention: 'required', projection: 'membership' };
     expect(input.parse(request)).toEqual(request);
+    expect(input.parse({ projection: 'membership' })).toEqual({ projection: 'membership' });
     for (const invalid of [
-      { projection: 'membership' },
       { ...request, originDiscussionId: 'discussion-1' },
       { ...request, targetSessionId: 'session-1' },
       { ...request, underSessionId: 'session-1' },

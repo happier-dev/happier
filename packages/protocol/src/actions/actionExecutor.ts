@@ -8,7 +8,7 @@ import { admitDeploymentHomeInputV1 } from './executor/deploymentHomeAdmission.j
 import { readSessionStopConfirmationFailure } from './executor/session/stopConfirmation.js';
 import { buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js';
 import { isPluginActionInvokeConfirmationV1 } from './invocationAuthority.js';
-import { isWorkspaceSyncRelationshipWriteActionId } from './actionIds.js';
+import { isWorkspaceSyncRelationshipWriteActionId, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from './actionIds.js';
 import { isProjectSourceActionIdV1 } from './specs/projectSourcesActionIdsV1.js';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from './filesystemActionIdsV1.js';
 import { COMPUTER_RECORDING_ACTION_IDS_V1 } from './recordingActionIds.js';
@@ -4631,6 +4631,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             case 'workflow.validate':
               return workflowAction({ actionId: workflowId, input: (parsed.data as z.infer<(typeof WorkflowActionInputSchemasV1)[typeof workflowId]>), ...common });
             case 'workflow.run.start':
+              return workflowAction({ actionId: workflowId, input: (parsed.data as z.infer<(typeof WorkflowActionInputSchemasV1)[typeof workflowId]>), ...common });
+            case WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1:
               return workflowAction({ actionId: workflowId, input: (parsed.data as z.infer<(typeof WorkflowActionInputSchemasV1)[typeof workflowId]>), ...common });
             case 'workflow.run.list':
               return workflowAction({ actionId: workflowId, input: (parsed.data as z.infer<(typeof WorkflowActionInputSchemasV1)[typeof workflowId]>), ...common });

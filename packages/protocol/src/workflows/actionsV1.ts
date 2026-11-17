@@ -211,7 +211,7 @@ export function parseWorkflowRunStartActionResultReferenceV1(
 export const WorkflowRunAttentionFilterV1Schema = lazyZodSchema(() => z.literal('required'));
 export const WorkflowRunListRequestV1Schema = lazyZodSchema(() => z.strictObject({
   cursor: zMini.optional(CursorSchema), limit: z.optional(PositivePagePreferenceSchema),
-  /** Public attention membership only; private facts are opened when a surface demands them. */
+  /** Public membership only; private facts are opened when a surface demands them. */
   projection: z.optional(z.literal('membership')),
   /**
    * Exact-Run selection for background refresh and transcript initial
@@ -243,7 +243,6 @@ export const WorkflowRunListRequestV1Schema = lazyZodSchema(() => z.strictObject
   machineId: zMini.optional(WorkflowMachineIdV1Schema),
 }).check(z.superRefine((value, context) => {
   if (value.projection !== 'membership') return;
-  if (value.attention !== 'required') context.addIssue({ code: 'custom', path: ['attention'], message: 'Membership requires attention selection' });
   for (const key of ['originDiscussionId', 'targetSessionId', 'underSessionId', 'invocationProvenance'] as const) {
     if (value[key] !== undefined) context.addIssue({ code: 'custom', path: [key], message: 'Membership cannot select private facts' });
   }
@@ -316,6 +315,17 @@ export const WorkflowRunListResultV1Schema = lazyZodSchema(() => z.strictObject(
       message: 'Caller access must belong to a Run in the same page' });
   }
 })));
+/** Activity retains only the public Run projection; local observations belong to the observing UI. */
+export const WorkflowActivityListRequestV1Schema = lazyZodSchema(() => z.omit(z.strictObject(WorkflowRunListRequestV1Schema.shape), {
+  projection: true, originDiscussionId: true, targetSessionId: true, underSessionId: true, invocationProvenance: true,
+}));
+export const WorkflowActivityListResultV1Schema = lazyZodSchema(() => z.strictObject({
+  retained: WorkflowRunListResultV1Schema.check(z.refine(page => page.projection === 'membership', {
+    message: 'Activity requires public Run membership',
+  })),
+  live: z.strictObject({ kind: z.literal('unavailable'), reason: z.literal('ui_local_only') }),
+}));
+
 export const WorkflowRunGetRequestV1Schema = lazyZodSchema(() => z.strictObject({
   runId: WorkflowRunIdV1Schema,
   /** Scope readers need the accepted frame, without opening usage history. */
@@ -607,6 +617,7 @@ export { WORKFLOW_ACTION_IDS_V1, type WorkflowActionIdV1 };
 export const WorkflowActionInputSchemasV1: {
   readonly 'workflow.validate': typeof WorkflowValidateRequestV1Schema;
   readonly 'workflow.run.start': typeof WorkflowRunStartRequestV1Schema;
+  readonly 'workflow.activity.list': typeof WorkflowActivityListRequestV1Schema;
   readonly 'workflow.run.list': typeof WorkflowRunListRequestV1Schema;
   readonly 'workflow.run.summaries': typeof WorkflowRunSummariesRequestV1Schema;
   readonly 'workflow.run.get': typeof WorkflowRunGetRequestV1Schema;
@@ -643,6 +654,7 @@ export const WorkflowActionInputSchemasV1: {
 } = {
   'workflow.validate': WorkflowValidateRequestV1Schema,
   'workflow.run.start': WorkflowRunStartRequestV1Schema,
+  'workflow.activity.list': WorkflowActivityListRequestV1Schema,
   'workflow.run.list': WorkflowRunListRequestV1Schema,
   'workflow.run.summaries': WorkflowRunSummariesRequestV1Schema,
   'workflow.run.get': WorkflowRunGetRequestV1Schema,
@@ -681,6 +693,7 @@ export const WorkflowActionInputSchemasV1: {
 export const WorkflowActionOutputSchemasV1: {
   readonly 'workflow.validate': typeof WorkflowValidateResultV1Schema;
   readonly 'workflow.run.start': typeof WorkflowRunStartResultV1Schema;
+  readonly 'workflow.activity.list': typeof WorkflowActivityListResultV1Schema;
   readonly 'workflow.run.list': typeof WorkflowRunListResultV1Schema;
   readonly 'workflow.run.summaries': typeof WorkflowRunSummariesResultV1Schema;
   readonly 'workflow.run.get': typeof WorkflowRunGetResultV1Schema;
@@ -717,6 +730,7 @@ export const WorkflowActionOutputSchemasV1: {
 } = {
   'workflow.validate': WorkflowValidateResultV1Schema,
   'workflow.run.start': WorkflowRunStartResultV1Schema,
+  'workflow.activity.list': WorkflowActivityListResultV1Schema,
   'workflow.run.list': WorkflowRunListResultV1Schema,
   'workflow.run.summaries': WorkflowRunSummariesResultV1Schema,
   'workflow.run.get': WorkflowRunGetResultV1Schema,
@@ -757,6 +771,8 @@ export type WorkflowValidateResultV1 = z.infer<typeof WorkflowValidateResultV1Sc
 export type WorkflowRunStartRequestV1 = z.infer<typeof WorkflowRunStartRequestV1Schema>;
 export type WorkflowRunStartResultV1 = z.infer<typeof WorkflowRunStartResultV1Schema>;
 export type WorkflowRunActionResultReferenceV1 = z.infer<typeof WorkflowRunActionResultReferenceV1Schema>;
+export type WorkflowActivityListRequestV1 = z.infer<typeof WorkflowActivityListRequestV1Schema>;
+export type WorkflowActivityListResultV1 = z.infer<typeof WorkflowActivityListResultV1Schema>;
 export type WorkflowRunListRequestV1 = z.infer<typeof WorkflowRunListRequestV1Schema>;
 export type WorkflowRunListResultV1 = z.infer<typeof WorkflowRunListResultV1Schema>;
 export type WorkflowRunGetRequestV1 = z.infer<typeof WorkflowRunGetRequestV1Schema>;

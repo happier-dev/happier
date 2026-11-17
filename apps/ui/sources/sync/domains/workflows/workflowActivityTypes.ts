@@ -1,5 +1,5 @@
 import type { WorkflowRunStateV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
-import type { WorkflowRunListRequestV1, WorkflowRunListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import type { WorkflowActivityListRequestV1, WorkflowRunListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 
 /** UI-local observations of committed facts; never a retained event journal. */
 export type WorkflowActivityLiveFact = Readonly<{
@@ -16,8 +16,7 @@ export type WorkflowActivityLiveFact = Readonly<{
 export type WorkflowActivityLiveBatch = readonly WorkflowActivityLiveFact[];
 
 /** Public membership selectors, derived from the existing Run list contract. */
-export type WorkflowActivityPageInput = Omit<WorkflowRunListRequestV1,
-    'projection' | 'originDiscussionId' | 'targetSessionId' | 'underSessionId' | 'invocationProvenance'>;
+export type WorkflowActivityPageInput = WorkflowActivityListRequestV1;
 
 export type WorkflowActivityObserver = Readonly<{
     onLive(batch: WorkflowActivityLiveBatch): void;
