@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
+import { LONG_LIVED_SSH_SERVER_ALIVE } from '../dev_targets/ssh_liveness.mjs';
 import {
   ensureExecutionHostServiceTunnel,
   inspectExecutionHostStackRuntime,
@@ -412,8 +413,8 @@ test('execution-host service tunnel starts one detached SSH transport with all r
     '-o', 'SetEnv=HAPPIER_STACK_EXECUTION_HOST_TUNNEL=primary:0.3:repo-dev-1234567890',
     '-o', 'BatchMode=yes',
     '-o', 'ExitOnForwardFailure=yes',
-    '-o', 'ServerAliveInterval=15',
-    '-o', 'ServerAliveCountMax=3',
+    '-o', `ServerAliveInterval=${LONG_LIVED_SSH_SERVER_ALIVE.intervalSeconds}`,
+    '-o', `ServerAliveCountMax=${LONG_LIVED_SSH_SERVER_ALIVE.countMax}`,
     '-L', '*:52753:127.0.0.1:52753',
     '-L', '*:18829:127.0.0.1:18829',
     '-N', 'lima-primary',

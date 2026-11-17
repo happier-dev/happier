@@ -2891,8 +2891,9 @@ export function buildRemoteDaemonReadinessProbeCommand(target, { stackName, runt
 }
 
 // Persistent listeners follow their owner's lifetime. A controller/network
-// stall must not retire them on an independent 45-second silence deadline.
-const FORWARD_SSH_SERVER_ALIVE_INTERVAL = 0;
+// stall must not retire them on a 45-second silence deadline, but a forward to
+// a dead or rebooted host must end instead of holding dead listeners forever.
+const FORWARD_SSH_SERVER_ALIVE = LONG_LIVED_SSH_SERVER_ALIVE;
 
 export function buildSshTunnelArgs(
   target,
@@ -2912,7 +2913,9 @@ export function buildSshTunnelArgs(
     '-o',
     'ExitOnForwardFailure=yes',
     '-o',
-    `ServerAliveInterval=${FORWARD_SSH_SERVER_ALIVE_INTERVAL}`,
+    `ServerAliveInterval=${FORWARD_SSH_SERVER_ALIVE.intervalSeconds}`,
+    '-o',
+    `ServerAliveCountMax=${FORWARD_SSH_SERVER_ALIVE.countMax}`,
     '-N',
     '-R',
     `127.0.0.1:${remoteServerPort}:127.0.0.1:${localServerPort}`,
@@ -2966,7 +2969,9 @@ export function buildSshForwardArgs(target, { forwards, sshArgs = [], observeRea
     '-o',
     'ExitOnForwardFailure=yes',
     '-o',
-    `ServerAliveInterval=${FORWARD_SSH_SERVER_ALIVE_INTERVAL}`,
+    `ServerAliveInterval=${FORWARD_SSH_SERVER_ALIVE.intervalSeconds}`,
+    '-o',
+    `ServerAliveCountMax=${FORWARD_SSH_SERVER_ALIVE.countMax}`,
     ...forwards.flatMap((forward) => {
       const formatted = formatSshForward(forward);
       return [formatted.flag, formatted.specification];

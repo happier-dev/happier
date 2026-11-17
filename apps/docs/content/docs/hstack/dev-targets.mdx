@@ -475,8 +475,10 @@ shared config with the normal synchronization-service setup.
 
 Stack service forwards and browser SOCKS/CDP forwards keep dedicated connections:
 their foreground owner must remove its listeners on stop without terminating
-another session's shared master. Persistent forwards disable SSH silence expiry;
-actual transport loss or their owner's stop still closes them. This leaves one connection per forward owner,
+another session's shared master. Persistent forwards use the same keepalive as
+payloads (30 s x 6): an idle forward on a live host stays up, and a forward to a
+host that stops answering exits within about 3.5 minutes instead of holding dead
+listeners. Actual transport loss or their owner's stop still closes them. This leaves one connection per forward owner,
 rather than one new authenticated connection for every readiness probe.
 
 The convenience command is a thin wrapper over the existing exact-target executor:
