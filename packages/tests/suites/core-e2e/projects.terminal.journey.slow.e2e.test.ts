@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterAll, expect, it } from 'vitest';
+import { afterAll, expect, it, vi } from 'vitest';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
 import { DaemonTerminalEnsureResponseSchema } from '@happier-dev/protocol/daemon/terminal';
@@ -10,11 +10,23 @@ import { ProjectOrganizationUpdateOutputV1Schema } from '@happier-dev/protocol/p
 import { TerminalStreamInputResponseSchema } from '@happier-dev/protocol/terminal/input';
 import { TerminalStreamReadResponseSchema, decodeTerminalStreamBytesFrame } from '@happier-dev/protocol/terminal/stream';
 import { ProjectManifestV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
-import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
+import { connectUiPersonActionClient, mountUiRetainedProjectTerminal } from '@happier-tests/ui-action-client';
 import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
 import { startProjectDaemonFixture, type ProjectDaemonFixture } from '../../src/testkit/daemon/projectDaemon';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { waitFor } from '../../src/testkit/timing';
+
+// Xterm is the external DOM renderer. Real terminal admission, transport,
+// stream decoding, preview retention and Account retirement remain mounted.
+vi.mock('@/components/terminal/xterm/XtermTerminalView.web', async () => {
+  const React = await import('react');
+  return { XtermTerminalView: React.forwardRef(function JourneyRenderer(
+    props: { onReady(cols: number, rows: number): void }, ref) {
+    React.useImperativeHandle(ref, () => ({ write: () => true, writeBytes: () => true, clear() {}, focus() {} }), []);
+    React.useEffect(() => { props.onReady(80, 24); }, [props.onReady]);
+    return React.createElement('JourneyTerminalRenderer');
+  }) };
+});
 
 let fixture: ProjectDaemonFixture | undefined;
 let database: Awaited<ReturnType<typeof startDatabaseWorkbenchPostgres>> | undefined;
@@ -45,6 +57,7 @@ it.skipIf(process.platform !== 'linux')('L12 row94: a bound Project terminal rec
       `printf 'PROJECT_SECRET_MISSING\\n'; exit 41\n`),
   ]);
   const ui = await connectUiPersonActionClient({ serverUrl: fixture.server.baseUrl, accountSecret: owner.auth.accountSigningSeed });
+  let retained: Awaited<ReturnType<typeof mountUiRetainedProjectTerminal>> | undefined;
   try {
     const action = async (actionId: ActionId, input: unknown) => {
       const result = await ui.executeConfirmed(actionId, input, { surface: 'ui', authority: 'present_user',
@@ -56,6 +69,7 @@ it.skipIf(process.platform !== 'linux')('L12 row94: a bound Project terminal rec
     const opened = OpenProjectResultV1Schema.parse(await action('projects.open', { ...machine.target,
       source: { kind: 'folder', path: machine.workspaceDir }, materialization: { kind: 'attach' } }));
     if (opened.kind !== 'opened' || !opened.facts?.projectKey) throw new Error(`Project did not open (${JSON.stringify(opened)})`);
+    if (opened.workspace.kind === 'managed') throw new Error('Attached folder must use the enrolled Machine checkout');
     const saved = PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.create'].parse(await action('secrets.create', {
       name: 'Project terminal requirement', kind: 'token', value: secretValue,
     }));
@@ -109,5 +123,60 @@ it.skipIf(process.platform !== 'linux')('L12 row94: a bound Project terminal rec
     const restarted = DaemonTerminalEnsureResponseSchema.parse(await action('machines.terminal.restart', request));
     if (!restarted.ok) throw new Error(`Project terminal Restart refused (${restarted.errorCode})`);
     await assertSecret(restarted.terminalId, 'Restart');
-  } finally { await ui.close(); }
+
+    // A04: the retained Project host reaches the same real daemon, then keeps
+    // its private preview only for the captured Account while hidden.
+    retained = await mountUiRetainedProjectTerminal(opened.workspace);
+    await waitFor(() => retained!.ready(), { context: 'Project Shell discovery publishes the New control' });
+    await retained.open();
+    await waitFor(() => Boolean(retained?.read().surface?.terminalId), { context: 'mounted Project terminal acquires its actual PTY' });
+    const retainedTerminalId = retained.read().surface!.terminalId!;
+    const marker = `A04_PRIVATE_${randomUUID()}`;
+    expect(TerminalStreamInputResponseSchema.parse(await action('machines.terminal.write', {
+      ...machine.target, terminalId: retainedTerminalId, event: { t: 'text', text: `printf '${marker}\\n'\r` },
+    })).ok).toBe(true);
+    await waitFor(() => retained!.read().surface?.output.includes(marker) === true,
+      { context: 'native Project output reaches the mounted private preview' });
+    const originalText = retained.text();
+    await retained.setPresented(false);
+    const renamed = `A04 renamed ${randomUUID()}`;
+    await action('machines.metadata.update', { ...machine.target, patch: { displayName: renamed } });
+    await waitFor(() => retained!.machineName() === renamed, { context: 'Machine rename push reaches the hidden Project Account store' });
+    // The hidden label holds its last presented value. Reveal joins the real
+    // metadata push rather than preserving a permanently stale label.
+    expect(retained.text()).toBe(originalText);
+    await retained.setPresented(true);
+    await waitFor(() => retained!.text().includes(renamed), { context: 'revealed Project terminal shows the pushed Machine name' });
+    expect(retained.read().surface?.terminalId).toBe(retainedTerminalId);
+    expect(retained.read().surface?.output.includes(marker)).toBe(true);
+    await retained.setPresented(false);
+    expect(await action('account.signOut', { serverId: ui.serverId, accountId: retained.accountId }))
+      .toMatchObject({ status: 'signed_out' });
+    await waitFor(() => !retained!.read().current && retained!.read().tabs.length === 0,
+      { context: 'Account withdrawal retires the hidden Project workspace' });
+    // The native PTY belongs to the Machine and survives this UI Account's
+    // retirement. Later native output must not refill the retired preview.
+    const afterRetirement = `A04_AFTER_RETIREMENT_${randomUUID()}`;
+    const writtenAfterRetirement = await owner.executeReviewed('machines.terminal.write', {
+      ...machine.target, terminalId: retainedTerminalId, event: { t: 'text', text: `printf '${afterRetirement}\\n'\r` },
+    });
+    if (!writtenAfterRetirement.ok) throw new Error(`Native Shell after UI withdrawal refused (${writtenAfterRetirement.errorCode})`);
+    expect(TerminalStreamInputResponseSchema.parse(writtenAfterRetirement.result).ok).toBe(true);
+    await waitFor(async () => {
+      const result = await owner.executeReviewed('machines.terminal.read', { ...machine.target,
+        terminalId: retainedTerminalId, byteOffset: 0, controlCursor: 0 });
+      if (!result.ok) throw new Error(`Native output after UI withdrawal refused (${result.errorCode})`);
+      const read = TerminalStreamReadResponseSchema.parse(result.result);
+      return read.ok && read.frames.some(frame => frame.t === 'bytes'
+        && Buffer.from(decodeTerminalStreamBytesFrame(frame)).toString('utf8').includes(afterRetirement));
+    }, { context: 'Machine Shell produces output after the private UI scope retired', failFast: true });
+    expect(retained.read().surface?.output ?? '').toBe('');
+    expect(retained.read().summary).toBeNull();
+    await retained.setPresented(true);
+    expect(retained.text().includes(marker)).toBe(false);
+    expect(retained.read().tabs).toEqual([]);
+  } finally {
+    try { await retained?.close(); }
+    finally { await ui.close(); }
+  }
 }, 0);

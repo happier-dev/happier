@@ -7,6 +7,22 @@ export type { BundledPluginUiAppArtifactInventory, PluginHostBundledUiDeclaratio
 
 export function installBundledPluginUiArtifactsForTests(artifacts: BundledPluginUiAppArtifactInventory): () => void;
 export function installBundledPluginUiDeclarationsForTests(declarations: readonly PluginHostBundledUiDeclaration[]): () => void;
+export function mountUiRetainedProjectTerminal(workspace: import('@happier-dev/protocol/workspaces/workspaceRefV1').WorkspaceAddressV1): Promise<Readonly<{
+    scopeId: string;
+    accountId: string;
+    text(): string;
+    machineName(): string | null;
+    ready(): boolean;
+    open(): Promise<void>;
+    setPresented(presented: boolean): Promise<void>;
+    read(): Readonly<{
+        tabs: readonly import('@happier-dev/protocol/terminal/workspace').SessionTerminalTabV1[];
+        current: boolean;
+        surface: Readonly<{ terminalId: string | null; output: string }> | null;
+        summary: Readonly<{ title: string | null }> | null;
+    }>;
+    close(): Promise<void>;
+}>>;
 export function prepareAuthenticationInventory(packaged: {
     artifacts: unknown[]; declarations: unknown[]; files: Map<number, Uint8Array>; reads: number;
 }, input: Readonly<{

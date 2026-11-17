@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { AuthProvider, InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { MainAppTabStateProvider } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
@@ -19,6 +19,8 @@ type MountedCurrentUiContextOptions = Pick<RenderWithAppProvidersOptions, 'creat
     withModalProvider?: boolean;
     /** Exercise contributed Actions through AppShell's actual discovery and admission owner. */
     withAppShellActions?: boolean;
+    /** Account lifecycle journeys use the App's credential mutation owner. */
+    withAccountLifecycle?: boolean;
 }>;
 
 function ActionPort() {
@@ -32,7 +34,7 @@ function ActionPort() {
 }
 
 /** Real mounted command publication and Action port. Install Home/Socket boundaries before importing. */
-export async function createMountedCurrentUiContextWrapper(options?: Pick<MountedCurrentUiContextOptions, 'withModalProvider' | 'withAppShellActions'>) {
+export async function createMountedCurrentUiContextWrapper(options?: Pick<MountedCurrentUiContextOptions, 'withModalProvider' | 'withAppShellActions' | 'withAccountLifecycle'>) {
     const authority = captureActiveServerAccountScopeLifetime();
     if (!authority) throw new Error('Mounted command fixture requires a restored Account');
     const server = getServerProfileById(authority.scope.serverId);
@@ -47,16 +49,17 @@ export async function createMountedCurrentUiContextWrapper(options?: Pick<Mounte
                 </AppShellPluginUiProjectionProvider> : <><ActionPort />{props.children}</>}
             </PluginSurfaceFocusEligibilityProvider>
         </CurrentUiContextProvider>;
-        return <InjectedAuthProvider credentials={credentials}>
-            <MainAppTabStateProvider><AppPaneProvider>
+        const app = <MainAppTabStateProvider><AppPaneProvider>
                 {options?.withModalProvider ? <ModalProvider>{content}</ModalProvider> : content}
-            </AppPaneProvider></MainAppTabStateProvider>
-        </InjectedAuthProvider>;
+            </AppPaneProvider></MainAppTabStateProvider>;
+        return options?.withAccountLifecycle
+            ? <AuthProvider initialCredentials={credentials}>{app}</AuthProvider>
+            : <InjectedAuthProvider credentials={credentials}>{app}</InjectedAuthProvider>;
     };
     return Wrapper;
 }
 
 export async function renderMountedCurrentUiContext(children: React.ReactNode, options?: MountedCurrentUiContextOptions) {
-    const { withModalProvider, withAppShellActions, ...renderOptions } = options ?? {};
-    return renderScreen(<>{children}</>, { ...renderOptions, wrapper: await createMountedCurrentUiContextWrapper({ withModalProvider, withAppShellActions }) });
+    const { withModalProvider, withAppShellActions, withAccountLifecycle, ...renderOptions } = options ?? {};
+    return renderScreen(<>{children}</>, { ...renderOptions, wrapper: await createMountedCurrentUiContextWrapper({ withModalProvider, withAppShellActions, withAccountLifecycle }) });
 }

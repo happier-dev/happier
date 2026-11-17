@@ -21,6 +21,7 @@ export { allowRealServerSocketBoundary as allowRealActionServerSocketBoundary } 
 export { createMachineClientEnrollmentOutputFixture } from './machineClientEnrollmentOutputFixture';
 export { createAccountOutputFixture } from './machineAccountOutputContractFixture';
 export { createUiMachineOutputFixture } from './machinesOutputContractFixture';
+export { mountUiRetainedProjectTerminal } from './projectTerminalPresentationIntegrationTestkit';
 export { installBundledPluginUiArtifactsForTests, installBundledPluginUiDeclarationsForTests } from './mocks/bundledPluginUiAssets';
 export { prepareAuthenticationInventory } from './fixtures/connectedAccountAuthentication';
 export type { BundledPluginUiAppArtifactInventory, PluginHostBundledUiDeclaration } from '@/sync/domains/plugins/availability/bundledPluginUiArtifactInventory';
