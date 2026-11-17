@@ -380,8 +380,14 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
   } as const satisfies DeploymentActionSpec<TId>;
 }
 
+// Name the per-id schema union so declaration emission does not serialize the
+// factory's entire inferred tuple of spread Action metadata and schemas.
+export type DeploymentActionSpecsV1 = ReadonlyArray<{
+  [TId in DeploymentActionIdV1]: DeploymentActionSpec<TId>;
+}[DeploymentActionIdV1]>;
+
 /** Storage declarations and real daemon effects share this single Action front door. */
-function createDeploymentActionSpecsV1() {
+function createDeploymentActionSpecsV1(): DeploymentActionSpecsV1 {
   return [
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, 'Add or update deployment domain', '/v1/deployments/environments/:environmentId/domains'),
     deploymentReadScope: createDeploymentReadScopeV1({ childMayMaterializeDomainUse: true,
