@@ -212,6 +212,9 @@ describe('SelectionTiles', () => {
       expect(home.getAttribute('role')).toBe('button');
       expect(home.getAttribute('aria-label')).toBe('Add another Home, Scan a QR code');
       expect(scan.getAttribute('aria-disabled')).toBe('true');
+      // C77 (phone Machines, 11-17): the option's button is the item; the row anatomy it draws is not a list item
+      // with no list (axe aria-required-parent).
+      expect(home.querySelector('[role="listitem"]')).toBeNull();
       await act(async () => { home.click(); scan.click(); });
       expect(onPress.mock.calls).toEqual([['home']]);
       measureTiles(mount.container, 704);

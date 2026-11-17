@@ -731,6 +731,8 @@ function ResponsiveActionOption<T extends string, I extends string>(props: Reado
           }) : undefined)}
           disabled={option.disabled}
           showDivider={props.showDivider}
+          // The button above is the item; this anatomy is not a list item outside a list.
+          suppressListItemRole
           accessory={<HappierChevron direction={props.rtl ? 'left' : 'right'} color={tiles.colors.glyph} />}
         />
       ) : <ActionCardBody tiles={tiles} option={option} styles={styles} />}
