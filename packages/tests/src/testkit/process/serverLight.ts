@@ -1,6 +1,7 @@
 import { existsSync, linkSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { createHash, randomInt } from 'node:crypto';
 import { createServer } from 'node:net';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -816,6 +817,28 @@ export async function startServerLight(params: {
     });
   }
 
+  let preparedSourceLaunch: ServerStartLaunchSpec | undefined;
+  if (shouldUseServerSourceEntrypoint(baseEnv) && baseEnv.HAPPIER_DEV_GUEST_CLI_EXPORT === '1') {
+    const rootDir = repoRootDir();
+    const [producer, launcher] = await Promise.all([
+      import(/* @vite-ignore */ pathToFileURL(resolve(rootDir, 'apps/stack/scripts/build/build_source_runtime.mjs')).href),
+      import(/* @vite-ignore */ pathToFileURL(resolve(rootDir, 'apps/stack/scripts/runtime/launch/resolveServerRuntimeLaunchSpec.mjs')).href),
+    ]);
+    // Stack's JavaScript producer owns this untyped boundary and the archive metadata.
+    const built: Readonly<{ entrypoint: string; serverDir: string; env: NodeJS.ProcessEnv }> = await producer.buildSourceRuntimeBundle({
+      repoDir: rootDir,
+      outputDir: join(params.testDir, 'source-runtime'),
+      component: 'server',
+      serverComponent: dbProvider === 'postgres' || dbProvider === 'mysql' ? 'happier-server' : 'happier-server-light',
+      dbProvider,
+      env: baseEnv,
+    });
+    const launch: Omit<ServerStartLaunchSpec, 'cwd'> = launcher.resolveServerRuntimeLaunchSpec({
+      sourceRuntimeLaunch: built, migrationsEnabled: false, env: baseEnv,
+    });
+    preparedSourceLaunch = { ...launch, cwd: built.serverDir };
+  }
+
   const pinnedPort = params.port;
   const portAllocator = params.__portAllocator
     ?? (pinnedPort !== undefined ? async () => pinnedPort : async () => pickPortCandidate());
@@ -853,7 +876,7 @@ export async function startServerLight(params: {
       ...databaseUrlEnv,
     };
 
-    const launchSpec = resolveServerStartLaunchSpec({
+    const launchSpec = preparedSourceLaunch ?? resolveServerStartLaunchSpec({
       provider: dbProvider,
       env,
     });
