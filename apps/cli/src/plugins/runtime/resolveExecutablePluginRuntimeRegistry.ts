@@ -3308,6 +3308,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 requestCurrentIntent: createCredentialedTargetActionCurrentIntent(sessionCredentials),
             } : {}),
             ...(request.approvalContext ? { approvalContext: request.approvalContext } : {}),
+            ...(request.presentUserIntent ? { presentUserIntent: request.presentUserIntent } : {}),
             actionId: buildQualifiedPluginContributionKey(
                 createPluginContributionIdentity({
                     pluginId: request.action.pluginId,

@@ -4,6 +4,8 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { DaemonPluginStructuredMessageActionExecuteRequestSchema } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { projectPluginActionFailureCode } from '@happier-dev/protocol/plugins/actions/invocation';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -71,6 +73,11 @@ export async function invokeAccountMachineSourceAction(input: AccountMachineTran
     if (!contributionLocalId || !caller.occurrenceId) return { status: 'unavailable',
         code: 'plugin_action_caller_unavailable', message: 'Current Account caller is unavailable', actionHandlerInvocation: 'notStarted' };
     await input.request.beforeHandlerInvocation?.();
+    // A press admits only the pressed Action (owner 2026-11-15, option A). Claim a
+    // settled present-user intent only for a child the issuer admitted by review;
+    // a bare press keeps its UI origin, so the receiving owner decides by policy.
+    const reviewedChild = input.request.presentUserIntent === 'confirmed' && readHostReviewedChildOperationV1(
+        input.request.approvalContext, formatQualifiedPluginActionId(input.request.action), input.request.input ?? null) !== null;
     const request = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse({ machineId: input.machineId,
         ...(input.request.requestId === undefined ? {} : { requestId: input.request.requestId }),
         qualifiedActionId: buildQualifiedPluginContributionKey(input.request.action), input: input.request.input,
@@ -79,7 +86,7 @@ export async function invokeAccountMachineSourceAction(input: AccountMachineTran
         // The host stamps this intent only for its admitted present-user press.
         executionSurface: input.request.presentUserIntent === 'confirmed' ? 'ui'
             : input.request.originSurface === 'agent' ? 'agent' : input.request.originSurface === 'mcp' ? 'mcp' : 'cli',
-        presentUserIntent: input.request.presentUserIntent,
+        ...(reviewedChild ? { presentUserIntent: 'confirmed' as const } : {}),
         expectedContributorOccurrenceId: input.source.occurrenceId,
         ...(input.request.sessionId ? { sessionId: input.request.sessionId } : {}),
         invocation: { kind: 'clientPluginAction', clientActionBinding: {

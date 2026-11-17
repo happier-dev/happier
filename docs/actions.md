@@ -1275,8 +1275,9 @@ contributed Action, such as the selected Tasks source for Create, Edit or Status
 that Action's own policy decides as the person's UI press in
 `executeContributedAction`. A Happier-task write is direct by declaration. A
 designed confirmation (Linear, GitHub), an explicit Contextual UI or Trusted
-plugins Ask, all ask. Off on either row refuses before any effect, including for
-admitted reviewed children. A required review never creates a self-approval
+plugins Ask, all ask. Off on either row refuses before any effect. A review
+admitted before a later Off still finishes; Off applies from the next press.
+A required review never creates a self-approval
 Artifact: the child refuses with `action_interactive_review_required`, the plugin
 passes it up, and the pressed Action's executor returns its own review and
 `reviewDigest`. The digest-bound re-press is a completed review, so the same

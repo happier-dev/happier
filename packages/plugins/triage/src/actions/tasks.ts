@@ -99,7 +99,12 @@ async function writeTask(request: TaskWriteRequest, context: TriageDataActionCon
         };
         const invokeWrite = async (operation: () => Promise<unknown>): Promise<TriageTaskWriteResultV1> => {
             try { return acceptResult(await operation()); }
-            catch (error) { return triageTaskWriteInvocationFailureV1(error); }
+            catch (error) {
+                // The source needs the pressing person's review before any write; the
+                // host carries this press's review back to their UI and re-presses.
+                if (isPluginError(error) && error.code === 'action_interactive_review_required') throw error;
+                return triageTaskWriteInvocationFailureV1(error);
+            }
         };
 
         // These are exact declared roles, not a provider verb/payload envelope.
