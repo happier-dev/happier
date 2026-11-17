@@ -3,9 +3,22 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { assertReviewedDeploymentSource } from './reviewedSource';
 import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from './targets/ownServer/paths';
-import { privateServiceForwardAcquisitionError, rethrowDeploymentSourceAcquisitionFailure } from './deploymentFailure';
+import { privateServiceForwardAcquisitionError, projectDeploymentFailure, projectDeploymentReceiptFailure, rethrowDeploymentSourceAcquisitionFailure } from './deploymentFailure';
+import { projectDeploymentReceiptInvestigationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { CaddyDomainMaterializationError } from './targets/ownServer/caddyRouteMaterialization';
 import { observeOwnServerTeardownVolumes } from './targets/ownServer/teardownVolumes';
+
+it('exposes the deepest typed native cause through exact receipt investigation', () => {
+    const failureCause = { phase: 'filesystem.listener', errorClass: 'TypeError', errorCode: 'EADDRNOTAVAIL', httpStatus: null };
+    const failed = projectDeploymentFailure('filesystem_transfer_failed', {
+        ok: false, errorCode: 'filesystem_transfer_failed', error: 'private native message', failureCause,
+    });
+    const investigation = projectDeploymentReceiptInvestigationV1({
+        failure: projectDeploymentReceiptFailure(failed, 'activate'),
+    });
+    expect(investigation.failure).toMatchObject({ code: 'filesystem_transfer_failed', phase: 'activate', failureCause });
+    expect(JSON.stringify(investigation)).not.toContain('private native message');
+});
 
 it('retains source review refusals in the Action result', () => {
     const content = createDeploymentReceiptDetailV1().content;

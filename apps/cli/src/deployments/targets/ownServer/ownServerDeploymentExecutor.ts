@@ -24,6 +24,7 @@ import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_
 import { createNativeComposeLifecycle, type NativeComposeActivatedProject, type NativeComposeEnvironmentProject, type NativeComposeProjectRender } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import { normalizeNativeComposePlatform } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { produceEnvironmentProjectServices } from '@/daemon/local/services/launch/projectDeclarations';
+import { restoreOwnServerDeploymentServices } from './restoreOwnServerDeploymentServices';
 import { machineNativeEffectAdmission, MachineNativeEffectAdmissionError, type MachineNativeEffectContext } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { isProjectNativeProcessUncertain } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 import { createDeploymentSourceMaterializationPort, readDeploymentSourceCommitSubjectForHost } from './exactCommitRelease';
@@ -984,18 +985,28 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     const { homeServerIdentityId } = await resolveOwnServerDeploymentIdentityForHost({
                         happierHomeDir: configuration.happyHomeDir, serverId: host.serverId,
                         environmentId: receipt.deployment.environmentId });
-                    const handles = services.map(composeService => {
+                    const resolveHandles = () => services.map(composeService => {
                         const environmentInstanceId = runtime.source.environmentInstanceId;
-                        const handle = runtime.projectManagedServices.resolveEnvironmentService(homeServerIdentityId, {
+                        return runtime.projectManagedServices.resolveEnvironmentService(homeServerIdentityId, {
                             kind: 'deployment', machineId: host.machineId, environmentId: receipt.deployment.environmentId,
                             environmentInstanceId, composeService, serviceId: `${environmentInstanceId}/${composeService}`,
                         });
-                        if (!handle || handle.deploymentId !== receipt.deployment.id
-                            || handle.release.installationId !== input.installationId) return refuse('deployment_generation_required');
-                        return handle;
                     });
-                    if (!handles.length) refuse('deployment_generation_required');
+                    let handles = resolveHandles();
+                    if (handles.some(handle => !handle || handle.deploymentId !== receipt.deployment.id)) {
+                        // The native recovery owner distinguishes an absent candidate
+                        // from an unobservable generation and restores surviving handles.
+                        const unavailable = await restoreOwnServerDeploymentServices({ serverId: host.serverId,
+                            machineId: host.machineId, installationId: input.installationId, receipt,
+                            owner: runtime.projectManagedServices, signal: snapshot.signal,
+                            isCurrent: () => !snapshot.signal.aborted });
+                        if (unavailable.length) refuse({ ok: false, errorCode: 'service_unavailable',
+                            error: 'Candidate native inventory is unavailable', failureCause: unavailable[0]?.failureCause });
+                        handles = resolveHandles();
+                    }
                     for (const handle of handles) {
+                        if (!handle || handle.deploymentId !== receipt.deployment.id) continue;
+                        if (handle.release.installationId !== input.installationId) refuse('deployment_generation_required');
                         await runtime.assertCurrent();
                         if (!handle.removeNative) refuse('deployment_generation_required');
                         const removed = await handle.removeNative({ operation: { operationId: receipt.deployment.actionOperationId,

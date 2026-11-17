@@ -20,7 +20,8 @@ import { encodeDirectPeerTransferPathKey } from './directPeerTransport/protocol'
 import { createFileTransferPayloadSource, resolveTransferPayloadManifestHash } from './transferPayloadSource';
 import { readJsonResponseWithBodyLimit } from './directPeerTransport/requestTransfer';
 import { resolveDirectPeerTransferOpenBodyMaxBytes } from './transferRuntimeConfig';
-import { carryActionFailureDiagnostic, withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { carryActionFailureDiagnostic, withActionFailureCauseDiagnostic, withActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 function readTransferFailureCode(error: unknown): string | undefined {
   if (!error || typeof error !== 'object') return undefined;
@@ -96,9 +97,9 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
             return result;
           },
         });
-        if (!result.success) return result.errorCode === 'indeterminate'
+        if (!result.success) return carryActionFailureDiagnostic(result.errorCode === 'indeterminate'
           ? { success: false, status: 'unknown', error: result.error ?? 'Upload failed', errorCode: 'indeterminate' }
-          : failure(result.error ?? 'Upload failed', result.errorCode, true);
+          : failure(result.error ?? 'Upload failed', result.errorCode, true), result);
         if (!('finalized' in result)) throw new Error('Prepared upload finalize result is unavailable');
         return { success: true, status: 'completed', transferId: receipt.prepared.uploadId, sourceId,
           path: result.finalized.path, sizeBytes: result.finalized.sizeBytes, sha256: result.sha256 };
@@ -107,8 +108,10 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
           try { abortConfirmed = ChunkSchema.parse(await postJson(preparedAbortEndpoint)).success; } catch { /* The admitted owner retains unconfirmed custody. */ }
         }
         if (error instanceof CredentialRequestRedirectError) throw error;
-        return carryActionFailureDiagnostic(failure(error instanceof Error ? error.message : 'Upload failed',
-          readTransferFailureCode(error)), error);
+        const normalized = normalizeActionExecutorThrownError(error, 'daemon.filesystem.upload');
+        return withActionFailureDiagnostic(withActionFailureCauseDiagnostic(failure(normalized.error,
+          readTransferFailureCode(error)), normalized, 'daemon.filesystem.upload'),
+          { phase: 'daemon.filesystem.upload', causeKind: 'native_failure', error });
       } finally { try { await file?.close(); } finally { await tunnel?.close(); } }
     },
     async download(input: Readonly<{ targetMachineId: string; serverId?: string; rootPath: string; path: string;
@@ -151,9 +154,11 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
           }, undefined, 'POST', candidate.authorizationToken).catch(() => undefined);
         }
         if (error instanceof CredentialRequestRedirectError) throw error;
-        return carryActionFailureDiagnostic({ success: false, status: destinationClosed ? 'unknown' : input.signal?.aborted ? 'cancelled' : 'failed',
-          error: error instanceof Error ? error.message : 'Download failed',
-          ...(destinationClosed ? { errorCode: 'indeterminate' } : { errorCode: readTransferFailureCode(error) }) }, error);
+        const normalized = normalizeActionExecutorThrownError(error, 'daemon.filesystem.download');
+        return withActionFailureDiagnostic(withActionFailureCauseDiagnostic({ success: false, status: destinationClosed ? 'unknown' : input.signal?.aborted ? 'cancelled' : 'failed',
+          error: normalized.error,
+          ...(destinationClosed ? { errorCode: 'indeterminate' } : { errorCode: readTransferFailureCode(error) }) }, normalized, 'daemon.filesystem.download'),
+          { phase: 'daemon.filesystem.download', causeKind: 'native_failure', error });
       } finally { await tunnel?.close(); }
     },
     async copy(input: (Omit<FilesystemPreparedCopyInput, 'kind'> | Omit<FilesystemTargetCopyInput, 'kind'>) & Readonly<{ signal?: AbortSignal;
@@ -183,9 +188,11 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
           ...(input.preparedAdmission ? { preparedAdmission: input.preparedAdmission } : {}), ...(input.signal ? { signal: input.signal } : {}) });
       } catch (error) {
         if (error instanceof CredentialRequestRedirectError) throw error;
-        return carryActionFailureDiagnostic({ success: false, status: input.preparedAdmission ? 'unknown' : input.signal?.aborted ? 'cancelled' : 'failed',
-          error: error instanceof Error ? error.message : 'Copy source is unavailable',
-          ...(input.preparedAdmission ? { errorCode: 'indeterminate' } : { errorCode: readTransferFailureCode(error) }) }, error);
+        const normalized = normalizeActionExecutorThrownError(error, 'daemon.filesystem.copy');
+        return withActionFailureDiagnostic(withActionFailureCauseDiagnostic({ success: false, status: input.preparedAdmission ? 'unknown' : input.signal?.aborted ? 'cancelled' : 'failed',
+          error: normalized.error,
+          ...(input.preparedAdmission ? { errorCode: 'indeterminate' } : { errorCode: readTransferFailureCode(error) }) }, normalized, 'daemon.filesystem.copy'),
+          { phase: 'daemon.filesystem.copy', causeKind: 'native_failure', error });
       } finally { await rm(temporaryDirectory, { recursive: true, force: true }); }
     },
   };
@@ -254,8 +261,8 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
         try {
           const uploaded = await uploadPreparedFile({ file, prepared: record.prepared, endpoint: carrierUrl(candidate.url, destinationPort), signal: input.signal,
             abort: async () => await postJson(appendEndpoint(carrierUrl(candidate.url, destinationPort), 'abort')) });
-          if (!uploaded.success) { retainImports = uploaded.errorCode === 'indeterminate'; return { success: false, status: retainImports ? 'unknown' : input.signal?.aborted ? 'cancelled' : 'failed',
-            error: uploaded.error ?? 'Entry payload upload failed', ...(uploaded.errorCode ? { errorCode: uploaded.errorCode } : {}) }; }
+          if (!uploaded.success) { retainImports = uploaded.errorCode === 'indeterminate'; return carryActionFailureDiagnostic({ success: false, status: retainImports ? 'unknown' : input.signal?.aborted ? 'cancelled' : 'failed',
+            error: uploaded.error ?? 'Entry payload upload failed', ...(uploaded.errorCode ? { errorCode: uploaded.errorCode } : {}) }, uploaded); }
         } finally { await file.close(); }
       }
       retainImports = true;
@@ -268,8 +275,10 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
         observed.operation.error, 'daemon.filesystem.copy');
     } catch (error) {
       if (error instanceof CredentialRequestRedirectError) throw error;
-      return carryActionFailureDiagnostic({ success: false, status: retainImports ? 'unknown' : input.signal?.aborted ? 'cancelled' : 'failed', error: error instanceof Error ? error.message : 'Entry copy failed',
-        ...(retainImports ? { errorCode: 'indeterminate' } : { errorCode: readTransferFailureCode(error) }) }, error);
+      const normalized = normalizeActionExecutorThrownError(error, 'daemon.filesystem.copy');
+      return withActionFailureDiagnostic(withActionFailureCauseDiagnostic({ success: false, status: retainImports ? 'unknown' : input.signal?.aborted ? 'cancelled' : 'failed', error: normalized.error,
+        ...(retainImports ? { errorCode: 'indeterminate' } : { errorCode: readTransferFailureCode(error) }) }, normalized, 'daemon.filesystem.copy'),
+        { phase: 'daemon.filesystem.copy', causeKind: 'native_failure', error });
     } finally {
       try {
         if (sourceReceipt && !sourceClosed && sourceTunnel) {
@@ -305,7 +314,10 @@ async function uploadPreparedFile(input: Readonly<{ file: Awaited<ReturnType<typ
       try { return FinalizeSchema.parse(await postJson(appendEndpoint(input.endpoint, 'finalize'), undefined, signal ?? undefined, 'POST', undefined, true)); }
       catch (error) {
         if (error instanceof CredentialRequestRedirectError) throw error;
-        return { success: false as const, error: 'Upload finalize outcome could not be confirmed', errorCode: 'indeterminate', keepSession: true };
+        const normalized = normalizeActionExecutorThrownError(error, 'daemon.filesystem.upload');
+        return withActionFailureDiagnostic(withActionFailureCauseDiagnostic({ success: false as const,
+          error: 'Upload finalize outcome could not be confirmed', errorCode: 'indeterminate', keepSession: true }, normalized, 'daemon.filesystem.upload'),
+          { phase: 'daemon.filesystem.upload', causeKind: 'native_failure', error });
       }
     }, retainUploadAfterFinalize: response => !response.success && response.keepSession === true, abort: input.abort });
 }

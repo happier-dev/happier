@@ -72,6 +72,21 @@ describe('prepared filesystem Actions', () => {
       expect(lifecycle.getState().publishedTransferCount).toBe(0);
     } finally { await lifecycle.stop(); await rm(rootPath, { recursive: true, force: true }); }
   });
+  it('retains the deepest native listener cause for deployment receipt investigation', async () => {
+    const rootPath = await mkdtemp(join(tmpdir(), 'happier-transfer-native-cause-'));
+    const lifecycle = createDirectTransferServerLifecycle({ bindPort: 0, listenerClasses: ['loopback_http'],
+      startServer: async () => { throw new TypeError('private-native-listener-message'); } });
+    try {
+      const owner = createPreparedFilesystemTransferActionExecutor({ lifecycle, workingDirectory: rootPath,
+        accessPolicy: { kind: 'restrictedRoots', roots: [rootPath] } });
+      const result = projectPreparedFilesystemActionResult(await owner({ actionId: 'daemon.filesystem.upload',
+        input: { rootPath, path: 'file', overwrite: false, source: { sourceId: 'source', sizeBytes: 0 } },
+        context: { runtimeAccountId: 'account', operationAcceptance: {
+          operationId: 'native-cause', actionId: 'daemon.filesystem.upload', accept: () => {} } } }));
+      expect(result).toMatchObject({ ok: false, errorCode: 'filesystem_transfer_failed',
+        failureCause: { errorClass: 'TypeError' } });
+    } finally { await lifecycle.stop(); await rm(rootPath, { recursive: true, force: true }); }
+  });
   it('does not label an unconfirmed transfer owner outcome as failed', async () => {
     const rootPath = await mkdtemp(join(tmpdir(), 'happier-unknown-transfer-'));
     const lifecycle = createDirectTransferServerLifecycle({ bindPort: 0, listenerClasses: ['loopback_http'],

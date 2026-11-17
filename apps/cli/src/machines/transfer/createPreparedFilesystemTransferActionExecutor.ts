@@ -1,5 +1,7 @@
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { carryActionFailureDiagnostic, readActionOutputDiagnostic, withActionFailureCauseDiagnostic, withActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { copyFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHappierTempDir, removeHappierTempDirAsync } from '@happier-dev/cli-common/tempDirs';
@@ -22,7 +24,10 @@ type TransferActionId = 'daemon.filesystem.upload' | 'daemon.filesystem.download
 type TransferActionOutput = FilesystemUploadOutput | FilesystemDownloadOutput | FilesystemTransferCancelOutput | FilesystemCopyOutput;
 
 export function projectPreparedFilesystemActionResult(result: TransferActionOutput): ActionExecuteResult {
-  return result.success ? { ok: true, result } : { ok: false, errorCode: result.errorCode ?? 'filesystem_transfer_failed', error: result.error };
+  if (result.success) return { ok: true, result };
+  const failureCause = readActionOutputDiagnostic(result)?.failureCause;
+  return carryActionFailureDiagnostic({ ok: false, errorCode: result.errorCode ?? 'filesystem_transfer_failed', error: result.error,
+    ...(failureCause ? { failureCause } : {}) }, result);
 }
 
 export function createPreparedFilesystemTransferActionExecutor(params: Readonly<{
@@ -221,7 +226,9 @@ export function createPreparedFilesystemTransferActionExecutor(params: Readonly<
         name: prepared.name, sizeBytes: result.sizeBytes, sha256: result.manifestHash.slice('sha256:'.length) };
     } catch (error) {
       const errorCode = readFilesystemTransferErrorCode(error, 'filesystem_transfer_failed');
-      return failure(error instanceof Error ? error.message : 'Filesystem transfer failed', errorCode);
+      const normalized = normalizeActionExecutorThrownError(error, args.actionId);
+      return withActionFailureDiagnostic(withActionFailureCauseDiagnostic(failure(normalized.error, errorCode), normalized, args.actionId),
+        { phase: args.actionId, causeKind: 'native_failure', error });
     } finally {
       if (onAbort) args.context.signal?.removeEventListener('abort', onAbort);
     }
@@ -229,6 +236,6 @@ export function createPreparedFilesystemTransferActionExecutor(params: Readonly<
 }
 
 function transferFailure(result: Readonly<{ error: string; errorCode?: string }>): Extract<FilesystemUploadOutput, { success: false }> {
-  return { success: false, status: result.errorCode === 'cancelled' ? 'cancelled' : result.errorCode === 'indeterminate' ? 'unknown' : 'failed',
-    error: result.error, ...(result.errorCode ? { errorCode: result.errorCode } : {}) };
+  return carryActionFailureDiagnostic({ success: false, status: result.errorCode === 'cancelled' ? 'cancelled' : result.errorCode === 'indeterminate' ? 'unknown' : 'failed',
+    error: result.error, ...(result.errorCode ? { errorCode: result.errorCode } : {}) }, result);
 }

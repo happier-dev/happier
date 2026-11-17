@@ -15,6 +15,7 @@ import { createPreparedFilesystemTransferClient } from './preparedFilesystemTran
 import { FilesystemUploadOutputSchema, type FilesystemPreparedCopyInput, type FilesystemTargetCopyInput } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { prepareWorkspaceEntryExport } from './prepareWorkspaceFileExport';
 import { observeWorkspaceSyncEntryAtRoot } from '@/workspaces/sync/workspaceSyncFileRead';
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 
 const nativeProcessBoundary = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock('node:child_process', async importOriginal => {
@@ -24,6 +25,39 @@ vi.mock('node:child_process', async importOriginal => {
 });
 
 describe('headless prepared filesystem client', () => {
+  it.each(['upload', 'download', 'copy'] as const)('retains a native tunnel cause for %s', async direction => {
+    const rootPath = await mkdtemp(join(tmpdir(), 'happier-transfer-tunnel-cause-'));
+    const sourcePath = join(rootPath, 'source.bin');
+    const lifecycle = createDirectTransferServerLifecycle({ bindPort: 0, listenerClasses: ['loopback_http'] });
+    try {
+      await writeFile(sourcePath, Buffer.from([0, 255, 42]));
+      const owner = createPreparedFilesystemTransferActionExecutor({ lifecycle, workingDirectory: rootPath,
+        accessPolicy: { kind: 'restrictedRoots', roots: [rootPath] } });
+      const store = createActionOperationStore();
+      let sequence = 0;
+      const runner = createActionOperationRunner({ store, generateOperationId: () => `tunnel-${direction}-${++sequence}`,
+        resolveAction: actionId => ({ actionId, title: 'File transfer', operation: { version: 1, visibility: 'activity',
+          progress: 'reported', presentation: { onStart: 'activity' } } }) });
+      const client = createPreparedFilesystemTransferClient({
+        openMachineTunnel: async () => { throw new TypeError('private-native-tunnel-message'); },
+        executeAction: async (actionId, input, context) => {
+          if (actionId === 'action.operations.get') throw new Error('No native copy was admitted');
+          return await runner.observe({ actionId, scope: { accountId: 'account', machineId: 'machine' },
+            execute: async ({ operationAcceptance, signal }) => projectPreparedFilesystemActionResult(await owner({ actionId, input,
+              context: { ...context, runtimeAccountId: 'account', operationAcceptance, signal } })) });
+        },
+      });
+      const target = { serverId: 'home', machineId: 'machine', rootPath, path: sourcePath };
+      const result = direction === 'upload' ? await client.upload({ targetMachineId: 'machine', rootPath,
+        path: join(rootPath, 'uploaded.bin'), sourcePath, overwrite: false })
+        : direction === 'download' ? await client.download({ targetMachineId: 'machine', rootPath, path: sourcePath,
+          destinationPath: join(rootPath, 'downloaded.bin'), asZip: false })
+        : await client.copy({ source: target, destination: { ...target, path: join(rootPath, 'copied.bin') },
+          overwrite: false, recursive: false });
+      expect(result).toMatchObject({ success: false });
+      expect(readActionOutputDiagnostic(result)?.failureCause).toMatchObject({ errorClass: 'TypeError' });
+    } finally { await lifecycle.stop(); await rm(rootPath, { recursive: true, force: true }); }
+  });
   it.each(['machine_carrier_unavailable', 'action_forbidden'] as const)('preserves the exact %s refusal before entry copy admission', async errorCode => {
     const client = createPreparedFilesystemTransferClient({
       openMachineTunnel: async () => { throw new Error('No carrier may open after source refusal'); },
@@ -303,6 +337,7 @@ describe('headless prepared filesystem client', () => {
       expect(upload).toMatchObject(lostFinalizeResponse
         ? { success: false, status: 'unknown', errorCode: 'indeterminate' }
         : { success: true, status: 'completed', sourceId: 'actual-cli-source', sizeBytes: payload.length });
+      if (lostFinalizeResponse) expect(readActionOutputDiagnostic(upload)?.failureCause).toMatchObject({ errorClass: 'TypeError' });
       expect(await readFile(join(rootPath, remoteName))).toEqual(payload);
       const download = await client.download({ targetMachineId: scope.machineId, rootPath, path: remoteName,
         destinationPath: join(rootPath, destinationName), destinationId: 'actual-cli-destination', asZip: false });
