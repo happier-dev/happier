@@ -23,7 +23,7 @@ import {
   prepareMachineSetupSoftwareRemoveInput,
   removeMachineSetupSoftware,
 } from '@/components/settings/machines/managed/machineSetupSoftware';
-import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
+import { useActionOperation, useMachineSetupActionOperation, useMachineSetupRunActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
 import {
   homeDomainFailureCode,
@@ -157,10 +157,14 @@ export function useMachineSetup(
   }> | null>(null);
   const [pending, setPending] = React.useState<'review' | 'apply' | null>(null);
   const [accepted, setAccepted] = React.useState<Readonly<{
+    scopeKey: string;
     operationId: string;
     actionId: 'machines.setup.apply' | 'machines.setup.remove';
-  }> | null>(null);
-  const operationId = accepted?.operationId ?? null;
+    runId?: string;
+  }> | Readonly<{ scopeKey: string; operationId: null; actionId?: never; runId?: never }> | null>(null);
+  const retainedOperation = useMachineSetupActionOperation(binding ? { serverId, machineId, accountId: binding.accountId } : null);
+  const currentAccepted = accepted?.scopeKey === scopeKey ? accepted : null;
+  const operationId = currentAccepted ? currentAccepted.operationId : retainedOperation?.snapshot.operationId ?? null;
   const plan = current?.key === scopeKey ? current.plan : null;
   const sourcePresentations = React.useMemo(() => {
     if (!current || current.key !== scopeKey) return null;
@@ -269,9 +273,10 @@ export function useMachineSetup(
         return;
       }
       setReview(null);
-      setAccepted({ operationId: output.data.operationId, actionId });
+      setAccepted({ scopeKey, operationId: output.data.operationId, actionId,
+        ...('runId' in output.data && typeof output.data.runId === 'string' ? { runId: output.data.runId } : {}) });
     },
-    [],
+    [scopeKey],
   );
 
   const prepare = React.useCallback(
@@ -447,14 +452,22 @@ export function useMachineSetup(
   const operation = useActionOperation({
     serverId,
     operationId: operationId ?? '',
-  }, { machineId, actionId: accepted?.actionId ?? '', lifetime: binding });
+  }, { machineId, actionId: currentAccepted?.actionId ?? retainedOperation?.snapshot.actionId ?? '', lifetime: binding });
+  // The combined root remains the lifecycle owner. Native rows, questions and
+  // private output follow its admitted child instead of being copied to it.
+  const retainedResult = ManagedMachineActionOutputSchemasV1['machines.setup.apply'].safeParse(operation?.snapshot.result);
+  const runId = currentAccepted?.runId ?? (retainedResult.success ? retainedResult.data.runId : undefined);
+  const nativeOperation = useMachineSetupRunActionOperation(runId && binding ? {
+    serverId, accountId: binding.accountId, machineId, runId,
+  } : null);
+  const progressOperation = runId ? nativeOperation : operation;
   const settled =
     operationId !== null &&
     operation !== null &&
     isActionOperationTerminal(operation.snapshot.state);
   React.useEffect(() => {
-    if (settled) void check();
-  }, [settled, check]);
+    if (settled && demanded) void check();
+  }, [settled, demanded, check]);
 
   return {
     observation,
@@ -468,11 +481,12 @@ export function useMachineSetup(
     pending,
     approvalId: approval.approvalId,
     operationId, operation: operationId ? operation : null,
+    progressOperation: operationId ? progressOperation : null,
     check,
     prepare,
     apply,
     cancelReview,
-    dismissOperation: () => setAccepted(null),
+    dismissOperation: () => setAccepted({ scopeKey, operationId: null }),
   };
 }
 export type MachineSetupState = ReturnType<typeof useMachineSetup>;

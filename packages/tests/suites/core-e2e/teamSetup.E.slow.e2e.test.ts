@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import { connectUiActionClient } from '@happier-tests/ui-action-client';
 import { MachineSetupPlanResultV1Schema, machineSetupApplyTargetFromPlanV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
-import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
+import { ActionOperationGetV1ResponseSchema, ActionOperationListV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { actionOperationStore } from '../../../../apps/ui/sources/sync/domains/actionOperations/actionOperationStore';
 import { actionOperationSelectors } from '../../../../apps/ui/sources/sync/domains/actionOperations/actionOperationSelectors';
 import { machineTerminalInput, machineTerminalStreamRead } from '../../../../apps/ui/sources/sync/ops/machineTerminal';
@@ -157,11 +157,29 @@ it('TS.E.machineRows and TS.E.ambient retain ordered script rows through native 
   expect(completed).toMatchObject({ ok: true });
   if (!completed.ok) throw new Error('Machine rows observation failed');
   const found = ActionOperationGetV1ResponseSchema.parse(completed.result);
-  expect(found).toMatchObject({ kind: 'found', operation: { state: 'succeeded', domainRef: {
+  expect(found).toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
+  // Apply owns the combined Run. The admitted native child publishes its own
+  // rows; the Setup tab follows that child through the same retained Run cause.
+  expect(receipt.runId).toEqual(expect.any(String));
+  const listed = await ui.execute('action.operations.list', { serverId: ui.serverId, machineId }, context);
+  expect(listed).toMatchObject({ ok: true });
+  if (!listed.ok) throw new Error('Machine rows child list failed');
+  const native = ActionOperationListV1ResponseSchema.parse(listed.result).items.find(operation =>
+    operation.originRunId === receipt.runId && operation.domainRef?.kind === 'machineSetup');
+  expect(native).toBeDefined();
+  if (!native) throw new Error('Combined Setup native child was not retained');
+  const child = await ui.execute('action.operations.get', {
+    serverId: ui.serverId, machineId, operationId: native.operationId, waitForTerminal: true,
+  }, context);
+  expect(child).toMatchObject({ ok: true });
+  if (!child.ok) throw new Error('Machine rows child observation failed');
+  expect(ActionOperationGetV1ResponseSchema.parse(child.result)).toMatchObject({ kind: 'found', operation: { state: 'succeeded', domainRef: {
     kind: 'machineSetup', steps: [{ state: 'succeeded' }, { state: 'succeeded' }],
   } } });
   await waitFor(() => [...actionOperationStore.getSnapshot().operationsByKey.values()].some(entry =>
-    entry.snapshot.operationId === receipt.operationId && entry.snapshot.state === 'succeeded'), { timeoutMs: 60_000 });
+    entry.snapshot.operationId === native.operationId && entry.snapshot.originRunId === receipt.runId
+      && entry.snapshot.state === 'succeeded' && entry.snapshot.domainRef?.kind === 'machineSetup'
+      && entry.snapshot.domainRef.steps?.every(step => step.state === 'succeeded')), { timeoutMs: 60_000 });
   expect(actionOperationSelectors.selectActivitySummary(actionOperationStore.getSnapshot()))
     .toMatchObject({ activeCount: 0, hasAttention: true });
 });

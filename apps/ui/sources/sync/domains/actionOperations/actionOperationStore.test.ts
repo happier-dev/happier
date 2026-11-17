@@ -16,6 +16,29 @@ import { log } from '@/log';
 
 const SERVER_ID = 'home-a';
 
+it('joins only native Setup progress for the exact Home, Account, Machine and accepted Run', () => {
+    const store = createActionOperationStore();
+    const native = operation({ operationId: 'native-child', actionId: 'machines.setup.apply', originRunId: 'setup-run',
+        domainRef: { kind: 'machineSetup', serverId: SERVER_ID, machineId: 'machine-a', steps: [
+            { planIndex: 0, stepId: 'script:0', label: { key: 'script', fallback: 'Script' }, state: 'running' },
+        ] } });
+    const root = operation({ operationId: 'combined-root', actionId: 'machines.setup.apply', result: { operationId: 'combined-root', runId: 'setup-run' } });
+    merge(store, [native, root]);
+    const selectors = createActionOperationSelectors();
+    const query = { serverId: SERVER_ID, accountId: 'account-a', machineId: 'machine-a', runId: 'setup-run' };
+    expect(selectors.selectForMachineSetupRun(store.getSnapshot(), query)?.snapshot).toBe(native);
+    expect(selectors.selectForMachineSetup(store.getSnapshot(), query)?.snapshot).toBe(root);
+    for (const mismatch of [{ serverId: 'home-b' }, { accountId: 'account-b' }, { machineId: 'machine-b' }, { runId: 'other-run' }, { accountId: null }]) {
+        expect(selectors.selectForMachineSetupRun(store.getSnapshot(), { ...query, ...mismatch })).toBeNull();
+    }
+    for (const mismatch of [{ serverId: 'home-b' }, { accountId: 'account-b' }, { machineId: 'machine-b' }, { accountId: null }]) {
+        expect(selectors.selectForMachineSetup(store.getSnapshot(), { ...query, ...mismatch })).toBeNull();
+    }
+    const changed = { ...native, revision: 2, state: 'succeeded' as const, settledAt: 120 };
+    merge(store, [changed]);
+    expect(selectors.selectForMachineSetupRun(store.getSnapshot(), query)?.snapshot.state).toBe('succeeded');
+});
+
 describe('admitted New Session continuation', () => {
     it('retains the composer handoff across result refresh and consumes it once', async () => {
         const store = createActionOperationStore();

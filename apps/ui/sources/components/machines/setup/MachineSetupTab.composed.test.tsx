@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema,
   ExternalActionExecutionAuthorizationRequestV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1,
   projectExternalActionDeploymentPreparationEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -645,6 +646,156 @@ describe('Machine setup preparation', () => {
 });
 
 describe('Machine → Setup tab (P-M1)', () => {
+  it.each(['succeeded', 'failed'] as const)('follows native child rows from the combined Apply receipt while the root retains settlement (%s)', async outcome => {
+    const home = await harness.addHome({ name: 'Build', serverUrl: 'https://combined-setup.example',
+      serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
+    const serverId = resolveServerProfileScopeIdForIdentifier(home);
+    await publishManagedDevbox(serverId);
+    const installationKey = sodium.crypto_sign_seed_keypair(new Uint8Array(32).fill(19));
+    harness.answer(home, '/v1/machines/devbox', { body: { machine: {
+      ...createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }),
+      installationPublicKey: encodeBase64(installationKey.publicKey, 'base64'),
+    } } });
+    const scripts = [{ body: 'printf FIRST', affects: 'none' as const }, { body: 'printf SECOND', affects: 'none' as const }];
+    const plan = MachineSetupPlanResultV1Schema.parse({ desiredRevision: 0, sources: [{ kind: 'direct', setup: { scripts } }],
+      exclusions: [], support: [], recipePlans: [] });
+    harness.answer(home, '/v1/actions/machines.setup.plan', { select: input => {
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
+      return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId, execution: { ok: true, result: plan } } };
+    } });
+    const [{ actionOperationStore }, { createSetupOperationSnapshot }, { createWorkflowRunSummaryFixture }] = await Promise.all([
+      import('@/sync/domains/actionOperations/actionOperationStore'),
+      import('../../../../../cli/src/machines/setup/setupOperationSnapshot'),
+      import('@/dev/testkit/fixtures/workflowRunFixtures'),
+    ]);
+    const runtime = createHostActionOperationRuntime({ machineId: 'devbox', serverId,
+      resolveAccountId: async () => 'owner', publishSnapshot: snapshot => {
+        actionOperationStore.mergeSnapshots({ serverId, snapshots: [snapshot] });
+      } });
+    let finishNative: (() => void) | undefined;
+    let finishRoot!: () => void;
+    const rootEffect = new Promise<void>(resolve => { finishRoot = resolve; });
+    let nativeEffect: Promise<unknown> | undefined;
+    const combined = createCombinedMachineSetupActionDeps({ readDeps: () => ({}),
+      targetPlan: async () => plan, orchestrationDirectory: '/setup',
+      readHostFacts: async () => ({ machines: [{ machineId: 'devbox', online: true }] }),
+      // Workflow transport is the boundary. Its native operation and row
+      // producer remain real and publish through the normal host sink.
+      startCombined: async request => {
+        nativeEffect = runtime.runActionOperation({ actionId: 'machines.setup.apply', input: request.parent.input,
+          context: { surface: 'agent', runtimeAccountId: 'owner', actionRequestId: 'native-setup',
+            executionRunWorkflowRunId: request.start.runId,
+            actionCaller: { kind: 'workflowRun', runId: request.start.runId,
+              authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } } },
+          execute: async context => {
+            if (!context.operationAcceptance || !context.operationOwnerUpdate) throw new Error('Native owner not admitted');
+            const snapshot = createSetupOperationSnapshot({ kind: 'machineSetup', serverId: 'srv_build', machineId: 'devbox' },
+              [], context.operationOwnerUpdate.update, scripts);
+            const nativeResult = { operationId: context.operationAcceptance.operationId, terminalId: 'native-output' };
+            context.operationAcceptance.accept(nativeResult);
+            snapshot.emit({ type: 'machine.setup.progress', stepId: 'script:0', data: { planIndex: 0, status: 'started' } });
+            snapshot.update({ domainRef: { kind: 'machineSetup', serverId: 'srv_build', machineId: 'devbox', terminalId: 'native-output' } });
+            await new Promise<void>(resolve => { finishNative = resolve; });
+            if (outcome === 'failed') {
+              snapshot.emit({ type: 'machine.setup.result', stepId: 'script:0', data: { status: 'failed', stepId: 'script:0', reason: 'Native step failed' } });
+              return { ok: false, errorCode: 'native_step_failed', error: 'Native step failed' };
+            }
+            for (const stepId of ['script:0', 'script:1']) snapshot.emit({ type: 'machine.setup.progress', stepId,
+              data: { planIndex: 0, status: 'satisfied' } });
+            return { ok: true, result: nativeResult };
+          } });
+        return { admission: 'created', run: createWorkflowRunSummaryFixture({ id: request.start.runId,
+          machineId: 'devbox', ownerAccountId: 'owner', origin: { kind: 'direct' } }) };
+      },
+      readInvocations: async () => ({ invocations: [], invocationDetails: [], parentRevision: 1 }),
+      waitForRun: async request => {
+        await nativeEffect;
+        await rootEffect;
+        return { run: createWorkflowRunSummaryFixture({ id: request.start.runId, machineId: 'devbox', ownerAccountId: 'owner',
+          origin: { kind: 'direct' }, state: outcome, workflowCustodyState: 'settled' }) };
+      },
+    });
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const { readOriginalAccountActionAuthentication } = await import('@/sync/api/externalActionAccountTransport');
+    const account = await captureLazyActionAccountContext(home);
+    onTestFinished(() => account.dispose());
+    harness.answer(home, bindExternalActionExecutionAuthorizationHttpPathV1('machines.setup.apply'), { select: input => {
+      const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(input);
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.envelope);
+      const authentication = readOriginalAccountActionAuthentication(account.credentials.token);
+      if (!authentication || envelope.target?.kind !== 'machine') throw new Error('Expected an Account Machine invocation');
+      return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'combined-setup-authorization', binding: {
+        accountId: 'owner', authentication, serverIdentityId: 'srv_build', machineId: 'devbox',
+        custodianAccountId: 'owner', installationId: 'test-installation', actionId: 'machines.setup.apply',
+        accountEncryptionMode: 'plain', requestId: envelope.requestId, target: envelope.target,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        deploymentPreparationAdmission: projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({
+          actionId: 'machines.setup.apply', envelope,
+        }),
+      } }) };
+    } });
+    harness.answer(home, '/v1/actions/machines.setup.apply', { select: async input => {
+      const request = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(input);
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.success ? request.data.envelope : input);
+      const parsed = MachineSetupApplyInputV1Schema.parse(envelope.input);
+      const execution = await runtime.runActionOperation({ actionId: 'machines.setup.apply', input: parsed,
+        context: { surface: 'ui', serverId, runtimeAccountId: 'owner', actionRequestId: envelope.requestId,
+          actionCaller: { kind: 'host' } }, execute: async context => {
+          const result = await combined.machineSetupApply!({ input: parsed, context });
+          const failure = ActionExecuteFailureSchema.safeParse(result);
+          return failure.success ? failure.data : { ok: true, result };
+        } });
+      return { body: { v: 1, actionId: 'machines.setup.apply', requestId: envelope.requestId, execution } };
+    } });
+    const [{ renderHook }, { useMachineSetup }] = await Promise.all([
+      import('@/dev/testkit/hooks/renderHook'), import('./useMachineSetup'),
+    ]);
+    let hook = await renderHook(() => useMachineSetup({ serverId, machineId: 'devbox', active: true, online: true, canCheck: true }));
+    onTestFinished(async () => { finishNative?.(); finishRoot(); await hook.unmount(); });
+    await waitForHomeGovernance(() => expect({ plan: hook.getCurrent().plan !== null, failure: hook.getCurrent().failure })
+      .toEqual({ plan: true, failure: null }));
+    await act(async () => { await hook.getCurrent().prepare({ kind: 'reapply' }); });
+    await act(async () => { await hook.getCurrent().apply(); });
+    expect(hook.getCurrent().failure).toBeNull();
+    expect(hook.getCurrent().operationId).toEqual(expect.any(String));
+    expect(nativeEffect).toBeDefined();
+    await waitForHomeGovernance(() => expect(hook.getCurrent().progressOperation?.snapshot.domainRef).toMatchObject({
+      kind: 'machineSetup', steps: [{ stepId: 'script:0', state: 'running', terminalId: 'native-output' },
+        { stepId: 'script:1', state: 'pending' }],
+    }));
+    expect(hook.getCurrent().operation?.snapshot).toMatchObject({ state: 'running' });
+    expect(hook.getCurrent().operation?.snapshot.domainRef).toBeUndefined();
+    const rootId = hook.getCurrent().operationId;
+    expect(hook.getCurrent().progressOperation?.snapshot.operationId).not.toBe(rootId);
+    await hook.unmount();
+    hook = await renderHook(() => useMachineSetup({ serverId, machineId: 'devbox', active: true, online: true, canCheck: true }));
+    await waitForHomeGovernance(() => expect(hook.getCurrent().operationId).toBe(rootId));
+    expect(hook.getCurrent().progressOperation?.snapshot.domainRef).toMatchObject({ kind: 'machineSetup',
+      steps: [{ state: 'running' }, { state: 'pending' }] });
+    const [{ MachineSetupTab }, { AccountNoticeInvestigationBoundary }] = await Promise.all([
+      import('./MachineSetupTab'), import('@/hooks/inbox/AccountNoticeInvestigationProvider'),
+    ]);
+    const screen = await renderScreen(<AccountNoticeInvestigationBoundary>
+      <MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online
+        params={{ id: 'setup' }} setParams={() => {}} />
+    </AccountNoticeInvestigationBoundary>);
+    onTestFinished(() => screen.unmount());
+    await act(async () => { finishNative!(); });
+    await waitForHomeGovernance(() => expect(hook.getCurrent().progressOperation?.snapshot.state).toBe(outcome));
+    if (outcome === 'failed') {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-stopped')).not.toBeNull());
+      expect(screen.findByTestId('machine-setup-stopped.action')).toBeNull();
+      expect(screen.findByTestId('machine-setup-apply')).toBeNull();
+    }
+    expect(hook.getCurrent().operation?.snapshot.state).toBe('running');
+    await act(async () => { finishRoot(); });
+    await waitForHomeGovernance(() => expect(hook.getCurrent().operation?.snapshot.state).toBe(outcome));
+    if (outcome === 'failed') {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-stopped.action')).not.toBeNull());
+    }
+    expect(hook.getCurrent().operationId).toBe(rootId);
+  });
+
   it('reviews prerequisite recipe sources alongside the Machine sources before any Apply', async () => {
     const home = await harness.addHome({ name: 'Build', serverUrl: 'https://prerequisite-setup.example',
       serverIdentityId: 'srv_prerequisite_setup', accountId: 'owner', currentAccount: true });

@@ -1,3 +1,5 @@
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
 import { randomUUID } from 'node:crypto';
 import { isProjectCheckoutRemovalActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { createPendingSessionBirth } from './pendingSessionBirth';
@@ -329,7 +331,18 @@ export function createActionOperationRunner(deps: Readonly<{
               ...(previousSessionCreationFailure ? { previousSessionCreationFailure } : {}),
               ...(resumeActionRequest && previousRestoreSnapshot ? { previousRestoreSnapshot } : {}), accept: (result) => {
               if (isFiniteProjectCommand(action.actionId)) acceptFinite();
-              else accept({ ok: true, result });
+              else {
+                // Combined Setup keeps its public Run link while active, so a
+                // reopened surface can follow its native child. This receipt
+                // does not settle the root or retain other Actions' private output.
+                if (action.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1) {
+                  const receipt = MachineSetupApplyResultV1Schema.safeParse(result);
+                  if (receipt.success && receipt.data.runId && receipt.data.operationId === operationId) {
+                    deps.store.updateObservation(operationId, null, receipt.data);
+                  }
+                }
+                accept({ ok: true, result });
+              }
             } },
           });
           // Only the private native owner supplies effect evidence. Valid plugin

@@ -46,6 +46,15 @@ export type ActionOperationMachineAddress = Readonly<{
     machineId: string;
 }>;
 
+export type ActionOperationMachineSetupQuery = ActionOperationMachineAddress & Readonly<{
+    accountId: string | null;
+}>;
+
+/** Native progress belongs to one target in the accepted combined Setup Run. */
+export type ActionOperationMachineSetupRunQuery = ActionOperationMachineSetupQuery & Readonly<{
+    runId: string | null;
+}>;
+
 export type ActionOperationManagedMachineQuery = ActionOperationMachineAddress & Readonly<{
     accountId: string | null;
     managedId: string;

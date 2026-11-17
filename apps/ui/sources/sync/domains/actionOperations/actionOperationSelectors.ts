@@ -1,3 +1,4 @@
+import { isMachineSetupOperationActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { readActionOperationTaskQuestionV1, type ActionOperationSudoQuestionV1,
     type ActionOperationTaskQuestionV1 } from '@happier-dev/protocol/actions/operations/taskQuestionV1';
@@ -19,6 +20,8 @@ import {
     type ActionOperationProjectSourceQuery,
     type ActionOperationProjectScriptQuery,
     type ActionOperationManagedMachineQuery,
+    type ActionOperationMachineSetupRunQuery,
+    type ActionOperationMachineSetupQuery,
     type ActionOperationProjectServicesQuery,
     type QualifiedActionOperation,
 } from './qualifiedActionOperation';
@@ -83,6 +86,8 @@ export type ActionOperationSelectors = Readonly<{
     selectForProjectOpen(state: ActionOperationStoreSnapshot, query: ActionOperationProjectSourceQuery): ActionOperationProjection | null;
     selectHeldProjectSetupReview(state: ActionOperationStoreSnapshot, query: ActionOperationProjectWorkspaceQuery): ActionOperationProjection | null;
     selectForManagedMachine(state: ActionOperationStoreSnapshot, query: ActionOperationManagedMachineQuery): ActionOperationProjection | null;
+    selectForMachineSetup(state: ActionOperationStoreSnapshot, query: ActionOperationMachineSetupQuery): ActionOperationProjection | null;
+    selectForMachineSetupRun(state: ActionOperationStoreSnapshot, query: ActionOperationMachineSetupRunQuery): ActionOperationProjection | null;
     selectForProjectServices(state: ActionOperationStoreSnapshot, query: ActionOperationProjectServicesQuery): readonly ActionOperationProjection[];
     selectInbox(state: ActionOperationStoreSnapshot): readonly InboxActionOperationEntry[];
     selectActivitySummary(state: ActionOperationStoreSnapshot): ActionOperationActivitySummary;
@@ -301,6 +306,37 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
         const operation = state.operationsByKey.get(key);
         // Dismissal changes Activity visibility, not an explicit qualified record lookup.
         return operation ? readProjection(state, key, operation) : null;
+    };
+
+    const selectForMachineSetup = (state: ActionOperationStoreSnapshot, query: ActionOperationMachineSetupQuery): ActionOperationProjection | null => {
+        if (!query.serverId || !query.accountId || !query.machineId) return null;
+        let selected: ActionOperationProjection | null = null;
+        for (const [key, operation] of state.operationsByKey) {
+            const { snapshot } = operation;
+            if (!areServerProfileIdentifiersEquivalent(operation.serverId, query.serverId)
+                || snapshot.scope.accountId !== query.accountId || snapshot.scope.machineId !== query.machineId
+                || snapshot.originRunId !== undefined || !isMachineSetupOperationActionIdV1(snapshot.actionId)) continue;
+            const projection = readProjection(state, key, operation);
+            if (!selected || compareOperations(projection, selected) < 0) selected = projection;
+        }
+        return selected;
+    };
+
+    const selectForMachineSetupRun = (state: ActionOperationStoreSnapshot, query: ActionOperationMachineSetupRunQuery): ActionOperationProjection | null => {
+        if (!query.serverId || !query.accountId || !query.machineId || !query.runId) return null;
+        let selected: ActionOperationProjection | null = null;
+        for (const [key, operation] of state.operationsByKey) {
+            const { snapshot } = operation;
+            const domain = snapshot.domainRef;
+            if (!areServerProfileIdentifiersEquivalent(operation.serverId, query.serverId)
+                || snapshot.scope.accountId !== query.accountId || snapshot.scope.machineId !== query.machineId
+                || snapshot.originRunId !== query.runId || domain?.kind !== 'machineSetup'
+                || domain.machineId !== query.machineId
+                || !areServerProfileIdentifiersEquivalent(domain.serverId, query.serverId)) continue;
+            const projection = readProjection(state, key, operation);
+            if (!selected || compareOperations(projection, selected) < 0) selected = projection;
+        }
+        return selected;
     };
 
     const selectProjectOperation = (
@@ -574,6 +610,8 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
         selectForProjectOpen,
         selectHeldProjectSetupReview,
         selectForManagedMachine,
+        selectForMachineSetup,
+        selectForMachineSetupRun,
         selectForProjectServices,
         selectInbox,
         selectActivitySummary,

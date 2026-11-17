@@ -17,6 +17,35 @@ import { callSocketRpc, type SocketRpcContent } from '@happier-dev/sync-client';
 const scope = { accountId: 'account-1', machineId: 'machine-1' } as const;
 
 describe('action operation canonical execution observer', () => {
+  it.each([
+    { actionId: 'machines.setup.apply', privateContent: false, retained: true },
+    { actionId: 'machines.reboot', privateContent: false, retained: false },
+    { actionId: 'machines.setup.apply', privateContent: true, retained: false },
+  ] as const)('retains only the public combined Setup receipt while its root is active ($actionId, private=$privateContent)', async ({ actionId, privateContent, retained }) => {
+    const store = createActionOperationStore();
+    const spec = getActionSpec(actionId);
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'receipt-root', resolveAction: () => ({
+      actionId: spec.id, title: spec.title, operation: spec.operation,
+    }) });
+    let finish!: () => void;
+    const effect = new Promise<void>(resolve => { finish = resolve; });
+    const receipt = { operationId: 'receipt-root', runId: 'setup-run', ...(privateContent ? { privateToken: 'do-not-retain' } : {}) };
+    const request = { actionId, scope, requestId: 'combined-setup-receipt', input: {},
+      execute: async (context: Parameters<Parameters<typeof runner.observe>[0]['execute']>[0]) => {
+        context.operationAcceptance?.accept(receipt);
+        await effect;
+        return { ok: true as const, result: { settled: true } };
+      },
+    };
+    try {
+      expect(await runner.observe(request)).toEqual({ ok: true, result: receipt });
+      expect(store.get(scope, 'receipt-root')?.state).toBe('running');
+      expect(store.get(scope, 'receipt-root')?.result).toEqual(retained ? receipt : undefined);
+    } finally { finish(); }
+    expect(await runner.observe({ ...request, response: 'terminal' })).toEqual({ ok: true, result: { settled: true } });
+    expect(store.get(scope, 'receipt-root')).toMatchObject({ state: 'succeeded', result: { settled: true } });
+  });
+
   it('keeps a child terminal observer attached while another observer receives its approval', async () => {
     const store = createActionOperationStore();
     const runner = createActionOperationRunner({ store, resolveAction: actionId => ({ actionId,

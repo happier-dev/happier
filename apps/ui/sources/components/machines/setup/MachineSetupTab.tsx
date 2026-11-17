@@ -563,7 +563,8 @@ function MachineSetupAttention(
     () => (setup.operation ? [setup.operation] : []),
     [setup.operation],
   );
-  const domainRef = setup.operation?.snapshot.domainRef;
+  const progressOperation = setup.progressOperation;
+  const domainRef = progressOperation?.snapshot.domainRef;
   // The operation's own reviewed steps, in place; their labels carry their own fallback words.
   const steps = React.useMemo(
     () => (domainRef?.kind === 'machineSetup' ? projectMachineSetupStepChecklist(domainRef, (label) => localize('', label)) : null),
@@ -572,8 +573,8 @@ function MachineSetupAttention(
   if (setup.operationId) {
     const operationId = setup.operationId;
     const open = () => openActionOperationDetail({ serverId: props.serverId, operationId });
-    if (steps && domainRef?.kind === 'machineSetup' && operations.length > 0) {
-      const operation = operations[0];
+    if (steps && domainRef?.kind === 'machineSetup' && progressOperation) {
+      const operation = progressOperation;
       // What needs the person leads the card, once: the Machine's password question while it waits, or where it stopped.
       const sudoPrompt = readActionOperationSudoPrompt(operation.snapshot);
       const stopped = isActionOperationTerminal(operation.snapshot.state)
@@ -590,7 +591,8 @@ function MachineSetupAttention(
               operation={operation.snapshot}
               step={stoppedTitle}
               cause={typeof stopped?.subtitle === 'string' ? stopped.subtitle : undefined}
-              onRetry={props.editable ? () => { void setup.prepare({ kind: 'reapply' }); } : null}
+              onRetry={props.editable && setup.operation && isActionOperationTerminal(setup.operation.snapshot.state)
+                ? () => { void setup.prepare({ kind: 'reapply' }); } : null}
             />
           ) : null}
           <MachineSetupStepsChecklist

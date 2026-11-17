@@ -5,6 +5,7 @@ import { actionOperationStore, isActionOperationTerminal } from './actionOperati
 import type { ActionOperationAddress, ActionOperationSessionAddress, ActionOperationProjectScriptQuery, ActionOperationProjectWorkspaceQuery, ActionOperationManagedMachineQuery, ActionOperationProjectServicesQuery } from './qualifiedActionOperation';
 import type { ServerAccountScopeLifetime } from '../scope/serverAccountScope';
 import type { ActionOperationProjectSourceQuery } from './qualifiedActionOperation';
+import type { ActionOperationMachineSetupRunQuery, ActionOperationMachineSetupQuery } from './qualifiedActionOperation';
 
 function useActionOperationSelector<T>(selector: () => T): T {
     return React.useSyncExternalStore(
@@ -154,6 +155,17 @@ export function useProjectServiceActionOperations(query: ActionOperationProjectS
 
 export function useManagedMachineActionOperation(query: ActionOperationManagedMachineQuery) {
     return useActionOperationSelector(() => actionOperationSelectors.selectForManagedMachine(actionOperationStore.getSnapshot(), query));
+}
+
+/** The retained root owns Setup lifecycle when its surface reopens. */
+export function useMachineSetupActionOperation(query: ActionOperationMachineSetupQuery | null) {
+    return useActionOperationSelector(() => query
+        ? actionOperationSelectors.selectForMachineSetup(actionOperationStore.getSnapshot(), query) : null);
+}
+
+export function useMachineSetupRunActionOperation(query: ActionOperationMachineSetupRunQuery | null) {
+    return useActionOperationSelector(() => query
+        ? actionOperationSelectors.selectForMachineSetupRun(actionOperationStore.getSnapshot(), query) : null);
 }
 
 export function useActionOperationsHaveAttention(): boolean {
