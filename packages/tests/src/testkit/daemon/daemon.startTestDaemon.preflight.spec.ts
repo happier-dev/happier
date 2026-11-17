@@ -380,7 +380,7 @@ describe('startTestDaemon', () => {
         "import { resolve } from 'node:path';",
         "const homeDir = process.env.HAPPIER_HOME_DIR;",
         "if (!homeDir) throw new Error('Missing HAPPIER_HOME_DIR');",
-        "writeFileSync(resolve(homeDir, 'daemon.state.json'), JSON.stringify({ pid: process.ppid, httpPort: 32991, controlToken: 'invalid-owner-token' }), 'utf8');",
+        "writeFileSync(resolve(homeDir, 'daemon.state.json'), JSON.stringify({ pid: process.pid, httpPort: 32991, controlToken: 'invalid-owner-token' }), 'utf8');",
         "process.on('SIGTERM', () => process.exit(0));",
         "setInterval(() => {}, 1000);",
       ].join('\n'), 'utf8');

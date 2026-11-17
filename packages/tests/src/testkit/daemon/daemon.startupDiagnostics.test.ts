@@ -5,8 +5,38 @@ import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { startTestDaemon, waitForDaemonState } from './daemon';
+import { runLoggedCommand } from '../process/spawnProcess';
 
 describe('startTestDaemon startup diagnostics', () => {
+  it('rejects prior daemon state when the spawned process exits without publishing its own state', async () => {
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-stale-startup-'));
+    const homeDir = join(testDir, 'home');
+    const priorDaemonPath = join(testDir, 'prior-daemon.mjs');
+    const failedDaemonPath = join(testDir, 'failed-daemon.mjs');
+    await mkdir(homeDir, { recursive: true });
+    await writeFile(priorDaemonPath, [
+      "import { writeFileSync } from 'node:fs';",
+      `writeFileSync(${JSON.stringify(join(homeDir, 'daemon.state.json'))}, JSON.stringify({ pid: process.pid, httpPort: 1, machineControlReady: true }));`,
+    ].join('\n'));
+    await writeFile(failedDaemonPath, 'process.exit(17);');
+    try {
+      await expect(startTestDaemon({
+        testDir, happyHomeDir: homeDir, env: {}, startupTimeoutMs: 1_000,
+        cliLaunchSpec: { command: process.execPath, args: [failedDaemonPath], cwd: testDir, env: {} },
+        __beforeSpawn: () => runLoggedCommand({
+          command: process.execPath, args: [priorDaemonPath], cwd: testDir, env: {},
+          stdoutPath: join(testDir, 'prior.stdout.log'), stderrPath: join(testDir, 'prior.stderr.log'),
+          timeoutMs: null,
+        }),
+      }).then(async daemon => {
+        await daemon.proc.stop();
+        throw new Error('Startup accepted stale prior daemon state');
+      })).rejects.toThrow(/Daemon exited before writing daemon\.state\.json|phase=waitForDaemonState/);
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
   it('requires acknowledged Machine control when enrollment requests it, while retaining local-control startup', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-readiness-'));
     const statePath = join(homeDir, 'daemon.state.json');

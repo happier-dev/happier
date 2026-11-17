@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol';
+import { connectUiActionClient } from '@happier-tests/ui-action-client';
+import { resolveMachineIdForServerFromSettings } from '../../../../apps/cli/src/daemon/resolveMachineIdForServerFromSettings';
+import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
+import type { Settings } from '../../../../apps/cli/src/persistence';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -10,6 +16,11 @@ import {
   type SocketCollector,
 } from '../../src/testkit/socketClient';
 import { waitFor } from '../../src/testkit/timing';
+import { startTeamSetupFFixture } from '../../src/testkit/teamSetupF';
+import { startTestDaemon } from '../../src/testkit/daemon/daemon';
+import { fetchJson } from '../../src/testkit/http';
+import { createIsolatedFakeClaudeControlShim, waitForFakeClaudeUserText } from '../../src/testkit/fakeClaude';
+import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
 import {
   createMachineInstallationIdentityFixture,
   fetchMachineIdentity,
@@ -61,6 +72,78 @@ describe('core e2e: machine installation identity replacement', () => {
     await server?.stop();
     server = null;
   });
+
+  // The composed fixture control uses lifecycle-owned phase budgets; this
+  // journey likewise includes enrollment, daemon restart and an Agent turn.
+  it('JOURNEYS-A.J7 keeps retained Session control working after real registration rotates a revoked Machine identity', async () => {
+    const testDir = run.testDir('machine-replacement-retained-session-control');
+    const postgres = await startDatabaseWorkbenchPostgres({ preloadStatistics: false });
+    let fixture: Awaited<ReturnType<typeof startTeamSetupFFixture>> | undefined;
+    let daemon: Awaited<ReturnType<typeof startTestDaemon>> | undefined;
+    let ui: Awaited<ReturnType<typeof connectUiActionClient>> | undefined;
+    try {
+      fixture = await startTeamSetupFFixture({ testDir, dbProvider: 'postgres',
+        serverEnv: { DATABASE_URL: postgres.homeDatabaseUrl } });
+      const account = await fixture.createAccount('rotation-owner');
+      // Keep the actual Action client alive across registration, rather than
+      // constructing an executor with the recovered identity afterwards.
+      ui = await connectUiActionClient({ serverUrl: fixture.server.baseUrl, credentials: account.uiCredentials });
+      await waitFor(() => ui!.isAccountReady(), { timeoutMs: 60_000, context: 'rotation Account ready' });
+      const directory = join(testDir, account.name);
+      const invocationId = randomUUID();
+      const vendor = await createIsolatedFakeClaudeControlShim({ testDir: directory, invocationId,
+        captureEnvironmentKeys: [], logFullStdin: true });
+      const enrolled = await fixture.enrollDaemon(account, { env: { HAPPIER_CLAUDE_PATH: vendor.executablePath } });
+      const { homeDir, workspaceDir } = enrolled;
+      await writeFile(join(workspaceDir, 'rotation-sentinel.txt'), 'retained Session control');
+      const assertSessionControl = async (machineId: string, phase: string) => {
+        const control = await ui!.executeConfirmed('daemon.filesystem.listDirectory', { rootPath: workspaceDir, path: '.' }, {
+          surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: ui!.serverId,
+          externalActionTarget: { kind: 'machine', machineId },
+        });
+        expect(control, `${phase}: ${JSON.stringify(control)}`).toMatchObject({ ok: true, result: { success: true,
+          entries: expect.arrayContaining([expect.objectContaining({ name: 'rotation-sentinel.txt' })]) } });
+        const session = await fixture!.assertKnownGoodSessionControl(account, {
+          target: { serverId: fixture!.serverId, machineId }, workspaceDir,
+        });
+        const message = `Machine rotation journey ${phase} ${invocationId}`;
+        const sent = await account.execute('session.message.send', { sessionId: session.sessionId, message });
+        expect(sent, `${phase}: ${JSON.stringify(sent)}`).toMatchObject({ ok: true });
+        expect(await waitForFakeClaudeUserText(vendor.logPath, text => text.includes(message), { invocationId })).toContain(message);
+      };
+      await assertSessionControl(enrolled.target.machineId, 'before rotation');
+      // Leave no incumbent before exercising revoked-identity startup recovery.
+      await enrolled.daemon.stop();
+      const paired = { serverId: enrolled.cliServerId, machineId: enrolled.target.machineId };
+      const revoked = await fetchJson<unknown>(`${fixture.server.baseUrl}/v1/machines/${paired.machineId}/revoke`, {
+        method: 'POST', headers: { Authorization: `Bearer ${account.auth.token}` },
+      });
+      expect(revoked.status).toBe(200);
+      // With no incumbent, startDaemon creates Session control before its real
+      // registration loop encounters machine_revoked and rotates the persisted id.
+      daemon = await startTestDaemon({ testDir: directory, happyHomeDir: homeDir, requireMachineControlReady: true, env: {
+        ...process.env, CI: '1', HAPPIER_VARIANT: 'dev', HAPPIER_DISABLE_CAFFEINATE: '1',
+        HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: fixture.server.baseUrl, HAPPIER_WEBAPP_URL: fixture.server.baseUrl,
+        HAPPIER_CLAUDE_PATH: vendor.executablePath, HAPPIER_CLAUDE_CONFIG_DIR: join(homeDir, '.claude'),
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1', HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
+        NODE_OPTIONS: fixture.sourceOptions,
+      } });
+      let machineId: string | null = null;
+      await waitFor(async () => {
+        const settings = JSON.parse(await readFile(join(homeDir, 'settings.json'), 'utf8')) as Settings;
+        machineId = resolveMachineIdForServerFromSettings(settings, paired.serverId, readAccountIdFromToken(account.credentials.token));
+        return machineId !== null && machineId !== paired.machineId && ui!.isMachineControlReady(machineId);
+      }, { timeoutMs: 60_000, context: 'rotated Machine persisted and control published' });
+      if (!machineId) throw new Error('Registration did not publish its recovered Machine identity');
+      await assertSessionControl(machineId, 'after rotation');
+    } finally {
+      try { await ui?.close(); } finally {
+        try { await daemon?.stop(); } finally {
+          try { await fixture?.stop(); } finally { await postgres.stop(); }
+        }
+      }
+    }
+  }, 0);
 
   it('records automatic replacement only when registration includes explicit replacement proof', async () => {
     server = await startServerLight({ testDir: run.testDir('machine-replacement-automatic') });

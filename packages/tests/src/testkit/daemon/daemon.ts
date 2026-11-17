@@ -283,7 +283,7 @@ function recordDaemonStatePresence(
 
 export async function waitForDaemonState(
   happyHomeDir: string,
-  opts?: { timeoutMs?: number; statePresence?: DaemonStatePresenceTracker; requireMachineControlReady?: boolean },
+  opts?: { timeoutMs?: number; statePresence?: DaemonStatePresenceTracker; requireMachineControlReady?: boolean; expectedPid?: number },
 ): Promise<DaemonState> {
   const timeoutMs = opts?.timeoutMs ?? 30_000;
   const startedAt = Date.now();
@@ -291,6 +291,7 @@ export async function waitForDaemonState(
     recordDaemonStatePresence(opts?.statePresence, await observeDaemonStatePresence(happyHomeDir));
     const state = await readDaemonState(happyHomeDir);
     if (state && state.httpPort > 0 && state.pid > 0
+      && (opts?.expectedPid === undefined || state.pid === opts.expectedPid)
       && (!opts?.requireMachineControlReady || state.machineControlReady === true)) return state;
     await new Promise((r) => setTimeout(r, 100));
   }
@@ -1075,6 +1076,7 @@ export async function startTestDaemon(params: {
       'waitForDaemonState',
       Promise.race([
         waitForDaemonState(params.happyHomeDir, { timeoutMs: startupTimeoutMs, statePresence,
+          expectedPid: spawnedProc.child.pid,
           requireMachineControlReady: params.requireMachineControlReady }),
         new Promise<DaemonState>((resolveState, rejectState) => {
           spawnedProc.child.once('exit', (code, signal) => {
@@ -1083,6 +1085,7 @@ export async function startTestDaemon(params: {
                 const exitedState = await waitForDaemonState(params.happyHomeDir, {
                   timeoutMs: exitStateGraceTimeoutMs,
                   statePresence,
+                  expectedPid: spawnedProc.child.pid,
                   requireMachineControlReady: params.requireMachineControlReady,
                 });
                 resolveState(exitedState);
