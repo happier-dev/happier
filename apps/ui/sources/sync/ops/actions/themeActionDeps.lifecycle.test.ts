@@ -1,14 +1,67 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
+import { mergeThemeProfileDocumentEdit } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { createThemeActionHarness as setup, themeActionDocument as document } from '@/dev/testkit/harness/themeActionHarness';
 import { createThemeActionExecute } from './themeActionDeps';
 import { exportThemeProfileToJson } from '@/theme/profiles/themeProfileImportExport';
 import { prepareThemeCss } from '@/theme/css/prepareThemeCss';
 
+// Platform is the external paint adapter; all profile and material owners stay real.
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
 const actionContext = { surface: 'ui' as const, authority: 'present_user' as const };
 describe('theme Actions through real library and try-on owners', () => {
+    it('projects the requested retained profile and mode into its surface map and guide', async () => {
+        const { projectThemeSurfacePaintMap } = await import('@/theme/css/themeSurfacePaintMap');
+        const f = setup();
+        const base = mergeThemeProfileDocumentEdit(document('requested-paint'), { overrides: {
+            light: { 'message.user.background': '#123456' }, dark: { 'message.user.background': '#123456' },
+        } });
+        const requested = mergeThemeProfileDocumentEdit(base, { assetAppearance: 'dark',
+            overrides: { light: base.profile.overrides.light, dark: { 'message.user.background': 'rgba(30, 40, 50, 0.3)' } } });
+        const saved = await f.library.save({ document: requested });
+        if (!saved.entry) throw new Error('Expected saved fixture');
+        const execute = createActionExecutor({ themeAction: createThemeActionExecute({
+            withLibrary: async operation => operation(f.library), readSelection: () => f.selection, clientId: () => 'this-app',
+            runtime: { preview: f.owner,
+                coverage: document => prepareThemeCss(document.profile.css ?? '').coverage,
+                detailedCoverage: document => prepareThemeCss(document.profile.css ?? '').detailedCoverage,
+                surfaceMap: projectThemeSurfacePaintMap },
+        }) });
+        const expected = projectThemeSurfacePaintMap(requested, 'dark');
+        const bubbleBackground = (map: typeof expected) => map.find(row => row.address.surface === 'user-bubble'
+            && row.address.part === 'root' && row.address.state === undefined)?.paintRoles.find(role => role.facet === 'background');
+        expect(bubbleBackground(expected)).toEqual({ facet: 'background', source: { kind: 'token', ref: 'message.user.background' } });
+        expect(bubbleBackground(projectThemeSurfacePaintMap(base, 'dark'))).not.toEqual(bubbleBackground(expected));
+        expect(bubbleBackground(projectThemeSurfacePaintMap(requested, 'light'))).not.toEqual(bubbleBackground(expected));
+        const result = await execute.execute(THEME_ACTION_IDS.get,
+            { ref: saved.entry.reference, include: ['surfaceMap', 'guide'] }, actionContext);
+        expect(result).toMatchObject({ ok: true, result: { surfaceMap: expected } });
+        if (!result.ok || typeof result.result !== 'object' || result.result === null
+            || !('guide' in result.result) || typeof result.result.guide !== 'string') throw new Error('Expected guide');
+        expect(JSON.parse(result.result.guide.split('\n').at(-1)!)).toMatchObject({ surfaceMap: expected });
+    });
+
+    it.each(['absent', 'empty'] as const)('refuses an %s surface map instead of returning a successful empty guide', async state => {
+        const f = setup();
+        const saved = await f.library.save({ document: document('surface-map-request') });
+        if (!saved.entry) throw new Error('Expected saved fixture');
+        const execute = createActionExecutor({ themeAction: createThemeActionExecute({
+            withLibrary: async operation => operation(f.library), readSelection: () => f.selection, clientId: () => 'this-app',
+            runtime: { preview: f.owner,
+                coverage: document => prepareThemeCss(document.profile.css ?? '').coverage,
+                detailedCoverage: document => prepareThemeCss(document.profile.css ?? '').detailedCoverage,
+                ...(state === 'empty' ? { surfaceMap: () => [] } : {}) },
+        }) });
+        expect(await execute.execute(THEME_ACTION_IDS.get,
+            { ref: saved.entry.reference, include: ['surfaceMap', 'guide'] }, actionContext))
+            .toMatchObject({ ok: false, errorCode: 'client_not_connected' });
+    });
+
     it('rejects a Store preview without its listing before creating the overlay', async () => {
         const f = setup();
         const execute = createActionExecutor({ themeAction: createThemeActionExecute({

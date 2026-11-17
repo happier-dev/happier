@@ -18,7 +18,7 @@ export interface ThemeActionRuntime {
     preview: ThemeTryOnOwner;
     coverage(document: ThemeProfileDocument): ThemeCssCoverage;
     detailedCoverage(document: ThemeProfileDocument): ThemeCssDetailedCoverage;
-    surfaceMap(): readonly ThemeSurfacePaintDescriptor[];
+    surfaceMap?(document: ThemeProfileDocument, mode: ThemeProfileMode): readonly ThemeSurfacePaintDescriptor[];
 }
 
 /** The capturing Action host supplies the Account-scoped library and live socket id. */
@@ -69,14 +69,17 @@ export function createThemeActionExecute(host: ThemeActionHost): NonNullable<Act
                     const entry = (await library.list()).find(row => sameStrictJsonValue(row.reference, ref));
                     if (!entry) return { ok: false as const, errorCode: 'theme_not_found', error: 'theme_not_found' };
                     const runtime = host.runtime;
-                    if ((include.includes('coverage') || include.includes('surfaceMap') || include.includes('guide')) && !runtime) return clientActionUnavailable(request.actionId);
-                    const document = include.includes('document') || include.includes('coverage') ? await library.get(ref) : undefined;
+                    const includeSurfaceMap = include.includes('surfaceMap') || include.includes('guide');
+                    if ((include.includes('coverage') || includeSurfaceMap) && !runtime) return clientActionUnavailable(request.actionId);
+                    const document = include.includes('document') || include.includes('coverage') || includeSurfaceMap ? await library.get(ref) : undefined;
                     if (document === null) return { ok: false as const, errorCode: 'theme_not_found', error: 'theme_not_found' };
+                    const surfaceMap = includeSurfaceMap ? runtime?.surfaceMap?.(document!, entry.mode) : undefined;
+                    if (includeSurfaceMap && !surfaceMap?.length) return clientActionUnavailable(request.actionId);
                     return { entry,
                         ...(include.includes('document') ? { document } : {}),
                         ...(include.includes('coverage') && document ? { coverage: runtime!.detailedCoverage(document) } : {}),
-                        ...(include.includes('surfaceMap') ? { surfaceMap: runtime!.surfaceMap() } : {}),
-                        ...(include.includes('guide') ? { guide: themeGuide(runtime!.surfaceMap()) } : {}),
+                        ...(include.includes('surfaceMap') ? { surfaceMap } : {}),
+                        ...(include.includes('guide') ? { guide: themeGuide(surfaceMap!) } : {}),
                     };
                 }
                 case THEME_ACTION_IDS.tryOn: {
