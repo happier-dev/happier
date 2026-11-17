@@ -3,6 +3,8 @@ import * as React from 'react';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
+import { CollectionRowOrder } from '@/components/ui/lists/collection/CollectionList';
+
 import { SessionListHeaderItem } from './sessionListHeaderItem';
 import type { SessionListProjectHeaderViewModelState } from './sessionListProjectHeaderViewModels';
 import {
@@ -28,7 +30,26 @@ export type SessionListRowFacts = Readonly<{
     reachableSessionDisplayById: ReadonlyMap<string, SessionReachableDisplay>;
     reachableSessionDisplayByKey: ReadonlyMap<string, SessionReachableDisplay>;
     projectHeaderViewModelState: SessionListProjectHeaderViewModelState;
+    /**
+     * The open Session. Opening another one is a change to two rows (and the row above each, which drops
+     * its separator), so it reaches rows here rather than through `extraData`, which redrew every cell.
+     */
+    selection: SessionListRowSelection;
 }>;
+
+export type SessionListRowSelection = Readonly<{
+    sessionId: string | null;
+    serverId: string | null;
+    /** An unscoped selection (no Home in the route) marks a row only when its id is unique in the list. */
+    unscopedSelectionIsUnique: boolean;
+}>;
+
+type SessionListRowSessionAddress = Readonly<{ sessionId: string; serverId?: string | null }>;
+
+function isSelectedSessionRow(selection: SessionListRowSelection, row: SessionListRowSessionAddress): boolean {
+    return selection.sessionId !== null && selection.sessionId === row.sessionId
+        && (selection.serverId === null || selection.serverId === (row.serverId ?? null));
+}
 
 type SessionListRowFactsSource = Readonly<{
     get: () => SessionListRowFacts;
@@ -92,7 +113,8 @@ export type SessionListRowContextChoices = Omit<SessionListRowContextInput, 'pro
 
 /** A Session row that reads its own reachable display and Project context from the row facts. */
 export function SessionListSessionRowWithFacts(props: Readonly<
-    Omit<SessionListRowViewModelBoundaryProps, 'reachableSessionDisplay' | keyof SessionListSelectedRowContextInput> & {
+    Omit<SessionListRowViewModelBoundaryProps, 'reachableSessionDisplay' | 'selectedSessionId' | 'selectedSessionServerId'
+        | 'unscopedSelectionIsUnique' | keyof SessionListSelectedRowContextInput> & {
         item: SessionRowItem;
         rowContextChoices: SessionListRowContextChoices;
     }
@@ -102,7 +124,12 @@ export function SessionListSessionRowWithFacts(props: Readonly<
     // This row's own entries: a facts change for other rows (or an equal rebuild) does not render it.
     const selected = useSessionListRowFactsSelection(React.useCallback((facts: SessionListRowFacts) => {
         const { projectDisplayByKey, groupProjectByGroupKey } = facts.projectHeaderViewModelState;
+        // Only the selected row sees the selection: the other rows' inputs stay equal when it moves.
+        const own = facts.selection.sessionId === item.sessionId;
         return {
+            selectedSessionId: own ? facts.selection.sessionId : null,
+            selectedSessionServerId: own ? facts.selection.serverId : null,
+            unscopedSelectionIsUnique: own && facts.selection.unscopedSelectionIsUnique,
             ...selectSessionListRowContextInput(item, { ...rowContextChoices, projectDisplayByKey, groupProjectByGroupKey }),
             reachableSessionDisplay: (item.serverId ? facts.reachableSessionDisplayByKey.get(
                 sessionAddressKey({ serverId: item.serverId, sessionId: item.sessionId }),
@@ -110,6 +137,22 @@ export function SessionListSessionRowWithFacts(props: Readonly<
         };
     }, [item, rowContextChoices]), areShallowEqual);
     return <SessionListRowViewModelBoundary {...boundaryProps} {...selected} />;
+}
+
+/**
+ * A list cell's row order: whether the row below it is the selected Session (the cell then drops its
+ * separator) is read from the row facts, so only the cell above the old and the new selection redraws.
+ */
+export function SessionListRowOrderWithFacts(props: React.PropsWithChildren<Readonly<{
+    followed: boolean;
+    next: SessionListRowSessionAddress | null;
+}>>): React.ReactElement {
+    const { next } = props;
+    const precedesSelected = useSessionListRowFactsSelection(
+        React.useCallback((facts: SessionListRowFacts) => next !== null && isSelectedSessionRow(facts.selection, next), [next]),
+        Object.is,
+    );
+    return <CollectionRowOrder followed={props.followed} precedesSelected={precedesSelected}>{props.children}</CollectionRowOrder>;
 }
 
 const selectProjectHeaderViewModelByGroupKey = (facts: SessionListRowFacts) => facts.projectHeaderViewModelState.projectHeaderViewModelByGroupKey;

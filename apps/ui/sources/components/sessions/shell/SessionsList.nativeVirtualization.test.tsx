@@ -86,7 +86,7 @@ let homeA: string;
 const pinPath = '/v2/session-organization/pins/sess_a';
 const tagsPath = '/v2/session-organization/tag-assignments/sess_a';
 let keyboardRegistration: ReturnType<typeof import('@/keyboard/KeyboardShortcutProvider').useKeyboardShortcutContextSnapshot>['registration'] = null;
-const nativeBoundary = vi.hoisted(() => ({ pathname: '', platformOs: 'ios' as 'ios' | 'android' }));
+const nativeBoundary = vi.hoisted(() => ({ pathname: '', platformOs: 'ios' as 'ios' | 'android', window: { width: 390, height: 844 } }));
 let filteredListingEnabled = false;
 let previousRealStorageState: ReturnType<typeof import('@/sync/domains/state/storageStore').storage.getState> | undefined;
 let previousWarmCacheAccountScope: string | null;
@@ -233,8 +233,9 @@ vi.mock('react-native', async () => {
                 },
                 select: (value: any) => value[nativeBoundary.platformOs] ?? value.default,
             },
-            Dimensions: { get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+            Dimensions: { get: () => ({ ...nativeBoundary.window, scale: 2, fontScale: 1 }),
                 addEventListener: () => ({ remove() {} }) },
+            useWindowDimensions: () => ({ ...nativeBoundary.window, scale: 2, fontScale: 1 }),
             TurboModuleRegistry: { get: () => ({}) },
         });
 });
@@ -674,6 +675,44 @@ describe('SessionsList (native virtualization)', () => {
             expect(derive.mock.calls.filter(([input]) => originalModels.has(input.item.sessionId))).toHaveLength(0);
             expect(rowRenders.mock.calls.filter(([input]) => input.sessionKey !== null && originalKeys.has(input.sessionKey))).toHaveLength(0);
         } finally { derive.mockRestore(); rowRenders.mockRestore(); await screen.unmount(); }
+    });
+
+    it('redraws only the rows whose selection changed when another Session is opened', async () => {
+        // Opening a Session from the list is the most frequent web action; a selection change used to
+        // ride the list-wide extraData and redraw every mounted cell (31 rows per switch, live).
+        const rowModels = await import('./sessionListRowViewModels');
+        const inlineDrag = await import('./useSessionInlineDrag');
+        const derive = vi.spyOn(rowModels, 'buildSessionListRowViewModel');
+        const rowRenders = vi.spyOn(inlineDrag, 'useSessionInlineDrag');
+        const rows = Array.from({ length: 12 }, (_, index) => createSessionListRenderableSessionFixture({
+            ...sessionB, id: `selection-row-${index}`,
+        }));
+        mockVisibleSessionListViewData = [mockVisibleSessionListViewData[0], ...rows.map(session => ({
+            type: 'session', session, groupKey: defaultProjectGroupKey, groupKind: 'project', serverId: 'srv_server_a',
+        }))];
+        // A tablet list shows the open Session as selected (phone lists have no selection).
+        nativeBoundary.window = { width: 1180, height: 820 };
+        nativeBoundary.pathname = '/session/selection-row-3';
+        const screen = await renderSessionsList();
+        try {
+            await flushHookEffects();
+            const selectedIds = () => rows.filter(row => findSessionItem(screen, row.id)?.props.rowViewModel?.selected === true).map(row => row.id);
+            expect(selectedIds()).toEqual(['selection-row-3']);
+            const before = virtualizedListState.current?.props?.extraData;
+            derive.mockClear();
+            rowRenders.mockClear();
+            nativeBoundary.pathname = '/session/selection-row-7';
+            await screen.update(<SessionsList />);
+            await flushHookEffects();
+            expect(selectedIds()).toEqual(['selection-row-7']);
+            const keyOf = (id: string) => buildSessionOrganizationSessionKey('srv_server_a', id);
+            const rendered = new Set(rowRenders.mock.calls.flatMap(([input]) => input.sessionKey === null ? [] : [input.sessionKey]));
+            expect([...rendered].sort()).toEqual([keyOf('selection-row-3'), keyOf('selection-row-7')].sort());
+            expect(new Set(derive.mock.calls.map(([input]) => input.item.sessionId))).toEqual(new Set(['selection-row-3', 'selection-row-7']));
+            const after = virtualizedListState.current?.props?.extraData;
+            const changedKeys = Object.keys(before ?? {}).filter((key) => !Object.is(before[key], after?.[key]));
+            expect(after, `Changed row inputs: ${changedKeys.join(', ')}`).toBe(before);
+        } finally { derive.mockRestore(); rowRenders.mockRestore(); nativeBoundary.window = { width: 390, height: 844 }; await screen.unmount(); }
     });
 
     it('invalidates mounted cells when a Section gains a member, so its header count follows the row', async () => {

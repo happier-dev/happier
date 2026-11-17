@@ -1,4 +1,3 @@
-import { CollectionRowOrder } from '@/components/ui/lists/collection/CollectionList';
 import {
     normalizeSessionAddress,
     sessionAddressKey as audienceSessionAddressKey,
@@ -27,6 +26,7 @@ import { resolveSessionListDensityViewState } from './resolveSessionListDensityV
 import { resolveSessionListOrderingPersistenceState } from './resolveSessionListOrderingPersistenceState';
 import {
     SessionListHeaderItemWithFacts,
+    SessionListRowOrderWithFacts,
     SessionListSessionRowWithFacts,
     type SessionListRowFacts,
 } from './sessionListRowFacts';
@@ -2167,7 +2167,6 @@ export function useSessionListViewStateFromPaneState(
                 homeObservation={item.serverId ? homeObservations[item.serverId] ?? null : null}
                 audience={item.serverId ? renderModels.audience.presentationsBySessionKey.get(audienceSessionAddressKey({ serverId: item.serverId, sessionId: item.sessionId })) : null}
                 item={item}
-                unscopedSelectionIsUnique={selectedSessionId === item.sessionId && unscopedSelectionIsUnique}
                 rowHeight={densityViewState.rowHeight}
                 dragEnabled={rowDragPolicy.canDrag}
                 treeRowId={treeRowIdForItem}
@@ -2207,8 +2206,6 @@ export function useSessionListViewStateFromPaneState(
                 }}
                 pinnedSessionKeys={orderingPersistenceState.pinnedKeySet}
                 rowViewport={rowViewport}
-                selectedSessionId={selectedSessionId}
-                selectedSessionServerId={selectedSessionServerId}
                 sessionTags={normalizedShellState.sessionTags}
                 showPinnedServerBadge={shellFlags.showPinnedServerBadge}
                 showServerBadge={shellFlags.showServerBadge}
@@ -2238,8 +2235,6 @@ export function useSessionListViewStateFromPaneState(
         sessionListRowContextV1,
         sessionListStatusWords,
         workspaceFaviconsEnabled,
-        selectedSessionId,
-        selectedSessionServerId,
         isFolderActionsEnabledForServerId,
         forkActionContext,
         hideInactiveSessions,
@@ -2419,7 +2414,9 @@ export function useSessionListViewStateFromPaneState(
         reachableSessionDisplayById: renderModels.reachableSessionDisplayById,
         reachableSessionDisplayByKey: renderModels.reachableSessionDisplayByKey,
         projectHeaderViewModelState: renderModels.projectHeaderViewModelState,
-    }), [renderModels.projectHeaderViewModelState, renderModels.reachableSessionDisplayById, renderModels.reachableSessionDisplayByKey]);
+        selection: { sessionId: selectedSessionId, serverId: selectedSessionServerId, unscopedSelectionIsUnique },
+    }), [renderModels.projectHeaderViewModelState, renderModels.reachableSessionDisplayById, renderModels.reachableSessionDisplayByKey,
+        selectedSessionId, selectedSessionServerId, unscopedSelectionIsUnique]);
     const virtualizedRowExtraData = React.useMemo(() => ({
         allKnownTagsSignature,
         attentionStandingEnabled: attentionStanding.actionEnabled,
@@ -2441,8 +2438,6 @@ export function useSessionListViewStateFromPaneState(
         nativeContextMenuSessionKey: rowInteractions.nativeContextMenuSessionKey,
         pinnedSessionKeys: orderingPersistenceState.pinnedKeySet,
         rowHeight: densityViewState.rowHeight,
-        selectedSessionId,
-        selectedSessionServerId,
         sessionFoldersSignature,
         sessionListActiveColorMode: sessionListActiveColorMode === 'attentionOnly' || sessionListActiveColorMode === 'allActive'
             ? sessionListActiveColorMode
@@ -2484,8 +2479,6 @@ export function useSessionListViewStateFromPaneState(
         rowInteractions.nativeContextMenuSessionKey,
         sessionListRowContextV1,
         sessionListStatusWords,
-        selectedSessionId,
-        selectedSessionServerId,
         sessionListActiveColorMode,
         sessionListIdentityDisplay,
         sessionFoldersSignature,
@@ -2497,26 +2490,23 @@ export function useSessionListViewStateFromPaneState(
         workspaceLabelsSignature,
     ]);
 
-    const selectedSessionKeyRef = React.useRef({ sessionId: selectedSessionId, serverId: selectedSessionServerId });
-    selectedSessionKeyRef.current = { sessionId: selectedSessionId, serverId: selectedSessionServerId };
     const renderVirtualizedItem = React.useCallback((params: { item: SessionListVirtualizedNode; index: number }) => {
         if (params.item.kind === 'supporting_sections') return null;
         const item = nodeByIdRef.current.get(params.item.id) ?? listItemsRef.current[params.index] ?? null;
         if (!item) return null;
         if (item.type === 'header') return renderHeaderItemRef.current(item, item === listItemsRef.current[0], firstInSectionHeadersRef.current.has(item));
         // The one list-row rule (owner 2026-11-15): under a row another row of its section follows, never beside the
-        // selected Session. Selection reaches mounted cells through `extraData`.
+        // selected Session. Selection reaches mounted cells through the row facts, which only the rows it
+        // changes (the old and new selected rows and the row above each) read differently.
         const followed = params.item.followed === true;
         const nodes = virtualizedNodesRef.current;
         const nextNode = followed ? nodes[params.index + 1]?.kind === 'supporting_sections' ? nodes[params.index + 2] : nodes[params.index + 1] : undefined;
         const next = nextNode ? nodeByIdRef.current.get(nextNode.id) : undefined;
-        const selectedKey = selectedSessionKeyRef.current;
-        const precedesSelected = next?.type === 'session' && next.sessionId === selectedKey.sessionId
-            && (selectedKey.serverId === null || next.serverId === selectedKey.serverId);
         return (
-            <CollectionRowOrder followed={followed} precedesSelected={precedesSelected}>
+            <SessionListRowOrderWithFacts followed={followed}
+                next={next?.type === 'session' ? { sessionId: next.sessionId, serverId: next.serverId ?? null } : null}>
                 {item.type === 'workflow_run' ? renderWorkflowRunItemRef.current(item) : renderSessionItemRef.current(item)}
-            </CollectionRowOrder>
+            </SessionListRowOrderWithFacts>
         );
     }, []);
     const handleTreeViewportLayout = React.useCallback((event: { nativeEvent?: { layout?: { y?: number; height?: number } } }) => {
