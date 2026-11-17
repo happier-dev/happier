@@ -93,6 +93,7 @@ import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/acco
 import {
     acquireServerReachabilitySupervisor,
     invalidateServerReachabilitySupervisor,
+    isServerReachabilityNetworkAllowed,
     subscribeServerReachabilityNetworkAllowed,
     subscribeServerReachabilityState,
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
@@ -1483,6 +1484,9 @@ async function connectManagedServer(
             if (!entry.snapshotDemanded) {
                 return;
             }
+            // A probe stopped by a pause (hidden web tab, backgrounded app) is not an outage verdict:
+            // the Home keeps presenting what it last showed, and the resume probes it again.
+            if (!isServerReachabilityNetworkAllowed()) return;
             // A retry probe is `connecting` too, but only the first attempt means "never reached";
             // a still-failing retry keeps presenting the steady offline/error state.
             const isInitialConnection = state.phase === 'idle' || (state.phase === 'connecting' && !isRetryOfKnownFailure(state, true));

@@ -124,6 +124,30 @@ describe('concurrent session cache reachability lease fencing', () => {
         expect(published.slice(settled)).toEqual([]);
     });
 
+    it('keeps a reachable Home\'s presented phase through a hidden-tab pause: a stopped probe is not an outage', async () => {
+        // P03-JOURNEYS-2: a web tab's hide stops reachability on purpose; publishing that as "offline"
+        // redrew every mounted Session list cell on hide and again on show (1.2–1.7k renders each).
+        const h = await installHarness();
+        const { storage } = await import('@/sync/domains/state/storage');
+        const homeId = h.profiles.resolveServerProfileScopeIdForIdentifier(h.homeB.id);
+        const read = () => `${storage.getState().concurrentSessionListCacheByServerId?.[homeId]?.listObservation?.phase ?? '-'}/${storage.getState().machineListStatusByServerId?.[homeId] ?? '-'}`;
+        h.pendingPings[0].respond();
+        await vi.advanceTimersByTimeAsync(50);
+        await vi.waitFor(() => expect(read().startsWith('ready/')).toBe(true));
+        const before = read();
+        const published: string[] = [];
+        const unsubscribe = storage.subscribe(() => {
+            const next = read();
+            if ((published[published.length - 1] ?? before) !== next) published.push(next);
+        });
+        // What Sync does when a web tab is hidden: network not allowed, then reachability stopped.
+        h.pool.setServerReachabilityNetworkAllowed(false);
+        await h.pool.stopServerReachabilitySupervisors();
+        await vi.advanceTimersByTimeAsync(1_000);
+        unsubscribe();
+        expect(published).toEqual([]);
+    });
+
     it('forwards same-content secondary Home census activity without replacing its admitted Machine', async () => {
         vi.useRealTimers();
         const fixture = createMachineFixture({ id: 'secondary-activity', activeAt: Date.now() });

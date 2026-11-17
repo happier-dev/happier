@@ -628,6 +628,39 @@ describe('sync AppState pause/resume', () => {
         }
     });
 
+    it('keeps the Home\'s list observation through a hidden-tab pause, and publishes a real socket loss', async () => {
+        // P03-REOPEN/JOURNEYS-2: the visibility pause's own disconnect published the Home "offline", so
+        // every mounted Session list cell redrew on hide (1.2–1.5k renders) and again on show.
+        const browser = await installBrowserRuntimeForTests({ url: 'http://localhost/' });
+        const visibility = vi.spyOn(browser.document, 'visibilityState', 'get').mockReturnValue('visible');
+        try {
+            await loadSyncSingletonForTests();
+            const { sync } = await import('./sync');
+            const { storage } = await import('./domains/state/storageStore');
+            // The Sync target is the observation's key; this harness never signs in.
+            (sync as unknown as { appliedServerTarget: unknown }).appliedServerTarget = { serverId: 'srv_pause', serverUrl: 'http://localhost:1' };
+            (sync as unknown as { subscribeToUpdates(): void }).subscribeToUpdates();
+            for (const handler of socketStatusHandlers) handler('connected');
+            vi.spyOn(sync, 'resumeSync').mockResolvedValue(undefined);
+            apiSocketDisconnect.mockClear();
+            apiSocketConnect.mockClear();
+            const phase = () => storage.getState().concurrentSessionListCacheByServerId.srv_pause?.listObservation?.phase ?? null;
+
+            visibility.mockReturnValue('hidden');
+            browser.document.dispatchEvent(new browser.window.Event('visibilitychange'));
+            expect(apiSocketDisconnect).toHaveBeenCalledTimes(1);
+            expect(phase()).toBe(null);
+
+            visibility.mockReturnValue('visible');
+            browser.document.dispatchEvent(new browser.window.Event('visibilitychange'));
+            expect(apiSocketConnect).toHaveBeenCalledTimes(1);
+            for (const handler of socketStatusHandlers) handler('error');
+            expect(phase()).toBe('offline');
+        } finally {
+            browser.restore();
+        }
+    });
+
     it('keeps socket reachability through routine hidden visibility until pre-accept leases settle', async () => {
         const browser = await installBrowserRuntimeForTests({ url: 'http://localhost/' });
         const visibility = vi.spyOn(browser.document, 'visibilityState', 'get').mockReturnValue('visible');

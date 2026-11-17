@@ -86,6 +86,7 @@ import { actionOperationPresentationCoordinator } from '@/components/inbox/actio
 import {
     assertServerReachabilityAuthenticated,
     invalidateAllServerReachabilitySupervisors,
+    isServerReachabilityNetworkAllowed,
     setServerReachabilityNetworkAllowed,
     stopServerReachabilitySupervisors,
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
@@ -13027,7 +13028,11 @@ class Sync {
                               this.userRequestLeaseOwner.deferRoutineTeardown(() => this.teardownRoutineConnectivity());
                           }
                           markAccountSettingsHeadUnverified();
-                          if (!this.embedSessionScope && !isEmbedWindowContext()) this.publishActiveSessionListObservation('offline');
+                          // A socket closed by a pause (hidden web tab, backgrounded app: the network is not
+                          // allowed) is not an outage; the Home keeps presenting what it showed.
+                          if (!this.embedSessionScope && !isEmbedWindowContext() && isServerReachabilityNetworkAllowed()) {
+                              this.publishActiveSessionListObservation('offline');
+                          }
 		                  if (this.lastSocketDisconnectedAtMs == null) {
 		                      this.lastSocketDisconnectedAtMs = Date.now();
 		                      this.lastSocketOfflineDurationMs = null;
