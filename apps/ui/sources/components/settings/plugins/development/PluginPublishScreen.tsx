@@ -2,7 +2,7 @@ import * as React from 'react';
 import * as z from 'zod/mini';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { formatHappierDataBytes, HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { File } from 'expo-file-system';
 import { encodeBase64, decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { useStore } from 'zustand';
@@ -96,21 +96,23 @@ export function PluginPublishPackageSection({ controller, botTemplate }: Readonl
         <RoundButton testID="plugin-publish.prepare" title={copy('prepare')} size="small" display="secondary"
             loading={controller.pending === 'prepare'} disabled={busy || !controller.available} onPress={() => { void controller.prepare(); }} />
     }>
-        <Item title={copy('check')} detail={report?.stages?.validation ? copy(report.stages.validation === 'passed' ? 'passed' : 'failed') : report ? undefined : unreported} mode="info" showChevron={false} />
+        {/* The tests are part of the check, so their outcome is the check's own line rather than a row of its own. */}
+        <Item title={copy('check')} detail={report?.stages?.validation ? copy(report.stages.validation === 'passed' ? 'passed' : 'failed') : report ? undefined : unreported}
+            subtitle={report?.tests ? copy(report.tests.status === 'passed' ? 'testsPassed' : report.tests.status === 'failed' ? 'testsFailed' : 'noTests') : undefined}
+            mode="info" showChevron={false} />
         <Item title={copy('build')} detail={report?.stages?.build ? copy(report.stages.build === 'passed' ? 'passed' : report.stages.build === 'not_configured' ? 'notConfigured' : 'failed') : report ? undefined : unreported} mode="info" showChevron={false} />
-        <Item title={copy('pack')} detail={report ? `${report.files.length} · ${report.archiveSizeBytes.toLocaleString()} B` : unreported}
+        {/* The archive's size; its file count is View files' own, one row below. */}
+        <Item title={copy('pack')} detail={report ? formatHappierDataBytes(report.archiveSizeBytes, { kind: 'storage' }) : unreported}
             subtitle={report?.sdkVersion ? `SDK ${report.sdkVersion}` : undefined} mode="info" showChevron={false} />
         {botTemplate ? <Item testID="plugin-publish.template-check" title={t('botTemplates.templateCheck')}
             subtitle={t('botTemplates.templateCheckDescription')}
             detail={[t('botTemplates.getsSkills', { count: botTemplate.release.content.skills.length }),
                 t('botTemplates.getsMemory', { count: botTemplate.release.content.memoryRules.length })].join(' · ')}
             mode="info" showChevron={false} /> : null}
-        {report?.tests ? <Item title={copy(report.tests.status === 'passed' ? 'testsPassed' : report.tests.status === 'failed' ? 'testsFailed' : 'noTests')}
-            mode="info" showChevron={false} /> : null}
         {report ? <ExpandableItem expanded={filesOpen} onExpandedChange={setFilesOpen} testID="plugin-publish.files"
             header={({ expanded, toggle }) => <Item title={copy('viewFiles')} detail={String(report.files.length)}
                 onPress={toggle} accessibilityExpanded={expanded} /> }>
-            {report.files.map(file => <Item key={file.path} title={file.path} detail={`${file.sizeBytes.toLocaleString()} B`}
+            {report.files.map(file => <Item key={file.path} title={file.path} detail={formatHappierDataBytes(file.sizeBytes, { kind: 'storage' })}
                 mode="info" showChevron={false} />)}
         </ExpandableItem> : null}
     </ItemGroup>;
