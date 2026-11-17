@@ -320,7 +320,7 @@ async function startArchiveServer(bytes: Buffer | (() => Buffer), expectedPath?:
 }
 
 describe('createDaemonArchivePluginChangePreparer', () => {
-  it('returns the typed attributed Settings refusal from archive staging without publishing', async () => {
+  it('isolates invalid Settings during archive admission and still requires installation review', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-archive-settings-home-'));
     roots.push(happyHomeDir);
     const fixture = await createArchiveFixture({ contributes: { settings: [{
@@ -332,8 +332,8 @@ describe('createDaemonArchivePluginChangePreparer', () => {
     }) });
     try {
       const result = await service.requestPluginChange({ kind: 'installArchive', locator: fixture.archivePath });
-      expect(result).toMatchObject({ kind: 'failed', code: 'PLUGIN_SETTINGS_DEFAULT_INVALID',
-        message: expect.stringContaining("Plugin 'acme.archive-candidate' Settings 'preferences' field 'enabled'") });
+      expect(result).toMatchObject({ kind: 'reviewRequired', reviewKind: 'installation',
+        review: { pluginId: 'acme.archive-candidate', contributions: [] } });
       expect(JSON.stringify(result)).not.toContain('private-settings-value');
       expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins).toEqual({});
     } finally { await service.shutdown(); }

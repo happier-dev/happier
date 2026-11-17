@@ -176,7 +176,7 @@ describe('plugin author source module owner', () => {
     ].join('\n');
     await writeFile(entryPath, source(true), 'utf8');
     await expect(evaluatePluginAuthorSource({ locator: entryPath }))
-      .rejects.toThrow(/value\.contributes\.actions\[0\]\.input\.schema\.parse must contain strict JSON data/u);
+      .rejects.toThrow(/value\.contributes\.actions\[0\]\.input\.schema\.jsonSchema must be an enumerable data property/u);
     const correctedEntryPath = join(root, 'corrected.ts');
     await writeFile(correctedEntryPath, source(false), 'utf8');
     const evaluated = await evaluatePluginAuthorSource({ locator: correctedEntryPath });
@@ -352,7 +352,10 @@ describe('plugin author source module owner', () => {
       // The package declares the SDK but nothing prepared it; the host alias
       // must not substitute for the declared dependency closure.
       await expect(evaluatePluginAuthorSource({ locator: packageRoot }))
-        .rejects.toThrow(/@happier-dev\/plugin-sdk/);
+        .rejects.toMatchObject({
+          code: 'PLUGIN_DAEMON_MODULE_LOAD_FAILED',
+          details: { cause: { phase: 'resolve', code: 'MODULE_NOT_FOUND', specifier: '@happier-dev/plugin-sdk' } },
+        });
     } finally {
       await rm(packageRoot, { recursive: true, force: true });
     }

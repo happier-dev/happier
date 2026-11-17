@@ -13,6 +13,7 @@ import {
   preparePluginAuthorDependencies,
   type PluginAuthorDependencyPreparationResult,
 } from './toolchain';
+import { findPluginModuleLoadError, type PluginModuleFailureCause } from '@/plugins/runtime/moduleFailure';
 import { PluginLocalSettingsDeclarationError } from '@/plugins/settings/localSettingsContributions';
 import { PluginSettingsProjectionError } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
@@ -34,6 +35,7 @@ export type PluginAuthorDoctorDiagnostic = Readonly<{
   contributionId?: string;
   fieldId?: string;
   location?: PluginAuthorDoctorDiagnosticLocation;
+  details?: Readonly<{ cause: PluginModuleFailureCause }>;
 }>;
 
 /**
@@ -60,9 +62,10 @@ function diagnosticLocationFromError(
   error: unknown,
   packageRoot: string | undefined,
 ): PluginAuthorDoctorDiagnosticLocation | undefined {
-  if (!packageRoot || !(error instanceof Error) || typeof error.stack !== 'string') return undefined;
+  const sourceError = findPluginModuleLoadError(error)?.cause ?? error;
+  if (!packageRoot || !(sourceError instanceof Error) || typeof sourceError.stack !== 'string') return undefined;
   return findPluginDiagnosticSourceLocation({
-    texts: [error.stack],
+    texts: [sourceError.stack],
     sourceRoot: packageRoot,
   }) ?? undefined;
 }
@@ -76,6 +79,7 @@ function createErrorDiagnostic(
   packageRoot?: string,
 ): PluginAuthorDoctorDiagnostic {
   const location = diagnosticLocationFromError(error, packageRoot);
+  const moduleError = findPluginModuleLoadError(error);
   return Object.freeze({
     code: error instanceof PluginLocalSettingsDeclarationError || error instanceof PluginSettingsProjectionError ? error.code : code,
     message: `${prefix}: ${messageFromError(error)}`,
@@ -84,6 +88,7 @@ function createErrorDiagnostic(
       ...(error.fieldId ? { fieldId: error.fieldId } : {}),
     } : {}),
     ...(location === undefined ? {} : { location }),
+    ...(moduleError === undefined ? {} : { details: moduleError.details }),
   });
 }
 

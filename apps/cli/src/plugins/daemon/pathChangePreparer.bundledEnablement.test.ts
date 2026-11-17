@@ -15,7 +15,7 @@ import { createDaemonPathPluginChangePreparer } from './pathChangePreparer';
 import { readCurrentDaemonPluginCatalog } from './currentCatalog';
 
 describe('bundled Machine desired enablement', () => {
-  it('refreshes Account admission against the current Machine revision without rewriting installation state', async () => {
+  it('retains unchanged Account admission and the current Machine revision without rewriting installation state', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-bundled-refresh-'));
     const reloadController = createPluginReloadController();
     const runtimeLifecycle = createDaemonPluginRegistryRuntimeLifecycle({ happyHomeDir, reloadController });
@@ -23,11 +23,12 @@ describe('bundled Machine desired enablement', () => {
     try {
       await store.setEnabledWithResult('happier.app-context', false);
       const before = await readPluginRegistryCommitRecord(store.paths);
-      const generationBefore = reloadController.getState().generation;
+      const runtimeBefore = reloadController.getState();
       await store.refreshRuntime(['happier.app-context']);
       expect(await readPluginRegistryCommitRecord(store.paths)).toEqual(before);
       expect((await store.readSnapshot()).bundledPluginEnabledById['happier.app-context']).toBe(false);
-      expect(reloadController.getState().generation).toBeGreaterThan(generationBefore);
+      expect(reloadController.getState().generation).toBe(runtimeBefore.generation);
+      expect(reloadController.getState().activeRegistry).toBe(runtimeBefore.activeRegistry);
       expect(reloadController.getState().lastResult?.runningSessionDisposition).toBe('retainRunningSessions');
     } finally {
       await reloadController.shutdown();

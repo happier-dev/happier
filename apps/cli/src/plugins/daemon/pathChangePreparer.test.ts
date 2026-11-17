@@ -327,7 +327,7 @@ describe('createDaemonPathPluginChangePreparer', () => {
     } finally { await service.shutdown(); }
   });
 
-  it.each(['development', 'developmentModule', 'installPath'] as const)('preserves the typed attributed Settings refusal through %s preparation without publishing', async (kind) => {
+  it.each(['development', 'developmentModule', 'installPath'] as const)('preserves strict authored Settings refusal and tolerant host admission through %s without publishing', async (kind) => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-path-settings-home-'));
     roots.push(happyHomeDir);
     const pluginRoot = await createDescriptorPlugin();
@@ -348,15 +348,20 @@ describe('createDaemonPathPluginChangePreparer', () => {
       const result = await service.requestPluginChange(kind === 'installPath'
         ? { kind, locator: pluginRoot }
         : { kind: 'development', sourceRootPath: pluginRoot });
-      expect(result).toMatchObject({ kind: 'failed', code: 'PLUGIN_SETTINGS_DEFAULT_INVALID',
-        message: expect.stringContaining("Plugin 'acme.descriptor' Settings 'preferences' field 'enabled'") });
-      if (result.kind !== 'failed') throw new Error('Invalid Settings must refuse preparation');
-      const publicFailure = describeUserPluginChangeFailure(result);
-      expect(publicFailure).toMatchObject({ code: 'PLUGIN_SETTINGS_DEFAULT_INVALID',
-        details: { causeCode: 'PLUGIN_SETTINGS_DEFAULT_INVALID' },
-        message: expect.stringContaining("Plugin 'acme.descriptor' Settings 'preferences' field 'enabled'") });
+      if (kind === 'installPath') {
+        expect(result).toMatchObject({ kind: 'reviewRequired', reviewKind: 'installation',
+          review: { pluginId: 'acme.descriptor', contributions: [] } });
+      } else {
+        expect(result).toMatchObject({ kind: 'failed', code: 'PLUGIN_SETTINGS_DEFAULT_INVALID',
+          message: expect.stringContaining("Plugin 'acme.descriptor' Settings 'preferences' field 'enabled'") });
+        if (result.kind !== 'failed') throw new Error('Invalid authored Settings must refuse preparation');
+        const publicFailure = describeUserPluginChangeFailure(result);
+        expect(publicFailure).toMatchObject({ code: 'PLUGIN_SETTINGS_DEFAULT_INVALID',
+          details: { causeCode: 'PLUGIN_SETTINGS_DEFAULT_INVALID' },
+          message: expect.stringContaining("Plugin 'acme.descriptor' Settings 'preferences' field 'enabled'") });
+        expect(JSON.stringify(publicFailure)).not.toContain('private-settings-value');
+      }
       expect(JSON.stringify(result)).not.toContain('private-settings-value');
-      expect(JSON.stringify(publicFailure)).not.toContain('private-settings-value');
       expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins).toEqual({});
     } finally { await service.shutdown(); }
   });
@@ -656,7 +661,8 @@ describe('createDaemonPathPluginChangePreparer', () => {
     ].join('\n'), 'utf8');
     const daemonRights = { freshness: 'current', observation: {
       version: 1, observedAt: 1, daemonUid: 1000, daemonUsername: 'happier', daemonIdentity: 'nonRoot',
-      rootEquivalentGroups: [], passwordlessSudoToRoot: 'denied', managedDropIn: 'absent',
+      rootEquivalentGroups: [], groupMembership: { state: 'current' },
+      passwordlessSudoToRoot: 'denied', managedDropIn: 'absent',
       tailscaledOperator: { authorization: 'allowed' },
     } } satisfies MachineDaemonRightsV1;
     const prepare = createDaemonPathPluginChangePreparer({

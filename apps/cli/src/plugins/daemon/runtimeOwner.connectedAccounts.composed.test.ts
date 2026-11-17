@@ -39,8 +39,8 @@ it('admits native and explicit Account bindings through the cold daemon runtime,
         selectTarget: async () => { throw new Error('Invocation must not open selection UI'); },
         resolveTarget: async (target) => accountAvailable && target.kind === 'account'
             ? { displayName: 'Selected Account', account: target.account } : null,
-        materializeAccount: async () => ({ kind: 'httpHeaders', headers: { 'x-fixture': 'account' } }),
-        materializeNative: async () => ({ kind: 'httpHeaders', headers: { 'x-fixture': 'native' } }),
+        materializeAccount: async () => ({ kind: 'httpHeaders', headers: { 'x-fixture': 'fixture-account-token' } }),
+        materializeNative: async () => ({ kind: 'httpHeaders', headers: { 'x-fixture': 'fixture-native-token' } }),
         projectTargetAccounts: async () => { throw new Error('Invocation must not enumerate Accounts'); },
         assertTargetAccountMaterializable: async () => { throw new Error('Invocation must not enumerate Accounts'); },
     });
@@ -87,7 +87,12 @@ it('admits native and explicit Account bindings through the cold daemon runtime,
                 const material = await context.services.connectedAccounts.materialize('action-account',
                     { kind: 'httpHeaders', origin: 'https://example.test', headerNames: ['x-fixture'] },
                     input.nativeService ? { nativeService: input.nativeService } : { expectedAccount: input.credentialRef });
-                return { source: material.headers['x-fixture'] };
+                // Prove which credential was consumed without returning the
+                // credential itself through the Action's redacted result.
+                const token = material.headers['x-fixture'];
+                if (token === 'fixture-native-token') return { source: 'native' };
+                if (token === 'fixture-account-token') return { source: 'account' };
+                throw new Error('Unexpected materialized fixture credential');
             });
             api.connectedAccounts.register('account', {
                 authentication: { modes: { manual: { kind: 'manual', async complete() {

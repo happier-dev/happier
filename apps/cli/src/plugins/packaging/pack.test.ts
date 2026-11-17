@@ -13,6 +13,15 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { startCandidateRegistry } from '../../../../../packages/tests/scripts/plugin-platform/run-packed-author-ui-compat.mjs';
 import { packLocalPlugin } from './pack';
 
+it('preserves the typed cause of a pack failure without exposing its input', async () => {
+  const result = await packLocalPlugin({ locator: '/unused', sdkRegistryOrigin: 'not-a-url' });
+  expect(result).toMatchObject({ ok: false, diagnostics: [{
+    code: 'plugin_manifest_invalid',
+    details: { failureCause: { phase: 'plugin.pack', errorCode: 'ERR_INVALID_URL' } },
+  }] });
+  expect(JSON.stringify(result)).not.toContain('not-a-url');
+});
+
 async function startCandidateSdkRegistry(params: Readonly<{
   sdkTarball: Buffer;
 }>): Promise<Readonly<{

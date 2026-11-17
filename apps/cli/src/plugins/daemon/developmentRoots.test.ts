@@ -71,7 +71,7 @@ describe('daemon plugin development root ownership', () => {
           outDir: join(cliRoot, 'src/chunks'), emptyOutDir: false, minify: false,
           lib: { entry: fileURLToPath(new URL('./developmentRoots.ts', import.meta.url)), formats: ['es'], fileName: () => 'developmentRoots.mjs' },
           rollupOptions: { external: (id) => id.startsWith('node:') || builtinModules.includes(id)
-            || (!id.startsWith('.') && !isAbsolute(id) && !id.startsWith('@/') && !id.startsWith('@happier-dev/') && !id.startsWith('#') && !id.startsWith('\0')) },
+            || (!id.startsWith('.') && !isAbsolute(id) && !id.startsWith('@/') && !id.startsWith('#') && !id.startsWith('\0')) },
         },
       });
       process.env.HAPPIER_STACK_CLI_ROOT_DIR = cliRoot;

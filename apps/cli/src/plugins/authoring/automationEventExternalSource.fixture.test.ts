@@ -481,7 +481,14 @@ describe('External plugin as a first-class Automation Event source', () => {
     ]);
     expect(logInfo).toHaveBeenCalledWith('automation_event_source.settled', {
       occurrenceId: 'entry-1',
-      disposition: { kind: 'checkpointSafe' },
+      disposition: { kind: 'checkpointSafe', admissions: [{
+        definition: { automationId: AUTOMATION_ID, triggerId: TRIGGER_ID,
+          triggerRevision: TRIGGER_REVISION, sourceSelectorId },
+        observation: { eventRef, occurrenceId: 'entry-1', sourceContractVersion: 1,
+          sourceInstanceId: 'ledger:main' },
+        result: { kind: 'admitted', runId: 'run-external-1', checkpointSafe: true },
+        scope: { kind: 'checkpointedPull' },
+      }] },
     });
 
     // 7. The committed Run lifecycle reaches the same external plugin: the

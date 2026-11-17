@@ -64,7 +64,7 @@ async function writePackageRootPlugin(
 }
 
 describe('plugin author doctor', () => {
-  it('refuses an external authored invalid Settings default with the same attributed error as install admission', async () => {
+  it('refuses an invalid authored Settings default while host admission isolates that contribution', async () => {
     const manifest = createPluginManifestV2Fixture({ id: 'acme.settings-admission', contributes: {
       settings: [{ id: 'preferences', title: 'Preferences', scope: 'daemon', target: { kind: 'plugin' },
         fields: [{ id: 'enabled', title: 'Enabled', schema: { type: 'boolean' }, default: 'true' }] }],
@@ -82,9 +82,9 @@ describe('plugin author doctor', () => {
       const manifestPath = join(root, 'plugin.json');
       await writeFile(manifestPath, JSON.stringify(manifest));
       await expect(readPluginManifest({ manifestPath, sourceProvenance: 'localSource' })).resolves.toMatchObject({
-        ok: false, diagnostics: [{ code: 'plugin_manifest_invalid',
+        ok: true, manifest: { contributes: { settings: [] } },
+        diagnostics: [{ code: 'plugin_contribution_skipped',
           contribution: { pluginId: diagnostic.pluginId, localId: diagnostic.contributionId },
-          details: { code: diagnostic.code, fieldId: diagnostic.fieldId },
         }],
       });
     } finally { await rm(root, { recursive: true, force: true }); }
@@ -143,7 +143,8 @@ describe('plugin author doctor', () => {
         ok: false,
         diagnostics: [{
           code: 'plugin_author_evaluation_failed',
-          message: 'Plugin author evaluation failed: top-level boom',
+          message: 'Plugin author evaluation failed: Failed to load plugin author source module',
+          details: { cause: { phase: 'evaluate', code: 'UNKNOWN', retryable: 'unknown' } },
         }],
       });
       if (broken.ok) return;
@@ -168,13 +169,15 @@ describe('plugin author doctor', () => {
         ok: false,
         diagnostics: [{
           code: 'plugin_author_evaluation_failed',
-          message: 'Plugin author evaluation failed: top-level boom at <path>',
+          message: 'Plugin author evaluation failed: Failed to load plugin author source module',
+          details: { cause: { phase: 'evaluate', code: 'UNKNOWN', retryable: 'unknown' } },
           location: expect.objectContaining({ file: 'src/index.ts', line: expect.any(Number) }),
         }],
       });
       const serialized = JSON.stringify(result);
       expect(serialized).not.toContain(root);
       expect(serialized).not.toContain('/private/runtime-secret.ts');
+      expect(serialized).not.toContain('top-level boom');
       expect(serialized).not.toContain('    at ');
     });
   });

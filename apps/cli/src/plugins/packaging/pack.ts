@@ -6,6 +6,7 @@ import { createHappierTempDir, removeHappierTempDirAsync } from '@happier-dev/cl
 
 import * as tar from 'tar';
 
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createMarketplaceNpmDiscoveryProjectionV1, deriveMarketplaceNpmDiscoveryKeywordsV1 } from '@happier-dev/protocol/marketplace/marketplaceIndexV1';
 import { createPluginCompatibilityProjectionV1 } from '@happier-dev/protocol/plugins/availability/compatibilityProjectionV1';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
@@ -821,7 +822,10 @@ export async function packLocalPlugin(params: Readonly<{
   } catch (error) {
     return {
       ok: false,
-      diagnostics: [createDiagnostic(error instanceof Error ? error.message : 'Plugin SDK registry is invalid')],
+      diagnostics: [{
+        ...createDiagnostic('Plugin SDK registry must be a credential-free HTTPS origin or loopback HTTP origin'),
+        details: { failureCause: projectActionFailureCauseV1(error, 'plugin.pack') },
+      }],
     };
   }
   const operationResolution = await createPackOperationSource(params.locator);

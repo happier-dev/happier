@@ -63,12 +63,17 @@ describe('daemon release-less declaration publication', () => {
         let owner: ReturnType<typeof createDaemonPluginRuntimeOwner> | undefined;
         let publishedState: DaemonState | null = null;
         let publishedCatalog: Awaited<ReturnType<NonNullable<typeof owner>['readCatalog']>> = [];
+        const pendingProjectionPublications = new Set<Promise<void>>();
         const projectionPublication = createDaemonPluginRegistryProjectionInvalidation({
             // Daemon-state transport is the boundary. Its catalog consumer only
             // reads when the production invalidation owner publishes a change.
-            getApiMachine: () => ({ updateDaemonState: async update => {
+            getApiMachine: () => ({ updateDaemonState: update => {
                 publishedState = update(publishedState);
-                if (owner) publishedCatalog = await owner.readCatalog();
+                const publication = owner
+                    ? owner.readCatalog().then(catalog => { publishedCatalog = catalog; })
+                    : Promise.resolve();
+                pendingProjectionPublications.add(publication);
+                return publication.finally(() => { pendingProjectionPublications.delete(publication); });
             } }),
             isDaemonQuiescing: () => false,
             onPublicationFailure: error => { throw error; },
@@ -282,6 +287,11 @@ describe('daemon release-less declaration publication', () => {
                     kind: 'backend', sourceKind: 'built_in', backendId: 'codex',
                 }, lease: spawnLease })).toMatchObject({ pluginId: target.identity.pluginId, backendId: 'codex' });
             } finally { await spawnLease.release(); }
+            // A projection read begun during unavailable admission can finish
+            // recovering after the live signal first publishes a healthy row.
+            // Settle those actual transport operations before measuring the
+            // following unchanged refresh.
+            while (pendingProjectionPublications.size > 0) await Promise.all(pendingProjectionPublications);
             const recovered = controller.getState();
             const recoveredPublication = projectionPublication.readRevision();
             await refreshStore.refreshRuntime([manifest.id]);

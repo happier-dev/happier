@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPluginManifestV2Fixture } from '../testkit/manifestV2Fixture';
 import { ensureManagedJavaScriptRuntimeCommand } from '@/packagedRuntime/js/managedJavaScriptRuntime';
 import { PluginAuthorBundlerUnavailableError } from './bundleDaemonRuntime';
@@ -131,6 +131,10 @@ describe('assertPluginAuthorPrepublicationRuntimeDeclarations', () => {
 });
 
 describe('runPluginAuthorToolchain', () => {
+  // The real materialization child must run the same moving source as this suite.
+  beforeEach(() => vi.stubEnv('HAPPIER_CLI_SUBPROCESS_PREFER_TSX', '1'));
+  afterEach(() => vi.unstubAllEnvs());
+
   it.each(['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'] as const)(
     'resolves only satisfying Happier prepublication specifiers in %s',
     (section) => {
@@ -267,6 +271,7 @@ describe('runPluginAuthorToolchain', () => {
         'utf8',
       );
       await writeFile(join(fixture.projectRoot, 'dist', 'source-owned.js'), 'stale daemon\n', 'utf8');
+      await mkdir(dirname(join(fixture.projectRoot, PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH)), { recursive: true });
       await writeFile(
         join(fixture.projectRoot, PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH),
         `${JSON.stringify({ version: 1, outputs: ['dist/source-owned.js'] })}\n`,
@@ -335,7 +340,7 @@ describe('runPluginAuthorToolchain', () => {
     }
   });
 
-  it('fails closed when the plugin metadata directory is a symlink outside the project during marker write', async () => {
+  it('fails closed when the generated runtime directory is a symlink outside the project during marker write', async () => {
     const parent = await mkdtemp(join(tmpdir(), 'happier-daemon-output-marker-write-symlink-'));
     const projectRoot = join(parent, 'project');
     const outsideRoot = join(parent, 'outside');
@@ -344,7 +349,7 @@ describe('runPluginAuthorToolchain', () => {
       await mkdir(outsideRoot, { recursive: true });
       await symlink(
         outsideRoot,
-        join(projectRoot, '.happier-plugin'),
+        dirname(join(projectRoot, PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH)),
         process.platform === 'win32' ? 'junction' : 'dir',
       );
 
@@ -397,6 +402,7 @@ describe('runPluginAuthorToolchain', () => {
       await mkdir(join(fixture.projectRoot, 'dist'), { recursive: true });
       await writeFile(join(fixture.projectRoot, 'dist', 'source-owned.js'), 'stale daemon\n', 'utf8');
       await writeFile(join(fixture.projectRoot, 'dist', 'descriptor-owned.js'), 'fresh descriptor\n', 'utf8');
+      await mkdir(dirname(join(fixture.projectRoot, PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH)), { recursive: true });
       await writeFile(
         join(fixture.projectRoot, PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH),
         `${JSON.stringify({ version: 1, outputs: ['dist/source-owned.js'] })}\n`,
