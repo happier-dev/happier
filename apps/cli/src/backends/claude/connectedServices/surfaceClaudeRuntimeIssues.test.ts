@@ -26,6 +26,7 @@ import { recordConnectedServiceRuntimeQuotaSnapshotForSession } from '@/daemon/c
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '@/daemon/connectedServices/accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import { resolveConnectedServiceGroupMemberByProviderAccountId } from '@/daemon/connectedServices/shared/resolveConnectedServiceGroupMemberByProviderAccountId';
 import { readClaudeMaterializedOAuthAccountIdentity } from './resolveClaudeRuntimeProviderAccountIdentity';
+import { parseQueuedSessionMutation } from '@/api/session/mutations/sessionMutationPersistence';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import type { SessionTurnMutationV1 } from '@/api/session/mutations/sessionMutationTypes';
 import type { FailTurnInput } from '@/agent/runtime/session/turn/types';
@@ -142,6 +143,61 @@ function restoreClaudeSelectionEnv(previous: string | undefined): void {
 }
 
 describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
+  it.each([
+    { utilization: 100, planType: null, providerLimitId: 'seven_day', invalid: false },
+    { utilization: 101, planType: null, providerLimitId: 'seven_day', invalid: true },
+    { utilization: Number.NaN, planType: null, providerLimitId: 'seven_day', invalid: true },
+    { utilization: 100, planType: '', providerLimitId: 'seven_day', invalid: true },
+    { utilization: 100, planType: null, providerLimitId: '', invalid: true },
+  ])('queues a terminal failure despite invalid optional provider values ($utilization, $planType, $providerLimitId)', async ({ utilization, planType, providerLimitId, invalid }) => {
+    const previous = installClaudeSelectionEnv();
+    const warn = vi.spyOn(logger, 'warnFile').mockImplementation(() => {});
+    const admitted: ReturnType<typeof parseQueuedSessionMutation>[] = [];
+    const lifecycle = createSessionTurnLifecycle({
+      sessionId: 'wire-usage-limit',
+      enqueueSessionTurn: async payload => {
+        admitted.push(parseQueuedSessionMutation({
+          kind: 'session_turn', mutationId: payload.mutationId, payload,
+          createdAt: 1_000, attempts: 0, nextAttemptAt: 0,
+        }, 'wire-usage-limit'));
+      },
+    });
+    try {
+      await lifecycle.beginTurn({ provider: 'claude' });
+      await surfaceClaudeRateLimitRuntimeIssue({ client: {
+        sessionId: 'wire-usage-limit', sessionTurnLifecycle: lifecycle,
+      } }, {
+        v: 1, resetAtMs: Date.now() + 604_800_000, retryAfterMs: 604_800_000,
+        providerLimitId, limitCategory: 'usage_limit', quotaScope: 'account',
+        recoverability: 'switch_account', planType, utilization,
+        overage: null, action: null, connectedService: null,
+        providerObservedAtMs: Date.now(), sourceProviderAccountId: 'account-internal',
+        sourceProviderOrganizationId: 'organization-internal', usageLimitNoteKind: 'wrap_up',
+      }, '[test]');
+      const failed = admitted.at(-1);
+      expect(failed).toMatchObject({ ok: true, mutation: { kind: 'session_turn', payload: { action: 'fail' } } });
+      if (invalid) {
+        expect(failed).toMatchObject({ ok: true, mutation: { payload: { issue: { code: 'usage_limit' } } } });
+        expect(warn).toHaveBeenCalledWith(
+          '[API] Invalid failure issue reduced to preserve terminal session turn',
+          expect.objectContaining({ issues: expect.arrayContaining([expect.objectContaining({ path: expect.stringMatching(/^issue\.usageLimit/) })]) }),
+        );
+      } else {
+        expect(failed).toMatchObject({ ok: true, mutation: { payload: { issue: { usageLimit: { providerLimitId: 'seven_day',
+          connectedService: { serviceId: 'claude-subscription', groupId: 'team-pool' } } } } } });
+      }
+      if (!failed?.ok || failed.mutation.kind !== 'session_turn' || failed.mutation.payload.action !== 'fail') {
+        throw new Error('Expected admitted terminal failure');
+      }
+      expect(failed.mutation.payload.issue?.usageLimit ?? {}).not.toHaveProperty('providerObservedAtMs');
+      expect(failed.mutation.payload.issue?.usageLimit ?? {}).not.toHaveProperty('sourceProviderAccountId');
+      expect(failed.mutation.payload.issue?.usageLimit ?? {}).not.toHaveProperty('usageLimitNoteKind');
+      if (invalid) expect(failed.mutation.payload.issue).not.toHaveProperty('usageLimit');
+      expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).toHaveBeenCalled();
+      expect(lifecycle.hasActiveTurn()).toBe(false);
+    } finally { restoreClaudeSelectionEnv(previous); warn.mockRestore(); }
+  });
+
   it('reports duplicate Claude observers once and a fresh begun turn again', async () => {
     const previousSelectionEnv = installClaudeSelectionEnv();
     const mutations: SessionTurnMutationV1[] = [];

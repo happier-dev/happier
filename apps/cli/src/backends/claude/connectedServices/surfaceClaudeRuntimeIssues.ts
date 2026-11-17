@@ -1,6 +1,7 @@
 import { isClaudeSidechainRuntimeEvidence } from '../utils/sessionHookAttribution';
 import {
     buildUsageLimitIssueFingerprint,
+    SessionRuntimeUsageLimitDetailsV1Schema,
     readConnectedServiceLimitCategoryV1,
     type ConnectedServiceQuotaSnapshotV1,
     type ConnectedServiceLimitCategoryV1,
@@ -621,7 +622,6 @@ function buildClaudeRuntimeIssueUsageLimit(params: Readonly<{
 }>): RuntimeIssueUsageLimitDetails {
     const [details] = params.windows;
     const primaryMeter = buildClaudeRuntimeQuotaMeter(details, 'runtime_event');
-    const { sourceProviderOrganizationId: _internalOrganizationId, ...publicDetails } = details;
     const allWindows = params.windows.flatMap((window) => {
         const meter = buildClaudeRuntimeQuotaMeter(window, 'runtime_event');
         // A rejection proves failure, not a numerical measurement of the window.
@@ -634,8 +634,10 @@ function buildClaudeRuntimeIssueUsageLimit(params: Readonly<{
             status: 'ok',
         }];
     });
-    return {
-        ...publicDetails,
+    // Project keys only: invalid provider values must reach the canonical durable
+    // failure-issue reduction rather than throw before local failure/recovery starts.
+    const publicDetails = {
+        ...details,
         resetAtMs: primaryMeter.resetAtMs ?? null,
         limitCategory: normalizeClaudePublicLimitCategory(details.limitCategory),
         connectedService: params.connectedService,
@@ -644,6 +646,12 @@ function buildClaudeRuntimeIssueUsageLimit(params: Readonly<{
             : {}),
         ...(allWindows.length > 0 ? { allWindows } : {}),
     };
+    for (const key of Object.keys(publicDetails)) {
+        if (!Object.hasOwn(SessionRuntimeUsageLimitDetailsV1Schema.shape, key)) {
+            Reflect.deleteProperty(publicDetails, key);
+        }
+    }
+    return publicDetails;
 }
 
 function buildClaudeRateLimitRuntimeIssue(params: Readonly<{
