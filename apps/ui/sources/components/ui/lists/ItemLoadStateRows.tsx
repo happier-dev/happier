@@ -1,6 +1,8 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { useSectionRowBleedStyle } from '@/components/ui/lists/bareRowBleed';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
@@ -123,6 +125,7 @@ export const ItemLoadStateRows = React.memo(function ItemLoadStateRows(props: Re
     // The reserved rows take the real rows' box at the user's density, so nothing moves when they arrive.
     const rowMetrics = usePageRowMetrics(props.shape);
     const divided = React.useContext(ItemLoadStateRowDividersContext);
+    const bleedStyle = useSectionRowBleedStyle();
     const rowBox = React.useMemo(
         () => ({ minHeight: rowMetrics.minHeightPx, paddingVertical: rowMetrics.paddingVerticalPx }),
         [rowMetrics],
@@ -136,7 +139,7 @@ export const ItemLoadStateRows = React.memo(function ItemLoadStateRows(props: Re
         return <FailedRow testID={testID} state={props.state} />;
     }
 
-    return (
+    const skeleton = (
         <SkeletonRows
             {...(testID === undefined ? {} : { testID, rowTestID: (index: number) => `${testID}-skeleton:${index}` })}
             {...(props.accessibilityLabel === undefined ? {} : { accessibilityLabel: props.accessibilityLabel })}
@@ -147,4 +150,6 @@ export const ItemLoadStateRows = React.memo(function ItemLoadStateRows(props: Re
             {...(divided ? { dividerColor: theme.colors.border.subtle, dividerPlacement: 'between' as const } : {})}
         />
     );
+    // The reserved rows stand where the rows will: in a bare contained section they reach past the column as rows do.
+    return bleedStyle ? <View style={bleedStyle}>{skeleton}</View> : skeleton;
 });

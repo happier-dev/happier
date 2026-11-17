@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
+import { SectionRowBleedContext, useSectionRowBleedStyle } from './bareRowBleed';
 import { PAGE_LIST_METRICS } from './pageListMetrics';
 
 /**
@@ -19,10 +20,11 @@ export function SectionContentRow(props: Readonly<{
     leading?: React.ReactNode;
     testID?: string;
 }>) {
-    return (
+    const bleedStyle = useSectionRowBleedStyle();
+    const row = (
         <View
             testID={props.testID}
-            style={[styles.row, props.continuesRow ? styles.continuesRow : null, props.showDivider !== false ? styles.divider : null]}
+            style={[styles.row, bleedStyle, props.continuesRow ? styles.continuesRow : null, props.showDivider !== false ? styles.divider : null]}
         >
             {props.leading ? (
                 <View style={styles.leadingRow}>
@@ -32,6 +34,8 @@ export function SectionContentRow(props: Readonly<{
             ) : props.children}
         </View>
     );
+    // Only the section's own rows bleed: a row drawn inside this one does not.
+    return bleedStyle ? <SectionRowBleedContext.Provider value={0}>{row}</SectionRowBleedContext.Provider> : row;
 }
 
 const styles = StyleSheet.create((theme) => ({

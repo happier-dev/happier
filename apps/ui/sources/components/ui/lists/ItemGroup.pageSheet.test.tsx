@@ -55,6 +55,20 @@ function rowDividers(screen: Screen, rowTestIds: readonly string[]): Array<strin
     });
 }
 
+/** How far a node's leading edge sits from the scope's edge: the sum of the leading margins of it and its host ancestors. */
+function leadingOffsetPx(screen: Screen, testID: string): number {
+    let node: ReactTestInstance | null = screen.findAllByTestId(testID).find((candidate) => typeof candidate.type === 'string') ?? null;
+    if (!node) throw new Error(`Missing ${testID}`);
+    let offset = 0;
+    for (; node; node = node.parent) {
+        if (typeof node.type !== 'string') continue;
+        const style = flattenTestStyle(node.props.style);
+        const leading = style.marginLeft ?? style.marginStart ?? style.marginHorizontal ?? style.margin;
+        if (typeof leading === 'number') offset += leading;
+    }
+    return offset;
+}
+
 function sheetSeparators(sheet: ReactTestInstance): ReactTestInstance[] {
     // Group separation is observable by its published colour, independently of material wrappers.
     return sheet.findAll((node) => typeof node.type === 'string' && node.props.role === 'separator'
@@ -201,6 +215,30 @@ describe('ItemGroup page sections render through the shared page sheet', () => {
         );
         const dividers = rowDividers(screen, ['row-a', 'row-b']);
         expect(dividers.map((color) => color !== null)).toEqual([true, false]);
+    });
+
+    it('bleeds only the rows of a bare section in a contained scope: tiles and notes stay inside the column', async () => {
+        const { ItemGroup, Item, ListPresentationProvider, presentation } = await loadModules();
+        const { View } = await import('react-native');
+        const { SectionContentRow } = await import('./SectionContentRow');
+        // Personalize's Look step: visual tiles and a note in a bare section, in a column that clips at its edge.
+        const screen = await renderScreen(
+            <ListPresentationProvider value="page" pageInsets="contained">
+                <ItemGroup title="Glass" surface="none">
+                    <View testID="tiles" />
+                    <Item testID="row" title="Download desktop app" />
+                    <SectionContentRow testID="content-row"><View /></SectionContentRow>
+                    <View testID="note" />
+                </ItemGroup>
+            </ListPresentationProvider>,
+        );
+        const rowInsetPx = presentation.HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx;
+        expect({
+            row: leadingOffsetPx(screen, 'row'),
+            contentRow: leadingOffsetPx(screen, 'content-row'),
+            tiles: leadingOffsetPx(screen, 'tiles'),
+            note: leadingOffsetPx(screen, 'note'),
+        }).toEqual({ row: -rowInsetPx, contentRow: -rowInsetPx, tiles: 0, note: 0 });
     });
 
     it('hands each row its position in the section, so a highlighted first or last row follows the sheet corners', async () => {

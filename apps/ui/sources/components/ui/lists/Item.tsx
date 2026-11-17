@@ -55,6 +55,7 @@ import { buildActionRowAccessibilityLabel } from './actionRowAccessibility';
 import { Icon } from '@/components/ui/icons/Icon';
 import { DisclosureCaret } from './DisclosureCaret';
 import { ICON_LABEL_OPTICAL_NUDGE_STYLE } from '@/components/ui/icons/iconOpticalAlignment';
+import { SectionRowBleedContext, useSectionRowBleedStyle } from './bareRowBleed';
 import { BareSectionRowsContext, MenuSectionRowsContext, PageDirectoryRowsContext, useListPresentation, useSidePaneTextEdge, useWidgetBodyRowEdge } from './listPresentation';
 import { PANE_TEXT_INSET_PX } from '@/components/ui/layout/headerBand';
 import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from './pageListMetrics';
@@ -807,7 +808,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
 }));
 
-export const Item = React.memo<ItemProps>((props) => {
+function ItemRow(props: ItemProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const selectionContext = React.useContext(ItemGroupSelectionContext);
@@ -2406,4 +2407,18 @@ export const Item = React.memo<ItemProps>((props) => {
             {content}
         </View>
     );
+}
+
+/**
+ * A list row. In a bare section of a contained scope (`SectionRowBleedContext`) it reaches past the column by its
+ * own inset, so its text keeps the column's edge while its fills and dividers reach into the padding.
+ */
+export const Item = React.memo<ItemProps>((props) => {
+    const bleedStyle = useSectionRowBleedStyle();
+    // Only the section's own rows bleed: a row drawn inside this one (an accessory, an expanded body) does not.
+    return bleedStyle ? (
+        <View style={bleedStyle}>
+            <SectionRowBleedContext.Provider value={0}><ItemRow {...props} /></SectionRowBleedContext.Provider>
+        </View>
+    ) : <ItemRow {...props} />;
 });

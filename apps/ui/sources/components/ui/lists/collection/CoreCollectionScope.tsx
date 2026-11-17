@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { HAPPIER_PAGE_METRICS, HappierColumnEdgeContext, useHappierPageSection } from '@happier-dev/plugin-ui/presentation';
 
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
-import { BareRowBleedContext, useBareRowBleedPx } from '@/components/ui/lists/bareRowBleed';
+import { BareRowBleedContext, SectionRowBleedContext, useBareRowBleedPx } from '@/components/ui/lists/bareRowBleed';
 import { useListPresentation, usePageListInsets } from '@/components/ui/lists/listPresentation';
 import { useInPageContentColumn } from '@/components/ui/lists/PageContentColumn';
 
@@ -37,12 +37,17 @@ export const CoreCollectionScope = React.memo(function CoreCollectionScope(props
         ? <HappierColumnEdgeContext.Provider value={HAPPIER_PAGE_METRICS.sheetInsetPx}>{inner}</HappierColumnEdgeContext.Provider>
         : inner;
     // A Collection owns its edge on the page (its sheet inset, its resting list on the page's edges). A bare
-    // section's bleed is for its own rows, so a Collection inside one gets the inset back like any free content,
-    // and the sections it draws in its header start unbled.
+    // section's row bleed is for that section's own rows, so the Collection's rows start unbled; in a menu section
+    // the Collection takes the rows' inset like any free content, and the sections it draws in its header start
+    // without it.
     const bleedPx = useBareRowBleedPx();
-    return bleedPx > 0 ? (
-        <BareRowBleedContext.Provider value={0}>
-            <View style={{ paddingHorizontal: bleedPx }}>{scope}</View>
-        </BareRowBleedContext.Provider>
-    ) : scope;
+    return (
+        <SectionRowBleedContext.Provider value={0}>
+            {bleedPx > 0 ? (
+                <BareRowBleedContext.Provider value={0}>
+                    <View style={{ paddingHorizontal: bleedPx }}>{scope}</View>
+                </BareRowBleedContext.Provider>
+            ) : scope}
+        </SectionRowBleedContext.Provider>
+    );
 });

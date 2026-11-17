@@ -42,7 +42,7 @@ import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from './pageListMetrics'
 import { SectionItemDensityProvider, usePageRowDensityOverride, useResolvedItemDensity, type ResolvedItemDensity } from './useResolvedItemDensity';
 import { ITEM_ROW_PADDING_HORIZONTAL } from './itemDensityMetrics';
 import { SectionLeadingColumnProvider } from './sectionLeadingColumn';
-import { BareRowBleedContext } from './bareRowBleed';
+import { BareRowBleedContext, SectionRowBleedContext } from './bareRowBleed';
 import {
     HappierItemGroupBehavior,
     HappierItemGroupSelectionContext,
@@ -674,15 +674,14 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
     const resolvedAccessibilityLabel = accessibilityLabel ?? (typeof title === 'string' ? title : undefined);
     // Bare rows in a contained scope (a widget body or flow, grouped or page) bleed by their own padding: their
     // marks and titles keep the column's edge (the frame header's mark, a flow's Name and section titles), while
-    // the press fill and dividers reach into the column's padding.
+    // the press fill and dividers reach into the column's padding. Only the rows bleed (each row reads the
+    // amount through `useSectionRowBleedStyle`); the section itself stays in the column, so its tiles and notes are never cut at a clipping edge.
     const groupedRowPaddingPx = ITEM_ROW_PADDING_HORIZONTAL[useResolvedItemDensity(density)];
     const rowPaddingPx = isPage ? PAGE_LIST_METRICS.rowPaddingHorizontalPx : groupedRowPaddingPx;
-    const bleedRows = contained && surface === 'none';
-    const resolvedContainerStyle = contained
-        ? [styles.containedContent, bleedRows ? { marginHorizontal: -rowPaddingPx } : null, containerStyle]
-        : containerStyle;
-
     const wantsColumns = (columns ?? 1) > 1;
+    // A column grid's cells are cards of their own: their rows stay in their cells.
+    const bleedRows = contained && surface === 'none' && !wantsColumns;
+    const resolvedContainerStyle = contained ? [styles.containedContent, containerStyle] : containerStyle;
     // A section on a popover, menu or its phone sheet, carded or not: a floating surface draws no card, so
     // both take the menu anatomy and every row there shares the menu's text edge (a flat group kept the
     // grouped margin and sat 12 px in from the carded rows beside it). A column grid, a virtualized chunk
@@ -714,6 +713,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                     : title ?? null}
                 <MenuSectionRowsContext.Provider value={true}>
                 <BareSectionRowsContext.Provider value={false}>
+                <SectionRowBleedContext.Provider value={0}>
                     {/* Free content (a button row, a details head) stands on the menu rows' text edge, as rows bring
                         their own padding: `BareSectionContent` takes this inset back. */}
                     <BareRowBleedContext.Provider value={MENU_ROW_METRICS.paddingHorizontalPx}>
@@ -738,6 +738,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                         </HappierItemGroupBehavior>
                     </SectionItemDensityProvider>
                     </BareRowBleedContext.Provider>
+                </SectionRowBleedContext.Provider>
                 </BareSectionRowsContext.Provider>
                 </MenuSectionRowsContext.Provider>
                 {description ? (
@@ -799,7 +800,8 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                 {hasRows ? <SectionLeadingColumnProvider>
                 <SectionItemDensityProvider value={density}>
                 <BareSectionRowsContext.Provider value={surface === 'none' && !bleedRows}>
-                <BareRowBleedContext.Provider value={bleedRows ? rowPaddingPx : 0}>
+                <BareRowBleedContext.Provider value={0}>
+                <SectionRowBleedContext.Provider value={bleedRows ? rowPaddingPx : 0}>
                     <HappierItemGroupBehavior
                         accessibilityRole={accessibilityRole}
                         accessibilityLabel={resolvedAccessibilityLabel}
@@ -840,6 +842,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                     >
                         {children}
                     </HappierItemGroupBehavior>
+                </SectionRowBleedContext.Provider>
                 </BareRowBleedContext.Provider>
                 </BareSectionRowsContext.Provider>
                 </SectionItemDensityProvider>

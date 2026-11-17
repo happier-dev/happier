@@ -6,6 +6,7 @@ import type { PageColumn } from '@/components/ui/layout/contentWidthMode';
 import { PANE_TEXT_INSET_PX } from '@/components/ui/layout/headerBand';
 import { ITEM_ROW_PADDING_HORIZONTAL } from '@/components/ui/lists/itemDensityMetrics';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
+import { SectionRowBleedContext } from '@/components/ui/lists/bareRowBleed';
 
 /**
  * How grouped list content is presented.
@@ -103,9 +104,9 @@ export function usePageNoticeActive(): boolean {
 }
 
 /**
- * Starts a list presentation scope. The scope also starts outside any page sheet: a menu, popover or
- * picker opened from a sheet row (React context crosses portals) draws its own rows, never the sheet's
- * row inset and hairlines.
+ * Starts a list presentation scope. The scope also starts outside any page sheet or bare section: a menu,
+ * popover or picker opened from a sheet row (React context crosses portals) draws its own rows, never the
+ * sheet's row inset and hairlines or a bare section's row bleed.
  */
 export function ListPresentationProvider(props: Readonly<{
     value: ListPresentation;
@@ -120,6 +121,7 @@ export function ListPresentationProvider(props: Readonly<{
     const bodyEdge = React.useContext(HappierBodyEdgeContext);
     return (
         <HappierPageSectionContext.Provider value={null}>
+          <SectionRowBleedContext.Provider value={0}>
             <PageListInsetsContext.Provider value={props.pageInsets ?? 'standard'}>
                 <PageNoticeActiveContext.Provider value={props.value === 'page' && props.pageNoticeActive === true}>
                     <FloatingListSurfaceContext.Provider value={props.floating === true}>
@@ -131,6 +133,7 @@ export function ListPresentationProvider(props: Readonly<{
                     </FloatingListSurfaceContext.Provider>
                 </PageNoticeActiveContext.Provider>
             </PageListInsetsContext.Provider>
+          </SectionRowBleedContext.Provider>
         </HappierPageSectionContext.Provider>
     );
 }
