@@ -1,8 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import parse from 'css-tree/lib/parser';
 import { isThemeSurfaceAddress } from '@happier-dev/plugin-sdk/ui';
+import { build } from 'esbuild';
+import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
+import { fileURLToPath } from 'node:url';
 
 import { prepareThemeCss, prepareThemeProfileCss, getThemeCssWebOnlyRules } from './prepareThemeCss';
+import { acquireThemeCssParser } from './cssTreeBoundary';
 
 // The third-party parser boundary delegates to the real parser while counting work.
 vi.mock('css-tree/lib/parser', async (importOriginal) => {
@@ -10,8 +15,39 @@ vi.mock('css-tree/lib/parser', async (importOriginal) => {
     return { default: vi.fn(actual.default) };
 });
 afterEach(() => vi.clearAllMocks());
+beforeAll(acquireThemeCssParser);
 
 describe('theme CSS native projection and coverage', () => {
+    it('acquires the parser only on demand in the compiled startup graph', async () => {
+        const compiled = await build({
+            entryPoints: [fileURLToPath(new URL('./cssTreeBoundary.ts', import.meta.url))],
+            bundle: true, write: false, format: 'iife', globalName: 'cssBoundary', platform: 'browser', metafile: true,
+            plugins: [{ name: 'observe-parser-acquisition', setup(builder) {
+                builder.onLoad({ filter: /css-tree[\\/]lib[\\/]parser[\\/]index\.js$/ }, async ({ path }) => ({
+                    contents: `globalThis.parserLoads++;\n${await readFile(path, 'utf8')}`, loader: 'js',
+                }));
+            } }],
+        });
+        const realm = { parserLoads: 0 };
+        runInNewContext(`${compiled.outputFiles[0].text}\nglobalThis.cssBoundary = cssBoundary;`, realm);
+        expect(realm.parserLoads).toBe(0);
+        const boundary = (realm as typeof realm & { cssBoundary: typeof import('./cssTreeBoundary') }).cssBoundary;
+        // Acquisition is an explicit asynchronous operation, before synchronous AST projection.
+        await boundary.acquireThemeCssParser();
+        expect(boundary.parseThemeCss('[data-surface=composer]{padding:8px}').type).toBe('StyleSheet');
+        expect(realm.parserLoads).toBe(1);
+        await boundary.acquireThemeCssParser();
+        expect(realm.parserLoads).toBe(1);
+        expect(Object.keys(compiled.metafile.inputs).some(path => /css-tree[\\/]lib[\\/](lexer|data)[\\/]/.test(path))).toBe(false);
+        const split = await build({
+            entryPoints: [fileURLToPath(new URL('./cssTreeBoundary.ts', import.meta.url))],
+            bundle: true, write: false, splitting: true, format: 'esm', platform: 'browser',
+            outdir: '/theme-css-acquisition', metafile: true,
+        });
+        const startup = Object.values(split.metafile.outputs).find(output => output.entryPoint?.endsWith('cssTreeBoundary.ts'))!;
+        expect(Object.keys(startup.inputs).some(path => /css-tree[\\/]lib[\\/]parser[\\/]/.test(path))).toBe(false);
+        expect(startup.imports.some(edge => edge.kind === 'dynamic-import')).toBe(true);
+    });
     it('keeps assistant Markdown children web-only while retaining native root styling', () => {
         const children = ['paragraph', 'heading', 'link', 'quote', 'list'];
         expect(children.every(part => isThemeSurfaceAddress('assistant-text', part))).toBe(true);
@@ -37,7 +73,7 @@ describe('theme CSS native projection and coverage', () => {
         expect(parse).toHaveBeenCalledTimes(1);
     });
     it('shares one lazy preparation between facts and application of the retained profile body', () => {
-        const profile = { css: '[data-surface=composer]{padding:8px}' };
+        const profile = { css: '[data-surface=composer]{padding:8px} /* retained body */' };
         const facts = prepareThemeProfileCss(profile);
         const application = prepareThemeProfileCss(profile);
         expect(parse).not.toHaveBeenCalled();
@@ -45,6 +81,21 @@ describe('theme CSS native projection and coverage', () => {
         expect(application.light.composer?.root?.base.paddingTop).toBe(8);
         expect(parse).toHaveBeenCalledTimes(1);
         expect(application).toBe(facts);
+    });
+    it('shares compilation across cloned profiles and metadata changes while CSS changes prepare again', () => {
+        const profile = { css: '[data-surface=composer]{padding:19px}', name: 'Original' };
+        const facts = prepareThemeProfileCss(profile);
+        expect(facts.coverage.native).toBe(1);
+        const selected = prepareThemeProfileCss({ ...profile, id: 'selected-profile' });
+        const renamed = prepareThemeProfileCss({ ...profile, name: 'Renamed', updatedAt: 'later' });
+        expect(selected.light.composer?.root?.base.paddingTop).toBe(19);
+        expect(renamed.dark.composer?.root?.base.paddingTop).toBe(19);
+        expect(selected).toBe(facts);
+        expect(renamed).toBe(facts);
+        expect(parse).toHaveBeenCalledTimes(1);
+        const changed = prepareThemeProfileCss({ ...profile, css: profile.css.replace('19px', '21px') });
+        expect(changed.light.composer?.root?.base.paddingTop).toBe(21);
+        expect(parse).toHaveBeenCalledTimes(2);
     });
     it('does no native parsing for source-only web application or empty projections', () => {
         const source = '[data-surface=composer]{padding:8px}';
@@ -58,7 +109,7 @@ describe('theme CSS native projection and coverage', () => {
     });
 
     it('shares one lazy parse and stable projections across appearances, summary and detail', () => {
-        const prepared = prepareThemeCss('[data-surface=composer]{padding:8px}');
+        const prepared = prepareThemeCss('[data-surface=composer]{padding:8px} /* projection identity */');
         expect(parse).not.toHaveBeenCalled();
         const light = prepared.light;
         const dark = prepared.dark;

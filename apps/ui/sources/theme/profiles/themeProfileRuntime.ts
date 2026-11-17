@@ -19,7 +19,7 @@ import { findActiveThemeProfileForMode } from './themeProfilePersistence';
 import { createThemeProfileResolver } from './resolveThemeProfile';
 import { applyThemeFontFamilyVariables } from '../themeFontFamilyVariables';
 import { applyThemeStylesheet } from '../css/themeStylesheet';
-import { prepareThemeProfileCss } from '../css/prepareThemeCss';
+import { prepareThemeProfileCssAsync, readPreparedThemeProfileCss } from '../css/prepareThemeCss';
 import type { ThemeSurfaceStyleTable } from '../css/types';
 import { applyThemeStyleScales, resolveThemeStyleScales, themeStyleSelectionFromSurfaceFinish, type ThemeStyleSelection } from '../themeStyleScales';
 import type { ThemeProfileMode, ThemeProfileSelectionByMode, ThemeProfilesLocalStateV1 } from './themeProfileTypes';
@@ -185,7 +185,8 @@ function composeNativeCss(
     if (platform === 'web') return themes;
     const profile = readRuntimeProfile(profiles, mode, preview);
     if (!profile?.css) return themes;
-    const prepared = prepareThemeProfileCss(profile);
+    const prepared = readPreparedThemeProfileCss(profile);
+    if (!prepared) return themes;
     const surfaces = prepared[mode];
     const base = themes[mode];
     const previous = nativeCssThemes.get(base);
@@ -233,6 +234,20 @@ export const resolveThemeRuntimeStartupThemes = (
 export const readSystemTheme = (): AppThemeName => (Appearance.getColorScheme() === 'dark' ? 'dark' : 'light');
 
 let currentRuntimeSelection: Readonly<{ themes: ThemeRuntimeThemes; input: ApplyThemeRuntimeSelectionInput }> | null = null;
+const runtimeSelections = new WeakMap<ThemeRuntimeUnistylesAdapter, ApplyThemeRuntimeSelectionInput>();
+
+function acquireNativeCss(input: ApplyThemeRuntimeSelectionInput): void {
+    const runtime = input.unistylesRuntime ?? defaultUnistylesRuntimeAdapter;
+    runtimeSelections.set(runtime, input);
+    if (resolveRuntimePlatform(input) === 'web') return;
+    const mode = resolveThemeRuntimeVisualTheme(input.themePreference, input.systemTheme ?? readSystemTheme());
+    const profile = readRuntimeProfile(input.themeProfiles, mode, input.preview);
+    if (!profile?.css || readPreparedThemeProfileCss(profile)) return;
+    fireAndForget(prepareThemeProfileCssAsync(profile).then(() => {
+        // A newer selection owns the runtime while this first-use chunk loads.
+        if (runtimeSelections.get(runtime) === input) applyThemeRuntimeSelection(input);
+    }), { tag: 'themeProfileRuntime.acquireCss', onError: warnThemeRuntimeFallback });
+}
 let appearanceSubscription: ReturnType<typeof Appearance.addChangeListener> | null = null;
 const systemThemeSubscribers = new Set<() => void>();
 /** OS readers subscribe here, never register another platform listener. */
@@ -257,6 +272,7 @@ function observeSystemTheme(): void {
 export const initializeThemeRuntimeAppearance = (input: ApplyThemeRuntimeSelectionInput, themes: ThemeRuntimeThemes): void => {
     currentRuntimeSelection = { input, themes };
     observeSystemTheme();
+    acquireNativeCss(input);
 };
 
 const resolveRuntimePlatform = (input: ApplyThemeRuntimeSelectionInput): string => input.platform ?? Platform.OS;
@@ -355,6 +371,7 @@ const applyThemesToUnistyles = (
 
 export const applyThemeRuntimeSelection = (requested: ApplyThemeRuntimeSelectionInput): ThemeRuntimeThemes => {
     const input = requested.preview ? { ...requested, themePreference: requested.preview.mode } : requested;
+    acquireNativeCss(input);
     const resolveThemes = input.resolveThemes ?? resolveThemeRuntimeThemes;
 
     const style = input.style === undefined

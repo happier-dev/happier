@@ -3726,6 +3726,7 @@
     "sources/theme/css/themeSurfaceLabels.ts",
     "sources/theme/css/themeSurfaceStyles.ts",
     "sources/theme/css/types.ts",
+    "sources/theme/css/usePreparedThemeCss.ts",
     "sources/theme/index.ts",
     "sources/theme/parseThemeColor.ts",
     "sources/theme/profiles/baseThemeCatalog.ts",

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { darkTheme, lightTheme, type Theme } from '@/theme';
 import { FontFamilies } from '@/constants/Typography';
@@ -14,6 +14,7 @@ import type { ThemeProfilesLocalStateV1 } from './themeProfileTypes';
 import { getBuiltInThemeLibraryEntries } from './builtInThemeProfiles';
 
 const noProfiles: ThemeProfilesLocalStateV1 = { activeProfileIds: { light: null, dark: null }, profiles: [] };
+beforeAll(cssParser.acquireThemeCssParser);
 
 function createRegisteredThemes() {
     const registered: Record<'light' | 'dark', Theme> = { light: lightTheme, dark: darkTheme };
@@ -38,6 +39,29 @@ function rootFontVariable(name: string): string {
 }
 
 describe('theme runtime style selection', () => {
+    it('keeps the startup palette synchronous and reconciles first-use native CSS without reviving an old selection', async () => {
+        vi.resetModules();
+        const cold = await import('./themeProfileRuntime');
+        const runtime = createRegisteredThemes();
+        const profile = { schemaVersion: 1 as const, id: 'cold-css', name: 'Cold CSS', createdAt: '2026-11-16', updatedAt: '2026-11-16',
+            base: { light: 'light' as const, dark: 'dark' as const }, overrides: { light: {}, dark: {} },
+            css: '[data-surface=composer]{border-radius:27px}' };
+        const input = { themePreference: 'light' as const,
+            themeProfiles: { activeProfileIds: { light: profile.id, dark: null }, profiles: [profile] },
+            platform: 'ios', unistylesRuntime: runtime.adapter, style: null,
+            setSystemBackgroundColor: () => {}, recordBreadcrumb: () => {} };
+        const startup = cold.resolveThemeRuntimeStartupThemes(input);
+        expect(startup.themes.light.surfaces).toBeUndefined();
+        runtime.registered.light = startup.themes.light;
+        runtime.registered.dark = startup.themes.dark;
+        cold.initializeThemeRuntimeAppearance(input, startup.themes);
+        cold.applyThemeRuntimeSelection({ ...input, themeProfiles: { ...input.themeProfiles,
+            profiles: [{ ...profile, css: profile.css.replace('27px', '31px') }] } });
+        await vi.waitFor(() => expect(runtime.registered.light.surfaces?.composer?.root?.base.borderTopLeftRadius).toBe(31));
+        expect(runtime.updateTheme).toHaveBeenCalledTimes(1);
+        cold.applyThemeRuntimeSelection({ ...input, themeProfiles: noProfiles });
+        expect(runtime.registered.light.surfaces).toBeUndefined();
+    });
     it('replaces web CSS at the sheet boundary without updating Unistyles themes', () => {
         const sheet = vi.spyOn(stylesheet, 'applyThemeStylesheet');
         const runtime = createRegisteredThemes();
@@ -79,6 +103,11 @@ describe('theme runtime style selection', () => {
         runtime.updateTheme.mockClear();
         parse.mockClear();
         applyThemeRuntimeSelection(input);
+        expect(runtime.updateTheme).not.toHaveBeenCalled();
+        expect(parse).not.toHaveBeenCalled();
+        // The selected-profile producer supplies a fresh DTO; metadata is not a paint input.
+        applyThemeRuntimeSelection({ ...input, themeProfiles: { ...input.themeProfiles,
+            profiles: [{ ...profile, name: 'Renamed', updatedAt: '2026-11-17' }] } });
         expect(runtime.updateTheme).not.toHaveBeenCalled();
         expect(parse).not.toHaveBeenCalled();
         const changed = { ...profile, css: profile.css.replace('12px', '14px') };

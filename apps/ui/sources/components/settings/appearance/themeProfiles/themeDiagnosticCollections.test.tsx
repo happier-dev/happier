@@ -2,7 +2,7 @@ import * as React from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, renderSettingsView, standardCleanup } from '@/dev/testkit';
 import { measureMountedCollections } from '@/dev/testkit/render/renderInCollectionLayout';
-import { prepareThemeCss } from '@/theme/css/prepareThemeCss';
+import { prepareThemeCssAsync } from '@/theme/css/prepareThemeCss';
 
 // The browser editor's platform boundary has no DOM node in the React renderer.
 beforeEach(() => vi.stubGlobal('window', { innerWidth: 1440 }));
@@ -52,7 +52,7 @@ it('windows authored web-only CSS rules and still reveals their source line', as
     const basis = specimen.findAllByType(ThemeProfileEditorView)[0]!.props;
     await specimen.unmount();
     const source = Array.from({ length: 200 }, (_, index) => `.rule-${index} { filter: blur(2px); }`).join('\n');
-    const rules = prepareThemeCss(source).detailedCoverage.rules.filter(rule => !rule.native)
+    const rules = (await prepareThemeCssAsync(source)).detailedCoverage.rules.filter(rule => !rule.native)
         .map(rule => ({ line: rule.range.line, selector: rule.selector }));
     expect(rules).toHaveLength(200);
     const reveal = vi.fn();

@@ -7,7 +7,7 @@ import { mergeThemeProfileDocumentEdit, type ThemeProfileLibrary, type ThemeProf
 import { importThemeProfileFromJson, exportThemeProfileToJson } from '@/theme/profiles/themeProfileImportExport';
 import { createShareThemePlugin } from '@/theme/profiles/shareThemePlugin';
 import type { BoundThemeRegistryLifecycle } from '@/registries/themeRegistryInstall';
-import { prepareThemeProfileCss } from '@/theme/css/prepareThemeCss';
+import { prepareThemeProfileCssAsync } from '@/theme/css/prepareThemeCss';
 
 import type { ThemeTryOnOrigin, ThemeTryOnOwner } from '@/theme/profiles/themeTryOn';
 import type { ThemeSurfacePaintDescriptor } from '@happier-dev/plugin-ui';
@@ -44,8 +44,8 @@ export function createThemeActionExecute(host: ThemeActionHost): NonNullable<Act
                         return { listing: { pointer: { sourceId: summary.sourceId, itemId: summary.itemId, version: payload.version },
                             summary, metadata: payload.listing, provenance: acquired.provenance },
                             faces: payload.themes.map(face => face.document),
-                            coverage: payload.themes.map(face => ({ faceId: face.key,
-                                coverage: prepareThemeProfileCss(face.document.profile).coverage })) };
+                            coverage: await Promise.all(payload.themes.map(async face => ({ faceId: face.key,
+                                coverage: (await prepareThemeProfileCssAsync(face.document.profile)).coverage }))) };
                     }
                     case THEME_ACTION_IDS.install:
                         return lifecycle.install(request.input);
@@ -73,6 +73,7 @@ export function createThemeActionExecute(host: ThemeActionHost): NonNullable<Act
                     if ((include.includes('coverage') || includeSurfaceMap) && !runtime) return clientActionUnavailable(request.actionId);
                     const document = include.includes('document') || include.includes('coverage') || includeSurfaceMap ? await library.get(ref) : undefined;
                     if (document === null) return { ok: false as const, errorCode: 'theme_not_found', error: 'theme_not_found' };
+                    if (include.includes('coverage') && document) await prepareThemeProfileCssAsync(document.profile);
                     const surfaceMap = includeSurfaceMap ? runtime?.surfaceMap?.(document!, entry.mode) : undefined;
                     if (includeSurfaceMap && !surfaceMap?.length) return clientActionUnavailable(request.actionId);
                     return { entry,
@@ -96,6 +97,7 @@ export function createThemeActionExecute(host: ThemeActionHost): NonNullable<Act
                     } else {
                         previewOrigin = { kind: origin.kind };
                     }
+                    await prepareThemeProfileCssAsync(input.document.profile);
                     const preview = runtime.preview.begin({ ...input, origin: previewOrigin });
                     return { previewRef: preview.previewRef, coverage: runtime.coverage(request.input.document), compatibility: request.input.document.compatibility };
                 }

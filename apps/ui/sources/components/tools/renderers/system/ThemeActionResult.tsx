@@ -12,7 +12,7 @@ import { useLayoutPresentationActive } from '@/components/ui/presentation/Plugin
 import { t } from '@/text';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
-import { prepareThemeProfileCss } from '@/theme/css/prepareThemeCss';
+import { usePreparedThemeCss } from '@/theme/css/usePreparedThemeCss';
 import { projectThemeLibraryEntry, projectThemeMiniature } from '@/theme/profiles/themeProfilePresentation';
 import { getThemeTryOnOwner } from '@/theme/profiles/themeTryOnRuntime';
 import { ThemeActionResultView } from './ThemeActionResultView';
@@ -33,11 +33,18 @@ export function ThemeActionResult({ presentation, fallback }: Readonly<{ present
     const [created] = React.useState(() => call.actionId === THEME_ACTION_IDS.tryOn && entry === null);
     const selected = useThemeProfileReferenceSelection(presented)[mode];
     const selectedDocument = useThemeProfileDocument(selected, presented).document;
-    const currentSelection = React.useMemo(() => selected && !selectedDocument ? undefined : ({
+    const selectedPreparation = usePreparedThemeCss(selectedDocument?.profile.css ?? '', presented);
+    const selectedCss = selectedPreparation.prepared;
+    React.useEffect(() => {
+        if (selectedPreparation.error) alertActionFailure({ code: readActionErrorCodeV1(selectedPreparation.error),
+            reason: resolveActionExecutionErrorMessage(selectedPreparation.error, t('common.unavailable')) });
+    }, [selectedPreparation.error]);
+    const currentSelection = React.useMemo(() => (selected && !selectedDocument)
+        || (selectedDocument?.profile.css && !selectedCss) ? undefined : ({
         miniature: projectThemeMiniature(selectedDocument ? { ...selectedDocument.profile, assetAppearance: mode }
             : { assetAppearance: mode, overrides: { light: {}, dark: {} } }),
-        surfaceStyles: selectedDocument ? prepareThemeProfileCss(selectedDocument.profile)[mode] : undefined,
-    }), [selected, selectedDocument, mode]);
+        surfaceStyles: selectedDocument ? selectedCss?.[mode] : undefined,
+    }), [selected, selectedDocument, mode, selectedCss]);
     // One card retains its initial comparison facts while Keep changes the selected appearance.
     const before = React.useRef(currentSelection);
     if (!before.current && currentSelection) before.current = currentSelection;

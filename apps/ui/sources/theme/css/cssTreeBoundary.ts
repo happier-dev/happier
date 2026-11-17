@@ -1,4 +1,18 @@
-import parse from 'css-tree/lib/parser';
+type Parser = typeof import('css-tree/lib/parser')['default'];
+let parser: Parser | undefined;
+let acquisition: Promise<void> | undefined;
+
+/** The parser-only chunk is acquired by a nonempty CSS preparation, never startup imports. */
+export function acquireThemeCssParser(): Promise<void> {
+    return acquisition ??= import('css-tree/lib/parser').then(module => { parser = module.default; }).catch(error => {
+        acquisition = undefined;
+        throw error;
+    });
+}
+
+export function isThemeCssParserAcquired(): boolean {
+    return parser !== undefined;
+}
 
 export type CssPosition = Readonly<{ offset: number; line: number; column: number }>;
 export type CssLocation = Readonly<{ start: CssPosition; end: CssPosition }>;
@@ -60,6 +74,7 @@ function node(value: unknown): CssNode {
 
 /** The only full AST parse. Importing this adapter never imports the lexer/data catalogue. */
 export function parseThemeCss(source: string): CssNode {
-    const parsed: unknown = parse(source, { positions: true });
+    if (!parser) throw new Error('Acquire the theme CSS parser before reading projections');
+    const parsed: unknown = parser(source, { positions: true });
     return node(parsed);
 }

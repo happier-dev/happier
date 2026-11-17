@@ -3212,6 +3212,7 @@
     "sources/theme/css/themeSurfaceEmission.rnw.real.integration.test.tsx",
     "sources/theme/css/themeSurfaceNativeBinding.test.tsx",
     "sources/theme/css/themeSurfacePaintMap.test.ts",
+    "sources/theme/css/usePreparedThemeCss.test.tsx",
     "sources/theme/parseThemeColor.test.ts",
     "sources/theme/profiles/builtInThemeProfiles.test.ts",
     "sources/theme/profiles/createThemeProfileDraft.test.ts",

@@ -123,11 +123,11 @@ describe('theme library recovery facts', () => {
             retry() {}, onCreate() {}, onEdit() {}, onExport() {}, onImport() {}, onUpdate() {},
         };
         const hook = await renderHook(value => useThemeLibraryModel(value, execute), { initialProps: input });
-        expect(hook.getCurrent().facts).toEqual(expect.arrayContaining([
+        await vi.waitFor(() => expect(hook.getCurrent().facts).toEqual(expect.arrayContaining([
             expect.objectContaining({ kind: 'partial', requiresAppVersion: '99.0.0',
                 unsupportedPaths: expect.arrayContaining(['style.futurePresentation']), webOnlyRules: 1, onUpdate: expect.any(Function) }),
             expect.objectContaining({ kind: 'hides', areas: ['session list'] }),
-        ]));
+        ])));
         const hidden = hook.getCurrent().facts?.find(fact => fact.kind === 'hides');
         if (hidden?.kind !== 'hides') throw new Error('Expected hidden surface metadata');
         await hook.rerender({ ...input, showing: 'light' });

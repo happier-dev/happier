@@ -12,7 +12,7 @@ import type { ThemeDevicePickerInput } from '@/components/settings/appearance/th
 import type { ThemeActionCardPresentation, TranscriptThemeTry } from '@/components/sessions/transcript/references/transcriptThemeAction';
 import type { ThemeActionResultViewProps, ThemeResultOperation, ThemeResultPhase, ThemeResultTheme } from '@/components/tools/renderers/system/themeActionResultViewTypes';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { prepareThemeProfileCss } from '@/theme/css/prepareThemeCss';
+import { usePreparedThemeCss } from '@/theme/css/usePreparedThemeCss';
 import { resolveCustomThemeSourceLabel } from '@/components/settings/appearance/themeProfiles/themeProfilePresetOptions';
 import { t } from '@/text';
 
@@ -66,7 +66,8 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
     React.useLayoutEffect(() => presented && preview?.origin.kind === 'agent' ? facts.preview.present(preview.previewRef) : undefined,
         [facts.preview, presented, preview?.previewRef, preview?.origin.kind]);
     // The retained preview is the compiler identity; transcript inputs rebuild documents.
-    const surfaceStyles = React.useMemo(() => preview?.document ? prepareThemeProfileCss(preview.document.profile)[preview.mode] : undefined, [preview]);
+    const preparedCss = usePreparedThemeCss(preview?.document?.profile.css ?? '', presented);
+    const surfaceStyles = preview?.document ? preparedCss.prepared?.[preview.mode] : undefined;
     const [currentOptionKey, setCurrentOptionKey] = React.useState(() => input.options.at(-1)?.id ?? null);
     const [busy, setBusy] = React.useState<ThemeResultOperation | null>(null);
     const [failure, setFailure] = React.useState<Extract<ThemeResultPhase, { kind: 'failed' }> | null>(null);
@@ -124,6 +125,7 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
     }, [call, selected, outcome, invoke, tryOption]);
     const onRedo = React.useCallback(() => perform('redo', replay), [perform, replay]);
     const onRetry = React.useCallback(() => {
+        if (preparedCss.error) { preparedCss.retry(); return; }
         if (failure?.operation === 'keep' && failure.code === 'theme_preview_stale' && selected) {
             perform('keep', async () => {
                 const preview = await tryOption(selected);
@@ -131,7 +133,7 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
             });
         } else if (failure && retryOperation.current) perform(failure.operation, retryOperation.current);
         else perform('try', replay);
-    }, [failure, selected, perform, replay, tryOption, invoke]);
+    }, [preparedCss.error, preparedCss.retry, failure, selected, perform, replay, tryOption, invoke]);
     const display = entry ?? (call.actionId === THEME_ACTION_IDS.apply ? facts.appliedTheme : null);
     if (!display) return null;
     const editTarget: ThemeActionCardEdit | null = outcome.kind === 'preview' && selected
@@ -142,7 +144,8 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
         ? { reference: outcome.output.entry.reference, mode: outcome.output.applied.mode, name: display.name }
         : outcome.kind === 'applied' && call.actionId === THEME_ACTION_IDS.apply
             ? { reference: call.input.ref, mode: outcome.output.applied.mode, name: display.name } : null;
-    const phase: ThemeResultPhase = failure ?? (outcome.kind === 'preview'
+    const phase: ThemeResultPhase = (preparedCss.error ? { kind: 'failed' as const, operation: 'try' as const,
+        code: readActionErrorCodeV1(preparedCss.error) } : null) ?? failure ?? (outcome.kind === 'preview'
         ? { kind: preview ? 'trying' : 'replaced' }
         : outcome.kind === 'undone'
             ? outcome.previous === 'preview' ? { kind: 'reverted' } : { kind: 'undone', restoredName: null }

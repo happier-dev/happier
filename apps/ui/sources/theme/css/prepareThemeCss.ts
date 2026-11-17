@@ -3,7 +3,7 @@ import type { SurfaceAddress } from '@happier-dev/plugin-sdk/ui';
 import { convertNativeDeclaration } from './nativeDeclarations';
 import type { NativeDeclarationStyle } from './nativeDeclarations';
 import { themeCssResourceRejection } from './themeCssResourcePolicy';
-import { parseThemeCss } from './cssTreeBoundary';
+import { acquireThemeCssParser, isThemeCssParserAcquired, parseThemeCss } from './cssTreeBoundary';
 import type { CssNode } from './cssTreeBoundary';
 import type {
     PreparedThemeCss, ThemeCssCoverage, ThemeCssDetailedCoverage, ThemeCssRange,
@@ -283,6 +283,9 @@ const emptyCompilation: Compiled = {
 };
 
 const profilePreparations = new WeakMap<Readonly<{ css?: string }>, PreparedThemeCss>();
+// Profile DTOs are cloned by selection and metadata updates. Content is the only
+// compiler input; weak values avoid retaining every CSS edit for the app lifetime.
+const sourcePreparations = new Map<string, WeakRef<PreparedThemeCss>>();
 
 /** Editor Which navigation retains the compiler's authored ranges and rule identities. */
 export function getThemeCssWebOnlyRules(prepared: PreparedThemeCss): readonly ThemeCssRuleCoverage[] {
@@ -298,8 +301,30 @@ export function prepareThemeProfileCss(profile: Readonly<{ css?: string }>): Pre
     return prepared;
 }
 
+/** Async entry points acquire the parser before exposing synchronous projections. */
+export async function prepareThemeCssAsync(source: string): Promise<PreparedThemeCss> {
+    if (source.trim() !== '') await acquireThemeCssParser();
+    return prepareThemeCss(source);
+}
+
+export async function prepareThemeProfileCssAsync(profile: Readonly<{ css?: string }>): Promise<PreparedThemeCss> {
+    if (profile.css?.trim()) await acquireThemeCssParser();
+    return prepareThemeProfileCss(profile);
+}
+
+/** Rendering/startup can keep its palette while first-use acquisition is pending. */
+export function readPreparedThemeCss(source: string): PreparedThemeCss | null {
+    return source.trim() === '' || isThemeCssParserAcquired() ? prepareThemeCss(source) : null;
+}
+
+export function readPreparedThemeProfileCss(profile: Readonly<{ css?: string }>): PreparedThemeCss | null {
+    return readPreparedThemeCss(profile.css ?? '') ? prepareThemeProfileCss(profile) : null;
+}
+
 /** Source-only web application does no native parse; projection reads share one compilation. */
 export function prepareThemeCss(source: string): PreparedThemeCss {
+    const existing = sourcePreparations.get(source)?.deref();
+    if (existing) return existing;
     let compilation: Readonly<{ ok: true; value: Compiled } | { ok: false; error: unknown }> | undefined;
     const get = (): Compiled => {
         if (!compilation) {
@@ -309,11 +334,16 @@ export function prepareThemeCss(source: string): PreparedThemeCss {
         if (!compilation.ok) throw compilation.error;
         return compilation.value;
     };
-    return {
+    const prepared: PreparedThemeCss = {
         source,
         get light() { return get().light; },
         get dark() { return get().dark; },
         get coverage() { return get().coverage; },
         get detailedCoverage() { return get().detailedCoverage(); },
     };
+    const ref = new WeakRef(prepared);
+    // Retired profile bodies no longer retain their CSS or AST projections.
+    for (const [key, value] of sourcePreparations) if (!value.deref()) sourcePreparations.delete(key);
+    sourcePreparations.set(source, ref);
+    return prepared;
 }

@@ -3,7 +3,8 @@ import { themeSurfaceLabel } from '@/theme/css/themeSurfaceLabels';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ThemeLibraryEntry, ThemeProfileDocument, ThemeProfileMode, ThemeReference } from '@/theme/profiles/themeProfileTypes';
-import { prepareThemeProfileCss } from '@/theme/css/prepareThemeCss';
+import { usePreparedThemeCss } from '@/theme/css/usePreparedThemeCss';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { resolveThemeProfile } from '@/theme/profiles/resolveThemeProfile';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
@@ -41,6 +42,11 @@ export type ThemeLibraryModelInput = Readonly<{
 
 /** Reads header facts only; selection effects and their admission remain with the theme Action owner. */
 export function useThemeLibraryModel(input: ThemeLibraryModelInput, execute: ThemeUiActionExecute): ThemeLibraryViewProps {
+    const presented = useLayoutPresentationActive();
+    const lightCss = usePreparedThemeCss(input.selectedDocuments?.light?.profile.css ?? '', presented);
+    const darkCss = usePreparedThemeCss(input.selectedDocuments?.dark?.profile.css ?? '', presented);
+    const preparedLight = lightCss.prepared;
+    const preparedDark = darkCss.prepared;
     const [mode, setMode] = React.useState(input.showing);
     const [failure, setFailure] = React.useState<Readonly<{ key: string; error: unknown }> | null>(null);
     const title = React.useCallback((option: ThemeLibrarySourceOption) => option.kind === 'base'
@@ -52,6 +58,10 @@ export function useThemeLibraryModel(input: ThemeLibraryModelInput, execute: The
     const activeOption = React.useCallback((slotMode: ThemeProfileMode) => input.options.find(option =>
         option.reference !== null && sameStrictJsonValue(option.reference, input.selection[slotMode]))
         ?? input.options.find(option => option.kind === 'base' && option.preferredMode === slotMode)!, [input.options, input.selection]);
+    const preparationError = lightCss.error ?? darkCss.error;
+    React.useEffect(() => {
+        if (preparationError) input.onFailure?.(preparationError);
+    }, [preparationError, input.onFailure]);
     const previewFor = React.useCallback((option: ThemeLibrarySourceOption, previewMode: ThemeProfileMode): ThemeLibraryTile['preview'] =>
         option.miniature ? { kind: 'miniature', miniature: option.miniature } : {
             kind: 'palette', palette: resolveThemeProfile({ mode: previewMode, profile: option.profile }),
@@ -98,7 +108,8 @@ export function useThemeLibraryModel(input: ThemeLibraryModelInput, execute: The
             const option = activeOption(slotMode);
             const document = input.selectedDocuments?.[slotMode];
             const compatibility = option.entry?.compatibility ?? document?.compatibility;
-            const webOnlyRules = input.native && document ? prepareThemeProfileCss(document.profile).coverage.webOnly : 0;
+            const prepared = slotMode === 'light' ? preparedLight : preparedDark;
+            const webOnlyRules = input.native && document ? prepared?.coverage.webOnly ?? 0 : 0;
             if ((compatibility?.status === 'partial' || webOnlyRules > 0) && !partialIds.has(option.id)) {
                 partialIds.add(option.id);
                 result.push({ kind: 'partial', name: title(option), requiresAppVersion: compatibility?.requiresAppVersion,
@@ -107,7 +118,8 @@ export function useThemeLibraryModel(input: ThemeLibraryModelInput, execute: The
             }
         }
         const document = input.selectedDocuments?.[input.showing];
-        const areas = document ? [...new Set(prepareThemeProfileCss(document.profile).coverage.hides
+        const prepared = input.showing === 'light' ? preparedLight : preparedDark;
+        const areas = document && prepared ? [...new Set(prepared.coverage.hides
             .filter(hidden => hidden.mode === 'both' || hidden.mode === input.showing)
             .map(hidden => hidden.address.surface))].map(themeSurfaceLabel) : [];
         if (areas.length) result.push({ kind: 'hides', name: title(activeOption(input.showing)), areas,
@@ -115,11 +127,13 @@ export function useThemeLibraryModel(input: ThemeLibraryModelInput, execute: The
                 void execute(THEME_ACTION_IDS.apply, { ref: null, mode: input.showing }).catch(error => input.onFailure?.(error));
             } });
         return result;
-    }, [activeOption, title, input.selectedDocuments, input.showing, input.native, input.onUpdate, input.onFailure, execute]);
+    }, [activeOption, title, input.selectedDocuments, input.showing, input.native, input.onUpdate, input.onFailure, execute, preparedLight, preparedDark]);
     return { slots, mode, selectedKey: activeOption(mode).id, tiles, hasOwnThemes: input.options.some(option => option.entry?.source.kind === 'yours'),
         facts,
         addMenu, onNewTheme: openCreate, onChooseMode: setMode, onChooseTheme: chooseTheme, onOpenStore: input.onOpenStore,
-        ...(failure ? { notice: { text: resolveActionExecutionErrorMessage(failure.error, t('common.unavailable')),
+        ...(preparationError ? { notice: { text: resolveActionExecutionErrorMessage(preparationError, t('common.unavailable')),
+            action: { title: t('common.retry'), onPress: () => { lightCss.retry(); darkCss.retry(); } } } }
+            : failure ? { notice: { text: resolveActionExecutionErrorMessage(failure.error, t('common.unavailable')),
             action: { title: t('common.retry'), onPress: () => chooseTheme(failure.key) } } }
             : input.failed ? { notice: { text: t('artifacts.browser.loadFailedBody'), action: { title: t('common.retry'), onPress: input.retry } } } : {}),
     };
