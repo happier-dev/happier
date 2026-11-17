@@ -1654,6 +1654,14 @@ The Account-owned `happier.triage/actions/sessions/run-configured-v1` Action run
 
 The handoff operand and summary result are defined by
 [`sessionHandoff.ts`](../packages/triage-protocol/src/v1/sessionHandoff.ts).
+In unreleased 0.3 source, Triage adapts its configured choices and source evidence
+to the shared Session input owner in
+[`runSessionInputHandoffV1.ts`](../packages/protocol/src/sessions/messages/runSessionInputHandoffV1.ts).
+The SDK `/sessions` facade exposes that same owner for editable New drafts,
+compose/send selection, creation settlement, and delivery-before-navigation.
+Source plugins supply the brief and typed evidence;
+they do not own another Session sender. Triage retains its catalog, placement,
+source-context and recovery adapters.
 `prepareTriageSessionHandoffV1` on `@happier-dev/triage-sources/runtime` validates
 those operands and returns the projected `{input}` for a host Action control,
 using `TRIAGE_SESSION_HANDOFF_ACTION_REF_V1`. `settleTriageSessionHandoffV1`
