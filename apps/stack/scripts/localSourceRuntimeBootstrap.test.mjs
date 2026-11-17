@@ -1,3 +1,4 @@
+// @happier-test-preparation source
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cp, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
@@ -120,8 +121,8 @@ test('checkout tooling loads product packages at the committed revision, on the 
   // Another lane's half-landed edit: the import lands before its export, and a helper moved away.
   await write('packages/protocol/src/actions.ts', 'import { ScmMissingRefusal } from "./scm.js";\nexport const value = ScmMissingRefusal;\n');
   await rm(join(controller, 'packages/protocol/src/helper.ts'));
-  const probe = (checkout, env = {}) => spawnSync(process.execPath, ['--conditions=happier-source',
-    `--import=${pathToFileURL(join(checkout, 'apps/stack/bin/localSourceRuntimeBootstrap.mjs')).href}`,
+  const probe = (checkout, env = {}, preload = 'apps/stack/bin/localSourceRuntimeBootstrap.mjs') => spawnSync(process.execPath, ['--conditions=happier-source',
+    `--import=${pathToFileURL(join(checkout, preload)).href}`,
     join(checkout, 'apps/stack/scripts/probe.mjs')], { cwd: checkout, encoding: 'utf8',
     env: { ...process.env, NODE_OPTIONS: '', HAPPIER_STACK_TOOLING_PACKAGES: '', ...env } });
   const pinned = probe(controller);
@@ -131,12 +132,34 @@ test('checkout tooling loads product packages at the committed revision, on the 
   const live = probe(controller, { HAPPIER_STACK_TOOLING_PACKAGES: 'live' });
   assert.notEqual(live.status, 0);
   assert.match(live.stderr, /ScmMissingRefusal/u);
+  // A mid-edit syntax error must be replaced before the TypeScript transformer
+  // sees it, including children that already preload the source runtime.
+  await write('packages/cli-common/fileChangeObserver.mjs', 'export const incomplete = ;\n');
+  await write('packages/protocol/src/scm.ts', 'export const ScmRefusal: string = ;\n');
+  const syntax = probe(controller);
+  assert.equal(syntax.status, 0, syntax.stderr);
+  assert.equal(syntax.stdout, 'committed+helper');
+  const inherited = probe(controller, { NODE_OPTIONS: `--import=${pathToFileURL(join(controller, 'packages/cli-common/registerSourceRuntime.mjs')).href}` });
+  assert.equal(inherited.status, 0, inherited.stderr);
+  assert.equal(inherited.stdout, 'committed+helper');
+  const direct = probe(controller, {}, 'packages/cli-common/registerSourceRuntime.mjs');
+  assert.equal(direct.status, 0, direct.stderr);
+  assert.equal(direct.stdout, 'committed+helper');
+  await write('apps/cli/probe.mjs', 'const { value } = await import("@happier-dev/protocol/actions"); process.stdout.write(value);');
+  const product = spawnSync(process.execPath, ['--conditions=happier-source',
+    `--import=${pathToFileURL(join(controller, 'packages/cli-common/registerSourceRuntime.mjs')).href}`,
+    join(controller, 'apps/cli/probe.mjs')], { cwd: controller, encoding: 'utf8',
+    env: { ...process.env, NODE_OPTIONS: '', HAPPIER_STACK_TOOLING_PACKAGES: '' } });
+  assert.notEqual(product.status, 0, 'product children retain live source instead of the tooling pin');
   // An execution host's mirror has no Git: it reads the synchronized pin the controller wrote.
   const mirror = join(root, 'mirror');
   await cp(controller, mirror, { recursive: true, verbatimSymlinks: true, filter: source => source !== join(controller, '.git') });
   const fromMirror = probe(mirror);
   assert.equal(fromMirror.status, 0, fromMirror.stderr);
   assert.equal(fromMirror.stdout, 'committed+helper');
+  const directMirror = probe(mirror, { HAPPIER_STACK_SOURCE_MIRROR: '1' }, 'packages/cli-common/registerSourceRuntime.mjs');
+  assert.equal(directMirror.status, 0, directMirror.stderr);
+  assert.equal(directMirror.stdout, 'committed+helper');
   // An edit after the controller's last load: the sync flush barrier refreshes
   // the pin before every remote dispatch, so the mirror still gets HEAD's bytes.
   await write('packages/protocol/src/scm.ts', 'export const ScmRefusal: string = (() => { throw new Error("half-landed"); })();\n');

@@ -2,9 +2,18 @@ import * as nodeModule from 'node:module';
 import { existsSync, realpathSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { initialize, resolve } from './sourceRuntimeEntries.mjs';
 
 const repoDir = realpathSync(fileURLToPath(new URL('../../', import.meta.url)));
+// Install the existing tooling pin before any workspace graph or TypeScript
+// loader. This registration can be an inherited preload that runs before the
+// Stack bootstrap; a later pin cannot replace syntax tsx already rejected.
+let toolingPin;
+const toolingPinOwner = new URL('../../apps/stack/bin/localToolingPackagePin.mjs', import.meta.url);
+if (existsSync(toolingPinOwner)) {
+  const { registerStackToolingPackagePin } = await import(toolingPinOwner.href);
+  toolingPin = registerStackToolingPackagePin({ repoDir });
+}
+const { initialize, resolve } = await import('./sourceRuntimeEntries.mjs');
 const entrypoint = process.argv[1] && existsSync(process.argv[1]) ? realpathSync(process.argv[1]) : null;
 const cliDir = join(repoDir, 'apps', 'cli');
 const isCliEntrypoint = ['src/index.ts', 'src/index.mjs', 'bin/happier.mjs', 'bin/happier-dev.mjs']
@@ -47,3 +56,4 @@ if (typeof nodeModule.registerHooks === 'function') {
 } else {
   nodeModule.register('./sourceRuntimeEntries.mjs', import.meta.url, { data: repoDir });
 }
+toolingPin?.registerResolution();

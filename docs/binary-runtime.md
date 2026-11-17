@@ -1168,7 +1168,10 @@ the product package modules it imports (`packages/**`, and `apps/**` outside
 `apps/stack`) load at the checkout's committed revision:
 `apps/stack/bin/localToolingPackagePin.mjs` keeps every module URL but replaces
 the bytes of a module that differs from HEAD with HEAD's, so another lane's
-half-landed package edit cannot break `stack start` or a reload. When HEAD moves,
+half-landed package edit cannot break `stack start` or a reload. Source-runtime
+registration installs that same pin before loading workspace modules or tsx,
+including when a tooling child inherits the raw source-runtime preload before
+the Stack bootstrap. Product entrypoints remain outside tooling pin scope. When HEAD moves,
 the controller writes HEAD's bytes of every module the checkout changed, then
 HEAD's blob manifest, into the Git-ignored `.happier-tooling-pin/`, which the
 source mirror carries to execution hosts.

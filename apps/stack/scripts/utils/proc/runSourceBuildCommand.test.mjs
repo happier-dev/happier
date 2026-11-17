@@ -24,9 +24,10 @@ for (const publication of ['absent', 'replaced']) {
       await mkdir(fixture.path(directory), { recursive: true });
     }
     await mkdir(dirname(tool), { recursive: true });
-    await cp(new URL('../../../bin/localSourceRuntimeBootstrap.mjs', import.meta.url),
-      fixture.path('apps/stack/bin/localSourceRuntimeBootstrap.mjs'));
-    for (const name of ['registerSourceRuntime.mjs', 'sourceRuntimeEntries.mjs', 'cliRuntimeSidecars.mjs', 'sourceRuntimeDependencies.mjs']) {
+    for (const name of ['localSourceRuntimeBootstrap.mjs', 'localToolingPackagePin.mjs']) {
+      await cp(new URL(`../../../bin/${name}`, import.meta.url), fixture.path('apps/stack/bin', name));
+    }
+    for (const name of ['registerSourceRuntime.mjs', 'sourceRuntimeEntries.mjs', 'cliRuntimeSidecars.mjs', 'sourceRuntimeDependencies.mjs', 'packageExportMatch.cjs']) {
       await cp(new URL(`../../../../../packages/cli-common/${name}`, import.meta.url), fixture.path('packages/cli-common', name));
     }
     // Keep the bootstrap's real installed-tree owner and its complete graph.

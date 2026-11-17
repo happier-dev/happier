@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import * as nodeModule from 'node:module';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /**
@@ -42,6 +42,22 @@ export function isPinnedToolingModule(path) {
 
 export function toolingPackagesMode(env = process.env) {
   return String(env.HAPPIER_STACK_TOOLING_PACKAGES ?? '').trim() === 'live' ? 'live' : 'pinned';
+}
+
+let stackToolingPin;
+/** Bootstrap and inherited raw preloads share one registration. Bootstrap must
+ * protect its dependency-custody imports before entering the source runtime. */
+export function registerStackToolingPackagePin({ repoDir }) {
+  const entry = resolve(process.argv[1] ?? '');
+  // Product children retain their selected runtime despite inherited preloads.
+  const isToolEntry = ['apps/stack', 'scripts/workspaces'].some(directory => {
+    const path = relative(resolve(repoDir, directory), entry);
+    return path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path);
+  });
+  if (!isToolEntry) return null;
+  // Tests exercise their own uncommitted package edits.
+  if (/\.test\.[cm]?[jt]s$/u.test(entry)) process.env.HAPPIER_STACK_TOOLING_PACKAGES = 'live';
+  return stackToolingPin ??= registerToolingPackagePin({ repoDir });
 }
 
 function writeAtomic(path, bytes) {
