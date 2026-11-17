@@ -41,7 +41,7 @@ import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '../../local/services/actio
 import { isPresentUserHostInvocation, isPluginActionInvokeConfirmationV1 } from '../../actions/invocationAuthority.js';
 import { ActionRequestAttributionV1Schema, materializeActionRequestAttributionV1, type ActionRequestAttributionV1 } from '../../actions/actionRequestAttributionV1.js';
 import type { ActionExecutorContext } from '../../actions/executor/types.js';
-import { readHostReviewedParentV1 } from '../../actions/executor/deploymentRoleChild.js';
+import { readHostReviewedParentV1, readHostReviewedChildPresentUserApprovalV1 } from '../../actions/executor/deploymentRoleChild.js';
 import { ManagedSessionDefaultsContextV1Schema } from '../../teams/managedDefaults.js';
 import { SessionPlacementSelectionV1Schema } from './sessionPlacementSelectionV1.js';
 import { ManagedControllerAccessV1Schema } from '../../machines/managed/managedMachineV1.js';
@@ -191,11 +191,12 @@ export function projectExternalActionRequesterInvocationV1(args: Readonly<{
   target: Extract<NonNullable<ActionExecutorContext['externalActionTarget']>, { kind: 'machine' }>;
   authentication?: Readonly<{ kind: 'account' | 'terminal' }>;
 }>): ExternalActionRequesterInvocationV1 | null {
-  const review = args.context.presentUserApproval;
+  const childReview = readHostReviewedChildPresentUserApprovalV1(args.context, args.actionId);
+  const review = childReview ?? args.context.presentUserApproval;
   if (review?.actionId === args.actionId && review.decidingAccountId !== undefined
     && review.decidingAccountId !== args.account.accountId) return null;
   const reviewedParent = readHostReviewedParentV1(args.context);
-  const confirmation = args.context.presentUserConfirmation?.inputDigest !== undefined
+  const confirmation = !childReview && args.context.presentUserConfirmation?.inputDigest !== undefined
     ? args.context.presentUserConfirmation
     : review?.actionId === args.actionId ? {
       actionId: review.actionId, inputDigest: review.inputDigest, requestId: review.requestId,

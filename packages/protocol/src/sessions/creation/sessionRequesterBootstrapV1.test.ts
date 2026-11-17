@@ -15,7 +15,8 @@ import { sealExternalActionRequestV2, openExternalActionRequestV2 } from '../../
 import { WorkflowApprovedOperationParentV1Schema } from '../../actions/approvedOperationV1.js';
 import { DeploymentChildRpcV1Schema } from '../../deployments/deploymentChildRpcV1.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../../auth/apiTokenGrant.js';
-import { recordPresentUserApprovalV1 } from '../../actions/executor/approvalReview.js';
+import { admitPresentUserConfirmationV1, recordPresentUserApprovalV1 } from '../../actions/executor/approvalReview.js';
+import { createHostReviewedChildPortV1 } from '../../actions/executor/deploymentRoleChild.js';
 import { SessionPlacementSelectionV1Schema } from './sessionPlacementSelectionV1.js';
 
 const request = {
@@ -31,6 +32,49 @@ const request = {
 } as const;
 
 describe('requester bootstrap installation confidentiality', () => {
+  it.each(['confirmed', 'unconfirmed', 'automation', 'other-person', 'unknown-person', 'different-child'] as const)(
+    'carries exact native child confirmation only from its admitted present person (%s)', async scenario => {
+    const parentActionId = 'ui.voice_global.history.clear';
+    const childActionId = 'session.delete';
+    const childInput = { sessionId: 'active-history' };
+    const target = { kind: 'machine' as const, machineId: 'own-machine' };
+    const port = createHostReviewedChildPortV1({ actionId: parentActionId, input: {},
+      context: { actionCaller: { kind: 'host' }, surface: scenario === 'automation' ? 'agent' : 'ui',
+        authority: scenario === 'automation' ? 'account_automation' : 'present_user',
+        serverId: 'home', runtimeAccountId: 'requester', externalActionTarget: target,
+        actionRequestId: 'clear-history', presentUserApproval: recordPresentUserApprovalV1({
+          actionId: parentActionId, input: {}, requestId: 'clear-history',
+          ...(scenario === 'unknown-person' ? {} : {
+            decidingAccountId: scenario === 'other-person' ? 'another-person' : 'requester' }) }),
+        ...(scenario === 'confirmed' ? { presentUserConfirmation: {
+          actionId: parentActionId, requestId: 'clear-history', accountId: 'requester', serverId: 'home', target,
+          inputDigest: recordPresentUserApprovalV1({ actionId: parentActionId, input: {}, requestId: 'clear-history' }).inputDigest,
+        } } : {}) },
+      plan: { children: [{ action: childActionId, role: 'delete' }] },
+      ...(scenario === 'unconfirmed' ? {} : { reviewAdmitted: true as const,
+        policies: [{ action: childActionId, role: 'delete', surface: 'ui' as const, requiredActionIds: [] }] }),
+      execute: async (_input, context) => {
+        const invocation = bootstrap.projectExternalActionRequesterInvocationV1({
+          actionId: scenario === 'different-child' ? 'session.stop' : childActionId,
+          context: { ...context, actionRequestId: 'delete-history' },
+          account: { accountId: 'requester', serverId: 'home' }, target });
+        if (scenario === 'confirmed') expect(invocation).toMatchObject({
+          reviewedParent: { actionId: parentActionId, input: {} },
+          presentUserConfirmation: { actionId: childActionId, requestId: 'delete-history',
+            accountId: 'requester', serverId: 'home', target,
+            inputDigest: recordPresentUserApprovalV1({ actionId: childActionId, input: childInput,
+              requestId: 'delete-history' }).inputDigest } });
+        else expect(invocation?.presentUserConfirmation).toBeUndefined();
+        if (scenario === 'confirmed') {
+          const receiving = { ...context, actionRequestId: 'delete-history',
+            presentUserConfirmation: invocation?.presentUserConfirmation };
+          expect(admitPresentUserConfirmationV1(childActionId, { sessionId: 'another-history' }, receiving)).toBeNull();
+          expect(admitPresentUserConfirmationV1(childActionId, childInput, receiving)).not.toBeNull();
+        }
+        return { ok: true, result: null };
+      } });
+    expect(await port.invoke({ action: childActionId, role: 'delete', input: childInput })).toMatchObject({ ok: true });
+  });
   it.each(['plain', 'e2ee'] as const)('retains one private Session defaults selection under its exact requester admission (%s)', accountEncryptionMode => {
     const receiver = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
     const target = { kind: 'machine' as const, machineId: 'shared-machine' };

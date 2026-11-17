@@ -5954,6 +5954,18 @@ describe("external Action execution authorization", () => {
         try {
             const input = { sessionId: session.id };
             const root = await mint(app, fixture, 'session.delete', { ...fixture.envelope, input });
+            const snapshotPath = `/v2/sessions/${session.id}`;
+            const snapshot = await verifyExternalActionDomainExecutionRequest({ authorizationToken: root.token,
+                effectActionId: 'session.delete', encodedTarget: encodeExternalActionResolvedTargetV1(root.binding.target),
+                method: 'GET', path: snapshotPath,
+                sessionRouteTarget: { kind: 'session', sessionId: session.id, actionId: 'session.transcript.get' },
+                machineSignature: signExternalActionMachineRequestV1({ authorizationToken: root.token,
+                    effectActionId: 'session.delete', target: root.binding.target, installationId: fixture.machine.installationId!,
+                    requestId: root.binding.requestId, method: 'GET', path: snapshotPath, body: undefined,
+                    privateKey: fixture.keyPair.secretKey }),
+            });
+            if (scope === 'granted') expect(snapshot).not.toBeNull();
+            else expect(snapshot).toBeNull();
             const request = bindHomeDomainActionHttpRequestV1('session.delete', input);
             const result = await app.inject({ method: 'DELETE', url: request.path, payload: request.body,
                 headers: createExternalActionAuthorizedRequestHeaders({ authorization: root, effectActionId: root.binding.actionId,
@@ -12840,6 +12852,41 @@ describe("external Action execution authorization", () => {
             expect(delivered).toBeUndefined();
             expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
         } finally { await currentnessChannel.close(); get.mockRestore(); post.mockRestore(); await app.close(); }
+    });
+
+    it('lets native Account Delete prepare only its owned Session snapshot', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const { app } = await createApp(fixture.team.id);
+        try {
+            const outsider = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+            const [session, foreign] = await Promise.all([fixture.account.id, outsider.id].map(accountId => db.session.create({
+                data: { accountId, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' },
+            })));
+            const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+            const authorization = await mint(app, fixture, 'session.delete', { ...fixture.envelope,
+                requestId: crypto.randomUUID(), input: { sessionId: session.id } }, token);
+            const target = authorization.binding.target;
+            const verifyHttp = (method: string, path: string, body?: unknown) => verifyExternalActionDomainExecutionRequest({
+                authorizationToken: authorization.token, effectActionId: 'session.delete',
+                encodedTarget: encodeExternalActionResolvedTargetV1(target), method, path, body,
+                sessionRouteTarget: { kind: 'session', sessionId: path.split('/')[3]!.split('?')[0]!, actionId: 'session.transcript.get' },
+                machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: 'session.delete', target, installationId: fixture.machine.installationId!,
+                    requestId: authorization.binding.requestId, method, path, body, privateKey: fixture.keyPair.secretKey }),
+            });
+            expect(await verifyHttp('GET', `/v2/sessions/${session.id}`)).not.toBeNull();
+            expect(await verifyHttp('GET', `/v2/sessions/${session.id}?accessProjectionVersion=1`)).not.toBeNull();
+            expect(await verifyHttp('GET', `/v2/sessions/${session.id}?unexpected=1`)).toBeNull();
+            expect(await verifyHttp('GET', `/v2/sessions/${crypto.randomUUID()}`)).not.toBeNull();
+            expect(await verifyHttp('GET', `/v2/sessions/${foreign.id}`)).toBeNull();
+            expect(await verifyHttp('GET', `/v1/sessions/${session.id}/messages`)).toBeNull();
+            const ownerTuple = { mode: 'owner', metadataLayoutVersion: 1,
+                expectedOwnerMetadata: { t: 'plain', v: { v: 1 } }, ownerMetadata: { t: 'plain', v: { v: 1 } },
+                sharedMetadata: { ciphertext: '{}', expectedVersion: 0 }, agentState: { ciphertext: null, expectedVersion: 0 } };
+            expect(await verifyHttp('PATCH', `/v2/sessions/${session.id}`, ownerTuple)).toBeNull();
+            expect(await verifyHttp('POST', `/v2/sessions/${session.id}/unarchive`, {})).toBeNull();
+            expect(await verifyHttp('GET', '/v2/account/settings')).toBeNull();
+        } finally { await app.close(); }
     });
 
     it('lets an admitted Account Stop on a Session target retire its own control projection through the owner tuple', async () => {

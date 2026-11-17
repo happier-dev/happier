@@ -2310,7 +2310,7 @@ function isSessionStopRetirementHttpPurpose(verified: VerifiedSignedChildRequest
 async function isInstalledSessionLifecycleHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof): Promise<boolean> {
     const actionId = verified.effectActionId;
-    if (!isLedSubtreeSessionLifecycleActionId(actionId) && actionId !== 'session.open'
+    if (!isLedSubtreeSessionLifecycleActionId(actionId) && actionId !== 'session.open' && actionId !== 'session.delete'
         || actionId !== verified.binding.actionId && !verified.signedChildPurpose.sibling.archiveStop
         || !proof.sessionRouteTarget
         || verified.binding.target.kind !== 'machine' || verified.target.kind !== 'machine') return false;
@@ -2319,6 +2319,13 @@ async function isInstalledSessionLifecycleHttpPurpose(verified: VerifiedSignedCh
     const reads = proof.method.toUpperCase() === 'GET' && proof.body === undefined
         && (proof.path === path || proof.path === `${path}?accessProjectionVersion=1`);
     const origin = verified.binding.sessionActionOrigin;
+    if (actionId === 'session.delete') {
+        // Native deletion resolves its owned Session before Stop and directory cleanup.
+        // Absence reaches the existing idempotent Delete recovery; foreign content and tuple writes stay closed.
+        if (!reads) return false;
+        const session = await db.session.findUnique({ where: { id: sessionId }, select: { accountId: true } });
+        return session === null || session.accountId === verified.binding.accountId;
+    }
     if (actionId === 'session.open' || actionId === 'session.stop') {
         if (!reads && !isSessionOwnerMetadataHttpPatch(proof, sessionId)) return false;
         const session = await db.session.findUnique({ where: { id: sessionId }, select: { accountId: true } });

@@ -9,9 +9,10 @@ import { isManagedOpaquePresetReviewedChildRootActionV1 } from '../../machines/m
 import { projectDeploymentNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1,
   isDeploymentBackupConfigureNativeAdmissionV1, isDeploymentTelemetryNativeAdmissionV1, type DeploymentNativeAdmissionV1 } from '../../deployments/deploymentCandidatePublicationV1.js';
 import type { WorkflowApprovedOperationV1 } from '../approvedOperationV1.js';
-import type { ActionId } from '../actionIds.js';
+import { ActionIdSchema, type ActionId } from '../actionIds.js';
 import { getActionSpec } from '../actionSpecs.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
+import { isPresentUserHostInvocation } from '../invocationAuthority.js';
 import type { ExternalActionExecutionAuthorizationV1, ReviewedActionChildHttpProofV1 } from '../externalActionApi.js';
 import type { SocketRpcMachineAdmissionContextV1 } from '../../rpc/socket.js';
 import type { ApiTokenGrantV1 } from '../../auth/apiTokenGrant.js';
@@ -265,6 +266,24 @@ export function readHostAdmittedReviewedChildV1(context: ActionExecutorContext |
   if (!proof?.reviewedChild || (proof.operation?.[deploymentRoleChild] !== true && proof[deploymentRoleChild] !== true)
     || !readProof(context, proof.qualifiedActionId, proof.input)) return null;
   return { ...proof.reviewedChild, input: proof.input };
+}
+
+/** Project the issuer's admitted person review onto its exact native child intent. */
+export function readHostReviewedChildPresentUserApprovalV1(context: ActionExecutorContext, actionId: string):
+  ActionExecutorContext['presentUserApproval'] | undefined {
+  const proof = (context as ChildContext)[deploymentRoleChild];
+  const review = context.presentUserApproval;
+  if (!proof || proof.qualifiedActionId !== actionId || proof.operation?.[deploymentRoleChild] !== true
+    || !readProof(context, actionId, proof.input) || !isPresentUserHostInvocation(context)
+    || context.actionCaller?.kind !== 'host' || !context.actionRequestId || !context.runtimeAccountId
+    || !review || review.decidingAccountId !== context.runtimeAccountId
+    || review.actionId !== proof.operation.parent.actionId
+    || review.inputDigest !== computeActionInputApprovalDigestV1(review.actionId, proof.operation.parent.input)) return undefined;
+  const childId = ActionIdSchema.safeParse(actionId);
+  if (!childId.success) return undefined;
+  return { actionId: childId.data, requestId: context.actionRequestId,
+    inputDigest: computeActionInputApprovalDigestV1(childId.data, proof.input),
+    decidingAccountId: review.decidingAccountId };
 }
 
 /** Keep the complete signed projection at its owner; transports never copy its keys. */
