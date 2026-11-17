@@ -265,7 +265,11 @@ function createProviderBrokerCarrierDispatch(input: Readonly<{
         const statusCode = Number(status[1]);
         const headers: Record<string, string> = {};
         for (const line of lines) { const split = line.indexOf(':'); if (split > 0) headers[line.slice(0, split).toLowerCase()] = line.slice(split + 1).trim(); }
-        if (statusCode >= 400) {
+        // External clients consume the Provider's HTTP response verbatim. Only
+        // broker-authored refusals use the closed Happier mapper; resource Test
+        // keeps its existing closed result rather than exposing Provider bytes.
+        if (statusCode >= 400 && (binding.kind === 'resource_test'
+            || Object.hasOwn(headers, PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER))) {
             await relay.stream.close();
             const applicationCode = TeamCredentialBrokerApplicationFailureCodeV1Schema.safeParse(headers[PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER]);
             logger.warn({ module: 'provider-broker-carrier', stage: 'application_response',

@@ -282,7 +282,7 @@ export function registerExternalProviderApiRoutes(
                 }
                 for (const [name, value] of Object.entries(result.headers)) {
                     const normalized = name.toLowerCase();
-                    if (["content-type", "content-encoding", "x-request-id"].includes(normalized)) {
+                    if (["content-type", "content-encoding", "x-request-id", "retry-after"].includes(normalized)) {
                         reply.header(normalized, value);
                     }
                 }

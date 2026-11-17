@@ -12,7 +12,7 @@ import {
 import type { StoredCredentials } from '@/persistence';
 import { resolveSessionControlSocketConnectTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/socketRpc';
-import { isRpcMethodNotAvailableError } from '@happier-dev/protocol/rpcErrors';
+import { isRpcMethodNotAvailableError, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { resolveCanonicalMachineId } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 import axios from '@/api/client/credentialAxios';
 import { createHttpStatusError, isAuthenticationStatus, readHttpStatus } from '@/api/client/httpStatusError';
@@ -98,11 +98,11 @@ type MachineRpcExternalAction = Readonly<{
   deploymentArchiveOrigin?: DeploymentArchiveOriginForHost;
 }>;
 
-export class MachineRpcEncryptionModeMismatchError extends Error {
+export class MachineRpcEncryptionModeMismatchError extends RpcError {
   readonly code = 'machine_content_mode_mismatch' as const;
 
   constructor(readonly machineId: string) {
-    super(`Machine ${machineId} content mode does not match the verified caller's expectation`);
+    super(`Machine ${machineId} content mode does not match the verified caller's expectation`, 'machine_content_mode_mismatch');
     this.name = 'MachineRpcEncryptionModeMismatchError';
   }
 }
@@ -184,24 +184,24 @@ export type MachineRpcTargetNotCurrentReason =
   | 'archive_child_unavailable' | 'archive_origin_mismatch' | 'setup_manage_required'
   | 'private_target_mismatch';
 
-export class MachineRpcTargetNotCurrentError extends Error {
+export class MachineRpcTargetNotCurrentError extends RpcError {
   readonly code = 'machine_target_not_current' as const;
 
   constructor(readonly machineId: string, readonly reason: MachineRpcTargetNotCurrentReason,
     readonly derivationReason?: DeploymentChildDerivationRefusal) {
-    super(`Machine ${machineId} RPC target refused: ${reason}${derivationReason ? `/${derivationReason}` : ''}`);
+    super(`Machine ${machineId} RPC target refused: ${reason}${derivationReason ? `/${derivationReason}` : ''}`, 'machine_target_not_current');
     this.name = 'MachineRpcTargetNotCurrentError';
   }
 }
 
-export class MachineRpcMachineKindMismatchError extends Error {
+export class MachineRpcMachineKindMismatchError extends RpcError {
   readonly code = 'machine_kind_mismatch' as const;
 
   constructor(
     readonly machineId: string,
     readonly expectedKind: 'persistent' | 'ephemeral_session_runner',
   ) {
-    super(`Machine ${machineId} is not a ${expectedKind}`);
+    super(`Machine ${machineId} is not a ${expectedKind}`, 'machine_kind_mismatch');
     this.name = 'MachineRpcMachineKindMismatchError';
   }
 }

@@ -1074,7 +1074,7 @@ describe("external Provider broker ingress network vertical (SQLite)", () => {
             data: {
                 teamId: team.id,
                 custodianAccountId: custodian.id,
-                displayName: `Route shape provider ${label}`,
+                displayName: storedPlainPrivateLabel(`Route shape provider ${label}`),
                 disclosureCeiling: "brokered_only",
                 sessionUsePolicy: "personal_allowed",
                 sourceBindingJson: JSON.stringify({
@@ -1089,14 +1089,15 @@ describe("external Provider broker ingress network vertical (SQLite)", () => {
             },
         });
         const created = await inTx((tx) => createTeamCredentialExternalApiKeyInTx(tx, {
+            keyId: crypto.randomUUID(),
             authentication: TEST_AUTHENTICATION,
             actorAccountId: custodian.id,
             resourceId: resource.id,
             teamMembershipId: membership.id,
-            label: `Route shape ${label}`,
+            label: plainPrivateLabel(`Route shape ${label}`),
             expiresAt: null,
         }));
-        if (!created.ok) throw new Error("route-shape fixture requires a real external API key");
+        if (!created.ok) throw new Error(`route-shape fixture requires a real external API key: ${created.error}`);
         return {
             custodianAccountId: custodian.id,
             brokerMachineId: broker.id,
@@ -1210,6 +1211,32 @@ describe("external Provider broker ingress network vertical (SQLite)", () => {
             .toBe(JSON.stringify({ model: "gpt-test", stream: true }));
         expect(responseHeaders.authorization).toBeUndefined();
         expect(responseHeaders["content-type"]).toBe("text/event-stream");
+    }, 180_000);
+
+    it("preserves the upstream refusal and retry timing at public ingress", async () => {
+        const fixture = await createDirectBrokerIngressFixture("upstream-refusal");
+        const body = JSON.stringify({ error: { type: "rate_limit_error", code: "rate_limit_exceeded" } });
+        // Only the broker network response is substituted; key verification,
+        // Home admission and the public HTTP route remain real.
+        const dispatch: ExternalProviderBrokerDispatch = async () => ({
+            ok: true, statusCode: 429,
+            headers: { "content-type": "application/json", "Retry-After": "120",
+                authorization: "never-forward", "x-happier-provider-broker-error-code": "never-forward" },
+            body: (async function* () { yield Buffer.from(body); })(),
+        });
+        const app = Fastify();
+        for (const route of fixture.register({ dispatch })) app.route(route as unknown as RouteOptions);
+        try {
+            const response = await app.inject({ method: "GET", url: "/api/provider-broker/v1/models",
+                headers: { authorization: `Bearer ${fixture.token}` } });
+            expect(response.statusCode).toBe(429);
+            expect(response.body).toBe(body);
+            expect(response.headers["retry-after"]).toBe("120");
+            expect(response.headers.authorization).toBeUndefined();
+            expect(response.headers["x-happier-provider-broker-error-code"]).toBeUndefined();
+        } finally {
+            await app.close();
+        }
     }, 180_000);
 
     it("returns the stable public 429 code and Retry-After only for a deterministic exhaustion reset", async () => {

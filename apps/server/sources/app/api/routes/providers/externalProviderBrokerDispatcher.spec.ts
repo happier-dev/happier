@@ -166,6 +166,19 @@ describe('external Provider broker dispatcher', () => {
         );
     }
 
+    it.each([401, 403, 429, 503])('preserves upstream HTTP %i without relabelling it as a broker refusal', async status => {
+        const body = JSON.stringify({ error: { type: 'rate_limit_error', code: 'rate_limit_exceeded' } });
+        const { result, transportCloseCount } = await dispatchWithUpstreamResponse(new TextEncoder().encode(
+            `HTTP/1.1 ${status} Provider Refusal\r\nContent-Type: application/json\r\nRetry-After: 120\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+        ));
+        expect(result).toMatchObject({ ok: true, statusCode: status, headers: { 'retry-after': '120' } });
+        if (!result.ok) return;
+        const chunks: Uint8Array[] = [];
+        for await (const chunk of result.body) chunks.push(chunk);
+        expect(Buffer.concat(chunks).toString('utf8')).toBe(body);
+        expect(transportCloseCount()).toBe(1);
+    });
+
     it('settles a Home relay admission refusal without waiting for caller cancellation', async () => {
         const cancellation = new AbortController();
         let settled = false;

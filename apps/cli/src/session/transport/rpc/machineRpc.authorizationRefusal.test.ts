@@ -5,6 +5,7 @@ import axios from '@/api/client/credentialAxios';
 import { normalizeCliActionThrownError, normalizeActionExecuteResult, projectCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { callExactMachineRpc } from './machineRpc';
 
 afterEach(() => vi.restoreAllMocks());
@@ -73,3 +74,19 @@ it.each([[false, 401], [true, 500]] as const)(
     vi.spyOn(axios, 'get').mockRejectedValue(refusal);
     await expect(callMachine(signed)).rejects.toBe(refusal);
   });
+
+it.each([
+  { code: 'machine_kind_mismatch', options: { requiredMachineKind: 'ephemeral_session_runner' as const } },
+  { code: 'machine_content_mode_mismatch', options: { expectedEncryptionMode: 'e2ee' as const } },
+])('retains $code through the public Action failure projection', async ({ code, options }) => {
+  vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { machine: {
+    id: 'machine-target', kind: 'persistent', storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+  } } });
+  let refusal: unknown;
+  try {
+    await callExactMachineRpc({ credentials: { token: 'never-record-bearer', encryption: null },
+      machineId: 'machine-target', method: 'prepare-source-key', request: { sourceKey: 'never-send' }, ...options });
+  } catch (error) { refusal = error; }
+  expect(refusal).toMatchObject({ code });
+  expect(projectCliActionFailure(normalizeCliActionThrownError(refusal).failure)).toMatchObject({ code });
+});

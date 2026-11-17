@@ -2070,6 +2070,12 @@ those Provider codes, and Team launches retain the same cause. External Resource
 Test diagnostics retain the exact code in `failureDetail`; the external API's
 public error vocabulary remains separate. Matching development daemon and server
 readers must be reloaded to consume this diagnostic projection.
+For external API clients, vendor HTTP failures without a broker refusal header
+retain their HTTP status, response body and `Retry-After` value through the relay
+and public route. Broker-authored refusals still use
+`mapProviderBrokerApplicationFailure`; resource Test retains its closed failure
+projection. Forwarding a vendor response does not classify a failed resource Test
+as available or add an automatic retry.
 Its file-only
 `[ProviderBroker] Endpoint discovery refused` record retains a closed
 `discoveryCause`, `httpStatus` only when HTTP responded, `discoveryElapsedMs`,
