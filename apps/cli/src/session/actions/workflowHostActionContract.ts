@@ -20,22 +20,34 @@ export function createWorkflowHostActionContractReader(
 ): ReadHostActionContract {
   const serverHttpBaseUrl = params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
   return async (actionId, target) => {
-    const action = await readCompleteActionSpecV1({ actionId, ...(target.signal ? { signal: target.signal } : {}),
-      read: async input => {
-        const result = await readLocalActionSpec(input, target) ?? await dispatchOriginalAccountAction({
-          actionId: 'action.spec.get', input, requestId: randomUUID(), credentials: params.credentials,
-          serverHttpBaseUrl, serverIdentityId: params.serverIdentityId, authority: 'account_automation',
-          target: { kind: 'machine', machineId: target.machineId,
-            project: { machineId: target.machineId, directory: target.directory } },
-          ...(params.isCredentialCurrent ? { isCurrent: params.isCredentialCurrent } : {}),
-          ...(params.onRequesterSessionCredentialDisclosure
-            ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
-          ...(target.signal ? { signal: target.signal } : {}),
-        });
-        if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
-        return result.result;
-      },
-    });
-    return freezeWorkflowActionContractV1(action);
+    const disabledContract = new Error('action_disabled');
+    try {
+      const action = await readCompleteActionSpecV1({ actionId, ...(target.signal ? { signal: target.signal } : {}),
+        read: async input => {
+          const result = await readLocalActionSpec(input, target) ?? await dispatchOriginalAccountAction({
+            actionId: 'action.spec.get', input, requestId: randomUUID(), credentials: params.credentials,
+            serverHttpBaseUrl, serverIdentityId: params.serverIdentityId, authority: 'account_automation',
+            target: { kind: 'machine', machineId: target.machineId,
+              project: { machineId: target.machineId, directory: target.directory } },
+            ...(params.isCredentialCurrent ? { isCurrent: params.isCredentialCurrent } : {}),
+            ...(params.onRequesterSessionCredentialDisclosure
+              ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
+            ...(target.signal ? { signal: target.signal } : {}),
+          });
+          if (!result.ok) {
+            // The host already decided availability; absence is the materializer's
+            // typed unavailable contract, while all other failures still propagate.
+            if (result.errorCode === 'action_disabled') throw disabledContract;
+            throw Object.assign(new Error(result.error), { code: result.errorCode });
+          }
+          return result.result;
+        },
+      });
+      return freezeWorkflowActionContractV1(action);
+    } catch (error) {
+      target.signal?.throwIfAborted();
+      if (error === disabledContract) return null;
+      throw error;
+    }
   };
 }

@@ -1,6 +1,3 @@
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
-import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
-import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,6 +10,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+import { RoleArtifactV1Schema } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
 import { callSocketRpc } from '@happier-dev/sync-client';
 import { Server } from 'socket.io';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
@@ -75,8 +73,7 @@ afterEach(async () => {
 
 const runId = '11111111-1111-4111-8111-111111111111';
 const definitionId = '22222222-2222-4222-8222-222222222222';
-const waitDefinition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {
-    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"action.spec.get": Object.keys(ActionSurfaceSchema.shape), "workflow.run.start": Object.keys(ActionSurfaceSchema.shape), "machines.setup.apply": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),}, blocks: [{ kind: 'wait', id: 'continue',
+const waitDefinition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'wait', id: 'continue',
     document: { text: 'Continue when ready', references: [], attachments: [] } }] };
 const semanticInput = {
     runId,
@@ -180,13 +177,12 @@ async function createBoundaryHarness(holdRetainedSource?: () => Promise<void>, s
                 content: { t: 'plain', v: emptyPromptLibraryRecordV1(key) } })),
         } }; }
         if (path === '/v1/account/entity-rows/provider-connections') return { status: 200, data: { status: 'absent' } };
+        if (path === '/v1/account/entity-rows/profiles/transfer') return { status: 200, data: { status: 'absent' } };
         const historyCapture = emptyAccountSettingsHistoryCaptureResponse(path);
         if (historyCapture) return historyCapture;
         if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
         if (path === '/v1/artifacts') {
-            // The real role-source owner inventories saved roles even when the
-            // Workflow selects an Agent directly. This Account has no saved
-            // Artifact documents; the actual HTTP list shape is an array.
+            // Explicit inventory consumers receive this Account's empty list.
             const authorization = Object.entries(config?.headers ?? {}).find(([name]) => name.toLowerCase() === 'authorization')?.[1];
             boundaryObservations.push(`Artifact list originMatches=${target.origin === serverUrl} limit=${target.searchParams.get('limit')} authorizationMatches=${authorization === `Bearer ${token}`}`);
             expect(target.origin).toBe(serverUrl);
@@ -340,7 +336,7 @@ describe('UI Workflow targeted Action RPC boundary', () => {
             vi.spyOn(sockets, 'in').mockReturnValue({ fetchSockets,
                 timeout: () => ({ fetchSockets }) } as unknown as ReturnType<Server['in']>);
             const execute = createUiWorkflowActionTransport({
-                account: { serverId: 'server-1', accountId: 'account-1', assertCurrent: () => {} },
+                account: { serverId: 'server-1', accountId: 'account-1', assertCurrent: () => {}, assertResultCurrent: () => {} },
                 resolveFallbackMachineId: () => null,
                 transport: async request => callSocketRpc({
                     socket: { connected: true, emit: () => {}, emitWithAck: async (_event, payload) => {
@@ -413,7 +409,7 @@ describe('UI Workflow targeted Action RPC boundary', () => {
             target: { kind: 'machine', machineId: boundary.project.machineId, project: boundary.project },
         });
         if (!available) {
-            expect(WorkflowActionFailureV1Schema.parse(response)).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+            expect(WorkflowActionFailureV1Schema.parse(response), JSON.stringify({ response, observations: boundary.boundaryObservations })).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
             expect(boundary.readCommittedEnvelope()).toBeUndefined();
             expect(http.post.mock.calls.some(([url]) => new URL(String(url)).pathname === '/v1/actions/action.spec.get')).toBe(false);
             expect(terminal).not.toHaveBeenCalled();
@@ -435,7 +431,7 @@ describe('UI Workflow targeted Action RPC boundary', () => {
         expect(machineRpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.CAPABILITIES_DETECT)).toHaveLength(0);
     });
 
-    it.each([true, false])('reads an exact remote Setup catalog through Home and preserves availability (%s)', async available => {
+    it.each([true, false, 'not_authenticated'] as const)('reads an exact remote Setup catalog through Home and preserves availability (%s)', async available => {
         const definition = buildMachineSetupWorkflow(MachineSetupApplyInputV1Schema.parse({
             homeId: 'server-1', machineId: 'machine-1', targets: [{ homeId: 'server-1', machineId: 'machine-1', desiredRevision: 0,
                 sources: [{ kind: 'direct', setup: { items: [], scripts: [{ body: 'printf remote-setup-fixture' }] } }], recipePlans: [] }],
@@ -459,9 +455,10 @@ describe('UI Workflow targeted Action RPC boundary', () => {
             expect(args[2].headers.Authorization).toBe(`Bearer ${boundary.credentials.token}`);
             catalogTargets.push(request.target);
             return { status: 200, data: { v: 1, actionId: 'action.spec.get', requestId: request.requestId,
-                execution: available ? await nativeCatalog.execute('action.spec.get', request.input, {
+                execution: available === true ? await nativeCatalog.execute('action.spec.get', request.input, {
                     surface: 'cli', authority: 'account_automation',
-                }) : { ok: false, errorCode: 'action_disabled', error: 'action_disabled' },
+                }) : { ok: false, errorCode: available === false ? 'action_disabled' : available,
+                    error: available === false ? 'action_disabled' : available },
             } };
         });
         const terminal = vi.spyOn(daemonControlClient, 'requestDaemonSignedRootActionExecution')
@@ -473,7 +470,7 @@ describe('UI Workflow targeted Action RPC boundary', () => {
         expect(terminal, JSON.stringify({ response, observations: boundary.boundaryObservations })).not.toHaveBeenCalled();
         expect(catalogTargets.length, JSON.stringify({ response, observations: boundary.boundaryObservations })).toBeGreaterThan(0);
         expect(catalogTargets).toEqual(catalogTargets.map(() => ({ kind: 'machine', machineId: boundary.project.machineId, project: boundary.project })));
-        if (available) {
+        if (available === true) {
             expect(response).toEqual({ run, admission: 'created' });
             const accepted = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
                 envelope: parseWorkflowStoredContentEnvelopeV1(boundary.readCommittedEnvelope()!)!,
@@ -481,7 +478,9 @@ describe('UI Workflow targeted Action RPC boundary', () => {
             expect(accepted).toMatchObject({ kind: 'available', content: { materializedLeaves: [{ kind: 'action',
                 actionId: 'machines.setup.apply', actionContract: { inputSchema: expect.any(Object) } }] } });
         } else {
-            expect(WorkflowActionFailureV1Schema.parse(response)).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+            expect(WorkflowActionFailureV1Schema.parse(response), JSON.stringify({ response, observations: boundary.boundaryObservations }))
+                .toMatchObject({ ok: false, errorCode: available === false ? 'target_unavailable' : available });
+            if (available === 'not_authenticated') expect(response).toMatchObject({ failureCause: { errorCode: 'not_authenticated' } });
             expect(boundary.readCommittedEnvelope()).toBeUndefined();
         }
     });
@@ -573,7 +572,7 @@ describe('UI Workflow targeted Action RPC boundary', () => {
                 timeout: () => ({ fetchSockets }), fetchSockets,
             } as unknown as ReturnType<Server['in']>);
             const action = createUiWorkflowActionTransport({
-                account: { serverId: 'server-1', accountId: 'account-1', assertCurrent: () => {} },
+                account: { serverId: 'server-1', accountId: 'account-1', assertCurrent: () => {}, assertResultCurrent: () => {} },
                 resolveFallbackMachineId: () => null,
                 transport: async (request) => await callSocketRpc({
                     socket: { connected: true, emit: () => {}, emitWithAck: async (_event, payload) => {
@@ -647,16 +646,16 @@ describe('UI Workflow targeted Action RPC boundary', () => {
             'happier.agent.claude/claude-subscription': { source: 'connected' as const, selection: 'profile' as const,
                 profileId: '00ae5eea-6286-48bc-b82a-30a5f8492864' },
             'happier.agent.claude/anthropic': { source: 'native' as const },
-        } }, engine: { agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        } }, agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
             modelSelection: { v: 1 as const, ref: { agentTargetKey: 'agent:happier.agent.claude/claude',
-                providerConnectionId: null, modelId: 'claude-haiku-4-5' }, updatedAt: 1791577000000 }, effort: 'low' } };
-        const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: { agentTarget: selection.engine.agentTarget },
+                providerConnectionId: null, modelId: 'claude-haiku-4-5' }, updatedAt: 1791577000000 }, sessionConfigOptionOverrides: { v: 1 as const, updatedAt: 0, overrides: { reasoning_effort: { value: 'low', updatedAt: 0 } } } };
+        const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: { agentTarget: selection.agentTarget },
             blocks: [{ kind: 'step', id: 'reply', name: 'QA-FIN20 Reply', document: {
                 text: 'Reply exactly QA_FIN20_AGENT_READY. Do not use tools, edit files, or run commands.', references: [], attachments: [] },
                 execution: selection, input: [], result: { kind: 'text' } }] };
         const boundary = await createBoundaryHarness(undefined, definition);
         const { createUiWorkflowActionTransport } = await loadWorkflowActionTransportForTests();
-        const action = createUiWorkflowActionTransport({ account: { serverId: 'server-1', accountId: 'account-1', assertCurrent: () => {} },
+        const action = createUiWorkflowActionTransport({ account: { serverId: 'server-1', accountId: 'account-1', assertCurrent: () => {}, assertResultCurrent: () => {} },
             resolveFallbackMachineId: () => null,
             transport: async ({ payload, target }) => boundary.handlers.get('workflow.run.start')!(createTargetedActionRpcRequestV1(payload, target)),
         });
@@ -672,7 +671,7 @@ describe('UI Workflow targeted Action RPC boundary', () => {
             envelope: parseWorkflowStoredContentEnvelopeV1(boundary.readCommittedEnvelope()!)!,
             binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId } });
         expect(accepted).toMatchObject({ kind: 'available', content: { materializedLeaves: [{ kind: 'step', selection: {
-            agentTarget: selection.engine.agentTarget, modelSelection: selection.engine.modelSelection,
+            agentTarget: selection.agentTarget, modelSelection: selection.modelSelection,
             connectedServices: selection.connectedServices,
             sessionConfigOptionOverrides: { overrides: { reasoning_effort: { value: 'low' } } },
         } }] } });
@@ -682,7 +681,23 @@ describe('UI Workflow targeted Action RPC boundary', () => {
         const sourceIssued = createDeferred<void>();
         const source = createDeferred<void>();
         let sourceReleased = false;
-        const boundary = await createBoundaryHarness(async () => { sourceIssued.resolve(); await source.promise; });
+        let sourceHeld = false;
+        const boundary = await createBoundaryHarness(async () => {
+            // Hold this maintenance request, while independent admission reads
+            // retain the same immediately available HTTP boundary.
+            if (sourceHeld) return;
+            sourceHeld = true;
+            sourceIssued.resolve();
+            await source.promise;
+        });
+        // Wait-only admission no longer demands unrelated Prompt data. Start the
+        // real refresh independently so this case exercises maintenance already
+        // in flight, rather than relying on that obsolete eager dependency.
+        const maintenance = runWithServerHttpBaseUrl(boundary.serverUrl,
+            () => refreshActivePromptLibraryCatalog({ credentials: boundary.credentials }));
+        await Promise.race([sourceIssued.promise, maintenance.then(result => {
+            throw new Error(JSON.stringify({ result, observations: boundary.boundaryObservations }));
+        })]);
         const startedAt = performance.now();
         const attempt = boundary.handlers.get('workflow.run.start')!({
             v: 1, kind: 'targeted_action_rpc',
@@ -690,7 +705,6 @@ describe('UI Workflow targeted Action RPC boundary', () => {
             target: { kind: 'machine', machineId: boundary.project.machineId, project: boundary.project },
         });
         try {
-            await sourceIssued.promise;
             expect(await attempt, JSON.stringify(boundary.boundaryObservations)).toEqual({ run, admission: 'created' });
             expect(sourceReleased).toBe(false);
             if (process.env.FF_ADMIT_MEASURE_ADMISSION === '1') console.info('FF-LATENCY admission timing', JSON.stringify({
@@ -700,25 +714,41 @@ describe('UI Workflow targeted Action RPC boundary', () => {
             sourceReleased = true;
             source.resolve();
             await attempt;
-            await runWithServerHttpBaseUrl(boundary.serverUrl, () => refreshActivePromptLibraryCatalog({ credentials: boundary.credentials }));
+            await maintenance;
         }
     });
 
-    it('refuses admission if its Account lifetime retires while reading the role Artifact inventory', async () => {
-        const boundary = await createBoundaryHarness();
+    it.each([false, true])('uses the selected Role Artifact in its captured Account lifetime (retired=%s)', async retired => {
+        const roleId = 'selected-workflow-role';
+        const role = RoleArtifactV1Schema.parse({ name: 'Selected', instructions: 'Reply READY', runsAs: { kind: 'session' },
+            engine: { agentTargetKey: 'agent:happier.agent.test/test' }, workspaceWrites: 'deny', enabled: true, secondOpinion: 'off' });
+        const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'step', id: 'work',
+            execution: { roleId }, document: { text: 'Reply READY', references: [], attachments: [] }, input: [], result: { kind: 'text' } }] };
+        const boundary = await createBoundaryHarness(undefined, definition);
         const readHttp = http.get.getMockImplementation()!;
         http.get.mockImplementation(async (...args: Parameters<typeof readHttp>) => {
-            const response = await readHttp(...args);
-            if (new URL(String(args[0])).pathname === '/v1/artifacts') clearActiveAccountSettingsSnapshot();
-            return response;
+            if (new URL(String(args[0])).pathname !== `/v1/artifacts/${roleId}`) return await readHttp(...args);
+            if (retired) clearActiveAccountSettingsSnapshot();
+            return { status: 200, data: { id: roleId, ownerAccountId: 'account-1', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
+                header: encodePlainArtifactStoredContent({ kind: 'role.v1', name: role.name }),
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify(role) }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } };
         });
         const response = await boundary.handlers.get('workflow.run.start')!({
             v: 1, kind: 'targeted_action_rpc',
             input: { runId, source: { kind: 'saved', definitionId, revision: { headerVersion: 1, bodyVersion: 1 } } },
             target: { kind: 'machine', machineId: boundary.project.machineId, project: boundary.project },
         });
-        expect(response).toMatchObject({ ok: false });
-        expect(boundary.readCommittedEnvelope()).toBeUndefined();
+        if (retired) {
+            expect(response).toMatchObject({ ok: false, failureCause: { errorCode: 'source_unavailable' } });
+            expect(boundary.readCommittedEnvelope()).toBeUndefined();
+        } else {
+            expect(response, JSON.stringify(boundary.boundaryObservations)).toEqual({ run, admission: 'created' });
+            const accepted = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+                envelope: parseWorkflowStoredContentEnvelopeV1(boundary.readCommittedEnvelope()!)!,
+                binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId } });
+            expect(accepted).toMatchObject({ kind: 'available', content: { materializedLeaves: [{ role: { roleId, instructions: role.instructions } }] } });
+        }
     });
 
     it('admits and response-loss rejoins with the selected project kept out of semantic input', async () => {
@@ -733,6 +763,7 @@ describe('UI Workflow targeted Action RPC boundary', () => {
                 serverId: 'server-1',
                 accountId: 'account-1',
                 assertCurrent: () => undefined,
+                assertResultCurrent: () => undefined,
             },
             resolveFallbackMachineId: () => null,
             transport: async ({ payload, target }) => {
