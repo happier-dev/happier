@@ -65,6 +65,19 @@ export async function connectUiActionClient(params: Readonly<{ serverUrl: string
             execute,
             // The composed fixture supplies the designed user's explicit Confirm.
             executeConfirmed: execute.confirmed,
+            async executeVoiceSpawn(input: unknown, effectId: string) {
+                const [{ createVoiceToolHandlers }, { VOICE_ACTION_EXECUTE_TOOL_NAME }, voiceSession] = await Promise.all([
+                    import('@/voice/tools/handlers'), import('@/voice/tools/voiceActionExecution'),
+                    import('@/voice/session/voiceSessionStore'),
+                ]);
+                voiceSession.setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: effectId,
+                    status: 'connected', mode: 'listening', canStop: true });
+                try {
+                    const tools = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: serverId });
+                    return await tools[VOICE_ACTION_EXECUTE_TOOL_NAME]!({ actionId: 'session.spawn_new', input },
+                        { serverId, effectId, turnOrigin: 'person' });
+                } finally { voiceSession.resetVoiceSessionStoreForTests(); }
+            },
             isAccountReady: () => Boolean(getActiveServerAccountScope()),
             isMachineActive: (machineId: string) => {
                 const machine = storage.getState().machines[machineId];

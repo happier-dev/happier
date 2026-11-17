@@ -18,6 +18,7 @@ export function connectUiActionClient(params: Readonly<{
     serverId: string;
     execute(actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult>;
     executeConfirmed(actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult>;
+    executeVoiceSpawn(input: unknown, effectId: string): Promise<string>;
     isAccountReady(): boolean;
     isMachineActive(machineId: string): boolean;
     close(): Promise<void>;
