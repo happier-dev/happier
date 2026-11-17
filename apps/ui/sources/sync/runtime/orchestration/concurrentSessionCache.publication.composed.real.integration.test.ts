@@ -15,8 +15,10 @@ import { machinesRoutes } from '../../../../../server/sources/app/api/routes/mac
 import { sessionPendingRoutes } from '../../../../../server/sources/app/api/routes/session/pendingRoutes';
 import { changesRoutes } from '../../../../../server/sources/app/api/routes/changes/changesRoutes';
 import { registerSessionListingRoutes } from '../../../../../server/sources/app/api/routes/session/registerSessionListingRoutes';
+import { registerSessionReadBatchRoute } from '../../../../../server/sources/app/api/routes/session/registerSessionReadBatchRoute';
 import { startSocket } from '../../../../../server/sources/app/api/socket';
-import { removeMachineAccessGrantInTx, setMachineAccessGrantInTx } from '../../../../../server/sources/app/machines/machineAccess';
+import { removeMachineAccessGrantInTx } from '../../../../../server/sources/app/machines/machineAccess';
+import { setEligibleMachineAccessGrantInTx } from '../../../../../server/sources/testkit/machineAccessGrant.testkit';
 import { db } from '../../../../../server/sources/storage/db';
 import { inTx } from '../../../../../server/sources/storage/inTx';
 import { createSessionMachineAccessKeyInTx } from '../../../../../server/sources/app/accessKeys/sessionMachineAccessKeyMutations';
@@ -25,6 +27,7 @@ import { createPresentUserSessionAccessAuthentication } from '../../../../../ser
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { registerSessionRealtimeTranscriptConsumer } from '@/sync/runtime/sessionRealtimeTranscriptConsumers';
 import { resolvePendingActivationBanner } from '@/components/sessions/pending/resolvePendingActivationBanner';
+import { SessionReadBatchResponseV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -55,13 +58,18 @@ it.each(['secondary', 'focused'] as const)('delivers real grant and activation-f
         admittedActionRequestId: `create-managed-${mode}`, admittedInput: {}, allocation: 'bound', creationState: 'active',
         launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Retained', choices: {} },
         resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
-        enrolledMachineId: machine.id, desired: 'stop', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+        // Exercise manual power permission. Owner-enabled accepted-input wake permits Use.
+        enrolledMachineId: machine.id, desired: 'stop', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
         observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' } } });
-    const grant = (level: 'view' | 'admin', machineId = machine.id) => inTx(tx => setMachineAccessGrantInTx(tx, {
-        actorAccountId: custodian.id, machineId, principal: { kind: 'account', accountId: requester.id }, level,
-    }));
-    await grant('view');
-    await grant('view', controller.id);
+    const grant = async (level: 'view' | 'admin', machineId = machine.id) => {
+        const result = await inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
+            actorAccountId: custodian.id, machineId, principal: { kind: 'account', accountId: requester.id }, level,
+        }));
+        expect(result).toMatchObject({ kind: 'saved' });
+        return result;
+    };
+    expect(await grant('view')).toMatchObject({ kind: 'saved' });
+    expect(await grant('view', controller.id)).toMatchObject({ kind: 'saved' });
     const requestedAt = 1_000;
     const session = await db.session.create({ data: { accountId: requester.id, tag: 'publication-session', metadata: '{}',
         encryptionMode: 'plain', active: false, lastActiveAt: new Date(0) } });
@@ -77,6 +85,7 @@ it.each(['secondary', 'focused'] as const)('delivers real grant and activation-f
     sessionPendingRoutes(app);
     changesRoutes(app);
     registerSessionListingRoutes(app);
+    registerSessionReadBatchRoute(app);
     if (mode === 'focused') startSocket(app);
     await app.ready();
     const activeReads = new Set<Promise<Response>>();
@@ -100,10 +109,13 @@ it.each(['secondary', 'focused'] as const)('delivers real grant and activation-f
     h.setResponder(async (input, init) => {
         const url = new URL(String(input));
         const path = url.pathname;
-        if (path === `/v2/sessions/${session.id}` && holdNextSessionRead) {
+        if (path === '/v2/sessions/read-batch' && holdNextSessionRead) {
             holdNextSessionRead = false;
             const response = await read(path, init);
-            expect((await response.clone().json()).session.pendingActivationAuthorization.status).toBe('waiting');
+            const batch = SessionReadBatchResponseV1Schema.parse(await response.clone().json());
+            expect(batch.results.find(row => row.sessionId === session.id)?.detail).toMatchObject({
+                status: 200, body: { session: { pendingActivationAuthorization: { status: 'waiting' } } },
+            });
             await new Promise<void>(resolve => { releaseOlderSessionRead = resolve; });
             return response;
         }
@@ -115,7 +127,7 @@ it.each(['secondary', 'focused'] as const)('delivers real grant and activation-f
             await gate;
             return response;
         }
-        return path === '/v1/machines' || path.startsWith('/v2/sessions') || path === '/v2/changes' || path === '/v2/cursor'
+        return path === '/v1/machines' || path === '/v1/machines/read-batch' || path.startsWith('/v2/sessions') || path === '/v2/changes' || path === '/v2/cursor'
             ? read(`${path}${url.search}`, init) : null;
     });
     h.setSessions(home, [h.session({ id: session.id })]);
@@ -177,9 +189,11 @@ it.each(['secondary', 'focused'] as const)('delivers real grant and activation-f
         await grant('admin', controller.id);
         await vi.waitFor(() => expect(pending()[0]?.pendingActivationHoldReason).toBe('resume_not_requested'));
         await grant('view');
-        // Guest Use still admits input; only the controller requires Manage
-        // for power. The guest publication must preserve that owner decision.
-        await vi.waitFor(() => expect(machines().find(row => row.id === machine.id)?.access?.role).toBe('use'));
+        expect(await db.machineGrant.findUnique({ where: { machineId_accountId: { machineId: machine.id, accountId: requester.id },
+            principalKind: 'account' }, select: { accessLevel: true } })).toEqual({ accessLevel: 'view' });
+        // A direct Use grant does not withdraw Manage inherited from the controller.
+        // The guest publication must preserve the canonical role-graph decision.
+        await vi.waitFor(() => expect(machines().find(row => row.id === machine.id)?.access?.role).toBe('manage'));
         expect(pending()[0]?.pendingActivationHoldReason).toBe('resume_not_requested');
         await grant('admin');
         await vi.waitFor(() => expect(pending()[0]?.pendingActivationHoldReason).toBe('resume_not_requested'));
@@ -215,6 +229,9 @@ it.each(['secondary', 'focused'] as const)('delivers real grant and activation-f
             expect(h.storage.getState().sessions[session.id]!.pendingActivationAuthorization!.requestedAt).toBeGreaterThan(requestedAt);
         }
         expect((await db.session.findUniqueOrThrow({ where: { id: session.id } })).pendingCount).toBe(1);
+        // Keep the controller visible through Use while removing its inherited Manage.
+        await grant('view', controller.id);
+        await vi.waitFor(() => expect(machines().find(row => row.id === controller.id)?.access?.role).toBe('use'));
         // Real grant loss publishes AccountChange, then the access-filtered
         // complete census withdraws the unrevoked Machine from either Home.
         expect(machines().some(row => row.id === machine.id)).toBe(true);
