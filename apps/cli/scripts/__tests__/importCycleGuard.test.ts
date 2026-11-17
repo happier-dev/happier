@@ -59,6 +59,16 @@ function withFixtureProject<T>(files: Readonly<Record<string, string>>, run: (pa
 }
 
 describe('importCycleGuard analyzer', () => {
+  it('detects eager schema reads in a module-scope descriptor map', () => {
+    withFixtureProject({
+      'a.ts': "import { schema } from './b.js'; function descriptor() { return { schema }; } export const catalog = Object.freeze(['machine'].map(() => descriptor()));",
+      'b.ts': "import { catalog } from './a.js'; export const schema = () => catalog;",
+    }, ({ sourceRoot, tsconfigPath }) => {
+      expect(analyzeRuntimeImportCycles({ sourceRoot, tsconfigPath, evaluationOnly: true }).cycles)
+        .toEqual([expect.objectContaining({ read: { from: 'a.ts', to: 'b.ts', binding: 'schema' } })]);
+    });
+  });
+
   it('ignores deferred cycles but catches eager reads through a deferred return edge', () => {
     withFixtureProject({
       'a.ts': "import { b } from './b.js'; export const a = () => b;",

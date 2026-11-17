@@ -293,7 +293,8 @@ type NativeDescriptor = WidgetInputDescriptorV1 & Readonly<{
     icon: (typeof nativeMetadata)[BuiltinWidgetIdV1]['icon'];
     key: string; target: 'session' | 'app' | 'project'; homeDefault: 'available'; availability: 'available';
 }>;
-export const BUILTIN_WIDGET_DESCRIPTORS_V1 = Object.freeze([...SESSION_COMPANION_BUILTIN_ITEM_IDS.map((id): NativeDescriptor => Object.freeze({
+// Build only after module evaluation: machine contracts can be reached through cyclic entry graphs.
+export const BUILTIN_WIDGET_DESCRIPTORS_V1 = lazyDefinition(() => Object.freeze([...SESSION_COMPANION_BUILTIN_ITEM_IDS.map((id): NativeDescriptor => Object.freeze({
     ...sessionInputs, ...nativeMetadata[id], definition: { kind: 'builtin' as const, id },
     sizeDeclaration: nativeSizeDeclaration,
     key: `builtin:${id}`, target: readWidgetInputTargetV1(sessionInputs).kind === 'session' ? 'session' : 'app', homeDefault: 'available' as const, availability: 'available' as const,
@@ -316,7 +317,7 @@ export const BUILTIN_WIDGET_DESCRIPTORS_V1 = Object.freeze([...SESSION_COMPANION
     // An App read with no inputs, at the four sizes the lab composes.
     sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full'], defaultSize: 'medium' } satisfies WidgetSizeDeclarationV1,
     key: `builtin:${id}`, target: 'app', homeDefault: 'available', availability: 'available',
-}))]);
+}))]));
 export type BuiltinWidgetDescriptorV1 = NativeDescriptor;
 
 export function readBuiltinWidgetDescriptorV1(definition: WidgetDefinitionRefV1): BuiltinWidgetDescriptorV1 | null {

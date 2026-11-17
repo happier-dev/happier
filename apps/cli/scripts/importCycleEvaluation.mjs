@@ -67,7 +67,13 @@ export function collectImportBindingReads(sourceFile) {
       while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
       const immediate = (ts.isArrowFunction(node) || ts.isFunctionExpression(node))
         && ts.isCallExpression(expression.parent) && expression.parent.expression === expression;
-      visitFunction(node, eager && immediate, shadowed);
+      // Array projections run their callbacks during a module-scope catalog build.
+      const callback = ts.isCallExpression(expression.parent)
+        && ts.isPropertyAccessExpression(expression.parent.expression)
+        && ['map', 'flatMap', 'forEach', 'filter', 'reduce', 'reduceRight', 'some', 'every', 'find', 'findIndex', 'sort', 'from']
+          .includes(expression.parent.expression.name.text)
+        && expression.parent.arguments.includes(expression);
+      visitFunction(node, eager && (immediate || callback), shadowed);
       return;
     }
     if (ts.isPropertyDeclaration(node)) {

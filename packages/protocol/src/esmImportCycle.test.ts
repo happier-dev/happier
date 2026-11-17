@@ -26,6 +26,52 @@ async function importInFreshProcess(relativeEntryPath: string, afterImport = '',
 }
 
 describe('protocol ESM import safety', () => {
+  it('loads every public Protocol subpath in fresh processes with different entry orders', async () => {
+    const root = path.join(__dirname, '..');
+    const matcher = pathToFileURL(path.join(__dirname, '../../cli-common/packageExportMatch.cjs')).href;
+    for (const order of ['ascending', 'descending', 'middle-first']) {
+      await importInFreshProcess('zodRuntimePolicy.ts', `
+        const { readdirSync, readFileSync } = await import('node:fs');
+        const { pathToFileURL } = await import('node:url');
+        const { default: { matchPackageExport, substitutePackageExportTarget } } = await import(${JSON.stringify(matcher)});
+        const root = ${JSON.stringify(root)};
+        const exports = JSON.parse(readFileSync(root + '/package.json', 'utf8')).exports;
+        const subpaths = new Set(Object.keys(exports).filter(key => !key.includes('*')));
+        for (const file of readdirSync(root + '/src', { recursive: true })) {
+          if (file.endsWith('.ts') && !file.endsWith('.d.ts')) subpaths.add('./' + file.replaceAll('\\\\', '/').slice(0, -3));
+        }
+        let entries = [...subpaths].sort().flatMap(subpath => {
+          const match = matchPackageExport(exports, subpath);
+          const target = match?.declaration?.['happier-source'];
+          return typeof target === 'string' ? [substitutePackageExportTarget(target, match.replacement)] : [];
+        });
+        if (${JSON.stringify(order)} === 'descending') entries.reverse();
+        if (${JSON.stringify(order)} === 'middle-first') {
+          const middle = Math.floor(entries.length / 2);
+          entries = [...entries.slice(middle), ...entries.slice(0, middle)];
+        }
+        for (const entry of entries) {
+          try { await import(pathToFileURL(root + '/' + entry).href); }
+          catch (error) { throw new Error(${JSON.stringify(order)} + ' entry ' + entry, { cause: error }); }
+        }
+        if (!entries.length) throw new Error('No public Protocol entries discovered');
+      `, true);
+    }
+  }, 3 * MODULE_IMPORT_TIMEOUT_MS + 5_000);
+
+  it('reads machine widget descriptors with machine access first in a fresh native process', async () => {
+    const widgets = pathToFileURL(path.join(__dirname, 'widgets/builtinWidgetDescriptorV1.ts')).href;
+    await importInFreshProcess('machines/machineAccessV1.ts', `
+      const { strict: assert } = await import('node:assert');
+      const { BUILTIN_WIDGET_DESCRIPTORS_V1, readBuiltinWidgetDescriptorV1 } = await import(${JSON.stringify(widgets)});
+      const descriptor = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: 'machine_vitals' });
+      assert.ok(descriptor);
+      assert.equal(BUILTIN_WIDGET_DESCRIPTORS_V1.find(row => row.definition.id === 'machine_vitals'), descriptor);
+      assert.equal(readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: 'machine_vitals' }), descriptor);
+      assert.deepEqual(Object.keys(descriptor.inputSchema.properties.machine.properties).sort(), ['machineId', 'serverId']);
+    `, true);
+  }, MODULE_IMPORT_TIMEOUT_MS + 5_000);
+
   it('parses strict public-link creation with the public-share owner first under the native source runtime', async () => {
     const artifacts = pathToFileURL(path.join(__dirname, 'artifacts/artifactActionsV1.ts')).href;
     await importInFreshProcess('sharing/storedContentPublicShareV1.ts', `
