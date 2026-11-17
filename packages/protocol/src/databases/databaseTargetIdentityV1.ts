@@ -2,6 +2,7 @@ import { z } from 'zod/mini';
 import { WorkspaceAddressV2Schema } from '../workspaces/workspaceRefV1.js';
 import { DeploymentEnvironmentRefV1Schema } from '../deployments/deploymentEnvironmentRefV1.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { lazyZodSchema } from '../lazyZodSchema.js';
 
 /** Structural database bindings shared with Automation subjects. Business
  * operations/results remain owned by database-protocol. */
@@ -16,7 +17,7 @@ export type DatabaseWorktreeSourceV1 = z.infer<typeof DatabaseWorktreeSourceV1Sc
 
 // Retain Workspace parsing/projection through the existing neutral boundary,
 // whose output already carries the SDK's strict JSON representation.
-const workspaceAddress = asProtocolZod(projectZodProtocolSchema(WorkspaceAddressV2Schema));
+const workspaceAddress = lazyZodSchema(() => asProtocolZod(projectZodProtocolSchema(WorkspaceAddressV2Schema)));
 const workspaceContext = {
     accountId: id, workspace: workspaceAddress, installationId: id, projectKey: id,
 };

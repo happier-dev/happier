@@ -19,7 +19,7 @@ export function createArtifactCreateHttpInputV1Schema<const RequiresMemoryDecisi
     requiresBlob: boolean;
     requiresMemoryDecisionSource: RequiresMemoryDecisionSource;
 }>) {
-    return z.strictObject({
+    return lazyZodSchema(() => z.strictObject({
         id: ArtifactCreateIdV1Schema,
         idScope: z.optional(ArtifactIdScopeV1Schema),
         kind: z.optional(ArtifactStoredKindV1Schema),
@@ -33,7 +33,7 @@ export function createArtifactCreateHttpInputV1Schema<const RequiresMemoryDecisi
         memoryDecisionSource: (input.requiresMemoryDecisionSource ? CoordinationMessageRefV1Schema : z.optional(z.never())) as MemoryDecisionSourceSchema<RequiresMemoryDecisionSource>,
         provenance: z.optional(z.nullable(z.string())),
         provenanceDataEncryptionKey: z.optional(z.nullable(z.string())),
-    }).check(z.refine(value => input.requiresBlob ? value.blob !== undefined : value.blob === undefined));
+    }).check(z.refine(value => input.requiresBlob ? value.blob !== undefined : value.blob === undefined)));
 }
 
 export const ArtifactJsonCreateHttpInputV1Schema = createArtifactCreateHttpInputV1Schema({
@@ -45,7 +45,7 @@ export function createArtifactUpdateHttpInputV1Schema<const RequiresMemoryDecisi
     requiresBlob: boolean;
     requiresMemoryDecisionSource: RequiresMemoryDecisionSource;
 }>) {
-    return z.strictObject({
+    return lazyZodSchema(() => z.strictObject({
         transcriptVisualPublication: z.optional(lazyZodSchema(() => ApprovalTranscriptVisualPublicationV1Schema)),
         approvalInputCustody: z.optional(ApprovalInputCustodySchema),
         header: z.optional(z.string()),
@@ -65,7 +65,7 @@ export function createArtifactUpdateHttpInputV1Schema<const RequiresMemoryDecisi
         z.refine(value => value.approvalInputCustody === undefined || (
             decodeArtifactKindV1(value.kind).kindHint === APPROVAL_ARTIFACT_KINDS_V1.targetAction && isApprovalRequestV2TerminalStatus(value.approvalState)
             && value.header !== undefined && value.expectedHeaderVersion !== undefined
-            && value.body !== undefined && value.expectedBodyVersion !== undefined)));
+            && value.body !== undefined && value.expectedBodyVersion !== undefined))));
 }
 
 export const ArtifactJsonUpdateHttpInputV1Schema = createArtifactUpdateHttpInputV1Schema({
