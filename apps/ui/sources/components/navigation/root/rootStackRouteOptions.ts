@@ -6,7 +6,6 @@ import { createFriendsStackScreenOptions, createInboxStackScreenOptions } from '
 import { resolveNewSessionPickerRoutePresentation, resolveNewSessionPickerWebModalStyle, resolveNewSessionSecretRequirementRoutePresentation } from '@/components/sessions/new/navigation/newSessionPresentation';
 import { createSessionPageScreenOptions } from '@/components/navigation/sessionRouteScreenOptions';
 import { PROJECT_PAGE_ROUTE_NAMES } from '@/components/workspaceCockpit/project/projectPages';
-import { PROJECT_PAGES } from '@/components/workspaceCockpit/project/projectCockpitState';
 
 type StackScreenOptions = ExtendedStackNavigationOptions;
 const MAIN_TAB_STACK_SCREEN_OPTIONS = { animation: 'none' } as const;
@@ -22,7 +21,7 @@ const TAB_DESTINATION_ROUTES: ReadonlySet<string> = new Set([
     'index', 'inbox/index', 'friends/index', 'settings', 'home',
     'workflows/index', 'projects/index', 'projects/deployments', 'discussions/index', 'boards/index', 'artifacts/index',
     'plugins/index', 'machines/index', 'monitoring/index',
-    ...PROJECT_PAGES.map(page => `projects/[workspaceRefId]/${page}`),
+    ...PROJECT_PAGE_ROUTE_NAMES,
 ]);
 
 /** Canonical root declarations, consumed by Expo and retained workspace destinations. */
