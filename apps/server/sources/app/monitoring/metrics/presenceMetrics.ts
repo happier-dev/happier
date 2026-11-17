@@ -14,13 +14,6 @@ export const machineAliveEventsCounter = getOrCreateMetric("machine_alive_events
     registers: [register],
 }));
 
-export const sessionCacheCounter = getOrCreateMetric("session_cache_operations_total", () => new Counter({
-    name: "session_cache_operations_total",
-    help: "Total session cache operations",
-    labelNames: ["operation", "result"] as const,
-    registers: [register],
-}));
-
 export const databaseUpdatesSkippedCounter = getOrCreateMetric("database_updates_skipped_total", () => new Counter({
     name: "database_updates_skipped_total",
     help: "Number of database updates skipped due to debouncing",

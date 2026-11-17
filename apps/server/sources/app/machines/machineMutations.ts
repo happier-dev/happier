@@ -9,7 +9,6 @@ import {
     buildUpdateMachineUpdate,
     eventRouter,
 } from "@/app/events/eventRouter";
-import { activityCache } from "@/app/presence/sessionCache";
 import { afterTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { readMachineAccessKeySessionBindingsInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
@@ -286,7 +285,6 @@ export async function revokeMachineInTx(
                 ? { type: "user-scoped-only" }
                 : { type: "machine-scoped-only", machineId: updated.id },
         });
-        activityCache.invalidateMachine(updated.id);
     });
 
     return { ok: true, machine: updated, deletedAccessKeys };

@@ -101,7 +101,7 @@ describe("startSocket handshake cache warmup", () => {
         expect(socket.data).toMatchObject({ sessionId, machineId });
     });
 
-    it("seeds session and machine validity from a successful machine-bound session handshake", async () => {
+    it("records the session publisher observation from a successful machine-bound session handshake", async () => {
         const { account, middleware, socket } = await runHandshake();
         const lastActiveAt = new Date("2026-04-19T18:00:00.000Z");
         await db.session.create({ data: { id: "warmup-session", tag: "warmup-session", accountId: account.id, metadata: "{}", active: true, lastActiveAt } });
@@ -114,13 +114,7 @@ describe("startSocket handshake cache warmup", () => {
 
         expect(next).toHaveBeenCalledWith();
         expect(socket.data.sessionScopedBinding).toEqual({ sessionId: "warmup-session", machineId: "warmup-machine", proof: "machine-access-key" });
-        // Warm validity must survive a storage outage without doing another lookup.
-        const sessionLookup = vi.spyOn(db.session, "findUnique").mockRejectedValue(new Error("database unavailable"));
-        const machineLookup = vi.spyOn(db.machine, "findUnique").mockRejectedValue(new Error("database unavailable"));
-        expect(await activityCache.isSessionValid("warmup-session", account.id)).toBe(true);
-        expect(await activityCache.isMachineValid("warmup-machine", account.id)).toBe(true);
-        expect(sessionLookup).not.toHaveBeenCalled();
-        expect(machineLookup).not.toHaveBeenCalled();
+        expect(activityCache.isSessionObservedActive("warmup-session")).toBe(true);
         for (const stage of ["verify-token", "login-eligibility", "session-binding"]) {
             expect(stages).toHaveBeenCalledWith(expect.objectContaining({ clientType: "session-scoped", transport: "websocket", stage, result: "ok" }));
         }

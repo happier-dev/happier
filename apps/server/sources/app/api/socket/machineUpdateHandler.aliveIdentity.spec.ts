@@ -33,12 +33,6 @@ vi.mock("@/app/monitoring/metrics/index", () => ({
     websocketEventsCounter: { inc: vi.fn() },
 }));
 
-const isMachineValid = vi.fn(async () => true);
-const invalidateMachine = vi.fn();
-vi.mock("@/app/presence/sessionCache", () => ({
-    activityCache: { isMachineValid, invalidateMachine },
-}));
-
 const recordMachineAlive = vi.fn(async () => {});
 vi.mock("@/app/presence/presenceRecorder", () => ({ recordMachineAlive }));
 
@@ -107,7 +101,6 @@ await import("./machineUpdateHandler");
 describe("machineUpdateHandler authenticated machine identity binding", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        isMachineValid.mockResolvedValue(true);
         // Call clearing does not discard unconsumed per-test database results.
         machineFindFirst.mockReset();
         machineFindFirst.mockResolvedValue({ revokedAt: null, replacedByMachineId: null });
@@ -160,7 +153,6 @@ describe("machineUpdateHandler authenticated machine identity binding", () => {
 
         expect(recordMachineAlive).not.toHaveBeenCalled();
         expect(emitEphemeral).not.toHaveBeenCalled();
-        expect(isMachineValid).not.toHaveBeenCalled();
     });
 
     it("ignores machine-alive events whose payload machine differs from the authenticated socket machine", async () => {
@@ -178,7 +170,6 @@ describe("machineUpdateHandler authenticated machine identity binding", () => {
 
         expect(recordMachineAlive).not.toHaveBeenCalled();
         expect(emitEphemeral).not.toHaveBeenCalled();
-        expect(isMachineValid).not.toHaveBeenCalled();
     });
 
     it("captures and finalizes only the authenticated machine session terminal authority", async () => {

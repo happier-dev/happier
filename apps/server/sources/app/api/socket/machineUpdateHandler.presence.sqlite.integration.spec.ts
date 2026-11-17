@@ -16,7 +16,6 @@ import { removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
 import { updateMachineInstallationIdentityInTx } from '@/app/machines/installationIdentityUpdate';
 import { revokeMachineInTx } from '@/app/machines/machineMutations';
 import { setEligibleMachineAccessGrantInTx as setMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
-import { activityCache } from '@/app/presence/sessionCache';
 import { markMachinePresenceInactive, persistMachinePresence } from '@/app/presence/persistMachinePresence';
 import { createMachinePresenceDeadlineOwner, createSessionPresenceDeadlineOwner, startLocalMachinePresenceTimeout, stopLocalMachinePresenceTimeout } from '@/app/presence/timeout';
 import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
@@ -537,7 +536,6 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
             stopObserving();
             db.$transaction = transaction;
             await stopLocalMachinePresenceTimeout();
-            activityCache.invalidateMachine(machine.id);
             vi.useRealTimers();
         }
     });
@@ -614,7 +612,6 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
             ]));
         } finally {
             eventRouter.removeConnection(owner.id, connection);
-            activityCache.invalidateMachine(machine.id);
             await peerDeadlines.stop();
             await stopLocalMachinePresenceTimeout();
             vi.useRealTimers();
@@ -720,7 +717,6 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
         } finally {
             await deadlines.stop();
             await stopLocalMachinePresenceTimeout();
-            activityCache.invalidateMachine(machine.id);
             vi.useRealTimers();
         }
     });
@@ -780,7 +776,6 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
             releaseBootstrap();
             await bootstrap;
             await stopLocalMachinePresenceTimeout();
-            activityCache.invalidateMachine(machine.id);
             vi.useRealTimers();
         }
     });
@@ -868,7 +863,6 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
             expect(await db.accountChange.count({ where: { accountId: owner.id } })).toBe(changesAfterContent);
         } finally {
             await stopLocalMachinePresenceTimeout();
-            activityCache.invalidateMachine(machine.id);
             vi.useRealTimers();
         }
     });
@@ -1306,7 +1300,6 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
             for (const recipient of recipients.slice(1)) expect(recipient.activities()).toEqual([]);
         } finally {
             for (const connection of connections) eventRouter.removeConnection(connection.userId, connection);
-            activityCache.invalidateMachine(machine.id);
             vi.useRealTimers();
         }
     });
@@ -1348,7 +1341,6 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
                 select: { active: true, lastActiveAt: true, updatedAt: true } })).toEqual(beforeDeniedBeat);
         } finally {
             eventRouter.removeConnection(owner.id, connection);
-            activityCache.invalidateMachine(machine.id);
         }
     });
 
@@ -1380,7 +1372,6 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
             expect(serverTimestamp).toBeLessThanOrEqual(receivedAt);
         } finally {
             eventRouter.removeConnection(owner.id, connection);
-            activityCache.invalidateMachine(machine.id);
         }
     });
 });

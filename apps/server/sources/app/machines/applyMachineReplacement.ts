@@ -1,7 +1,6 @@
 import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { acquireAccountChangePublicationLocksInTx, markAccountChanged } from "@/app/changes/markAccountChanged";
 import { buildUpdateMachineUpdate, eventRouter } from "@/app/events/eventRouter";
-import { activityCache } from "@/app/presence/sessionCache";
 import { afterTx, TransactionReplayRequiredError } from "@/storage/inTx";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import type { Tx } from "@/storage/inTx";
@@ -104,7 +103,6 @@ export async function applyMachineReplacement(params: ApplyMachineReplacementPar
     });
 
     afterTx(params.tx, () => {
-        activityCache.invalidateMachine(params.oldMachineId);
         eventRouter.disconnectMachineAndSessionSockets({
             accountId: params.accountId,
             machineId: params.oldMachineId,
@@ -169,7 +167,6 @@ export async function clearMachineReplacement(params: Readonly<{
     });
 
     afterTx(params.tx, () => {
-        activityCache.invalidateMachine(params.oldMachineId);
         eventRouter.emitUpdate({
             userId: params.accountId,
             payload: buildUpdateMachineUpdate(

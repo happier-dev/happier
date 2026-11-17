@@ -11,7 +11,6 @@ import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lig
 import { machineUpdateHandler } from '@/app/api/socket/machineUpdateHandler';
 import { VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY } from '@/app/api/socket/machineSocketInstallationProof';
 import { createFakeSocket, getSocketHandler } from '@/app/api/testkit/socketHarness';
-import { activityCache } from './sessionCache';
 import { createMachinePresenceDeadlineOwner, stopLocalMachinePresenceTimeout } from './timeout';
 import { inTx } from '@/storage/inTx';
 import { writeAccountSettingsInTx } from '@/app/accountSettings/writeAccountSettingsInTx';
@@ -128,25 +127,23 @@ describe('opted-in Machine offline presence alerts (real SQLite)', () => {
             [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: row.installationId } }), { handshake: { auth: { token } }, disconnect: vi.fn() });
         machineUpdateHandler(owner.id, socket as unknown as Socket, { operationSocketBatchLimits: {
             ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 } } });
-        try {
-            await getSocketHandler(socket, 'machine-alive')({ machineId: row.id, time: Date.now() });
-            expect(messages()).toHaveLength(1);
-            expect(messages()[0]).toMatchObject({ data: { type: 'machine_alert', phase: 'recovered', machineId: row.id },
-                _contentAvailable: true });
-            for (const key of ['title', 'body', 'sound']) expect(messages()[0]).not.toHaveProperty(key);
-            // LOCAL admission is committed synchronously. A continuing beat
-            // is not a second recovery and does not repeat the dismissal push.
-            await getSocketHandler(socket, 'machine-alive')({ machineId: row.id, time: Date.now() });
-            expect(messages()).toHaveLength(1);
-            for (const message of messages()) {
-                expect(message).toMatchObject({ data: { phase: 'recovered' }, _contentAvailable: true });
-                for (const key of ['title', 'body', 'sound']) expect(message).not.toHaveProperty(key);
-            }
-            send.mockClear();
-            await db.account.update({ where: { id: owner.id }, data: { settingsVersion: { increment: 1 } } });
-            await getSocketHandler(socket, 'machine-alive')({ machineId: row.id, time: Date.now() });
-            expect(messages()).toEqual([]);
-        } finally { activityCache.invalidateMachine(row.id); }
+        await getSocketHandler(socket, 'machine-alive')({ machineId: row.id, time: Date.now() });
+        expect(messages()).toHaveLength(1);
+        expect(messages()[0]).toMatchObject({ data: { type: 'machine_alert', phase: 'recovered', machineId: row.id },
+            _contentAvailable: true });
+        for (const key of ['title', 'body', 'sound']) expect(messages()[0]).not.toHaveProperty(key);
+        // LOCAL admission is committed synchronously. A continuing beat
+        // is not a second recovery and does not repeat the dismissal push.
+        await getSocketHandler(socket, 'machine-alive')({ machineId: row.id, time: Date.now() });
+        expect(messages()).toHaveLength(1);
+        for (const message of messages()) {
+            expect(message).toMatchObject({ data: { phase: 'recovered' }, _contentAvailable: true });
+            for (const key of ['title', 'body', 'sound']) expect(message).not.toHaveProperty(key);
+        }
+        send.mockClear();
+        await db.account.update({ where: { id: owner.id }, data: { settingsVersion: { increment: 1 } } });
+        await getSocketHandler(socket, 'machine-alive')({ machineId: row.id, time: Date.now() });
+        expect(messages()).toEqual([]);
     });
     it.each([
         { online: false, optOut: false, deliveryDisabled: false },
@@ -194,36 +191,34 @@ describe('opted-in Machine offline presence alerts (real SQLite)', () => {
             [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: row.installationId } }), { handshake: { auth: { token } }, disconnect: vi.fn() });
         machineUpdateHandler(owner.id, socket as unknown as Socket, { operationSocketBatchLimits: {
             ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 } } });
-        try {
-            const alive = getSocketHandler(socket, 'machine-alive');
-            await Promise.all([alive({ machineId: row.id, time: Date.now() }), alive({ machineId: row.id, time: Date.now() })]);
-            if (optOut || deliveryDisabled) {
-                expect(messages()).toEqual([]);
-                expect(await recoveryRequests()).toBe(0);
-                if (deliveryDisabled) {
-                    expect(await write(2, enabledSettings)).toMatchObject({ status: 'success', version: 3 });
-                    await db.machine.update({ where: { id: row.id }, data: { active: false } });
-                    await alive({ machineId: row.id, time: Date.now() });
-                    expect(messages()).toHaveLength(1);
-                    expect(visibleMessages()).toHaveLength(0);
-                }
-                return;
-            }
-            expect(messages().length).toBeGreaterThan(0);
-            for (const message of messages()) {
-                expect(message).toMatchObject({ to: pushToken });
-                expect(MachineRemoteAlertV1Schema.parse(message.data)).toMatchObject({ phase: 'recovered', machineId: row.id });
-            }
-            expect(visibleMessages()).toHaveLength(online ? 0 : 1);
+        const alive = getSocketHandler(socket, 'machine-alive');
+        await Promise.all([alive({ machineId: row.id, time: Date.now() }), alive({ machineId: row.id, time: Date.now() })]);
+        if (optOut || deliveryDisabled) {
+            expect(messages()).toEqual([]);
             expect(await recoveryRequests()).toBe(0);
-            expect(JSON.stringify(messages())).not.toContain('private-machine-name');
-            await alive({ machineId: row.id, time: Date.now() });
-            expect(visibleMessages()).toHaveLength(online ? 0 : 1);
-            // Re-saving consent after delivery and a later outage stay ordinary.
-            expect(await write(2, settings)).toMatchObject({ status: 'success', version: 3 });
-            await db.machine.update({ where: { id: row.id }, data: { active: false } });
-            await alive({ machineId: row.id, time: Date.now() });
-            expect(visibleMessages()).toHaveLength(online ? 0 : 1);
-        } finally { activityCache.invalidateMachine(row.id); }
+            if (deliveryDisabled) {
+                expect(await write(2, enabledSettings)).toMatchObject({ status: 'success', version: 3 });
+                await db.machine.update({ where: { id: row.id }, data: { active: false } });
+                await alive({ machineId: row.id, time: Date.now() });
+                expect(messages()).toHaveLength(1);
+                expect(visibleMessages()).toHaveLength(0);
+            }
+            return;
+        }
+        expect(messages().length).toBeGreaterThan(0);
+        for (const message of messages()) {
+            expect(message).toMatchObject({ to: pushToken });
+            expect(MachineRemoteAlertV1Schema.parse(message.data)).toMatchObject({ phase: 'recovered', machineId: row.id });
+        }
+        expect(visibleMessages()).toHaveLength(online ? 0 : 1);
+        expect(await recoveryRequests()).toBe(0);
+        expect(JSON.stringify(messages())).not.toContain('private-machine-name');
+        await alive({ machineId: row.id, time: Date.now() });
+        expect(visibleMessages()).toHaveLength(online ? 0 : 1);
+        // Re-saving consent after delivery and a later outage stay ordinary.
+        expect(await write(2, settings)).toMatchObject({ status: 'success', version: 3 });
+        await db.machine.update({ where: { id: row.id }, data: { active: false } });
+        await alive({ machineId: row.id, time: Date.now() });
+        expect(visibleMessages()).toHaveLength(online ? 0 : 1);
     });
 });

@@ -8,7 +8,6 @@ import {
 } from './machinePublication';
 import { registerMachineOperationCapabilitiesHandler } from './machineOperationCapabilities';
 import { machineAliveEventsCounter, websocketEventsCounter } from "@/app/monitoring/metrics/index";
-import { activityCache } from "@/app/presence/sessionCache";
 import { buildUpdateMachineUpdate, eventRouter } from "@/app/events/eventRouter";
 import { log } from "@/utils/logging/log";
 import { db } from "@/storage/db";
@@ -107,7 +106,7 @@ export async function observeMachineAliveFromSocket(input: Readonly<{
     }, input.continuingBeat ? {
         installationId: readVerifiedMachineSocketInstallationIdFromSocketData(socket.data),
     } : undefined);
-    if (!presence) { activityCache.invalidateMachine(machineId); return; }
+    if (!presence) return;
     // Ordinary beats only renew reachability. Transitions and changed work facts
     // publish their separate content-free notifications.
     await publishMachineAliveObservation(userId, machineId, timestamp, presence, !input.continuingBeat,
@@ -256,7 +255,6 @@ export function machineUpdateHandler(
                 !sourceMachineId
                 || !(await isMachineAvailableForSocket(userId, sourceMachineId))
             ) {
-                if (sourceMachineId) activityCache.invalidateMachine(sourceMachineId);
                 callback?.({
                     v: 1,
                     kind: "result",
@@ -327,7 +325,6 @@ export function machineUpdateHandler(
                     !sourceMachineId
                     || !(await isMachineAvailableForSocket(userId, sourceMachineId))
                 ) {
-                    if (sourceMachineId) activityCache.invalidateMachine(sourceMachineId);
                     callback?.({
                         v: version,
                         result: { status: "rejected", code: "session_input_unauthorized" },
@@ -418,7 +415,6 @@ export function machineUpdateHandler(
                 return;
             }
             if (!machineId || !(await isMachineAvailableForSocket(userId, machineId))) {
-                if (machineId) activityCache.invalidateMachine(machineId);
                 callback?.({
                     v: 1,
                     status: "rejected",
@@ -652,7 +648,6 @@ export function machineUpdateHandler(
         }
         try {
             if (!(await isMachineAvailableForSocket(userId, machineId))) {
-                activityCache.invalidateMachine(machineId);
                 callback?.({
                     v: 1,
                     kind: "error",
@@ -804,7 +799,6 @@ export function machineUpdateHandler(
                 return;
             }
             if (!(await isMachineAvailableForSocket(userId, machineId))) {
-                activityCache.invalidateMachine(machineId);
                 return;
             }
 
@@ -841,7 +835,6 @@ export function machineUpdateHandler(
             const parsed = ExternalSessionSourceUnavailableOccurrenceV1Schema.safeParse(data);
             if (clientType !== "machine-scoped" || !machineId || !parsed.success || parsed.data.machineId !== machineId) return;
             if (!(await isMachineAvailableForSocket(userId, machineId))) {
-                activityCache.invalidateMachine(machineId);
                 return;
             }
             const admitted = await inTx(async (tx) => {

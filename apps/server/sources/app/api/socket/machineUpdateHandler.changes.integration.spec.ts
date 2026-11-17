@@ -33,13 +33,6 @@ vi.mock("@/app/monitoring/metrics/index", () => ({
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
-vi.mock("@/app/presence/sessionCache", () => ({
-    activityCache: {
-        isMachineValid: vi.fn(async () => true),
-        queueMachineUpdate: vi.fn(),
-    },
-}));
-
 let machineRevokedAt: Date | null = null;
 let accountMode: 'plain' | 'e2ee' = 'e2ee';
 let tokenEpoch = 0;

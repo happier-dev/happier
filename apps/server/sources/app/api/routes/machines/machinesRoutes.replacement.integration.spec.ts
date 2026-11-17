@@ -6,7 +6,6 @@ import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent, signMac
     buildAccountStoredContentCompatibilityHttpHeadersV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from "@happier-dev/protocol";
 import { db } from "@/storage/db";
 import { eventRouter } from "@/app/events/eventRouter";
-import { activityCache } from "@/app/presence/sessionCache";
 import { createSessionMachineAccessKeyInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
@@ -39,7 +38,6 @@ describe("machinesRoutes machine replacement", () => {
     });
     afterEach(async () => {
         eventRouter.clearIo();
-        activityCache.invalidateMachine("m1"); activityCache.invalidateMachine("m2");
         await db.managedMachine.deleteMany(); await db.accessKey.deleteMany(); await db.automationAssignment.deleteMany(); await db.automation.deleteMany();
         await db.session.deleteMany(); await db.machine.deleteMany(); await db.accountChange.deleteMany(); await db.account.deleteMany();
     });
@@ -112,14 +110,11 @@ describe("machinesRoutes machine replacement", () => {
         // Socket.IO is the external transport boundary; actual replacement, cache and Automation owners run.
         eventRouter.setIo({ to: rooms => ({ emit: () => undefined,
             disconnectSockets: () => disconnected.push(...(Array.isArray(rooms) ? rooms : [rooms])) }) });
-        activityCache.seedMachineValidity({ machineId: "m1", userId: accountId, active: true, lastActiveAt: new Date() });
-        expect(await activityCache.isMachineValid("m1", accountId)).toBe(true);
         const response = await invoke(proposal("m1"));
         expect(response.statusCode, response.body).toBe(200);
         expect(response.json()).toMatchObject({ machineReplacement: { status: "applied", replacesMachineId: "m1" } });
         expect(await db.machine.findUniqueOrThrow({ where: { id: "m1" } })).toMatchObject({ active: false, replacedByMachineId: "m2",
             replacementReason: "reauth", replacementSource: "automatic", replacementActorUserId: null });
-        expect(await activityCache.isMachineValid("m1", accountId)).toBe(false);
         expect(disconnected).toEqual(expect.arrayContaining([`machine:m1:${accountId}`, `session:${session.id}:machine:m1:${accountId}`]));
         expect(await db.automation.findUniqueOrThrow({ where: { id: automation.id } })).toEqual(automation);
         expect(await db.automationAssignment.findUniqueOrThrow({ where: { id: assignment.id } })).toEqual(assignment);

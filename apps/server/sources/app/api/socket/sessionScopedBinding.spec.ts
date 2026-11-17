@@ -75,11 +75,6 @@ describe("resolveSessionScopedSocketBinding", () => {
             cacheWarmState: {
                 session: {
                     active: true,
-                    lastActiveAt: new Date("2026-04-20T11:00:00.000Z"),
-                },
-                machine: {
-                    active: true,
-                    lastActiveAt: new Date("2026-04-20T12:00:00.000Z"),
                 },
             },
         });
@@ -114,9 +109,7 @@ describe("resolveSessionScopedSocketBinding", () => {
             cacheWarmState: {
                 session: {
                     active: true,
-                    lastActiveAt: new Date("2026-04-20T10:00:00.000Z"),
                 },
-                machine: null,
             },
         });
         expect(accessKeyFindUniqueMock).not.toHaveBeenCalled();

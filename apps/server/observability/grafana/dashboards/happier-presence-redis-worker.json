@@ -102,44 +102,6 @@
       ],
       "title": "Machine alive rate",
       "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ops"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 12
-      },
-      "id": 7,
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "expr": "sum by (operation, result) (rate(session_cache_operations_total{job=\"happier-worker\"}[5m]))",
-          "legendFormat": "{{operation}} {{result}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Session cache operation rate",
-      "type": "timeseries"
     }
   ],
   "refresh": "30s",

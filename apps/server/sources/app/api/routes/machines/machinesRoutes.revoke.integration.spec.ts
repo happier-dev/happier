@@ -25,11 +25,6 @@ vi.mock("@/app/events/eventRouter", () => ({
 vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked: vi.fn(() => "upd") }));
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
-const invalidateMachine = vi.fn();
-vi.mock("@/app/presence/sessionCache", () => ({
-    activityCache: { invalidateMachine },
-}));
-
 const removeAutomationMachineAssignmentsTx = vi.fn(async (params: Readonly<{
     tx: unknown;
     markMachineUnavailableTx: (tx: unknown) => Promise<void>;
@@ -142,7 +137,6 @@ describe("machinesRoutes (revoke machine)", () => {
             expect.objectContaining({ revokedAt: expect.any(Number), active: false }),
         );
         expect(emitUpdate).toHaveBeenCalledTimes(1);
-        expect(invalidateMachine).toHaveBeenCalledWith("m1");
         expect(disconnectMachineAndSessionSockets).toHaveBeenCalledWith({
             accountId: "u1",
             machineId: "m1",

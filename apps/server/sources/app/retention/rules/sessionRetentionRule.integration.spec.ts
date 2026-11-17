@@ -4,7 +4,7 @@ import { activityCache } from '@/app/presence/sessionCache';
 import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 
-const emitUpdate = vi.fn();
+const emitUpdate = vi.hoisted(() => vi.fn());
 vi.mock('@/app/events/eventRouter', async () => {
     const actual = await vi.importActual<typeof import('@/app/events/eventRouter')>('@/app/events/eventRouter');
     return {
@@ -138,7 +138,7 @@ describe('sessionRetentionRule', () => {
             },
         });
 
-        await expect(activityCache.isSessionValid('s1', 'owner')).resolves.toBe(true);
+        activityCache.seedSessionValidity({ sessionId: 's1', userId: 'owner', active: true });
 
         const { pruneInactiveSessionsOnce } = await import('./sessionRetentionRule');
         const result = await pruneInactiveSessionsOnce({

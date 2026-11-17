@@ -4,7 +4,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { readMachineAvailabilityState } from "@/app/machines/machineStateGuards";
-import { activityCache } from "@/app/presence/sessionCache";
 import { db, initDbPostgres } from "@/storage/db";
 import { inReadSnapshot, inTx } from "@/storage/inTx";
 import { createDbMaintenanceClient, getDbProviderFromEnv, type PrismaClientType } from "@/storage/prisma";
@@ -107,9 +106,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
                 WHERE datname = current_database() AND pid <> ${holderPid}::int AND wait_event_type = 'Lock'
             `;
             waitingConnections = count;
-            activityCache.invalidateMachine(machine.id);
             probes = await Promise.allSettled([
-                activityCache.isMachineValid(machine.id, account.id),
                 readMachineAvailabilityState({ accountId: account.id, machineId: machine.id }),
                 db.machine.updateMany({ where: { id: machine.id, accountId: account.id }, data: { lastActiveAt: new Date() } }),
             ]);
@@ -119,11 +116,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
             release();
             await holderOutcome;
             if (writers) await writers;
-            activityCache.invalidateMachine(machine.id);
         }
         try {
             expect(probes).toEqual([
-                { status: "fulfilled", value: true },
                 { status: "fulfilled", value: "available" },
                 { status: "fulfilled", value: { count: 1 } },
             ]);

@@ -706,13 +706,6 @@ export function startSocket(app: Fastify): () => Promise<void> {
                     return rejectHandshake({ statusCode: 403, error: 'invalid-machine' });
                 }
                 observeHandshakeStage("ok");
-
-                activityCache.seedMachineValidity({
-                    machineId: machine.id,
-                    userId: verified.userId,
-                    active: machine.active,
-                    lastActiveAt: machine.lastActiveAt,
-                });
             }
 
             if (clientType === 'session-scoped' && sessionId) {
@@ -732,16 +725,7 @@ export function startSocket(app: Fastify): () => Promise<void> {
                     sessionId: binding.binding.sessionId,
                     userId: verified.userId,
                     active: binding.cacheWarmState.session.active,
-                    lastActiveAt: binding.cacheWarmState.session.lastActiveAt,
                 });
-                if (binding.cacheWarmState.machine && binding.binding.machineId) {
-                    activityCache.seedMachineValidity({
-                        machineId: binding.binding.machineId,
-                        userId: verified.userId,
-                        active: binding.cacheWarmState.machine.active,
-                        lastActiveAt: binding.cacheWarmState.machine.lastActiveAt,
-                    });
-                }
                 socket.data.sessionScopedBinding = binding.binding;
             }
 

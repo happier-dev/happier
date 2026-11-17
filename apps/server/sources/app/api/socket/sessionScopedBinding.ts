@@ -73,12 +73,7 @@ export type SessionScopedSocketBinding = Readonly<{
 export type SessionScopedSocketBindingCacheWarmState = Readonly<{
     session: Readonly<{
         active: boolean;
-        lastActiveAt: Date | null;
     }>;
-    machine: Readonly<{
-        active: boolean;
-        lastActiveAt: Date | null;
-    }> | null;
 }>;
 
 type SessionScopedBindingResolution =
@@ -206,7 +201,7 @@ export async function resolveSessionScopedSocketBinding(params: Readonly<{
         const startedAt = Date.now();
         const session = await db.session.findUnique({
             where: { id: sessionId },
-            select: { accountId: true, active: true, lastActiveAt: true },
+            select: { accountId: true, active: true },
         });
         if (!session || session.accountId !== params.userId) {
             observeSessionScopedBindingStage({
@@ -231,9 +226,7 @@ export async function resolveSessionScopedSocketBinding(params: Readonly<{
             cacheWarmState: {
                 session: {
                     active: session.active,
-                    lastActiveAt: session.lastActiveAt,
                 },
-                machine: null,
             },
         };
     }
@@ -252,13 +245,10 @@ export async function resolveSessionScopedSocketBinding(params: Readonly<{
                 session: {
                     select: {
                         active: true,
-                        lastActiveAt: true,
                     },
                 },
                 machine: {
                     select: {
-                        active: true,
-                        lastActiveAt: true,
                         revokedAt: true,
                         replacedByMachineId: true,
                     },
@@ -293,11 +283,6 @@ export async function resolveSessionScopedSocketBinding(params: Readonly<{
         cacheWarmState: {
             session: {
                 active: accessKey.session.active,
-                lastActiveAt: accessKey.session.lastActiveAt,
-            },
-            machine: {
-                active: accessKey.machine.active,
-                lastActiveAt: accessKey.machine.lastActiveAt,
             },
         },
     };
