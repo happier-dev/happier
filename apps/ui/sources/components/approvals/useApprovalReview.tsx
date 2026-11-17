@@ -643,6 +643,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
     <>
         {parsed.kind === 'built_in' ? <ApprovalReviewFacts
           actionId={parsed.request.actionId} actionArgs={parsed.request.actionArgs} preview={parsed.request.preview}
+          execution={parsed.request.execution}
           status={parsed.request.status} serverId={approvalServerId} testID="approvals" summaryPlacement="host"
           artifactId={props.artifactId}
           decided={parsed.request.status !== 'open' || answeredWhileOpen !== null}

@@ -766,6 +766,10 @@ projects that pending request for Add as Keep; `readPetImportOutcomeV1` projects
 execution as `added`, `could_not_add`, `library_full` or `pet_sync_off` while
 retaining the owner's error code. An added result supplies the Account entry
 and a `pet.delete` Undo invocation; Undo leaves the original Machine package.
+The existing approval result carrier is `ApprovalRequestV2.execution`; retained
+review facts receive that same `execution`, and consumers read
+`readPetImportOutcomeV1(approval.execution)` or `confirmation.outcome`. No new
+Artifact or outcome store is involved.
 
 The bundled Apache-2.0 `hatch-pet` skill uses `pet.import` for its final import.
 `useCreatePetSession` opens the existing Codex session-authoring flow with its
