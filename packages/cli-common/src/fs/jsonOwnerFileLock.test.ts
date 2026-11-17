@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdtemp, open, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { tmpdir, uptime } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -200,5 +200,45 @@ describe('withJsonOwnerFileLock — holder liveness', () => {
       holder.kill();
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('withJsonOwnerFileLock — crash recovery without per-lock fsync', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  async function inRoot<T>(name: string, run: (lockPath: string) => Promise<T>): Promise<T> {
+    const root = await mkdtemp(join(tmpdir(), `happier-json-owner-lock-${name}-`));
+    try { return await run(join(root, 'store.lock')); } finally { await rm(root, { recursive: true, force: true }); }
+  }
+
+  it('publishes and releases ownership without flushing the owner or guard bytes to disk', async () => {
+    await inRoot('nosync', async (lockPath) => {
+      const probe = await open(`${lockPath}.probe`, 'w');
+      const sync = vi.spyOn(Object.getPrototypeOf(probe), 'sync');
+      await probe.close();
+      await withJsonOwnerFileLock({ lockPath, timeoutMs: 1_000, errorCode: 'json_owner_lock_timeout' }, async () => undefined);
+      // The owner record only has to survive its process, which the page cache does. A lost
+      // record after power loss is recovered by the boot rule below, not by an fsync per lock.
+      expect(sync).toHaveBeenCalledTimes(0);
+    });
+  });
+
+  it('reclaims unreadable owner bytes left before this boot, with no age threshold', async () => {
+    await inRoot('preboot', async (lockPath) => {
+      await writeFile(lockPath, '', 'utf8');
+      const beforeBoot = (Date.now() - uptime() * 1_000 - 60_000) / 1_000;
+      await utimes(lockPath, beforeBoot, beforeBoot);
+      await expect(withJsonOwnerFileLock({ lockPath, timeoutMs: 300, errorCode: 'json_owner_lock_timeout' },
+        async () => 'reclaimed')).resolves.toBe('reclaimed');
+    });
+  });
+
+  it('preserves unreadable owner bytes written during this boot', async () => {
+    await inRoot('thisboot', async (lockPath) => {
+      await writeFile(lockPath, '', 'utf8');
+      await expect(withJsonOwnerFileLock({ lockPath, timeoutMs: 100, errorCode: 'json_owner_lock_timeout' },
+        async () => 'stolen')).rejects.toThrow('json_owner_lock_timeout');
+      expect(await readFile(lockPath, 'utf8')).toBe('');
+    });
   });
 });

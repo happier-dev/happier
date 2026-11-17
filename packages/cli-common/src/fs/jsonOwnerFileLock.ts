@@ -5,6 +5,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { link, lstat, mkdir, open, readFile, readdir, rename, rmdir, stat, unlink } from 'node:fs/promises';
+import { uptime } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -370,7 +371,6 @@ async function publishReclaimGuard(path: string): Promise<{ snapshot: FileSnapsh
   try {
     handle = await open(privatePath, 'wx', 0o600);
     await handle.writeFile(raw, 'utf8');
-    await handle.sync();
     const info = await handle.stat();
     snapshot = {
       raw,
@@ -434,7 +434,15 @@ async function shouldReclaimCurrent(
     // preserved; their W3 field is never compared with a W1 observation.
     return false;
   }
-  return Number.isFinite(snapshot.mtimeMs) && Date.now() - snapshot.mtimeMs > staleAfterMs;
+  return Number.isFinite(snapshot.mtimeMs)
+    && (predatesThisBoot(snapshot) || Date.now() - snapshot.mtimeMs > staleAfterMs);
+}
+
+/** Unreadable bytes last written before this boot have no live writer: every process of that boot is gone.
+ * Live owners never leave unreadable bytes (the record is complete before it is linked), so this only
+ * recovers a record a power failure cut short. `os.uptime()` has 1 s resolution. */
+function predatesThisBoot(snapshot: FileSnapshot): boolean {
+  return snapshot.mtimeMs < Date.now() - (uptime() + 1) * 1_000;
 }
 
 async function recoverStaleReclaimGuard(
@@ -805,8 +813,9 @@ export async function withJsonOwnerFileLock<TResult>(
       }
       ownRaw = serializeOwner(Date.now(), observedStartMs);
       handle = await open(ownerTempPath, 'wx', 0o600);
+      // Not flushed to disk: the record only has to outlive its process, which the page cache
+      // guarantees. Bytes lost to a power failure are reclaimed by `predatesThisBoot`.
       await handle.writeFile(ownRaw, 'utf8');
-      await handle.sync();
       const info = await handle.stat();
       ownerSnapshot = {
         raw: ownRaw,
