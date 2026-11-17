@@ -2213,6 +2213,8 @@ their own advertised sections. Its local references
 still resolve against the original `inputSchema` or `outputSchema` root, rather
 than the section itself. Reattach the listed definitions before compiling the
 schema with a JSON Schema validator. No fields or allowed values are truncated.
+Voice preserves these catalog section pointers when file-path sharing is off;
+filesystem values and path examples still pass through the privacy projection.
 MCP tool advertisements omit output schemas; describe includes their section index
 by default. Set `includeOutputSchema: false` for input-only discovery. A
 `/outputSchema/...` section read includes outputs automatically.

@@ -7,6 +7,7 @@ import {
   searchSerializedActionSpecsForSurface,
 } from '@happier-dev/protocol/actions/actionCatalog';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { projectActionSpecSchemaSections } from '@happier-dev/protocol/actions/actionSpecSections';
 import { projectApprovalRequestForPublicRead } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { AppShellActionOutputSchemas, projectInboxReadItemV1 } from '@happier-dev/protocol/actions/appShellActionFamily';
@@ -144,14 +145,21 @@ describe('realtime provider output redaction', () => {
   });
 
   it('delivers the real session spawn Action detail contract after privacy projection', async () => {
-    const output = { ok: true, actionSpec: projectActionDefinitionForExternalDiscovery(
-      actionSpecToActionDefinitionV1(getActionSpec('session.spawn_new'), { surface: 'voice', includeOutputSchema: true }),
-    ) };
-    const result = await runTool('getActionSpec', { id: 'session.spawn_new' }, output);
-
-    expect(result.results[0]?.status).toBe('success');
-    expect(result.results[0]).toMatchObject({ status: 'success',
-      output: redactVoiceToolResultForProvider('getActionSpec', output, privacy) });
+    const definition = actionSpecToActionDefinitionV1(getActionSpec('session.spawn_new'), {
+      surface: 'voice', includeOutputSchema: true,
+    });
+    const root = projectActionSpecSchemaSections(definition);
+    expect(root.schemaSections.length).toBeGreaterThan(0);
+    for (const schemaPath of [undefined, root.schemaSections[0].path]) {
+      const output = { ok: true, ...projectActionSpecSchemaSections(definition, schemaPath) };
+      const result = await runTool('getActionSpec', {
+        id: 'session.spawn_new', ...(schemaPath === undefined ? {} : { schemaPath }),
+      }, output);
+      expect(result.results[0]).toMatchObject({ status: 'success', output: {
+        schemaSections: output.schemaSections,
+        ...(schemaPath === undefined ? {} : { schemaSection: { path: schemaPath } }),
+      } });
+    }
   });
 
   it('delivers the real spawn-session discovery summaries after privacy projection', async () => {

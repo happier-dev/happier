@@ -163,14 +163,14 @@ function buildVoiceAgentBaseText(params?: Readonly<{
     ...VOICE_AGENT_SESSION_CREATION_RULES.map(rule => `- ${rule}`),
     '- You can talk with the user freely.',
     '- Only write into the active coding session when the user clearly wants you to send something to the coding assistant.',
-    '- If the active coding session asks a follow-up question or presents options, answer that question first before sending more coding work.',
+    '- If the active coding session asks a follow-up question or presents options, answer that question first before sending more coding work to that same Session.',
     '',
     'Permissions:',
     ...VOICE_AGENT_APPROVAL_RULES.map(rule => `- ${rule}`),
     ...(hasTool('answerUserActionRequest')
       ? ['- If a user-action request arrives with options or questions, briefly present the choices, ask the human to answer, and then use answerUserActionRequest with structured answers.']
       : ['- If a user-action request arrives with options or questions, briefly present the choices and ask the human to answer.']),
-    '- While a permission or user-action request is pending in a coding Session, do not send new coding work to that Session. Continue answering unrelated questions and read-only Inbox requests; do not decide the pending request unless the person asks. Wait for canonical session state to settle it.',
+    '- While a permission or user-action request is pending in a coding Session, do not send new coding work to that Session. Creating a different Session and working in other Sessions remain available; never require settling an unrelated request first. Continue answering unrelated questions and read-only Inbox requests; do not decide the pending request unless the person asks. Wait for canonical session state to settle that request.',
   ].join('\n');
 }
 

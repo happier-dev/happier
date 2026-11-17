@@ -79,11 +79,14 @@ export function redactVoicePathLikeString(value: string): string {
 export function redactVoicePathLikeData(input: unknown, options?: Readonly<{ preserveSchemaFieldPaths?: boolean }>): unknown {
     const seen = new Set<object>();
 
-    const walk = (value: unknown, depth: number, parentKey: string | null): unknown => {
+    const walk = (value: unknown, depth: number, parentKey: string | null, schemaSectionField = false): unknown => {
         // Provider-bound redaction must fail closed at the traversal guard. An
         // untouched deep subtree could otherwise carry paths beyond the limit.
         if (depth > 20) return null;
         if (typeof value === 'string') {
+            // The Action catalog owns these section pointers. They address
+            // schema definitions, rather than files on the person's machine.
+            if (options?.preserveSchemaFieldPaths && schemaSectionField && parentKey === 'path') return value;
             // Catalog `path` values name schema operands (pageId, anchor, ...).
             // Actual filesystem strings still pass through content redaction below.
             if (isPathBearingFieldKey(parentKey) && value.trim()
@@ -102,7 +105,8 @@ export function redactVoicePathLikeData(input: unknown, options?: Readonly<{ pre
 
         const output: Record<string, unknown> = {};
         for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-            output[key] = walk(entry, depth + 1, key);
+            output[key] = walk(entry, depth + 1, key,
+                parentKey === 'schemaSections' || parentKey === 'schemaSection');
         }
         return output;
     };
