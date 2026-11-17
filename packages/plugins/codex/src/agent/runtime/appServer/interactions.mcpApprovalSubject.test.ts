@@ -1,3 +1,4 @@
+import { formatMcpToolWireNameV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
@@ -335,6 +336,7 @@ describe('Codex MCP approval subjects through real session grants', () => {
           const identities = assignMcpWireNames({ items: catalog.servers.map(server => ({
             name: server.name, serverId: server.id, serverTitle: server.title ?? server.name,
           })) });
+          const wireKey = identities.wireNamesByServerId['catalog-qa']!;
           const mcpServerKeys = assignInjectedServerKeys(['happier', ...Object.keys(identities.mcpServerIdentities)]);
           const getMcpToolContext = () => ({
             mcpServerIdentities: identities.mcpServerIdentities,
@@ -354,9 +356,9 @@ describe('Codex MCP approval subjects through real session grants', () => {
             : refreshActiveMcpServerCatalogAfterChange({ credentials, scopeKey, lifetimeToken });
           if (phase === 'demanded') beginActiveMcpServerCatalogRefresh({ scopeKey, lifetimeToken });
           const result = fixture.request('catalog-revision-change', {
-            server: mcpServerKeys.get('qa-boot3')!, tool: 'acknowledge', arguments: { note: 'fixture' },
+            server: mcpServerKeys.get(wireKey)!, tool: 'acknowledge', arguments: { note: 'fixture' },
           });
-          const runResult = run.handleToolCall('run-revision-change', 'mcp__qa-boot3__acknowledge', {});
+          const runResult = run.handleToolCall('run-revision-change', formatMcpToolWireNameV1(wireKey, 'acknowledge'), {});
           // On the broken demanded path the Ask publishes without ever demanding
           // a read. Release also when that public outcome wins, keeping RED finite.
           await Promise.race([issued.promise, fixture.pending()]);
@@ -373,7 +375,7 @@ describe('Codex MCP approval subjects through real session grants', () => {
           await expect(runResult).resolves.toEqual({ decision: 'denied' });
           if (phase === 'refresh-failed') expect(identity).toBeUndefined();
           else expect(ResolvedMcpToolIdentityV1Schema.parse(identity)).toMatchObject({
-            server: 'qa-boot3', tool: 'acknowledge', item: { serverId: 'catalog-qa' },
+            server: wireKey, tool: 'acknowledge', item: { serverId: 'catalog-qa' },
             serverTitle: 'Updated QA server', decision: { approval: 'ask' },
           });
           if (phase === 'refresh-failed') expect(runRequest?.mcpTool).toBeUndefined();
@@ -407,20 +409,21 @@ describe('Codex MCP approval subjects through real session grants', () => {
       const identities = assignMcpWireNames({ items: catalog.servers.map(server => ({
         name: server.name, serverId: server.id, serverTitle: server.title ?? server.name,
       })) });
-      const mcpServerKeys = assignInjectedServerKeys(['happier', ...Object.keys(identities.mcpServerIdentities)]);
+      const wireKey = identities.wireNamesByServerId['catalog-qa']!;
+    const mcpServerKeys = assignInjectedServerKeys(['happier', ...Object.keys(identities.mcpServerIdentities)]);
       let admitted = state !== 'unknown-wire-key';
       const fixture = createFixture({ pluginId: 'external.agent', mcpServerKeys, getMcpToolContext: () => ({
         mcpServerIdentities: admitted ? identities.mcpServerIdentities : {}, catalog: current,
       }) });
       stops.push(fixture.stop);
-      const source = { server: mcpServerKeys.get('qa-boot3')!, tool: 'acknowledge', arguments: { note: 'fixture' } };
+      const source = { server: mcpServerKeys.get(wireKey)!, tool: 'acknowledge', arguments: { note: 'fixture' } };
       const result = fixture.request('unresolved', source);
       // Stop at either public outcome so an accidental auto-denial fails directly.
       await vi.waitFor(() => expect(Object.keys(fixture.session.state.requests ?? {}).length
         + Object.keys(fixture.session.state.completedRequests ?? {}).length).toBe(1));
       expect(Object.values(fixture.session.state.completedRequests ?? {})).toHaveLength(0);
       const pending = await fixture.pending();
-      expect(pending.request.tool).toBe('mcp__qa-boot3__acknowledge');
+      expect(pending.request.tool).toBe(formatMcpToolWireNameV1(wireKey, 'acknowledge'));
       expect(pending.request.arguments).toEqual(source.arguments);
       expect(pending.request.mcpTool).toBeUndefined();
       await fixture.respond(pending.id, 'denied');
@@ -431,7 +434,7 @@ describe('Codex MCP approval subjects through real session grants', () => {
       const recovered = fixture.request('recovered', source);
       const resolved = await fixture.pending();
       expect(ResolvedMcpToolIdentityV1Schema.parse(resolved.request.mcpTool)).toMatchObject({
-        server: 'qa-boot3', tool: 'acknowledge', item: { serverId: 'catalog-qa' }, decision: { approval: 'ask' },
+        server: wireKey, tool: 'acknowledge', item: { serverId: 'catalog-qa' }, decision: { approval: 'ask' },
       });
       await fixture.respond(resolved.id, 'denied');
       await expect(recovered).resolves.toEqual(deniedAnswer);
@@ -439,9 +442,11 @@ describe('Codex MCP approval subjects through real session grants', () => {
   );
 
   it.each(['happier.codex', 'external.agent'])('offers catalog consent for an injected server through %s host interactions', async pluginId => {
-    const mcpServerKeys = assignInjectedServerKeys(['happier', 'qa-boot3']);
+    const identities = assignMcpWireNames({ items: [{ name: 'qa-boot3', serverId: 'catalog-qa', serverTitle: 'QA server' }] });
+    const wireKey = identities.wireNamesByServerId['catalog-qa']!;
+    const mcpServerKeys = assignInjectedServerKeys(['happier', ...Object.keys(identities.mcpServerIdentities)]);
     const fixture = createFixture({ pluginId, mcpServerKeys, getMcpToolContext: () => ({
-      mcpServerIdentities: { 'qa-boot3': { serverId: 'catalog-qa', serverTitle: 'QA server' } },
+      mcpServerIdentities: identities.mcpServerIdentities,
       catalog: { status: 'ready', authority: 'active', revision: 1, diagnostics: [], catalog: McpServerCatalogV1Schema.parse({ v: 1,
         servers: [{ id: 'catalog-qa', name: 'qa-boot3', title: 'QA server', transport: 'stdio',
           stdio: { command: 'fixture', args: [] }, env: {}, createdAt: 1, updatedAt: 1,
@@ -451,13 +456,13 @@ describe('Codex MCP approval subjects through real session grants', () => {
     stops.push(fixture.stop);
     const operands = { note: 'Confirm the fixture' };
     const result = fixture.request('qa-call', {
-      server: mcpServerKeys.get('qa-boot3')!, tool: 'acknowledge', arguments: operands,
+      server: mcpServerKeys.get(wireKey)!, tool: 'acknowledge', arguments: operands,
     });
     const pending = await fixture.pending();
-    expect(pending.request.tool).toBe('mcp__qa-boot3__acknowledge');
+    expect(pending.request.tool).toBe(formatMcpToolWireNameV1(wireKey, 'acknowledge'));
     expect(pending.request.arguments).toEqual(operands);
     expect(ResolvedMcpToolIdentityV1Schema.parse(pending.request.mcpTool)).toMatchObject({
-      server: 'qa-boot3', tool: 'acknowledge', item: { serverId: 'catalog-qa' },
+      server: wireKey, tool: 'acknowledge', item: { serverId: 'catalog-qa' },
       serverTitle: 'QA server', toolTitle: 'Acknowledge', decision: { approval: 'ask' },
     });
     const offer = pending.request.nativeChoices;
