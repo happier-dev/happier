@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -6,50 +6,84 @@ import { join } from 'node:path';
 
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 
-const { mockSessionRPC, readMachineTargetForSession } = vi.hoisted(() => ({
-    mockSessionRPC: vi.fn(),
-    readMachineTargetForSession: vi.fn(() => ({
-        machineId: 'machine-1',
-        basePath: '.',
-    })),
-}));
+// test-policy-boundary: model the person's confirmation at the native/web modal presentation boundary.
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
 
-vi.mock('../api/session/apiSocket', () => ({
-    apiSocket: {
-        sessionRPC: mockSessionRPC,
-    },
-}));
+// HTTP, Socket.IO and device credential storage are the external boundaries.
+// Session targeting, path resolution, Account admission and SCM Actions stay real.
+const { installSessionOpsNetworkBoundary } = await import('@/dev/testkit/harness/sessionOpsNetworkBoundary');
+const boundary = await installSessionOpsNetworkBoundary();
+const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+await loadSyncSingletonForTests();
+const { serveSessionActionHome } = await import('@/dev/testkit/harness/sessionActionHome');
+const { createSessionFixture, createPlainSessionCurrentProjectionRecordFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+const { createEmptyAccountBootstrapHttpResponse } = await import('@/dev/testkit/fixtures/accountBootstrapHttpBoundary');
+const { createHydratedPlainMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
+const { SCM_GIT_ACTION_SPECS } = await import('@happier-dev/protocol/actions/scmGitActionSpecs');
+const { socketRpcCodec } = await import('@happier-dev/sync-client');
+const { storage } = await import('../domains/state/storage');
+const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
+const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
+const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+const nativeRpc = vi.fn<(sessionId: string, method: string, request: unknown) => Promise<unknown>>();
+let actionHome: Awaited<ReturnType<typeof serveSessionActionHome>> | undefined;
+let sessionRecord = createPlainSessionCurrentProjectionRecordFixture();
+let serverId = '';
 
-vi.mock('./sessionMachineTarget', () => ({
-    readMachineTargetForSession,
-    readMachineControlTargetForSession: readMachineTargetForSession,
-}));
+function publishWorkspace(workspace: string) {
+    const metadata = { path: workspace, host: 'tester.local', machineId: 'machine-1' };
+    sessionRecord = createPlainSessionCurrentProjectionRecordFixture({ id: 'session-1', active: true, metadata });
+    const machine = createHydratedPlainMachineFixture({ id: 'machine-1', accountId: 'scm-account',
+        machine: { activeAt: Date.now() } });
+    storage.setState({ sessions: { 'session-1': createSessionFixture({ id: 'session-1', serverId, active: true, metadata }) },
+        machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
+}
 
-vi.mock('../domains/fileSystem/resolveMachineAbsolutePath', () => ({
-    resolveMachineAbsolutePath: ({ requestPath }: { requestPath?: string }) => requestPath ?? '.',
-}));
-
-vi.mock('./scm/machineScm', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('./scm/machineScm')>();
-    return {
-        ...actual,
-        runMachineScmRpc: async (_machineId: string, method: string, request: unknown) => {
-            const requestWithPreference = actual.withScmBackendPreference(request as { backendPreference?: unknown });
-            return await mockSessionRPC('session-1', method, requestWithPreference);
+beforeEach(async () => {
+    boundary.resetRequests();
+    nativeRpc.mockReset();
+    resetScopedMachineTransportCacheForTests();
+    const serverUrl = 'https://scm.example.test';
+    const serverIdentityId = 'srv_scm_home';
+    await boundary.addHome(serverUrl, 'scm-account', { serverIdentityId });
+    const actionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1, actions: {},
+        approvalWaivedSurfaces: Object.fromEntries(SCM_GIT_ACTION_SPECS.map(spec => [spec.id, ['ui']])),
+    });
+    actionHome = await serveSessionActionHome({ homes: [{ key: 'scm', serverUrl, serverIdentityId,
+        accountId: 'scm-account', currentAccount: true, settings: { actionsSettingsV1 } }],
+        route: async request => {
+            if (request.path === '/v2/sessions' || request.path === '/v2/sessions/active') {
+                return Response.json({ sessions: [sessionRecord], nextCursor: null, hasNext: false });
+            }
+            if (request.path === '/v2/sessions/session-1') return Response.json({ session: sessionRecord });
+            const init = { method: request.method, headers: request.headers,
+                ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }), signal: request.signal };
+            if (request.path === '/v1/machines' || request.path.startsWith('/v1/machines/')) {
+                return await boundary.request(request.url, init);
+            }
+            return createEmptyAccountBootstrapHttpResponse(request.url.pathname + request.url.search, init) ?? undefined;
         },
-    };
+    });
+    serverId = actionHome.homes.scm!.id;
+    publishWorkspace(tmpdir());
+    boundary.setRpcResponder(async request => {
+        expect(request.targetId).toBe('machine-1');
+        const decoded = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, request.payload,
+            `${request.targetId}:${request.method}`);
+        const result = await nativeRpc('session-1', request.method, decoded.params);
+        return socketRpcCodec.encodeResponse({ mode: 'plain' }, result, decoded.callId);
+    });
 });
+afterEach(async () => {
+    await serverScopedRpcSocketPool.stopAll();
+    await resetServerReachabilitySupervisors();
+    await actionHome?.dispose();
+    actionHome = undefined;
+});
+afterAll(() => boundary.dispose());
 
-vi.mock('../sync', () => ({
-    sync: {
-        encryption: {
-            getSessionEncryption: () => null,
-            getMachineEncryption: () => null,
-        },
-    },
-}));
-
-import {
+const {
     sessionScmChangeExclude,
     sessionScmChangeInclude,
     sessionScmCommitBackout,
@@ -61,18 +95,21 @@ import {
     sessionScmRemotePull,
     sessionScmRemotePush,
     sessionScmStatusSnapshot,
-} from './sessions';
+} = await import('./sessions');
 import { createSaplingSessionRpcHarness, initSaplingRepo, runSapling } from './__tests__/saplingRepoHarness';
 import { git, initBareRemote } from './__tests__/gitRepoHarness';
 
+/** Refusals count only after this repository is readable through the same real Home/Socket. */
+async function serveRepository(workspace: string) {
+    publishWorkspace(workspace);
+    nativeRpc.mockImplementation(createSaplingSessionRpcHarness(workspace));
+    const control = await sessionScmStatusSnapshot('session-1', { cwd: '.' });
+    expect(control).toMatchObject({ success: true });
+}
+
 describe('session scm ops integration (sapling)', () => {
     beforeEach(() => {
-        mockSessionRPC.mockReset();
-        readMachineTargetForSession.mockReset();
-        readMachineTargetForSession.mockReturnValue({
-            machineId: 'machine-1',
-            basePath: '.',
-        });
+        storage.getState().applySettingsLocal({ scmGitRepoPreferredBackend: 'sapling' });
     });
 
     it('returns sapling snapshots and file/commit diffs for .sl repositories', async () => {
@@ -84,7 +121,7 @@ describe('session scm ops integration (sapling)', () => {
         const base = runSapling(workspace, ['whereami']);
         writeFileSync(join(workspace, 'a.txt'), 'hello2\n');
 
-        mockSessionRPC.mockImplementation(createSaplingSessionRpcHarness(workspace));
+        await serveRepository(workspace);
 
         const status = await sessionScmStatusSnapshot('session-1', { cwd: '.' });
         assert(status.success === true);
@@ -113,7 +150,7 @@ describe('session scm ops integration (sapling)', () => {
         initSaplingRepo(workspace);
         writeFileSync(join(workspace, 'a.txt'), 'hello\n');
 
-        mockSessionRPC.mockImplementation(createSaplingSessionRpcHarness(workspace));
+        await serveRepository(workspace);
 
         const include = await sessionScmChangeInclude('session-1', {
             cwd: '.',
@@ -135,7 +172,7 @@ describe('session scm ops integration (sapling)', () => {
         initSaplingRepo(workspace);
         writeFileSync(join(workspace, 'a.txt'), 'hello\n');
 
-        mockSessionRPC.mockImplementation(createSaplingSessionRpcHarness(workspace));
+        await serveRepository(workspace);
 
         const commit = await sessionScmCommitCreate('session-1', {
             cwd: '.',
@@ -167,7 +204,7 @@ describe('session scm ops integration (sapling)', () => {
         writeFileSync(join(workspace, 'a.txt'), 'three\n');
         runSapling(workspace, ['commit', '-A', '-m', 'three']);
 
-        mockSessionRPC.mockImplementation(createSaplingSessionRpcHarness(workspace));
+        await serveRepository(workspace);
 
         const firstPage = await sessionScmLogList('session-1', {
             cwd: '.',
@@ -197,7 +234,7 @@ describe('session scm ops integration (sapling)', () => {
         runSapling(workspace, ['commit', '-A', '-m', 'update']);
         const commitToBackout = runSapling(workspace, ['whereami']);
 
-        mockSessionRPC.mockImplementation(createSaplingSessionRpcHarness(workspace));
+        await serveRepository(workspace);
 
         const backout = await sessionScmCommitBackout('session-1', {
             cwd: '.',
@@ -216,7 +253,7 @@ describe('session scm ops integration (sapling)', () => {
         writeFileSync(join(workspace, 'a.txt'), 'hello\n');
         runSapling(workspace, ['commit', '-A', '-m', 'init']);
 
-        mockSessionRPC.mockImplementation(createSaplingSessionRpcHarness(workspace));
+        await serveRepository(workspace);
 
         const pull = await sessionScmRemotePull('session-1', { cwd: '.' });
         const push = await sessionScmRemotePush('session-1', { cwd: '.' });
@@ -247,7 +284,7 @@ describe('session scm ops integration (sapling)', () => {
         git(other, ['commit', '-m', 'remote update']);
         git(other, ['push', 'origin', 'main']);
 
-        mockSessionRPC.mockImplementation(createSaplingSessionRpcHarness(workspace));
+        await serveRepository(workspace);
 
         const fetch = await sessionScmRemoteFetch('session-1', {
             cwd: '.',
