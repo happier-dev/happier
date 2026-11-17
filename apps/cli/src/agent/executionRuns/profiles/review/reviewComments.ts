@@ -75,7 +75,7 @@ export function createReviewRunCommentService(deps: Readonly<{
       const binding = ReviewRoundBindingV1Schema.safeParse(input.reviewRound);
       if (!binding.success) return;
       if (!deps.reviewRecords || !deps.scope.workspace) {
-        throw Object.assign(new Error('Review record transport is unavailable'), { code: 'review_record_unavailable' });
+        throw Object.assign(new Error('Artifact content is unavailable'), { code: 'artifact_content_unavailable' });
       }
       const outcome = record(run.structuredMeta?.payload)?.reviewOutcome ?? record(run.latestToolResult)?.reviewOutcome;
       await deps.reviewRecords.settle({ ...binding.data,

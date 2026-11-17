@@ -562,7 +562,9 @@ erDiagram
   Artifact mutation calls `writeReviewRoundState` in the content transaction:
   one start and one whole-round settlement, including reviews with no findings.
   Historical rounds stay in the sealed content; there is no round table or
-  per-reviewer progress mirror.
+  per-reviewer progress mirror. Later rounds preserve the Review's creation
+  source identity, and conflicting content writes surface the existing Artifact
+  version conflict without a hidden round retry.
 - `AccessKey`: encrypted per-session-per-machine access keys.
 - `UserKVStore`: domain-owned opaque bytes with optimistic versions; each domain,
   such as Todo, owns its plain/encrypted envelope.

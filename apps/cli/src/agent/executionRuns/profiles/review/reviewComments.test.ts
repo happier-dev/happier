@@ -115,6 +115,12 @@ afterEach(async () => {
 });
 
 describe('canonical review Run comments', () => {
+  it('surfaces the Artifact content failure when a bound round cannot be published', async () => {
+    const comments = createReviewRunCommentService({ cwd: root, scope: { workspace }, execute: transport() });
+    await expect(comments.settleRound({ ...run(), status: 'succeeded', intentInput: {
+      reviewRound: { reviewId: 'review-without-transport', roundOrdinal: 1 }, reviewRoundSettlement: 'execution',
+    } })).rejects.toMatchObject({ code: 'artifact_content_unavailable' });
+  });
   it('settles a retained clean Review before publication while its native conversation stays running', async () => {
     let row: Awaited<ReturnType<ReviewArtifactTransportV1['read']>> = null;
     let writes = 0;

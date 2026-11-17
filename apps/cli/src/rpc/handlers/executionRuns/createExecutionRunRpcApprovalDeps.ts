@@ -57,7 +57,7 @@ export function createExecutionRunRpcApprovalDeps(params: Readonly<{
   });
   async function resolveReviewTransport() {
     const credentials = await params.readCredentials();
-    if (!credentials) throw Object.assign(new Error('review_record_credentials_unavailable'), { code: 'review_record_credentials_unavailable' });
+    if (!credentials) throw Object.assign(new Error('Artifact content is unavailable'), { code: 'artifact_content_unavailable' });
     return createAcknowledgedAccountArtifactTransport(createCredentialedAccountArtifactStore(credentials));
   }
 
