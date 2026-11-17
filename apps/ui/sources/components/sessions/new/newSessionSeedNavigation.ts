@@ -9,6 +9,38 @@ export type SessionAuthoringPresentation = Pick<Parameters<typeof import('./newS
     isCurrent?: () => boolean;
 }>;
 
+type NewSessionSeedNavigationInput = Parameters<SessionAuthoringPresentation['navigateToNewSession']>[0];
+
+function buildNewSessionSeedRoute(input: NewSessionSeedNavigationInput, scope: ServerAccountScope) {
+    const { dataId, draftId, worktree, spawnServerId, machineId, directory } = input;
+    return {
+        pathname: '/new',
+        params: {
+            draftId,
+            draftServerId: scope.serverId,
+            draftAccountId: scope.accountId,
+            ...(dataId === null ? {} : { dataId }),
+            ...(worktree === undefined ? {} : { worktree }),
+            ...(spawnServerId === undefined ? {} : { spawnServerId }),
+            ...(machineId === undefined ? {} : { machineId }),
+            ...(directory === undefined ? {} : { directory }),
+        },
+    } as const;
+}
+
+/** Open an admitted seeded draft whose first screen requires the full New Session page. */
+export async function navigateToNewSessionSeedPage(input: NewSessionSeedNavigationInput, scope: ServerAccountScope,
+    isCurrent: () => boolean): Promise<boolean> {
+    try {
+        const { router } = await import('expo-router');
+        if (!isCurrent()) return false;
+        router.push(buildNewSessionSeedRoute(input, scope));
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 /** Page-host navigation adapter shared by semantic Host API and authoring Actions. */
 export async function openOrdinaryNewSessionSeed(params: Readonly<{
     seed: unknown;
@@ -46,19 +78,7 @@ export async function openOrdinaryNewSessionSeed(params: Readonly<{
                     params.presentation.navigateToNewSession({ dataId, draftId, worktree, spawnServerId, machineId, directory });
                     return;
                 }
-                const href = {
-                    pathname: '/new',
-                    params: {
-                        draftId,
-                        draftServerId: params.scope.serverId,
-                        draftAccountId: params.scope.accountId,
-                        ...(dataId === null ? {} : { dataId }),
-                        ...(worktree === undefined ? {} : { worktree }),
-                        ...(spawnServerId === undefined ? {} : { spawnServerId }),
-                        ...(machineId === undefined ? {} : { machineId }),
-                        ...(directory === undefined ? {} : { directory }),
-                    },
-                } as const;
+                const href = buildNewSessionSeedRoute({ dataId, draftId, worktree, spawnServerId, machineId, directory }, params.scope);
                 if (!interceptNewSessionEntry(href, params.origin)) router.push(href);
             },
         });

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as React from 'react';
 import { storage } from '@/sync/domains/state/storage';
 import {
   publishAppliedActiveServerSnapshot,
@@ -18,12 +19,13 @@ import {
   readPresentationNotice,
   retirePresentationNotice,
 } from '@/components/sessions/presentation/presentationNotices';
-import { openSessionAuthoringAction } from './sessionAuthoringActions';
+import { openSessionAuthoringAction, type SessionAuthoringOpenOutcome } from './sessionAuthoringActions';
 import { CREATE_PET_SESSION_INTRO_V1, useCreatePetSession } from '@/components/pets/useCreatePetSession';
-import { renderHook } from '@/dev/testkit';
+import { act, renderHook } from '@/dev/testkit';
 import { createMachineFixture, createMachineMetadataFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { readNewSessionDraftFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
 import { createNewSessionComposerDocumentOwner } from '@/components/sessions/composer/newSessionComposerDocumentOwner';
+import { NewSessionShellHostProvider, useNewSessionShellHost } from '@/components/sessions/new/navigation/newSessionEntry';
 
 const navigation = vi.hoisted(() => ({ push: vi.fn() }));
 // Navigation and the Home's HTTP are the boundaries; the Action front door, its persisted policy and the draft owner run for real.
@@ -73,16 +75,21 @@ const lifetime = () => {
 };
 
 describe('session.authoring.open: one owner reads and presents the result', () => {
-  it('opens Create pet on the last Machine at home with Codex and the included Hatch pet skill', async () => {
+  it('opens Create pet on the full page from a docked host with its intro and Hatch pet skill', async () => {
+    storage.getState().applySettingsLocal({ newSessionPresentationModeV1: 'docked' });
     const machine = createMachineFixture({ id: 'pet-machine',
       metadata: createMachineMetadataFixture({ platform: 'win32', homeDir: 'C:\\Users\\pet-maker' }) });
     storage.setState(state => ({ machines: { [machine.id]: machine },
       authoringMemory: { ...state.authoringMemory, recentMachinePaths: [{ machineId: machine.id, path: 'C:\\repo' }] } }));
-    const hook = await renderHook(() => useCreatePetSession());
+    const hook = await renderHook(() => ({ create: useCreatePetSession(), shell: useNewSessionShellHost() }), {
+      wrapper: ({ children }: React.PropsWithChildren) => React.createElement(NewSessionShellHostProvider, null, children),
+    });
     try {
-      const outcome = await hook.getCurrent()();
-      expect(outcome.kind).toBe('opened');
-      if (outcome.kind !== 'opened') throw new Error(JSON.stringify(outcome));
+      expect(hook.getCurrent().shell?.enabled).toBe(true);
+      let outcome!: SessionAuthoringOpenOutcome;
+      await act(async () => { outcome = await hook.getCurrent().create(); });
+      expect(outcome?.kind).toBe('opened');
+      if (outcome?.kind !== 'opened') throw new Error(JSON.stringify(outcome));
       const scope = lifetime().scope;
       const draft = readNewSessionDraftFromRepository({ scope, draftId: outcome.draftId });
       expect(draft).toMatchObject({ selectedMachineId: machine.id, selectedPath: 'C:\\Users\\pet-maker',
@@ -94,6 +101,10 @@ describe('session.authoring.open: one owner reads and presents the result', () =
       expect(document.text).toBe('');
       expect(document.structuredInputMentions).toEqual([]);
       expect(navigation.push).toHaveBeenCalledOnce();
+      expect(navigation.push).toHaveBeenCalledWith({ pathname: '/new', params: expect.objectContaining({
+        draftId: outcome.draftId, draftServerId: scope.serverId, draftAccountId: scope.accountId,
+      }) });
+      expect(hook.getCurrent().shell?.visible).toBe(false);
     } finally { await hook.unmount(); }
   });
   it('opens New Session and shows nothing else when the Action is allowed', async () => {

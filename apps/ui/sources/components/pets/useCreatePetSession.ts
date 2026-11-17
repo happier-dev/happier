@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { resolveAgentExecutionTargetForPersistedSelection } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 import { resolvePreferredLaunchMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
-import { navigateToSavedNewSessionDraft } from '@/components/sessions/drafts/newSessionDraftNavigation';
+import { navigateToNewSessionSeedPage } from '@/components/sessions/new/newSessionSeedNavigation';
 import { includeSkillInNewSessionDraft } from '@/components/sessions/new/newSessionDraftSkill';
 import { applyNewSessionDraftSeedV1, type NewSessionDraftIntroV1 } from '@/components/sessions/new/newSessionDraftSeed';
 import { writeNewSessionAuthoringDraftToRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
@@ -43,12 +43,13 @@ export function useCreatePetSession(): () => Promise<SessionAuthoringOpenOutcome
             seed: { ...(agentTarget ? { agentTarget } : {}),
                 placement: machineId ? { kind: 'exactTarget', serverId: lifetime.scope.serverId, machineId, directory }
                     : { kind: 'currentTarget', directory } },
-            navigateToNewSession: ({ draftId }) => {
+            navigateToNewSession: (input) => {
+                const { draftId } = input;
                 const included = includeSkillInNewSessionDraft({ scope: lifetime.scope, draftId, skillId: 'happier:hatch-pet' });
                 writeNewSessionAuthoringDraftToRepository({ scope: lifetime.scope, draftId,
                     draft: applyNewSessionDraftSeedV1({ seed: { intro: CREATE_PET_SESSION_INTRO_V1 },
                         existingDraft: included, updatedAt: included.updatedAt }) });
-                navigation = navigateToSavedNewSessionDraft(draftId, lifetime.scope, lifetime.isCurrent);
+                navigation = navigateToNewSessionSeedPage(input, lifetime.scope, lifetime.isCurrent);
             },
         });
         if (navigation && !await navigation) return { kind: 'unavailable' as const, reason: 'navigation_unavailable' as const };

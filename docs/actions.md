@@ -779,7 +779,9 @@ stdout line contains `HatchPetProgressV1`, read by
 the four checklist steps and the drawn pose count, retaining step and pose
 failures. The shared Create entry uses the existing New Session seed's optional
 `intro: { title, body, scene, suggestions }`. Its `scene` is a built-in
-`HappierSceneId`; Create declares `ideas`. The existing draft presentation
+`HappierSceneId`; Create declares `ideas` and opens the full New Session page
+through the seed navigation owner, including when Docked Composer is selected,
+so its intro and attached hatch skill have their first-screen region. The existing draft presentation
 exposes the intro for the shipped EmptyState, while unseeded Sessions retain
 their existing first screen. This host-only addition does not change the plugin
 New Session seed schema. It adds no Artifact type or Todo schema.
