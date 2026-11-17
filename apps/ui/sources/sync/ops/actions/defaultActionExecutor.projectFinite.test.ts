@@ -489,29 +489,23 @@ describe('Project finite delivery through the default UI Action host', () => {
             await pending;
         }
     });
-    it('confirms project setup with the shared human presentation and cancels without dispatch', async () => {
+    it('cancels project setup when the native confirmation presenter declines without dispatch', async () => {
         homes.answer(requesterHomeId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
             actionsSettingsV1: { v: 1 },
         } } } });
-        foreignDisclosure.mockResolvedValueOnce(false);
         const actionId = 'projects.prepare';
-        const spec = getActionSpec(actionId);
         const input = {
             workspace: { serverId, workspaceId: 'source-workspace', machineId: 'source', rootPath: '/repo' },
             phase: 'setup',
         };
-        const { presentActionApproval } = await import('@/components/approvals/actionApprovalPresentation');
-        const presentation = presentActionApproval({ actionId, actionArgs: input, subject: 'Finite requester' });
-        const result = await createDefaultActionExecutor().execute(actionId, input,
+        // Replace only the native person's choice, retaining Action admission and delivery.
+        const confirmation = vi.fn(async () => false);
+        const result = await createDefaultActionExecutor({ presentUserActionConfirmation: confirmation }).execute(actionId, input,
             { serverId, surface: 'ui', authority: 'present_user' });
 
         expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
-        expect(foreignDisclosure).toHaveBeenCalledOnce();
-        const [title, body] = foreignDisclosure.mock.calls[0] ?? [];
-        expect(title).toBe(presentation.title);
-        expect(body).toBe(presentation.summary);
-        expect(body).toBeTruthy();
-        expect(body).not.toBe(spec.description);
+        expect(confirmation).toHaveBeenCalledWith(expect.objectContaining({ actionId, input }));
+        expect(foreignDisclosure).not.toHaveBeenCalled();
         expect(homes.requestsFor(`/v1/actions/${actionId}`)).toHaveLength(0);
     });
 

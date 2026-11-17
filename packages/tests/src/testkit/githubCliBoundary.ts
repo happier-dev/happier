@@ -35,6 +35,11 @@ export async function startGithubCliBoundary() {
     },
   });
   return { ...proxy, deviceCode, verificationURI, env: {
+    // The canonical plugin HTTP adapter supplies its own dispatcher. Reuse
+    // the existing external-provider preload for Node health requests too.
+    NODE_OPTIONS: `--import=${new URL('./deploymentProvidersHttpPreload.mjs', import.meta.url).href}`,
+    HAPPIER_E2E_DEPLOYMENT_PROVIDER_PROXY: proxy.url, HAPPIER_E2E_DEPLOYMENT_PROVIDER_CA: proxy.caCertPath,
+    HAPPIER_E2E_DEPLOYMENT_PROVIDER_HOSTS: JSON.stringify(['api.github.com', 'github.com']),
     HTTPS_PROXY: proxy.url, https_proxy: proxy.url, HTTP_PROXY: proxy.url,
     NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost',
     SSL_CERT_FILE: proxy.caCertPath, GIT_SSL_CAINFO: proxy.caCertPath,

@@ -60,11 +60,16 @@ export async function connectUiActionClient(params: Readonly<{ serverUrl: string
         await getSyncSingleton().refreshMachines();
         const serverId = getActiveServerSnapshot().serverId;
         const execute = createFrontDoorActionExecute(createDefaultActionExecutor());
+        // Substitute only the native confirmation renderer: this facade is the
+        // fixture's explicit person choosing Confirm on the carried review.
+        const confirmed = createFrontDoorActionExecute(createDefaultActionExecutor({
+            presentUserActionConfirmation: async () => true,
+        }));
         return {
             serverId,
             execute,
             // The composed fixture supplies the designed user's explicit Confirm.
-            executeConfirmed: execute.confirmed,
+            executeConfirmed: confirmed.confirmed,
             async executeVoiceSpawn(input: unknown, effectId: string) {
                 const [{ createVoiceToolHandlers }, { VOICE_ACTION_EXECUTE_TOOL_NAME }, voiceSession] = await Promise.all([
                     import('@/voice/tools/handlers'), import('@/voice/tools/voiceActionExecution'),

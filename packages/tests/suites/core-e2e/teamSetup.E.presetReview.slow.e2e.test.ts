@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import { connectUiActionClient } from '@happier-tests/ui-action-client';
 import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { ManagedMachinePresetRecipientCensusResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
@@ -17,20 +17,27 @@ const run = createRunDirs({ runLabel: 'core' });
 const testDir = run.testDir(`preset-review-${randomUUID()}`);
 let fixture: TeamSetupFFixture | undefined;
 let ui: Awaited<ReturnType<typeof connectUiActionClient>> | undefined;
+let account: Awaited<ReturnType<TeamSetupFFixture['createAccount']>>;
 let auth: Awaited<ReturnType<TeamSetupFFixture['createAccount']>>['auth'];
 let machineId: string;
 let workspaceDir: string;
 
 beforeAll(async () => {
   fixture = await startTeamSetupFFixture({ testDir });
-  const account = await fixture.createAccount('member');
+  account = await fixture.createAccount('member');
   auth = account.auth;
   const enrolled = await fixture.enrollDaemon(account);
   machineId = enrolled.target.machineId;
   workspaceDir = enrolled.workspaceDir;
-  ui = await connectUiActionClient({ serverUrl: fixture.server.baseUrl, credentials: account.uiCredentials });
+});
+
+// Each test connects after the shared UI device reset has run.
+beforeEach(async () => {
+  ui = await connectUiActionClient({ serverUrl: fixture!.server.baseUrl, credentials: account.uiCredentials });
   await waitFor(() => ui!.isAccountReady() && ui!.isMachineActive(machineId), { timeoutMs: 60_000 });
 });
+
+afterEach(async () => { await ui?.close(); ui = undefined; });
 
 afterAll(async () => {
   const failures: unknown[] = [];
