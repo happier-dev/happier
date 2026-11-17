@@ -222,7 +222,9 @@ function createNativeHealthCheckSourceAdapter(now: () => number = Date.now,
                 for (const subscription of monitorSubscriptions) subscription.dispose(); } };
         },
         retryAt({ definition, error, now: time }) {
-            if (isPluginError(error) && !error.retryable) return null;
+            // Account KV deliberately exposes row contention to its author.
+            // Re-observe on the chosen probe period, reading the winning cursor.
+            if (isPluginError(error) && !error.retryable && error.code !== 'plugin_account_kv_conflict') return null;
             const parsed = HealthCheckSourceConfigV1ProtocolSchema.safeParse(definition?.sourceConfig);
             return parsed.success ? time + Math.min(...parsed.data.checks.map(check => check.periodMs)) : null;
         },

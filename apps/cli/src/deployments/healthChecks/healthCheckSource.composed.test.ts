@@ -21,6 +21,10 @@ import { createAccountWorkflowTriggerActions } from '@happier-dev/protocol/actio
 import { AutomationDefinitionDetailSchema, type AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 
+import { PluginAccountStorageMutationRequestV1Schema } from '@happier-dev/protocol';
+import { createAccountPluginDataStorageHost } from '@/plugins/runtime/context/accountPluginDataStorage';
+import { PluginAccountStorageRowV1Schema } from '@happier-dev/protocol/plugins/data/accountKvV1';
+
 const materialization = { pluginId: 'happier.machine.services', machineId: 'observer', materializationId: 'installed' };
 const source: HealthCheckSourceConfigV1 = { v: 1, subject: { kind: 'machineService', machineId: 'subject', serviceId: 'service' },
     checks: [{ checkId: 'http', kind: { pluginId: materialization.pluginId, localId: 'http' }, binding: { kind: 'healthCheck' },
@@ -130,6 +134,92 @@ function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['he
 }
 
 describe('saved health source registration and finite cycles', () => {
+    it.each(['current', 'pending', 'acknowledgement', 'unauthorized', 'invalid content'] as const)('settles %s Account KV failures through the native observer', async phase => {
+        // The HTTP boundary retains the opaque Account row and implements only
+        // server CAS. Both logical writes use the real Account KV owner.
+        let revision: number | 'absent' = 'absent';
+        let content: unknown;
+        let interleave = true;
+        let pendingRetained = false;
+        const permanent = phase === 'unauthorized' || phase === 'invalid content';
+        const host = createAccountPluginDataStorageHost({ contracts: [],
+            readCredentials: async () => ({ token: 'health-test', encryption: null }),
+            isCurrentAccount: () => true, resolveAccountScopeKey: () => 'health-cas',
+            resolveBaseUrl: () => 'https://health.example.test',
+            resolveAccountEncryptionCurrentness: async () => ({ mode: 'plain', version: 1,
+                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+                recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } }),
+            http: {
+                async get() {
+                    if (phase === 'unauthorized') return { status: 401, data: { error: 'unauthorized' } };
+                    if (phase === 'invalid content') return { status: 200,
+                        data: { status: 'present', revision: 0, content: { t: 'plain', v: { v: 1, values: { invalid: { version: -1, value: null } } } } } };
+                    return { status: 200, data: revision === 'absent' ? { status: 'absent' }
+                    : { status: 'present', revision, content } }; },
+                async post(_url, body) {
+                    const request = PluginAccountStorageMutationRequestV1Schema.parse(JSON.parse(body));
+                    const row = request.content?.t === 'plain' ? PluginAccountStorageRowV1Schema.parse(request.content.v) : undefined;
+                    const entry = Object.entries(row?.values ?? {}).find(([key]) => key !== 'health:other-source')?.[1];
+                    const cursor = entry && !('deleted' in entry) && entry.value && typeof entry.value === 'object' && !Array.isArray(entry.value)
+                        ? entry.value : undefined;
+                    const hasPending = Array.isArray(cursor?.pending) && cursor.pending.length > 0;
+                    const selectedPhase = hasPending ? 'pending' : Array.isArray(cursor?.checks) && cursor.checks.length ? 'acknowledgement' : 'current';
+                    if (interleave && cursor && selectedPhase === phase) {
+                        interleave = false;
+                        await competing.kv.set('health:other-source', { probe: 'up' }, { expectedVersion: 'absent' });
+                    }
+                    if (request.expectedRevision !== revision) return { status: 200,
+                        data: { status: 'conflict', revision: revision === 'absent' ? 0 : revision } };
+                    revision = revision === 'absent' ? 0 : revision + 1;
+                    content = request.content;
+                    pendingRetained = hasPending;
+                    return { status: 200, data: { status: 'updated', revision } };
+                },
+            },
+        });
+        const binding = { pluginId: materialization.pluginId, signal: new AbortController().signal, isOccurrenceCurrent: () => true };
+        const account = host.bind({ ...binding, occurrenceId: 'observer' })!;
+        const competing = host.bind({ ...binding, occurrenceId: 'other-observer' })!;
+        const f = fixture({ ...source, checks: source.checks.map(check => ({ ...check, consecutiveFailuresBeforeAlerting: 1 })) });
+        const controller = new AbortController();
+        const context = { ...f.context, signal: controller.signal, services: { ...f.context.services, storage: { account } } };
+        const reports = () => vi.mocked(f.context.services.actions.execute).mock.calls
+            .filter(([id]) => id === 'automation.event.source.status.report').map(([, input]) => input);
+        let backoffClock: number | undefined;
+        f.onSourceReport(() => {
+            const report = reports().at(-1);
+            if (report && typeof report === 'object' && 'state' in report && report.state === 'backingOff') backoffClock = f.now();
+            if (report && typeof report === 'object' && 'state' in report
+                && (report.state === 'attention' || permanent && report.state === 'backingOff'
+                    || !interleave && !pendingRetained && report.state === 'observing')) controller.abort();
+        });
+        await runCheckpointedPluginEventObserverV1({ context, source: f.adapter, now: f.now,
+            sleep: async delayMs => { f.clock(f.now() + delayMs); } });
+        if (permanent) {
+            expect(reports().at(-1)).toMatchObject({ state: 'attention', nextRetryAt: null,
+                code: phase === 'unauthorized' ? 'plugin_account_storage_unavailable' : 'plugin_collection_protocol_invalid' });
+            expect(f.read).not.toHaveBeenCalled();
+            expect(f.admissions).toEqual([]);
+            expect(revision).toBe('absent');
+            return;
+        }
+        expect(interleave).toBe(false);
+        expect(reports()).toContainEqual(expect.objectContaining({ state: 'backingOff', code: 'plugin_account_kv_conflict' }));
+        const backoff = reports().find(report => report && typeof report === 'object' && 'state' in report && report.state === 'backingOff');
+        expect(backoff).toMatchObject({ nextRetryAt: backoffClock! + source.checks[0]!.periodMs });
+        expect(await competing.kv.get('health:other-source')).toMatchObject({ value: { probe: 'up' } });
+        expect(f.admissions).toHaveLength(phase === 'acknowledgement' ? 2 : 1);
+        expect(new Set(f.admissions.map(admission => admission.occurrenceId)).size).toBe(1);
+        expect(reports().filter(report => report && typeof report === 'object' && 'observedDelta' in report && report.observedDelta === 1)).toHaveLength(1);
+        expect(f.admissions[0]?.payload).toMatchObject({ transition: 'failed' });
+        const own = (await account.kv.list({ prefix: 'health:' })).items.find(row => row.key !== 'health:other-source');
+        const saved = own && !('deleted' in own) ? own.value : undefined;
+        expect(saved).toMatchObject({ checks: [{ checkId: 'http', status: 'down', ordinal: 1 }] });
+        expect(saved).not.toHaveProperty('pending');
+        const current = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved.current : undefined;
+        expect(healthResultProjectionSchema.parse(current).checks[0]?.result.observedAt).toBeGreaterThan(1000);
+    });
+
     it('retains saved source identity while a threshold transition awaits admission', async () => {
         const f = fixture();
         f.safe(false);
