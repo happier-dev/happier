@@ -32,7 +32,7 @@ import { resolveSavedServerProfileByUrl } from '../../../../apps/ui/sources/sync
 
 const run = createRunDirs({ runLabel: 'core' });
 
-it('runs Account provisioner options and acquire, then refuses both roles when the installed revision lacks its artifact', async () => {
+it('runs Account provisioner options and acquire, then refuses both roles when the selected release has no hosted Account artifact', async () => {
   const testDir = run.testDir(`account-artifact-${randomUUID()}`);
   const payloadRoot = join(testDir, 'local-guest-payload');
   await mkdir(payloadRoot, { recursive: true });
@@ -80,7 +80,7 @@ it('runs Account provisioner options and acquire, then refuses both roles when t
       JSON.parse(await readFile(join(machine.homeDir, 'installation-identity.json'), 'utf8')));
     const controller = { machineId: machine.target.machineId, installationId: installation.installationId };
 
-    async function install(version: string, withArtifact: boolean) {
+    async function install(version: string, publishAccountArtifact: boolean) {
       const root = join(testDir, `provider-${version}`);
       const declaration = { ...manifest, version };
       await mkdir(join(root, '.happier-plugin'), { recursive: true });
@@ -90,18 +90,16 @@ it('runs Account provisioner options and acquire, then refuses both roles when t
       await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'account-machine-journey-fixture', version,
         type: 'module', keywords: ['happier-plugin'], happier: { manifest: '.happier-plugin/plugin.json' },
         files: ['.happier-plugin/plugin.json', 'daemon.mjs', 'dist/happier-plugin-ui'] }));
-      if (withArtifact) {
-        const artifact = await buildAuthoredAccountActionRelease({ manifest: declaration, artifactId: 'account-runtime',
-          accountArtifactId: randomUUID(), manifestExport: null, activateExport: 'activateAccount', archiveDigestCharacter: 'a',
-          source: { manifest: declaration, projectRoot: resolve(repoRootDir(), 'packages/tests'),
-            entryPath: resolve(repoRootDir(), 'packages/tests/fixtures/account-machine-provider/index.ts') } });
-        for (const file of artifact.files) {
-          const path = join(root, GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH, file.relativePath);
-          await mkdir(dirname(path), { recursive: true });
-          await writeFile(path, file.bytes);
-        }
-        await writeFile(join(root, GENERATED_PLUGIN_UI_ARTIFACTS_MANIFEST_RELATIVE_PATH), JSON.stringify(artifact.generated));
+      const artifact = await buildAuthoredAccountActionRelease({ manifest: declaration, artifactId: 'account-runtime',
+        accountArtifactId: randomUUID(), manifestExport: null, activateExport: 'activateAccount', archiveDigestCharacter: 'a',
+        source: { manifest: declaration, projectRoot: resolve(repoRootDir(), 'packages/tests'),
+          entryPath: resolve(repoRootDir(), 'packages/tests/fixtures/account-machine-provider/index.ts') } });
+      for (const file of artifact.files) {
+        const path = join(root, GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH, file.relativePath);
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(path, file.bytes);
       }
+      await writeFile(join(root, GENERATED_PLUGIN_UI_ARTIFACTS_MANIFEST_RELATIVE_PATH), JSON.stringify(artifact.generated));
       // Exercise normal portable installation. A development source has no portable Account release.
       const packed = await packLocalPlugin({ locator: root, outPath: join(testDir, `provider-${version}.tgz`) });
       expect(packed, JSON.stringify(packed)).toMatchObject({ ok: true });
@@ -123,7 +121,7 @@ it('runs Account provisioner options and acquire, then refuses both roles when t
         daemon: { serverId: ui!.serverId, serverIdentityId: fixture.serverId, machineId: machine.target.machineId },
       }, { surface: 'ui', authority: 'present_user', serverId: ui!.serverId, actionCaller: { kind: 'host' } });
       expect(selected, JSON.stringify(selected)).toMatchObject({ ok: true, result: { kind: 'selected' } });
-      if (withArtifact) {
+      if (publishAccountArtifact) {
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) throw new Error('Signed-in Account lifetime unavailable');
         const reader = readPluginAccountAvailability(lifetime.scope);
@@ -187,11 +185,12 @@ it('runs Account provisioner options and acquire, then refuses both roles when t
         machineId: machine.target.machineId, operationId: accepted.operation.operationId });
       throw new Error(`Present-artifact allocation did not bind: ${String(error)}; operation=${JSON.stringify(operation)}`);
     }
-    // Binding proves the Account acquire handler ran. Guest installation/enrollment is a separate journey.
+    // Binding proves the Account acquire handler ran. The next complete portable
+    // release is selected without publishing its hosted Account executable.
     await install('1.0.1', false);
     const missingOptions = await options();
-    expect(missingOptions, JSON.stringify(missingOptions)).toMatchObject({ ok: false, errorCode: 'plugin_daemon_module_load_failed' });
-    expect(JSON.stringify(missingOptions)).toContain('plugin_account_execution_artifact_unavailable');
+    expect(missingOptions, JSON.stringify(missingOptions)).toMatchObject({ ok: false,
+      errorCode: 'plugin_account_execution_artifact_unavailable', effectAttempted: false });
     const missingAcquire = await acquire('missing-artifact');
     expect(missingAcquire, JSON.stringify(missingAcquire)).toMatchObject({ ok: true });
     if (!missingAcquire.ok) throw new Error(missingAcquire.errorCode);
@@ -203,8 +202,14 @@ it('runs Account provisioner options and acquire, then refuses both roles when t
     if (!terminal.ok) throw new Error(terminal.errorCode);
     const failed = ActionOperationActionOutputSchemasV1['action.operations.get'].parse(terminal.result);
     expect(failed).toMatchObject({ kind: 'found', operation: { state: 'failed',
-      error: { errorCode: 'plugin_daemon_module_load_failed' } } });
-    expect(JSON.stringify(failed)).toContain('plugin_account_execution_artifact_unavailable');
+      error: { errorCode: 'plugin_account_execution_artifact_unavailable', effectAttempted: false } } });
+    const missingRead = await account.execute('machines.managed.get', { homeId: fixture.serverId,
+      managedId: missingAccepted.managedId });
+    expect(missingRead, JSON.stringify(missingRead)).toMatchObject({ ok: true });
+    if (!missingRead.ok) throw new Error(missingRead.errorCode);
+    const missingRow = unwrapManagedMachineReadV1(ManagedMachineActionOutputSchemasV1['machines.managed.get'].parse(missingRead.result));
+    expect(missingRow, JSON.stringify(missingRow)).toMatchObject({ allocation: 'confirmed-absent' });
+    expect(missingRow.resource).toBeUndefined();
   } finally {
     try { await ui?.close(); }
     finally {
