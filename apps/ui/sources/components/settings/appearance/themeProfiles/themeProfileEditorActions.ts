@@ -14,10 +14,10 @@ function editedDocument(input: ThemeEditorDraft): ThemeProfileDocument {
 /** The mounted editor supplies its captured Action executor; persistence and the
  * single temporary preview remain with their existing Action owners. */
 export function createThemeProfileEditorActions(execute: ThemeEditorExecute) {
-    const tryDocument = (document: ThemeProfileDocument, mode: ThemeProfileMode) =>
-        execute(THEME_ACTION_IDS.tryOn, { document, mode, origin: { kind: 'editor' } });
+    const tryDocument = (document: ThemeProfileDocument, mode: ThemeProfileMode, transition?: 'none') =>
+        execute(THEME_ACTION_IDS.tryOn, { document, mode, origin: { kind: 'editor' }, ...(transition ? { transition } : {}) });
     return {
-        preview(input: ThemeEditorDraft) { return tryDocument(editedDocument(input), input.mode); },
+        preview(input: ThemeEditorDraft) { return tryDocument(editedDocument(input), input.mode, 'none'); },
         async saveAndUse(input: ThemeEditorDraft & Readonly<{ reference?: ThemeReference }>) {
             let document = editedDocument(input);
             if (input.reference) {

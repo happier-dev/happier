@@ -428,7 +428,7 @@ export const readThemeRuntimeInk = (): string => {
     return current.themes[mode].colors.text.primary;
 };
 
-/** Every observed palette change uses the appearance reveal; an already-painted mode/Keep is a no-op. */
+/** Discrete palette changes reveal; continuous drafts paint quietly and an already-painted mode/Keep is a no-op. */
 export const transitionThemeRuntimeSelection = (requested: ApplyThemeRuntimeSelectionInput, reduceMotion: boolean): Promise<void> => {
     const prepared = prepareThemeRuntimeSelection(requested);
     const { input, themes } = prepared;
@@ -446,7 +446,7 @@ export const transitionThemeRuntimeSelection = (requested: ApplyThemeRuntimeSele
     }
     return defaultRunThemePreferenceChange({
         currentPreference: previousMode, nextPreference: mode, systemTheme,
-        platform: Platform.OS, reduceMotion,
+        platform: Platform.OS, reduceMotion: reduceMotion || input.preview?.transition === 'none',
         forceAnimate: visibleChanged,
         mutation: () => { applyPreparedThemeRuntimeSelection(prepared); },
     });

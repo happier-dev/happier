@@ -43,6 +43,7 @@ describe('themeProfileEditorActions', () => {
         expect(calls.map(call => call.id)).toEqual([THEME_ACTION_IDS.tryOn]);
         expect(writes()).toBe(0);
         expect(owner.read()?.origin).toEqual({ kind: 'editor' });
+        expect(owner.read()).toMatchObject({ transition: 'none' });
         expect(calls[0]?.input).toMatchObject({ mode: 'light', origin: { kind: 'editor' }, document: { raw: {
             schemaVersion: 2, name: 'Edited theme', style: { radius: 'round', futureInset: 12 }, futurePresentation: { texture: 'paper' }, css: '.composer { opacity: .8 }',
         } } });

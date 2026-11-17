@@ -1,4 +1,6 @@
 import * as React from 'react';
+import type { ThemeActionId, ThemeActionInput, ThemeActionOutput, ThemeActionRequest } from '@happier-dev/protocol/actions/themeActionFamily';
+import type { ThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -106,6 +108,59 @@ describe('Artifact-backed theme runtime synchronization', () => {
         expect(transition).toHaveBeenCalledTimes(3);
         expect(shared.setTheme).toHaveBeenCalledTimes(1);
         await screen.unmount();
+    });
+    it('debounces draft keystrokes into one quiet application while explicit Try still reveals once', async () => {
+        await setup();
+        const { createThemeActionHarness } = await import('@/dev/testkit/harness/themeActionHarness');
+        const { createThemeActionExecute } = await import('@/sync/ops/actions/themeActionDeps');
+        const { ThemeActionInputSchemas, ThemeActionOutputSchemas } = await import('@happier-dev/protocol/actions/themeActionFamily');
+        const { createThemeProfileEditorActions } = await import('@/components/settings/appearance/themeProfiles/themeProfileEditorActions');
+        const { useThemeProfileEditorPreview } = await import('@/components/settings/appearance/themeProfiles/useThemeProfileEditorPreview');
+        const { getThemeTryOnOwner } = await import('./profiles/themeTryOnRuntime');
+        const { prepareThemeProfileCss } = await import('./css/prepareThemeCss');
+        const harness = createThemeActionHarness();
+        const owner = getThemeTryOnOwner();
+        const action = createThemeActionExecute({ withLibrary: operation => operation(harness.library),
+            readSelection: () => harness.selection, clientId: () => '', runtime: { preview: owner,
+                coverage: value => prepareThemeProfileCss(value.profile).coverage,
+                detailedCoverage: value => prepareThemeProfileCss(value.profile).detailedCoverage, surfaceMap: () => [] } });
+        const editor = createThemeProfileEditorActions(async <Id extends ThemeActionId,>(id: Id, input: ThemeActionInput<Id>): Promise<ThemeActionOutput<Id>> => {
+            const admitted = ThemeActionInputSchemas[id].parse(input);
+            const result = await action({ actionId: id, input: admitted, context: { surface: 'ui' } } as ThemeActionRequest);
+            return ThemeActionOutputSchemas[id].parse(result) as ThemeActionOutput<Id>;
+        });
+        const onFailure = (error: unknown) => { throw error; };
+        function Draft({ document }: { document: ThemeProfileDocument }) {
+            useThemeProfileEditorPreview({ owner, draft: { document, draft: document.profile, mode: 'light' }, preview: editor.preview, onFailure });
+            return <ThemeProfileRuntimeSync />;
+        }
+        const { parseThemeProfileDocument, mergeThemeProfileDocumentEdit } = await import('@happier-dev/protocol/account/settings/themeProfiles');
+        const parsed = parseThemeProfileDocument({ schemaVersion: 1, id: 'draft', name: 'Draft', createdAt: '2026-11-16', updatedAt: '2026-11-16',
+            base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} } });
+        if (!parsed.ok) throw new Error('Invalid draft');
+        const screen = await renderScreen(<Draft document={parsed.document} />);
+        const transition = vi.fn((mutation: () => void) => mutation());
+        const unregister = registerNativeThemePreferenceTransitionController({ run: transition });
+        setReducedMotionPreferenceOverride(false);
+        onTestFinished(() => { unregister(); setReducedMotionPreferenceOverride(null); vi.useRealTimers(); });
+        vi.useFakeTimers();
+        shared.update.mockClear();
+        let latest = parsed.document;
+        for (let i = 0; i < 10; i++) {
+            latest = mergeThemeProfileDocumentEdit(parsed.document, { overrides: { light: { 'background.canvas': `#12345${i}` }, dark: {} } });
+            await screen.update(<Draft document={latest} />);
+        }
+        expect(shared.update).not.toHaveBeenCalled();
+        await act(async () => { await vi.advanceTimersByTimeAsync(150); });
+        expect(shared.themes!.light.colors.background.canvas).toBe('#123459');
+        expect(transition).not.toHaveBeenCalled();
+        expect(shared.update).toHaveBeenCalledTimes(1);
+        expect(harness.writes()).toBe(0);
+        await act(async () => { owner.begin({ document: parsed.document, mode: 'dark', origin: { kind: 'agent' } }); });
+        expect(transition).toHaveBeenCalledTimes(1);
+        await screen.unmount();
+        const current = owner.read();
+        if (current) await act(async () => { owner.revert(current.previewRef); });
     });
     it('renders the shared preview and restores the latest saved selection when its receipt is released', async () => {
         const fixture = await setup();

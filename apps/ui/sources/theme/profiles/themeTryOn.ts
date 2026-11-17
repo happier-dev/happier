@@ -10,11 +10,14 @@ import { retainDeep } from '@/sync/domains/state/structuralSharing';
 export type PreviewRef = string;
 export type ThemeTryOnOrigin =
     | Readonly<{ kind: 'agent' | 'editor' }>
+    | Readonly<{ kind: 'store'; reference: Extract<ThemeReference, { kind: 'plugin' }> }>
     | Readonly<{ kind: 'store'; listing: Pick<RegistryItemPointerV1, 'sourceId' | 'itemId'>; acquired?: RegistryThemeAcquisitionV1 }>;
 export type ThemeTryOnInput = Readonly<{
     mode: ThemeProfileMode;
     origin: ThemeTryOnOrigin;
     group?: string;
+    /** Continuous editor draft paint uses the same application trigger without a reveal. */
+    transition?: 'none';
 }> & (Readonly<{ document: ThemeProfileDocument; selection?: ThemeReference | null }>
     | Readonly<{ document: null; selection: null }>);
 export type ThemeTryOnSnapshot = ThemeTryOnInput & Readonly<{ previewRef: PreviewRef }>;
@@ -23,7 +26,9 @@ function presentationKey(snapshot: ThemeTryOnSnapshot): string {
     switch (snapshot.origin.kind) {
         case 'agent': return JSON.stringify(['agent', snapshot.previewRef]);
         case 'editor': return 'editor';
-        case 'store': return JSON.stringify(['store', snapshot.origin.listing.sourceId, snapshot.origin.listing.itemId]);
+        case 'store': return 'reference' in snapshot.origin
+            ? JSON.stringify(['store', snapshot.origin.reference.pluginId, snapshot.origin.reference.contributionId])
+            : JSON.stringify(['store', snapshot.origin.listing.sourceId, snapshot.origin.listing.itemId]);
     }
 }
 export interface ThemeTryOnOwner {

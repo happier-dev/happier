@@ -2,15 +2,26 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { registerNativeThemePreferenceTransitionController } from '@/components/settings/appearance/themePreferenceTransition';
 
 const platformRuntime = vi.hoisted(() => ({
+    themes: null as Record<'light' | 'dark', Theme> | null,
+    updateTheme: vi.fn((mode: 'light' | 'dark', updater: (theme: Theme) => Theme) => {
+        if (platformRuntime.themes) platformRuntime.themes[mode] = updater(platformRuntime.themes[mode]);
+    }),
     setStatusBarStyle: vi.fn(),
     setTheme: vi.fn(),
     setRootViewBackgroundColor: vi.fn(),
 }));
+vi.mock('react-native', async () =>
+    (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+        Platform: { OS: 'ios', select: (values: Record<string, unknown>) => values.ios ?? values.default },
+        Appearance: { getColorScheme: () => 'light' },
+    }));
 vi.mock('expo-status-bar', () => ({ setStatusBarStyle: platformRuntime.setStatusBarStyle }));
 vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: vi.fn(async () => {}) }));
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock({ runtime: {
+        getTheme: (mode: 'light' | 'dark') => platformRuntime.themes?.[mode],
+        updateTheme: platformRuntime.updateTheme,
         setTheme: platformRuntime.setTheme,
         setRootViewBackgroundColor: platformRuntime.setRootViewBackgroundColor,
     } });
@@ -21,6 +32,7 @@ import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import {
     commitThemeSelection,
     applyThemeRuntimeSelection,
+    transitionThemeRuntimeSelection,
     resolveEffectiveThemeRuntimeBackground,
     resolveThemeRuntimeStartupThemes,
     resolveThemeRuntimeThemes,
@@ -80,6 +92,28 @@ const pairedProfileState = {
 } as unknown as ThemeProfilesLocalStateV1;
 
 describe('theme profile runtime', () => {
+    it('applies every settled draft once without a reveal, retaining discrete restore motion', async () => {
+        platformRuntime.themes = { light: lightTheme, dark: darkTheme };
+        const input = { themePreference: 'light' as const, themeProfiles: profileState, style: null, systemTheme: 'light' as const };
+        applyThemeRuntimeSelection(input);
+        const reveal = vi.fn((mutation: () => void) => mutation());
+        onTestFinished(registerNativeThemePreferenceTransitionController({ run: reveal }));
+        platformRuntime.updateTheme.mockClear();
+        for (let index = 0; index < 3; index++) {
+            const parsed = parseThemeProfileDocument({ ...profileState.profiles[0], overrides: {
+                light: { 'background.canvas': `#12345${index}` }, dark: {},
+            } });
+            if (!parsed.ok) throw new Error('Invalid draft fixture');
+            await transitionThemeRuntimeSelection({ ...input, preview: { document: parsed.document, mode: 'light',
+                origin: { kind: 'editor' }, transition: 'none', previewRef: `draft-${index}` } }, false);
+        }
+        expect(platformRuntime.themes.light.colors.background.canvas).toBe('#123452');
+        expect(platformRuntime.updateTheme).toHaveBeenCalledTimes(3);
+        expect(reveal).not.toHaveBeenCalled();
+        await transitionThemeRuntimeSelection(input, false);
+        expect(reveal).toHaveBeenCalledTimes(1);
+        expect(platformRuntime.updateTheme).toHaveBeenCalledTimes(4);
+    });
     it.each([false, true])('keeps dark base text on system-dark startup with light-only selection %s', (selectLight) => {
         const themes = resolveThemeRuntimeStartupThemes({
             themePreference: 'adaptive', systemTheme: 'dark', platform: 'web',

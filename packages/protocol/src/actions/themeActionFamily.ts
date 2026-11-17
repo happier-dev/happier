@@ -112,7 +112,7 @@ export const ThemeActionInputSchemas = {
     include: z.optional(z.array(z.enum(['document', 'guide', 'coverage', 'surfaceMap']))) }),
   [THEME_ACTION_IDS.tryOn]: z.strictObject({ document: z.nullable(ThemeProfileDocumentSchema), mode,
     origin: z.strictObject({ kind: z.enum(['agent', 'editor', 'store']), listing: z.optional(ThemeRegistryItemKeySchema) }),
-    group: z.optional(z.string()) }),
+    group: z.optional(z.string()), transition: z.optional(z.literal('none')) }),
   [THEME_ACTION_IDS.revert]: z.strictObject({ previewRef: identifier }),
   [THEME_ACTION_IDS.keep]: z.strictObject({ previewRef: identifier }),
   [THEME_ACTION_IDS.save]: z.strictObject({ document: ThemeProfileDocumentSchema, ref: z.optional(ThemeReferenceSchema) }),
