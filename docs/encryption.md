@@ -2267,6 +2267,11 @@ release availability and loaded-runtime validation are separate evidence.
 
 ### Project setup trust (0.3 development source)
 
+Shared setup publication uses the canonical `artifact.create` Action with a
+schema-valid `ProjectSharedSetupV1` body; addressed reads use `artifact.get`.
+The kind stays hidden from ordinary browser discovery. Generic updates and
+accepted-copy authoring remain restricted to their specialized owners.
+
 Setup consent belongs to the approving Account and its Home-qualified Project,
 not the execution Machine or its custodian. The reserved Account-row adapter in
 `app/projects/trust/projectTrustRowService.ts` stores one current

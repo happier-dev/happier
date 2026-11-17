@@ -201,6 +201,8 @@ import { WaitActionInputV1Schema } from './specs/wait.js';
 import { ActionOperationActionIdV1Schema, ActionOperationActionInputSchemasV1 } from './specs/actionOperations.js';
 import { readActionFailureEnvelope, readFailureEnvelopeDetails } from './executor/actionFailureEnvelope.js';
 import { AccountNoticeArtifactBodyV1Schema, readAccountNoticeArtifactV1, readOwnedNoticeArtifactV1, ACCOUNT_NOTICE_ARTIFACT_KIND_V1, USAGE_NOTICE_ARTIFACT_KIND_V1 } from '../activity/usageNoticeArtifactV1.js';
+import { PROJECT_SETUP_ARTIFACT_KIND_V1, ProjectSharedSetupV1Schema } from '../projects/projectSetupV1.js';
+import { ARTIFACT_CREATE_ACTION_ID_V1 } from '../artifacts/artifactActionIdsV1.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue } from '../json/strictJsonValue.js';
 import { resolveActionOriginationPreferenceFailureV1 } from './executor/actionOriginationPreferences.js';
 import { UsageSourceActionIdSchema, USAGE_SOURCE_ACTION_INPUT_SCHEMAS } from '../usage/usageSources.js';
@@ -4458,6 +4460,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!deps.artifactAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const artifactInput = (parsed.data as z.infer<(typeof ArtifactActionInputSchemasV1)[typeof artifactActionId]>);
         const internalKindRefusal = { ok: false as const, errorCode: 'artifact_kind_internal', error: 'artifact_kind_internal' };
+        // Setup publication is an addressed, reviewed document write. Browser
+        // visibility does not decide authoring; accepted copies retain their owner.
+        const isSharedSetupArtifact = (artifact: Readonly<{ header: { kind?: unknown }; body?: unknown }>): boolean => {
+          if (artifact.header.kind !== PROJECT_SETUP_ARTIFACT_KIND_V1 || typeof artifact.body !== 'string') return false;
+          try { return ProjectSharedSetupV1Schema.safeParse(JSON.parse(artifact.body)).success; }
+          catch { return false; }
+        };
+        const isSharedSetupCreateInput = artifactActionId === ARTIFACT_CREATE_ACTION_ID_V1
+          && 'header' in artifactInput && 'body' in artifactInput && isSharedSetupArtifact(artifactInput);
         // The incumbent Inbox may read and dismiss its captured Account's private
         // notices. This does not admit ordinary private-document authoring or egress.
         const noticeAccountId = readNoticeInboxAccountIdV1(ctx);
@@ -4483,9 +4494,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           && isNoticeInboxCaller && 'header' in artifactInput
           && (artifactInput.header.kind === USAGE_NOTICE_ARTIFACT_KIND_V1
             || artifactInput.header.kind === ACCOUNT_NOTICE_ARTIFACT_KIND_V1) && 'body' in artifactInput;
-        // Generic documents consume the same kind exclusion as the browser. Specialized
-        // owners keep their native transport; retagging cannot bypass their write policy.
-        if ('header' in artifactInput && !getArtifactKindPolicyV1(artifactInput.header.kind).browserListed && !isNoticeUpdateInput
+        // Other hidden documents keep their specialized write policy. A shared setup
+        // publication must match its closed body schema; retagging alone cannot admit it.
+        if ('header' in artifactInput && !getArtifactKindPolicyV1(artifactInput.header.kind).browserListed
+          && !isSharedSetupCreateInput && !isNoticeUpdateInput
           || artifactActionId === 'artifact.publish_from_file' && 'kind' in artifactInput
             && !getArtifactKindPolicyV1(artifactInput.kind).browserListed) return internalKindRefusal;
         if ((artifactActionId === 'artifact.update' || artifactActionId === 'artifact.delete' || artifactActionId === 'artifact.export'
@@ -4537,7 +4549,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (artifactActionId === 'artifact.get') {
           const opened = ArtifactActionOutputSchemasV1['artifact.get'].parse(result);
           if (opened.artifact && !getArtifactKindPolicyV1(opened.artifact.header.kind).browserListed
-            && !readOwnedNotice(opened.artifact)) return internalKindRefusal;
+            && !isSharedSetupArtifact(opened.artifact) && !readOwnedNotice(opened.artifact)) return internalKindRefusal;
           return { ok: true, result: opened };
         }
         if (artifactActionId === 'artifact.list') {

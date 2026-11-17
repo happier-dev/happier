@@ -86,6 +86,51 @@ const ids = ['artifact.create', 'artifact.get', 'artifact.list', 'artifact.updat
   'artifact.publish_from_file', 'artifact.revisions.list', 'artifact.revisions.restore', 'artifact.storage.usage'] as const;
 
 describe('ordinary Artifact Actions', () => {
+  it('publishes and reads schema-valid shared setup through the ordinary Artifact Action after a document control', async () => {
+    const initial = { ...usageNoticeArtifact(), header: ArtifactHeaderMetadataV1Schema.parse({ title: 'Notes' }), body: 'control' };
+    const boundary = openedArtifactBoundary(initial);
+    const executor = createActionExecutor({ artifactAction: boundary.action, readActionsSettings: usageNoticeApprovalPolicy });
+    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', runtimeAccountId: 'owner',
+      expectedAccountId: 'owner', actionCaller: { kind: 'host' }, actionsSettings: usageNoticeActionsSettings };
+    const artifactId = '22222222-2222-4222-8222-222222222222';
+    const controlArtifactId = '33333333-3333-4333-8333-333333333333';
+    expect(await executor.execute('artifact.create', { artifactId: controlArtifactId, header: { title: 'Control' }, body: 'ordinary' }, context))
+      .toMatchObject({ ok: true, result: { artifactId: controlArtifactId } });
+    const body = JSON.stringify({ kind: 'project_setup.v1', manifest: { version: 1,
+      scripts: { build: { source: { kind: 'command', command: 'echo shared' } } } } });
+    expect(await executor.execute('artifact.create', { artifactId, header: { kind: 'project_setup.v1', title: 'Setup' }, body }, context))
+      .toMatchObject({ ok: true, result: { artifactId } });
+    expect(await executor.execute('artifact.get', { artifactId }, context))
+      .toMatchObject({ ok: true, result: { artifact: { artifactId, body } } });
+    expect(getActionSpec('artifact.create').surfaces.agent).toBe(true);
+    expect(resolveActionApprovalRouting({ actionId: 'artifact.create', spec: getActionSpec('artifact.create'),
+      input: { header: { kind: 'project_setup.v1' }, body }, settings: normalizeActionsSettingsV1({ v: 1 }),
+      context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(true);
+  });
+
+  it('keeps accepted setup authoring and malformed setup outside generic Artifact authoring', async () => {
+    const initial = { ...usageNoticeArtifact(), header: ArtifactHeaderMetadataV1Schema.parse({ title: 'Notes' }), body: 'control' };
+    const boundary = openedArtifactBoundary(initial);
+    const executor = createActionExecutor({ artifactAction: boundary.action, readActionsSettings: usageNoticeApprovalPolicy });
+    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', runtimeAccountId: 'owner',
+      expectedAccountId: 'owner', actionCaller: { kind: 'host' }, actionsSettings: usageNoticeActionsSettings };
+    const artifactId = '22222222-2222-4222-8222-222222222222';
+    for (const body of ['{', JSON.stringify({ kind: 'project_setup.v1', manifest: { version: 2 } }),
+      JSON.stringify({ kind: 'project_setup.v1', setupOverrides: { version: 1 } })]) {
+      expect(await executor.execute('artifact.create', { artifactId, header: { kind: 'project_setup.v1' }, body }, context))
+        .toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
+      expect(boundary.exists(artifactId)).toBe(false);
+    }
+    const setup = { ...initial, header: ArtifactHeaderMetadataV1Schema.parse({ kind: 'project_setup.v1' }),
+      body: JSON.stringify({ kind: 'project_setup.v1', manifest: { version: 1 } }) };
+    const existing = openedArtifactBoundary(setup);
+    const protectedExecutor = createActionExecutor({ artifactAction: existing.action, readActionsSettings: usageNoticeApprovalPolicy });
+    expect(await protectedExecutor.execute('artifact.update', { artifactId: setup.artifactId,
+      expectedRevision: setup.revision, header: setup.header, body: setup.body }, context))
+      .toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
+    expect(existing.read()).toEqual(setup);
+  });
+
   it('saves a person’s reviewed document edit through the UI without a second approval', async () => {
     const initial = { ...usageNoticeArtifact(), header: ArtifactHeaderMetadataV1Schema.parse({ title: 'Notes' }), body: 'Original passage' };
     const boundary = openedArtifactBoundary(initial);
