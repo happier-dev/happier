@@ -743,6 +743,15 @@ describe('private installed Environment secret launch transport', () => {
             actionId, machineId: input.machineId, target, requestId: envelope.requestId,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), deploymentReadAdmission: admission });
         const authorization = await mint();
+        // A reviewed native write spends the same Environment admission with its own write operand.
+        const writeInput = { action, input: { operation: 'statement.run', mode: 'write', target: actionInput.input.target,
+            executionMode: 'transaction', statements: [{ sql: 'UPDATE selected SET value=$1', parameters: [{ type: 'text', value: 'w' }] }] } };
+        const writeEnvelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: writeInput };
+        await expect(auth.mintExternalActionExecutionAuthorization({ accountId: f.owner.id,
+            serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.owner.tokenEpoch },
+            actionId, machineId: input.machineId, target, requestId: writeEnvelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(writeEnvelope),
+            deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, writeInput) })).resolves.toMatchObject({ binding: { actionId } });
         const request = (changes: Partial<EnvironmentSecretLaunchAdmissionBodyV1> = {}) => {
             const body = { serverId, environmentId: row.id, targetLinkId: input.targetLinkId, machineId: input.machineId,
                 installationId: input.installationId, materialization: { kind: 'dataRole' as const,
