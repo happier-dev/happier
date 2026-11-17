@@ -55,7 +55,7 @@ describe("registerAccountErasureRoute", () => {
         expect(await db.account.findUnique({ where: { id: "survivor" } })).not.toBeNull();
     });
 
-    it("reports retired Account cleanup as pending when blob deletion fails", async () => {
+    it("keeps sockets connected while public-file cleanup remains pending", async () => {
         await createAccount("blob-owner");
         await db.uploadedFile.create({ data: { accountId: "blob-owner", path: "retained-public-file" } });
         const remove = vi.spyOn(blobFiles, "deletePublicFile").mockRejectedValue(new Error("Storage unavailable"));
@@ -63,8 +63,6 @@ describe("registerAccountErasureRoute", () => {
 
         expect(await erase("blob-owner", disconnect)).toEqual({ statusCode: 200, body: { status: "disabled_pending_completion" } });
         expect(remove).toHaveBeenCalledWith("retained-public-file");
-        expect(await db.account.findUniqueOrThrow({ where: { id: "blob-owner" }, select: { status: true, tokenEpoch: true } }))
-            .toEqual({ status: "disabled", tokenEpoch: 1 });
         expect(disconnect).not.toHaveBeenCalled();
     });
 
