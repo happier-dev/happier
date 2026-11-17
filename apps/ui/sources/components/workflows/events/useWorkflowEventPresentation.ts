@@ -16,6 +16,8 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { WorkflowActivityLiveFact } from '@/sync/domains/workflows/workflowActivityTypes';
 import type { WorkflowActivityProjection } from '@/sync/engine/workflows/workflowActivityProjection';
+import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { readWorkflowEventStartedRuns } from './workflowEventFacts';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
@@ -37,7 +39,11 @@ export type WorkflowEventPresentation = Readonly<{
   needsYou: boolean;
   lines: readonly WorkflowEventFactLine[];
   open: Readonly<{ label: string; href: string }> | null;
+  /** Exact immutable causes from the retained page; names stay with the Run label owner. */
+  runsStarted: readonly WorkflowRunSummaryV1[];
 }>;
+
+const NO_RUNS: readonly WorkflowRunSummaryV1[] = Object.freeze([]);
 
 /** One row's fact, subscribed by its own key: a new event elsewhere re-renders only the key list. */
 export function useWorkflowEventFact(
@@ -63,6 +69,7 @@ export function useWorkflowEventFact(
 export function useWorkflowEventPresentation(
   fact: WorkflowActivityLiveFact | undefined,
   scope: ServerAccountScope | null,
+  retainedRuns?: readonly WorkflowRunSummaryV1[],
 ): WorkflowEventPresentation | null {
   const serverId = scope?.serverId ?? null;
   const sessionId = fact?.kind === 'session' ? fact.sessionId : '';
@@ -101,6 +108,7 @@ export function useWorkflowEventPresentation(
         );
   return React.useMemo((): WorkflowEventPresentation | null => {
     if (fact === undefined) return null;
+    const runsStarted = retainedRuns === undefined ? NO_RUNS : readWorkflowEventStartedRuns(fact, retainedRuns);
     switch (fact.kind) {
       case 'session': {
         const glyph =
@@ -131,6 +139,7 @@ export function useWorkflowEventPresentation(
           });
         return {
           fact,
+          runsStarted,
           glyph,
           needsYou: false,
           subtitle: sessionName,
@@ -152,6 +161,7 @@ export function useWorkflowEventPresentation(
         const machine = machineName ?? t('workflows.events.someMachine');
         return {
           fact,
+          runsStarted,
           glyph: 'desktop',
           needsYou: false,
           subtitle: null,
@@ -176,6 +186,7 @@ export function useWorkflowEventPresentation(
         const result = formatWorkflowRunStateLabel(fact.state);
         return {
           fact,
+          runsStarted,
           glyph: 'tree-structure',
           needsYou: fact.event === 'needs_attention',
           subtitle: result,
@@ -204,7 +215,7 @@ export function useWorkflowEventPresentation(
         };
       }
     }
-  }, [fact, machineName, sessionName, sessionPath, workflowName, serverId]);
+  }, [fact, machineName, sessionName, sessionPath, workflowName, serverId, retainedRuns]);
 }
 
 function readSessionMachineId(

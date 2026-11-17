@@ -14,6 +14,7 @@ import type { TriggerWhenValue } from '@/components/workflows/triggers/sessionTr
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { WorkflowActivityProjection } from '@/sync/engine/workflows/workflowActivityProjection';
+import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { t } from '@/text';
 
 import {
@@ -68,12 +69,13 @@ export const WorkflowLiveEventsPane = React.memo(
           projection={feed.projection}
           eventKey={key}
           scope={scope}
+          retainedRuns={feed.retained?.runs}
           added={added.has(key)}
           onAdd={onAddTrigger === null ? null : add}
           testID={props.testID}
         />
       ),
-      [feed.projection, scope, added, onAddTrigger, add, props.testID],
+      [feed.projection, feed.retained?.runs, scope, added, onAddTrigger, add, props.testID],
     );
     return (
       <View testID={props.testID} style={styles.pane}>
@@ -123,6 +125,7 @@ const LiveEventBody = React.memo(function LiveEventBody(
     projection: WorkflowActivityProjection;
     eventKey: string;
     scope: ServerAccountScope | null;
+    retainedRuns: readonly WorkflowRunSummaryV1[] | undefined;
     added: boolean;
     onAdd: ((key: string, when: TriggerWhenValue) => void) | null;
     testID: string;
@@ -130,7 +133,7 @@ const LiveEventBody = React.memo(function LiveEventBody(
 ) {
   const router = useRouter();
   const fact = useWorkflowEventFact(props.projection, props.eventKey);
-  const presentation = useWorkflowEventPresentation(fact, props.scope);
+  const presentation = useWorkflowEventPresentation(fact, props.scope, props.retainedRuns);
   if (presentation === null) return null;
   const when = readWorkflowEventWhen(presentation.fact);
   const open = presentation.open;
