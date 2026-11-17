@@ -1214,6 +1214,7 @@ const ja: Shared_skillsPageTranslations.SkillsPageTranslation = {
     restartDetail: "再起動しても会話はそのままです。",
     restartTerminalDetail: "ターミナルから再起動してください。会話はそのままです。",
     notAttachedDetail: "スキルには保存されていますが、このセッションには入っていません。",
+    attachFailed: "このセッションに追加できませんでした。もう一度お試しください。",
     onlyUses: ({ name }) => name + " だけが使います",
   },
   maker: {

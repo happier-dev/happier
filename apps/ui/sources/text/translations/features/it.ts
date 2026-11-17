@@ -1234,6 +1234,7 @@ const it: Shared_skillsPageTranslations.SkillsPageTranslation = {
     restartDetail: "Il riavvio mantiene la conversazione.",
     restartTerminalDetail: "Riavviala dal suo terminale. La conversazione resta.",
     notAttachedDetail: "È nelle tue abilità; questa sessione non l’ha presa.",
+    attachFailed: "Impossibile allegarla a questa sessione. Riprova.",
     onlyUses: ({ name }) => "solo " + name + " la usa",
   },
   maker: {

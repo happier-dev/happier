@@ -1202,6 +1202,7 @@ const zhHant: Shared_skillsPageTranslations.SkillsPageTranslation = {
     restartDetail: "重新啟動會保留對話。",
     restartTerminalDetail: "請在終端機重新啟動。對話會保留。",
     notAttachedDetail: "它已在你的技能中，但此工作階段沒有載入。",
+    attachFailed: "無法附加到此工作階段。請再試一次。",
     onlyUses: ({ name }) => "僅 " + name + " 使用",
   },
   maker: {

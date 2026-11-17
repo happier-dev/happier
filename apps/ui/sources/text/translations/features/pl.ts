@@ -1220,6 +1220,7 @@ const pl: Shared_skillsPageTranslations.SkillsPageTranslation = {
     restartDetail: "Ponowne uruchomienie zachowuje rozmowę.",
     restartTerminalDetail: "Uruchom ją ponownie z terminala. Rozmowa zostaje.",
     notAttachedDetail: "Jest w twoich umiejętnościach; ta sesja jej nie przyjęła.",
+    attachFailed: "Nie udało się dołączyć go do tej sesji. Spróbuj ponownie.",
     onlyUses: ({ name }) => "używa jej tylko " + name,
   },
   maker: {

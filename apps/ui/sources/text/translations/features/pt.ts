@@ -1234,6 +1234,7 @@ const pt: Shared_skillsPageTranslations.SkillsPageTranslation = {
     restartDetail: "Reiniciar mantém a conversa.",
     restartTerminalDetail: "Reinicie pelo terminal. A conversa é mantida.",
     notAttachedDetail: "Está nas suas habilidades; esta sessão não a recebeu.",
+    attachFailed: "Não foi possível anexá-la a esta sessão. Tente de novo.",
     onlyUses: ({ name }) => "só " + name + " a usa",
   },
   maker: {

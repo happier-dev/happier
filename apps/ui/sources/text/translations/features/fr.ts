@@ -1237,6 +1237,7 @@ const fr: Shared_skillsPageTranslations.SkillsPageTranslation = {
     restartDetail: "Redémarrer conserve la conversation.",
     restartTerminalDetail: "Redémarre-la depuis son terminal. La conversation est conservée.",
     notAttachedDetail: "Elle est dans tes compétences ; cette session ne l’a pas prise.",
+    attachFailed: "Impossible de l’ajouter à cette session. Réessaie.",
     onlyUses: ({ name }) => "seul " + name + " l’utilise",
   },
   maker: {

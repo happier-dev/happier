@@ -1236,6 +1236,7 @@ const ca: Shared_skillsPageTranslations.SkillsPageTranslation = {
     restartDetail: "Reiniciar conserva la conversa.",
     restartTerminalDetail: "Reinicia-la des del seu terminal. La conversa es conserva.",
     notAttachedDetail: "És a les teves habilitats; aquesta sessió no l’ha agafada.",
+    attachFailed: "No s’ha pogut adjuntar a aquesta sessió. Torna-ho a provar.",
     onlyUses: ({ name }) => "només " + name + " la fa servir",
   },
   maker: {

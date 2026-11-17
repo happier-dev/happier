@@ -3,7 +3,6 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { SkillLibraryActionResultByIdV1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 import { RestartSessionRunnerResultV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1';
-import { SessionCapabilitiesSetOutputV1Schema } from '@happier-dev/protocol/actions/specs/sessionCapabilities';
 import { HappierSavedSkillCard, HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX, resolveHappierWorkStatusGlyphColor,
     type HappierWorkStatusTone } from '@happier-dev/plugin-ui/presentation';
 
@@ -20,10 +19,12 @@ import { useSessionSkillApplicationFacts } from '@/sync/domains/capabilities/ses
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 
 type SavedSkill = SkillLibraryActionResultByIdV1['skills.create'];
 export { readSavedSkillResult } from './savedSkillResultModel';
+import { readSavedSkillAttachFailure } from './savedSkillResultModel';
 
 /** Decoration is carried by the acknowledgment; application is read from this Session's pushed metadata. */
 export function SavedSkillResult(props: Readonly<{ fact: SavedSkill; sessionId?: string; serverId?: string }>) {
@@ -63,11 +64,8 @@ export function SavedSkillResult(props: Readonly<{ fact: SavedSkill; sessionId?:
             const result = await execution.execute('session.capabilities.set', {
                 sessionId: props.sessionId, kind: 'skill', id: props.fact.skillId, state: 'on',
             }, { defaultSessionId: props.sessionId });
-            const attached = result.ok ? SessionCapabilitiesSetOutputV1Schema.safeParse(result.result) : null;
-            if (!result.ok) setError(result.errorCode ?? result.error);
-            else if (!attached?.success) setError('invalid_action_output');
-            else if (!attached.data.ok) setError(attached.data.code);
-        } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
+            setError(readSavedSkillAttachFailure(result));
+        } catch (failure) { setError(resolveActionExecutionErrorMessage(failure, t('capabilities.skills.saved.attachFailed'))); }
         finally { setBusy(false); }
     };
     const restart = async () => {

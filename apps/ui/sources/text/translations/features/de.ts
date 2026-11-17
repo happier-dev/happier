@@ -1231,6 +1231,7 @@ const de: Shared_skillsPageTranslations.SkillsPageTranslation = {
     restartDetail: "Ein Neustart behält das Gespräch.",
     restartTerminalDetail: "Starte sie im Terminal neu. Das Gespräch bleibt erhalten.",
     notAttachedDetail: "Er ist in deinen Skills; diese Sitzung hat ihn nicht übernommen.",
+    attachFailed: "Konnte ihn nicht an diese Sitzung anhängen. Versuch es erneut.",
     onlyUses: ({ name }) => "nur " + name + " nutzt ihn",
   },
   maker: {

@@ -29,6 +29,7 @@ export type SkillsPageTranslation = Readonly<{
     restartDetail: string;
     restartTerminalDetail: string;
     notAttachedDetail: string;
+    attachFailed: string;
     onlyUses: (params: Readonly<{ name: string }>) => string;
   }>;
   maker: Readonly<{
@@ -104,6 +105,7 @@ const en: SkillsPageTranslation = {
     restartDetail: "Restarting keeps the conversation.",
     restartTerminalDetail: "Restart it from its terminal. The conversation is kept.",
     notAttachedDetail: "It’s in your skills; this session didn’t take it.",
+    attachFailed: "Couldn’t attach it to this session. Try again.",
     onlyUses: ({ name }) => "only " + name + " uses it",
   },
   maker: {
@@ -198,6 +200,7 @@ export const es: SkillsPageTranslation = {
     restartDetail: "Reiniciar conserva la conversación.",
     restartTerminalDetail: "Reiníciala desde su terminal. La conversación se conserva.",
     notAttachedDetail: "Está en tus habilidades; esta sesión no la tomó.",
+    attachFailed: "No se pudo adjuntar a esta sesión. Inténtalo de nuevo.",
     onlyUses: ({ name }) => "solo " + name + " la usa",
   },
   maker: {

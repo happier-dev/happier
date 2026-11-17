@@ -1202,6 +1202,7 @@ const zhHans: Shared_skillsPageTranslations.SkillsPageTranslation = {
     restartDetail: "重启会保留对话。",
     restartTerminalDetail: "请在终端中重启。对话保留。",
     notAttachedDetail: "它已在你的技能中，但本会话没有加载。",
+    attachFailed: "无法附加到此会话。请重试。",
     onlyUses: ({ name }) => "仅 " + name + " 使用",
   },
   maker: {

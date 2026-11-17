@@ -1217,6 +1217,7 @@ const ru: Shared_skillsPageTranslations.SkillsPageTranslation = {
     restartDetail: "Перезапуск сохраняет разговор.",
     restartTerminalDetail: "Перезапустите сессию из терминала. Разговор сохранится.",
     notAttachedDetail: "Он есть в ваших навыках, но эта сессия его не приняла.",
+    attachFailed: "Не удалось подключить его к этой сессии. Попробуйте ещё раз.",
     onlyUses: ({ name }) => "использует только " + name,
   },
   maker: {

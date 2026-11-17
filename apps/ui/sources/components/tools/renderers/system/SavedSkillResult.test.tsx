@@ -5,7 +5,7 @@ import { APPROVAL_ARTIFACT_KINDS_V1, buildApprovalRequestArtifactHeaderV1 } from
 import { createUsageNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
 import { listTranscriptApprovalArtifactsForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import { TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS } from '@/components/tools/shell/approvals/transcriptSettledApprovalPresentations';
-import { readApprovedSavedSkillResult, readSavedSkillResult } from './savedSkillResultModel';
+import { readApprovedSavedSkillResult, readSavedSkillAttachFailure, readSavedSkillResult } from './savedSkillResultModel';
 
 describe('saved skill Action results', () => {
     const result = { ok: true, skillId: 'review', revision: '1:1', includedInSessionId: null, incomplete: 'session_include',
@@ -48,5 +48,14 @@ describe('saved skill Action results', () => {
         expect(readApprovedSavedSkillResult({ ...request, status: 'open' })).toBeNull();
         expect(readApprovedSavedSkillResult({ ...request, origin: undefined })).toBeNull();
         expect(readApprovedSavedSkillResult({ ...request, actionId: 'skills.duplicate' })).toBeNull();
+    });
+    it('says why attaching failed in a sentence, never by its raw code', () => {
+        for (const outcome of [{ ok: false, errorCode: 'session_unavailable', error: 'session_unavailable' },
+            { ok: true, result: { ok: false, code: 'conflict' } }, { ok: true, result: { unexpected: true } }]) {
+            const sentence = readSavedSkillAttachFailure(outcome);
+            expect(sentence).toMatch(/\s/);
+            expect(sentence).not.toMatch(/session_unavailable|conflict|invalid_action_output/);
+        }
+        expect(readSavedSkillAttachFailure({ ok: true, result: { ok: true, state: 'on', previous: 'off', applyTiming: { t: 'next_turn' } } })).toBeNull();
     });
 });
