@@ -19,10 +19,10 @@ describe('deleteCurrentAccount', () => {
     serverFetch.mockResolvedValueOnce(new Response(JSON.stringify({ status: 'pending' }), { status: 200 }));
     await expect(deleteCurrentAccount({ token: 'signed' })).rejects.toThrow('account_delete_invalid_response');
   });
-  it('preserves cleanup pending as a typed refusal without reporting deletion', async () => {
-    serverFetch.mockResolvedValue(new Response(JSON.stringify({ error: 'account_erasure_transition_cleanup_pending' }), { status: 409 }));
+  it.each(['account_erasure_transition_cleanup_pending', 'account_erasure_upload_pending'])('preserves %s as a typed refusal without reporting deletion', async code => {
+    serverFetch.mockResolvedValue(new Response(JSON.stringify({ error: code }), { status: 409 }));
     await expect(deleteCurrentAccount({ token: 'signed' })).rejects.toMatchObject({
-      code: 'account_erasure_transition_cleanup_pending',
+      code,
       status: 409,
     });
   });

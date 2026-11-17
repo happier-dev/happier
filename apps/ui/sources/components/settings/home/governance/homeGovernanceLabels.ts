@@ -162,13 +162,14 @@ export function homeGovernanceFailureNotice(
  * Team, with the same typed ownership-transfer verdicts it gives an
  * administrator, so they are shown with the same words: the deletion was
  * answered, repeating it cannot succeed, and the actionable step is to make
- * someone else an owner first. A known encryption-cleanup refusal instead
+ * someone else an owner first. An encryption-cleanup or upload refusal instead
  * explains that the same deletion can be retried. Other typed refusals use the
  * Action presenter. An absent or unreadable answer keeps the "not confirmed"
  * notice because the deletion may still have happened.
  */
 export function accountErasureFailureNotice(error: unknown): Readonly<{ title: string; body: string }> {
-    if (error instanceof HappyError && error.code === 'account_erasure_transition_cleanup_pending') {
+    if (error instanceof HappyError && (error.code === 'account_erasure_transition_cleanup_pending'
+        || error.code === 'account_erasure_upload_pending')) {
         return homeGovernanceFailureNotice({ kind: 'conflict', retryable: true, code: error.code });
     }
     if (error instanceof HappyError
@@ -206,6 +207,8 @@ function homeGovernanceFailureBody(failure: HomeDomainFailure, effect: 'read' | 
             return t('homeGovernance.revisionConflictBody');
         case 'account_erasure_transition_cleanup_pending':
             return t('homeGovernance.errorErasureTransitionCleanupPending');
+        case 'account_erasure_upload_pending':
+            return t('homeGovernance.errorErasureUploadPending');
         case 'home_policy_widening_unconfirmed':
             return t('homeGovernance.signInPolicy.errorWideningUnconfirmed');
         case 'home_claim_refused':

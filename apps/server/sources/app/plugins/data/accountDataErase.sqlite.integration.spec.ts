@@ -512,12 +512,12 @@ describe("plugin Account data erasure", () => {
         expect(await db.discussionAttachment.count()).toBe(1);
         const pending = await db.uploadedFile.create({ data: { accountId: 'attachment-owner',
             path: `discussions/${blobId}/writing`, reuseKey: `discussion-attachment-writing-v1:${blobId}` } });
-        expect(await deleteAccountForErasure({ accountId: 'attachment-owner' })).toMatchObject({ status: 'failed', code: 'account_erasure_blob_delete_failed' });
+        expect(await deleteAccountForErasure({ accountId: 'attachment-owner' })).toMatchObject({ status: 'failed', code: 'account_erasure_upload_pending' });
         expect((await db.account.findUniqueOrThrow({ where: { id: 'attachment-owner' } })).status).toBe('active');
         expect(removePrivate).not.toHaveBeenCalled();
         await db.uploadedFile.delete({ where: { id: pending.id } });
         removePrivate.mockRejectedValueOnce(new Error('Private storage unavailable'));
-        expect(await deleteAccountForErasure({ accountId: 'attachment-owner' })).toMatchObject({ status: 'failed', code: 'account_erasure_blob_delete_failed' });
+        expect(await deleteAccountForErasure({ accountId: 'attachment-owner' })).toMatchObject({ status: 'disabled_pending_completion' });
         expect(await db.discussionAttachment.count()).toBe(1);
         expect(await db.uploadedFile.count({ where: { accountId: 'attachment-owner', path: rejectedKey } })).toBe(1);
         removePrivate.mockResolvedValue(undefined);

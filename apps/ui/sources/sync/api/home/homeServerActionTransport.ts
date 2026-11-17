@@ -146,7 +146,8 @@ function classifyAnswer<TCode extends string>(
         // The shared Protocol parser is the sole authority for publishable
         // recovery details. Provider refusals additionally carry their own
         // validated retryability (not every retryable response is a 5xx).
-        const retryable = domain.code === 'account_erasure_transition_cleanup_pending' || status >= 500 || (
+        const retryable = domain.code === 'account_erasure_transition_cleanup_pending'
+            || domain.code === 'account_erasure_upload_pending' || status >= 500 || (
             typeof domain.details === 'object'
             && domain.details !== null
             && 'retryable' in domain.details

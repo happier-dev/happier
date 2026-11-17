@@ -39,6 +39,14 @@ describe('homeDisplayName', () => {
 });
 
 describe('accountErasureFailureNotice', () => {
+    it('explains an upload refusal on both erasure surfaces without claiming retirement', () => {
+        const failure = { kind: 'conflict', retryable: true, code: 'account_erasure_upload_pending' } as const;
+        const notice = homeGovernanceFailureNotice(failure);
+        expect(notice.body).toBe('homeGovernance.errorErasureUploadPending');
+        expect(accountErasureFailureNotice(new HappyError(failure.code, true, {
+            status: 409, kind: 'server', code: failure.code,
+        }))).toEqual(notice);
+    });
     it('explains encryption cleanup pending before erasure as retryable without claiming retirement', () => {
         const failure = { kind: 'conflict', retryable: true, code: 'account_erasure_transition_cleanup_pending' } as const;
         const notice = homeGovernanceFailureNotice(failure);

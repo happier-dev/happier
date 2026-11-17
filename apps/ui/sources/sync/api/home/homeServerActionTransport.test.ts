@@ -353,11 +353,11 @@ describe('requestHomeDomain', () => {
         });
     });
 
-    it('keeps an erasure blocked by encryption cleanup retryable', async () => {
+    it.each(['account_erasure_transition_cleanup_pending', 'account_erasure_upload_pending'])('keeps an erasure blocked by %s retryable', async code => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await focusHome(homeA);
         plainCredentialsFor('account');
-        runtimeFetchMock.mockResolvedValue(jsonResponse({ error: 'account_erasure_transition_cleanup_pending' }, 409));
+        runtimeFetchMock.mockResolvedValue(jsonResponse({ error: code }, 409));
 
         const result = await requestHomeDomain({
             scope: createServerAccountScope(homeA, 'account')!,
@@ -372,8 +372,8 @@ describe('requestHomeDomain', () => {
             failure: {
                 kind: 'conflict',
                 retryable: true,
-                code: 'account_erasure_transition_cleanup_pending',
-                details: { error: 'account_erasure_transition_cleanup_pending' },
+                code,
+                details: { error: code },
                 httpStatus: 409,
             },
         });

@@ -37,6 +37,20 @@ beforeEach(async () => {
 afterEach(async () => { await account.reset(); retireActiveServerAccountScopeLifetime(); publishAppliedActiveServerRuntimeAvailability(false); resetRuntimeFetch(); vi.restoreAllMocks(); });
 
 describe('ordinary Account erasure managed-resource review', () => {
+    it('keeps credentials and the current screen after an upload-pending refusal', async () => {
+        setRuntimeFetch(async url => new URL(String(url)).pathname === '/v1/auth/account/delete'
+            ? Response.json({ error: 'account_erasure_upload_pending' }, { status: 409 })
+            : new Response('{}', { status: 404 }));
+        let credentialsRemoved = false;
+        const replace = vi.fn();
+        await expect(completeAccountDeletion({ target,
+            deleteCurrentAccount: async options => await deleteCurrentAccount(credentials, options),
+            logout: async options => { await options?.beforeMutation?.(); credentialsRemoved = true; return { kind: 'completed' }; }, replace,
+        })).rejects.toMatchObject({ code: 'account_erasure_upload_pending', status: 409 });
+        expect(credentialsRemoved).toBe(false);
+        expect(replace).not.toHaveBeenCalled();
+    });
+
     it('never sends the original token after its text-confirmation Account lifetime retired', async () => {
         const requests: unknown[] = [];
         setRuntimeFetch(async (url, init) => { if (new URL(String(url)).pathname !== '/v1/auth/account/delete') return new Response('{}', { status: 404 }); requests.push(JSON.parse(String(init?.body))); return Response.json({ status: 'deleted' }); });

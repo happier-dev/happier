@@ -139,6 +139,46 @@ afterEach(async () => {
 });
 
 describe("Account erasure ordering against Home ownership", () => {
+    it.each(["home", "self"] as const)("refuses %s erasure during a private upload without retiring credentials", async (route) => {
+        const { accountId: ownerId } = await createAccountWithBlob({ homeRole: "owner" });
+        const { accountId } = await createAccountWithBlob({ homeRole: "member" });
+        await db.uploadedFile.create({ data: { accountId, path: `discussions/${accountId}/writing`,
+            reuseKey: `discussion-attachment-writing-v1:${accountId}` } });
+        const app = Fastify({ logger: false });
+        app.setValidatorCompiler(validatorCompiler);
+        app.setSerializerCompiler(serializerCompiler);
+        const typed = app.withTypeProvider<ZodTypeProvider>() as unknown as AppFastify;
+        enableAuthentication(typed);
+        startSocket(typed);
+        homeGovernanceRoutes(typed);
+        registerAccountErasureRoute(typed);
+        const targetToken = await auth.createToken(accountId, undefined, {
+            kind: "account", authority: "present_user",
+        });
+        const token = route === "home" ? await auth.createToken(ownerId, undefined, {
+            kind: "account", authority: "present_user",
+        }) : targetToken;
+        try {
+            const response = await app.inject({ method: "POST",
+                url: route === "home" ? "/v1/home/accounts/delete" : "/v1/auth/account/delete",
+                headers: { authorization: `Bearer ${token}` },
+                payload: route === "home" ? { accountId } : { confirmation: "DELETE" },
+            });
+            expect(response.statusCode).toBe(409);
+            expect(response.json()).toEqual({ error: "account_erasure_upload_pending" });
+            await expect(deleteAccountForErasure({ accountId })).resolves.toEqual({
+                status: "failed", code: "account_erasure_upload_pending",
+            });
+            expect(await auth.verifyToken(targetToken)).not.toBeNull();
+        } finally {
+            await app.close();
+        }
+        expect(await db.account.findUniqueOrThrow({ where: { id: accountId }, select: { status: true, tokenEpoch: true } }))
+            .toEqual({ status: "active", tokenEpoch: 0 });
+        expect(await db.uploadedFile.count({ where: { accountId } })).toBe(2);
+        expect(blobCalls).toEqual([]);
+    });
+
     it("reports pending completion for a managed resource discovered after retirement and preserves Home-owner review", async () => {
         const { accountId: ownerId } = await createAccountWithBlob({ homeRole: "owner" });
         const { accountId, path } = await createAccountWithBlob({ homeRole: "member" });
@@ -370,7 +410,7 @@ describe("Account erasure ordering against Home ownership", () => {
             publicReadAtBlobDeletion = await readPublicProfile(handle, profileEnv, publicProfileServerDependencies);
         };
         failBlobDeletion = true;
-        await expect(erase()).resolves.toEqual({ status: "failed", code: "account_erasure_blob_delete_failed" });
+        await expect(erase()).resolves.toEqual({ status: "disabled_pending_completion" });
         expect(publicationAtBlobDeletion).toBeNull();
         expect(publicReadAtBlobDeletion).toEqual({ kind: 'unavailable' });
         expect(await db.accountPublicProfile.findUnique({ where: { accountId } })).toBeNull();
@@ -407,7 +447,7 @@ describe("Account erasure ordering against Home ownership", () => {
         const erase = () => deleteAccountForErasure({ accountId,
             actor: { kind: "home_administration", actorAccountId: homeOwnerId },
         });
-        expect(await erase()).toEqual({ status: "failed", code: "account_erasure_blob_delete_failed" });
+        expect(await erase()).toEqual({ status: "disabled_pending_completion" });
         const retiredChange = await change();
         expect(retiredChange).toMatchObject({ hint: null, cursor: viewerSeqBefore + 1 });
         expect(await db.teamMembership.count({ where: { accountId } })).toBe(2);
@@ -507,8 +547,7 @@ describe("Account erasure ordering against Home ownership", () => {
         })).seq;
 
         await expect(deleteAccountForErasure({ accountId })).resolves.toEqual({
-            status: "failed",
-            code: "account_erasure_blob_delete_failed",
+            status: "disabled_pending_completion",
         });
 
         // Access stays revoked and the row survives for an authorized retry;
@@ -539,8 +578,7 @@ describe("Account erasure ordering against Home ownership", () => {
         failPrivateBlobDeletion = true;
 
         await expect(deleteAccountForErasure({ accountId })).resolves.toEqual({
-            status: "failed",
-            code: "account_erasure_blob_delete_failed",
+            status: "disabled_pending_completion",
         });
         expect(privateBlobCalls).toEqual([objectKey]);
         await expect(privateFiles.readPrivateFile(objectKey)).resolves.toEqual(new Uint8Array([1]));
@@ -563,8 +601,7 @@ describe("Account erasure ordering against Home ownership", () => {
         };
 
         await expect(deleteAccountForErasure({ accountId })).resolves.toEqual({
-            status: "failed",
-            code: "account_erasure_locator_mismatch",
+            status: "disabled_pending_completion",
         });
         expect(await db.account.findUniqueOrThrow({ where: { id: accountId }, select: { status: true } }))
             .toEqual({ status: "disabled" });
@@ -734,7 +771,7 @@ describe("Account erasure ordering against Home ownership", () => {
 
         await expect(deleteAccountForErasure({ accountId })).resolves.toEqual({
             status: "failed",
-            code: "account_erasure_not_retired",
+            code: "account_erasure_incomplete",
         });
         expect(await db.account.findUnique({ where: { id: accountId } })).not.toBeNull();
     });

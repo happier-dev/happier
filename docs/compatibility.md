@@ -7087,6 +7087,12 @@ This extends the undeployed V1 read response without changing cursor semantics.
 Self-erasure and Home administration share the closed Account deletion result:
 `deleted` confirms physical completion; `disabled_pending_completion` confirms
 retirement and credential revocation while physical deletion remains unconfirmed.
+The erasure owner refuses with `account_erasure_upload_pending` before
+retirement while private upload IO is outstanding. Both routes relay this as
+HTTP 409 without disabling the Account, revoking credentials or signing out the
+self-eraser. After retirement, blob deletion or retained-locator mismatch returns
+`disabled_pending_completion` from that same owner; routes do not infer retirement
+from error codes. The existing encryption-cleanup refusal stays distinct.
 A typed database failure in the final deletion transaction preserves that partial
 result after the retirement transaction committed. Revocation is immediate. An
 active Home owner resumes cleanup through `home.accounts.delete` for the same

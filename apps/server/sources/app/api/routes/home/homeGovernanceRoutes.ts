@@ -353,9 +353,9 @@ export function homeGovernanceRoutes(app: Fastify): void {
         },
         async (request, reply) => {
             if (request.validationError) return await reply.code(400).send({ error: "invalid_home_input" as const });
-            // The same physical erasure owner as present-user self-erasure. It
-            // rereads this actor's `eraseAccounts` authority in both protected
-            // transactions, so nothing here may shortcut that decision.
+            // The same physical erasure owner as present-user self-erasure. Its
+            // retirement transaction decides this actor's `eraseAccounts`
+            // authority; cleanup then finishes that admitted invocation.
             const result = await deleteAccountForErasure({
                 accountId: request.body.accountId,
                 managedResourceDispositions: request.body.managedResourceDispositions,
@@ -369,31 +369,10 @@ export function homeGovernanceRoutes(app: Fastify): void {
                 // terminal-disable commit, so this route adds no second wake.
                 return await reply.send({ status: "deleted" as const });
             }
-            switch (result.code) {
-                case "account_erasure_managed_resources_review_required":
-                    return await reply.code(409).send({ error: result.code, resources: [...result.resources] });
-                case "home_governance_forbidden":
-                case "home_account_not_found":
-                case "home_owner_transfer_required":
-                // A live, staffed Team would lose its last owner. Like the Home
-                // case this is refused before any irreversible work, so the
-                // administrator transfers Team ownership and reissues.
-                case "team_owner_transfer_required":
-                case "account_erasure_transition_cleanup_pending":
-                    return await reply.code(homeGovernanceErrorHttpStatusV1(result.code)).send({ error: result.code });
-                case "account_erasure_not_retired":
-                    // The Account is active again, so it is not "disabled
-                    // pending completion"; this erasure is simply no longer the
-                    // current intent and the administrator may reissue it.
-                    return await reply
-                        .code(homeGovernanceErrorHttpStatusV1("account_erasure_incomplete"))
-                        .send({ error: "account_erasure_incomplete" as const });
-                default:
-                    // Access is already revoked and the row is terminally
-                    // retired with its exact locators intact. This is a failure
-                    // the administrator retries, never a successful deletion.
-                    return await reply.send({ status: "disabled_pending_completion" as const });
-            }
+            const error = result.code === "account_erasure_managed_resources_review_required"
+                ? { error: result.code, resources: [...result.resources] }
+                : { error: result.code };
+            return await reply.code(homeGovernanceErrorHttpStatusV1(result.code)).send(error);
         },
     );
 

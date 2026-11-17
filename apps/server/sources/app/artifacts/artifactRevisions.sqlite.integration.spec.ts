@@ -254,7 +254,7 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
             try {
                 await entered;
                 await expect(deleteAccountForErasure({ accountId: owner.id })).resolves.toEqual({
-                    status: 'failed', code: 'account_erasure_blob_delete_failed',
+                    status: 'failed', code: 'account_erasure_upload_pending',
                 });
                 expect(await db.account.findUnique({ where: { id: owner.id } })).toMatchObject({ status: 'active', tokenEpoch: owner.tokenEpoch });
                 expect(await db.uploadedFile.count({ where: { accountId: owner.id, path: storageKey } })).toBe(1);

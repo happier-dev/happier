@@ -56,6 +56,8 @@ export const HomeGovernanceErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'account_erasure_incomplete',
   /** Transition cleanup made progress; retry before Account retirement. */
   'account_erasure_transition_cleanup_pending',
+  /** Private upload IO is still in progress; retry before Account retirement. */
+  'account_erasure_upload_pending',
   'account_erasure_managed_resources_review_required',
 ]));
 
@@ -104,6 +106,7 @@ export function homeGovernanceErrorHttpStatusV1(
     case 'team_membership_transfer_conflict':
     case 'account_erasure_incomplete':
     case 'account_erasure_transition_cleanup_pending':
+    case 'account_erasure_upload_pending':
     case 'account_erasure_managed_resources_review_required':
       return 409;
   }

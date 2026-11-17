@@ -503,11 +503,10 @@ export type DeleteAccountForErasureResult =
         status: "failed";
         code:
             | "account_erasure_transition_cleanup_pending"
-            | "account_erasure_blob_delete_failed"
-            | "account_erasure_locator_mismatch"
+            | "account_erasure_upload_pending"
             // The Account was reactivated after Phase A retired it, so this
             // erasure is no longer the current intent for that Account.
-            | "account_erasure_not_retired"
+            | "account_erasure_incomplete"
             | "home_owner_transfer_required"
             // A live, staffed Team would lose its last owner. Team ownership is
             // decided by its own owner; this composition only refuses to erase.
@@ -811,7 +810,7 @@ export async function deleteAccountForErasure(input: Readonly<{
         // replica owns pending IO. The Account fence prevents a new candidate
         // from being captured between this check and the terminal disable.
         if (await hasPendingAccountPrivateFileUploadInTx(tx, input.accountId)) {
-            return { status: "rejected" as const, code: "account_erasure_blob_delete_failed" as const };
+            return { status: "rejected" as const, code: "account_erasure_upload_pending" as const };
         }
 
         // Terminal disable and credential revocation commit before the first
@@ -864,7 +863,7 @@ export async function deleteAccountForErasure(input: Readonly<{
 
     const blobsDeleted = await deleteAccountErasureBlobLocators(capturedLocators);
     if (!blobsDeleted) {
-        return { status: "failed", code: "account_erasure_blob_delete_failed" };
+        return { status: "disabled_pending_completion" };
     }
 
     // Retirement and the Account fences protect admission and owned locators.
@@ -894,7 +893,7 @@ export async function deleteAccountForErasure(input: Readonly<{
         });
         if (!lifecycle) return { status: "already-deleted" };
         if (lifecycle.status !== "disabled") {
-            return { status: "failed", code: "account_erasure_not_retired" };
+            return { status: "failed", code: "account_erasure_incomplete" };
         }
         // Ownership is rechecked defensively: another transaction may have
         // demoted or retired the remaining owners while the external objects
@@ -925,7 +924,7 @@ export async function deleteAccountForErasure(input: Readonly<{
         await publishAccountNativeCredentialPolicyChangesInTx(tx, input.accountId);
         const currentLocators = await captureAccountErasureBlobLocatorsInTx(tx, input.accountId);
         if (!sameAccountErasureBlobLocators(capturedLocators, currentLocators)) {
-            return { status: "failed", code: "account_erasure_locator_mismatch" };
+            return { status: "disabled_pending_completion" };
         }
 
         const machines = await tx.machine.findMany({ where: { accountId: input.accountId }, select: { id: true } });

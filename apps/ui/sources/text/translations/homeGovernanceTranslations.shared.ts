@@ -190,6 +190,7 @@ export const en = {
     errorAccountNotFound: 'This account no longer exists on this Home.',
     errorAccountInactive: 'This account is not active, so it cannot receive this authority.',
     errorErasureTransitionCleanupPending: 'Account deletion is waiting for encryption cleanup. Try deleting the account again.',
+    errorErasureUploadPending: 'An upload is still in progress. Wait for the upload to finish, then try deleting the account again.',
     errorGeneric: 'This Home could not complete the change. Nothing was changed.',
     errorConflict: 'Something else changed here first. Refresh this Home and try again.',
     changeFailedTitle: 'The change did not go through',
