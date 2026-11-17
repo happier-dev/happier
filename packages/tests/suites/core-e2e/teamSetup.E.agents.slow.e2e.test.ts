@@ -14,14 +14,18 @@ import { WorkflowRunGetResultV1Schema, WorkflowRunStartResultV1Schema } from '@h
 import { ApprovalQueueListResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { MachinesAgentsListOutputSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { DaemonAgentInstallStartResponseSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
+import { connectSessionMcpClient, readSessionMcpContextFromEnvironment } from '../../../../apps/cli/src/mcp/runtime/sessionMcpLocalClient';
 
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { waitFor } from '../../src/testkit/timing';
+import { waitForFakeClaudeInvocation, waitForFakeClaudeUserText } from '../../src/testkit/fakeClaude';
 
 const run = createRunDirs({ runLabel: 'core' });
 const testDir = run.testDir(`team-setup-agents-${randomUUID()}`);
+const callerLog = join(testDir, 'caller-vendor.jsonl');
 let fixture: TeamSetupFFixture | undefined;
 let ui: Awaited<ReturnType<typeof connectUiActionClient>> | undefined;
 let machineId: string;
@@ -108,6 +112,7 @@ beforeAll(async () => {
     HOME: userHome, USERPROFILE: userHome, PATH: agentPath,
     NODE_OPTIONS: [fixture.sourceOptions, ...(githubBootstrap ? ['--import', githubBootstrap] : [])].join(' '),
     HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON: JSON.stringify({ codex: 'managed-first' }),
+    HAPPIER_E2E_FAKE_CLAUDE_LOG: callerLog,
   } });
   machineId = enrolled.target.machineId;
   workspaceDir = enrolled.workspaceDir;
@@ -190,8 +195,10 @@ it.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('TS.E.a
   expect(failedApply.ok).toBe(true);
   if (!failedApply.ok) throw new Error(failedApply.errorCode);
   const failedReceipt = MachineSetupApplyResultV1Schema.parse(failedApply.result);
-  await expect(action('action.operations.get', { serverId: ui!.serverId, machineId, operationId: failedReceipt.operationId, waitForTerminal: true }))
-    .resolves.toMatchObject({ ok: true, result: { kind: 'found', operation: { state: 'failed',
+  const failedObservation = await action('action.operations.get', {
+    serverId: ui!.serverId, machineId, operationId: failedReceipt.operationId, waitForTerminal: true,
+  });
+  expect(failedObservation, JSON.stringify(failedObservation)).toMatchObject({ ok: true, result: { kind: 'found', operation: { state: 'failed',
       error: { errorCode: 'native_effect_failed', details: { outcome: { kind: 'failed', code: 'rate_limited' } } } } } });
   expect(downloads).toBe(0);
   expect(await readFile(nativeLog, 'utf8')).toBe('setup-once\n');
@@ -248,19 +255,43 @@ it.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('J6 req
     expect(await action('actions.policy.set', { actionId, audience: 'agent', mode }, true)).toMatchObject({ ok: true });
   }
   const start = async (approvalProfileId: string) => {
-    const result = await account.execute('workflow.run.start', { runId: randomUUID(),
-      source: { kind: 'inline', definition: { version: 1,
-        defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
-          conversation: { kind: 'fresh' }, approvalProfileId: 'builtin:full-trust', terminal: { mode: 'plain' } },
-        blocks: [{ kind: 'step', id: 'agent-install', inputMode: 'none',
-          document: { text: '', references: [], attachments: [] }, input: [], result: { kind: 'text' } }],
-      } }, executionTarget: { kind: 'session' } }, {
-      surface: 'agent', authority: 'account_automation', approvalProfileId,
-      externalActionTarget: { kind: 'machine', machineId, project: { machineId, directory: workspaceDir } },
+    const callerStartedAt = Date.now();
+    const spawned = await account.execute('session.spawn_new', {
+      executionTarget: { serverId: fixture!.serverId, machineId },
+      directory: { kind: 'path', path: workspaceDir },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      permissionMode: 'read-only', approvalProfileId, terminal: { mode: 'plain' },
     });
-    expect(result.ok, JSON.stringify(result)).toBe(true);
-    if (!result.ok) throw new Error(result.errorCode);
-    return WorkflowRunStartResultV1Schema.parse(result.result).run;
+    expect(spawned.ok, JSON.stringify(spawned)).toBe(true);
+    if (!spawned.ok) throw new Error(spawned.errorCode);
+    const caller = SessionSpawnNewActionResultV1Schema.parse(spawned.result);
+    if (caller.type !== 'success') throw new Error(`Workflow caller Session not admitted (${caller.type})`);
+    const prompt = `Propose the Agent installation workflow ${caller.sessionId}.`;
+    const sent = await account.execute('session.message.send', { sessionId: caller.sessionId, message: prompt });
+    expect(sent.ok, JSON.stringify(sent)).toBe(true);
+    expect(await waitForFakeClaudeUserText(callerLog, text => text.includes(prompt))).toContain(prompt);
+    const invocation = await waitForFakeClaudeInvocation(callerLog, event =>
+      typeof event.ts === 'number' && event.ts >= callerStartedAt
+      && typeof event.sessionMcpContextFile === 'string');
+    if (typeof invocation.sessionMcpContextFile !== 'string') throw new Error('Native Session Action transport missing');
+    const mcp = await connectSessionMcpClient(await readSessionMcpContextFromEnvironment({
+      HAPPIER_SESSION_MCP_CONTEXT_FILE: invocation.sessionMcpContextFile,
+    }));
+    try {
+      // Native Session custody supplies caller, applied parent selection and
+      // the Session's actual approval profile; the test supplies only operands.
+      const response = await mcp.client.callTool({ name: 'action_execute', arguments: {
+        actionId: 'workflow.run.start', input: { runId: randomUUID(),
+          source: { kind: 'inline', definition: { version: 1,
+            defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+              conversation: { kind: 'fresh' }, approvalProfileId: 'builtin:full-trust', terminal: { mode: 'plain' } },
+            blocks: [{ kind: 'step', id: 'agent-install', inputMode: 'none',
+              document: { text: '', references: [], attachments: [] }, input: [], result: { kind: 'text' } }],
+          } }, executionTarget: { kind: 'session' } } } });
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      if (!Array.isArray(response.content) || response.content[0]?.type !== 'text') throw new Error('Workflow Action response missing');
+      return WorkflowRunStartResultV1Schema.parse(JSON.parse(response.content[0].text)).run;
+    } finally { await mcp.close(); }
   };
   const pendingApproval = async (actionId: string) => {
     let artifactId: string | undefined;
