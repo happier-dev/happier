@@ -281,11 +281,8 @@ Presence stream (when Redis adapter is enabled):
 - `HAPPIER_PRESENCE_STREAM_MAXLEN` (alias: `HAPPY_PRESENCE_STREAM_MAXLEN`, default: `100000`)
   - uses Redis `XADD ... MAXLEN ~ N` trimming for the `presence:alive:v1` stream to prevent unbounded growth
   - set to `0` to disable trimming (not recommended in production)
-- `HAPPIER_PRESENCE_WORKER_FLUSH_INTERVAL_MS` (default: `5000`)
-- `HAPPIER_PRESENCE_WORKER_READ_BLOCK_MS` (default: `5000`)
 - `HAPPIER_PRESENCE_WORKER_READ_COUNT` (default: `200`)
-- `HAPPIER_PRESENCE_WORKER_RECLAIM_IDLE_MS` (default: `60000`)
-  - tune worker-side read/flush/reclaim cadence explicitly instead of patching code constants
+  - entries read per presence stream read
 
 Important:
 
