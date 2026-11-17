@@ -5,16 +5,25 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { DiscussionCreateResultV1Schema } from '@happier-dev/protocol/discussions/actions';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import { resolveWorkflowRunDataKeyV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
+import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { WorkflowInvocationGetResultV1Schema, WorkflowInvocationListResultV1Schema,
   WorkflowRunGetResultV1Schema, WorkflowRunStartResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { startFinJourneyFixture, type FinJourneyFixture } from '../../src/testkit/finJourney';
 import { execGit, initGitRepo } from '../../src/testkit/uiE2e/gitRepoFixtures';
 import { createRunDirs } from '../../src/testkit/runDir';
+import { waitFor } from '../../src/testkit/timing';
+import { startHttpRequestRecordingProxy } from '../../src/testkit/httpRequestRecordingProxy';
+import { createCliActionExecutorFromCredentials } from '../../../../apps/cli/src/session/actions/createCliActionExecutorFromCredentials';
+import { createWorkflowRunStorageClient } from '../../../../apps/cli/src/daemon/workflows/workflowRunStorageClient';
+import { buildWorkflowActionContext } from '../../../../apps/cli/src/daemon/workflows/workflowActionContext';
 
 const run = createRunDirs({ runLabel: 'core' });
 
 // Real public Actions, encrypted storage, disposable SQLite, server and daemon.
-// Only the external Claude executable is doubled.
+// Only the external Claude executable and the explicit HTTP refusal are doubled.
 describe('FIN recovery and Discussion causes through the public Action surface', () => {
   let fixture: FinJourneyFixture | undefined;
   let owner: Awaited<ReturnType<FinJourneyFixture['createAccount']>>;
@@ -52,16 +61,18 @@ describe('FIN recovery and Discussion causes through the public Action surface',
   }
   const document = (text: string) => ({ text, references: [], attachments: [] });
 
-  it('J5 hold → lose workspace → retain action cause → Restore → finish', async () => {
+  it.each(['action', 'step'] as const)('J5 hold → lose workspace → retain %s cause → Restore → finish', async kind => {
     const started = WorkflowRunStartResultV1Schema.parse(await act('workflow.run.start', {
       runId: randomUUID(), executionTarget: { kind: 'session' }, source: { kind: 'inline', definition: { version: 1,
         defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
           permissionMode: 'read-only', terminal: { mode: 'plain' }, conversation: { kind: 'fresh' },
-          workspace: { kind: 'new_worktree', source: { kind: 'original' }, displayName: 'recover-action' } },
+          workspace: { kind: 'new_worktree', source: { kind: 'original' }, displayName: `recover-${kind}` } },
         blocks: [
           { kind: 'action', id: 'prepare-workspace', actionId: 'machines.list', input: {} },
           { kind: 'wait', id: 'before-loss', document: document('Continue after workspace loss') },
-          { kind: 'action', id: 'after-loss', actionId: 'machines.list', input: {} },
+          kind === 'action'
+            ? { kind: 'action', id: 'after-loss', actionId: 'machines.list', input: {} }
+            : { kind: 'step', id: 'after-loss', inputMode: 'none', document: document(''), input: [], result: { kind: 'text' } },
         ],
       } },
     }));
@@ -89,7 +100,7 @@ describe('FIN recovery and Discussion causes through the public Action surface',
     const failed = WorkflowInvocationListResultV1Schema.parse(await act('workflow.run.invocations.list', { runId, includeContent: true }));
     const failure = failed.invocationDetails?.find(row => row.progress.invocationPath.blockId === 'after-loss');
     expect(failure).toMatchObject({ index: { lifecycle: 'needs_attention' },
-      progress: { blockKind: 'action', reason: { code: 'workspace_unavailable' } } });
+      progress: { blockKind: kind, reason: { code: 'workspace_unavailable' } } });
     if (!failure) throw new Error('Missing recoverable invocation');
     expect(failure.progress.execution).toBeUndefined();
     const opened = WorkflowInvocationGetResultV1Schema.parse(await act('workflow.run.invocations.get', {
@@ -108,7 +119,7 @@ describe('FIN recovery and Discussion causes through the public Action surface',
       .toMatchObject({ index: { lifecycle: 'superseded' }, progress: { reason: { code: 'workspace_unavailable' } } });
     expect(history.invocationDetails?.filter(row => row.progress.invocationPath.blockId === 'before-loss')).toHaveLength(1);
     expect(history.invocationDetails?.find(row => row.progress.invocationPath.blockId === 'after-loss' && row.index.lifecycle === 'completed'))
-      .toMatchObject({ progress: { blockKind: 'action', attempt: '1' } });
+      .toMatchObject({ progress: { blockKind: kind, attempt: '1' } });
   });
 
   it('J6/J8 owner Discussion start succeeds; another Account receives the original typed read refusal', async () => {
@@ -139,4 +150,63 @@ describe('FIN recovery and Discussion causes through the public Action surface',
       .toBe(allowed.run.id);
   });
 
+  it('J6 an admitted Round frame read preserves an HTTP storage refusal instead of missing content', async () => {
+    const started = WorkflowRunStartResultV1Schema.parse(await act('workflow.run.start', {
+      runId: randomUUID(), executionTarget: { kind: 'session' }, source: { kind: 'inline', definition: { version: 1,
+        blocks: [{ kind: 'action', id: 'round', actionId: 'workflow.discussion.round.project',
+          input: { collections: { kind: 'literal', value: ['speakers'] } } }],
+      } },
+    }));
+    const runId = started.run.id;
+    let opened: ReturnType<typeof WorkflowInvocationListResultV1Schema.parse> | undefined;
+    await waitFor(async () => {
+      opened = WorkflowInvocationListResultV1Schema.parse(await act('workflow.run.invocations.list', { runId, includeContent: true }));
+      return opened.invocationDetails?.some(row => row.progress.invocationPath.blockId === 'round' && row.progress.execution?.kind === 'action') === true;
+    }, { context: 'The real coordinator admits the Round Action before its storage read is refused' });
+    if (!opened) throw new Error('Admitted Round invocation absent');
+    const round = opened.invocationDetails?.find(row => row.progress.invocationPath.blockId === 'round');
+    const execution = round?.progress.execution;
+    if (!round || execution?.kind !== 'action') throw new Error(`Round Action was not admitted: ${JSON.stringify(opened)}`);
+    const stored = await createWorkflowRunStorageClient({ token: owner.credentials.token, serverHttpBaseUrl: fixture!.server.baseUrl })
+      .execute({ operation: 'get', runId });
+    if (typeof stored !== 'object' || stored === null || !('keyCensus' in stored) || !('acceptedEnvelope' in stored)) {
+      throw new Error('Admitted Round snapshot absent');
+    }
+    const census = WorkflowRunRecipientCensusResponseV1Schema.parse(stored.keyCensus);
+    if (census.ownerAccountCurrentness.mode !== 'e2ee') throw new Error('Expected the fixture Account to retain E2EE mode');
+    const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material: owner.credentials.encryption,
+      dataKeyPublicKey: owner.credentials.encryption.publicKey });
+    const key = resolveWorkflowRunDataKeyV1({ encryption: { witness: { ...census.ownerAccountCurrentness, mode: census.ownerAccountCurrentness.mode }, material }, census });
+    const envelope = parseWorkflowStoredContentEnvelopeV1(stored.acceptedEnvelope);
+    if (key.kind !== 'available' || !envelope) throw new Error('Admitted Round key unavailable');
+    const accepted = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ ...key.encryption.runCrypto,
+      binding: { v: 1, purpose: 'accepted_snapshot', accountId: census.ownerAccountId, runId }, envelope });
+    if (accepted.kind !== 'available') throw new Error('Admitted Round authorization unavailable');
+    // Replay the real accepted invocation's read through the public Action
+    // executor. The HTTP boundary alone refuses; no storage/domain function is
+    // supplied by the test. In particular, the accepted frame is not fabricated.
+    const proxy = await startHttpRequestRecordingProxy({ targetBaseUrl: fixture!.server.baseUrl,
+      rewriteResponseBody: { when: request => request.path === '/v3/automations/runs/workflow-storage',
+        statusCode: 403, rewrite: () => JSON.stringify({ error: 'run_access_denied' }) } });
+    try {
+      // The real client must observe the substituted endpoint refusal. Proxy
+      // entries retain the genuine upstream 200, rather than the client status.
+      await expect(createWorkflowRunStorageClient({ token: owner.credentials.token, serverHttpBaseUrl: proxy.baseUrl })
+        .execute({ operation: 'get', runId }))
+        .rejects.toMatchObject({ response: { status: 403, data: { error: 'run_access_denied' } } });
+      const executor = createCliActionExecutorFromCredentials({ credentials: owner.credentials,
+        readCredentials: async () => owner.credentials, serverId: fixture!.serverId,
+        serverIdentityId: fixture!.serverId, serverApiUrl: proxy.baseUrl });
+      const refused = await executor.execute('workflow.discussion.round.project', { collections: ['speakers'] }, {
+        ...buildWorkflowActionContext({ runId, invocationRecordId: round.index.id, authorization: accepted.content.authorization,
+          origin: accepted.content.origin, workspace: accepted.content.workspaceTarget.project }),
+        serverId: fixture!.serverId, serverIdentityId: fixture!.serverId, actionRequestId: execution.actionRequestId,
+      });
+      expect(proxy.count(request => request.path === '/v3/automations/runs/workflow-storage')).toBeGreaterThan(0);
+      expect(refused, JSON.stringify({ refused, transport: proxy.entries().map(request => ({
+        path: request.path, status: request.statusCode,
+        operation: request.body?.text ? JSON.parse(request.body.text).operation : null,
+      })) })).toMatchObject({ ok: false, errorCode: 'run_access_denied', failureCause: { errorCode: 'run_access_denied' } });
+    } finally { await proxy.stop(); }
+  });
 });
