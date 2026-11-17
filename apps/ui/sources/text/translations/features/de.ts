@@ -18779,6 +18779,8 @@ const de: WorkflowTriggersCopy = {
         loadFailed: 'Die Auslöser dieser Sitzung konnten nicht geladen werden.',
         accountLoadFailed: 'Einige Workflows konnten nicht geladen werden.',
         automationsLoadFailed: "Automatisierungen konnten nicht geladen werden.",
+        empty: "Hier läuft noch kein Workflow.",
+        startsUnavailable: "Konnte nicht lesen, was hier einen Workflow starten kann.",
         startsHere: "Startet hier",
         title: "Automatisierungen",
         countOn: ({ count }) => `${count} an`,

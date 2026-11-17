@@ -19309,6 +19309,8 @@ const pl: WorkflowTriggersCopy = {
         loadFailed: 'Nie udało się wczytać wyzwalaczy tej sesji.',
         accountLoadFailed: 'Nie udało się wczytać niektórych workflow.',
         automationsLoadFailed: "Nie udało się wczytać automatyzacji.",
+        empty: "Nie uruchamia się tu jeszcze żaden workflow.",
+        startsUnavailable: "Nie udało się odczytać, co może tu uruchomić workflow.",
         startsHere: "Startuje tutaj",
         title: "Automatyzacje",
         countOn: ({ count }) => `${count} włączone`,

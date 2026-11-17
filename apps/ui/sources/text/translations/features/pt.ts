@@ -19271,6 +19271,8 @@ const pt: WorkflowTriggersCopy = {
         loadFailed: 'Não foi possível carregar os gatilhos desta sessão.',
         accountLoadFailed: 'Não foi possível carregar alguns fluxos.',
         automationsLoadFailed: "Não foi possível carregar as automações.",
+        empty: "Nenhum fluxo de trabalho é executado aqui ainda.",
+        startsUnavailable: "Não foi possível ler o que pode iniciar um fluxo de trabalho aqui.",
         startsHere: "Começa aqui",
         title: "Automações",
         countOn: ({ count }) => `${count} ligados`,

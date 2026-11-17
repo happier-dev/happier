@@ -93,6 +93,8 @@ export const en = {
         loadFailed: "Could not load this session's triggers.",
         accountLoadFailed: 'Some workflows couldn’t load.',
         automationsLoadFailed: "Couldn’t load automations.",
+        empty: "No workflows run here yet.",
+        startsUnavailable: "Couldn’t read what can start a workflow here.",
         title: "Automations",
         startsHere: 'Starts here',
         countOn: ({ count }: Count) => `${count} on`,

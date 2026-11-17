@@ -19285,6 +19285,8 @@ const it: WorkflowTriggersCopy = {
         loadFailed: 'Impossibile caricare i trigger di questa sessione.',
         accountLoadFailed: 'Impossibile caricare alcuni workflow.',
         automationsLoadFailed: "Impossibile caricare le automazioni.",
+        empty: "Qui non è ancora in esecuzione nessun workflow.",
+        startsUnavailable: "Impossibile leggere cosa può avviare un workflow qui.",
         startsHere: "Parte da qui",
         title: "Automazioni",
         countOn: ({ count }) => `${count} attivi`,

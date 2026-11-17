@@ -19219,6 +19219,8 @@ const ja: WorkflowTriggersCopy = {
         loadFailed: 'このセッションのトリガーを読み込めませんでした。',
         accountLoadFailed: '一部のワークフローを読み込めませんでした。',
         automationsLoadFailed: "オートメーションを読み込めませんでした。",
+        empty: "ここで実行されるワークフローはまだありません。",
+        startsUnavailable: "ここでワークフローを開始できるものを読み込めませんでした。",
         startsHere: "ここから開始",
         title: "オートメーション",
         countOn: ({ count }) => `${count} 件オン`,

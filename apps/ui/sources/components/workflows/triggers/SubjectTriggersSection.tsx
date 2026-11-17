@@ -124,8 +124,11 @@ export const SubjectTriggersSectionContent = React.memo(
     const { accountLifetime, read, editor, rows, also, skippedNotSharedCount, project, link, session } = props.automations;
     const presented = useLayoutPresentationActive();
     const linkAnchor = React.useRef<View>(null);
-    // Link is offered once this resource's starts can be read; a resource with none never shows a form that cannot succeed.
-    const linkOffered = !link ? false : link.whenStatus === 'ready' ? link.whenOptions.length > 0 : link.whenStatus === 'loading';
+    // Link is decided by this resource's settled starts: offered when some can start a linked workflow, never a form that
+    // cannot succeed. While they load its place is held unseen, so the common case (starts exist) lands without moving
+    // Automate…; none settles it away, and starts that could not be read say so in the section.
+    const linkSlot = !link ? 'none' : link.whenStatus === 'ready' ? link.whenOptions.length > 0 ? 'offered' : 'none'
+      : link.whenStatus === 'loading' ? 'pending' : link.whenStatus === 'unavailable' ? 'unavailable' : 'none';
     const router = useRouter();
     const { status } = read;
     const legacy = 'serverId' in props.subject || props.subject.kind === 'action' ? null : props.subject;
@@ -185,12 +188,13 @@ export const SubjectTriggersSectionContent = React.memo(
     // page does not move when the rows land. With nothing retained, a failed read says so in place, with Retry.
     const held = !empty || props.hasRetainedContent === true;
     const unsettled = !held && status !== 'ready';
+    // Settled with nothing to show (no rows, no starter, nothing broader): say what belongs here in one line, never a blank sheet.
+    const nothingHere = !held && !unsettled && !starters.some(starterAvailable) && also.length === 0 && skippedNotSharedCount === 0;
     const section = (
       <ItemGroup
         testID="subject-triggers"
         title={t('workflows.triggers.section.title')}
         description={describeAutomationsSection(props.subject.kind, empty && !unsettled)}
-        {...(!held && !unsettled && starters.length === 0 && also.length === 0 && skippedNotSharedCount === 0 ? { surface: 'none' as const } : {})}
         action={
           <View ref={addAnchor} collapsable={false} style={styles.actions}>
             <SectionActionButton
@@ -199,7 +203,7 @@ export const SubjectTriggersSectionContent = React.memo(
               title={t('workflows.triggers.section.automate')}
               onPress={() => openSentence(null, addAnchor)}
             />
-            {linkOffered ? (
+            {linkSlot === 'offered' ? (
               <View ref={linkAnchor} collapsable={false}>
                 <SectionActionButton
                   testID="subject-triggers-link"
@@ -208,6 +212,11 @@ export const SubjectTriggersSectionContent = React.memo(
                   expanded={opening?.kind === 'link'}
                   onPress={() => setOpening({ kind: 'link', anchor: linkAnchor })}
                 />
+              </View>
+            ) : linkSlot === 'pending' ? (
+              <View testID="subject-triggers-link-pending" style={styles.heldSlot} pointerEvents="none"
+                aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+                <SectionActionButton icon="link" title={t('workflows.triggers.section.link')} disabled onPress={() => {}} />
               </View>
             ) : null}
           </View>
@@ -243,6 +252,13 @@ export const SubjectTriggersSectionContent = React.memo(
         {empty ? null : persistentStarters.filter(starterAvailable).map((starter) => (
           <StarterRow key={starter} starter={starter} onOpen={(anchor) => openStarter(starter, anchor)} />
         ))}
+        {nothingHere ? (
+          <SurfaceStateCard testID="subject-triggers-empty" size="line" kind="empty" title={t('workflows.triggers.section.empty')} />
+        ) : null}
+        {linkSlot === 'unavailable' && status !== 'failed' ? (
+          <SurfaceStateCard testID="subject-triggers-starts-unavailable" size="line" kind="unavailable"
+            title={t('workflows.triggers.section.startsUnavailable')} />
+        ) : null}
         {skippedNotSharedCount > 0 ? (
           <SurfaceStateCard testID="subject-triggers-not-shared" size="line" kind="unavailable"
             title={t('workflows.triggers.section.skippedNotShared', { count: skippedNotSharedCount })} />
@@ -330,7 +346,6 @@ const StarterRow = React.memo(function StarterRow(
         icon={
           <Icon
             name={SUBJECT_TRIGGER_STARTER_GLYPH[props.starter]}
-            size={18}
             color={theme.colors.text.secondary}
           />
         }
@@ -365,7 +380,7 @@ const ReadOnlyAutomationRow = React.memo(function ReadOnlyAutomationRow(props: R
     <View ref={anchorRef} collapsable={false}>
       <Item testID={`subject-triggers-read-only:${row.automationId}:${row.triggerId ?? 'manual'}`}
         title={row.subtitle} subtitle={joinHappierFacts(row.title, author)} dimmed={row.off}
-        icon={<Icon name={row.glyph} size={18} color={theme.colors.text.secondary} />}
+        icon={<Icon name={row.glyph} color={theme.colors.text.secondary} />}
         onPress={() => props.onOpen(row, anchorRef)} />
     </View>
   );
@@ -415,4 +430,6 @@ const SubjectTriggerRowView = React.memo(function SubjectTriggerRowView(
 
 const styles = StyleSheet.create((theme) => ({
   actions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+  /** Link's place while this resource's starts load: held, not drawn. */
+  heldSlot: { opacity: 0 },
 }));

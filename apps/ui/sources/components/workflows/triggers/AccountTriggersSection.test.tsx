@@ -565,6 +565,28 @@ describe('Account Workflow Library and settings', () => {
         expect(screen.getTextContent()).toContain('workflows.triggers.section.approvalProfileInfo');
         expect(screen.findByTestId('subject-triggers-add')).not.toBeNull();
         expect(screen.getTextContent()).not.toContain('workflows.triggers.guided.starter');
+        // Settled with no rows and no starters: one line says what belongs here, never a blank sheet.
+        expect(screen.findByTestId('subject-triggers-empty')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('workflows.triggers.section.empty');
+        // Its starts settle with Actions a profile can link before or after: Link lands in its held place.
+        await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers-link')).not.toBeNull());
+        expect(screen.findByTestId('subject-triggers-link-pending')).toBeNull();
+        expect(screen.findByTestId('subject-triggers-starts-unavailable')).toBeNull();
+        await screen.unmount();
+    });
+    it('says, in place of Link, that a Machine\'s starts could not be read', async () => {
+        const { SubjectTriggersSection } = await import('./SubjectTriggersSection');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
+        home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
+            automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 }) });
+        const screen = await renderAccountScreen(<PluginSurfaceFocusEligibilityProvider active><ListPresentationProvider value="page">
+            <SubjectTriggersSection subject={{ kind: 'machine', serverId, machineId: 'unreachable-machine' }} subjectName="Studio" />
+        </ListPresentationProvider></PluginSurfaceFocusEligibilityProvider>);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers-starts-unavailable')).not.toBeNull());
+        expect(screen.findByTestId('subject-triggers-link-pending')).toBeNull();
+        expect(screen.findByTestId('subject-triggers-link')).toBeNull();
+        expect(screen.getTextContent()).toContain('workflows.triggers.section.startsUnavailable');
         await screen.unmount();
     });
     it('reads a plugin resource without execution placement or opening a saved attachment body', async () => {

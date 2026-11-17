@@ -19221,6 +19221,8 @@ const es: WorkflowTriggersCopy = {
         loadFailed: 'No se pudieron cargar los disparadores de esta sesión.',
         accountLoadFailed: 'No se pudieron cargar algunos flujos.',
         automationsLoadFailed: "No se pudieron cargar las automatizaciones.",
+        empty: "Todavía no se ejecuta ningún flujo de trabajo aquí.",
+        startsUnavailable: "No se pudo leer qué puede iniciar un flujo de trabajo aquí.",
         startsHere: "Empieza aquí",
         title: "Automatizaciones",
         countOn: ({ count }) => `${count} activos`,

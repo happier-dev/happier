@@ -19159,6 +19159,8 @@ const zhHant: WorkflowTriggersCopy = {
         loadFailed: '無法載入此工作階段的觸發器。',
         accountLoadFailed: '部分工作流程無法載入。',
         automationsLoadFailed: "無法載入自動化。",
+        empty: "這裡還沒有執行任何工作流程。",
+        startsUnavailable: "無法讀取這裡可以啟動工作流程的內容。",
         startsHere: "從此處開始",
         title: "自動化",
         countOn: ({ count }) => `${count} 個已開啟`,

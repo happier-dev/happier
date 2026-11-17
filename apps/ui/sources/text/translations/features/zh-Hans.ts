@@ -19159,6 +19159,8 @@ const zhHans: WorkflowTriggersCopy = {
         loadFailed: '无法加载此会话的触发器。',
         accountLoadFailed: '部分工作流无法加载。',
         automationsLoadFailed: "无法加载自动化。",
+        empty: "这里还没有运行任何工作流。",
+        startsUnavailable: "无法读取这里可以启动工作流的内容。",
         startsHere: "从此处开始",
         title: "自动化",
         countOn: ({ count }) => `${count} 个已开启`,

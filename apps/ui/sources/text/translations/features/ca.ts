@@ -19299,6 +19299,8 @@ const ca: WorkflowTriggersCopy = {
         loadFailed: "No s'han pogut carregar els activadors d'aquesta sessió.",
         accountLoadFailed: "No s'han pogut carregar alguns fluxos.",
         automationsLoadFailed: "No s’han pogut carregar les automatitzacions.",
+        empty: "Encara no s’hi executa cap flux de treball.",
+        startsUnavailable: "No s’ha pogut llegir què pot iniciar un flux de treball aquí.",
         startsHere: "Comença aquí",
         title: "Automatitzacions",
         countOn: ({ count }) => `${count} actius`,
