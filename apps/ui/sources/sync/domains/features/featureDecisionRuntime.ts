@@ -9,6 +9,7 @@ import {
     getCachedServerFeaturesSnapshot,
     getServerFeaturesSnapshot,
     getServerFeaturesSnapshotRetryDelayMs,
+    readKnownServerFeaturesSnapshot,
     subscribeServerFeaturesSnapshot,
     type ServerFeaturesSnapshot,
 } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -43,7 +44,8 @@ export function useServerFeaturesRuntimeSnapshot(options?: Readonly<{ enabled?: 
         }
 
         let cancelled = false;
-        const observer = new AbortController();
+        // Created only when this reader waits: a known fresh answer (every mount after the first) starts nothing.
+        let observer: AbortController | null = null;
         let requestToken = 0;
         let requestGeneration = 0;
         let lastRequestedServerId = '\u0000';
@@ -51,9 +53,9 @@ export function useServerFeaturesRuntimeSnapshot(options?: Readonly<{ enabled?: 
         const loadForServerId = async (serverId: string | undefined, generation: number) => {
             const token = requestToken + 1;
             requestToken = token;
-            const next = await getServerFeaturesSnapshot({
+            const next = readKnownServerFeaturesSnapshot(serverId ? { serverId } : undefined) ?? await getServerFeaturesSnapshot({
                 serverId,
-                signal: observer.signal,
+                signal: (observer ??= new AbortController()).signal,
             });
             if (!cancelled && token === requestToken && generation === requestGeneration) {
                 setSnapshot(next);
@@ -101,7 +103,7 @@ export function useServerFeaturesRuntimeSnapshot(options?: Readonly<{ enabled?: 
 
         return () => {
             cancelled = true;
-            observer.abort();
+            observer?.abort();
             unsubscribe();
             unsubscribeSnapshot();
         };
@@ -130,7 +132,8 @@ export function useServerFeaturesSnapshotForServerId(
         }
 
         let cancelled = false;
-        const observer = new AbortController();
+        // Created only when this reader waits: a known fresh answer (every mount after the first) starts nothing.
+        let observer: AbortController | null = null;
         let requestToken = 0;
         const unsubscribeSnapshot = subscribeServerFeaturesSnapshot(() => {
             if (cancelled || !serverId) return;
@@ -141,7 +144,7 @@ export function useServerFeaturesSnapshotForServerId(
         const load = async (serverId: string) => {
             const token = requestToken + 1;
             requestToken = token;
-            const next = await getServerFeaturesSnapshot({ serverId, signal: observer.signal });
+            const next = await getServerFeaturesSnapshot({ serverId, signal: (observer ??= new AbortController()).signal });
             if (!cancelled && token === requestToken) {
                 setSnapshot(next);
             }
@@ -151,18 +154,20 @@ export function useServerFeaturesSnapshotForServerId(
             setSnapshot(LOADING_SERVER_FEATURES_SNAPSHOT);
             return () => {
                 cancelled = true;
-                observer.abort();
                 unsubscribeSnapshot();
             };
         }
 
-        const cached = getCachedServerFeaturesSnapshot({ serverId });
-        setSnapshot(cached ?? LOADING_SERVER_FEATURES_SNAPSHOT);
-        fireAndForget(load(serverId), { tag: 'useServerFeaturesSnapshotForServerId.initialLoad' });
+        const known = readKnownServerFeaturesSnapshot({ serverId });
+        if (known) setSnapshot(known);
+        else {
+            setSnapshot(getCachedServerFeaturesSnapshot({ serverId }) ?? LOADING_SERVER_FEATURES_SNAPSHOT);
+            fireAndForget(load(serverId), { tag: 'useServerFeaturesSnapshotForServerId.initialLoad' });
+        }
 
         return () => {
             cancelled = true;
-            observer.abort();
+            observer?.abort();
             unsubscribeSnapshot();
         };
     }, [enabled, serverId]);
@@ -253,7 +258,8 @@ export function useServerFeaturesMainSelectionSnapshot(
         }
 
         let cancelled = false;
-        const observer = new AbortController();
+        // Created only when this reader waits (a missing or transient snapshot), never for known answers.
+        let observer: AbortController | null = null;
         let requestToken = 0;
         const unsubscribeSnapshot = subscribeServerFeaturesSnapshot(() => {
             if (cancelled) return;
@@ -268,7 +274,7 @@ export function useServerFeaturesMainSelectionSnapshot(
 
         const cleanup = () => {
             cancelled = true;
-            observer.abort();
+            observer?.abort();
             unsubscribeSnapshot();
         };
 
@@ -277,7 +283,7 @@ export function useServerFeaturesMainSelectionSnapshot(
             requestToken = token;
 
             const results = await Promise.all(
-                serverIds.map(async (serverId) => [serverId, await getServerFeaturesSnapshot({ serverId, signal: observer.signal })] as const),
+                serverIds.map(async (serverId) => [serverId, await getServerFeaturesSnapshot({ serverId, signal: (observer ??= new AbortController()).signal })] as const),
             );
 
             if (cancelled || token !== requestToken) return;

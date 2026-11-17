@@ -274,6 +274,32 @@ describe('serverFeaturesClient', () => {
         expect(featuresFetchMock).not.toHaveBeenCalled();
     });
 
+    it('answers a known fresh snapshot without starting a wait: a Session switch\'s consumers create no AbortController', async () => {
+        const primed = {
+            status: 'ready' as const,
+            features: FeaturesResponseSchema.parse({ features: { sessions: { enabled: true, folders: { enabled: false } } }, capabilities: {} }),
+        };
+        const { getServerFeaturesSnapshot, primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+        primeServerFeaturesSnapshot({ serverId: 'server-a', snapshot: primed });
+        const consumers = Array.from({ length: 20 }, () => new AbortController());
+        const NativeAbortController = globalThis.AbortController;
+        let created = 0;
+        globalThis.AbortController = class extends NativeAbortController {
+            constructor() { super(); created += 1; }
+        };
+        try {
+            // What each mounted feature reader does on mount: read the Home's features with its own signal.
+            const results = await Promise.all(consumers.map((consumer, index) =>
+                getServerFeaturesSnapshot({ serverId: 'server-a', signal: consumer.signal, ...(index % 2 ? { timeoutMs: 5_000 } : {}) })));
+            expect(results.every((result) => result === primed)).toBe(true);
+            expect(created).toBe(0);
+            expect(featuresFetchMock).not.toHaveBeenCalled();
+        } finally {
+            globalThis.AbortController = NativeAbortController;
+        }
+    });
+
     it('deletes a primed feature snapshot for a server', async () => {
         const primed = {
             status: 'ready' as const,

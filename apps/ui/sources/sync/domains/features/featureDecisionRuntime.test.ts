@@ -679,15 +679,25 @@ describe('featureDecisionRuntime', () => {
         await waitForHomeGovernance(() => expect(seen.at(-1)).toMatchObject({ status: 'ready' }));
         expect(countFeaturesFetchCalls(fetchMock)).toBe(1);
 
-        // Remount within TTL_READY_MS.
+        // Remount within TTL_READY_MS (a Session or screen switch): the known answer starts no wait.
         now = 1;
-        await act(async () => {
-            screen.tree.unmount();
-            screen = await renderScreen(React.createElement(Test));
-            await flushHookEffects(20);
-        });
+        const NativeAbortController = globalThis.AbortController;
+        let controllersCreated = 0;
+        globalThis.AbortController = class extends NativeAbortController {
+            constructor() { super(); controllersCreated += 1; }
+        };
+        try {
+            await act(async () => {
+                screen.tree.unmount();
+                screen = await renderScreen(React.createElement(Test));
+                await flushHookEffects(20);
+            });
+        } finally {
+            globalThis.AbortController = NativeAbortController;
+        }
 
         expect(countFeaturesFetchCalls(fetchMock)).toBe(1);
+        expect(controllersCreated).toBe(0);
 
         await act(async () => {
             screen.tree.unmount();

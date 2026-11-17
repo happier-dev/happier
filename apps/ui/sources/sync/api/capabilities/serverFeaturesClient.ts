@@ -311,6 +311,42 @@ function getEndpointCacheKey(
     return `endpoint:${endpointUrl}\u0000identity:${expectedServerIdentityId ?? 'unknown'}\u0000runtime:${runtimeOrigin}\u0000carrier:${homeCarrier?.endpointId ?? 'url'}`;
 }
 
+/**
+ * What a read of this Home's features answers without any I/O: its fresh cached success. A forced read and a
+ * stale or missing entry return null and go through the read. Features are Home facts, so every consumer that
+ * mounts on a screen or Session switch shares this answer instead of starting its own wait.
+ */
+function readKnownFreshSnapshot(projection: ActiveFeatureProjection, cacheKey: string, force: boolean): ServerFeaturesSnapshot | null {
+    if (force) return null;
+    if (projection === 'public') restorePublicSnapshot(cacheKey);
+    const projectionCache = getActiveProjectionCache(projection);
+    const entry = projectionCache.get(cacheKey);
+    return entry?.kind === 'success' && projectionCache.isFresh(entry) ? entry.value : null;
+}
+
+function readKnownServerFeaturesSnapshotForProjection(
+    read: Readonly<{ projection: ActiveFeatureProjection; serverId?: string; force?: boolean }>,
+): ServerFeaturesSnapshot | null {
+    if (requiresExplicitTransportDrain(read.serverId)) return null;
+    return readKnownFreshSnapshot(read.projection, getCacheKey(read.serverId), read.force ?? false);
+}
+
+/**
+ * The Home's features when they are already known and fresh (no I/O), else null. A consumer that mounts per
+ * screen or Session uses it before starting a wait, so a switch re-reads nothing and starts no observer; on null
+ * it calls {@link getServerFeaturesSnapshot}, which revalidates a stale answer.
+ */
+export function readKnownServerFeaturesSnapshot(params?: Readonly<{ serverId?: string }>): ServerFeaturesSnapshot | null {
+    return readKnownServerFeaturesSnapshotForProjection({ projection: 'public', serverId: params?.serverId });
+}
+
+/** An explicit (non-focused) Iroh Home drains retained transport release custody before any cached answer. */
+function requiresExplicitTransportDrain(serverId: string | undefined): boolean {
+    const requested = String(serverId ?? '').trim();
+    if (!requested || areServerProfileIdentifiersEquivalent(requested, getActiveServerSnapshot().serverId)) return false;
+    return getServerProfileById(resolveServerProfileScopeIdForIdentifier(requested))?.homeConnectionDescriptor?.endpoints
+        .some((endpoint) => endpoint.kind === 'iroh') === true;
+}
 function normalizeExplicitEndpointUrl(raw: unknown): string {
     const value = String(raw ?? '').trim();
     if (!value) return '';
@@ -432,13 +468,12 @@ async function getServerFeaturesSnapshotWithRetry(
     // the next explicit Iroh operation boundary, before a cached feature result
     // can bypass transport ownership entirely. A repeated cleanup failure stays
     // retained and does not invalidate an otherwise valid cached observation.
-    if (isExplicitServerRequest && explicitServerProfile?.homeConnectionDescriptor?.endpoints.some((endpoint) => endpoint.kind === 'iroh')) {
+    if (requiresExplicitTransportDrain(params?.serverId)) {
         await drainExplicitServerFeatureTransportReleaseCustody();
     }
 
-    const cachedEntry = projectionCache.get(cacheKey);
-    const cached = cachedEntry?.kind === 'success' ? cachedEntry.value : null;
-    if (!force && cached && cachedEntry && projectionCache.isFresh(cachedEntry)) return cached;
+    const known = readKnownFreshSnapshot(projection, cacheKey, force);
+    if (known) return known;
 
     return await projectionCache.runDedupe(cacheKey, async ({ signal, isCurrent }): Promise<ServerFeaturesSnapshot> => {
         const publishSnapshot = (value: ServerFeaturesSnapshot, key = cacheKey): ServerFeaturesSnapshot => {
@@ -744,10 +779,14 @@ async function getServerFeaturesSnapshotWithRetry(
 async function waitForServerFeaturesSnapshot(
     request: (signal: AbortSignal) => Promise<ServerFeaturesSnapshot>,
     waitBudgetMs: number | undefined,
-    signal?: AbortSignal,
+    signal: AbortSignal | undefined,
+    /** An active-projection read; an explicit-URL probe answers its own cache before it waits. */
+    read?: Readonly<{ projection: ActiveFeatureProjection; serverId?: string; force?: boolean }>,
 ): Promise<ServerFeaturesSnapshot> {
     if (signal?.aborted) return { status: 'error', reason: 'network' };
     return await new Promise<ServerFeaturesSnapshot>((resolve, reject) => {
+    const known = read ? readKnownServerFeaturesSnapshotForProjection(read) : null;
+    if (known) return known;
         const observer = new AbortController();
         let settled = false;
         let cancelTimer: (() => void) | null = null;
@@ -843,6 +882,7 @@ export async function getServerFeaturesSnapshot(params?: {
         (signal) => getServerFeaturesSnapshotWithRetry({ ...params, signal, projection: 'public' }),
         params?.timeoutMs,
         params?.signal,
+        { projection: 'public', serverId: params?.serverId, force: params?.force },
     );
 }
 
@@ -862,7 +902,7 @@ export async function refreshAuthenticatedServerFeaturesSnapshot(params: {
 }): Promise<ServerFeaturesSnapshot> {
     return await waitForServerFeaturesSnapshot((signal) => getServerFeaturesSnapshotWithRetry({
         ...params, signal, projection: 'authenticated',
-    }), params.timeoutMs, params.signal);
+    }), params.timeoutMs, params.signal, { projection: 'authenticated', serverId: params.serverId, force: params.force });
 }
 
 export function getCachedServerFeaturesSnapshot(params?: { serverId?: string }): ServerFeaturesSnapshot | null {
