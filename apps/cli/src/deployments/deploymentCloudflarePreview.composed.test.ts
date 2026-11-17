@@ -23,7 +23,7 @@ import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { registerAccountHomeHttp } from '@/session/actions/widgetApproval.testkit';
 import { registerAuthoredAccountActionRelease } from '@/plugins/runtime/accountPluginActions.testkit';
-import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createAuthoredAdmittedPluginRuntimeFixture, requireDaemonEntrypoint } from '@/plugins/testkit/admittedRuntime';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
@@ -72,16 +72,17 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
     const outcome = scenario === 'second-preview' || scenario === 'production' ? 'succeeded'
         : scenario === 'lost-response' || scenario === 'missing-preview' ? 'outcome_unknown'
         : scenario.startsWith('settled-') || watched ? 'queued' : scenario;
-    const accountId = 'owner', origin = 'https://platform-home.test', serverId = 'srv_cloudflare_preview_home';
+    const accountId = 'owner', origin = 'https://platform-home.test';
     const providerAccountId = 'a'.repeat(32), workerTag = 'b'.repeat(32), previewId = (scenario === 'second-preview' ? 'd' : 'c').repeat(32);
     const sha = 'f'.repeat(40), gitBranch = scenario === 'second-preview' ? 'feature/another-review' : 'feature/reviewed',
         previewName = scenario === 'second-preview' ? 'review/18' : 'review/17';
     const app = fastify();
-    const homeFeatures = registerAccountHomeHttp(app, { accountId, serverId });
+    const homeFeatures = registerAccountHomeHttp(app, { accountId, serverId: 'srv_cloudflare_preview_home' });
     // The containing runtime admits the portable Home from its authenticated
     // features, just as SessionClient.getServerIdentityId does in production.
     const serverIdentityId = readServerIdentityIdFromFeaturesSnapshot({ status: 'ready', provenance: 'authenticated', features: homeFeatures });
     if (!serverIdentityId) throw new Error('Expected the admitted Cloudflare fixture Home');
+    const serverId = serverIdentityId;
     const authored = await registerAuthoredAccountActionRelease(app, accountId, { primary: {
         manifest: cloudflare.manifest,
         projectRoot: resolve(import.meta.dirname, '../../../../packages/plugins/deploy-cloudflare'),
@@ -213,7 +214,7 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
             && (receipt.state === 'failed' || receipt.state === 'succeeded') ? [] : [receipt], nextCursor: null }));
     app.post(AutomationEventActionHttpPathsV1['automation.event.admit'], async request => {
         admissions.push(request.body);
-        return { results: [{ kind: 'skipped', reason: 'occurrenceRejected', checkpointSafe: true }],
+        return { results: [{ kind: 'observed', checkpointSafe: true }],
             continuation: { kind: 'ready', accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } } };
     });
     app.post(AutomationEventActionHttpPathsV1['automation.event.source.status.report'], async () => ({}));
@@ -243,7 +244,7 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
         runtimeOptions: { connectedAccounts: purposeOwner, actionFormConnectedAccounts: purposeOwner,
             accountExecution: { credentials, serverUrl: origin, serverId, serverIdentityId, machineId: 'machine-a', isCurrent: async () => true },
             resolveCurrentMachineId: () => 'machine-a' },
-        plugins: [{ manifest: cloudflare.manifest, files: { [cloudflare.manifest.entrypoints.daemon]: 'export function activate() {}' },
+        plugins: [{ manifest: cloudflare.manifest, files: { [requireDaemonEntrypoint(cloudflare.manifest)]: 'export function activate() {}' },
             instantiateCommittedModule: () => ({ activate: cloudflare.activate }) }],
         resolveContributes: async happyHomeDir => createResolvedContributionRegistry(projectLoadedPluginContributes({
             loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external' })),
@@ -348,9 +349,9 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
                     externalActionHomeBinding: { serverId, serverIdentityId },
                     resolveCurrentMachineId: () => 'machine-a',
                     resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId, machineId: 'machine-a' }) },
-                plugins: [{ manifest: cloudflare.manifest, files: { [cloudflare.manifest.entrypoints.daemon]: 'export function activate() {}' },
+                plugins: [{ manifest: cloudflare.manifest, files: { [requireDaemonEntrypoint(cloudflare.manifest)]: 'export function activate() {}' },
                     instantiateCommittedModule: () => ({ activate: cloudflare.activate }) },
-                { manifest: machineServices.manifest, files: { [machineServices.manifest.entrypoints.daemon]: 'export function activate() {}',
+                { manifest: machineServices.manifest, files: { [requireDaemonEntrypoint(machineServices.manifest)]: 'export function activate() {}',
                     ...Object.fromEntries(await Promise.all((machineServices.manifest.contributes.resources ?? [])
                         .filter(resource => resource.kind === 'asset').map(async resource => [resource.path,
                             await readFile(new URL(`../../../../packages/plugins/machine-services/${resource.path}`, import.meta.url))]))) },
@@ -386,6 +387,7 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
                 function observerContext(controller: AbortController, occurrenceId: string) {
                     activeOccurrenceId = occurrenceId;
                     const seed: PluginInvocationServicesSeed = { plugin: { id: caller.pluginId, version: machineServices.manifest.version }, occurrenceId,
+                        approvalContext: { serverId, serverIdentityId, runtimeAccountId: accountId },
                         sourceCustody, contribution: { id: 'deployment-receipt-observer', qualifiedId: `${caller.pluginId}/backgroundServices/deployment-receipt-observer` },
                         surface: 'background', signal: controller.signal, resolveCurrentPluginMaterializationRef: () => caller,
                         isOccurrenceCurrent: () => !controller.signal.aborted };
