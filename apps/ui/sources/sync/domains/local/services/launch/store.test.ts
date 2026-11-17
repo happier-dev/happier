@@ -30,6 +30,19 @@ const snapshot = {
 } satisfies LocalServiceLauncherSnapshotV1;
 
 describe('local service launcher UI store', () => {
+    it('publishes port-only changes, retains equal identities and echoes the admitted watch baseline', async () => {
+        const { applyLocalServiceLauncherSnapshot, createLocalServiceLauncherState, snapshotFromLocalServiceLauncherState } = await import('./store');
+        const ports = { rootPath: '/repo', result: { kind: 'ready' as const, assignment: { ports: [4100], listenerPorts: {} } } };
+        const loaded = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), { ...snapshot, worktreePorts: ports });
+        expect(snapshotFromLocalServiceLauncherState(loaded)?.worktreePorts).toEqual(ports);
+        const changedPorts = { ...ports, result: { kind: 'ready' as const, assignment: { ports: [4200], listenerPorts: {} } } };
+        const changed = applyLocalServiceLauncherSnapshot(loaded, { ...snapshot, updatedAt: 2000, worktreePorts: changedPorts });
+        expect(changed).not.toBe(loaded);
+        expect(changed.targetsById).toBe(loaded.targetsById);
+        expect(snapshotFromLocalServiceLauncherState(changed)?.worktreePorts).toEqual(changedPorts);
+        expect(applyLocalServiceLauncherSnapshot(changed, { ...snapshot, updatedAt: 3000, worktreePorts: structuredClone(changedPorts) })).toBe(changed);
+        expect(snapshotFromLocalServiceLauncherState(applyLocalServiceLauncherSnapshot(changed, { ...snapshot, updatedAt: 4000 }))?.worktreePorts).toBeUndefined();
+    });
     it('publishes only changed refresh failures and retains last-known targets while preserving receipt ordering', async () => {
         const { applyLocalServiceLauncherSnapshot, createLocalServiceLauncherState, failLocalServiceLauncherRefresh,
             readLocalServiceLauncherSnapshotTime } = await import('./store');

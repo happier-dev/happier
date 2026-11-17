@@ -52,7 +52,8 @@ describe('Project Services source feed plus actual native binding', () => {
       payload: { launcherProjection?: unknown } }) => {
       if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT) {
         launcherReads++;
-        return { protocolVersion: 1, snapshot: { v: 1, machineId, updatedAt: launcherReads, targets: [] } };
+        return { protocolVersion: 1, snapshot: { v: 1, machineId, updatedAt: launcherReads, targets: [],
+          worktreePorts: { rootPath: '/repo', result: { kind: 'ready', assignment: { ports: [4100 + launcherReads], listenerPorts: {} } } } } };
       }
       if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH && payload.launcherProjection) return new Promise(() => {});
       if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) broadWatches++;
@@ -68,6 +69,7 @@ describe('Project Services source feed plus actual native binding', () => {
       const readsBeforeRefresh = broadReads;
       await act(async () => { await hook.getCurrent().refresh?.(); });
       await vi.waitFor(() => expect(launcherReads).toBe(2));
+      expect(hook.getCurrent().launcherState?.worktreePorts?.result).toMatchObject({ assignment: { ports: [4102] } });
       expect(broadReads).toBe(readsBeforeRefresh);
       expect(broadWatches).toBe(0);
       expect(alert).not.toHaveBeenCalled();

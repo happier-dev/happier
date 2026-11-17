@@ -2614,6 +2614,7 @@ export type LocalServicesActionsActionResultById = {
         reasonCode?: string | undefined;
         reviewedEffect?: JsonValue | undefined;
         reviewedEffectDigest?: string | undefined;
+        destinationUrl?: string | undefined;
     };
     readonly "localServices.actions.openPreview": {
         protocolVersion: 1;

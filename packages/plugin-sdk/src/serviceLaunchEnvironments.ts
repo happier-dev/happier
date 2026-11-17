@@ -1,6 +1,8 @@
 import type { PluginServiceLaunchEnvironmentContributionV1 } from '@happier-dev/protocol/plugins/contributions/serviceLaunchEnvironments';
 import type { WorktreePortsResultV1 } from '@happier-dev/protocol/workspaces/projectSetup/worktreePortsV1';
 
+export type { PluginServiceLaunchEnvironmentContributionV1 };
+
 export type PluginServiceLaunchEnvironmentProjectionV1 = Readonly<{
     projectedEnvironment: Readonly<Record<string, string>>;
     provenance: Readonly<Record<string, Readonly<{ source: 'host' | 'dotenv' | 'runtime' | 'project' | 'profile' | 'invocation'; file?: string }>>>;

@@ -1,4 +1,31 @@
 # Plugin platform and SDK ownership
+
+## Private service launch preparation (unreleased 0.3)
+
+`serviceLaunchEnvironments` contributions prepare private defaults or replacements
+through `PluginServiceLaunchEnvironmentInputV1`. Project owns the final environment
+composition and supplies one lazy declared-name dotenv snapshot; contributions
+receive original values rather than another contribution's rewritten upstream.
+Successful contribution cleanup stays with the actual service process lifetime.
+Unavailable capture leaves the ordinary service usable with a visible diagnostic.
+
+The optional `requestListenerPorts(keys)` operation returns Protocol's existing
+`WorktreePortsResultV1`. The host binds the admitted execution root and launch
+signal to B's worktree port owner. A contribution requests its own named listeners
+only after opting in and determining eligible inputs; disabled contributions do
+no listener allocation. Initial `assignedPorts` remains available, including when
+ordinary Project port assignment is disabled. Contributions bind those assigned
+ports and never choose substitute ports. Listener keys and capture configuration
+belong to the contributing plugin.
+The contribution host qualifies each local key with the plugin and contribution
+identity before assignment, then projects the result back to local listener keys.
+
+This private host operation adds no serialized field, wire epoch or persistence
+format. SDK package SemVer remains separate from runtime ABI version 1. The
+optional operation is safely omitted by an older host; contributions needing it
+report capture unavailable and retain ordinary launch. Matching development
+source is required for listener demand; it does not establish released availability.
+
 ## Managed executable qualification (unreleased 0.3)
 
 A managed dependency's `system` source may declare `minimumVersion` together

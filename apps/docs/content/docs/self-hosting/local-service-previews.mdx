@@ -24,6 +24,12 @@ Private previews are the normal path and the rest of this page is mostly about t
 The table describes the current checkout; it does not certify stable or preview
 release availability.
 
+In development CLI builds, `services copy-url` prints the selected destination;
+with `--json`, read `data.destinationUrl`. `services open` and
+`services launcher open` use the browser on the computer running the CLI. A
+headless CLI reports `browser_unavailable`; use the copied destination in your
+browser instead.
+
 Automatic discovery lists recognized development servers and listeners owned by
 a Happier Shell, including those with an unrecognized runtime. Known
 low-signal listeners, such as database and browser helper processes, stay out of

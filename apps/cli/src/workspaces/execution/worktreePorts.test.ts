@@ -22,6 +22,36 @@ describe('execution-host retained worktree ports', () => {
         const statePath = join(root, 'host', 'worktree-ports.json');
         return { root, first, second, statePath, owner: createWorktreePortsOwner({ statePath }) };
     }
+    it('publishes successful changed assignments only to mounted physical-root observers', async () => {
+        const f = await fixture();
+        await f.owner.assign({ rootPath: f.first, slots: 1 });
+        const alias = join(f.root, 'first-alias');
+        await symlink(f.first, alias, process.platform === 'win32' ? 'junction' : 'dir');
+        let notices = 0;
+        const unsubscribe = await f.owner.subscribe({ rootPath: alias }, () => { notices += 1; });
+        try {
+            await f.owner.assign({ rootPath: f.second, slots: 1 });
+            await f.owner.read({ rootPath: f.first });
+            await f.owner.assign({ rootPath: f.first, slots: 1 });
+            expect(notices).toBe(0);
+            const write = vi.spyOn(atomicWrite, 'writeJsonAtomicSync').mockImplementationOnce(() => {
+                throw Object.assign(new Error('disk unavailable'), { code: 'EIO' });
+            });
+            expect(await f.owner.reassign({ rootPath: f.first, isActive: false })).toMatchObject({
+                kind: 'unavailable', reason: 'state_write_failed',
+            });
+            write.mockRestore();
+            expect(notices).toBe(0);
+            expect(await f.owner.reassign({ rootPath: f.first, isActive: false })).toMatchObject({ kind: 'ready' });
+            expect(notices).toBe(1);
+            await f.owner.release({ rootPath: f.first });
+            expect(notices).toBe(2);
+            await f.owner.release({ rootPath: f.first });
+            expect(notices).toBe(2);
+        } finally { unsubscribe(); }
+        await f.owner.assign({ rootPath: f.first, slots: 1 });
+        expect(notices).toBe(2);
+    });
     it('does no state or OS work without project or listener demand', async () => {
         const f = await fixture();
         await writeFile(join(f.root, 'invalid-state.json'), '{damaged');

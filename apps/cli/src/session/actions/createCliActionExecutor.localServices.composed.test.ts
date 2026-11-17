@@ -17,11 +17,13 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerDaemonLocalServicePreviewSnapshotHandler } from '@/rpc/handlers/daemonLocalServicePreviewSnapshot';
 import { createLocalServicePreviewRegistry, registerLocalServicePreview } from '@/daemon/local/services/preview/registry';
 import { createLocalServicePreviewRoutes } from '@/daemon/local/services/preview/routes';
-import { DaemonLocalServicePreviewOpenOrCreateRequestV1Schema, DaemonLocalServicePreviewRevokeRequestV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
+import { DaemonLocalServicePreviewOpenOrCreateResponseV1Schema, DaemonLocalServicePreviewOpenOrCreateRequestV1Schema, DaemonLocalServicePreviewRevokeRequestV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 import { DaemonLocalServicePublicPreviewCreateRequestV1Schema, DaemonLocalServicePublicPreviewRevokeRequestV1Schema } from '@happier-dev/protocol/local/services/public/v1';
 import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 
-const { io, uiPreviewRpc } = vi.hoisted(() => ({ io: vi.fn(), uiPreviewRpc: vi.fn() }));
+const { io, uiPreviewRpc, openOsBrowser } = vi.hoisted(() => ({ io: vi.fn(), uiPreviewRpc: vi.fn(), openOsBrowser: vi.fn() }));
+// Opening the platform browser is an OS boundary; the headless/TTY owner stays real.
+vi.mock('open', () => ({ default: openOsBrowser }));
 // Socket.IO and HTTP are the only replaced boundaries; Action policy, credential
 // selection, targeted request framing and Machine content codecs remain real.
 vi.mock('socket.io-client', () => ({ io }));
@@ -298,22 +300,85 @@ describe('credentialed CLI Local Services runtime dispatch', () => {
         expect(requests).toEqual([]);
         expect(get).not.toHaveBeenCalled();
     });
-    it.each([
-        ['localServices.actions.copyUrl', 'copy_url'],
-        ['localServices.actions.openPreview', 'open_preview'],
-    ] as const)('does not present %s permission as a completed client effect without an answering client', async (actionId, action) => {
-        const permission = LocalServiceActionResultV1Schema.parse({ v: 1, requestId: 'client-effect', action,
+    it('preserves a denied Copy receipt without reading or copying a destination', async () => {
+        const denied = LocalServiceActionResultV1Schema.parse({ v: 1, requestId: 'copy-denied', action: 'copy_url',
+            status: 'denied', reasonCode: 'managed_service_not_current', auditEvents: [] });
+        const { executor, requests, context } = receivingMachineBoundary(denied, 'localServices.actions.copyUrl');
+        expect(await executor.execute('localServices.actions.copyUrl', { requestId: 'copy-denied', action: 'copy_url',
+            target: { kind: 'managed_service', managedServiceId: 'old-instance', machineId: 'machine-a' } }, context))
+            .toMatchObject({ ok: true, result: denied });
+        expect(requests).toHaveLength(1);
+    });
+
+    it('copies the canonical stable destination instead of treating daemon eligibility as the copied URL', async () => {
+        const permission = LocalServiceActionResultV1Schema.parse({ v: 1, requestId: 'client-effect', action: 'copy_url',
             status: 'succeeded', auditEvents: [] });
-        const { executor, requests, get, context } = receivingMachineBoundary(permission, actionId);
-        const input = LocalServiceActionRequestV1Schema.parse({ requestId: 'client-effect', action,
+        const { executor, requests, context } = receivingMachineBoundary(permission, 'localServices.actions.copyUrl', false, 'cli', async payload => {
+            if (payload && typeof payload === 'object' && 'method' in payload
+                && payload.method === `machine-a:${RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT}`) return {
+                protocolVersion: 1, snapshot: { v: 1, machineId: 'machine-a', updatedAt: 1, targets: [{
+                    id: 'stable-web', source: 'managed_service', title: 'Web', machineId: 'machine-a', confidence: 'high',
+                    sourceClass: { kind: 'managed_service', managedServiceId: 'actual-instance' },
+                    state: 'available', actions: [],
+                    browserTarget: { kind: 'localServicePreview', machineId: 'machine-a', targetId: 'stable-web' },
+                }] },
+            };
+            return permission;
+        });
+        const input = LocalServiceActionRequestV1Schema.parse({ requestId: 'client-effect', action: 'copy_url',
             target: { kind: 'managed_service', managedServiceId: 'actual-instance', machineId: 'machine-a',
                 workspaceId: 'accepted', cwd: '/accepted/web' } });
-        expect(await executor.execute(actionId, input, context)).toMatchObject(actionId === 'localServices.actions.copyUrl'
-            ? { ok: false, errorCode: 'action_disabled', details: { reason: 'unsupported_surface', surface: 'cli' } }
-            : { ok: false, errorCode: 'runtime_action_disabled', error: 'runtime_action_disabled:localServices:runtime_family_unimplemented' });
-        expect(requests).toEqual([]);
-        expect(get).not.toHaveBeenCalled();
+        expect(await executor.execute('localServices.actions.copyUrl', input, context)).toMatchObject({ ok: true,
+            result: { ...permission, destinationUrl: expect.stringContaining('/preview-service/machine-a/stable-web?serverId=home-a') } });
+        expect(requests).toHaveLength(2);
     });
+
+    it.each(['localServices.launcher.openPreview', 'localServices.actions.openPreview'] as const)('opens %s through the canonical CLI Action and OS browser boundary', async actionId => {
+        const browserTarget = { kind: 'localServicePreview' as const, machineId: 'machine-a', targetId: 'stable-web' };
+        const registry = createLocalServicePreviewRegistry();
+        const registered = registerLocalServicePreview(registry, { previewId: 'preview-a', machineId: 'machine-a', browserTarget,
+            owner: { kind: 'user', id: 'owner' }, target: { scheme: 'http', host: '127.0.0.1', port: 5173 },
+            initialPath: { pathname: '/', search: '' }, display: { title: 'Web', addressLabel: 'local fixture' }, originMode: 'host' });
+        if (!registered.ok) throw new Error(registered.reasonCode);
+        const response = actionId === 'localServices.launcher.openPreview'
+            ? { protocolVersion: 1, status: 'opened', targetId: 'stable-web', browserTarget }
+            : DaemonLocalServicePreviewOpenOrCreateResponseV1Schema.parse({ protocolVersion: 1, status: 'existing',
+                preview: { previewId: 'preview-a', resource: registered.resource }, snapshot: {
+                    v: 1, machineId: 'machine-a', generatedAt: 1, refreshState: 'idle', resources: [registered.resource],
+                } });
+        const { executor, requests, context } = receivingMachineBoundary(response, actionId);
+        const descriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+        Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+        vi.stubEnv('CI', ''); vi.stubEnv('HEADLESS', ''); vi.stubEnv('DISPLAY', ':99');
+        vi.stubEnv('HAPPIER_NO_BROWSER_OPEN', '0');
+        openOsBrowser.mockResolvedValue(undefined);
+        try {
+            expect(await executor.execute(actionId, actionId === 'localServices.launcher.openPreview'
+                ? { machineId: 'machine-a', targetId: 'stable-web', scope: 'machine' }
+                : { requestId: 'open-1', action: 'open_preview', target: {
+                    kind: 'inventory_entry', inventoryEntryId: 'entry-a', machineId: 'machine-a' } }, context))
+                .toMatchObject({ ok: true, result: response });
+            expect(openOsBrowser).toHaveBeenCalledWith(expect.stringContaining('/preview-service/machine-a/stable-web?serverId=home-a'));
+            expect(requests).toHaveLength(1);
+        } finally {
+            if (descriptor) Object.defineProperty(process.stdout, 'isTTY', descriptor);
+            else Reflect.deleteProperty(process.stdout, 'isTTY');
+            vi.unstubAllEnvs();
+        }
+    });
+
+    it('returns a visible browser-unavailable failure instead of a successful launcher permission receipt', async () => {
+        const response = { protocolVersion: 1, status: 'opened', targetId: 'stable-web',
+            browserTarget: { kind: 'localServicePreview', machineId: 'machine-a', targetId: 'stable-web' } };
+        const { executor, context } = receivingMachineBoundary(response, 'localServices.launcher.openPreview');
+        vi.stubEnv('HAPPIER_NO_BROWSER_OPEN', '1');
+        try {
+            expect(await executor.execute('localServices.launcher.openPreview', {
+                machineId: 'machine-a', targetId: 'stable-web', scope: 'machine',
+            }, context)).toMatchObject({ ok: false, errorCode: 'browser_unavailable' });
+        } finally { vi.unstubAllEnvs(); }
+    });
+
     it.each([
         ['localServices.actions.copyUrl', 'copy_url'],
         ['localServices.actions.openPreview', 'open_preview'],

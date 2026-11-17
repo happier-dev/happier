@@ -3,6 +3,7 @@ import type {
     LocalServiceLauncherState,
     LocalServiceLaunchTarget,
 } from './types';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
 const selectedTargets = new WeakMap<LocalServiceLauncherState['targetsById'], readonly LocalServiceLaunchTarget[]>();
 // Receipt order is not a presentation change. Retain only the admitted daemon timestamp,
@@ -106,7 +107,8 @@ export function applyLocalServiceLauncherSnapshot(
     const receivedAt = readLocalServiceLauncherSnapshotTime(state);
     if (sameScope && receivedAt !== null && snapshot.updatedAt < receivedAt) return state;
     const collection = reconcileLocalServiceLauncherTargets(state, snapshot.targets);
-    if (sameScope && state.refreshStatus === 'idle' && state.refreshError === null && collection === state) {
+    const worktreePorts = retainDeep(sameScope ? state.worktreePorts : undefined, snapshot.worktreePorts);
+    if (sameScope && state.refreshStatus === 'idle' && state.refreshError === null && collection === state && worktreePorts === state.worktreePorts) {
         snapshotTimes.set(state, snapshot.updatedAt);
         return state;
     }
@@ -119,6 +121,7 @@ export function applyLocalServiceLauncherSnapshot(
         refreshError: null,
         targetIds: collection.targetIds,
         targetsById: collection.targetsById,
+        ...(worktreePorts ? { worktreePorts } : {}),
     };
     snapshotTimes.set(next, snapshot.updatedAt);
     return next;
@@ -182,5 +185,6 @@ export function snapshotFromLocalServiceLauncherState(
         ...(state.sessionId ? { sessionId: state.sessionId } : {}),
         updatedAt: readLocalServiceLauncherSnapshotTime(state)!,
         targets: [...selectLocalServiceLaunchTargets(state)],
+        ...(state.worktreePorts ? { worktreePorts: state.worktreePorts } : {}),
     };
 }

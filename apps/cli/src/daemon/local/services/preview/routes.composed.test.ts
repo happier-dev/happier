@@ -23,7 +23,8 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import { normalizeLocalServiceScan } from '../inventory/scanner';
-import { createProjectServiceDeclarationTargetIdV1 } from '@happier-dev/protocol/local/services/actions/v1';
+import { parseLocalServiceDeclarationPreviewLandingUrlV1 } from '@happier-dev/protocol/local/services/preview/v1';
+import { projectWorktreeRuntimeEnvironment } from '@/workspaces/execution/projectWorktreeRuntime';
 import { createLocalServiceLauncherFeed } from '../launch/feed';
 import { buildBrowserLaunchpadRows, selectRunningServiceForEndedPreview } from '../../../../../../ui/sources/sync/domains/browser/targets/suggestions';
 
@@ -174,12 +175,19 @@ describe('createLocalServicePreviewRoutes lifecycle', () => {
         });
         const workspace = { id: 'checkout', serverId: 'home', machineId: MACHINE_ID, rootPath: process.cwd(), createdAtMs: 1 };
         const declaration = { workspaceRefId: workspace.id, selection: { kind: 'manifest' as const, name: 'web' } };
-        const launchTargetId = createProjectServiceDeclarationTargetIdV1(workspace, declaration.selection);
         let adapter: Awaited<ReturnType<typeof startLocalServicePreviewNativeAdapter>> | undefined;
         let reopenedAdapter: Awaited<ReturnType<typeof startLocalServicePreviewNativeAdapter>> | undefined;
         let replacement: ReturnType<typeof createServer> | undefined;
         let inspectionUnavailable = false;
         try {
+            const environment = projectWorktreeRuntimeEnvironment({ workspace,
+                manifest: { version: 1, worktreePorts: { enabled: true, slots: 1 }, services: {
+                    web: { source: { kind: 'command', command: 'serve' }, runtime: { primary: true } },
+                } }, assignment: { ports: [address.port], listenerPorts: {} } });
+            const locator = parseLocalServiceDeclarationPreviewLandingUrlV1(environment.HAPPIER_WORKTREE_URL!);
+            expect(locator).toEqual({ serverId: workspace.serverId, machineId: workspace.machineId, targetId: expect.any(String) });
+            if (!locator) throw new Error('missing stable worktree locator');
+            const launchTargetId = locator.targetId;
             // The external program's native lifecycle is the SDK system boundary.
             // Host supervision, preview registration and HTTP adapters remain real.
             const start = (nativeResourceId: string, resource: typeof original) => owner.superviseProject({ kind: 'workspace', workspace, declaration, cwd: workspace.rootPath,

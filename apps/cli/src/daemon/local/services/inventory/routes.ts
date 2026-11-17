@@ -3,6 +3,7 @@ import type { LocalServiceLauncherScopeV1, LocalServiceLauncherSnapshotV1 } from
 import { isDeepStrictEqual } from 'node:util';
 
 import { createParkWatch, type ParkWatchResult } from '@/daemon/lifecycle/parkWatch';
+import { getHostWorktreePortsOwner, type WorktreePortsOwner } from '@/workspaces/execution/worktreePorts';
 
 import type { LocalServiceInventoryLabelSource } from './labels';
 import type {
@@ -37,6 +38,7 @@ export type LocalServiceInventoryRoutes = Readonly<{
     /** The same parked owner, restricted to the caller's already-admitted launcher projection. */
     watchLauncherSnapshot(input: Readonly<{
         targets: LocalServiceLauncherSnapshotV1['targets'];
+        worktreePorts?: LocalServiceLauncherSnapshotV1['worktreePorts'];
         readSnapshot(): Promise<LocalServiceLauncherSnapshotV1>;
         launcherScopes?: readonly LocalServiceLauncherScopeV1[];
         signal?: AbortSignal;
@@ -53,6 +55,7 @@ export type LocalServiceInventoryRoutes = Readonly<{
 
 export function createLocalServiceInventoryRoutes(input: Readonly<{
     registry: LocalServiceInventoryRegistry;
+    worktreePorts?: Pick<WorktreePortsOwner, 'subscribe'>;
     getSummary?: () => LocalServiceMachineSummaryV1;
     refreshSnapshot?: () => Promise<NormalizedLocalServiceInventorySnapshot>;
     /**
@@ -105,20 +108,29 @@ export function createLocalServiceInventoryRoutes(input: Readonly<{
         async watchLauncherSnapshot(request) {
             const release = request.launcherScopes?.length
                 ? await input.observeLauncherScopes?.(request.launcherScopes, request.signal) : undefined;
+            let releasePorts: (() => void) | undefined;
+            let wakePorts: (() => void) | undefined;
+            const unchanged = (snapshot: LocalServiceLauncherSnapshotV1) => isDeepStrictEqual(snapshot.targets, request.targets)
+                && isDeepStrictEqual(snapshot.worktreePorts, request.worktreePorts);
             try {
                 while (!request.signal?.aborted) {
                     const snapshot = await request.readSnapshot();
-                    if (!isDeepStrictEqual(snapshot.targets, request.targets)) return { changed: true, snapshot };
+                    if (!unchanged(snapshot)) return { changed: true, snapshot };
+                    // The admitted projection supplies the root, never the caller's echoed baseline.
+                    // No opted-in selected root means no assignment-owner subscription or work.
+                    if (!releasePorts && snapshot.worktreePorts) releasePorts = await (input.worktreePorts ?? getHostWorktreePortsOwner())
+                        .subscribe({ rootPath: snapshot.worktreePorts.rootPath }, () => wakePorts?.());
                     let readFailure: unknown;
                     const result = await watches.parkWatch({
                         isNewer: () => false,
                         subscribe(listener) {
                             const unsubscribe = input.registry.subscribe(listener);
+                            wakePorts = listener;
                             // Close the async projection-read/subscribe gap at the existing watch owner.
                             void request.readSnapshot().then(current => {
-                                if (!isDeepStrictEqual(current.targets, request.targets)) listener();
+                                if (!unchanged(current)) listener();
                             }, error => { readFailure = error; listener(); });
-                            return unsubscribe;
+                            return () => { wakePorts = undefined; unsubscribe(); };
                         },
                         read: () => undefined,
                         signal: request.signal,
@@ -129,7 +141,7 @@ export function createLocalServiceInventoryRoutes(input: Readonly<{
                     // change to this requester's projection can settle the remote watch.
                 }
                 return { changed: false };
-            } finally { release?.(); }
+            } finally { releasePorts?.(); release?.(); }
         },
         watcherCount() {
             return watches.watcherCount();

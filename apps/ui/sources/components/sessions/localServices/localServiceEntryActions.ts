@@ -6,6 +6,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 
 import type { LocalServicePublicPreviewActions } from './publicPreviewActions';
+import type { LocalServiceLogOccurrence } from './localServiceOccurrenceActions';
 import type {
   ServiceRowCopyUrlHandler,
   ServiceRowForgetHandler,
@@ -22,6 +23,8 @@ import type {
  */
 export type LocalServiceEntryHandlers = Readonly<{
   onOpenServiceInBrowser?: ServiceRowOpenHandler;
+  onShowServiceTerminal?: (target: LocalServiceLaunchTarget) => Promise<unknown>;
+  onShowServiceLogs?: (occurrence: LocalServiceLogOccurrence) => void | Promise<unknown>;
   onStartLauncherTarget?: ServiceRowStartHandler;
   onTerminateDetectedService?: ServiceRowTerminateHandler;
   onForgetDetectedService?: ServiceRowForgetHandler;
@@ -37,6 +40,8 @@ export type LocalServiceEntryActions = Readonly<{
   /** The target Open hands to the surface's opener, when the entry is openable and the surface can open. */
   open: LocalServiceLaunchTarget | null;
   start: LocalServiceLaunchTarget | null;
+  showTerminal: LocalServiceLaunchTarget | null;
+  showLogs: LocalServiceLogOccurrence | null;
   /** A detected listener with ownership evidence: `localServices.actions.terminateDetected`. */
   terminateDetected: boolean;
   forget: boolean;
@@ -117,6 +122,11 @@ export function resolveLocalServiceEntryActions(
       hasUnsettledLocalServiceCustody(row));
   return {
     open,
+    showTerminal: row.target.terminalView && handlers.onShowServiceTerminal ? row.target : null,
+    showLogs: row.target.sourceClass?.kind === 'managed_service' && handlers.onShowServiceLogs
+      ? { machineId: row.target.machineId, serviceId: row.target.id,
+          expectedGeneration: row.target.sourceClass.managedServiceId, name: row.target.title }
+      : null,
     start:
       primary?.kind === 'start' && handlers.onStartLauncherTarget
         ? primary.target

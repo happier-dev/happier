@@ -3,6 +3,7 @@ import { z } from '../../../zodRuntimePolicy.js';
 import { ProjectNativeRefV1Schema } from '../../../workspaces/projectSetup/projectManifestV1.js';
 import { WorkspaceRefV1WriteSchema } from '../../../workspaces/workspaceRefV1.js';
 import { ProjectExecutionChoiceV1Schema } from '../../../workspaces/projectWorkerPreferencesV1.js';
+import { BrowserHttpUrlV1Schema } from '../../../browser/url.js';
 import { StrictJsonValueSchema } from '../../../json/strictJsonValue.js';
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex } from '@noble/hashes/utils';
@@ -212,6 +213,12 @@ export const LocalServiceActionResultV1Schema = lazyZodSchema(() => z.strictObje
     }
   })));
 export type LocalServiceActionResultV1 = z.infer<typeof LocalServiceActionResultV1Schema>;
+
+/** CLI Copy writes the destination to stdout; raw daemon receipts only establish eligibility. */
+export const LocalServiceCopyUrlResultV1Schema = lazyZodSchema(() => z.extend(LocalServiceActionResultV1Schema, {
+  destinationUrl: z.optional(BrowserHttpUrlV1Schema),
+}));
+export type LocalServiceCopyUrlResultV1 = z.infer<typeof LocalServiceCopyUrlResultV1Schema>;
 
 // Preview Open uses its Machine Action RPC and the canonical preview lifecycle DTO.
 // This retained aggregate accepts only controls with the audited result envelope below.

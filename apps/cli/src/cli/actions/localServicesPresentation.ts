@@ -7,7 +7,7 @@ import { DaemonLocalServicePreviewOpenOrCreateResponseV1Schema, DaemonLocalServi
   LocalServicePreviewSnapshotV1Schema, type LocalServicePreviewSnapshotRowV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import { DaemonLocalServicePublicPreviewCreateResponseV1Schema, DaemonLocalServicePublicPreviewRevokeResponseV1Schema,
   LocalServicePublicPreviewSnapshotV1Schema, type LocalServicePublicExposureV1 } from '@happier-dev/protocol/local/services/public/v1';
-import { LocalServiceActionResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
+import { LocalServiceActionResultV1Schema, LocalServiceCopyUrlResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 
 import type { ActionCliPresentation } from './commandPresentation';
 
@@ -119,6 +119,14 @@ export const LOCAL_SERVICES_PRESENTATION: ActionCliPresentation = {
         for (const exposure of result.snapshot.exposures) presentPublicExposure(exposure);
         return true;
       }
+      case 'localServices.actions.copyUrl': {
+        const result = LocalServiceCopyUrlResultV1Schema.parse(payload);
+        if (!result.destinationUrl) return false;
+        console.log(result.destinationUrl);
+        return true;
+      }
+      case 'localServices.launcher.openPreview':
+      case 'localServices.actions.openPreview': console.log('Opened in browser'); return true;
       case 'localServices.actions.forget':
       case 'localServices.actions.stopManaged':
       case 'localServices.actions.restartManaged':

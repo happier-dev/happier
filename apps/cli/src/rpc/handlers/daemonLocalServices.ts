@@ -144,7 +144,7 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
                         const watchLauncherSnapshot = requireInventoryRoutes(options).watchLauncherSnapshot;
                         if (!watchLauncherSnapshot) throw new Error('Local service inventory watch runtime is unavailable');
                         const projection = request.launcherProjection;
-                        const result = await watchLauncherSnapshot({ targets: projection.targets,
+                        const result = await watchLauncherSnapshot({ targets: projection.targets, worktreePorts: projection.worktreePorts,
                             readSnapshot: () => reader.getSnapshot({ ...projection.request, discovery: 'cached',
                                 ...(context ? { signal: context.signal } : {}) }),
                             // Guest projections contain only their installed managed bindings;

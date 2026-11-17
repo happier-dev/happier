@@ -31,6 +31,7 @@ export type LocalServiceLauncherSnapshotClientResult =
 
 export type LocalServiceLauncherWatchClientInput = Omit<LocalServiceLauncherSnapshotClientInput, 'request'> & Readonly<{
     targets: LocalServiceLauncherSnapshot['targets'];
+    worktreePorts?: LocalServiceLauncherSnapshot['worktreePorts'];
 }>;
 export type LocalServiceLauncherWatchClientResult =
     | Readonly<{ ok: true; changed: true; snapshot: LocalServiceLauncherSnapshot }>

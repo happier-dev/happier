@@ -2871,6 +2871,16 @@ owners.
 
 ### Sessionless Project Services (0.3 development)
 
+The canonical CLI commands `services copy-url`, `services open` and
+`services launcher open` continue the admitted Machine Action on the present
+user's CLI. Copy prints its destination to stdout and preserves
+`data.destinationUrl` in JSON output. Declared-service destinations use the
+configured web app's stable Home/Machine/declaration landing URL. Open uses the
+existing OS browser opener and returns `browser_unavailable` when it cannot open
+the browser; a daemon eligibility receipt alone is not a completed client effect.
+Agent and MCP callers still require an answering client for these presentation
+effects. Public-preview clipboard presentation remains client-owned.
+
 `daemon/local/services/launch/projectDeclarations.ts` owns reviewed declaration
 Start and fresh-review Restart. It consumes the accepted WorkspaceRef and exact
 Home/Machine/requester, B1's declaration/native resolution, the setup preparation

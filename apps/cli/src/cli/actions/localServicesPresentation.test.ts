@@ -10,15 +10,39 @@ import { composeActionCliInput, parseActionCliCommandInput } from './parseComman
 describe('compiled Services command presentation', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it.each(['localServices.actions.copyUrl',
-    'localServices.launcher.openPreview', 'localServices.publicPreview.copyUrl'] as const)(
-    'keeps answering-client effect %s client-placed without public Machine RPC', actionId => {
-      const spec = getActionSpec(actionId);
-      expect(spec.executionPlacement).toBe('client');
-      expect(spec.surfaces.rpc).toBe(false);
-      expect(listCompiledActionCliCommands().some(command => command.actionId === actionId)).toBe(false);
-    },
-  );
+  it.each([
+    ['localServices.actions.copyUrl', ['services', 'copy-url']],
+    ['localServices.actions.openPreview', ['services', 'open']],
+    ['localServices.launcher.openPreview', ['services', 'launcher', 'open']],
+  ] as const)('exposes %s through the canonical CLI compiler', (actionId, path) => {
+    const command = findCompiledActionCliCommand([...path], listCompiledActionCliCommands());
+    expect(command?.actionId).toBe(actionId);
+    expect(getActionSpec(actionId).surfaces.cli).toBe(true);
+  });
+
+  it('keeps public preview clipboard presentation client-owned', () => {
+    const spec = getActionSpec('localServices.publicPreview.copyUrl');
+    expect(spec.executionPlacement).toBe('client');
+    expect(spec.surfaces.rpc).toBe(false);
+    expect(listCompiledActionCliCommands().some(command => command.actionId === spec.id)).toBe(false);
+  });
+
+  it('prints the copied destination as stdout text and preserves it in the canonical JSON payload', async () => {
+    const command = findCompiledActionCliCommand(['services', 'copy-url'], listCompiledActionCliCommands());
+    expect(command).toBeDefined();
+    if (!command) return;
+    const presentation = await loadActionCliPresentation(command.actionId);
+    const input = {};
+    const result = { v: 1, requestId: 'copy-1', action: 'copy_url', status: 'succeeded', auditEvents: [],
+      destinationUrl: 'https://app.example/preview-service/machine-a/stable-web?serverId=home-a' };
+    const output = captureConsoleText();
+    try {
+      expect(await presentation?.presentSuccess?.(result, { command, input, callerInput: input, json: false })).toBe(true);
+      expect(output.text().trim()).toBe(result.destinationUrl);
+      expect(await presentation?.presentSuccess?.(result, { command, input, callerInput: input, json: true })).toBe(false);
+      expect(getActionSpec(command.actionId).outputSchema.parse(result)).toEqual(result);
+    } finally { output.restore(); }
+  });
 
   it('routes local service preview creation through the Machine owner', () => {
     const spec = getActionSpec('localServices.actions.openPreview');

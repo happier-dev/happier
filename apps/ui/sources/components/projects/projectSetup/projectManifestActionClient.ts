@@ -1,9 +1,12 @@
 import {
   ProjectDefinitionInspectOutputSchema,
   ProjectDefinitionInspectResultSchema,
+  ProjectWorktreePortsReassignInputSchema,
   type ProjectDefinitionWorkspace,
   type ProjectDefinitionInspectRead,
 } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
+import { PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
+import { WorktreePortsResultV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/worktreePortsV1';
 import {
   readProjectSetupConsentFailureV1,
   readProjectWorkerNoAcceptanceFailureV1,
@@ -32,11 +35,12 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { randomUUID } from '@/platform/randomUUID';
 import { HappyError } from '@/utils/errors/errors';
 
-type Execute = (
-  actionId: 'projects.inspect' | 'projects.manifest.update' | 'projects.script.run' | 'projects.prepare' | 'projects.organization.update',
+type ActionInvocation = (
+  actionId: 'projects.inspect' | 'projects.manifest.update' | 'projects.script.run' | 'projects.prepare' | 'projects.organization.update' | typeof PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID,
   input: unknown,
   context?: Parameters<ReturnType<typeof createFrontDoorActionExecute>>[2],
 ) => ReturnType<ReturnType<typeof createFrontDoorActionExecute>>;
+type Execute = ActionInvocation & Readonly<{ confirmed?: ActionInvocation }>;
 type Outcome<T> =
   | Readonly<{ ok: true; value: T }>
   | Readonly<{ ok: false; code: string; workerRefusal?: ProjectWorkerNoAcceptanceFailureDetailsV1 }>;
@@ -79,14 +83,17 @@ export function createProjectManifestActionClient(
       | 'projects.manifest.update'
       | 'projects.script.run'
       | 'projects.organization.update'
-      | 'projects.prepare',
+      | 'projects.prepare'
+      | typeof PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID,
     actionInput: unknown,
     schema: core.$ZodType<T>,
+    confirmation?: Readonly<{ confirmed: true }>,
   ): Promise<T> {
     const actionContext = { ...context, actionRequestId: randomUUID() };
     const outcome = await awaitActionApprovalResult<unknown, Outcome<T>>({
       execute: async (callbacks) => {
-        const result = await execute(actionId, actionInput, actionContext);
+        const dispatch = confirmation?.confirmed ? execute.confirmed ?? execute : execute;
+        const result = await dispatch(actionId, actionInput, actionContext);
         if (!result.ok) {
           // A typed D18 setup review keeps its safe review facts for the review surface.
           const consent = readProjectSetupConsentFailureV1(result);
@@ -137,6 +144,11 @@ export function createProjectManifestActionClient(
   }
 
   return {
+    /** Called after the surface's designed Choose new ports confirmation. */
+    reassignWorktreePorts(confirmation: Readonly<{ confirmed: true }>) {
+      return invoke(PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID,
+        ProjectWorktreePortsReassignInputSchema.parse({ workspace: input.workspace }), WorktreePortsResultV1Schema, confirmation);
+    },
     async inspect(read: ProjectDefinitionInspectRead = { kind: 'scripts' }) {
       const result = await execute(
         'projects.inspect',

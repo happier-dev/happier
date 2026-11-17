@@ -178,7 +178,8 @@ const store = createSharedSubscriptionStore<
     onWatchSnapshot: input => invalidateLocalServicePreviewStore(input),
     watch: async ({ input, state, watchClient, signal }) => {
         const result = await watchClient({ ...normalizeInput(input),
-            projection: input.projection ?? undefined, targets: [...selectLocalServiceLaunchTargets(state)], signal });
+            projection: input.projection ?? undefined, targets: [...selectLocalServiceLaunchTargets(state)],
+            ...(state.worktreePorts ? { worktreePorts: state.worktreePorts } : {}), signal });
         if (!result.ok) return { status: 'unavailable' };
         return result.changed ? { status: 'changed', snapshot: result.snapshot } : { status: 'idle' };
     },

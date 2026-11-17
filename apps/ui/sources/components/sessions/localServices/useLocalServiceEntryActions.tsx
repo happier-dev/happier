@@ -26,11 +26,15 @@ import { LocalServiceEffectReviewCard } from './LocalServiceEffectReviewCard';
 import { LocalServiceSetupConsentContinuation } from './LocalServiceSetupConsentContinuation';
 import { useLocalServicePublicPreviewActions } from './publicPreviewActions';
 import type { LocalServiceLiveFeeds } from './useLocalServiceLiveFeeds';
+import { useSessionTerminalActionExecute } from '@/components/sessions/terminal/useSessionTerminalWorkspace';
+import { openLocalServiceTerminal } from './localServiceOccurrenceActions';
 
 export type LocalServiceEntryActionsInput = Readonly<{
   machineId: string | null;
   serverId: string | null;
   sessionId?: string;
+  /** The mounted terminal presentation scope; Show attaches an existing occurrence only. */
+  terminalScopeId?: string;
   workspaceRoot?: string | null;
   scope: 'workspace' | 'machine';
   /** Defaults to the single front door, so ActionsSettings enablement and approval routing apply. */
@@ -67,6 +71,9 @@ export function useLocalServiceEntryActions(
 ): LocalServiceEntryActionsWiring {
   const { machineId, serverId, sessionId, scope } = input;
   const workspaceRoot = input.workspaceRoot ?? null;
+  const terminalExecute = useSessionTerminalActionExecute(input.terminalScopeId ?? '');
+  const onShowServiceTerminal = React.useCallback<NonNullable<LocalServiceEntryHandlers['onShowServiceTerminal']>>(
+    target => openLocalServiceTerminal(target, terminalExecute), [terminalExecute]);
   const onRefresh = input.onRefresh;
   // Single front door (FINALIZATION-PLAN §3.1/§12.6): local-service runtime actions dispatch
   // through ActionExecutor.execute via the canonical bridge, so ActionsSettings enablement and
@@ -172,10 +179,13 @@ export function useLocalServiceEntryActions(
       onRestartManagedService,
       onStartLauncherTarget,
       onClearLauncherHistory,
+      ...(input.terminalScopeId ? { onShowServiceTerminal } : {}),
       publicPreviewActions,
     }),
     [
       onClearLauncherHistory,
+      input.terminalScopeId,
+      onShowServiceTerminal,
       onCopyServiceUrl,
       onForgetDetectedService,
       onRestartManagedService,

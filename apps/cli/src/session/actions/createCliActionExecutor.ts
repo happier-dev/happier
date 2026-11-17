@@ -19,7 +19,7 @@ import { createDaemonPluginActionExecutor, createPluginActionExecutor, readPlugi
 import { createCommittedContributedActionSchemaReader, createCommittedInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import type { CliActionExactHomeTarget } from './createCliActionDeps';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
-import { clientActionUnavailable } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { createCliLocalServiceClientActionExecutor } from './cliActionDeps/localServices';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, RuntimeActionExecute, ActionId } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
@@ -223,7 +223,7 @@ export function createCliActionExecutor(
     {
       ...(params.sessionActionConfirmation ? { sessionActionConfirmation: params.sessionActionConfirmation } : {}),
       ...(params.teamCredentialUsageExport ? { teamCredentialUsageExport: params.teamCredentialUsageExport } : {}),
-      clientActionExecute: params.clientActionExecute ?? (async ({ actionId }) => clientActionUnavailable(actionId)),
+      clientActionExecute: createCliLocalServiceClientActionExecutor(params.clientActionExecute),
       ...(params.confidentialSecretFill ? { confidentialSecretFill: params.confidentialSecretFill } : {}),
       ...(params.confidentialActionInputs ? { confidentialActionInputs: params.confidentialActionInputs } : {}),
       ...(params.runtimeActionExecute

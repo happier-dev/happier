@@ -22,7 +22,7 @@ vi.mock('@legendapp/list/react-native', async () =>
 // Resource store, continuation transport and Forge index/Find model remain real.
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
-const { useMachineServiceLogViewer } = await import('./useMachineServiceLogViewer');
+const { useMachineServiceLogViewer, useServiceOccurrenceLogViewer } = await import('./useMachineServiceLogViewer');
 let serverId: string;
 let restoreScope: () => void | Promise<void> = () => {};
 beforeEach(async () => {
@@ -412,7 +412,9 @@ describe('native log viewer authority withdrawal', () => {
                 selection: { kind: 'all' }, groupExpanded: {}, revealedLine: null, timestampsVisible: true,
             };
             const hook = await renderHook((props: { active: boolean }) => {
-                const value = useMachineServiceLogViewer({ serverId, machineId: 'machine', service,
+                const value = reason === 'expired_resource' ? useServiceOccurrenceLogViewer({ serverId, machineId: 'machine',
+                    serviceId: 'service', expectedGeneration: 'generation-a', name: 'Stopped workspace service',
+                    active: props.active, view, surfaceId: 'workspace-occurrence', containsFocus: () => true, isInputFocused: () => false }) : useMachineServiceLogViewer({ serverId, machineId: 'machine', service,
                     active: props.active, view, surfaceId: 'native-currentness', containsFocus: () => true, isInputFocused: () => false });
                 if (captureWithdrawnRenders) withdrawnRenders.push(JSON.stringify({
                     first: value.first, index: value.index?.plainText,

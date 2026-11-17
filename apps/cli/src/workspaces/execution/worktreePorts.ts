@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import { WorktreePortAssignmentV1Schema, type WorktreePortAssignmentV1, type WorktreePortsResultV1 } from '@happier-dev/protocol/workspaces/projectSetup/worktreePortsV1';
 
@@ -20,6 +21,8 @@ export type WorktreePortsDemand = Readonly<{
 }>;
 
 export interface WorktreePortsOwner {
+    /** Mounted selected-root observation only; does not read or allocate an assignment. */
+    subscribe(input: Readonly<{ rootPath: string }>, listener: () => void): Promise<() => void>;
     assign(input: WorktreePortsDemand): Promise<WorktreePortsResult>;
     read(input: Readonly<{ rootPath: string }>): Promise<WorktreePortsResult>;
     reassign(input: WorktreePortsDemand & Readonly<{ isActive: boolean }>): Promise<WorktreePortsResult>;
@@ -65,6 +68,11 @@ async function physicalRootIdentity(rootPath: string): Promise<string> {
 /** One receiving daemon owns mutations; independent installations remain external bind contenders. */
 export function createWorktreePortsOwner(input: Readonly<{ statePath: string }>): WorktreePortsOwner {
     let sequence: Promise<unknown> = Promise.resolve();
+    const listeners = new Map<string, Set<() => void>>();
+
+    function publish(root: string): void {
+        for (const listener of listeners.get(root) ?? []) listener();
+    }
 
     function serialized(operation: () => Promise<WorktreePortsResult>): Promise<WorktreePortsResult> {
         const result = sequence.then(operation);
@@ -156,10 +164,13 @@ export function createWorktreePortsOwner(input: Readonly<{ statePath: string }>)
                 changed = true;
             }
             if (demand.signal?.aborted) return unavailable('cancelled');
-            if (!changed && !replace) return ready(assignment);
+            if (!changed && (!replace || isDeepStrictEqual(previous, assignment))) return ready(assignment);
             if (!previous && assignment.ports.length === 0 && Object.keys(assignment.listenerPorts).length === 0) return ready();
             state.assignments[root] = assignment;
-            return save(state) ?? ready(assignment);
+            const failure = save(state);
+            if (failure) return failure;
+            publish(root);
+            return ready(assignment);
         } catch (error) {
             return unavailable(demand.signal?.aborted ? 'cancelled' : 'port_selection_failed', error);
         } finally {
@@ -168,6 +179,16 @@ export function createWorktreePortsOwner(input: Readonly<{ statePath: string }>)
     }
 
     return {
+        async subscribe(request, listener) {
+            const root = await physicalRootIdentity(request.rootPath);
+            const subscribers = listeners.get(root) ?? new Set<() => void>();
+            listeners.set(root, subscribers);
+            subscribers.add(listener);
+            return () => {
+                subscribers.delete(listener);
+                if (subscribers.size === 0) listeners.delete(root);
+            };
+        },
         assign: demand => {
             // No Project/listener demand means no root resolution, state reads or OS selection.
             if (!(demand.slots && demand.slots > 0) && !demand.listenerKeys?.length) return Promise.resolve(ready());
@@ -190,7 +211,10 @@ export function createWorktreePortsOwner(input: Readonly<{ statePath: string }>)
             if ('kind' in state) return state;
             if (!Object.hasOwn(state.assignments, root)) return ready();
             delete state.assignments[root];
-            return save(state) ?? ready();
+            const failure = save(state);
+            if (failure) return failure;
+            publish(root);
+            return ready();
         }),
     };
 }

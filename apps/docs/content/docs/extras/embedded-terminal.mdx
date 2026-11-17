@@ -56,6 +56,19 @@ The bottom panel has one strip:
   a shell stops what runs in it; closing the agent's terminal or another session's terminal only
   removes the view.
 
+### Project service terminals (0.3 development)
+
+The service-terminal integration is unreleased and its integrated validation is
+still in progress. A Project service with `runtime.terminal: true` presents the
+same supervised process in a terminal view. Showing its output attaches to that
+process; it does not launch another copy or create an Agent Session.
+
+Hiding that view leaves the service running. Ctrl-C stops the focused service;
+starting it again is explicit. The terminal's starting requester retains custody
+of interactive input and output, including service-log reads. Another person's
+Machine management access does not grant those interactive bytes. Native
+background services continue to use their ordinary logs.
+
 ### The agent's own terminal
 
 Sessions that run in tmux, zellij or Herdr have the agent's own terminal. It is a tab beside your

@@ -278,6 +278,7 @@ export const DaemonLocalServiceInventoryWatchRequestV1Schema = lazyZodSchema(() 
     // The caller already holds these targets. Echoing them closes the read/watch gap
     // without introducing a retained cursor or exposing unrelated inventory changes.
     targets: z.array(LocalServiceLaunchTargetV1Schema),
+    worktreePorts: LocalServiceLauncherSnapshotV1Schema.shape.worktreePorts,
   })),
   /**
    * The `generatedAt` of the snapshot the caller already holds. The daemon answers immediately

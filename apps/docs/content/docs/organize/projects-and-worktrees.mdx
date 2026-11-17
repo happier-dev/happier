@@ -78,6 +78,38 @@ The project overview stays anchored to the base repository, while the selected c
 - terminal launches
 - the default folder when you start a new session from that project
 
+## Worktree service ports (0.3 development)
+
+Worktree port allocation is opt-in in the Project definition. This development
+implementation is still undergoing integrated validation; it is not a released
+availability claim.
+
+For example, two listening services can select separate slots:
+
+```json
+{
+  "version": 1,
+  "worktreePorts": { "enabled": true, "slots": 2 },
+  "services": {
+    "web": { "source": { "kind": "command", "command": "./start-web" }, "runtime": { "primary": true } },
+    "api": { "source": { "kind": "command", "command": "./start-api" }, "runtime": { "portSlot": 1 } }
+  }
+}
+```
+
+Each worktree keeps its own assigned numbers on its execution machine. Commands
+receive `HAPPIER_WORKTREE_PORT` and numbered values such as
+`HAPPIER_WORKTREE_PORT_1`; a listening service's `PORT` defaults to its selected
+slot. Deliberate Project environment values take precedence. A script or Compose
+publication with a fixed literal port still needs to be parameterized; allocation
+does not rewrite repository files or reserve an OS socket until the app binds.
+
+Stopping a service retains its numbers. Successful worktree removal releases
+them after teardown; failed teardown retains the worktree and its assignments.
+An unrelated app can occupy a retained number while stopped. That failure is
+visible on Start; choosing replacement numbers requires the worktree's affected
+executions to be stopped.
+
 ## Worktrees list behavior
 
 The Project header's checkout selector lists known checkouts and worktrees.

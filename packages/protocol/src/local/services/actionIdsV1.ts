@@ -32,3 +32,9 @@ export const LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS = Object.freeze({
   'localServices.actions.restartManaged': RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_RESTART_MANAGED,
   'localServices.actions.terminateDetected': RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_TERMINATE_DETECTED,
 } satisfies Readonly<Record<keyof typeof LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION, string>>);
+
+/** Answering-host effects; the daemon resolves eligibility or a preview, never the local browser. */
+export function isLocalServicePresentationActionIdV1(actionId: string): boolean {
+  return actionId === 'localServices.actions.copyUrl' || actionId === 'localServices.actions.openPreview'
+    || actionId === 'localServices.launcher.openPreview';
+}

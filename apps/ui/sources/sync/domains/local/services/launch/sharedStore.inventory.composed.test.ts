@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -16,6 +19,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
 });
 
 import { createLocalServiceInventoryRegistry } from '../../../../../../../cli/src/daemon/local/services/inventory/registry';
+import { createWorktreePortsOwner } from '../../../../../../../cli/src/workspaces/execution/worktreePorts';
 import { createLocalServiceInventoryRoutes } from '../../../../../../../cli/src/daemon/local/services/inventory/routes';
 import { getLocalServiceInventoryState, resetLocalServiceInventoryStoreForTests, subscribeLocalServiceInventoryStore } from '../inventory/sharedStore';
 import { getLocalServiceLauncherState, resetLocalServiceLauncherStoreForTests, subscribeLocalServiceLauncherStore } from './sharedStore';
@@ -29,6 +33,48 @@ afterEach(() => {
     resetLocalServiceLauncherStoreForTests();
     resetLocalServiceInventoryStoreForTests();
     vi.useRealTimers();
+});
+
+it('pushes a port-only launcher change through the existing qualified watch and store', async () => {
+    const rootPath = await mkdtemp(join(tmpdir(), 'launcher-ports-'));
+    const owner = createWorktreePortsOwner({ statePath: join(rootPath, 'ports.json') });
+    const assigned = await owner.assign({ rootPath, slots: 1 });
+    if (assigned.kind !== 'ready') throw new Error('Real worktree assignment unavailable');
+    const registry = createLocalServiceInventoryRegistry();
+    registry.replaceSnapshot({ v: 1, machineId: 'machine-a', generatedAt: 1, refreshState: 'idle', entries: [], diagnostics: [] });
+    const routes = createLocalServiceInventoryRoutes({ registry, worktreePorts: owner });
+    let updatedAt = 1;
+    let targets: LocalServiceLauncherSnapshotV1['targets'] = [];
+    const readSnapshot = async (): Promise<LocalServiceLauncherSnapshotV1> => ({ v: 1, machineId: 'machine-a', updatedAt: updatedAt++,
+        targets, worktreePorts: { rootPath, result: await owner.read({ rootPath }) } });
+    const baselines: unknown[] = [];
+    rpc.machine.mockImplementation(async (request: { method: string; payload: DaemonLocalServiceInventoryWatchRequestV1; signal: AbortSignal }) => {
+        if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT)
+            return { protocolVersion: 1, snapshot: await readSnapshot() };
+        const projection = request.payload.launcherProjection;
+        if (!projection) throw new Error('Expected qualified launcher watch');
+        baselines.push(projection.worktreePorts);
+        return { protocolVersion: 1, ...await routes.watchLauncherSnapshot({ ...projection, readSnapshot, signal: request.signal }) };
+    });
+    const key = { machineId: 'machine-a', serverId: 'server-a', workspaceRoot: rootPath };
+    const release = subscribeLocalServiceLauncherStore(key, () => {});
+    try {
+        await vi.waitFor(() => expect(getLocalServiceLauncherState(key).worktreePorts?.result).toEqual(assigned));
+        await vi.waitFor(() => expect(baselines).toHaveLength(1));
+        expect(baselines[0]).toEqual({ rootPath, result: assigned });
+        // Positive transport/watch control: a material target change must arrive first.
+        targets = [{ id: 'control', source: 'package_script', machineId: 'machine-a', title: 'Control',
+            confidence: 'high', state: 'unavailable', unavailableReason: 'launch_unavailable', actions: [] }];
+        registry.invalidate();
+        await vi.waitFor(() => expect(getLocalServiceLauncherState(key).targetIds).toEqual(['control']));
+        await vi.waitFor(() => expect(baselines).toHaveLength(2));
+        const retainedTargets = getLocalServiceLauncherState(key).targetsById;
+        const reassigned = await owner.reassign({ rootPath, slots: 1, isActive: false });
+        if (reassigned.kind !== 'ready') throw new Error('Real worktree reassignment unavailable');
+        expect(reassigned.assignment.ports).not.toEqual(assigned.assignment.ports);
+        await vi.waitFor(() => expect(getLocalServiceLauncherState(key).worktreePorts?.result).toEqual(reassigned));
+        expect(getLocalServiceLauncherState(key).targetsById).toBe(retainedTargets);
+    } finally { release(); await rm(rootPath, { recursive: true, force: true }); }
 });
 
 it('parks each qualified launcher projection independently of broad Machine observation', async () => {

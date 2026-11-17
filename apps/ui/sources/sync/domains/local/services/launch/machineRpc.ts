@@ -52,7 +52,8 @@ export async function watchLocalServiceLauncherSnapshotViaMachineRpc(
     if (input.signal?.aborted) return { ok: false, reason: 'request_failed' };
     try {
         const payload = DaemonLocalServiceInventoryWatchRequestV1Schema.parse({ machineId: input.machineId,
-            launcherProjection: { targets: input.targets, request: {
+            launcherProjection: { targets: input.targets,
+                ...(input.worktreePorts ? { worktreePorts: input.worktreePorts } : {}), request: {
                 ...(input.sessionId ? { sessionId: input.sessionId } : {}),
                 ...(input.scope ? { scope: input.scope } : {}),
                 ...(input.workspaceRoot ? { workspaceRoot: input.workspaceRoot } : {}),

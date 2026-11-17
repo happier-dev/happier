@@ -1,3 +1,11 @@
+import { clientActionUnavailable } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { isLocalServicePresentationActionIdV1 } from '@happier-dev/protocol/local/services/actionIdsV1';
+import { LocalServiceActionResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
+import { DaemonLocalServiceLauncherOpenPreviewResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import { buildLocalServiceDeclarationPreviewLandingUrlV1, DaemonLocalServicePreviewOpenOrCreateResponseV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
+import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
+import { configuration } from '@/configuration';
+import { openBrowser } from '@/ui/openBrowser';
 import type { CliActionDepsParams } from './types';
 import { LocalServiceInventoryCountResponseV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -23,6 +31,20 @@ export type CliLocalServiceHost = Readonly<{
   withProjectHome: CliProjectAdmission['withProjectHome'];
   executionRunActionFailure: (code: string, message?: string, details?: unknown) => Readonly<{ ok: false; errorCode: string; error: string; details?: unknown }>;
 }>;
+export function createCliLocalServiceClientActionExecutor(
+  fallback?: ActionExecutorDeps['clientActionExecute'],
+): NonNullable<ActionExecutorDeps['clientActionExecute']> {
+  return async args => args.context.surface === 'cli' && args.context.authority === 'present_user'
+    && isLocalServicePresentationActionIdV1(args.actionId) ? await args.execute()
+    : fallback ? await fallback(args) : clientActionUnavailable(args.actionId);
+}
+
+function destinationUrl(target: BrowserViewTargetV1 | undefined, serverId: string): string | null {
+  if (target?.kind === 'externalUrl') return target.url;
+  return target?.kind === 'localServicePreview' ? buildLocalServiceDeclarationPreviewLandingUrlV1(configuration.webappUrl,
+    { serverId, machineId: target.machineId, targetId: target.targetId }) : null;
+}
+
 export function createCliLocalServiceActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'machineActionDirectTargetTransport' | 'serverId'>,
   host: CliLocalServiceHost,
@@ -61,9 +83,11 @@ export function createCliLocalServiceActionDeps(
       const isStart = args.actionId === 'localServices.launcher.start';
       const controlKind = resolveLocalServiceActionKindForRuntimeActionId(args.actionId);
       const domainRpc = resolveLocalServiceDomainActionRpcBinding(args.actionId);
-      // The daemon's Copy/Open receipt grants eligibility; it does not perform
-      // the answering client's clipboard/navigation effect. This host is headless.
-      if (!isStart && !domainRpc && (!controlKind || controlKind === 'copy_url' || controlKind === 'open_preview')) {
+      const presentation = isLocalServicePresentationActionIdV1(args.actionId);
+      if (presentation && (args.context.surface !== 'cli' || args.context.authority !== 'present_user')) {
+        return createUnavailableRuntimeActionExecutor()(args);
+      }
+      if (!isStart && !domainRpc && !controlKind) {
         return createUnavailableRuntimeActionExecutor()(args);
       }
       const spec = getActionSpec(args.actionId);
@@ -97,6 +121,35 @@ export function createCliLocalServiceActionDeps(
       const countProjection = args.actionId === 'localServices.inventory.list' && 'projection' in request && request.projection === 'count';
       const result = countProjection ? LocalServiceInventoryCountResponseV1Schema.parse(response) : domainRpc && 'snapshotResponseSchema' in domainRpc
         ? domainRpc.snapshotResponseSchema.parse(response).snapshot : response;
+      if (presentation) {
+        if (controlKind === 'copy_url') {
+          const receipt = LocalServiceActionResultV1Schema.parse(result);
+          if (receipt.status !== 'succeeded') return receipt;
+          if (!('target' in request)) return executionRunActionFailure('invalid_parameters');
+          const snapshotResponse = await withProjectHome(() => callMachineAction({
+            machineId, serverId: projectHomeId, method: RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
+            request: { machineId, scope: 'machine' }, context: args.context, exactMachine: true,
+            ...(args.context.signal ? { signal: args.context.signal } : {}),
+          }));
+          const snapshotFailure = ActionExecuteFailureSchema.safeParse(snapshotResponse);
+          if (snapshotFailure.success) return snapshotFailure.data;
+          const snapshot = DaemonLocalServiceLauncherSnapshotResponseV1Schema.parse(snapshotResponse);
+          const selected = request.target;
+          const target = snapshot.snapshot.targets.find(candidate => selected.kind === 'managed_service'
+            ? candidate.sourceClass?.kind === 'managed_service' && candidate.sourceClass.managedServiceId === selected.managedServiceId
+            : candidate.sourceClass?.kind === 'inventory_entry' && candidate.sourceClass.inventoryEntryId === selected.inventoryEntryId);
+          const url = destinationUrl(target?.browserTarget, projectHomeId);
+          return url ? { ...receipt, destinationUrl: url } : executionRunActionFailure('local_service_destination_unavailable');
+        }
+        const launcher = controlKind === 'open_preview' ? null : DaemonLocalServiceLauncherOpenPreviewResponseV1Schema.parse(result);
+        if (launcher?.status === 'unavailable') return launcher;
+        const target = launcher ? launcher.browserTarget
+          : DaemonLocalServicePreviewOpenOrCreateResponseV1Schema.parse(result).preview.resource.browserTarget;
+        const url = destinationUrl(target, projectHomeId);
+        if (!url) return executionRunActionFailure('local_service_destination_unavailable');
+        args.context.signal?.throwIfAborted();
+        if (!await openBrowser(url)) return executionRunActionFailure('browser_unavailable', undefined, { destinationUrl: url });
+      }
       if (requiresAgentEgressRedaction(args.context)) {
         if (args.actionId === 'localServices.publicPreview.status') return redactLocalServicePublicPreviewSnapshotForAgentEgress(LocalServicePublicPreviewSnapshotV1Schema.parse(result));
         if (args.actionId === 'localServices.publicPreview.create') return redactLocalServicePublicPreviewCreateResponseForAgentEgress(DaemonLocalServicePublicPreviewCreateResponseV1Schema.parse(result));

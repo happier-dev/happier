@@ -19,19 +19,29 @@ export function useMachineServiceLogViewer(input: LogViewerControlsV1 & Readonly
     serverId: string; machineId: string; service: MachineServiceRowV1; active: boolean;
 }>) {
     const canRead = input.service.capabilities.logs && input.service.generation !== null;
+    return useServiceOccurrenceLogViewer({ ...input, serviceId: input.service.serviceId,
+        expectedGeneration: input.service.generation, name: input.service.name, active: input.active && canRead });
+}
+
+/** Workspace and Machine occurrences share the original logs Action, Resource and viewer owner. */
+export function useServiceOccurrenceLogViewer(input: LogViewerControlsV1 & Readonly<{
+    serverId: string; machineId: string; serviceId: string;
+    expectedGeneration: string | null; name: string; active: boolean;
+}>) {
+    const canRead = input.expectedGeneration !== null;
     const first = useMachineServiceFirstLogRead({ serverId: input.serverId, machineId: input.machineId,
-        serviceId: input.service.serviceId, active: input.active && canRead,
-        expectedGeneration: input.service.generation });
+        serviceId: input.serviceId, active: input.active && canRead,
+        expectedGeneration: input.expectedGeneration });
     const page = first.state.kind === 'read' && first.state.value.kind === 'page' ? first.state.value.page : null;
-    const reference = React.useMemo<LogsReference | null>(() => page && input.service.generation !== null ? {
+    const reference = React.useMemo<LogsReference | null>(() => page && input.expectedGeneration !== null ? {
         hostRead: 'machines.services.logs', input: { serverId: input.serverId, machineId: input.machineId,
-            serviceId: input.service.serviceId, ...(page.nextCursor ? { cursor: page.nextCursor } : {}) },
-        expectedGeneration: input.service.generation, sourceRevision: page.sourceRevision,
-    } : null, [page, input.serverId, input.machineId, input.service.serviceId, input.service.generation]);
+            serviceId: input.serviceId, ...(page.nextCursor ? { cursor: page.nextCursor } : {}) },
+        expectedGeneration: input.expectedGeneration, sourceRevision: page.sourceRevision,
+    } : null, [page, input.serverId, input.machineId, input.serviceId, input.expectedGeneration]);
     const sourceKey = JSON.stringify([input.serverId, first.accountLifetime?.scope.accountId ?? null,
-        input.machineId, input.service.serviceId, input.service.generation]);
+        input.machineId, input.serviceId, input.expectedGeneration]);
     return useNativeLogViewer({ ...input, first: first.state, read: first.read, accountLifetime: first.accountLifetime,
-        reference, sourceKey, active: input.active && canRead, fileName: `${input.service.name}.log` });
+        reference, sourceKey, active: input.active && canRead, fileName: `${input.name}.log` });
 }
 
 /**

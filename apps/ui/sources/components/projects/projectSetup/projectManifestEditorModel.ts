@@ -10,6 +10,10 @@ import {
   ProjectDevcontainerSelectionV1Schema,
   ProjectToolchainSelectionV1Schema,
   ProjectNativeRefV1Schema,
+  ProjectWorktreePortsV1Schema,
+  ProjectServiceRuntimeV1Schema,
+  type ProjectWorktreePortsV1,
+  type ProjectServiceRuntimeV1,
   type ProjectDevcontainerSelectionV1,
   type ProjectToolchainSelectionV1,
   type ProjectNativeRefV1,
@@ -162,6 +166,17 @@ export function createProjectManifestEditorModel(
       return true;
     },
     edit,
+    setWorktreePorts(value: ProjectWorktreePortsV1 | undefined) {
+      if (value === undefined) return edit([{ kind: 'remove', path: ['worktreePorts'] }]);
+      const parsed = ProjectWorktreePortsV1Schema.safeParse(value);
+      return parsed.success && edit([{ kind: 'set', path: ['worktreePorts'], value: parsed.data }]);
+    },
+    setServiceRuntime(name: string, value: ProjectServiceRuntimeV1 | undefined) {
+      if (snapshot.draft.status !== 'valid' || !Object.hasOwn(snapshot.draft.manifest.services ?? {}, name)) return false;
+      if (value === undefined) return edit([{ kind: 'remove', path: ['services', name, 'runtime'] }]);
+      const parsed = ProjectServiceRuntimeV1Schema.safeParse(value);
+      return parsed.success && edit([{ kind: 'set', path: ['services', name, 'runtime'], value: parsed.data }]);
+    },
     importNative(
       selection: Readonly<{
         usage: 'script' | 'service' | 'setup';
