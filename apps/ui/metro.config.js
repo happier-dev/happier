@@ -484,10 +484,10 @@ const workspaceNodeModulesBlockList = new RegExp([
 // React Native, and narrowed Metro runs must still crawl the resolved source files.
 // Pierre also declares an ESM-only private theming package. Retain that exact
 // subtree (and its scope directory) so Metro can apply its public exports.
-// A dependency generation's own tree (`.deps/node_modules/<generation>/node_modules`,
+// A dependency generation's own tree (`.happier/deps/node_modules/<generation>/node_modules`,
 // the real path behind every linked node_modules) is a top-level tree, not a nested copy.
 const nestedDependencyNodeModulesBlockList =
-  /(?<![\\/]\.deps)[\\/]node_modules[\\/](?!react-native[\\/]node_modules[\\/]@react-native[\\/]|@pierre[\\/]diffs[\\/]node_modules[\\/]@pierre(?:[\\/]theming(?:[\\/]|$)|$))(?:@[^\\/]+[\\/])?[^\\/]+[\\/]node_modules[\\/]/;
+  /(?<![\\/]\.happier[\\/]deps)[\\/]node_modules[\\/](?!react-native[\\/]node_modules[\\/]@react-native[\\/]|@pierre[\\/]diffs[\\/]node_modules[\\/]@pierre(?:[\\/]theming(?:[\\/]|$)|$))(?:@[^\\/]+[\\/])?[^\\/]+[\\/]node_modules[\\/]/;
 const existingBlockList = config.resolver.blockList;
 const inheritedBlockList = Array.isArray(existingBlockList) ? existingBlockList : existingBlockList ? [existingBlockList] : [];
 config.resolver.blockList = [

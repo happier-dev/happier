@@ -94,7 +94,7 @@ test('readers keep resolving, without waiting, while a generation-managed tree i
 test('the replaced generation stays while a reader that entered before the switch holds it, then goes', async t => {
   const { env, installDir } = await setup(t);
   const first = (await moveInPlaceInstallationIntoGeneration(installDir)).name;
-  const container = join(installDir, '.deps', 'node_modules');
+  const container = join(installDir, '.happier', 'deps', 'node_modules');
   await writeFile(join(installDir, 'pnpm-lock.yaml'), '# v2\n');
   let release;
   const held = new Promise(resolve => { release = resolve; });
@@ -123,7 +123,7 @@ test('a failed generation install leaves the live tree and its admission untouch
     }), { code: 'HAPPIER_DEPENDENCY_REFRESH_FAILED' });
   assert.equal(readCurrentDependencyGeneration(installDir), first);
   assert.deepEqual(readInstalled(installDir), ['module.exports = "v1";\n', 'module.exports = "v1";\n']);
-  assert.deepEqual(await readdir(join(installDir, '.deps', 'node_modules')), [first]);
+  assert.deepEqual(await readdir(join(installDir, '.happier', 'deps', 'node_modules')), [first]);
   // Readers still enter; consumers do not retry the same failed inputs.
   await dependencies.withDependencyConsumption({ installDir, env }, async () => { readInstalled(installDir); });
   const readiness = await dependencies.inspectDependencyRefresh({ installDir, env });

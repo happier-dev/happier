@@ -7,17 +7,18 @@ import { observePidLiveness } from './pids.mjs';
 import { collectWorkspacePackageJsonPaths } from './workspace_package_manifests.mjs';
 
 // Atomic dependency installs (owner ruling 2026-11-17). Each installation is a
-// generation: a shadow workspace under `<root>/.deps/node_modules/<generation>/`
+// generation: a shadow workspace under `<root>/.happier/deps/node_modules/<generation>/`
 // whose project directories link the real sources, with its own installed
 // `node_modules` trees. Every `<project>/node_modules` path of the checkout is a
 // relative symlink into the current generation, replaced by renaming a temporary
 // symlink over it (atomic per path). Node loads modules by real path, so a module
 // loaded from generation N resolves its dependencies inside N even while paths
-// flip. The container is named `node_modules` so that Git, sync and source globs
-// ignore generations by their existing `node_modules` rules.
-const CONTAINER = join('.deps', 'node_modules');
+// flip. The container lives under `.happier/` (ignored by Git and by every
+// Mutagen session, so a mirror-only generation is never a sync deletion) and
+// is named `node_modules`, so source globs skip it by their existing rules.
+const CONTAINER = join('.happier', 'deps', 'node_modules');
 const GENERATION_NAME = /^g[0-9a-z]{9}-[0-9a-f]{8}$/u;
-const SKIPPED_ROOT_ENTRIES = new Set(['node_modules', '.deps', '.git']);
+const SKIPPED_ROOT_ENTRIES = new Set(['node_modules', '.happier', '.git']);
 
 export function resolveDependencyGenerationContainer(installDir) {
   return join(resolve(installDir), CONTAINER);

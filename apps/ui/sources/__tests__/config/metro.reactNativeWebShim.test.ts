@@ -323,7 +323,7 @@ describe('metro.config.js (web)', () => {
             (pattern: unknown) => pattern instanceof RegExp && pattern.test(candidate),
         );
         // The real path behind a generation-managed checkout's linked node_modules.
-        const generation = resolve(repoRoot, '.deps/node_modules/g0mwkj013b-67804c41');
+        const generation = resolve(repoRoot, '.happier/deps/node_modules/g0mwkj013b-67804c41');
         expect(isBlocked(resolve(generation, 'node_modules/react/index.js'))).toBe(false);
         expect(isBlocked(resolve(generation, 'apps/ui/node_modules/expo-router/build/index.js'))).toBe(false);
         expect(isBlocked(resolve(generation, 'node_modules/foo/node_modules/bar/index.js'))).toBe(true);

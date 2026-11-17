@@ -500,7 +500,7 @@ A checkout can switch to dependency generations (owner ruling 2026-11-17,
 "Atomic dependency installs"; development tooling only). `adoptDependencyGenerations`
 in `apps/stack/scripts/utils/proc/dependency_refresh.mjs` runs once per host as an
 ordinary writer on a current tree. It moves every `node_modules` into
-`.deps/node_modules/<generation>/` and leaves a relative symlink at each path.
+`.happier/deps/node_modules/<generation>/` (ignored by Git and every Mutagen session) and leaves a relative symlink at each path.
 From then on, a refresh installs into a new generation: a shadow workspace whose
 project directories link the real sources. Readers keep entering and are never
 drained while it installs. When the install succeeds, the owner points workspace
