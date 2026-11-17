@@ -14,6 +14,7 @@ import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibili
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
+import { readWorkflowChildSession } from '../../src/testkit/workflowChildSession';
 
 let fixture: TeamSetupFFixture | undefined;
 afterEach(async () => { await fixture?.stop(); fixture = undefined; }, 0);
@@ -165,6 +166,12 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
   const siblingSaved = WorkflowTriggerWriteResultV1Schema.parse(cleanupSibling.result);
   expect(siblingSaved.set.automationId, 'Identical habit context retains its existing saved owner')
     .toBe(cleanupSaved.set.automationId);
+  // The occurrence supplies triggerId; this fixture supplies the saved owner's
+  // automationId through the ordinary authored input constants.
+  expect(await person('workflow.trigger.update', {
+    automationId: cleanupSaved.set.automationId, expectedRevision: siblingSaved.set.revision,
+    patch: { inputs: { automationId: cleanupSaved.set.automationId } },
+  })).toMatchObject({ ok: true });
   const neighborLifetime = await fixture.assertKnownGoodSessionControl(actor, machine);
   const neighbor = await person('workflow.trigger.add', {
     lifetimeSession: { sessionId: neighborLifetime.sessionId }, target: target('another lifetime'),
@@ -223,7 +230,9 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
   await waitFor(async () => {
     const runs = await readRuns(0);
     expect(runs.length).toBeLessThanOrEqual(1);
-    return runs.length === 1 && typeof runs[0]!.producedSessionId === 'string';
+    if (runs.length !== 1) return false;
+    return await readWorkflowChildSession({ execute: actor.execute, serverBaseUrl: fixture!.server.baseUrl,
+      token: actor.credentials.token, runId: runs[0]!.id, blockId: 'review' }) !== null;
   }, { failFast: true, context: 'A habit attached to A starts one Workflow only when B is archived' });
   expect((await readRuns(0))[0]!.cause).toMatchObject({ kind: 'trigger', triggerId: saved[0]!.triggerId,
     triggerKind: 'sessionLifecycle', evidence: { sourceSessionId: watched.sessionId, event: 'sessionArchived' } });
