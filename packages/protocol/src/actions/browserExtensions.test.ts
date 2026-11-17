@@ -1,10 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { ActionIdSchema } from './actionIds.js';
-import { getActionSpec } from './actionSpecs.js';
+import { ACTION_ID_FAMILIES_V1, ActionIdSchema, isBrowserExtensionActionIdV1, isBrowserProfileActionIdV1 } from './actionIds.js';
+import { ActionSpecSchema, getActionSpec } from './actionSpecs.js';
 import { getActionRequiredServerFeatureId } from './actionRequiredServerFeature.js';
 import { BrowserExtensionsListResultV1Schema } from './browserExtensionActions.js';
 
 describe('browser extension Action contract', () => {
+  it.each(ACTION_ID_FAMILIES_V1.browser_control.filter(id => isBrowserProfileActionIdV1(id)
+    || isBrowserExtensionActionIdV1(id) || id === 'browser.profile.logins.import'))(
+    'exposes %s through admitted Action dispatch without advertising a dedicated RPC', id => {
+      const spec = getActionSpec(id);
+      expect(spec.surfaces).toMatchObject({ ui: true, agent: true, cli: true, rpc: false, mcp: true, api: true });
+      expect(spec.bindings?.rpcMethod).toBeUndefined();
+      expect(ActionSpecSchema.safeParse(spec).success).toBe(true);
+    });
+
   it('reads saved profile suggestions without exposing profile custody or requiring installed extensions', () => {
     expect(BrowserExtensionsListResultV1Schema.parse({ status: 'ready', entries: [],
       profiles: [{ profileId: 'personal', displayName: 'Personal' }, { profileId: 'empty' }] }))
@@ -32,7 +41,7 @@ describe('browser extension Action contract', () => {
       if (!parsed.success) continue;
       const spec = getActionSpec(parsed.data);
       expect(spec.executionPlacement).toBe('machine');
-      expect(spec.surfaces).toMatchObject({ ui: true, agent: true, cli: true, rpc: true, mcp: true });
+      expect(spec.surfaces).toMatchObject({ ui: true, agent: true, cli: true, rpc: false, mcp: true });
       expect(getActionRequiredServerFeatureId(parsed.data)).toBe(null);
       const target = { machineId: 'machine', profileId: 'profile' };
       const input = operation === 'install' ? { ...target, source: { kind: 'webStore', extensionId: 'a'.repeat(32) } }

@@ -164,9 +164,10 @@ function createRuntimeActionSpecFor<
     placements: [],
     surfaces: {
       ...resolveRuntimeActionSurfaces(actionId),
-      ...(actionId === 'browser.profile.logins.import' ? { rpc: true, cli: true } : {}),
-      ...(isBrowserExtensionActionIdV1(actionId) ? { rpc: true, cli: true } : {}),
-      ...(isBrowserProfileActionIdV1(actionId) ? { rpc: true, cli: true } : {}),
+      // These use admitted Action dispatch, not a dedicated public RPC method.
+      ...(actionId === 'browser.profile.logins.import' ? { cli: true } : {}),
+      ...(isBrowserExtensionActionIdV1(actionId) ? { cli: true } : {}),
+      ...(isBrowserProfileActionIdV1(actionId) ? { cli: true } : {}),
       ...(actionId === 'localServices.launcher.start' || controlRpcMethod ? { rpc: true, cli: true, voice: !requiresAnsweringClient } : {}),
       ...(domainRpc ? { cli: true, voice: !requiresAnsweringClient, ...(requiresAnsweringClient ? { rpc: false } : {}) } : {}),
       ...(actionId === 'projects.service.relocate' && executorReal ? { cli: true } : {}),
