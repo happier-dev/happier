@@ -33,7 +33,7 @@ import { isActiveHomeAccountStatus } from '@happier-dev/protocol/home/governance
 import { inTx, type Tx } from "@/storage/inTx";
 import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { isMachinePresetFiniteOperationActionIdV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
-import { log } from "@/utils/logging/log";
+import { log, warn } from "@/utils/logging/log";
 import { LRUTtlMap } from "@/utils/collections/lru";
 import { createSha256SecretDigest, sha256SecretDigestMatches } from "./secretDigest";
 import {
@@ -59,6 +59,9 @@ import { hasAdmittedExternalActionHandoffScope, readAdmittedExternalActionHandof
 import { projectWorkspaceSyncAdmissionInputV1, type WorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { readWorkspaceSyncAdmissionInTx } from './workspaceSyncAdmission';
 import type { WorkflowExternalActionAdmission } from './externalActionExecutionAuthorization';
+// After the Protocol barrels: this diagnostic module must not initialize Protocol schemas first.
+import { withActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { core } from 'zod/mini';
 import { admitAccountPrivateLabelWriteInTx, projectAccountPrivateLabelForRecipientV1 } from '@/app/encryption/accountPrivateLabelContent';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { deploymentAppTerminalCredentialIsCurrentInTx } from '@/app/deployments/deploymentAppEnrollment';
@@ -245,6 +248,35 @@ export class ApiTokenOperationError extends Error {
         super(code);
         this.name = "ApiTokenOperationError";
     }
+}
+
+type ExecutionAuthorizationMintRefusal = Readonly<{
+    grantReason?: ApiTokenGrantDenialReasonV1;
+    details?: ApiTokenOperationError['details'];
+    failureCause?: ApiTokenOperationError['failureCause'];
+    cause?: unknown;
+}>;
+
+/**
+ * One refusing branch of the execution-authorization mint. The public code, details and envelope are
+ * unchanged; the branch phase rides the hidden diagnostic and one server warn with closed facts only
+ * (catalog Action id, code, grant reason, cause class/code, schema issue paths), never tokens or input values.
+ */
+function refuseExecutionAuthorizationMint(phase: string, actionId: string,
+    code: ApiTokenOperationError['code'] = 'credential_scope_denied', refusal: ExecutionAuthorizationMintRefusal = {},
+): ApiTokenOperationError {
+    const error = new ApiTokenOperationError(code, refusal.grantReason, refusal.details, refusal.failureCause);
+    const cause = refusal.cause;
+    const causeCode = cause instanceof Error && typeof (cause as { code?: unknown }).code === 'string'
+        ? (cause as { code: string }).code : undefined;
+    const issues = cause instanceof core.$ZodError
+        ? cause.issues.map(issue => ({ path: issue.path.map(String).join('.'), code: issue.code })) : undefined;
+    return withActionFailureDiagnostic(error, { phase, causeKind: 'access_denied' }, () => warn({
+        module: 'external-action-execution-authorization-mint', phase, actionId, code,
+        ...(refusal.grantReason ? { grantReason: refusal.grantReason } : {}),
+        ...(cause instanceof Error ? { causeClass: cause.name } : {}), ...(causeCode ? { causeCode } : {}),
+        ...(issues ? { issues } : {}),
+    }, 'External Action execution authorization refused'));
 }
 
 function matchesApiTokenEncryptionBinding(
@@ -623,6 +655,8 @@ class AuthModule {
         input: ExternalActionExecutionAuthorizationMintInput,
         context: ExternalActionGrantEvaluationContext = {},
     ): Promise<ExternalActionExecutionAuthorizationV1> {
+        const refuse = (phase: string, code?: ApiTokenOperationError['code'], refusal?: ExecutionAuthorizationMintRefusal) =>
+            refuseExecutionAuthorizationMint(`external_action.mint.${phase}`, input.actionId, code, refusal);
         if (!this.externalActionExecutionAuthorizationTokens) {
             throw new Error("Auth module not initialized");
         }
@@ -630,16 +664,16 @@ class AuthModule {
         // author's Account or target fields. The ingress separately admits use.
         const machine = await db.machine.findUnique({ where: { id: input.machineId },
             select: { accountId: true, installationId: true } });
-        if (!machine?.installationId) throw new ApiTokenOperationError('target_unavailable');
+        if (!machine?.installationId) throw refuse('machine_installation', 'target_unavailable');
         const accountMode = await db.account.findUnique({ where: { id: input.accountId }, select: { encryptionMode: true } });
         if (!accountMode) {
-            throw new ApiTokenOperationError('invalid_token');
+            throw refuse('account', 'invalid_token');
         }
         const inputRecord = typeof context.input === "object" && context.input !== null && !Array.isArray(context.input)
             ? context.input as Readonly<Record<string, unknown>> : null;
         const presetOperation = isMachinePresetFiniteOperationActionIdV1(input.actionId);
         if (input.presetPreparationAdmission !== undefined && !presetOperation) {
-            throw new ApiTokenOperationError('credential_scope_denied');
+            throw refuse('preset_admission_supplied');
         }
         const presetPreparationAdmission = input.presetPreparationAdmission;
         const presetApiPrincipal = presetOperation && !('authentication' in input)
@@ -652,7 +686,7 @@ class AuthModule {
                     ? !('machineId' in presetPreparationAdmission) || presetPreparationAdmission.machineId !== input.machineId
                     : 'machineId' in presetPreparationAdmission)
                 || input.target.kind !== 'machine' || input.target.machineId !== input.machineId) {
-                throw new ApiTokenOperationError('credential_scope_denied');
+                throw refuse('preset_admission_binding');
             }
             const { admitMachinePresetFiniteOperationInTx } = await import('@/app/machines/managed/machinePresetService');
             const { ManagedMachineError } = await import('@/app/machines/managed/managedRows');
@@ -663,7 +697,7 @@ class AuthModule {
                         ? 'present_user' : 'account_automation', authenticationEvidence:
                         'authentication' in input ? input.authentication.evidence : presetApiPrincipal?.authenticationEvidence } }));
             } catch (error) {
-                if (error instanceof ManagedMachineError) throw new ApiTokenOperationError('credential_scope_denied');
+                if (error instanceof ManagedMachineError) throw refuse('preset_admission', undefined, { cause: error });
                 throw error;
             }
         }
@@ -674,16 +708,16 @@ class AuthModule {
         const ingressUpdateRoot = input.actionId === 'deployments.environments.update'
             && isDeploymentEnvironmentUpdateNativeAdmissionV1(nativeAdmission);
         const configureRoot = input.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1;
-        if (configureRoot && !isDeploymentBackupConfigureNativeAdmissionV1(nativeAdmission)) throw new ApiTokenOperationError('credential_scope_denied');
+        if (configureRoot && !isDeploymentBackupConfigureNativeAdmissionV1(nativeAdmission)) throw refuse('backup_configure_admission');
         const telemetryRoot = input.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1;
-        if (telemetryRoot && !isDeploymentTelemetryNativeAdmissionV1(nativeAdmission)) throw new ApiTokenOperationError('credential_scope_denied');
+        if (telemetryRoot && !isDeploymentTelemetryNativeAdmissionV1(nativeAdmission)) throw refuse('telemetry_admission');
         const nativeMemberRoot = input.actionId === 'deployments.restart' || input.actionId === 'deployments.backups.restore'
             || isDeploymentBackupActionIdV1(input.actionId);
         // Domain API roots need the canonical sealed requester projection first.
-        if (domainRoot && !('authentication' in input)) throw new ApiTokenOperationError('credential_scope_denied');
+        if (domainRoot && !('authentication' in input)) throw refuse('domain_requester_authentication');
         if (domainRoot && (!(isDeploymentDomainNativeAdmissionV1(nativeAdmission) || isDeploymentDomainDnsNativeAdmissionV1(nativeAdmission))
             || nativeAdmission.actionId !== input.actionId)) {
-            throw new ApiTokenOperationError('credential_scope_denied');
+            throw refuse('domain_native_admission');
         }
         const admittedPrincipal = context.workflowAdmission?.principal;
         const admittedApiPrincipal = admittedPrincipal && 'grant' in admittedPrincipal ? admittedPrincipal : null;
@@ -692,15 +726,15 @@ class AuthModule {
         const mintApiTokenPrincipal = (nativeAdmission || input.actionId === 'deployments.targets.link' || approvalMetadataRoot || moveDefinitionRoot) && !('authentication' in input)
             ? admittedApiPrincipal ?? await this.verifyCurrentApiTokenPrincipal(input) : null;
         if ((nativeAdmission || input.actionId === 'deployments.targets.link' || approvalMetadataRoot || moveDefinitionRoot) && !('authentication' in input)
-            && !mintApiTokenPrincipal) throw new ApiTokenOperationError('invalid_token');
+            && !mintApiTokenPrincipal) throw refuse('api_principal', 'invalid_token');
         let nativeSource: Readonly<{ id: string; revision: number }> | undefined;
         if (nativeAdmission) {
             const { admitDeploymentNativeRootEnvironmentInTx } = await import('@/app/deployments/deploymentRootEnvironmentAdmission');
             const environment = await admitDeploymentNativeRootEnvironmentInTx(db, input, nativeAdmission, 'authentication' in input
                 ? input.authentication.evidence : mintApiTokenPrincipal?.authenticationEvidence);
             if (!environment.ok) {
-                throw new ApiTokenOperationError(environment.code ?? 'credential_scope_denied', undefined,
-                    environment.placement?.details, environment.placement?.failureCause);
+                throw refuse(environment.phase ? `native_root_environment.${environment.phase}` : 'native_root_environment', environment.code, { details: environment.placement?.details,
+                    failureCause: environment.placement?.failureCause });
             }
             nativeSource = environment.source;
         }
@@ -712,17 +746,18 @@ class AuthModule {
             const receiptId = projectExternalActionDeploymentMetadataReceiptIdV1(input.actionId, inputRecord);
             if (receiptId !== undefined) {
                 const receipt = await db.deployment.findUnique({ where: { id: receiptId }, select: { environmentId: true } });
-                if (!receipt) throw new ApiTokenOperationError('credential_scope_denied');
+                if (!receipt) throw refuse('metadata_receipt');
                 metadataEnvironmentId = receipt.environmentId;
             }
-        } catch {
-            throw new ApiTokenOperationError('credential_scope_denied');
+        } catch (error) {
+            if (error instanceof ApiTokenOperationError) throw error;
+            throw refuse('metadata_projection', undefined, { cause: error });
         }
         if (metadataEnvironmentId !== undefined && nativeAdmission && metadataEnvironmentId !== nativeAdmission.environmentId) {
-            throw new ApiTokenOperationError('credential_scope_denied');
+            throw refuse('metadata_environment_mismatch');
         }
         if (approvalMetadataRoot && !nativeAdmission || moveDefinitionRoot) {
-            if (!metadataEnvironmentId) throw new ApiTokenOperationError('credential_scope_denied');
+            if (!metadataEnvironmentId) throw refuse('metadata_environment_missing');
             const { loadDeploymentEnvironmentInTx } = await import('../deployments/deploymentEnvironmentService');
             const { canDeployDeploymentEnvironment } = await import('../deployments/deploymentAdmission');
             const environment = await loadDeploymentEnvironmentInTx(db, input.accountId, input.serverIdentityId, metadataEnvironmentId, {
@@ -732,7 +767,7 @@ class AuthModule {
             if (!environment.ok || !(isDeploymentControllerSetActionIdV1(input.actionId) || moveDefinitionRoot
                 ? environment.admission.canManage && !environment.row.deletedAt
                 : canDeployDeploymentEnvironment(environment.admission, environment.row))) {
-                throw new ApiTokenOperationError('credential_scope_denied');
+                throw refuse('metadata_environment_admission');
             }
         }
         const environmentId = metadataEnvironmentId
@@ -742,7 +777,7 @@ class AuthModule {
                     || input.actionId === 'deployments.teardown')
                 ? nativeAdmission?.environmentId : undefined);
         if (input.environmentId !== undefined && input.environmentId !== environmentId) {
-            throw new ApiTokenOperationError('credential_scope_denied');
+            throw refuse('environment_mismatch');
         }
         let managedAdmission = input.managedAdmission;
         if (managedAdmission?.actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1) {
@@ -751,10 +786,10 @@ class AuthModule {
                 input: { ...managedAdmission.input, guestCli: readServerGuestCliIdentity() } };
         }
         if (managedAdmission && 'authority' in managedAdmission && managedAdmission.authority !== undefined) {
-            throw new ApiTokenOperationError('credential_scope_denied');
+            throw refuse('managed_admission_authority_supplied');
         }
         // This is a Home decision, never an invocation author's approval bypass.
-        if (input.managedAcquireDelegation !== undefined) throw new ApiTokenOperationError('credential_scope_denied');
+        if (input.managedAcquireDelegation !== undefined) throw refuse('managed_acquire_delegation_supplied');
         const managedAcquireDelegation = context.managedMachineAdmission?.managedAcquireDelegation;
         const sessionPresetAcquisition = context.managedMachineAdmission?.sessionPresetAcquisition;
         if (!sameStrictJsonValue(input.sessionPresetAcquisition, sessionPresetAcquisition)
@@ -762,7 +797,7 @@ class AuthModule {
                 || sessionPresetAcquisition.selection.homeId !== input.serverIdentityId
                 || sessionPresetAcquisition.controller.machineId !== input.machineId
                 || sessionPresetAcquisition.controller.installationId !== machine.installationId)) {
-            throw new ApiTokenOperationError('credential_scope_denied');
+            throw refuse('session_preset_acquisition');
         }
         let managedAccountExecutor: ExternalActionExecutionAuthorizationBindingV1['managedAccountExecutor'];
         if (input.actionId === 'machines.managed.power.set' || input.actionId === 'machines.managed.delete') {
@@ -774,30 +809,30 @@ class AuthModule {
                     : ExternalActionManagedControlAdmissionV1Schema.parse({ actionId: input.actionId, input: context.input });
                 if (projection !== undefined) {
                     const control = ExternalActionManagedControlAdmissionV1Schema.parse(projection);
-                    if (managedAdmission && !sameManagedInput(managedAdmission, control)) throw new ApiTokenOperationError('credential_scope_denied');
+                    if (managedAdmission && !sameManagedInput(managedAdmission, control)) throw refuse('managed_control_input');
                     managedAdmission = control;
                     if ('when' in control.input && control.input.when === 'after-idle') {
                         managedAccountExecutor = await qualifyExternalActionManagedAccountExecutorInTx(db, input, control);
                     }
                 }
             } catch (error) {
-                if (error instanceof ManagedMachineError) throw new ApiTokenOperationError('credential_scope_denied');
+                if (error instanceof ManagedMachineError) throw refuse('managed_control', undefined, { cause: error });
                 throw error;
             }
         }
         if (context.managedCreationRecovery) {
             if (!managedAdmission || managedAdmission.actionId !== 'machines.managed.cancel'
-                && managedAdmission.actionId !== 'machines.managed.delete') throw new ApiTokenOperationError('credential_scope_denied');
+                && managedAdmission.actionId !== 'machines.managed.delete') throw refuse('managed_creation_recovery');
             managedAdmission = { ...managedAdmission, authority: 'creator_recovery' };
         }
         // A caller cannot grant itself child dispatch, even on an otherwise valid root.
-        if (input.deploymentChildRoot !== undefined) throw new ApiTokenOperationError('credential_scope_denied');
+        if (input.deploymentChildRoot !== undefined) throw refuse('deployment_child_root_supplied');
         const deploymentChildRoot = isDeploymentChildRootActionIdV1(input.actionId, input.deploymentPreparationAdmission);
         const projectSessionDefaultsAdmission = context.input === undefined ? input.projectSessionDefaultsAdmission
             : projectExternalActionProjectSessionDefaultsAdmissionV1(input.actionId, context.input);
         if (input.projectSessionDefaultsAdmission !== undefined
             && !sameStrictJsonValue(input.projectSessionDefaultsAdmission, projectSessionDefaultsAdmission)) {
-            throw new ApiTokenOperationError('credential_scope_denied');
+            throw refuse('project_session_defaults');
         }
         const parsedBinding = ExternalActionExecutionAuthorizationBindingV1Schema.safeParse({
             ...input, custodianAccountId: machine.accountId, installationId: machine.installationId,
@@ -818,17 +853,17 @@ class AuthModule {
             }) } : {}),
             accountEncryptionMode: accountMode.encryptionMode,
         });
-        if (!parsedBinding.success) throw new ApiTokenOperationError('credential_scope_denied');
+        if (!parsedBinding.success) throw refuse('binding_shape', undefined, { cause: parsedBinding.error });
         let supplied = parsedBinding.data;
         // Link's private input names the Environment; only Home derives its owner.
-        if (input.deploymentLinkAdmission) throw new ApiTokenOperationError('credential_scope_denied');
+        if (input.deploymentLinkAdmission) throw refuse('deployment_link_admission_supplied');
         let linkEnvironmentId: string | undefined;
         if (supplied.actionId === 'deployments.targets.link') {
             const { projectExternalActionDeploymentLinkEnvironmentIdV1 } = await import('@happier-dev/protocol/actions/externalActionApi');
             linkEnvironmentId = context.input === undefined ? context.deploymentLinkEnvironmentId
                 : projectExternalActionDeploymentLinkEnvironmentIdV1(supplied.actionId, context.input);
             if (!linkEnvironmentId || context.deploymentLinkEnvironmentId !== undefined
-                && context.deploymentLinkEnvironmentId !== linkEnvironmentId) throw new ApiTokenOperationError('credential_scope_denied');
+                && context.deploymentLinkEnvironmentId !== linkEnvironmentId) throw refuse('deployment_link_environment');
         }
         // Link, preparation, registry and read admission have one owner, which a
         // person-presented relay of this root runs again.
@@ -840,26 +875,26 @@ class AuthModule {
             linkAuthenticationEvidence: 'authentication' in supplied
                 ? supplied.authentication.evidence : mintApiTokenPrincipal?.authenticationEvidence,
         });
-        if (!bindingAdmission.ok) throw new ApiTokenOperationError(bindingAdmission.code ?? 'credential_scope_denied', undefined,
-            bindingAdmission.placement?.details, bindingAdmission.placement?.failureCause);
+        if (!bindingAdmission.ok) throw refuse(bindingAdmission.phase ? `root_binding.${bindingAdmission.phase}` : 'root_binding', bindingAdmission.code, { details: bindingAdmission.placement?.details,
+            failureCause: bindingAdmission.placement?.failureCause });
         if (bindingAdmission.deploymentLinkAdmission) {
             supplied = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...supplied,
                 deploymentLinkAdmission: bindingAdmission.deploymentLinkAdmission });
         }
         const workspaceSyncRequest = context.workspaceSyncAdmission ?? projectWorkspaceSyncAdmissionInputV1(input.actionId, context.input);
         // Callers cannot supply Home-produced facts, including when no source was selected.
-        if (input.workspaceSyncAdmission) throw new ApiTokenOperationError('credential_scope_denied');
+        if (input.workspaceSyncAdmission) throw refuse('workspace_sync_admission_supplied');
         const bindWorkspaceSyncSource = async (callerAuthority: import('@happier-dev/protocol/actions/metadata').ActionRequiredAuthority) => {
             if (!workspaceSyncRequest) return;
             const workspaceSyncAdmission = await readWorkspaceSyncAdmissionInTx(db, {
                 binding: supplied, request: workspaceSyncRequest, callerAuthority });
-            if (!workspaceSyncAdmission) throw new ApiTokenOperationError('credential_scope_denied');
+            if (!workspaceSyncAdmission) throw refuse('workspace_sync_admission');
             supplied = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...supplied, workspaceSyncAdmission });
         };
         if (supplied.managedContinuation && context.managedCreationAdmission) {
             const { readSelectedManagedCreationChildAdmission } = await import('./externalActionManagedAdmission');
             if (!readSelectedManagedCreationChildAdmission(context.managedCreationAdmission, supplied)) {
-                throw new ApiTokenOperationError('target_unavailable');
+                throw refuse('managed_creation_child', 'target_unavailable');
             }
             // The selected root owns identity, grant, ceiling and Session source.
             // A child request cannot replace those facts with its own body fields.
@@ -885,21 +920,21 @@ class AuthModule {
                 verifyCurrentExternalActionPrincipalInTx, readExternalActionBindingAuthority } = await import('./externalActionExecutionAuthorization');
             if (supplied.authentication.kind === 'terminal'
                 && !isOriginalTerminalExecutionAction(supplied.actionId, supplied) && !supplied.workflowActionOrigin) {
-                throw new ApiTokenOperationError('credential_scope_denied');
+                throw refuse('terminal_action');
             }
             if (!context.workflowAdmission && !await this.isSignedCredentialCurrent(db, supplied.accountId, supplied.authentication.tokenEpoch)) {
-                throw new ApiTokenOperationError('invalid_token');
+                throw refuse('signed_credential_epoch', 'invalid_token');
             }
-            if (!await hasCurrentOriginalSessionActionTargetInTx(db, supplied)) throw new ApiTokenOperationError('target_unavailable');
+            if (!await hasCurrentOriginalSessionActionTargetInTx(db, supplied)) throw refuse('original_session_target', 'target_unavailable');
             if (supplied.handoffAdmission) {
                 const { readCurrentExternalActionHandoffBindingInTx } = await import('./externalActionExecutionAuthorization');
                 if (!await readCurrentExternalActionHandoffBindingInTx(db, { accountId: supplied.accountId,
-                    handoffAdmission: supplied.handoffAdmission })) throw new ApiTokenOperationError('credential_scope_denied');
+                    handoffAdmission: supplied.handoffAdmission })) throw refuse('handoff_binding');
             }
             if (supplied.sessionActionOrigin) {
                 const source = supplied.sessionActionSource;
                 if (!source || supplied.handoffAdmission && (source.machineId !== supplied.handoffAdmission.sourceMachineId
-                    || source.installationId !== supplied.handoffAdmission.sourceInstallationId)) throw new ApiTokenOperationError('credential_scope_denied');
+                    || source.installationId !== supplied.handoffAdmission.sourceInstallationId)) throw refuse('session_action_source');
                 const nativeRelease = supplied.actionId === 'machines.managed.credentials.install'
                     && supplied.managedAdmission?.actionId === supplied.actionId
                     && supplied.managedAdmission.input.operation === 'release';
@@ -911,30 +946,30 @@ class AuthModule {
                     : await hasCurrentSessionActionRpcSourceBinding({ accountId: supplied.accountId, ...source,
                         sourceSessionId: supplied.sessionActionOrigin.caller.sessionId,
                         resolveCurrentSessionMachine: context.resolveCurrentSessionMachine });
-                if (!current) throw new ApiTokenOperationError('target_unavailable');
+                if (!current) throw refuse('session_action_source_current', 'target_unavailable');
             }
             if (supplied.workflowActionOrigin && !context.workflowAdmission) {
                 const { hasCurrentExternalActionWorkflowOriginInTx } = await import('./externalActionExecutionAuthorization');
                 if (!await hasCurrentExternalActionWorkflowOriginInTx(db, supplied)) {
-                    throw new ApiTokenOperationError('credential_scope_denied');
+                    throw refuse('workflow_origin');
                 }
             }
             // HTTP issuance and direct daemon dispatch share this mint. Reuse
             // its current principal reader before issuing any decision root.
             if ((DECISION_ACTION_IDS as readonly string[]).includes(supplied.actionId)
                 && !await verifyCurrentExternalActionPrincipalInTx(db, supplied)) {
-                throw new ApiTokenOperationError('credential_scope_denied');
+                throw refuse('decision_principal');
             }
             if (workspaceSyncRequest) {
                 const principal = await verifyCurrentExternalActionPrincipalInTx(db, supplied);
-                if (!principal) throw new ApiTokenOperationError('invalid_token');
+                if (!principal) throw refuse('workspace_sync_principal', 'invalid_token');
                 await bindWorkspaceSyncSource(principal.authority);
             }
             if (!await admitExternalActionBrowserSessionInTx(db, { binding: supplied, actionInput: context.input,
                 browserSessionId: context.browserSessionId, authentication: { env: process.env,
                     authority: readExternalActionBindingAuthority(supplied),
                     authenticationEvidence: supplied.authentication.evidence, tokenEpoch: supplied.authentication.tokenEpoch } })) {
-                throw new ApiTokenOperationError('target_unavailable');
+                throw refuse('browser_session', 'target_unavailable');
             }
             const token = await this.externalActionExecutionAuthorizationTokens.generator.new({
                 user: supplied.accountId,
@@ -945,19 +980,19 @@ class AuthModule {
         // A verified assigned Run spends its signed admission; revocation is
         // considered when admitting the next job, not again for each finite leaf.
         const principal = admittedApiPrincipal ?? mintApiTokenPrincipal ?? presetApiPrincipal ?? await this.verifyCurrentApiTokenPrincipal(supplied);
-        if (!principal) throw new ApiTokenOperationError("invalid_token");
+        if (!principal) throw refuse('api_principal_current', 'invalid_token');
         const qualifiedAction = parseQualifiedPluginActionId(supplied.actionId);
         const invokedAction = supplied.actionId === "action.invoke"
             ? PluginContributionIdentityV1Schema.safeParse(inputRecord?.action) : null;
         const contributedQualifiedId = qualifiedAction ? supplied.actionId
             : invokedAction?.success ? formatQualifiedPluginActionId(invokedAction.data) : undefined;
-        if (!isApiTokenGrantWithinV1(supplied.grant, principal.grant)) throw new ApiTokenOperationError('credential_scope_denied');
-        if (supplied.automationId !== automationId) throw new ApiTokenOperationError('credential_scope_denied');
+        if (!isApiTokenGrantWithinV1(supplied.grant, principal.grant)) throw refuse('grant_ceiling');
+        if (supplied.automationId !== automationId) throw refuse('automation_id');
         if (supplied.actionId === 'deployments.deploy') {
             // New roots use the current Source/controller admission. Issued
             // native-fact verification retains its separate lifecycle rules.
             if (!environmentId || supplied.target.kind !== 'machine' || supplied.target.machineId !== supplied.machineId) {
-                throw new ApiTokenOperationError('credential_scope_denied');
+                throw refuse('deploy_target');
             }
             const { loadDeploymentEnvironmentInTx } = await import('../deployments/deploymentEnvironmentService');
             const { canDeployDeploymentEnvironment, admitDeploymentMachineInTx } = await import('../deployments/deploymentAdmission');
@@ -967,7 +1002,7 @@ class AuthModule {
             if (!environment.ok || !canDeployDeploymentEnvironment(environment.admission, environment.row)
                 || environment.row.controllerMachineId !== supplied.machineId
                 || await admitDeploymentMachineInTx(db, environment.admission.owner, supplied.machineId, 'controller', supplied.installationId)) {
-                throw new ApiTokenOperationError('credential_scope_denied');
+                throw refuse('deploy_environment');
             }
         }
         const { readExternalActionCredentialActionId } = await import('./externalActionExecutionAuthorization');
@@ -984,12 +1019,12 @@ class AuthModule {
                 ? { environmentAdmission: 'pre_open' as const } : {}) } : {}),
             ...(supplied.actionId === "session.spawn_new" && !supplied.handoffContinuation && context.input !== undefined ? { spawnInput: context.input } : {}),
         });
-        if (!admission.ok) throw new ApiTokenOperationError("credential_scope_denied", admission.reason);
+        if (!admission.ok) throw refuse('grant', undefined, { grantReason: admission.reason });
         await bindWorkspaceSyncSource(principal.authority);
         if (!await admitExternalActionBrowserSessionInTx(db, { binding: supplied, actionInput: context.input,
             browserSessionId: context.browserSessionId, authentication: { env: process.env, authority: principal.authority,
                 authenticationEvidence: principal.authenticationEvidence, apiTokenGrant: principal.grant } })) {
-            throw new ApiTokenOperationError('target_unavailable');
+            throw refuse('api_browser_session', 'target_unavailable');
         }
         const binding = supplied;
         const token = await this.externalActionExecutionAuthorizationTokens.generator.new({
@@ -1005,16 +1040,18 @@ class AuthModule {
         phase: Readonly<{ machineId: string; actionId: string; requestEnvelopeDigest: string }>
             & (Readonly<{ kind: 'continuation'; handoffId: string }> | Readonly<{ kind: 'preflight' }>),
     ): Promise<ExternalActionExecutionAuthorizationV1> {
+        const refuse = (step: string, code?: ApiTokenOperationError['code']) =>
+            refuseExecutionAuthorizationMint(`external_action.handoff.${phase.kind}.${step}`, phase.actionId, code);
         const root = await this.verifyExternalActionExecutionAuthorization(original.token);
         if (!root || !sameStrictJsonValue(root, original.binding) || root.actionId !== 'session.handoff'
             || !root.handoffAdmission || root.handoffContinuation || root.handoffPreflight
             || !hasAdmittedExternalActionHandoffScope(root)
             || (phase.kind === 'preflight' ? phase.actionId !== 'session.handoff'
                 : !(phase.actionId.startsWith('session.handoff.') || phase.actionId === 'session.spawn_new'))) {
-            throw new ApiTokenOperationError('invalid_token');
+            throw refuse('root', 'invalid_token');
         }
         const machine = await readAdmittedExternalActionHandoffMachineInTx(db, root, phase.machineId);
-        if (!machine) throw new ApiTokenOperationError('target_unavailable');
+        if (!machine) throw refuse('machine', 'target_unavailable');
         const binding = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...root,
             machineId: machine.machineId, installationId: machine.installationId, custodianAccountId: machine.custodianAccountId,
             actionId: phase.actionId, target: { kind: 'machine', machineId: machine.machineId },
@@ -1023,7 +1060,7 @@ class AuthModule {
                 ? { handoffPreflight: { rootRequestId: root.requestId, rootRequestEnvelopeDigest: root.requestEnvelopeDigest } }
                 : { handoffContinuation: { rootRequestId: root.requestId, rootRequestEnvelopeDigest: root.requestEnvelopeDigest,
                     handoffId: phase.handoffId } }) });
-        if (!hasAdmittedExternalActionHandoffScope(binding)) throw new ApiTokenOperationError('credential_scope_denied');
+        if (!hasAdmittedExternalActionHandoffScope(binding)) throw refuse('scope');
         if (!this.externalActionExecutionAuthorizationTokens) throw new Error('Auth module not initialized');
         const token = await this.externalActionExecutionAuthorizationTokens.generator.new({ user: binding.accountId,
             extras: { externalActionExecutionAuthorizationV1: binding } });

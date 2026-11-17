@@ -38,7 +38,9 @@ import { readDeploymentPreparationAuthorizationInTx, readDeploymentLinkAdmission
 
 export type DeploymentRootEnvironmentAdmission =
   | Readonly<{ ok: true; source?: Readonly<{ id: string; revision: number }> }>
-  | Readonly<{ ok: false; code?: 'source_changed'; placement?: ActionExecuteFailure }>;
+  | Readonly<{ ok: false; code?: 'source_changed'; placement?: ActionExecuteFailure;
+      /** Private refusing branch for the mint's server diagnostic; never a public code. */
+      phase?: string }>;
 
 /**
  * The one Environment admission for a native deployment root. Mint runs it once
@@ -81,14 +83,14 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
     nativeAdmission.environmentId,
     authentication,
   );
-  if (!environment.ok) return { ok: false };
+  if (!environment.ok) return { ok: false, phase: 'environment' };
   if ('kind' in nativeAdmission && nativeAdmission.kind === 'promote') {
-    if (!environment.admission.canManage) return { ok: false };
+    if (!environment.admission.canManage) return { ok: false, phase: 'promote_manage' };
     const source = await loadDeploymentEnvironmentInTx(tx, root.accountId, root.serverIdentityId,
       nativeAdmission.sourceEnvironmentId, authentication);
     if (!source.ok || !canDeployDeploymentEnvironment(source.admission, source.row)
       || !await tx.deployment.findFirst({ where: { id: nativeAdmission.sourceDeploymentId,
-        environmentId: source.row.id }, select: { id: true } })) return { ok: false };
+        environmentId: source.row.id }, select: { id: true } })) return { ok: false, phase: 'promote_source' };
   }
   if (
     'kind' in nativeAdmission &&
@@ -124,7 +126,7 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
         { actorAccountId: root.accountId, owner: source.admission.owner },
       ))?.ok
     )
-      return { ok: false };
+      return { ok: false, phase: 'restore_source' };
   }
   if (
     root.actionId !== 'action.operations.get' &&
@@ -140,13 +142,14 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
             environment.row,
           ))
     )
-      return { ok: false };
+      return { ok: false, phase: 'environment_capability' };
     if (
       !nativeMemberRoot &&
       environment.row.controllerMachineId !== root.machineId
     ) {
       return {
         ok: false,
+        phase: 'controller_placement',
         placement: projectDeploymentControllerPlacementFailure(
           environment.row.controllerMachineId,
         ),
@@ -155,23 +158,23 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
   }
   if (configureRoot) {
     if (!isDeploymentBackupConfigureNativeAdmissionV1(nativeAdmission) ||
-      environment.row.revision !== nativeAdmission.expectedRevision) return { ok: false };
+      environment.row.revision !== nativeAdmission.expectedRevision) return { ok: false, phase: 'configure_revision' };
     if (nativeAdmission.receiverMachineId !== undefined) {
       const receivers = await resolveMachineAdmissionsInTx(tx, {
         actorAccountId: root.accountId, machineIds: [nativeAdmission.receiverMachineId],
       });
       if (receivers.get(nativeAdmission.receiverMachineId)?.kind !== 'admitted' ||
         await admitDeploymentMachineInTx(tx, environment.admission.owner,
-          nativeAdmission.receiverMachineId, 'target')) return { ok: false };
+          nativeAdmission.receiverMachineId, 'target')) return { ok: false, phase: 'configure_receiver' };
     }
   }
   if (telemetryRoot) {
     if (!isDeploymentTelemetryNativeAdmissionV1(nativeAdmission)
-      || environment.row.revision !== nativeAdmission.expectedRevision) return { ok: false };
+      || environment.row.revision !== nativeAdmission.expectedRevision) return { ok: false, phase: 'telemetry_revision' };
     if (nativeAdmission.collector) {
       const placement = await admitDeploymentMachineInTx(tx, environment.admission.owner,
         nativeAdmission.collector.machineId, 'telemetry');
-      if (placement) return { ok: false };
+      if (placement) return { ok: false, phase: 'telemetry_collector' };
     }
   }
   if (nativeMemberRoot) {
@@ -180,7 +183,7 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
       (nativeAdmission.kind !== 'restart' &&
         nativeAdmission.kind !== 'restore' &&
         nativeAdmission.kind !== 'backup')
-    ) return { ok: false };
+    ) return { ok: false, phase: 'member_kind' };
     const selected = await readDeploymentTargetAuthorizationInTx(
         tx,
         environment.row,
@@ -194,8 +197,8 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
             }
           : undefined,
       );
-    if (!selected) return { ok: false };
-    if (!selected.ok) return selected;
+    if (!selected) return { ok: false, phase: 'member_target' };
+    if (!selected.ok) return { ...selected, phase: 'member_target_authorization' };
   }
   return root.actionId !== 'action.operations.get' &&
     !ingressUpdateRoot &&
@@ -215,7 +218,9 @@ export type DeploymentRootBindingAdmission =
       ok: true;
       deploymentLinkAdmission?: NonNullable<ExternalActionExecutionAuthorizationBindingV1['deploymentLinkAdmission']>;
     }>
-  | Readonly<{ ok: false; code?: Extract<DeploymentPreparationAuthorization, { ok: false }>['code']; placement?: ActionExecuteFailure }>;
+  | Readonly<{ ok: false; code?: Extract<DeploymentPreparationAuthorization, { ok: false }>['code']; placement?: ActionExecuteFailure;
+      /** Private refusing branch for the mint's server diagnostic; never a public code. */
+      phase?: string }>;
 
 /**
  * The one admission of a parsed root binding's deployment facts: Link,
@@ -241,30 +246,30 @@ export async function admitDeploymentRootBindingInTx(
   };
   let deploymentLinkAdmission: NonNullable<ExternalActionExecutionAuthorizationBindingV1['deploymentLinkAdmission']> | undefined;
   if (binding.actionId === 'deployments.targets.link') {
-    if (!input.linkEnvironmentId) return { ok: false };
+    if (!input.linkEnvironmentId) return { ok: false, phase: 'link_environment_missing' };
     const admitted = await readDeploymentLinkAdmissionInTx(tx, binding, input.linkEnvironmentId, {
       authenticationAuthority: 'account_automation',
       authenticationEvidence: input.linkAuthenticationEvidence,
     });
-    if (!admitted) return { ok: false };
+    if (!admitted) return { ok: false, phase: 'link_admission' };
     deploymentLinkAdmission = admitted;
   }
   if (!input.workflowAdmitted
     && (isDeploymentPreparationActionIdV1(binding.actionId) || binding.deploymentPreparationAdmission !== undefined)) {
-    if (!binding.deploymentPreparationAdmission) return { ok: false };
+    if (!binding.deploymentPreparationAdmission) return { ok: false, phase: 'preparation_admission_missing' };
     const preparation = await readDeploymentPreparationAuthorizationInTx(tx, binding, binding.deploymentPreparationAdmission, authentication);
-    if (!preparation.ok) return preparation;
+    if (!preparation.ok) return { ...preparation, phase: 'preparation' };
   }
   if (binding.registryAppUpdateAdmission && !await readRegistryAppUpdateAuthorizationInTx(tx, binding, authentication)) {
-    return { ok: false };
+    return { ok: false, phase: 'registry_app_update' };
   }
   const managedDataRead = binding.actionId === ACTION_INVOKE_ACTION_ID_V1
     && binding.deploymentReadAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1;
   if (isDeploymentReadAdmissionActionIdV1(binding.actionId) || managedDataRead) {
-    if (!binding.deploymentReadAdmission) return { ok: false };
+    if (!binding.deploymentReadAdmission) return { ok: false, phase: 'read_admission_missing' };
     const selected = await readDeploymentReadAuthorizationInTx(tx, binding, binding.deploymentReadAdmission, authentication);
-    if (!selected) return { ok: false };
-    if (!selected.ok) return selected;
+    if (!selected) return { ok: false, phase: 'read_admission' };
+    if (!selected.ok) return { ...selected, phase: 'read_authorization' };
   }
   return deploymentLinkAdmission ? { ok: true, deploymentLinkAdmission } : { ok: true };
 }
@@ -292,5 +297,5 @@ export async function readCurrentDeploymentRootEnvironmentAdmissionInTx(
     linkAuthenticationEvidence: authenticationEvidence,
   });
   if (!admitted.ok) return admitted;
-  return admitted.deploymentLinkAdmission?.environmentId === recordedLink?.environmentId ? admitted : { ok: false };
+  return admitted.deploymentLinkAdmission?.environmentId === recordedLink?.environmentId ? admitted : { ok: false, phase: 'link_environment_changed' };
 }

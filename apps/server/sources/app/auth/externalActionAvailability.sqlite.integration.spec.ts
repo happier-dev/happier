@@ -6,6 +6,7 @@ import { decodeBase64, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_M
 import { createExternalActionDaemonDispatchResponseV1, prepareExternalActionResponseEnvelopeV1 } from '@happier-dev/protocol/actions';
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { auth, type ExternalActionExecutionAuthorizationMintInput } from './auth';
 import { createExternalActionDaemonDispatcher } from '@/app/api/socket/externalActionDispatcher';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
@@ -169,5 +170,25 @@ describe('external Action mint availability classification', () => {
             expect(await db.machine.findUnique({ where: { id: machine.id }, select: { installationId: true } }))
                 .toEqual({ installationId: null });
         } finally { await new Promise<void>(resolve => { io.close(() => resolve()); }); }
+    });
+
+    it('records the refusing mint branch privately while the public code and allow decision stay unchanged', async () => {
+        const { machine, input } = await fixture();
+        const refusal = async (mint: Promise<unknown>) => {
+            const error = await mint.then(() => null, (caught: unknown) => caught);
+            const fields = error as { code?: unknown; details?: unknown; failureCause?: unknown } | null;
+            // The route projects details/failureCause publicly only when defined; the phase stays private.
+            return { code: fields?.code, phase: readActionOutputDiagnostic(error)?.phase,
+                details: fields?.details, failureCause: fields?.failureCause };
+        };
+        expect(await auth.mintExternalActionExecutionAuthorization(input)).toMatchObject({ binding: { machineId: machine.id } });
+        expect(await refusal(auth.mintExternalActionExecutionAuthorization({ ...input, deploymentChildRoot: true })))
+            .toEqual({ code: 'credential_scope_denied', phase: 'external_action.mint.deployment_child_root_supplied',
+                details: undefined, failureCause: undefined });
+        expect(await refusal(auth.mintExternalActionExecutionAuthorization({ ...input, managedAcquireDelegation: {} as never })))
+            .toMatchObject({ code: 'credential_scope_denied', phase: 'external_action.mint.managed_acquire_delegation_supplied' });
+        await db.machine.update({ where: { id: machine.id }, data: { installationId: null } });
+        expect(await refusal(auth.mintExternalActionExecutionAuthorization(input)))
+            .toMatchObject({ code: 'target_unavailable', phase: 'external_action.mint.machine_installation' });
     });
 });
