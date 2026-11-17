@@ -325,6 +325,7 @@ describe('ActivityLocalNotificationRuntime', () => {
     it.each(['web', 'desktop'] as const)('delivers an already-due managed inventory reminder through the %s notification channel', async host => {
         reactNativeRuntime.platformOs = 'web';
         reactNativeRuntime.isDesktopHost = host === 'desktop';
+        if (host === 'web') browserRuntime = await installBrowserRuntimeForTests({ url: 'https://happier.example.test/' });
         const browser = installBrowserNotificationApiStub('granted');
         const now = Date.now();
         managedMachines = [ManagedMachineV1Schema.parse({ id: 'due-deletion-box', homeId: 'srv_home_a', custodianAccountId: 'account-a',
@@ -344,6 +345,14 @@ describe('ActivityLocalNotificationRuntime', () => {
                 expect(delivered).toContainEqual(expect.objectContaining({ title: 'Retained build box' }));
             });
             expect(sendExpoLocalNotification).not.toHaveBeenCalled();
+            if (host === 'web') {
+                await act(async () => {
+                    expect(await setActiveServerAndSwitch({ serverId: 'srv_home_b', scope: 'tab', refreshAuth: null })).not.toBe('blocked');
+                });
+                await act(async () => { browser.shown[0]!.onclick?.(); });
+                await vi.waitFor(() => expect(getActiveServerSnapshot().serverId).toBe('srv_home_a'));
+                expect(routerNavigate).toHaveBeenCalledWith(expect.stringContaining('due-deletion-box'));
+            }
         } finally {
             await screen.unmount();
         }

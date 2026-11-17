@@ -14,7 +14,7 @@ export async function updateManagedMachineDeletionNotification(input:
         identifier: string;
         content: DeletionNotificationContent | ((reminder: NonNullable<ReturnType<typeof resolveProviderDeletionReminderV1>>) => DeletionNotificationContent);
     }>,
-    documentDelivery?: Readonly<{ channel: 'web' | 'desktop'; signal: AbortSignal }>,
+    documentDelivery?: Readonly<{ channel: 'web' | 'desktop'; signal: AbortSignal; onClick?: () => void }>,
 ): Promise<string | null> {
     const reminder = resolveProviderDeletionReminderV1(input);
     if (documentDelivery) {
@@ -33,7 +33,7 @@ export async function updateManagedMachineDeletionNotification(input:
         }
         const content = typeof input.content === 'function' ? input.content(reminder) : input.content;
         const delivered = documentDelivery.channel === 'web'
-            ? await sendWebLocalNotification({ ...content, tag: input.identifier })
+            ? await sendWebLocalNotification({ ...content, tag: input.identifier, onClick: documentDelivery.onClick })
             : await sendTauriLocalNotification({ ...content,
                 ...(desktopHostKind() === 'tauri' ? { interaction: {
                     identifier: input.identifier, data: content.data ?? {}, actions: [],

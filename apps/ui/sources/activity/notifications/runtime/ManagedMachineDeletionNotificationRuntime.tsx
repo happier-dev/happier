@@ -8,8 +8,23 @@ import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
+import { useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { useOptionalAuth } from '@/auth/context/AuthContext';
+import { navigateWithNotificationAccount } from './navigateWithNotificationAccount';
 
 const MachineReminder = React.memo(function MachineReminder({ entry, leadTimeMs }: Readonly<{ entry: ManagedMachineDeletionEntry; leadTimeMs: number }>) {
+    const router = useDestinationRouter();
+    const refreshFromActiveServer = useOptionalAuth()?.refreshFromActiveServer;
+    const openReminderRef = React.useRef(() => {});
+    openReminderRef.current = () => {
+        fireAndForget(navigateWithNotificationAccount({
+            target: { serverId: entry.serverId, accountId: entry.accountId, route: entry.href },
+            refreshAuth: refreshFromActiveServer ?? null,
+            // Delivered browser notifications stay clickable after their schedule retires.
+            isDisposed: () => false,
+            navigate: () => router.navigate(entry.href),
+        }), { tag: 'ActivityLocalNotificationRuntime.admitManagedMachine' });
+    };
     React.useEffect(() => {
         const controller = new AbortController();
         fireAndForget(updateManagedMachineDeletionNotification({ ...entry,
@@ -20,6 +35,7 @@ const MachineReminder = React.memo(function MachineReminder({ entry, leadTimeMs 
                 data: { serverId: entry.serverId, accountId: entry.accountId, managedId: entry.managedId, url: entry.href } }),
         }, Platform.OS === 'web' ? {
             channel: isDesktopHost() ? 'desktop' : 'web', signal: controller.signal,
+            onClick: () => openReminderRef.current(),
         } : undefined), { tag: 'ActivityLocalNotificationRuntime.managedMachineDeletion' });
         // Document deadlines retire with this entry; native OS schedules survive app closure.
         return () => controller.abort();
