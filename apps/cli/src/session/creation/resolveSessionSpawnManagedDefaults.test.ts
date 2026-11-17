@@ -239,7 +239,7 @@ describe('Session spawn defaults at admission', () => {
       reads.push(path);
       if (crossAccount) expect(AxiosHeaders.from(config.headers).get('Authorization')).toBe(`Bearer ${token}`);
       if (path === '/v1/teams/get') {
-        const projection = team();
+        const projection = { ...team(), viewerJoinedAt: 1700000000000, hasSetup: true };
         if (testCase.layer === 'approval-team') projection.policy.managedDefaults!.team.approvalProfileId = 'custom:team-profile';
         if (testCase.layer === 'group') projection.managedDefaultsGroupIds = ['group'];
         if (testCase.layer === 'v2' || testCase.layer === 'team-resource') projection.policy.managedDefaults!.team.modelByAgentTargetKey = {

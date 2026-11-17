@@ -217,6 +217,8 @@ describe('Team summary projection', () => {
       .toMatchObject({ viewerJoinedAt: 1700000000000 });
     expect(TeamSummaryV1Schema.parse({ ...summary, viewerJoinedAt: null }))
       .toMatchObject({ viewerJoinedAt: null });
+    const setupHints = { viewerJoinedAt: 1700000000000, hasSetup: true };
+    expect(TeamSummaryV1Schema.parse({ ...summary, ...setupHints })).toEqual({ ...summary, ...setupHints });
     expect(TeamSummaryV1Schema.safeParse({ ...summary, memberCount: 12 }).success).toBe(false);
     const directoryMembership = { providerDisplayName: 'Okta via WorkOS', state: 'healthy' };
     expect(TeamSummaryV1Schema.parse({ ...summary, directoryMembership }).directoryMembership).toEqual(directoryMembership);
