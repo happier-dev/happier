@@ -4,11 +4,11 @@ import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revis
 import { DeploymentHealthReadInputV1Schema, DeploymentHealthCurrentInputV1Schema,
   DeploymentDriftReadInputV1Schema, DeploymentLogsReadInputV1Schema, DeploymentStageLogsReadInputV1Schema } from './deploymentReadsV1.js';
 
-import { isDeploymentReadAdmissionActionIdV1 } from './deploymentActionIdsV1.js';
+import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, isDeploymentReadAdmissionActionIdV1 } from './deploymentActionIdsV1.js';
 import { ProjectReadinessReadInputV1Schema } from '../projects/readinessInputV1.js';
 import { PROJECT_READINESS_ACTION_IDS_V1 } from '../actions/projectReadinessActionIdsV1.js';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '../actions/actionIds.js';
-import { DeploymentDataQueryInputV1Schema } from './deploymentReadsV1.js';
+import { DeploymentDataQueryInputV1Schema, DeploymentDataSizeInputV1Schema } from './deploymentReadsV1.js';
 import { ActionInvokeInputSchema } from '../actions/actionInvokeInput.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
@@ -31,6 +31,8 @@ export const DeploymentReadAdmissionV1Schema = lazyZodSchema(() => z.union([z.di
   z.extend(z.omit(DeploymentStageLogsReadInputV1Schema, { serverId: true, ref: true, tail: true, cursor: true, kind: true }),
     { actionId: z.literal('deployments.logs.read'), kind: z.enum(['build', 'runtime']) }),
   z.strictObject({ actionId: z.literal('deployments.data.query'), ...references, expectedRevision: revision }),
+  z.extend(z.omit(DeploymentDataSizeInputV1Schema, { serverId: true, previous: true }),
+    { actionId: z.literal(DEPLOYMENT_DATA_SIZE_ACTION_ID_V1) }),
   z.strictObject({ actionId: z.literal(ACTION_INVOKE_ACTION_ID_V1), action: asProtocolZod(PluginContributionIdentityV1Schema),
     environmentId: id, targetLinkId: id, expectedRevision: revision, expectedTargetLinkRevision: revision }),
 ]), z.strictObject({ actionId: z.literal(ACTION_INVOKE_ACTION_ID_V1), action: asProtocolZod(PluginContributionIdentityV1Schema).check(
@@ -56,6 +58,10 @@ export function projectDeploymentReadAdmissionV1(actionId: string, input: unknow
     return { actionId: ACTION_INVOKE_ACTION_ID_V1, action: invoked.data.action, environmentId, targetLinkId, expectedRevision, expectedTargetLinkRevision };
   }
   if (!isDeploymentReadAdmissionActionIdV1(actionId)) return undefined;
+  if (actionId === DEPLOYMENT_DATA_SIZE_ACTION_ID_V1) {
+    const { serverId: _serverId, previous: _previous, ...scope } = DeploymentDataSizeInputV1Schema.parse(input);
+    return { actionId, ...scope };
+  }
   if (actionId === PROJECT_READINESS_ACTION_IDS_V1[0]) {
     const { projectId, machineId, environments } = ProjectReadinessReadInputV1Schema.parse(input);
     return { actionId, projectId, machineId,

@@ -34,6 +34,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
   const accountPage = isDeploymentAccountPageActionIdV1(id);
   const backup = isDeploymentBackupActionIdV1(id);
   const query = isDeploymentDataQueryActionIdV1(id);
+  const dataSize = deploymentActionIds.isDeploymentDataSizeActionIdV1(id);
   const telemetrySet = id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1;
   const backupConfigure = id === deploymentActionIds.DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1;
   const rolloutReview = id === DEPLOYMENT_DEPLOY_ACTION_ID_V1 || isDeploymentPromoteActionIdV1(id);
@@ -201,15 +202,15 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
           { path: 'environmentIds', title: 'Exact Environment headers', widget: 'json' as const }] : []),
       ...(accountPage ? [{ path: 'cursor', title: 'Next page cursor', widget: 'text' as const },
         { path: 'limit', title: 'Page size', widget: 'number' as const }] : []),
-      ...(query ? [
+      ...((query || dataSize) ? [
         { path: 'deploymentId', title: 'Active deployment', widget: 'text' as const, required: true },
         { path: 'targetLinkId', title: 'Deployment target', widget: 'text' as const, required: true },
         { path: 'machineId', title: 'Runtime Machine', widget: 'text' as const, required: true },
         { path: 'installationId', title: 'Machine installation', widget: 'text' as const, required: true },
         { path: 'expectedRevision', title: 'Environment revision', widget: 'number' as const, required: true },
         { path: 'service', title: 'Database service', widget: 'text' as const, required: true },
-        { path: 'sql', title: 'Read-only SQL', widget: 'text' as const, required: true },
-        { path: 'params', title: 'Bound string parameters', widget: 'json' as const, required: true },
+        ...(query ? [{ path: 'sql', title: 'Read-only SQL', widget: 'text' as const, required: true },
+          { path: 'params', title: 'Bound string parameters', widget: 'json' as const, required: true }] : []),
       ] : []),
       ...(isDeploymentNativeReadActionIdV1(id) || id === deploymentActionIds.DEPLOYMENT_RESTART_ACTION_ID_V1 ? [
         { path: 'deploymentId', title: id === deploymentActionIds.DEPLOYMENT_LOGS_READ_ACTION_ID_V1 ? 'Deployment receipt' : 'Active deployment', widget: 'text' as const, required: true },
@@ -313,7 +314,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
             ? [{ kind: 'backup' as const, serverId: target.serverId, environmentId: target.environmentId }] : [] };
         } }
         : 'environment' } : {}),
-    executionPlacement: isDeploymentTargetLinkActionIdV1(id) || rolloutReview || query || backup || backupConfigure || telemetrySet || deploymentActionIds.isDeploymentDomainDnsActionIdV1(id) || isDeploymentDomainChildActionIdV1(id) || id === deploymentActionIds.DEPLOYMENT_PREPARE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RESTART_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_OBSERVATION_GET_ACTION_ID_V1 ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
+    executionPlacement: isDeploymentTargetLinkActionIdV1(id) || rolloutReview || query || dataSize || backup || backupConfigure || telemetrySet || deploymentActionIds.isDeploymentDomainDnsActionIdV1(id) || isDeploymentDomainChildActionIdV1(id) || id === deploymentActionIds.DEPLOYMENT_PREPARE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RESTART_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_OBSERVATION_GET_ACTION_ID_V1 ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
     ...(id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 ? {
       approvalScope: { subjectKinds: ['environment'] as const },
       executionPlacements: ['account', 'machine'],
@@ -405,6 +406,8 @@ function createDeploymentActionSpecsV1() {
     deploymentReadScope: createDeploymentReadScopeV1({ requireEnvironmentRevision: true }), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_LOGS_READ_ACTION_ID_V1, 'Read deployment logs', undefined, true),
     deploymentReadScope: createDeploymentReadScopeV1({ target: 'historical_receipt' }), requesterAccountContentDemandForInput: (input: unknown) => readRecord(input).kind === 'build' },
+  { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, 'Read deployment database size', undefined, true),
+    deploymentReadScope: createDeploymentReadScopeV1({ requireEnvironmentRevision: true }), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_DATA_QUERY_ACTION_ID_V1, 'Query database read-only', undefined, true),
     deploymentReadScope: createDeploymentReadScopeV1({ requireEnvironmentRevision: true }), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, 'Create deployment environment', '/v1/deployments/environments'), deploymentPreparationScope: declareDeploymentPreparationScopeV1('create'), requesterAccountContentDemandForInput: () => true },

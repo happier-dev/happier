@@ -87,6 +87,10 @@ export function isDeploymentAccountPageActionIdV1(value: string): value is
   return value === DEPLOYMENT_DOMAIN_PAGE_ACTION_ID_V1 || value === DEPLOYMENT_DATA_PAGE_ACTION_ID_V1;
 }
 export const DEPLOYMENT_DATA_QUERY_ACTION_ID_V1 = 'deployments.data.query';
+export const DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 = 'deployments.data.size';
+export function isDeploymentDataSizeActionIdV1(value: string): value is typeof DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 {
+  return value === DEPLOYMENT_DATA_SIZE_ACTION_ID_V1;
+}
 export function isDeploymentDataQueryActionIdV1(value: string): value is typeof DEPLOYMENT_DATA_QUERY_ACTION_ID_V1 {
   return value === DEPLOYMENT_DATA_QUERY_ACTION_ID_V1;
 }
@@ -129,6 +133,7 @@ export const DEPLOYMENT_ACTION_IDS_V1 = [
   DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
   'deployments.health.read', 'deployments.health.current', 'deployments.drift.read', 'deployments.logs.read',
   DEPLOYMENT_DATA_QUERY_ACTION_ID_V1,
+  DEPLOYMENT_DATA_SIZE_ACTION_ID_V1,
 ] as const;
 export type DeploymentActionIdV1 = typeof DEPLOYMENT_ACTION_IDS_V1[number];
 /** Semantic composition/handoff have their own typed ports, never storage HTTP transports. */
@@ -251,14 +256,14 @@ export function isDeploymentChildRootActionIdV1(value: string, admission?: Deplo
 }
 
 export function isDeploymentReadActionIdV1(value: string): value is
-  'deployments.health.current' | 'deployments.health.read' | 'deployments.drift.read' | 'deployments.logs.read' | typeof DEPLOYMENT_DATA_QUERY_ACTION_ID_V1 {
-  return value === 'deployments.health.current' || isDeploymentNativeReadActionIdV1(value) || isDeploymentDataQueryActionIdV1(value);
+  'deployments.health.current' | 'deployments.health.read' | 'deployments.drift.read' | 'deployments.logs.read' | typeof DEPLOYMENT_DATA_QUERY_ACTION_ID_V1 | typeof DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 {
+  return value === 'deployments.health.current' || isDeploymentNativeReadActionIdV1(value) || isDeploymentDataQueryActionIdV1(value) || isDeploymentDataSizeActionIdV1(value);
 }
 
 /** Finite signed read scope includes the Project composite without changing native read placement. */
 export function isDeploymentReadAdmissionActionIdV1(value: string): value is
   'deployments.health.current' | 'deployments.health.read' | 'deployments.drift.read' | 'deployments.logs.read'
-  | typeof DEPLOYMENT_DATA_QUERY_ACTION_ID_V1 | ProjectReadinessActionIdV1 {
+  | typeof DEPLOYMENT_DATA_QUERY_ACTION_ID_V1 | typeof DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 | ProjectReadinessActionIdV1 {
   return isDeploymentReadActionIdV1(value) || isProjectReadinessActionIdV1(value);
 }
 

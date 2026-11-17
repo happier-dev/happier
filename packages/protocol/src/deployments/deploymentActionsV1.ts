@@ -128,6 +128,7 @@ import { DeploymentHealthCurrentInputV1Schema, DeploymentHealthCurrentSuccessV1S
   DeploymentHealthReadInputV1Schema, DeploymentDriftReadInputV1Schema, DeploymentLogsReadInputV1Schema,
   DeploymentHealthReadSuccessV1Schema, DeploymentDriftReadSuccessV1Schema, DeploymentLogsReadSuccessV1Schema } from './deploymentReadsV1.js';
 import { DeploymentDataQueryInputV1Schema, DeploymentDataQuerySuccessV1Schema, DeploymentDataQueryUnavailableV1Schema } from './deploymentReadsV1.js';
+import { DeploymentDataSizeInputV1Schema, DeploymentDataSizeSuccessV1Schema } from './deploymentReadsV1.js';
 export * from './deploymentReadsV1.js';
 export * from './deploymentPreparationV1.js';
 export * from './deploymentPreviewProvenanceV1.js';
@@ -731,6 +732,8 @@ export type DeploymentDriftReadResultV1 = z.infer<typeof DeploymentDriftReadResu
 export type DeploymentLogsReadResultV1 = z.infer<typeof DeploymentLogsReadResultV1Schema>;
 export const DeploymentDataQueryResultV1Schema = lazyZodSchema(() => z.union([DeploymentDataQuerySuccessV1Schema, DeploymentDataQueryUnavailableV1Schema, DeploymentActionFailureV1Schema]));
 export type DeploymentDataQueryResultV1 = z.infer<typeof DeploymentDataQueryResultV1Schema>;
+export const DeploymentDataSizeResultV1Schema = lazyZodSchema(() => z.union([DeploymentDataSizeSuccessV1Schema, DeploymentActionFailureV1Schema]));
+export type DeploymentDataSizeResultV1 = z.infer<typeof DeploymentDataSizeResultV1Schema>;
 // Domain leaf imports legitimately reach this catalog through installation and
 // access-provider contracts. Admit catalog bindings on first use, not ESM load.
 // Reading a sibling Action can admit the map while templates are still loading;
@@ -756,6 +759,7 @@ export const DeploymentActionInputSchemasV1 = lazyDefinition(() => ({
   'deployments.drift.read': DeploymentDriftReadInputV1Schema,
   'deployments.logs.read': DeploymentLogsReadInputV1Schema,
   'deployments.data.query': DeploymentDataQueryInputV1Schema,
+  'deployments.data.size': DeploymentDataSizeInputV1Schema,
   'deployments.prepare': DeploymentPrepareInputV1Schema,
   'deployments.environments.create': DeploymentEnvironmentCreateActionInputV1Schema,
   'deployments.environments.update': DeploymentEnvironmentUpdateInputV1Schema,
@@ -814,6 +818,7 @@ export const DeploymentActionOutputSchemasV1 = lazyDefinition(() => ({
   'deployments.drift.read': DeploymentDriftReadResultV1Schema,
   'deployments.logs.read': DeploymentLogsReadResultV1Schema,
   'deployments.data.query': DeploymentDataQueryResultV1Schema,
+  'deployments.data.size': DeploymentDataSizeResultV1Schema,
   'deployments.prepare': DeploymentPrepareResultV1Schema,
   'deployments.environments.create': DeploymentEnvironmentCreateActionResultV1Schema,
   'deployments.environments.update': DeploymentEnvironmentUpdateResultV1Schema,

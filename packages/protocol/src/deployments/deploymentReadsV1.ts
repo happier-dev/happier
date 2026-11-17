@@ -190,3 +190,13 @@ export const DeploymentDatabaseSizeV1Schema = lazyZodSchema(() => z.strictObject
   ]),
 }));
 export type DeploymentDatabaseSizeV1 = z.infer<typeof DeploymentDatabaseSizeV1Schema>;
+
+/** Fixed engine statistics for one installed deployment service; no caller SQL. */
+export const DeploymentDataSizeInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...input, expectedRevision: revision, service: id, previous: z.optional(DeploymentDatabaseSizeV1Schema),
+}));
+export type DeploymentDataSizeInputV1 = z.infer<typeof DeploymentDataSizeInputV1Schema>;
+export const DeploymentDataSizeSuccessV1Schema = lazyZodSchema(() => z.strictObject({
+  ok: z.literal(true), size: DeploymentDatabaseSizeV1Schema,
+}));
+export type DeploymentDataSizeSuccessV1 = z.infer<typeof DeploymentDataSizeSuccessV1Schema>;

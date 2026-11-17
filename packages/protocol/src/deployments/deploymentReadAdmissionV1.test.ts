@@ -28,6 +28,18 @@ describe('target-shaped deployment logs', () => {
 });
 
 describe('deployment current-health read admission', () => {
+    it('binds a native size read to its exact service without a SQL operand', () => {
+        const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 3,
+            deploymentId: 'deployment', targetLinkId: 'link', machineId: 'machine', installationId: 'installation',
+            service: 'postgres' };
+        const admission = projectDeploymentReadAdmissionV1('deployments.data.size', input);
+        expect(DeploymentReadAdmissionV1Schema.parse(admission)).toEqual({ actionId: 'deployments.data.size',
+            environmentId: input.environmentId, expectedRevision: input.expectedRevision,
+            deploymentId: input.deploymentId, targetLinkId: input.targetLinkId, machineId: input.machineId,
+            installationId: input.installationId, service: input.service });
+        expect(DeploymentReadAdmissionV1Schema.safeParse({ ...admission, sql: 'SELECT 1' }).success).toBe(false);
+    });
+
     it.each(['deployment_service', 'managed_deployment'] as const)('projects the selected %s for semantic SQL without publishing SQL or credentials', kind => {
         const action = parseQualifiedPluginActionId(DATABASE_STATEMENT_RUN_ACTION_ID_V1);
         if (!action) throw new Error('The canonical database Action has a qualified identity');
