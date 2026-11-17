@@ -197,7 +197,10 @@ describe('getAutomationRunInvalidationAction', () => {
     expect(action).toBe(expected);
   });
 
-  it('immediately aborts the matching active Run controller for a machine-scoped cancellation', () => {
+  it('distinguishes authoritative machine-scoped cancellation from a generic currentness abort', () => {
+    const generic = new AbortController();
+    generic.abort();
+    expect(isAuthoritativeAutomationRunCancellation(generic.signal)).toBe(false);
     const controller = new AbortController();
 
     const action = invalidateActiveAutomationRun({
