@@ -8,8 +8,8 @@ import { SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1, SessionPendingEnqueueByMac
 import { MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1,
   MachineUpdateOperationProtocolCapabilitiesRequestV1Schema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import type { StoredCredentials } from '@/persistence';
-import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
-import { bindApiSessionSocketMock, bindApiSessionSocketSequenceMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { bindApiSessionSocketMock, bindApiSessionSocketSequenceMock, createApiSessionSocketStub, createSessionCreationTargetPreparationRpcResult } from '@/testkit/backends/apiSessionSocketHarness';
 import { ApiMachineClient } from './apiMachine';
 import type { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -35,9 +35,13 @@ import type { TrackedSession } from '@/daemon/types';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { logger } from '@/ui/logger';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
-import { createProductionFreshWorkflowSessionConversation, createProductionWorkflowSessionStepExecutor } from '@/daemon/workflows/sessionStepExecutor';
+import { createProductionWorkflowSessionStepExecutor } from '@/daemon/workflows/sessionStepExecutor';
+import { createAdmittedFreshWorkflowSessionConversation as createProductionFreshWorkflowSessionConversation } from '@/daemon/workflows/workflowSessionStartup.testkit';
 import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
 import { SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
+import { SessionCreationTargetPreparationRequestV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
+import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
+import { ConnectedAccountCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import fs from 'node:fs/promises';
 import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
@@ -48,6 +52,7 @@ const io = vi.hoisted(() => vi.fn());
 // Only Socket.IO and the persisted installation/credential files are replaced.
 vi.mock('socket.io-client', () => ({ io }));
 vi.mock('@/persistence', async original => ({ ...await original<typeof import('@/persistence')>(),
+  readStoredCredentials: async () => os.credentials,
   readStoredCredentialsForServerId: async () => os.credentials }));
 vi.mock('@/daemon/identity/store', async original => ({ ...await original<typeof import('@/daemon/identity/store')>(),
   readInstallationIdentityIfExistsSync: () => os.identity }));
@@ -179,7 +184,7 @@ it.each(['refused_advertisement', 'late_feature_snapshot'] as const)('admits the
   const pair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(51));
   os.identity = { version: 1, installationId: '11111111-1111-4111-8111-111111111111', createdAt: 1,
     publicKey: Buffer.from(pair.publicKey).toString('base64url'), privateKey: Buffer.from(pair.secretKey).toString('base64url') };
-  const credentials = { token: 'owner-token', encryption: null };
+  const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };
   os.credentials = credentials;
   const sessionId = 'c' + '9'.repeat(24);
   let published: ReturnType<typeof MachineUpdateOperationProtocolCapabilitiesRequestV1Schema.parse>['capabilities'] = {};
@@ -228,8 +233,13 @@ it.each(['refused_advertisement', 'late_feature_snapshot'] as const)('admits the
       }
       return { status: 200, data: { v: 1, entries: [], nextAfter: null } };
     }
-    if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
-      mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+    if (url.endsWith('/v2/account/settings')) return { status: 200, data: { version: 0, content: { t: 'plain', v: {} } } };
+    if (url.endsWith('/v2/account/settings/history')) return { status: 200, data: { snapshots: [] } };
+    if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+    if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture({ settingsVersion: 0 }) };
+    if (url.endsWith('/v1/account/entity-rows/connected-accounts/purposes')) return { status: 200,
+      data: ConnectedAccountCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 1,
+        content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } } }) };
     if (url.endsWith('/v1/machines/target-machine')) return { status: 200, data: { machine: { id: 'target-machine',
       revokedAt: null, replacedByMachineId: null, operationProtocolCapabilitiesRevision: 2, operationProtocolCapabilities: published } } };
     if (url.endsWith(`/v2/sessions/${sessionId}/messages/reply-capability`)) return { status: 200, data: { v: 1, protocolVersions: [1] } };
@@ -243,14 +253,34 @@ it.each(['refused_advertisement', 'late_feature_snapshot'] as const)('admits the
     if (url.endsWith('/v2/sessions/lookup-by-tags')) return { status: 200, data: { sessions: birth ? [session()] : [] } };
     throw new Error('Unexpected Workflow HTTP write');
   });
+  vi.spyOn(axios, 'request').mockImplementation(async ({ url }) => {
+    if (new URL(String(url)).pathname === '/v1/home/governance/get') return { status: 200,
+      data: HomeSessionDefaultsProjectionV1Schema.parse({ homeDefaults: null }) };
+    throw new Error('Unexpected Home Action');
+  });
   vi.spyOn(fs, 'access').mockResolvedValue(undefined);
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ id: 'owner' }), { status: 200 })));
-  vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async ({ method, request }) => {
+  const machineBoundary: typeof machineRpc.callExactMachineRpc = async ({ method, request }) => {
+    if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return {
+      protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
+        claude: { id: 'claude', title: 'Claude', capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
+      } },
+    };
+    if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: { 'cli.claude': {
+      ok: true, checkedAt: 1, data: { installed: true, version: null, latestVersion: null,
+        update: { supported: false, command: null }, signIn: { status: 'signedIn', loginSupport: 'unsupported' },
+        platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [] },
+    } } };
+    if (method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
+      return createSessionCreationTargetPreparationRpcResult(SessionCreationTargetPreparationRequestV1Schema.parse(request));
+    }
     if (method !== RPC_METHODS.SPAWN_HAPPY_SESSION) throw new Error('Unexpected native launch');
     const spawn = SpawnDaemonSessionRequestSchema.parse(request);
     birth = buildCommittedLaunchMetadata({ options: spawn, directory: '/repo', accountSettings: {} });
     return { type: 'success', sessionId, sessionCreationOutcome: { disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } };
-  });
+  };
+  vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(machineBoundary);
+  vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(machineBoundary);
   const client = new ApiMachineClient(credentials.token, { id: 'target-machine', encryptionKey: new Uint8Array(32),
     encryptionVariant: 'legacy', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 }, undefined, {
       resolveServerFeaturesSnapshot: async () => {
