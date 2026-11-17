@@ -62,6 +62,7 @@ async function fixture(setupRefused = false, statusJourney = false) {
         occurrenceIdsByPluginId: { [manifest.id]: createPluginRuntimeOccurrenceId(manifest.id),
             [machineManifest.id]: createPluginRuntimeOccurrenceId(machineManifest.id) } });
     const environment = createDeploymentEnvironmentDetailV1();
+    environment.environment.revision = 3;
     if (statusJourney) environment.environment.id = 'preview-template';
     environment.environment.controllerMachineId = 'controller';
     environment.content.previewTemplate = { v: 1, enabled: true, forkPreviews: 'off',
@@ -143,7 +144,7 @@ async function fixture(setupRefused = false, statusJourney = false) {
             } }) };
         // Storage receives only its public patch after private Artifact preparation.
         return DeploymentActionOutputSchemasV1['deployments.environments.update'].parse(await enrollment.completeUpdate(
-            { ok: true, environmentId: environment.environment.id, revision: 2 }, { ...input, patch: {} }, context));
+            { ok: true, environmentId: environment.environment.id, revision: ++environment.environment.revision }, { ...input, patch: {} }, context));
     }
     async function selectSetupAccount(accountId: string) {
         await selected.store.update(current => ({ ...current, bindings: [{ ...selected.binding,
@@ -200,7 +201,7 @@ it('enrolls from the saved template, reuses its exact trigger, and retains PR-cl
             input: { repository: 'owner/app', credentialRef: { service: GITHUB_CONNECTED_ACCOUNT_SERVICE, accountId: 'account' } },
         })]) });
         const first = await f.save(true);
-        expect(first, JSON.stringify({ first, responses: f.responses })).toMatchObject({ ok: true, previewEnrollment: { status: 'enrolled' } });
+        expect(first, JSON.stringify({ first, responses: f.responses })).toMatchObject({ ok: true, revision: 4, previewEnrollment: { status: 'enrolled' } });
         expect(await f.save(true)).toMatchObject({ ok: true, previewEnrollment: { status: 'enrolled' } });
         expect(f.calls.filter(call => call.actionId === 'workflow.trigger.add')).toHaveLength(2);
         expect(f.saved).toHaveLength(2);

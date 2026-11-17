@@ -22,6 +22,8 @@ import { getRandomBytes } from '@/api/encryption';
 import { createCliWorkflowTriggerActions } from './workflowTriggers';
 import { WorkflowTriggerAddRequestV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { normalizeWorkflowActionThrownError } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
+import { createAutomationPluginEventTriggerDefinitionV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { enrollPlatformFailureSource } from '@/deployments/platformFailureEnrollment';
 import { createPlatformFailureNoticeFixture } from '@/deployments/platformFailureNotices.testkit';
 import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
@@ -79,8 +81,7 @@ describe('configured Event source writer consistency', () => {
         : sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
           binding: { ...binding, automationId, triggerId: AutomationTriggerIdSchema.parse(triggerId), triggerRevision: revision,
             eventRef: trigger.eventRef, sourceSelectorId: selector },
-          definition: { v: 1, sourceInstanceId: trigger.sourceInstanceId, sourceConfig: trigger.sourceConfig,
-            displayLabel: trigger.displayLabel, filter: trigger.filter, maximumObservationAgeMs: trigger.maximumObservationAgeMs } });
+          definition: createAutomationPluginEventTriggerDefinitionV1(trigger) });
       return { ...detail(automationId, triggerId, selector, envelope, revision, undefined,
         { kind: 'observationOnly', templateVersion: 1 }).triggers[0]!, enabled: trigger.enabled, eventRef: trigger.eventRef,
         observation: trigger.observationTransport.kind === 'durablePush'
@@ -159,7 +160,7 @@ describe('configured Event source writer consistency', () => {
       expect(await enrollPlatformFailureSource(request)).toMatchObject({ ok: true });
       baseline = 'later';
       expect(await enrollPlatformFailureSource(request)).toMatchObject({ ok: true });
-      expect(setupInput).toEqual(Array(2).fill({ serverId: 'home', environmentId: environment.environment.id, targetLinkId: 'target-link' }));
+      expect(setupInput).toEqual(Array(2).fill({ v: 1, serverId: 'home', environmentId: environment.environment.id, targetLinkId: 'target-link' }));
       expect(f.rows.size).toBe(1);
       expect(f.mutations()).toBe(1);
       const row = [...f.rows.values()][0]!;
@@ -355,34 +356,46 @@ describe('configured Event source writer consistency', () => {
     const deps = createDaemonDeploymentActionDeps({ ...fixture.host, accountArtifacts: artifacts, acquirePluginRuntimeRegistryLease: acquire,
       resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
       runtime: { async acquire() { throw new Error('Link enrollment does not execute native services'); } } });
-    let baseline = 'initial';
+    let observingSince = 100;
     const context: import('@happier-dev/protocol').ActionExecutorContext = { hostReviewedChild: { async invoke(child) {
       if (typeof child.action !== 'string') return { ok: true, result: { v: 1, sourceInstanceId: 'platform:target-link', sourceContractVersion: 1,
-        sourceConfig: { ...sourceConfigObject(fixture.definition.sourceConfig), baseline }, displayLabel: 'Production' } };
+        sourceConfig: { ...sourceConfigObject(fixture.definition.sourceConfig), observingSince }, displayLabel: 'Production' } };
       return { ok: true, result: await f.actions.add(WorkflowTriggerAddRequestV1Schema.parse(child.input)) };
     } } };
     const input = { serverId: 'home', environmentId: environment.environment.id, expectedRevision: environment.environment.revision,
       requestKey: 'production-link', role: 'runtime', targetId: 'platform', source: row.targetLink.source,
       targetKind: 'example', machines: [], contentArtifactId: row.targetLink.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 };
+    const receiptEvents = Object.values(DEPLOYMENT_RECEIPT_EVENT_REFS_V1);
+    const setupChildren = receiptEvents.map(ref => {
+      const event = lease.registry.contributes.automationEligibleEvents?.find(item =>
+        item.event.identity.pluginId === ref.pluginId && item.event.identity.localId === ref.localId);
+      if (!event) throw new Error('Expected receipt Event setup declaration');
+      return { action: event.setupAction.identity, role: 'platform-failure.setup' };
+    });
     expect(await deps.prepareHostReviewedChildren({ actionId: 'deployments.targets.link', input, context })).toEqual({ children: [
-      { action: { pluginId: fixture.caller.pluginId, localId: 'setup' }, role: 'platform-failure.setup' },
+      ...setupChildren,
       { action: 'workflow.trigger.add', role: 'platform-failure.enroll' },
     ] });
-    expect(await deps.deploymentAction('deployments.targets.link', input, context)).toMatchObject({ ok: true, targetLinkId: row.targetLink.id });
-    baseline = 'later';
-    expect(await deps.deploymentAction('deployments.targets.link', input, context)).toMatchObject({ ok: true, targetLinkId: row.targetLink.id });
-    expect(f.rows.size).toBe(1);
-    expect(f.mutations()).toBe(1);
-    const enrolled = [...f.rows.values()][0]!;
-    expect(enrolled).toMatchObject({ observationOnly: { deploymentEnvironment: { environmentId: environment.environment.id } } });
-    const trigger = enrolled.triggers[0]!;
-    if (trigger.kind !== 'pluginEvent') throw new Error('Expected enrolled Event');
-    expect(trigger.observation).toMatchObject({ kind: 'checkpointedPull', watcher: fixture.caller });
-    expect(openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
-      binding: { v: 1, automationId: enrolled.id, triggerId: trigger.id, triggerRevision: trigger.revision,
-        triggerKind: 'pluginEvent', eventRef: trigger.eventRef, sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(trigger.sourceSelectorId) },
-      envelope: JSON.parse(trigger.triggerDefinitionEnvelope),
-    })).toMatchObject({ kind: 'available', definition: { sourceConfig: { ...sourceConfigObject(fixture.definition.sourceConfig), baseline: 'initial' } } });
+    expect(await deps.deploymentAction('deployments.targets.link', input, context)).toMatchObject({ ok: true,
+      targetLinkId: row.targetLink.id, failureObserver: { status: 'enrolled' } });
+    observingSince = 200;
+    expect(await deps.deploymentAction('deployments.targets.link', input, context)).toMatchObject({ ok: true,
+      targetLinkId: row.targetLink.id, failureObserver: { status: 'enrolled' } });
+    expect(f.rows.size).toBe(receiptEvents.length);
+    expect(f.mutations()).toBe(receiptEvents.length);
+    expect([...f.rows.values()].map(item => item.triggers[0]?.kind === 'pluginEvent' ? item.triggers[0].eventRef : null))
+      .toEqual(expect.arrayContaining(receiptEvents));
+    for (const enrolled of f.rows.values()) {
+      expect(enrolled).toMatchObject({ observationOnly: { deploymentEnvironment: { environmentId: environment.environment.id } } });
+      const trigger = enrolled.triggers[0]!;
+      if (trigger.kind !== 'pluginEvent') throw new Error('Expected enrolled Event');
+      expect(trigger.observation).toMatchObject({ kind: 'checkpointedPull', watcher: fixture.caller });
+      expect(openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+        binding: { v: 1, automationId: enrolled.id, triggerId: trigger.id, triggerRevision: trigger.revision,
+          triggerKind: 'pluginEvent', eventRef: trigger.eventRef, sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(trigger.sourceSelectorId) },
+        envelope: JSON.parse(trigger.triggerDefinitionEnvelope),
+      })).toMatchObject({ kind: 'available', definition: { sourceConfig: { ...sourceConfigObject(fixture.definition.sourceConfig), observingSince: 100 } } });
+    }
   });
 });
 const event = {
@@ -397,9 +410,11 @@ const event = {
 const privateDefinition = { v: 1 as const, sourceInstanceId: event.sourceInstanceId,
   sourceConfig: event.sourceConfig, displayLabel: event.displayLabel, filter: event.filter,
   maximumObservationAgeMs: event.maximumObservationAgeMs };
-const binding: Extract<AutomationTriggerDefinitionBindingV1, { triggerKind: 'pluginEvent' }> = AutomationTriggerDefinitionBindingV1Schema._zod.def.options[0].parse({ v: 1, automationId: 'automation', triggerId: 'trigger',
+const parsedBinding = AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId: 'automation', triggerId: 'trigger',
   triggerRevision: 3, triggerKind: 'pluginEvent', eventRef: event.eventRef,
   sourceSelectorId: '9d5af559-2c82-4c22-b6a0-ecabce38a631' });
+if (parsedBinding.triggerKind !== 'pluginEvent') throw new Error('Expected the plugin Event fixture binding');
+const binding: Extract<AutomationTriggerDefinitionBindingV1, { triggerKind: 'pluginEvent' }> = parsedBinding;
 const resolveUnusedWorkflow = async (): Promise<Readonly<{ definition: typeof definition }>> => {
   throw new Error('Inline triggers must not resolve a saved Workflow');
 };
