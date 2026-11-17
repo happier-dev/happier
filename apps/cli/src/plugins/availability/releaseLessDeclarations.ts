@@ -41,8 +41,8 @@ export function projectPluginInstalledAvailabilityInventory(input: Readonly<{
 
 /**
  * One admitted installed source's release-less declaration. Every selected
- * source is observed, including UI-only sources; only Account-scoped executable
- * contribution families request the existing Account declaration claim.
+ * source is observed, including UI-only sources; Account-scoped executable
+ * contributions and raw credential consumers request the existing declaration claim.
  */
 export type ReleaseLessPluginDeclaration = Readonly<{
     manifest: CanonicalPluginManifest;
@@ -61,15 +61,18 @@ export type ReleaseLessPluginDeclaration = Readonly<{
 }>;
 
 /**
- * Only the Account-scoped contributions the server gates on a declaration
- * make a plugin claim: Collections, webhooks, Events, and Machine provisioners.
- * Preset and acquisition admission resolve provisioners through that declaration.
+ * Publish the declarations the Home needs for Account contribution admission
+ * and exact permission callers. Raw credential review also authenticates the
+ * requesting materialization against this declaration.
  */
-function declaresAccountScopedContributions(manifest: CanonicalPluginManifest): boolean {
+function requiresAccountDeclaration(manifest: CanonicalPluginManifest): boolean {
     return manifest.contributes.accountCollections.length > 0
         || manifest.contributes.webhooks.length > 0
         || manifest.contributes.events.length > 0
-        || manifest.contributes.machineProvisioners.length > 0;
+        || manifest.contributes.machineProvisioners.length > 0
+        || manifest.contributes.voiceProviders.some(provider => provider.credentials?.sources.some(
+            source => (source.rawGrants?.length ?? 0) > 0,
+        ));
 }
 
 /** Stable per machine and plugin, so a CLI update keeps its webhook targets. */
@@ -102,7 +105,7 @@ export function projectReleaseLessPluginDeclarations(input: Readonly<{
         declarations.set(target.pluginId, Object.freeze({
             manifest: target.manifest,
             materializationId,
-            claimsAccountIntent: custody !== undefined && declaresAccountScopedContributions(target.manifest),
+            claimsAccountIntent: custody !== undefined && requiresAccountDeclaration(target.manifest),
             runtimeMaterialization: registryMaterializationId !== undefined
                 ? null
                 : Object.freeze({

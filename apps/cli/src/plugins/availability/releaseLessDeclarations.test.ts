@@ -2,6 +2,7 @@ import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/ar
 import { describe, expect, it } from 'vitest';
 import { PluginManifestV2Schema } from '@happier-dev/protocol';
 import { PLUGIN_MANIFEST as LIMA_MANIFEST } from '@happier-dev/plugins-machine-lima/manifest';
+import { PLUGIN_MANIFEST as GOOGLE_MANIFEST } from '@happier-dev/plugins-google/manifest';
 
 import type { PluginSourceCustody } from '@/plugins/runtime/sourceAuthority';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
@@ -42,6 +43,19 @@ const MANAGED: PluginSourceCustody = {
 };
 
 describe('release-less plugin declarations', () => {
+    it('claims the admitted raw credential consumer declaration required by permission caller admission', () => {
+        const google = PluginManifestV2Schema.parse(GOOGLE_MANIFEST);
+        const project = (custodies: ReadonlyMap<string, PluginSourceCustody>) => projectReleaseLessPluginDeclarations({
+            activationTargets: [{ pluginId: google.id, manifest: google, sourceSpec: { kind: 'bundled' } }],
+            sourceCustodiesByPluginId: custodies,
+            registryMaterializationIdsByPluginId: {}, observedAt: 1_794_381_207_921,
+        }).get(google.id);
+        expect(project(new Map([[google.id, BUNDLED]]))).toMatchObject({
+            claimsAccountIntent: true,
+            runtimeMaterialization: { materializationId: 'daemon-selected:happier.voice.google', trustState: 'trusted' },
+        });
+        expect(project(new Map())).toMatchObject({ claimsAccountIntent: false, runtimeMaterialization: { trustState: 'untrusted' } });
+    });
     it('claims the admitted native provisioner declaration needed by preset and acquire admission', () => {
         const provisionerManifest = PluginManifestV2Schema.parse(LIMA_MANIFEST);
         const declarations = projectReleaseLessPluginDeclarations({

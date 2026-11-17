@@ -1,8 +1,9 @@
 import axios from 'axios';
+import * as fs from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema, PluginManifestV2Schema } from '@happier-dev/protocol';
 import { PLUGIN_MANIFEST as LIMA_MANIFEST } from '@happier-dev/plugins-machine-lima/manifest';
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
@@ -22,32 +23,34 @@ import { createDaemonPluginRegistryProjectionInvalidation } from '@/daemon/plugi
 import type { DaemonState } from '@/api/types';
 import { publishPluginAccountAvailabilityChanges, publishPluginAccountCollectionWatchInvalidation, retirePluginAccountCollectionWatchScope } from '@/plugins/runtime/context/pluginAccountSettingsChangeBroker';
 import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
+import { createBundledPluginPublicationFsFixture } from '@/plugins/projection/registry/builtIn/locators.testkit';
 
 // Model a cold daemon with no last-green UI graph at the filesystem boundary.
 // Discovery, runtime construction, source admission and availability stay real.
-vi.mock('node:fs', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('node:fs')>();
-    const { createBundledPluginPublicationFsFixture } = await import('@/plugins/projection/registry/builtIn/locators.testkit');
-    const publication = createBundledPluginPublicationFsFixture(actual);
-    return {
-        ...publication,
-        readFileSync: (...args: Parameters<typeof actual.readFileSync>) => (
-            String(args[0]).replaceAll('\\', '/').endsWith('/dist/happier-plugin-ui/ui-artifacts.json')
-                ? JSON.stringify({ version: 2, entries: [] })
-                : publication.readFileSync(...args)
-        ),
-    };
+beforeEach(() => {
+    // Install after imports: the publication policy itself imports node:fs, so
+    // importing its fixture inside a node:fs module factory creates a cycle.
+    const publication = createBundledPluginPublicationFsFixture({ ...fs });
+    vi.spyOn(fs, 'readFileSync').mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => (
+        String(args[0]).replaceAll('\\', '/').endsWith('/dist/happier-plugin-ui/ui-artifacts.json')
+            ? JSON.stringify({ version: 2, entries: [] })
+            : publication.readFileSync(...args)
+    )) as typeof fs.readFileSync);
 });
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('daemon release-less declaration publication', () => {
-    it.each(['normal', 'pluginRecovery'] as const)('starts without a last-green UI graph in %s and preserves Account admission', async startupMode => {
+    it.each([
+        ['normal', 'declaration-publication'],
+        ['normal', 'availability-recovery'],
+        ['pluginRecovery', 'availability-recovery'],
+    ] as const)('starts without a last-green UI graph in %s: %s and preserves Account admission', async (startupMode, journey) => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-native-declaration-'));
         const manifest = PluginManifestV2Schema.parse(LIMA_MANIFEST);
         expect(manifest.hostAccess.required.some(access => access.capability === 'storage.account')).toBe(false);
         expect(manifest.contributes.accountCollections).toEqual([]);
-        const credentials = { token: 'declaration-account', encryption: null } satisfies StoredCredentials;
+        const credentials = { token: `declaration-account-${startupMode}-${journey}`, encryption: null } satisfies StoredCredentials;
         const events: string[] = [];
         const claims: unknown[] = [];
         const claimsByPlugin = new Map<string, number>();
@@ -103,11 +106,18 @@ describe('daemon release-less declaration publication', () => {
                 readCredentials: async () => credentials, isCurrentAccount: () => true,
                 resolveAccountScopeKey: () => resolveAccountSettingsScopeKey(credentials),
                 resolveBaseUrl: () => 'https://declaration.example.test',
+                resolveAccountEncryptionCurrentness: async () => ({
+                    mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+                    recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
+                }),
                 http: {
                     get: async () => { throw new Error('Declaration publication must not read Account data'); },
                     post: async (url, body) => {
                         expect(url).toBe('https://declaration.example.test/v1/plugins/availability/collection-writers/claim');
                         const claim = JSON.parse(body);
+                        // A cold Home asks for the admitted declaration body
+                        // after the publisher's digest lookup misses.
+                        if (!claim.manifest) return { status: 404, data: { error: 'plugin_declaration_not_found' } };
                         claimsByPlugin.set(claim.manifest.id, (claimsByPlugin.get(claim.manifest.id) ?? 0) + 1);
                         if (claim.manifest.id === manifest.id) { claims.push(claim); events.push('lima-claim'); }
                         return { status: 200, data: {} };
@@ -146,6 +156,9 @@ describe('daemon release-less declaration publication', () => {
                 expect(events.indexOf('lima-claim')).toBeGreaterThan(events.indexOf('materializations'));
             } else expect(claims).toEqual([]);
             await runtime.claimReleaseLessDeclarations();
+            // r1117auto1 published Google as trusted but omitted its declaration,
+            // so the Home refused the exact caller's credential review request.
+            expect(claimsByPlugin.get('happier.voice.google')).toBe(1);
             expect(claimsByPlugin.size).toBeGreaterThan(1);
             expect([...claimsByPlugin.values()]).toEqual(Array.from(claimsByPlugin, () => 1));
             const startupClaims = new Map(claimsByPlugin);
@@ -160,6 +173,7 @@ describe('daemon release-less declaration publication', () => {
                 startupClaims: [...startupClaims.values()].reduce((sum, count) => sum + count, 0),
                 reconnects: 3, additionalClaims: [...claimsByPlugin.values()].reduce((sum, count) => sum + count, 0)
                     - [...startupClaims.values()].reduce((sum, count) => sum + count, 0) }));
+            if (journey === 'declaration-publication') return;
             expect(controller.getState().activeRegistry?.activatedPluginIds.has(manifest.id)).toBe(false);
             const assertServingAvailability = async () => {
                 expect((await owner!.readCatalog()).find(entry => entry.pluginId === manifest.id))
