@@ -54,24 +54,22 @@ export async function readAdmittedRegistryAppUpdateScopeInTx(tx: Tx,
 
 /** A finite read spends its signed scope; these reads select content custody, not fresh permission. */
 export async function readAdmittedDeploymentReadScopeInTx(tx: Tx,
-    admission: Extract<DeploymentReadAdmissionV1, { deploymentId: string }>
+    admission: Readonly<{ environmentId: string; deploymentId: string; targetLinkId?: string }>
         | Extract<DeploymentReadAdmissionV1, { actionId: typeof ACTION_INVOKE_ACTION_ID_V1 }>,
 ): Promise<Readonly<{ artifactContents: readonly DeploymentContentReference[]; managedControllerMachineId?: string }> | null> {
     const select = { contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true } as const;
     const databaseTarget = 'databaseTarget' in admission ? admission.databaseTarget : undefined;
-    if ('action' in admission && databaseTarget?.kind !== 'deployment_service') {
+    if ('action' in admission && databaseTarget?.kind === 'managed_deployment') {
         const environment = await tx.deploymentEnvironment.findFirst({ where: { id: admission.environmentId,
-            ...('expectedRevision' in admission ? { revision: admission.expectedRevision } : {}), deletedAt: null },
+            deletedAt: null },
             select: { ...select, controllerMachineId: true } });
         const links = environment ? await readCurrentManagedDataTargetLinksInTx(tx, { environmentId: admission.environmentId,
             targetLinkIds: [admission.targetLinkId] }) : null;
         if (!environment || !links || !links[0]
-            || 'expectedTargetLinkRevision' in admission && links[0].revision !== admission.expectedTargetLinkRevision
-            || links[0].pluginId !== (databaseTarget?.kind === 'managed_deployment' ? databaseTarget.contribution.pluginId : admission.action.pluginId)) return null;
+            || links[0].pluginId !== databaseTarget.contribution.pluginId) return null;
         const link = await tx.deploymentTargetLink.findFirst({ where: { id: admission.targetLinkId,
             environmentId: admission.environmentId }, select: { ...select, contributionLocalId: true } });
-        if (!link || databaseTarget?.kind === 'managed_deployment'
-            && link.contributionLocalId !== databaseTarget.contribution.contributionId) return null;
+        if (!link || link.contributionLocalId !== databaseTarget.contribution.contributionId) return null;
         return { artifactContents: [environment, link], managedControllerMachineId: environment.controllerMachineId };
     }
     const deploymentId = databaseTarget?.kind === 'deployment_service' ? databaseTarget.deploymentId
@@ -148,7 +146,7 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
         contentHeaderVersion: number; contentBodyVersion: number }>,
     admission: Exclude<DeploymentReadAdmissionV1, { actionId: ProjectReadinessActionIdV1 | typeof ACTION_INVOKE_ACTION_ID_V1 }> | DeploymentRestartNativeAdmissionV1
         | DeploymentRestoreNativeAdmissionV1 | Omit<DeploymentRestoreNativeAdmissionV1, 'expectedRevision'> | DeploymentBackupNativeAdmissionV1
-        | Readonly<{ actionId: typeof ACTION_INVOKE_ACTION_ID_V1; environmentId: string; deploymentId: string;
+        | Readonly<{ actionId: typeof ACTION_INVOKE_ACTION_ID_V1 | typeof deploymentActionIds.DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1; environmentId: string; deploymentId: string;
             targetLinkId: string; machineId: string; installationId: string }>,
     contentAdmission?: Readonly<{ actorAccountId: string; owner: ProjectSourceOwnerV1 }>,
 ): Promise<DeploymentTargetAuthorization> {

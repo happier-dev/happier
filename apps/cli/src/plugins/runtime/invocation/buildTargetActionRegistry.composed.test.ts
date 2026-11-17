@@ -100,6 +100,11 @@ import { managedDataQueryPostgresAvailable, managedQueryEndpoint, managedQueryPr
     managedQueryRolePassword, startManagedQueryPostgres } from './managedDataQueryPostgresql.testkit';
 import * as supabaseEntry from '../../../../../../packages/plugins/deployment-supabase/src/index.js';
 import * as neonEntry from '../../../../../../packages/plugins/deployment-neon/src/index.js';
+import { plugin as databaseWorkbench } from '../../../../../../packages/plugins/database-workbench/src/manifest.js';
+import { DATABASE_STATEMENT_RUN_ACTION_ID_V1, databaseActionLocalIdV1, type DatabaseValueV1 } from '@happier-dev/database-protocol';
+import { createDeploymentDatabasesInvocationServicesForHost } from '@/deployments/targets/createDeploymentDatabasesInvocationServicesForHost';
+import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
+import { DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import * as vercelEntry from '../../../../../../packages/plugins/deploy-vercel/src/index.js';
 import * as cloudflareEntry from '../../../../../../packages/plugins/deploy-cloudflare/src/index.js';
 import { PLUGIN_MANIFEST as VERCEL_ACCOUNT_MANIFEST } from '../../../../../../packages/plugins/machine-vercel/src/manifest.js';
@@ -1509,23 +1514,28 @@ describe('buildTargetActionInvocationRegistry', () => {
                 target?.dispose(); await kit.dispose();
             }
         });
-    it.skipIf(!managedDataQueryPostgresAvailable)('composes Neon read SQL through real P42 role opening and a database-enforced role', async () => {
+    it.skipIf(!managedDataQueryPostgresAvailable)('composes the semantic Neon statement Action through real P42 role opening and a database-enforced role', async () => {
         const postgres = await startManagedQueryPostgres();
         console.info(`[managedDataQuery.postgresql] started owned PostgreSQL PID ${postgres.pid}`);
-        const kit = await createPluginTestkit({ manifest: neonEntry.manifest, module: neonEntry });
+        let kit: Awaited<ReturnType<typeof createPluginTestkit>> | undefined;
+        let databaseKit: Awaited<ReturnType<typeof createPluginTestkit>> | undefined;
         let target: ReturnType<typeof buildRegistry> | undefined;
+        let serviceOwners: ReturnType<typeof createProductionPluginInvocationServiceOwners> | undefined;
         let installation: ReturnType<typeof vi.spyOn> | undefined;
         let home: ReturnType<typeof vi.spyOn> | undefined;
         try {
+            kit = await createPluginTestkit({ manifest: neonEntry.manifest, module: neonEntry });
+            databaseKit = await createPluginTestkit({ manifest: databaseWorkbench.manifest, module: databaseWorkbench });
             const pluginManifest = normalizePluginManifestV2(neonEntry.manifest);
             const pluginId = pluginManifest.id;
-            const localId = 'query-read';
-            const handler = kit.registration('actions', localId);
-            if (!handler) throw new Error('Neon query Action did not activate');
-            const stored = createDeploymentTargetRoleAdmissionFixture('query.readOnly');
+            const localId = databaseActionLocalIdV1(DATABASE_STATEMENT_RUN_ACTION_ID_V1);
+            const handler = databaseKit.registration('actions', localId);
+            const databaseRuntime = kit.registration('deploymentTargets', 'database');
+            if (!handler || !databaseRuntime) throw new Error('Database Action or Neon target runtime did not activate');
+            const stored = createDeploymentTargetRoleAdmissionFixture('branches.list');
             const account = { service: { pluginId, localId: 'neon' }, accountId: 'selected-account' };
             const principal = { kind: 'account' as const, accountId: 'custody-account', purpose: {
-                consumer: { pluginId, localId }, purpose: 'deploy-manage' as const,
+                consumer: { pluginId, localId: 'database' }, purpose: 'deploy-manage' as const,
             }, target: { kind: 'account' as const, account } };
             const providerIdentity = { providerAccountId: 'org', providerResourceId: 'project', providerEnvironment: 'br-main' };
             const providerEnvironment = { kind: 'custom' as const, id: 'br-main' };
@@ -1534,8 +1544,9 @@ describe('buildTargetActionInvocationRegistry', () => {
             selected.targetLink.targetKind = 'neon';
             selected.content = { credentialPrincipal: principal, providerIdentity, providerEnvironment };
             const input = { ...stored.input, credentialRef: account, credentialPrincipal: principal, providerIdentity, providerEnvironment,
-                database: 'neondb', sql: "SELECT $1::text AS duplicate, $1::text AS duplicate, NULL::text AS missing, ''::text AS empty",
-                params: { '1': "quoted'; INSERT INTO query_fixture VALUES ('injected'); --\nvalue" } };
+                database: 'neondb' };
+            const statement = "SELECT $1::text AS duplicate, value AS duplicate, NULL::text AS missing, ''::text AS empty, octet_length($1::text)::text AS length FROM query_fixture";
+            const parameter = "quoted'; INSERT INTO query_fixture VALUES ('injected'); --\nvalue";
             const resourceId = 'managed-read-role';
             stored.state.environment.content = { ...stored.state.environment.content, bindings: [{ purpose: 'dataRole',
                 targetLinkId: input.targetLinkId, role: 'readOnlyPassword', source: {
@@ -1580,23 +1591,60 @@ describe('buildTargetActionInvocationRegistry', () => {
                 }, projectTargetAccounts: unexpected, assertTargetAccountMaterializable: unexpected,
             });
             const requests: HttpRequest[] = [];
-            const owners = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} },
+            const owners = serviceOwners = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} },
                 connectedAccounts: createStablePluginConnectedAccountsHost(owner),
                 http: createStablePluginHttpHost({ purposeHost: createConnectedAccountPluginHttpPurposeHost(owner, { registerRawForRedaction() {} }),
                     adapter: managedQueryProviderHttp(postgres, requests) }),
             });
-            const contributes = registry({ pluginManifest });
-            target = buildRegistry({ ...owners, contributes, executionRealm: 'account',
-                targetActivationFacts: [fact({ pluginId, pluginVersion: pluginManifest.version,
-                    required: [{ family: 'actions', localId }], bound: [{ family: 'actions', localId }] })],
-                targetRegistrations: [{ pluginId, occurrenceId: '7', registration: { family: 'actions', localId, value: handler } }],
-                actionFormConnectedAccounts: owner, readDeploymentTargetRoleAdmissionHost: async () => host,
+            const workbenchManifest = normalizePluginManifestV2(databaseWorkbench.manifest);
+            const workbenchRegistry = registry({ pluginManifest: workbenchManifest });
+            const definition = pluginManifest.contributes.deploymentTargets.find(entry => entry.id === 'database');
+            if (!definition) throw new Error('Neon database contribution is missing');
+            const contributes = createResolvedContributionRegistry({ ...workbenchRegistry,
+                activationTargets: [...workbenchRegistry.activationTargets, activationTarget(pluginManifest)],
+                deploymentTargets: [{ pluginId, identity: { pluginId, localId: definition.id }, definition,
+                    provenance: 'first_party', source: { kind: 'bundled' }, manifestPath: '/fixture/neon/plugin.json',
+                    pluginVersion: pluginManifest.version }],
             });
-            const invoke = (sql: string, params: Record<string, string> = {}) => target!.invoke({ pluginId, localId,
-                input: { ...input, sql, params }, surface: 'cli' });
-            await expect(invoke(input.sql, input.params)).resolves.toMatchObject({ status: 'executed', value: {
-                ok: true, columns: [{ name: 'duplicate' }, { name: 'duplicate' }, { name: 'missing' }, { name: 'empty' }],
-                rows: [[input.params['1'], input.params['1'], null, '']], complete: true,
+            const registrations = [{ pluginId, occurrenceId: '7', registration: {
+                family: 'deploymentTargets' as const, localId: 'database', value: databaseRuntime } }];
+            const createServices = createDeploymentDatabasesInvocationServicesForHost({ contributes,
+                targetRegistrations: registrations,
+                readHost: async () => ({ ...host, readConnectedAccountPurposes: () => ({ owner }) }),
+                readCurrentOccurrenceId: () => '7', createServices: owners.createServices,
+                resolveInvocationHostPolicy: owners.resolveInvocationHostPolicy,
+            });
+            target = buildRegistry({ ...owners, contributes, createServices,
+                // Scope policy and database attachment consume the same stored Environment boundary.
+                resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(async (actionId, readInput, context) => {
+                    expect(actionId).toBe(DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1);
+                    expect(readInput).toEqual({ serverId: input.serverId, environmentId: input.environmentId });
+                    const detail = await host.readEnvironment({ environmentId: input.environmentId, context });
+                    return { ok: true, environment: detail.environment, secretScope: detail.secretScope,
+                        targetLinks: detail.targetLinks.map(entry => entry.targetLink) };
+                }),
+                targetActivationFacts: [fact({ pluginId: workbenchManifest.id, pluginVersion: workbenchManifest.version,
+                    required: [{ family: 'actions', localId }], bound: [{ family: 'actions', localId }] })],
+                targetRegistrations: [{ pluginId: workbenchManifest.id, occurrenceId: '7',
+                    registration: { family: 'actions', localId, value: handler } }],
+            });
+            const databaseTarget = { kind: 'managed_deployment' as const,
+                environment: { serverId: input.serverId, environmentId: input.environmentId,
+                    projectSourceId: stored.state.environment.environment.projectSourceId },
+                targetLinkId: input.targetLinkId, contribution: { pluginId, contributionId: definition.id },
+                platformProjectId: providerIdentity.providerResourceId, branchId: providerIdentity.providerEnvironment,
+                database: input.database };
+            const invoke = (sql: string, parameters: readonly DatabaseValueV1[] = []) => target!.invoke({
+                pluginId: workbenchManifest.id, localId, input: { operation: 'statement.run', target: databaseTarget,
+                    mode: 'read', statement: { sql, parameters } }, surface: 'cli',
+                approvalContext: { ...stored.request.context, authority: 'present_user' },
+            });
+            const statementResult = await invoke(statement, [{ type: 'text', value: parameter }]);
+            expect(statementResult, JSON.stringify(statementResult)).toMatchObject({ status: 'executed', value: {
+                ok: true, results: [{ columns: [{ name: 'duplicate' }, { name: 'duplicate' }, { name: 'missing' }, { name: 'empty' }, { name: 'length' }],
+                    // Canonical SQL parameter confidentiality also protects an echoed value.
+                    rows: [{ cells: [{ type: 'text', value: '[REDACTED]' }, { type: 'text', value: 'original' },
+                        { type: 'null' }, { type: 'text', value: '' }, { type: 'text', value: String(Buffer.byteLength(parameter)) }] }], completeness: { complete: true } }],
             } });
             const sql = requests.filter(request => new URL(request.url).pathname === '/sql');
             expect(sql).toHaveLength(1);
@@ -1616,18 +1664,26 @@ describe('buildTargetActionInvocationRegistry', () => {
                 expect(postgres.run(statement, 'happier_ro', managedQueryRolePassword).status).not.toBe(0);
             }
             for (const statement of ["INSERT INTO query_fixture VALUES ('changed')", 'CREATE TABLE public.should_not_exist(value text)',
-                'SET ROLE postgres', "BEGIN READ WRITE; INSERT INTO query_fixture VALUES ('changed')", 'SELECT 1; SELECT 2']) {
-                await expect(invoke(statement)).resolves.toMatchObject({ status: 'failed', code: 'query_failed' });
+                'SET ROLE postgres']) {
+                await expect(invoke(statement)).resolves.toMatchObject({ status: 'executed', value: {
+                    ok: false, status: 'failed', code: 'database_engine_error', cause: { source: 'engine', code: '42501' },
+                } });
+            }
+            for (const statement of ["BEGIN READ WRITE; INSERT INTO query_fixture VALUES ('changed')", 'SELECT 1; SELECT 2']) {
+                await expect(invoke(statement)).resolves.toMatchObject({ status: 'executed', value: {
+                    ok: false, status: 'failed', code: 'unsupported_action',
+                } });
             }
             expect(postgres.run('SELECT value FROM query_fixture').stdout.trim()).toBe('original');
             expect(postgres.run("SELECT to_regclass('public.should_not_exist')").stdout.trim()).toBe('');
 
             expect(postgres.run('ALTER ROLE happier_ro CREATEROLE', undefined, undefined, 'postgres').status).toBe(0);
             await expect(invoke("SELECT 'caller-must-not-run' AS caller")).resolves.toMatchObject({ status: 'executed', value: {
-                ok: false, error: 'deployment_unavailable', diagnostic: { code: 'read_role_unavailable' },
+                ok: false, status: 'unavailable', code: 'database_transport_unavailable', reason: 'read_role_unavailable',
             } });
         } finally {
-            home?.mockRestore(); installation?.mockRestore(); target?.dispose(); await kit.dispose();
+            home?.mockRestore(); installation?.mockRestore(); target?.dispose(); await databaseKit?.dispose(); await kit?.dispose();
+            await serviceOwners?.dispose();
             await postgres.stop();
             console.info(`[managedDataQuery.postgresql] stopped owned PostgreSQL PID ${postgres.pid}`);
         }

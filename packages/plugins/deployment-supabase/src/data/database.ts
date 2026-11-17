@@ -35,7 +35,7 @@ export const supabaseDatabaseRuntime: DeploymentTargetDatabaseRuntimeV1 = {
       return { descriptor: descriptor(target, placement), connection };
     }
     const transport = await openSupabaseReadOnlyTransport({ ...preparation, database: target.database }, context);
-    if (!transport.ok) throw new PluginError({ code: transport.diagnostic?.code ?? 'database_operation_unavailable' });
+    if (!transport.ok) throw new PluginError({ code: transport.reason });
     const selected = descriptor(target, placement);
     return { descriptor: selected, connection: {
       engine: 'postgresql',

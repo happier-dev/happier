@@ -59,7 +59,6 @@ export function createDeploymentTargetDataV1Schema<TAction extends z.ZodMiniType
             create: z.optional(action), delete: z.optional(action),
             /** Plugin-owned preview operands, evaluated against the occurrence's neutral preview input. */
             previewInput: z.optional(z.record(z.string().check(z.minLength(1)), WorkflowActionFieldBindingV1Schema)) })),
-        query: z.optional(z.strictObject({ readOnly: z.optional(action) })),
         connectionSecret: z.optional(z.strictObject({ save: z.optional(action) })),
     });
 }
@@ -110,7 +109,7 @@ export function isDeploymentTargetRoleReadOnlyV1(role: string): boolean {
     const [group, operation] = role.split('.');
     return operation === undefined ? group === 'inspect' || group === 'observe'
         : operation === 'list' || operation === 'provisionOptions' || operation === 'link' || operation === 'observe'
-            || operation === 'read' || operation === 'verify' || group === 'query' || group === 'logs';
+            || operation === 'read' || operation === 'verify' || group === 'logs';
 }
 
 /** One traversal supplies kind-aware reference admission and normalized catalog projection. */
@@ -171,15 +170,9 @@ export function validateDeploymentTargetContributionsV1(
             if (action.execution.target === 'client' || binding.role === 'uploadDeploy' && action.execution.target !== 'daemon') {
                 context.addIssue({ code: 'custom', path, message: 'Deployment target roles require Account or daemon placement; uploadDeploy requires daemon placement.' });
             }
-            // The query's named string parameters are the canonical typed map;
-            // every custody field and the enclosing input remain exact/closed.
-            const queryInput = binding.role === 'query.readOnly';
             let validInput = false;
             try {
-                validInput = Boolean(action.inputSchema && (queryInput
-                    ? pluginJsonValuesEqual(normalizePluginJsonSchema(action.inputSchema),
-                        normalizePluginJsonSchema(DeploymentTargetRoleInputProtocolSchemasV1['query.readOnly'].jsonSchema))
-                    : isRecursivelyClosedPluginJsonSchemaV2(action.inputSchema)));
+                validInput = Boolean(action.inputSchema && isRecursivelyClosedPluginJsonSchemaV2(action.inputSchema));
             } catch { /* Invalid authored schemas receive the same typed declaration refusal below. */ }
             if (!validInput || !action.resultSchema
                 || !isRecursivelyClosedPluginJsonSchemaV2(action.resultSchema)) {
@@ -211,7 +204,7 @@ export function validateDeploymentTargetContributionsV1(
                     context.addIssue({ code: 'custom', path, message: 'Deployment lifecycle roles require valid canonical schemas.' });
                 }
             }
-            if (!queryInput && (descriptor.role === 'data' || binding.role === 'inspect' || binding.role === 'link')) {
+            if (descriptor.role === 'data' || binding.role === 'inspect' || binding.role === 'link') {
                 try {
                     const declared = action.inputSchema && normalizePluginJsonSchema(action.inputSchema);
                     const role = binding.role as keyof typeof DeploymentTargetRoleInputProtocolSchemasV1;

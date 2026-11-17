@@ -1,7 +1,7 @@
-import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { PluginError, isPluginError, type DeploymentTargetPreparationBaseV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
-import { postgresqlReadOnlyRoleGuardSql, type DeploymentDataQueryUnavailableV1 } from '@happier-dev/deployment-protocol';
+import { postgresqlReadOnlyRoleGuardSql } from '@happier-dev/deployment-protocol';
+import type { DatabaseFailureV1 } from '@happier-dev/database-protocol';
 import { request, record } from './provider.js';
 
 const invalid = (): never => { throw new PluginError({ code: 'provider_response_invalid' }); };
@@ -11,18 +11,17 @@ function records(value: unknown) { return Array.isArray(value) ? value.map(recor
 export async function openNeonReadOnlyTransport(input: DeploymentTargetPreparationBaseV1 & Readonly<{ database: string }>,
   context: PluginAccountActionContext): Promise<Readonly<{ ok: true;
     execute(statement: Readonly<{ sql: string; parameters: readonly JsonValue[] }>, signal?: AbortSignal):
-      Promise<Readonly<{ ok: true; native: Record<string, unknown> }> | DeploymentDataQueryUnavailableV1>;
-  }> | DeploymentDataQueryUnavailableV1> {
+      Promise<Readonly<{ ok: true; native: Record<string, unknown> }> | Extract<DatabaseFailureV1, { status: 'unavailable' }>>;
+  }> | Extract<DatabaseFailureV1, { status: 'unavailable' }>> {
   const http = context.services.http;
-  if (!http) return withActionFailureDiagnostic<DeploymentDataQueryUnavailableV1>({ ok: false, error: 'deployment_unavailable', diagnostic: { code: 'client_required' } }, { phase: 'deployment.neon.client', causeKind: 'client_required' });
+  if (!http) return { ok: false, status: 'unavailable', code: 'database_transport_unavailable', reason: 'client_required' };
   let password: string;
   try {
     if (!context.services.secrets?.readDataRole) throw new PluginError({ code: 'secret_missing' });
     password = await context.services.secrets.readDataRole({ signal: context.signal });
   } catch (error) {
     context.signal.throwIfAborted();
-    if (isPluginError(error) && error.code === 'secret_missing') return withActionFailureDiagnostic<DeploymentDataQueryUnavailableV1>({ ok: false, error: 'deployment_unavailable',
-      diagnostic: { code: 'secret_missing' } }, { phase: 'deployment.neon.read_role', causeKind: 'binding_missing', error });
+    if (isPluginError(error) && error.code === 'secret_missing') return { ok: false, status: 'unavailable', code: 'database_transport_unavailable', reason: 'secret_missing' };
     throw error;
   }
   const project = input.providerIdentity!.providerResourceId;
@@ -34,7 +33,7 @@ export async function openNeonReadOnlyTransport(input: DeploymentTargetPreparati
   ]);
   if (!records(databases.databases).some(database => database.name === input.database && database.branch_id === branch)) return invalid();
   const selected = records(endpoints.endpoints).filter(endpoint => endpoint.type === 'read_write');
-  if (selected.length !== 1) return withActionFailureDiagnostic<DeploymentDataQueryUnavailableV1>({ ok: false, error: 'deployment_unavailable', diagnostic: { code: 'neon_endpoint_unavailable' } }, { phase: 'deployment.neon.endpoint', causeKind: 'not_found' });
+  if (selected.length !== 1) return { ok: false, status: 'unavailable', code: 'database_transport_unavailable', reason: 'neon_endpoint_unavailable' };
   const endpoint = selected[0]!;
   if (endpoint.branch_id !== branch || endpoint.project_id !== project || typeof endpoint.host !== 'string'
     || endpoint.disabled === true) return invalid();
@@ -73,7 +72,7 @@ export async function openNeonReadOnlyTransport(input: DeploymentTargetPreparati
       if (refusal && typeof refusal === 'object' && 'code' in refusal
         && (refusal.code === '28P01' || refusal.code === '28000'
           || refusal.code === '42501' && 'message' in refusal && refusal.message === 'happier_read_role_unavailable')) {
-        return withActionFailureDiagnostic<DeploymentDataQueryUnavailableV1>({ ok: false, error: 'deployment_unavailable', diagnostic: { code: 'read_role_unavailable' } }, { phase: 'deployment.neon.query', causeKind: 'access_denied' });
+        return { ok: false, status: 'unavailable', code: 'database_transport_unavailable', reason: 'read_role_unavailable' };
       }
       if (refusal && typeof refusal === 'object' && 'code' in refusal && typeof refusal.code === 'string'
         && /^[0-9A-Z]{5}$/.test(refusal.code)) {

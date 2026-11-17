@@ -25,14 +25,11 @@ it('publishes the canonical role and preparation contracts through public SDK au
 
 it('preserves an external data capability without authoring runtime Actions', () => {
     const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
-    const read = { title: 'Query', scopes: ['global'], surfaces: ['plugin'],
-        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['query.readOnly'].jsonSchema,
-        resultSchema: closed, dangerLevel: 'safe', readOnly: true, run: async () => ({}) } as const;
     const definition = { role: 'data', title: 'External database', targetKind: 'external', icon: 'server-outline',
-        targetSchema: closed, linkSchema: closed, dataV1: { query: { readOnly: 'query' } } } as const satisfies publicAuthoring.DeploymentTargetAuthorDefinitionV1;
+        targetSchema: closed, linkSchema: closed, dataV1: { database: { engineId: 'postgresql' } } } as const satisfies publicAuthoring.DeploymentTargetAuthorDefinitionV1;
     const plugin = definePlugin({
         id: 'com.example.data-target', version: '1.0.0', displayName: 'External database',
-        actions: { query: read }, deploymentTargets: { database: definition },
+        deploymentTargets: { database: definition },
     });
     const parsed = parsePluginManifest(plugin.manifest);
     expect(parsed.ok, parsed.ok ? undefined : JSON.stringify(parsed.diagnostics)).toBe(true);

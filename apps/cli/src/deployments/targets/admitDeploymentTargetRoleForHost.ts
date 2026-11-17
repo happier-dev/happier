@@ -173,7 +173,6 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
     // A managed query selects a live data link rather than a historical receipt.
     // Its provider/custody path must therefore begin from the exact current
     // Environment and Link, even though the query itself is read-only.
-    const queryReadOnly = matched.some(({ binding }) => binding.role === 'query.readOnly');
     const input = matched[0]!.input;
     const actionId = formatQualifiedPluginActionId({ pluginId: request.pluginId, localId: request.localId });
     const reviewed = readHostReviewedChildOperationV1(request.context, actionId, request.input);
@@ -248,7 +247,7 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
     const detail = await readDeploymentTargetEnvironmentForHost({ serverId: input.serverId, environmentId: input.environmentId,
         ...(input.targetLinkId ? { targetLinkId: input.targetLinkId } : {}), context: request.context }, host);
     const environment = detail.environment;
-    if ((mutating || queryReadOnly) && environment.revision !== input.expectedRevision) return refuse('deployment_conflict');
+    if (mutating && environment.revision !== input.expectedRevision) return refuse('deployment_conflict');
     let candidates = matched;
     let executionEnvironment: Readonly<{ phase: 'runtime'; machineId: string; installationId: string }> | undefined;
     if (input.targetLinkId) {
@@ -258,7 +257,7 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
             && link.source.contribution.pluginId === request.pluginId && link.source.contribution.localId === binding.targetLocalId
             && link.targetKind === binding.targetKind);
         if (!candidates.length) return refuse('target_mismatch', 'deployment.target.admission.link_identity');
-        if ((mutating || queryReadOnly) && link.revision !== input.expectedTargetLinkRevision) return refuse('deployment_conflict');
+        if (mutating && link.revision !== input.expectedTargetLinkRevision) return refuse('deployment_conflict');
         if (retained && (link.source.contribution.pluginId !== retained.source.pluginId
             || link.source.contribution.localId !== retained.source.localId
             || !isDeepStrictEqual(retained.deleteAction, { pluginId: request.pluginId, localId: request.localId })

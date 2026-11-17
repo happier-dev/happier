@@ -174,7 +174,6 @@ import { resolveDeploymentDefinitionRoleForHost, admitUseDeploymentDefinition, a
 import { createDeploymentRestartActionForHost } from './actions/restart';
 import { createDeploymentDataSizeActionForHost } from './actions/dataSize';
 import { isDeploymentDataSizeActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { createDeploymentDataQueryActionForHost } from './actions/dataQuery';
 import { admitPreviewEnvironmentForHost, preparePreviewForkEligibilityForHost } from './previewAdmissionForHost';
 
 type AdmittedTemplateSource = Readonly<{ id: string; revision: number }>;
@@ -1864,12 +1863,6 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
                 if (!parsed.success) return failure('invalid_parameters');
                 return createDeploymentDataSizeActionForHost({ ...targetHost, assertCurrent: assertHttpAuthority,
-                    ensureServiceObservations: host.ensureServiceObservations })(parsed.data, context);
-            }
-            if (actionId === 'deployments.data.query') {
-                const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
-                if (!parsed.success) return failure('invalid_parameters');
-                return createDeploymentDataQueryActionForHost({ ...targetHost, assertCurrent: assertHttpAuthority,
                     ensureServiceObservations: host.ensureServiceObservations })(parsed.data, context);
             }
             if (actionId === 'deployments.environments.update' || (actionId === 'deployments.environments.create'

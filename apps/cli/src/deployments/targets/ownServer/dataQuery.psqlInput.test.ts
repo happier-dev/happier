@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
-import * as query from './dataQuery';
+import * as query from './postgresqlInput';
 
 async function* bytes(sql: string) {
     // Deliberately split every UTF-8 code point, quote, comment and dollar tag.

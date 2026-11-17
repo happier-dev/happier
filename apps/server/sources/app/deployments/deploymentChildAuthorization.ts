@@ -95,8 +95,7 @@ export async function readDeploymentChildAdmissionInTx(tx: Tx, binding: External
         // membership is read here; requester permission is not admitted again.
         if (admittedReadContinuation) {
             const scope = await readAdmittedDeploymentReadScopeInTx(tx, {
-                actionId: deploymentActionIds.DEPLOYMENT_DATA_QUERY_ACTION_ID_V1, ...routing.input, targetLinkId: routing.targetLinkId,
-                deploymentId: routing.deploymentId, machineId: routing.machineId, installationId: routing.installationId,
+                environmentId: routing.input.environmentId, targetLinkId: routing.targetLinkId, deploymentId: routing.deploymentId,
             });
             return scope ? { binding, routing, dataRoleArtifactContents: [
                 ...scope.artifactContents, ...(routing.candidateContent ? [routing.candidateContent] : []),
@@ -110,8 +109,8 @@ export async function readDeploymentChildAdmissionInTx(tx: Tx, binding: External
             return projectDeploymentControllerPlacementFailure(loaded.row.controllerMachineId);
         }
         const selected = await readDeploymentTargetAuthorizationInTx(tx, loaded.row, {
-            actionId: deploymentActionIds.DEPLOYMENT_DATA_QUERY_ACTION_ID_V1, environmentId: routing.input.environmentId,
-            expectedRevision: routing.input.expectedRevision, deploymentId: routing.deploymentId,
+            actionId: deploymentActionIds.DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, environmentId: routing.input.environmentId,
+            deploymentId: routing.deploymentId,
             targetLinkId: routing.targetLinkId, machineId: routing.machineId, installationId: routing.installationId });
         if (!selected?.ok || await admitDeploymentMachinesInTx(tx, loaded.admission.owner, [
             { machineId: binding.machineId, installationId: binding.installationId, role: 'controller' },

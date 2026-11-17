@@ -47,7 +47,7 @@ export function registerEnvironmentSecretLaunchAdmissionRoute(app: Fastify): voi
         const binding = readDeploymentExecutionBindingFromRequest(request);
         const native = binding?.deploymentNativeAdmission;
         const readAdmission = binding?.deploymentReadAdmission;
-        const admittedDataQuery = readAdmission?.actionId === 'deployments.data.query' || readAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1
+        const admittedDataQuery = readAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1
             || readAdmission?.actionId === DEPLOYMENT_DATA_SIZE_ACTION_ID_V1
             ? readAdmission : undefined;
         const admittedBackup = native && 'kind' in native && (native.kind === 'restore' || native.kind === 'backup') ? native : undefined;

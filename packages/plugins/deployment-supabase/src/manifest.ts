@@ -5,7 +5,6 @@ import { SUPABASE_OAUTH_SCOPES } from './connectedAccounts/oauth.js';
 import { accountExecution, dataActions } from './data/actions.js';
 import { actionResource } from './data/resources.js';
 import { dataInputResources, dataInputTypes } from './data/inputs.js';
-import { queryAction } from './data/query.js';
 import { supabaseDatabaseRuntime } from './data/database.js';
 
 const empty = { type: 'object', properties: {}, additionalProperties: false } as const;
@@ -51,13 +50,13 @@ export const plugin = definePlugin({
         ] },
       }] } }, runtime: supabaseConnectedAccountRuntime, accountRuntime: supabasePortableRuntime,
   } },
-  actions: { ...dataActions, 'query-read': queryAction },
+  actions: dataActions,
   inputTypes: dataInputTypes,
   // Supabase's mark beside its name: Simple Icons 13.21.0 (CC0-1.0), brand green #3FCF8E.
   brand: { iconResourceId: 'brand-icon' },
   resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' }, ...dataInputResources, 'projects-list-resource': resource('projects-list'), 'provision-options-resource': resource('provision-options'), 'branches-list-resource': resource('branches-list') },
   deploymentTargets: { database: { role: 'data', title: 'Supabase', icon: 'server-outline', targetKind: 'supabase', targetSchema: empty, linkSchema: empty,
-    dataV1: { database: { engineId: 'postgresql', runtime: supabaseDatabaseRuntime }, query: { readOnly: 'query-read' }, projects: { list: 'projects-list-resource', listAction: 'projects-list', provisionOptions: 'provision-options-resource', provisionOptionsAction: 'provision-options', provision: 'projects-provision', link: 'projects-link', delete: 'projects-delete', observe: 'projects-observe' },
+    dataV1: { database: { engineId: 'postgresql', runtime: supabaseDatabaseRuntime }, projects: { list: 'projects-list-resource', listAction: 'projects-list', provisionOptions: 'provision-options-resource', provisionOptionsAction: 'provision-options', provision: 'projects-provision', link: 'projects-link', delete: 'projects-delete', observe: 'projects-observe' },
       branches: { list: 'branches-list-resource', listAction: 'branches-list', create: 'branches-create', delete: 'branches-delete',
         previewInput: { name: { kind: 'input', name: 'preview', path: ['name'] },
           gitBranch: { kind: 'input', name: 'preview', path: ['headRef'] }, withData: { kind: 'literal', value: false } } }, connectionSecret: { save: 'connections-save' } },

@@ -59,10 +59,8 @@ import { PluginError, isPluginError } from '@happier-dev/plugin-sdk';
 import { createAccountInvocationContext } from './createAccountInvocationContext';
 import { readPluginActionInputParser, readPluginActionReadObserver, readPluginActionResultParser } from '@happier-dev/cli-common/plugins/registration/actionInputParser';
 import { admitDeploymentTargetRoleForHost, type DeploymentTargetRoleAdmissionHost } from '@/deployments/targets/admitDeploymentTargetRoleForHost';
-import { createManagedDataRoleSecretReaderForHost } from '@/deployments/secrets/createManagedDataRoleSecretReaderForHost';
 import { admitDeploymentTargetCredentialPrincipalForHost } from '@/deployments/targets/admitDeploymentTargetCredentialPrincipalForHost';
 import { DeploymentTargetCredentialPrincipalV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
-import type { DeploymentTargetDataQueryInputV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { resolveRegistryConnectedAccountActionCredentialPurposeAuthorization } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
 import { createDeploymentTargetRoleSourceAdmissionForHost } from '@/deployments/targets/createDeploymentTargetRoleAdmissionHost';
@@ -405,7 +403,6 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             let admittedPurposeRuntime: ReturnType<typeof import('@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime').createDaemonConnectedAccountPurposeBindingRuntime> | undefined;
             let deploymentSource: PluginInvocationServicesSeed['deploymentSource'];
             let managedWorkloads: PluginInvocationServicesSeed['managedWorkloads'];
-            let readDataRole: PluginInvocationServicesSeed['readDataRole'];
             if (roles?.length) {
                 const unavailable = (code = 'deployment_target_role_unavailable') => ({ status: 'unavailable' as const, code, message: code });
                 const context = { ...input.approvalContext, signal: input.signal };
@@ -428,14 +425,6 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                     }
                     admittedPurposeRuntime = host.readConnectedAccountPurposes?.() ?? undefined;
                     if (admittedTeamPrincipal && !admittedPurposeRuntime) return unavailable();
-                    if (admitted.role === 'query.readOnly') {
-                        if (!('environment' in admitted)) return unavailable('deployment_invalid');
-                        // Role admission already parsed and authorized the exact role input.
-                        // This is type-only narrowing for its host-private SDK capability.
-                        const query = admitted.input as DeploymentTargetDataQueryInputV1;
-                        readDataRole = createManagedDataRoleSecretReaderForHost({ host, environment: admitted.environment,
-                            query, context });
-                    }
                     if (executionTarget === 'daemon' && params.ensureEnvironmentServices) {
                         managedWorkloads = createDeploymentTargetRoleWorkloadBindingForHost({ admission: admitted, host, context,
                             ensureEnvironmentServices: params.ensureEnvironmentServices,
@@ -544,15 +533,14 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                 isCurrent: input.isCurrent,
             });
             if (revalidation) return revalidation;
-            return admittedPurposeTarget || admittedTeamPrincipal || managedWorkloads || readDataRole
+            return admittedPurposeTarget || admittedTeamPrincipal || managedWorkloads
                 ? { status: 'admitted' as const,
                     ...(admittedPurposeTarget ? { connectedAccountPurposeTarget: admittedPurposeTarget } : {}),
                     ...(admittedTeamPrincipal ? { connectedAccountTeamPrincipal: admittedTeamPrincipal } : {}),
                     ...(admittedPurposeRuntime ? { connectedAccountPurposeRuntime: admittedPurposeRuntime } : {}),
                     ...(admittedPlatformOperation ? { connectedAccountPlatformOperation: admittedPlatformOperation } : {}),
                     ...(deploymentSource ? { deploymentSource } : {}),
-                    ...(managedWorkloads ? { managedWorkloads } : {}),
-                    ...(readDataRole ? { readDataRole } : {}) } : null;
+                    ...(managedWorkloads ? { managedWorkloads } : {}) } : null;
         },
         bindConnectedAccountActionOperation: async (input) => {
             const actionFormConnectedAccounts = input.admittedPurposeRuntime ?? params.actionFormConnectedAccounts;

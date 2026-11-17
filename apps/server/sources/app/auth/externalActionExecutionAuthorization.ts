@@ -2807,7 +2807,7 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
     proof: ExternalActionExecutionRequestProof): Promise<Pick<VerifiedExternalActionExecutionRequest,
         'acceptedDeploymentReceipt' | 'deploymentChildArtifactRead'> | false> {
     const admission = verified.binding.deploymentReadAdmission;
-    if (admission?.actionId !== 'deployments.data.query' && admission?.actionId !== ACTION_INVOKE_ACTION_ID_V1
+    if (admission?.actionId !== ACTION_INVOKE_ACTION_ID_V1
         && admission?.actionId !== DEPLOYMENT_DATA_SIZE_ACTION_ID_V1) return false;
     if (verified.effectActionId === admission.actionId && proof.method.toUpperCase() === 'POST'
         && proof.path === `/v1/deployments/environments/${encodeURIComponent(admission.environmentId)}/secret-launch-admission`) {
@@ -2826,15 +2826,6 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
                 ? !('targetLinkId' in materialization) && materialization.deploymentId === target.deploymentId
                     && materialization.service === target.serviceId ? {} : false
                 : 'targetLinkId' in materialization && materialization.targetLinkId === target.targetLinkId ? {} : false;
-        }
-        if (admission.actionId === ACTION_INVOKE_ACTION_ID_V1) {
-            if (!('targetLinkId' in materialization)) return false;
-            if (body.serverId !== verified.binding.serverIdentityId || body.environmentId !== admission.environmentId
-                || body.targetLinkId !== admission.targetLinkId || materialization.targetLinkId !== admission.targetLinkId
-                || materialization.expectedRevision !== admission.expectedRevision || body.machineId !== verified.binding.machineId
-                || body.installationId !== verified.binding.installationId
-                || (proof.routeInput !== undefined && !sameManagedInput(proof.routeInput, body))) return false;
-            return {};
         }
         if ('targetLinkId' in materialization) return false;
         return body.serverId === verified.binding.serverIdentityId && body.environmentId === admission.environmentId
@@ -3950,7 +3941,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         // Restart consumes its native handle, not Environment, receipt or Artifact
         // content. Only transport of the exact admitted root/codec remains.
         if (!isAdmittedRootRelay && !readsExecutionMachine) return refuse('deployment_restart_purpose');
-    } else if (verified.binding.actionId === 'deployments.data.query' || verified.binding.actionId === DEPLOYMENT_DATA_SIZE_ACTION_ID_V1
+    } else if (verified.binding.actionId === DEPLOYMENT_DATA_SIZE_ACTION_ID_V1
         || verified.binding.actionId === ACTION_INVOKE_ACTION_ID_V1 && verified.binding.deploymentReadAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1) {
         if (!isAdmittedRootRelay && !readsExecutionMachine) {
             const purpose = await readDeploymentDataQueryHttpPurpose(verified, proof);

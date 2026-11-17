@@ -53,18 +53,28 @@ import { seedTestServerProfile } from '../../../../cli/src/testkit/serverProfile
 import { reloadConfiguration } from '../../../../cli/src/configuration';
 import { readOrCreateInstallationIdentitySync } from '../../../../cli/src/daemon/identity/store';
 import { createDeploymentTargetRoleAdmissionHost } from '../../../../cli/src/deployments/targets/createDeploymentTargetRoleAdmissionHost';
-import { createManagedDataRoleSecretReaderForHost } from '../../../../cli/src/deployments/secrets/createManagedDataRoleSecretReaderForHost';
 import { sealMachineSecretGrant } from '../../../../cli/src/deployments/secrets/machineSecretGrant';
-import { createDeclaredPluginSecretsService } from '../../../../cli/src/plugins/runtime/context/secrets';
 import { admitRequesterAccountActionContext } from '../../../../cli/src/daemon/sessionEncryption/requesterAccountActionProjection';
 import { projectExternalActionRequesterHttpAuthorization } from '../../../../cli/src/api/externalActionExecutionAuthorization';
 import { managedDataQueryPostgresAvailable, managedQueryProviderHttp, managedQueryRolePassword,
     startManagedQueryPostgres } from '../../../../cli/src/plugins/runtime/invocation/managedDataQueryPostgresql.testkit';
-import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { createConnectedAccountPurposeBindingOwner } from '../../../../cli/src/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { createPurposeTargetResolver } from '../../../../cli/src/daemon/connectedServices/purposeBindings/resolveTarget';
+import { createProductionPluginInvocationServiceOwners } from '../../../../cli/src/plugins/runtime/invocation/services/production';
+import { createStablePluginHttpHost } from '../../../../cli/src/plugins/runtime/fetch/service';
+import { createConnectedAccountPluginHttpPurposeHost } from '../../../../cli/src/plugins/runtime/fetch/connectedAccountPurpose';
+import { createDeploymentDatabasesInvocationServicesForHost } from '../../../../cli/src/deployments/targets/createDeploymentDatabasesInvocationServicesForHost';
+import { normalizePluginManifestV2 } from '../../../../cli/src/plugins/manifest/normalize';
+import type { PluginInvocationServicesSeed } from '../../../../cli/src/plugins/runtime/invocation/services/types';
+import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
+import { neonDatabaseRuntime } from '../../../../../packages/plugins/deployment-neon/src/data/database';
+import { plugin as databaseWorkbench } from '../../../../../packages/plugins/database-workbench/src/manifest';
 import * as neonEntry from '../../../../../packages/plugins/deployment-neon/src/index.js';
 
 describe('private installed Environment secret launch transport', () => {
@@ -225,11 +235,14 @@ describe('private installed Environment secret launch transport', () => {
         const content = await f.artifact('deployment-receipt.v1');
         const other = await db.deployment.create({ data: { ...receipt, id: crypto.randomUUID(),
             requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), ...content } });
-        const admission = projectDeploymentReadAdmissionV1('deployments.data.query', { serverId,
-            environmentId: row.id, expectedRevision: row.revision, targetLinkId: receipt.targetLinkId,
-            deploymentId: receipt.id, machineId: f.payload.machineId,
-            installationId: f.payload.installationId, service: 'postgres', sql: 'SELECT 1', params: {} });
-        const binding = { ...f.authorization.binding, actionId: 'deployments.data.query',
+        const action = parseQualifiedPluginActionId(DATABASE_STATEMENT_RUN_ACTION_ID_V1);
+        if (!action) throw new Error('Expected the canonical database Action identity');
+        const admission = projectDeploymentReadAdmissionV1('action.invoke', { action, input: {
+            operation: 'statement.run', mode: 'read', target: { kind: 'deployment_service',
+                environment: { serverId, projectSourceId: row.projectSourceId, environmentId: row.id },
+                deploymentId: receipt.id, targetLinkId: receipt.targetLinkId, serviceId: 'postgres', database: 'postgres' },
+            statement: { sql: 'SELECT 1', parameters: [] } } });
+        const binding = { ...f.authorization.binding, actionId: 'action.invoke',
             deploymentNativeAdmission: undefined, deploymentReadAdmission: admission };
         for (const [deploymentId, expected] of [[receipt.id, true], [other.id, false]] as const) {
             expect(await isDeploymentReadOperandInAdmittedScopeInTx(db, binding,
@@ -471,7 +484,7 @@ describe('private installed Environment secret launch transport', () => {
             .toMatchObject({ ok: true, grants: [fixture.grant] });
     });
 
-    it.each([false, true])('delivers a managed data-role grant through its exact signed scope (semantic=%s)', async semantic => {
+    it('delivers a managed data-role grant through its exact signed semantic scope', async () => {
         const f = await admittedTeamDelivery('plain', true, undefined, 'plugin');
         await db.teamMembership.update({ where: { teamId_accountId: { teamId: f.team.id, accountId: f.requester.id } },
             data: { role: 'member' } });
@@ -488,14 +501,6 @@ describe('private installed Environment secret launch transport', () => {
         if (!data.ok) throw new Error(data.error);
         const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
         const link = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: data.targetLinkId } });
-        const credentialRef = { service: { pluginId: action.pluginId, localId: 'connection' }, accountId: 'connected' };
-        const query = { v: 1 as const, serverId, environmentId: row.id, expectedRevision: row.revision,
-            targetLinkId: link.id, expectedTargetLinkRevision: link.revision, credentialRef,
-            credentialPrincipal: { kind: 'account' as const, accountId: f.owner.id, purpose: {
-                consumer: action, purpose: 'deploy-manage' as const,
-            }, target: { kind: 'account' as const, account: credentialRef } },
-            providerIdentity: { providerAccountId: 'org', providerResourceId: 'project', providerEnvironment: 'branch' },
-            providerEnvironment: { kind: 'custom' as const, id: 'branch' }, database: 'managed', sql: 'SELECT 1', params: {} };
         const target = { kind: 'machine' as const, machineId: f.controller.machineId };
         const semanticAction = parseQualifiedPluginActionId(DATABASE_STATEMENT_RUN_ACTION_ID_V1);
         if (!semanticAction) throw new Error('The canonical database Action has a qualified identity');
@@ -506,7 +511,7 @@ describe('private installed Environment secret launch transport', () => {
         const semanticInput = { action: semanticAction, input: { operation: 'statement.run', mode: 'read',
             target: databaseTarget, statement: { sql: 'SELECT 1', parameters: [] } } };
         const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target,
-            input: semantic ? semanticInput : { action, input: query } };
+            input: semanticInput };
         const authorization = await auth.mintExternalActionExecutionAuthorization({ accountId: f.requester.id,
             serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.requester.tokenEpoch },
             actionId: 'action.invoke', machineId: f.controller.machineId, target, requestId: envelope.requestId,
@@ -534,41 +539,37 @@ describe('private installed Environment secret launch transport', () => {
             const result = await launch(body);
             expect(result.statusCode, result.body).toBe(200);
             expect(result.json()).toEqual({ ok: true, grants: [grant] });
-            if (semantic) {
-                const writeBody = { ...body, materialization: { ...body.materialization, role: 'write' as const } };
-                const refused = await launch(writeBody);
-                expect(refused.statusCode, refused.body).toBe(401);
-                const writeEnvelope = { ...envelope, requestId: crypto.randomUUID(), input: { action: semanticAction,
-                    input: { operation: 'statement.run', mode: 'write', target: databaseTarget,
-                        executionMode: 'transaction', statements: [{ sql: 'UPDATE selected SET value=$1',
-                            parameters: [{ type: 'text', value: 'private-write-value' }] }] } } };
-                const writeAuthorization = await auth.mintExternalActionExecutionAuthorization({ accountId: f.requester.id,
-                    serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.requester.tokenEpoch },
-                    actionId: 'action.invoke', machineId: f.controller.machineId, target, requestId: writeEnvelope.requestId,
-                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(writeEnvelope),
-                    deploymentReadAdmission: projectDeploymentReadAdmissionV1('action.invoke', writeEnvelope.input) });
-                const delivered = await launch(writeBody, f.controller.keys.secretKey, writeAuthorization.token, writeEnvelope.requestId);
-                expect(delivered.statusCode, delivered.body).toBe(200);
-                expect(delivered.json()).toEqual({ ok: true, grants: [grant] });
-                expect(JSON.stringify(projectDeploymentReadAdmissionV1('action.invoke', writeEnvelope.input)))
-                    .not.toContain('private-write-value');
-            }
+            const writeBody = { ...body, materialization: { ...body.materialization, role: 'write' as const } };
+            const refused = await launch(writeBody);
+            expect(refused.statusCode, refused.body).toBe(401);
+            const writeEnvelope = { ...envelope, requestId: crypto.randomUUID(), input: { action: semanticAction,
+                input: { operation: 'statement.run', mode: 'write', target: databaseTarget,
+                    executionMode: 'transaction', statements: [{ sql: 'UPDATE selected SET value=$1',
+                        parameters: [{ type: 'text', value: 'private-write-value' }] }] } } };
+            const writeAuthorization = await auth.mintExternalActionExecutionAuthorization({ accountId: f.requester.id,
+                serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.requester.tokenEpoch },
+                actionId: 'action.invoke', machineId: f.controller.machineId, target, requestId: writeEnvelope.requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(writeEnvelope),
+                deploymentReadAdmission: projectDeploymentReadAdmissionV1('action.invoke', writeEnvelope.input) });
+            const delivered = await launch(writeBody, f.controller.keys.secretKey, writeAuthorization.token, writeEnvelope.requestId);
+            expect(delivered.statusCode, delivered.body).toBe(200);
+            expect(delivered.json()).toEqual({ ok: true, grants: [grant] });
+            expect(JSON.stringify(projectDeploymentReadAdmissionV1('action.invoke', writeEnvelope.input)))
+                .not.toContain('private-write-value');
+
             const crossArm = await launch({ ...body, materialization: { kind: 'dataRole', expectedRevision: row.revision,
                 deploymentId: f.receipt.deploymentId, service: 'neon' } });
             expect(crossArm.statusCode, crossArm.body).toBe(401);
             const wrongController = await launch({ ...body, machineId: f.payload.machineId, installationId: f.payload.installationId }, f.keys.secretKey);
             expect(wrongController.statusCode, wrongController.body).toBe(401);
-            await db.deploymentTargetLink.update({ where: { id: link.id }, data: semantic
-                ? { detachedAt: new Date() } : { revision: { increment: 1 } } });
+            await db.deploymentTargetLink.update({ where: { id: link.id }, data: { detachedAt: new Date() } });
             const stale = await launch(body);
             expect(stale.statusCode, stale.body).toBe(403);
             expect(stale.json()).toEqual({ ok: false, error: 'deployment_access_denied' });
         }, { authentication: 'real' });
-        if (semantic) await db.deploymentTargetLink.update({ where: { id: link.id }, data: { detachedAt: null } });
-        const mismatchEnvelope = { ...envelope, requestId: crypto.randomUUID(), input: semantic
-            ? { ...semanticInput, input: { ...semanticInput.input, target: { ...databaseTarget,
-                contribution: { ...databaseTarget.contribution, pluginId: 'other.plugin' } } } }
-            : { action: { pluginId: 'other.plugin', localId: action.localId }, input: query } };
+        await db.deploymentTargetLink.update({ where: { id: link.id }, data: { detachedAt: null } });
+        const mismatchEnvelope = { ...envelope, requestId: crypto.randomUUID(), input: { ...semanticInput, input: { ...semanticInput.input, target: { ...databaseTarget,
+                contribution: { ...databaseTarget.contribution, pluginId: 'other.plugin' } } } } };
         await expect(auth.mintExternalActionExecutionAuthorization({ accountId: f.requester.id, serverIdentityId: serverId,
             authentication: { kind: 'account', tokenEpoch: f.requester.tokenEpoch }, actionId: 'action.invoke',
             machineId: f.controller.machineId, target, requestId: mismatchEnvelope.requestId,
@@ -583,7 +584,7 @@ describe('private installed Environment secret launch transport', () => {
             deploymentReadAdmission: projectDeploymentReadAdmissionV1('action.invoke', withdrawnEnvelope.input) })).rejects.toMatchObject({ code: 'credential_scope_denied' });
     });
 
-    it.skipIf(!managedDataQueryPostgresAvailable)('composes Neon data query through a real Home socket, installed P42 identity and database role', async () => {
+    it.skipIf(!managedDataQueryPostgresAvailable)('composes semantic Neon statements through a real Home socket, installed P42 identity and database role', async () => {
         await withTempDir('happier-managed-query-home-', async homeDir => {
             const environment = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL']);
             const lifetime = new AbortController();
@@ -591,6 +592,7 @@ describe('private installed Environment secret launch transport', () => {
             const sockets = new SocketServer(app.server, { path: '/v1/updates' });
             let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> | undefined;
             let kit: Awaited<ReturnType<typeof createPluginTestkit>> | undefined;
+            let serviceOwners: ReturnType<typeof createProductionPluginInvocationServiceOwners> | undefined;
             let postgres: Awaited<ReturnType<typeof startManagedQueryPostgres>> | undefined;
             try {
                 environment.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: serverId });
@@ -610,11 +612,22 @@ describe('private installed Environment secret launch transport', () => {
                     installationId: installation.installationId, installationPublicKey,
                 } });
                 const runtime = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
-                const action = { pluginId: neonEntry.manifest.id, localId: 'query-read' };
-                const targetContent = await f.artifact('deployment-target-link.v1');
+                const pluginManifest = normalizePluginManifestV2(neonEntry.manifest);
+                const pluginId = pluginManifest.id;
+                const action = parseQualifiedPluginActionId(DATABASE_STATEMENT_RUN_ACTION_ID_V1);
+                if (!action) throw new Error('Expected the canonical database Action identity');
+                const credentialRef = { service: { pluginId, localId: 'neon' }, accountId: 'connected' };
+                // The selected Connected Account belongs to the Link's author.
+                const credentialPrincipal = { kind: 'account' as const, accountId: f.owner.id, purpose: {
+                    consumer: { pluginId, localId: 'database' }, purpose: 'deploy-manage' as const,
+                }, target: { kind: 'account' as const, account: credentialRef } };
+                const providerIdentity = { providerAccountId: 'org', providerResourceId: 'project', providerEnvironment: 'br-main' };
+                const providerEnvironment = { kind: 'custom' as const, id: 'br-main' };
+                const targetContent = await f.artifact('deployment-target-link.v1', {
+                    credentialPrincipal, providerIdentity, providerEnvironment });
                 const data = await inTx(tx => linkDeploymentTargetInTx(tx, f.owner.id, { serverId,
                     environmentId: runtime.id, expectedRevision: runtime.revision,
-                    source: { kind: 'plugin', contribution: { pluginId: action.pluginId, localId: 'database' } },
+                    source: { kind: 'plugin', contribution: { pluginId, localId: 'database' } },
                     targetKind: 'neon', machineId: f.controller.machineId, installationId: installation.installationId, machines: [],
                     role: 'data', requestKey: crypto.randomUUID(), ...targetContent }));
                 if (!data.ok) throw new Error(data.error);
@@ -633,23 +646,20 @@ describe('private installed Environment secret launch transport', () => {
                     referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(definition.bindings) }));
                 if (!bound.ok) throw new Error(bound.error);
                 const current = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: row.id } });
-                const credentialRef = { service: { pluginId: action.pluginId, localId: 'neon' }, accountId: 'connected' };
-                const query = { v: 1 as const, serverId, environmentId: current.id, expectedRevision: current.revision,
-                    targetLinkId: link.id, expectedTargetLinkRevision: link.revision, credentialRef,
-                    credentialPrincipal: { kind: 'account' as const, accountId: f.owner.id, purpose: {
-                        consumer: action, purpose: 'deploy-manage' as const,
-                    }, target: { kind: 'account' as const, account: credentialRef } },
-                    providerIdentity: { providerAccountId: 'org', providerResourceId: 'project', providerEnvironment: 'br-main' },
-                    providerEnvironment: { kind: 'custom' as const, id: 'br-main' }, database: 'neondb',
-                    sql: 'SELECT value FROM query_fixture', params: {} };
+                const databaseTarget = { kind: 'managed_deployment' as const,
+                    environment: { serverId, projectSourceId: current.projectSourceId, environmentId: current.id },
+                    targetLinkId: link.id, contribution: { pluginId, contributionId: 'database' },
+                    platformProjectId: 'project', branchId: 'br-main', database: 'neondb' };
+                const query = { operation: 'statement.run' as const, mode: 'read' as const, target: databaseTarget,
+                    statement: { sql: 'SELECT value FROM query_fixture', parameters: [] } };
                 const target = { kind: 'machine' as const, machineId: f.controller.machineId };
                 const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: { action, input: query } };
-                const authorization = await auth.mintExternalActionExecutionAuthorization({ accountId: f.requester.id,
-                    serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.requester.tokenEpoch },
+                const authorization = await auth.mintExternalActionExecutionAuthorization({ accountId: f.owner.id,
+                    serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.owner.tokenEpoch },
                     actionId: 'action.invoke', machineId: f.controller.machineId, target, requestId: envelope.requestId,
                     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
                     deploymentReadAdmission: projectDeploymentReadAdmissionV1('action.invoke', envelope.input) });
-                const token = await auth.createToken(f.requester.id, undefined, { kind: 'account', authority: 'present_user' });
+                const token = await auth.createToken(f.owner.id, undefined, { kind: 'account', authority: 'present_user' });
                 requester = await admitRequesterAccountActionContext({ authorization, credentials: { token, encryption: null },
                     serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin,
                     isCurrent: async () => !lifetime.signal.aborted, isCustodyCurrent: async () => !lifetime.signal.aborted,
@@ -665,25 +675,62 @@ describe('private installed Environment secret launch transport', () => {
                 const host = await createDeploymentTargetRoleAdmissionHost(context, { readCurrentMachineId: () => f.controller.machineId,
                     resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
                 if (!host) throw new Error('Expected real deployment query host');
-                const admittedEnvironment = await host.readEnvironment({ environmentId: current.id, targetLinkId: link.id, context });
-                const readDataRole = createManagedDataRoleSecretReaderForHost({ host, environment: admittedEnvironment, query, context });
-                const secrets = createDeclaredPluginSecretsService({ pluginId: action.pluginId, declarations: [],
-                    resolveCustody: () => null, signal: lifetime.signal, isOccurrenceCurrent: () => true,
-                    registerRawForRedaction: () => {}, readDataRole });
                 postgres = await startManagedQueryPostgres();
                 console.info(`[managedDataQuery.real-home] started owned PostgreSQL PID ${postgres.pid}`);
+                const revision = 'csr_abcdefghijklmnopqrstuv';
+                const profile = QualifiedConnectedAccountProfileV4Schema.parse({ ref: credentialRef, status: 'connected',
+                    authenticationModeId: 'token', revisionSemantics: 'revisioned', credentialRevision: revision,
+                    configurationReady: true, configurationRevision: null, kind: 'token', expiresAt: null,
+                    displayName: 'Selected Neon Account', scopes: [] });
+                const descriptor = pluginManifest.contributes.connectedAccountDescriptors.find(entry => entry.id === 'neon');
+                const targetDefinition = pluginManifest.contributes.deploymentTargets.find(entry => entry.id === 'database');
+                if (!descriptor || !targetDefinition) throw new Error('Expected the declared Neon database and Connected Account');
+                const unexpected = async (): Promise<never> => { throw new Error('An admitted statement cannot select or write Accounts'); };
+                // Connected Account storage and provider HTTP are external boundaries;
+                // Home signatures, selected-target admission and installed P42 opening stay real.
+                const purposeOwner = createConnectedAccountPurposeBindingOwner({ credentialOwnerAccountId: f.owner.id,
+                    store: { read: async () => ({ v: 1, bindings: [] }), update: unexpected, subscribe: () => ({ dispose() {} }) },
+                    selectTarget: unexpected, resolveTarget: createPurposeTargetResolver({ available: true,
+                        resolveService: async () => ({ service: credentialRef.service, authentication: descriptor.authentication }),
+                        listAccounts: async () => [profile] }), resolveCredentialRevision: async () => revision,
+                    materializeAccount: async ({ credentialRevisionBasis }) => {
+                        credentialRevisionBasis?.captureCredentialRevision(revision);
+                        return { kind: 'httpHeaders', headers: { authorization: 'Bearer fixture-provider-credential' } };
+                    }, projectTargetAccounts: unexpected, assertTargetAccountMaterializable: unexpected });
                 const requests: HttpRequest[] = [];
-                kit = await createPluginTestkit({ manifest: neonEntry.manifest, module: neonEntry, services: {
-                    secrets, http: createPluginHttpFixture(managedQueryProviderHttp(postgres, requests)),
-                } });
-                await expect(kit.invokeAction('query-read', query, { surface: 'cli' })).resolves.toEqual({ ok: true,
-                    columns: [{ name: 'value' }], rows: [['original']], complete: true });
-                await expect(kit.invokeAction('query-read', { ...query, sql: "INSERT INTO query_fixture VALUES ('changed')" },
-                    { surface: 'cli' })).rejects.toMatchObject({ code: 'query_failed' });
+                const owners = serviceOwners = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} },
+                    http: createStablePluginHttpHost({ purposeHost: createConnectedAccountPluginHttpPurposeHost(purposeOwner,
+                        { registerRawForRedaction() {} }), adapter: managedQueryProviderHttp(postgres, requests) }) });
+                const seed: PluginInvocationServicesSeed = { plugin: { id: databaseWorkbench.manifest.id, version: '0.0.0' },
+                    contribution: { id: databaseActionLocalIdV1(DATABASE_STATEMENT_RUN_ACTION_ID_V1), qualifiedId: DATABASE_STATEMENT_RUN_ACTION_ID_V1 },
+                    occurrenceId: 'workbench', correlationId: 'real-home-statement', surface: 'cli', signal: lifetime.signal,
+                    approvalContext: { ...context, authority: 'present_user' }, isOccurrenceCurrent: () => true };
+                const createServices = createDeploymentDatabasesInvocationServicesForHost({
+                    contributes: { deploymentTargets: [{ pluginId, identity: { pluginId, localId: targetDefinition.id },
+                        definition: targetDefinition, provenance: 'first_party', source: { kind: 'bundled' },
+                        manifestPath: '/fixture/neon/plugin.json', pluginVersion: pluginManifest.version }],
+                    activationTargets: [{ pluginId, manifest: pluginManifest, provenance: 'first_party', source: { kind: 'bundled' },
+                        manifestPath: '/fixture/neon/plugin.json', daemonEntryPath: null,
+                        sourceSpec: { kind: 'path', locator: '/fixture/neon', trustPolicy: 'local_trusted', installPolicy: 'link' } }] },
+                    targetRegistrations: [{ pluginId, occurrenceId: 'provider', registration: {
+                        family: 'deploymentTargets', localId: targetDefinition.id, value: neonDatabaseRuntime } }],
+                    readHost: async () => ({ ...host, readConnectedAccountPurposes: () => ({ owner: purposeOwner }) }),
+                    readCurrentOccurrenceId: () => 'provider', createServices: owners.createServices,
+                    resolveInvocationHostPolicy: owners.resolveInvocationHostPolicy });
+                const services = createServices(seed, owners.createOrdinaryServiceBinding(seed.occurrenceId, seed.correlationId));
+                kit = await createPluginTestkit({ manifest: databaseWorkbench.manifest, module: databaseWorkbench,
+                    services: { deploymentDatabases: services.deploymentDatabases } });
+                const invoke = (sql: string) => kit!.invokeAction(databaseActionLocalIdV1(DATABASE_STATEMENT_RUN_ACTION_ID_V1),
+                    { ...query, statement: { sql, parameters: [] } }, { surface: 'cli', authority: 'present_user' });
+                await expect(invoke(query.statement.sql)).resolves.toMatchObject({ ok: true,
+                    results: [{ columns: [{ name: 'value' }], rows: [{ cells: [{ type: 'text', value: 'original' }] }],
+                        completeness: { complete: true } }] });
+                await expect(invoke("INSERT INTO query_fixture VALUES ('changed')")).resolves.toMatchObject({
+                    ok: false, status: 'failed', code: 'database_engine_error', cause: { source: 'engine', code: '42501' } });
                 expect(postgres.run('SELECT value FROM query_fixture').stdout.trim()).toBe('original');
                 expect(requests.filter(request => new URL(request.url).pathname === '/sql')).toHaveLength(2);
             } finally {
-                lifetime.abort(); await kit?.dispose(); await requester?.dispose();
+                lifetime.abort(); await kit?.dispose(); await serviceOwners?.dispose(); await requester?.dispose();
                 if (postgres) {
                     await postgres.stop();
                     console.info(`[managedDataQuery.real-home] stopped owned PostgreSQL PID ${postgres.pid}`);
@@ -694,10 +741,7 @@ describe('private installed Environment secret launch transport', () => {
         });
     });
 
-    it.each([
-        { mode: 'plain', semantic: false }, { mode: 'e2ee', semantic: false },
-        { mode: 'plain', semantic: true }, { mode: 'e2ee', semantic: true },
-    ] as const)('delivers $mode installed role custody through exact signed query scope (semantic=$semantic)', async ({ mode, semantic }) => {
+    it.each(['plain', 'e2ee'] as const)('delivers %s installed role custody through exact signed semantic scope', async mode => {
         const f = await admittedTeamDelivery(mode, false, 'postgres');
         const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
         const otherEnvironmentContent = await f.artifact('deployment-environment.v1', f.content);
@@ -725,17 +769,17 @@ describe('private installed Environment secret launch transport', () => {
         await db.deploymentTargetLink.update({ where: { id: f.payload.targetLinkId }, data: { activeDeploymentId: deploymentId,
             machines: { updateMany: { where: { machineId: f.payload.machineId, installationId: f.payload.installationId },
                 data: { state: 'active' } } } } });
-        const actionId = semantic ? 'action.invoke' as const : 'deployments.data.query' as const;
+        const actionId = 'action.invoke' as const;
         const input = { serverId, environmentId: row.id, expectedRevision: row.revision, deploymentId,
             targetLinkId: f.payload.targetLinkId, machineId: f.payload.machineId, installationId: f.payload.installationId,
             service: 'postgres', sql: 'SELECT 1', params: {} };
         const target = { kind: 'machine' as const, machineId: input.machineId };
         const action = parseQualifiedPluginActionId(DATABASE_STATEMENT_RUN_ACTION_ID_V1);
         if (!action) throw new Error('The canonical database Action has a qualified identity');
-        const actionInput = semantic ? { action, input: { operation: 'statement.run', mode: 'read',
+        const actionInput = { action, input: { operation: 'statement.run', mode: 'read',
             target: { kind: 'deployment_service', environment: { serverId, projectSourceId: row.projectSourceId,
                 environmentId: row.id }, deploymentId, targetLinkId: input.targetLinkId, serviceId: input.service, database: 'postgres' },
-            statement: { sql: 'SELECT 1', parameters: [] } } } : input;
+            statement: { sql: 'SELECT 1', parameters: [] } } };
         const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: actionInput };
         const admission = projectDeploymentReadAdmissionV1(actionId, actionInput);
         const mint = () => auth.mintExternalActionExecutionAuthorization({ accountId: f.owner.id,
@@ -819,8 +863,7 @@ describe('private installed Environment secret launch transport', () => {
             } finally { stopObserving(); }
             await expect(mint()).rejects.toMatchObject({ code: 'credential_scope_denied' });
             for (const changed of [{ environmentId: other.environmentId }, { targetLinkId: crypto.randomUUID() },
-                ...(!semantic ? [{ materialization: { kind: 'dataRole' as const, expectedRevision: row.revision + 1, deploymentId, service: input.service } }] : []),
-                ...(semantic ? [{ materialization: { kind: 'dataRole' as const, expectedRevision: row.revision, deploymentId, service: 'neighbor' } }] : []),
+                { materialization: { kind: 'dataRole' as const, expectedRevision: row.revision, deploymentId, service: 'neighbor' } },
                 { materialization: { kind: 'dataRole' as const, expectedRevision: row.revision, deploymentId: crypto.randomUUID(), service: input.service } }]) {
                 const refused = await app.inject(request(changed));
                 expect(refused.statusCode, refused.body).toBe(401);
@@ -834,7 +877,7 @@ describe('private installed Environment secret launch transport', () => {
         }, { authentication: 'real' });
     });
 
-    it('refuses a person-presented data.query root after its member left the Source Team', async () => {
+    it('refuses a person-presented semantic database root after its member left the Source Team', async () => {
         const f = await admittedTeamDelivery('plain', false, 'postgres');
         const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
         const deploymentId = f.payload.materialization.kind === 'deployment' ? f.receipt.deploymentId : '';
@@ -845,17 +888,23 @@ describe('private installed Environment secret launch transport', () => {
         // The member owns the executing Machine, so Machine admission alone cannot see the withdrawal.
         await db.machine.update({ where: { id: f.payload.machineId }, data: { accountId: f.owner.id, active: true, operationProtocolCapabilitiesRevision: 1,
             operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } } } });
-        const actionId = 'deployments.data.query' as const;
+        const actionId = 'action.invoke' as const;
         const input = { serverId, environmentId: row.id, expectedRevision: row.revision, deploymentId,
             targetLinkId: f.payload.targetLinkId, machineId: f.payload.machineId, installationId: f.payload.installationId,
             service: 'postgres', sql: 'SELECT 1', params: {} };
         const target = { kind: 'machine' as const, machineId: input.machineId };
-        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const action = parseQualifiedPluginActionId(DATABASE_STATEMENT_RUN_ACTION_ID_V1);
+        if (!action) throw new Error('Expected the canonical database Action identity');
+        const actionInput = { action, input: { operation: 'statement.run', mode: 'read',
+            target: { kind: 'deployment_service', environment: { serverId, projectSourceId: row.projectSourceId,
+                environmentId: row.id }, deploymentId, targetLinkId: input.targetLinkId, serviceId: input.service, database: 'postgres' },
+            statement: { sql: 'SELECT 1', parameters: [] } } };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: actionInput };
         const root = await auth.mintExternalActionExecutionAuthorization({ accountId: f.owner.id,
             serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.owner.tokenEpoch },
             actionId, machineId: input.machineId, target, requestId: envelope.requestId,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
-            deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, input) });
+            deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, actionInput) });
         // The daemon transport is the system boundary; Home's relay and dispatcher admission run for real.
         const forwarded: unknown[] = [];
         const forwardRpc = (async (request: unknown) => {

@@ -7,8 +7,7 @@ import { DeploymentDomainMutationResultV1Schema, DeploymentActionOutputSchemasV1
 import type { DeploymentBindingsPatchInputV1, DeploymentTeardownActionInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { type DeploymentDeployIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';
 import type { DeploymentPromoteIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentPromoteIntentV1';
-import { type DeploymentDataQueryInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
-import { DEPLOYMENT_DATA_QUERY_ACTION_ID_V1, DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentDomainDnsInputV1 } from '@happier-dev/protocol/deployments/deploymentDomainDnsV1';
 import { type DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { type DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
@@ -159,11 +158,6 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
             if (!result.ok) throw new HappyError(result.error, false, { details: result });
             if (!result.forkEligibility) throw new HappyError('invalid_action_output', false);
             return result.forkEligibility;
-        },
-        async queryDatabase(input: Omit<DeploymentDataQueryInputV1, 'serverId'>) {
-            assertCurrent();
-            return DeploymentActionOutputSchemasV1[DEPLOYMENT_DATA_QUERY_ACTION_ID_V1].parse(await invoke(
-                DEPLOYMENT_DATA_QUERY_ACTION_ID_V1, { ...input, serverId: lifetime.scope.serverId }));
         },
         async runBackup(input: Omit<DeploymentBackupInventoryInputV1, 'serverId'>) {
             assertCurrent();

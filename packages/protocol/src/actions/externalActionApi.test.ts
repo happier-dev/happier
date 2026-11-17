@@ -6,6 +6,8 @@ import tweetnacl from 'tweetnacl';
 import { signMachineInstallationProof } from '../machines/identity/installationIdentity.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from './externalActionExecutionAuthorization.js';
 import { projectActionExecuteFailure, projectUnexpectedActionFailureV1 } from './actionExecutionResult.js';
+import { DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from './actionIdsDatabaseV1.js';
+import { parseQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 import { DeploymentTeardownInputV1Schema } from '../deployments/deploymentActionsV1.js';
 
 it('presents an unadmitted Action without claiming a creation and preserves unknown outcomes', () => {
@@ -155,10 +157,14 @@ it('binds a receipt-shaped platform log read to its executing receiver without i
   expect(schema.safeParse({ ...binding, target: { kind: 'machine', machineId: 'another-controller' } }).success).toBe(false);
 });
 
-it('binds a qualified managed data query to its generic Action target', () => {
-  const admission = { actionId: 'action.invoke' as const,
-    action: { pluginId: 'happier.deploy.neon', localId: 'query-read' },
-    environmentId: 'environment', targetLinkId: 'managed-data', expectedRevision: 4, expectedTargetLinkRevision: 3 };
+it('binds a semantic managed database operation to its generic Action target', () => {
+  const action = parseQualifiedPluginActionId(DATABASE_STATEMENT_RUN_ACTION_ID_V1);
+  if (!action) throw new Error('Expected the canonical database Action identity');
+  const admission = { actionId: 'action.invoke' as const, action, access: 'read' as const,
+    environmentId: 'environment', targetLinkId: 'managed-data', databaseTarget: { kind: 'managed_deployment',
+      environment: { serverId: 'home', projectSourceId: 'source', environmentId: 'environment' },
+      targetLinkId: 'managed-data', contribution: { pluginId: 'happier.deploy.neon', contributionId: 'database' },
+      platformProjectId: 'project', branchId: 'branch', database: 'neondb' } };
   const binding = { serverIdentityId: 'home', accountId: 'reader', authentication: { kind: 'account' as const, tokenEpoch: 0 },
     machineId: 'controller', installationId: 'installed', custodianAccountId: 'owner', actionId: 'action.invoke',
     requestId: 'managed-query', requestEnvelopeDigest: 'a'.repeat(43),

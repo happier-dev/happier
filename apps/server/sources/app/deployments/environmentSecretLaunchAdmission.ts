@@ -92,8 +92,7 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
     input: EnvironmentSecretAdmissionRequestV1, authentication: DeploymentAuthentication = {},
     admittedChild?: DeploymentChildAdmission,
     admittedBackup?: DeploymentRestoreNativeAdmissionV1 | DeploymentBackupNativeAdmissionV1,
-    admittedDataQuery?: Extract<DeploymentReadAdmissionV1, { actionId: 'deployments.data.query' }>
-        | Extract<DeploymentReadAdmissionV1, { actionId: typeof DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 }>
+    admittedDataQuery?: Extract<DeploymentReadAdmissionV1, { actionId: typeof DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 }>
         | Extract<DeploymentReadAdmissionV1, { actionId: typeof ACTION_INVOKE_ACTION_ID_V1 }>,
 ): Promise<EnvironmentSecretLaunchAdmissionResultV1> {
     if ('kind' in input) return readEnvironmentBindingPreparationInTx(tx, actorAccountId, input, authentication);
@@ -130,14 +129,6 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
                     || materialization.deploymentId !== target.deploymentId || materialization.service !== target.serviceId
                     : !('targetLinkId' in materialization) || materialization.targetLinkId !== target.targetLinkId
                         || scope.managedControllerMachineId !== input.machineId) return deploymentFailure('deployment_access_denied');
-            } else if (admittedDataQuery.actionId === ACTION_INVOKE_ACTION_ID_V1) {
-                const materialization = input.materialization;
-                if (!('targetLinkId' in materialization) || input.environmentId !== admittedDataQuery.environmentId || input.targetLinkId !== admittedDataQuery.targetLinkId
-                    || materialization.targetLinkId !== admittedDataQuery.targetLinkId
-                    || materialization.expectedRevision !== admittedDataQuery.expectedRevision) {
-                    return deploymentFailure('deployment_access_denied');
-                }
-                if (scope.managedControllerMachineId !== input.machineId) return deploymentFailure('deployment_access_denied');
             } else if ('targetLinkId' in input.materialization) {
                 return deploymentFailure('deployment_access_denied');
             }

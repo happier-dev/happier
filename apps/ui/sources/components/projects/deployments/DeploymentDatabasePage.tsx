@@ -52,13 +52,6 @@ import {
   DeployOutcomeBanner,
   type DeploymentReviewHandle,
 } from './DeploymentEnvironmentDetail';
-import { DeploymentDataQueryResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { isRecord } from '@happier-dev/protocol/common/records';
-import { readDeploymentTargetActionRolesV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
-import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
-import { showDeploymentDataQuerySheet } from './DeploymentDataQuerySheet';
-import { buildPreviewBranchReadInput } from './previewDatabaseBranches';
 import { useDeploymentTargetDeclarations, useDeploymentPlatformTargetTitles } from './DeploymentPlatformTargetSheet';
 import { StoreRegistryItemPicker } from '@/components/store/StoreKindPage';
 import type { SettingsCollectionFilter } from '@/components/settings/shell/settingsCollectionAdapter';
@@ -98,6 +91,12 @@ import {
 } from './useDeploymentReads';
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
 import { useDeploymentTargetLinkChoices } from './useDeploymentTargetLinkChoices';
+import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1, DatabaseTargetsListResultV1Schema }
+  from '@happier-dev/database-protocol';
+import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
+import { useHappyAction } from '@/hooks/ui/useHappyAction';
+import { HappyError } from '@/utils/errors/errors';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 
 type Detail = DeploymentEnvironmentReadDetailV1;
 type TemplateData = NonNullable<
@@ -117,13 +116,6 @@ function resolveDatabase(detail: Detail, key: string): Database | null {
     (entry) => entry.targetLink.role === 'data' && entry.targetLink.id === key,
   );
   return link ? { kind: 'managed', key, link } : null;
-}
-
-/** The provider action schema, not its id, decides whether the shared sheet asks for a database. */
-function queryInputRequiresDatabase(inputSchema: unknown): boolean {
-  if (!isRecord(inputSchema) || !Array.isArray(inputSchema.required) || !inputSchema.required.includes('database')) return false;
-  const database = isRecord(inputSchema.properties) ? inputSchema.properties.database : undefined;
-  return isRecord(database) && database.type === 'string';
 }
 
 const HISTORY_ACTION = {
@@ -219,7 +211,7 @@ export function DeploymentDatabasePage(
     lifetime,
     database?.kind === 'managed',
   );
-  const queryDeclarations = useDeploymentTargetDeclarations(database?.kind === 'managed' ? lifetime : null);
+  const targetDeclarations = useDeploymentTargetDeclarations(database?.kind === 'managed' ? lifetime : null);
   // Unlink or delete a managed project through the same removal review and action owner as a runtime target.
   const disposition = useDeploymentEnvironmentDeletion({ environmentId: props.environmentId, lifetime,
     snapshot: record.snapshot, actions, controller: props.controller, demand: props.demand });
@@ -230,6 +222,28 @@ export function DeploymentDatabasePage(
     'project-deployments.database.back',
     props.onBack,
   );
+  const workbenchNavigation = usePluginSurfaceDestinationNavigationBinding();
+  const [workbenchOpening, openWorkbench] = useHappyAction(async () => {
+    if (!actions || !detail || !database || !workbenchNavigation) return;
+    if (!detail.environment.controllerMachineId) throw new HappyError('machine_unavailable', false);
+    const scope = { kind: 'environment' as const, environment: {
+      serverId: detail.environment.serverId, projectSourceId: detail.environment.projectSourceId,
+      environmentId: detail.environment.id,
+    } };
+    const result = await actions.inspectPlatformTarget(DATABASE_TARGETS_LIST_ACTION_ID_V1, { scope }, {
+      externalActionTarget: { kind: 'machine', machineId: detail.environment.controllerMachineId },
+    });
+    if (!result.ok) throw new HappyError(result.code, false);
+    const listed = DatabaseTargetsListResultV1Schema.parse(result.value);
+    const matches = listed.targets.filter(({ target }) => database.kind === 'selfHosted'
+      ? target.kind === 'deployment_service' && target.serviceId === database.data.service
+      : target.kind === 'managed_deployment' && target.targetLinkId === database.link.targetLink.id);
+    const opened = await workbenchNavigation.openSurface({
+      destination: { pluginId: DATABASE_PLUGIN_ID_V1, localId: 'database-workbench' }, subPath: 'console',
+      input: projectNativeJsonValueForTransport({ scope, ...(matches.length === 1 ? { descriptor: matches[0] } : {}) }),
+    });
+    if (!opened.ok) throw new HappyError(opened.reason, false);
+  });
   const id = 'project-deployments.database';
   const { theme } = useUnistyles();
 
@@ -327,66 +341,6 @@ export function DeploymentDatabasePage(
           ? platformTitle(database.link.targetLink.source) ?? database.link.targetLink.targetKind
           : database.link.targetLink.targetKind }];
 
-  const openQuery = actions && lifetime
-    && (database.kind === 'selfHosted' || queryDeclarations.state.status !== 'loading') ? () => {
-    if (database.kind === 'selfHosted') {
-      showDeploymentDataQuerySheet({ name: title, parameterHint: t('projects.deployments.databaseQuery.nativeParameters'),
-        run: async statement => target && activeId
-          ? actions.queryDatabase({ ...target, deploymentId: activeId, expectedRevision: detail.environment.revision,
-            service: database.data.service, ...statement })
-          : { ok: false, error: 'deployment_unavailable', diagnostic: { code: 'active_deployment_required' } },
-        ...(target && detail.environment.capabilities.manage ? { setup: {
-          lifetime, machineId: target.machineId,
-          configure: async source => {
-            const result = await actions.setBindings({ environmentId: detail.environment.id,
-              expectedRevision: detail.environment.revision,
-              set: [{ purpose: 'dataRole', service: database.data.service, role: 'readOnlyPassword', source }], remove: [] });
-            if (result.ok) void record.refresh();
-            return result;
-          }, onApproval: (artifactId: string) => props.review.request(artifactId),
-        } } : {}),
-      });
-      return;
-    }
-    const source = database.link.targetLink.source;
-    const declarations = queryDeclarations.state.status === 'ready' ? queryDeclarations.state.declarations : [];
-    const manifest = source.kind === 'plugin'
-      ? declarations.find(entry => entry.manifest.id === source.contribution.pluginId)?.manifest : undefined;
-    const contribution = source.kind === 'plugin'
-      ? manifest?.contributes.deploymentTargets?.find(entry => entry.id === source.contribution.localId) : undefined;
-    const binding = contribution ? readDeploymentTargetActionRolesV1(contribution).find(entry => entry.role === 'query.readOnly') : undefined;
-    const action = manifest?.contributes.actions?.find(entry => entry.id === binding?.action);
-    const input = buildPreviewBranchReadInput(detail, database.link);
-    const controllerMachineId = detail.environment.controllerMachineId;
-    const sqlHint = action?.inputHints?.fields?.find(field => field.path === 'sql')?.description;
-    const databaseHint = action?.inputHints?.fields?.find(field => field.path === 'database');
-    showDeploymentDataQuerySheet({ name: title,
-      parameterHint: sqlHint ? resolvePluginLocalizedStringV2Text(sqlHint) : '',
-      ...(queryInputRequiresDatabase(action?.inputSchema) ? { database: {
-        title: databaseHint ? resolvePluginLocalizedStringV2Text(databaseHint.title) : t('projects.deployments.databaseQuery.database'),
-        ...(databaseHint?.description ? { supportingText: resolvePluginLocalizedStringV2Text(databaseHint.description) } : {}),
-      } } : {}),
-      ...(controllerMachineId && detail.environment.capabilities.manage ? { setup: {
-        lifetime, machineId: controllerMachineId,
-        configure: async source => {
-          const result = await actions.setBindings({ environmentId: detail.environment.id,
-            expectedRevision: detail.environment.revision,
-            set: [{ purpose: 'dataRole', targetLinkId: database.link.targetLink.id, role: 'readOnlyPassword', source }], remove: [] });
-          if (result.ok) void record.refresh();
-          return result;
-        }, onApproval: (artifactId: string) => props.review.request(artifactId),
-      } } : {}),
-      run: async statement => {
-        if (!manifest || !action || !input || !controllerMachineId) return { ok: false, error: 'deployment_unavailable',
-          diagnostic: { code: queryDeclarations.state.status === 'failed' ? queryDeclarations.state.code
-            : !input ? 'managed_query_custody_unavailable' : !controllerMachineId ? 'machine_unavailable' : 'managed_query_action_unavailable' } };
-        const result = await actions.inspectPlatformTarget(formatQualifiedPluginActionId({ pluginId: manifest.id, localId: action.id }),
-          { ...input, ...statement }, { externalActionTarget: { kind: 'machine', machineId: controllerMachineId } });
-        return result.ok ? DeploymentDataQueryResultV1Schema.parse(result.value)
-          : { ok: false, error: 'deployment_unavailable', diagnostic: { code: result.code } };
-      },
-    });
-  } : null;
 
   const runBackup =
     factsInput && actions
@@ -498,9 +452,9 @@ export function DeploymentDatabasePage(
     ? () => showManagedDataSheet({ detail, lifetime, actions, linked: database.link,
       onApproval: props.review.request }) : null;
   const managedTarget = database.kind === 'managed' && database.link.targetLink.source.kind === 'plugin'
-    && queryDeclarations.state.status === 'ready' ? (() => {
+    && targetDeclarations.state.status === 'ready' ? (() => {
       const source = database.link.targetLink.source.contribution;
-      return managedDataTargets(queryDeclarations.state.declarations)
+      return managedDataTargets(targetDeclarations.state.declarations)
         .find(target => target.pluginId === source.pluginId && target.targetId === source.localId) ?? null;
     })() : null;
   // The removal owner decides which choices exist and where the review starts (created: Delete; linked: Unlink).
@@ -555,11 +509,10 @@ export function DeploymentDatabasePage(
             </ItemGroup>
           ) : null}
           <ItemGroup>
-            <Item testID={`${id}.query`} title={t('projects.deployments.databaseQuery.title')}
-              {...(database.kind === 'managed' && queryDeclarations.state.status === 'loading'
-                ? { subtitle: t('projects.deployments.loading') } : {})}
+            <Item testID={`${id}.query`} title={t('common.open')}
               icon={<Icon name="terminal" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
-              {...(openQuery ? { onPress: openQuery } : { mode: 'info' as const })} />
+              loading={workbenchOpening}
+              {...(actions && workbenchNavigation ? { onPress: openWorkbench } : { mode: 'info' as const })} />
           </ItemGroup>
           {missed ? (
             <AttentionBanner

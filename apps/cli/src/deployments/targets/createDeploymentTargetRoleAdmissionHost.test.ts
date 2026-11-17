@@ -9,7 +9,7 @@ import { createDeploymentTargetRoleAdmissionHost } from './createDeploymentTarge
 import { readDeploymentTargetEnvironmentForHost } from './admitDeploymentTargetRoleForHost';
 
 it.each(['controller', 'native-member'])('opens live data Link content only on its controller (%s)', async machineId => {
-    const stored = createDeploymentTargetRoleAdmissionFixture('query.readOnly');
+    const stored = createDeploymentTargetRoleAdmissionFixture('branches.list');
     const selected = stored.state.environment.targetLinks[0]!;
     const header = stored.state.environment.environment;
     const detached = createDeploymentTargetLinkHeaderV1({ ...selected.targetLink, id: 'detached-data',

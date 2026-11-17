@@ -47,6 +47,19 @@ import { MachineServicesListInputV1Schema, MachineServicesListResultV1Schema } f
 import { WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 
+import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
+import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1, databaseActionLocalIdV1,
+  databaseActionMetadata, DatabaseTargetsListInputV1Schema, type DatabaseDescriptorV1 } from '@happier-dev/database-protocol';
+import { PluginProjectedActionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
+import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { registerCurrentUiContextActionPort } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
+import { createCurrentUiContextVoiceToolPort } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
+import { createPluginPagePlacementFixture } from '@/dev/testkit/fixtures/pluginPageProjectionFixture';
+import { createPluginSurfaceDestinationNavigationBinding, PluginSurfaceDestinationNavigationBindingProvider }
+  from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
+import type { PluginSurfaceOpenRequest } from '@/components/plugins/surfaces/openPluginSurface';
+
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
 );
@@ -65,7 +78,7 @@ vi.mock(
     }),
   }),
 );
-// Native recycler layout is a platform boundary; the query sheet's real row renderer runs beneath it.
+// Native recycler layout is a platform boundary; real row renderers run beneath it.
 vi.mock('@legendapp/list/react-native', async (importOriginal) =>
   (await import('@/dev/testkit/mocks/legendList')).createCapturingLegendListMock({
     original: await importOriginal<Record<string, unknown>>() }).module);
@@ -125,7 +138,6 @@ function manifest(environmentId: string, id: string, time: string) {
 
 type Answers = Readonly<{
   history?: unknown;
-  query?: unknown;
   bindingRefusal?: string;
   missedSchedule?: boolean;
 }>;
@@ -148,6 +160,8 @@ async function renderDatabase(
     moveWritersUnavailable?: boolean;
     moveDestinationUnprotected?: boolean;
     moveManagedDestination?: boolean;
+    managed?: boolean;
+    multipleManagedDatabases?: boolean;
   }> = {},
 ) {
   await homes.reset();
@@ -219,12 +233,22 @@ async function renderDatabase(
       },
     },
   });
+  if (input.managed) {
+    authored.targetLinks.push({ targetLink: createDeploymentTargetLinkHeaderV1({
+      id: 'managed-database', environmentId, role: 'data', targetKind: 'neon', machines: [], members: [],
+      source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.neon', localId: 'database' } },
+    }), content: { data: { engine: 'postgres' },
+      providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'main' },
+      providerEnvironment: { kind: 'custom', id: 'main' }, credentialPrincipal: { kind: 'account', accountId: 'account-owner',
+        purpose: { consumer: { pluginId: 'happier.deploy.neon', localId: 'database' }, purpose: 'database.manage' },
+        target: { kind: 'account', account: { service: { pluginId: 'happier.deploy.neon', localId: 'database' }, accountId: 'token' } } } } });
+  }
   // Each case uses its own Home and Machine.
-  const detail = { ...authored, environment: { ...authored.environment, controllerMachineId: machineId },
+  const detail = { ...authored, environment: { ...authored.environment, serverId, controllerMachineId: machineId },
     targetLinks: authored.targetLinks.map((row) => ({ ...row, targetLink: { ...row.targetLink,
-    ...('machines' in row.targetLink && Array.isArray(row.targetLink.machines)
+    ...(row.targetLink.source.kind === 'host' && Array.isArray(row.targetLink.machines)
       ? { machines: [machineId, ...(input.sourceMultiMachine ? [`${machineId}-second`] : [])] } : {}),
-    ...('members' in row.targetLink && Array.isArray(row.targetLink.members)
+    ...(row.targetLink.source.kind === 'host' && Array.isArray(row.targetLink.members)
       ? { members: row.targetLink.members.flatMap((member) => [{ ...member, machineId },
           ...(input.sourceMultiMachine ? [{ ...member, machineId: `${machineId}-second` }] : [])]) } : {}) } })) } as typeof authored;
   homes.answer(serverId, `GET /v1/deployments/environments/${environmentId}`, { body: {
@@ -240,7 +264,7 @@ async function renderDatabase(
       providerEnvironment: { kind: 'custom', id: 'main' }, credentialPrincipal: { kind: 'account', accountId: 'owner',
         purpose: { consumer: { pluginId: 'happier.deploy.neon', localId: 'database' }, purpose: 'database.manage' },
         target: { kind: 'account', account: { service: { pluginId: 'happier.deploy.neon', localId: 'database' }, accountId: 'token' } } } } }]
-      : detail.targetLinks.map(row => ({ ...row, targetLink: { ...row.targetLink,
+      : detail.targetLinks.filter(row => row.targetLink.role === 'runtime').map(row => ({ ...row, targetLink: { ...row.targetLink,
         id: 'target-database-dedicated', environmentId: 'database-dedicated', activeDeploymentId: 'deployment-dedicated' } })),
     content: { ...detail.content, name: 'Dedicated Postgres',
       backup: input.moveDestinationUnprotected ? undefined : { ...backup,
@@ -385,14 +409,53 @@ async function renderDatabase(
       },
     });
   }
+  const scope = { kind: 'environment' as const,
+    environment: { serverId, projectSourceId: detail.environment.projectSourceId, environmentId } };
+  const descriptor: DatabaseDescriptorV1 = { ...createDatabaseDescriptorV1Fixture(),
+    target: input.managed ? { kind: 'managed_deployment', environment: scope.environment,
+      targetLinkId: 'managed-database', contribution: { pluginId: 'happier.deploy.neon', contributionId: 'database' },
+      platformProjectId: 'project', branchId: 'main', database: 'shop' } : { kind: 'deployment_service',
+      environment: scope.environment,
+      deploymentId: receipt.deployment.id, targetLinkId: receipt.deployment.targetLinkId,
+      serviceId: 'postgres', database: 'shop' },
+    placement: { serverId, accountId: account.accountId, machineId, installationId: 'installation-a' } };
   await answerExternalActionAccountForHome(homes, serverId, {
-    machineId, installationId: 'installation-a', actionId: 'deployments.data.query', tokenEpoch: 0,
+    machineId, installationId: 'installation-a', actionId: 'action.invoke', tokenEpoch: 0,
     execute: raw => {
-      const operand = DeploymentActionInputSchemasV1['deployments.data.query'].parse(raw);
-      effects.push({ actionId: 'deployments.data.query', input: operand });
-      return input.answers?.query ?? { ok: true, columns: [], rows: [], complete: true };
+      const invocation = getActionSpec('action.invoke').inputSchema.parse(raw);
+      effects.push({ actionId: 'action.invoke', input: invocation });
+      expect(invocation.action).toEqual({ pluginId: DATABASE_PLUGIN_ID_V1,
+        localId: databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1) });
+      DatabaseTargetsListInputV1Schema.parse(invocation.input);
+      return { targets: [descriptor, ...(input.multipleManagedDatabases && descriptor.target.kind === 'managed_deployment'
+        ? [{ ...descriptor, target: { ...descriptor.target, database: 'other' } }] : [])], completeness: { complete: true } };
     },
   });
+  const opened: PluginSurfaceOpenRequest[] = [];
+  // The AppShell's observed daemon declaration is a real boundary, alongside the answered Home HTTP transport.
+  const localId = databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1);
+  const metadata = databaseActionMetadata[DATABASE_TARGETS_LIST_ACTION_ID_V1];
+  const executionOrigin = { serverIdentityId, materializationRef: {
+    pluginId: DATABASE_PLUGIN_ID_V1, machineId, materializationId: 'database-current' } };
+  const projectedAction = { ...PluginProjectedActionV2Schema.parse({ id: localId, pluginId: DATABASE_PLUGIN_ID_V1,
+    title: metadata.title, dangerLevel: metadata.dangerLevel, readOnly: metadata.readOnly,
+    placementBindings: metadata.placementBindings, scopes: ['global'], surfaces: ['ui', 'cli', 'plugin'],
+    execution: { target: 'daemon' }, occurrenceId: 'database:current', available: true }), executionOrigin,
+    hostOrigin: { serverId, machineId, executionOrigin, phase: 'current' as const, interactionEnabled: true } };
+  const projection = { ...EMPTY_PLUGIN_UI_PROJECTION,
+    actionsById: { [`${DATABASE_PLUGIN_ID_V1}/${localId}`]: projectedAction } };
+  const withdrawProjection = publishCommittedAppShellPluginUiProjection(() => projection);
+  const unregisterActionPort = registerCurrentUiContextActionPort((surface, hostAction) => createCurrentUiContextVoiceToolPort({
+    invocationSurface: surface, hostAction, readProjection: () => projection, readNavigationBinding: () => navigation,
+    reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+  }));
+  const navigation = createPluginSurfaceDestinationNavigationBinding({ targetKind: 'app',
+    accountLifetime: account.accountLifetime,
+    placements: [{ ...createPluginPagePlacementFixture({ pluginId: DATABASE_PLUGIN_ID_V1,
+      localId: 'database-workbench', title: 'Database', targetKind: 'app' }), occurrenceId: projectedAction.occurrenceId,
+      executionOrigin, hostOrigin: projectedAction.hostOrigin }] });
+  const unregisterNavigation = navigation.registerOwner({ container: 'appPage',
+    handler: resolution => { opened.push(resolution.request); return { ok: true }; } });
   let setBindings = input.setBindings ?? null;
   if (input.moveDestination) {
     await answerExternalActionAccountForHome(homes, serverId, {
@@ -469,11 +532,11 @@ async function renderDatabase(
   const navigate = vi.fn();
   const back = vi.fn();
   const screen = await renderScreen(
-    <ModalProvider>
+    <ModalProvider><PluginSurfaceDestinationNavigationBindingProvider binding={navigation}>
       <DeploymentDatabasePage
         controller={controller}
         environmentId={environmentId}
-        database={input.database ?? 'postgres'}
+        database={input.database ?? (input.managed ? 'managed-database' : 'postgres')}
         demand={shown}
         phone={false}
         lifetime={account.accountLifetime}
@@ -483,7 +546,7 @@ async function renderDatabase(
         onBack={back}
         onNavigate={navigate}
       />
-    </ModalProvider>,
+    </PluginSurfaceDestinationNavigationBindingProvider></ModalProvider>,
   );
   const settle = async (testID: string) => {
     await act(async () => {
@@ -502,6 +565,7 @@ async function renderDatabase(
     screen,
     settle,
     effects,
+    opened, descriptor, scope,
     environmentId,
     serverIdentityId,
     machineId,
@@ -514,15 +578,12 @@ async function renderDatabase(
     dispose: async () => {
       await screen.unmount();
       controller.retire();
+      unregisterNavigation();
+      unregisterActionPort();
+      withdrawProjection();
       account.dispose();
     },
   };
-}
-
-/** The cell's rendered string, independent of the Text component's internal wrapper. */
-function renderedText(node: { findAll: (predicate: (node: { type: unknown; props: { children?: unknown } }) => boolean) => { props: { children?: unknown } }[] } | null): string | null {
-  return node ? node.findAll(entry => typeof entry.type === 'string' && typeof entry.props.children === 'string')
-    .map(entry => entry.props.children).join('') || null : null;
 }
 
 describe('Environment → Database → Private console', () => {
@@ -538,119 +599,42 @@ describe('Environment → Database → Private console', () => {
   });
 });
 
-describe('Environment → Database → Read-only query', () => {
-  it('runs a linked managed query through its qualified Action with the recorded credential principal and database', async () => {
-    const { definePlugin, DeploymentTargetRoleInputProtocolSchemasV1 } = await import('@happier-dev/plugin-sdk');
-    const { DeploymentDataQuerySuccessV1ProtocolSchema } = await import('@happier-dev/deployment-protocol');
-    const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
-    const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
-    const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
-    const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
-    const { formatSharedSavedSecretRefV1 } = await import('@happier-dev/protocol/account/settings/savedSecretReferenceV1');
-    const pluginId = 'com.example.query-database';
-    const calls: unknown[] = [];
-    const execution = { target: 'account', account: { artifactId: 'query-runtime', exportName: 'activate' } } as const;
-    const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
-    const plugin = definePlugin({ id: pluginId, version: '1.0.0', displayName: 'Managed SQL', actions: {
-      query: { title: 'Read SQL', execution, surfaces: ['ui'], readOnly: true, dangerLevel: 'safe',
-        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['query.readOnly'].jsonSchema,
-        resultSchema: DeploymentDataQuerySuccessV1ProtocolSchema.jsonSchema,
-        inputHints: { fields: [{ path: 'database', title: 'Database name', widget: 'text', required: true },
-          { path: 'sql', title: 'SQL', widget: 'textarea', description: 'Bind values with $1 and parameter key 1.' }] },
-        run: async () => ({ ok: true, columns: [], rows: [], complete: true }) },
-    }, deploymentTargets: { database: { role: 'data', title: 'Managed SQL', targetKind: 'database', icon: 'server-outline',
-      targetSchema: closed, linkSchema: closed, dataV1: { query: { readOnly: 'query' } } } } });
-    const serverId = await homes.addHome({ name: 'Managed query', serverUrl: 'https://managed-query.test',
-      serverIdentityId: 'srv_managed_query', accountId: 'owner', currentAccount: true });
-    const account = await captureLazyActionAccountContext(serverId);
-    const readRoleRef = formatSharedSavedSecretRefV1('managed-query-read-role');
-    const { seedSavedSecretCatalogForTest } = await import('@/dev/testkit/harness/savedSecretEditorHttpHarness');
-    await seedSavedSecretCatalogForTest(account.accountLifetime.scope, [{ ref: readRoleRef, name: 'Managed query read role' }]);
-    const installed = await installPortableAccountPluginReleaseForTest({ manifest: plugin.manifest,
-      activate: api => plugin.activateAccount(api, execution.account), accountLifetime: account.accountLifetime, publishProjection: true });
-    const targetLink = createDeploymentTargetLinkHeaderV1({ id: 'managed-query', role: 'data', targetKind: 'database', machines: [], members: [],
-      source: { kind: 'plugin', contribution: { pluginId, localId: 'database' } } });
-    const principal = { kind: 'account' as const, accountId: 'original-owner',
-      purpose: { consumer: { pluginId, localId: 'link' }, purpose: 'deploy-manage' },
-      target: { kind: 'account' as const, account: { service: { pluginId, localId: 'database' }, accountId: 'original-token' } } };
-    const detail = createDeploymentEnvironmentDetailV1({ environment: (({ runtimeTargetLinkId: _runtime, ...header }) => header)(createDeploymentEnvironmentHeaderV1({ serverId })),
-      targetLinks: [{ targetLink, content: { credentialPrincipal: principal,
-        providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'main' },
-        providerEnvironment: { kind: 'custom', id: 'main' } } }] });
-    homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
-      environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink) } });
-    const bindings: unknown[] = [];
-    await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
-      actionId: 'deployments.bindings.set', tokenEpoch: 0,
-      deploymentSource: { id: detail.environment.projectSourceId, revision: 1 }, execute: raw => {
-        bindings.push(DeploymentActionInputSchemasV1['deployments.bindings.set'].parse(raw));
-        return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
-      } });
-    await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
-      actionId: 'action.invoke', tokenEpoch: 0, requesterInvocation: 'required', execute: (raw, request) => {
-        expect(request.target).toEqual({ kind: 'machine', machineId: detail.environment.controllerMachineId });
-        const invocation = getActionSpec('action.invoke').inputSchema.parse(raw);
-        expect(invocation.action).toEqual({ pluginId, localId: 'query' });
-        calls.push(invocation.input);
-        return calls.length === 2
-          ? { ok: false, error: 'deployment_unavailable', diagnostic: { code: 'secret_missing' } }
-          : { ok: true, columns: [{ name: 'value' }], rows: [[null]], complete: false,
-            diagnostic: { code: 'provider_completeness_unknown' } };
-      } });
-    const controller = createDeploymentReadControllerV1({ scope: { serverId, accountId: 'owner', projectSourceId: detail.environment.projectSourceId },
-      transport: { listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
-        readEnvironment: async () => ({ ok: true, value: detail }),
-        listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
-        readReceipt: async () => ({ ok: true, value: createDeploymentReceiptDetailV1() }) } });
-    const screen = await renderScreen(<ModalProvider><DeploymentDatabasePage controller={controller}
-      environmentId={detail.environment.id} database={targetLink.id} demand={shown} phone={false}
-      lifetime={account.accountLifetime} review={noReview} restore={null} setBindings={null} onBack={() => {}} onNavigate={() => {}} /></ModalProvider>);
+describe('Environment → Database → Workbench', () => {
+  it('opens the shared workbench for the exact deployment database through environment discovery', async () => {
+    const view = await renderDatabase();
     try {
-      await waitForHomeGovernance(async () => { await act(async () => {});
-        expect(screen.findByTestId(`${page}.query`)?.props.onPress).toBeTypeOf('function'); });
-      await screen.pressByTestIdAsync(`${page}.query`);
-      expect(calls).toEqual([]);
-      expect(screen.findByTestId('project-deployments.query.database')).not.toBeNull();
-      await act(async () => {
-        screen.changeTextByTestId('project-deployments.query.sql', 'SELECT $1 AS value');
-        screen.changeTextByTestId('project-deployments.query.params', '{"1":"private value"}');
-        screen.changeTextByTestId('project-deployments.query.database', 'application');
+      await view.settle(`${page}.query`);
+      expect(view.effects.some(effect => effect.actionId === 'action.invoke')).toBe(false);
+      await view.screen.pressByTestIdAsync(`${page}.query`);
+      await waitForHomeGovernance(async () => {
+        await act(async () => {});
+        const { Modal } = await import('@/modal');
+        expect(view.opened, JSON.stringify({ effects: view.effects, alerts: vi.mocked(Modal.alert).mock.calls,
+          operations: [...actionOperationStore.getSnapshot().operationsByKey.values()] })).toHaveLength(1);
       });
-      await screen.pressByTestIdAsync('project-deployments.query.run');
-      await waitForHomeGovernance(async () => { await act(async () => {});
-        expect(screen.findByTestId('project-deployments.query.incomplete')).not.toBeNull(); });
-      expect(renderedText(screen.findByTestId('project-deployments.query.cell.0.0'))).toBe('NULL');
-      await screen.pressByTestIdAsync('project-deployments.query.run');
-      await waitForHomeGovernance(async () => { await act(async () => {});
-        expect(screen.findByTestId('project-deployments.query.refused')).not.toBeNull(); });
-      expect(screen.findByTestId('project-deployments.query.setup')).not.toBeNull();
-      await screen.pressByTestIdAsync('project-deployments.query.setup');
-      const password = screen.root.findAllByType(ActionInputFields).find(field => field.props.resolveFieldTestID?.(field.props.fields[0])
-        === 'project-deployments.query.password');
-      if (!password) throw new Error('Expected saved-secret setup field');
-      await act(async () => { password.props.onPatch({ password: { ref: readRoleRef, resourceRevision: 1 } }); });
-      const { Modal } = await import('@/modal');
-      vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
-      await screen.pressByTestIdAsync('project-deployments.query.configure');
-      await waitForHomeGovernance(async () => { await act(async () => {});
-        expect(bindings.length === 1 || screen.findByTestId('actions.confirmation-review.decision-approve') !== null).toBe(true); });
-      if (screen.findByTestId('actions.confirmation-review.decision-approve'))
-        await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
-      const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
-      await waitForHomeGovernance(async () => { await act(async () => {}); expect(bindings, JSON.stringify({
-        cards: screen.findAllByType(SurfaceStateCard).map(card => ({ id: card.props.testID, code: card.props.diagnosticCode })),
-        requests: homes.requests.map(request => `${request.method} ${request.path.split('?')[0]}`),
-      })).toHaveLength(1); });
-      expect(calls).toEqual([expect.objectContaining({ targetLinkId: targetLink.id, expectedTargetLinkRevision: targetLink.revision,
-        credentialPrincipal: principal, credentialRef: principal.target.account, database: 'application',
-        sql: 'SELECT $1 AS value', params: { '1': 'private value' } }), expect.objectContaining({ targetLinkId: targetLink.id, expectedTargetLinkRevision: targetLink.revision,
-        credentialPrincipal: principal, credentialRef: principal.target.account, database: 'application',
-        sql: 'SELECT $1 AS value', params: { '1': 'private value' } })]);
-      expect(bindings).toEqual([expect.objectContaining({ environmentId: detail.environment.id,
-        expectedRevision: detail.environment.revision, set: [{ purpose: 'dataRole', targetLinkId: targetLink.id,
-          role: 'readOnlyPassword', source: { kind: 'secret', ref: readRoleRef, resourceRevision: 1 } }], remove: [] })]);
-    } finally { await screen.unmount(); controller.retire(); await installed.dispose(); account.dispose(); }
+      expect(view.opened[0]).toMatchObject({ destination: { pluginId: DATABASE_PLUGIN_ID_V1, localId: 'database-workbench' },
+        subPath: 'console', input: { scope: view.scope,
+          descriptor: view.descriptor } });
+      expect(view.effects.filter(effect => effect.actionId === 'action.invoke')).toEqual([
+        expect.objectContaining({ input: expect.objectContaining({ input: { scope: {
+          kind: 'environment', environment: view.scope.environment } } }) })]);
+      expect(view.screen.findByTestId('project-deployments.query.sql')).toBeNull();
+    } finally { await view.dispose(); }
   });
+
+  it.each([false, true])('opens managed databases through the shared workbench without selecting an arbitrary database (multiple %s)', async multiple => {
+    const view = await renderDatabase({ managed: true, multipleManagedDatabases: multiple });
+    try {
+      await view.settle(`${page}.query`);
+      await view.screen.pressByTestIdAsync(`${page}.query`);
+      await waitForHomeGovernance(async () => { await act(async () => {}); expect(view.opened).toHaveLength(1); });
+      expect(view.opened[0]).toMatchObject({ destination: { pluginId: DATABASE_PLUGIN_ID_V1, localId: 'database-workbench' },
+        subPath: 'console', input: { scope: view.scope } });
+      if (multiple) expect(view.opened[0]?.input).not.toHaveProperty('descriptor');
+      else expect(view.opened[0]?.input).toHaveProperty('descriptor', view.descriptor);
+    } finally { await view.dispose(); }
+  });
+
   it.each([
     { origin: 'created' as const, starts: 'remove' },
     { origin: undefined, starts: 'detach' },
@@ -721,66 +705,7 @@ describe('Environment → Database → Read-only query', () => {
     } finally { await screen.unmount(); controller.retire(); await installed.dispose(); account.dispose(); }
   });
 
-  it('keeps invalid parameter JSON local and shows a complete empty result without inventing rows', async () => {
-    const view = await renderDatabase({ answers: { query: { ok: true, columns: [{ name: 'value' }], rows: [], complete: true } } });
-    try {
-      await view.settle(`${page}.query`);
-      await view.screen.pressByTestIdAsync(`${page}.query`);
-      await view.settle('project-deployments.query.sql');
-      await act(async () => {
-        view.screen.changeTextByTestId('project-deployments.query.sql', 'SELECT 1 WHERE false');
-        view.screen.changeTextByTestId('project-deployments.query.params', '{');
-      });
-      await view.screen.pressByTestIdAsync('project-deployments.query.run');
-      expect(await view.settle('project-deployments.query.refused')).not.toBeNull();
-      expect(view.effects.filter(effect => effect.actionId === 'deployments.data.query')).toHaveLength(0);
-      await act(async () => view.screen.changeTextByTestId('project-deployments.query.params', '{}'));
-      await view.screen.pressByTestIdAsync('project-deployments.query.run');
-      expect(await view.settle('project-deployments.query.empty')).not.toBeNull();
-      expect(view.screen.findByTestId('project-deployments.query.incomplete')).toBeNull();
-      expect(view.screen.findByTestId('project-deployments.query.cell.0.0')).toBeNull();
-    } finally { await view.dispose(); }
-  });
-  it('opens the shared SQL sheet from the exact database page without running a query on open', async () => {
-    const view = await renderDatabase();
-    try {
-      expect(await view.settle(`${page}.query`)).not.toBeNull();
-      await view.screen.pressByTestIdAsync(`${page}.query`);
-      expect(await view.settle('project-deployments.query.sql')).not.toBeNull();
-      expect(view.screen.findByTestId('project-deployments.query.database')).toBeNull();
-      expect(view.effects.some(effect => effect.actionId === 'deployments.data.query')).toBe(false);
-    } finally { await view.dispose(); }
-  });
-  it('preserves null, empty text, duplicate columns and explicit incompleteness from the real query Action', async () => {
-    const view = await renderDatabase({ answers: { query: { ok: true, columns: [{ name: 'value' }, { name: 'value' }],
-      rows: [[null, '']], complete: false, diagnostic: { code: 'native_output_truncated' } } } });
-    try {
-      await view.settle(`${page}.query`);
-      await view.screen.pressByTestIdAsync(`${page}.query`);
-      await view.settle('project-deployments.query.sql');
-      await act(async () => { view.screen.changeTextByTestId('project-deployments.query.sql', 'SELECT NULL AS value, \'\' AS value'); });
-      await view.screen.pressByTestIdAsync('project-deployments.query.run');
-      expect(await view.settle('project-deployments.query.incomplete')).not.toBeNull();
-      expect(await view.settle('project-deployments.query.cell.0.0')).not.toBeNull();
-      expect(renderedText(view.screen.findByTestId('project-deployments.query.cell.0.0'))).toBe('NULL');
-      expect(renderedText(view.screen.findByTestId('project-deployments.query.cell.0.1'))).toBe('""');
-      expect(view.effects.find(effect => effect.actionId === 'deployments.data.query')?.input).toMatchObject({ service: 'postgres', params: {} });
-    } finally { await view.dispose(); }
-  });
-  it('shows a missing data role as a setup prerequisite without retrying or falling back to another connection', async () => {
-    const view = await renderDatabase({ answers: { query: { ok: false, error: 'deployment_unavailable',
-      diagnostic: { code: 'secret_missing' } } } });
-    try {
-      await view.settle(`${page}.query`);
-      await view.screen.pressByTestIdAsync(`${page}.query`);
-      await view.settle('project-deployments.query.sql');
-      await act(async () => { view.screen.changeTextByTestId('project-deployments.query.sql', 'SELECT 1'); });
-      await view.screen.pressByTestIdAsync('project-deployments.query.run');
-      expect(await view.settle('project-deployments.query.refused')).not.toBeNull();
-      expect(view.screen.findByTestId('project-deployments.query.setup')).not.toBeNull();
-      expect(view.effects.filter(effect => effect.actionId === 'deployments.data.query')).toHaveLength(1);
-    } finally { await view.dispose(); }
-  });
+
 });
 
 describe('Environment → Database → Move', () => {

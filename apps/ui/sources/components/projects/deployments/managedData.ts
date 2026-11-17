@@ -15,7 +15,7 @@ export function managedDataTargets(declarations: readonly Readonly<{ manifest: P
   return declarations.flatMap(({ manifest }) => (manifest.contributes.deploymentTargets ?? []).flatMap(target => {
     if (target.role !== 'data') return [];
     const operations = readDeploymentTargetActionRolesV1(target).flatMap(binding => {
-      if (binding.role === 'query.readOnly' || binding.role === 'projects.delete' || binding.role === 'projects.observe') return [];
+      if (binding.role === 'projects.delete' || binding.role === 'projects.observe') return [];
       const action = manifest.contributes.actions?.find(value => value.id === binding.action);
       if (!action) return [];
       const hints = normalizePluginActionInputHintsV2(action.inputHints, action.inputSchema);

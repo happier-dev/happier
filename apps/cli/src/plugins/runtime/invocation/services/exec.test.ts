@@ -52,7 +52,6 @@ import { assemblePluginRuntimeConsumers } from '../../composition/consumerAssemb
 import { activatePluginRuntimeRegistry } from '../../lifecycle/manager';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { createProductionPluginInvocationServiceOwners } from './production';
-import { executeOwnServerReadOnlyDataQuery } from '@/deployments/targets/ownServer/dataQuery';
 
 const executable = Object.freeze({ kind: 'systemTool', id: 'fixture.node' } as const satisfies ManagedExecutableRef);
 
@@ -673,36 +672,17 @@ describe('createStablePluginExecService', () => {
         } finally { authorization.dispose(); }
     });
 
-    it.each([0, 17])('keeps complete query rows from actual truncated native stdout while ordinary native reads refuse (exit %s)', async exitCode => {
+    it.each([0, 17])('preserves explicit partial native stdout and exit status while ordinary native reads refuse (exit %s)', async exitCode => {
         const io = createProjectNativeToolchainIoForHost({ resolveTool: async () => null });
         // The real subprocess exceeds the supervisor's existing 8MiB buffer.
-        // No process, custody, native IO or query parser is substituted.
+        // No process, custody or native IO is substituted.
         const request = { command: process.execPath, cwd: process.cwd(), env: {},
             args: ['-e', `process.stdout.write("value\\n"+("q".repeat(1023)+"\\n").repeat(9*1024));process.exitCode=${exitCode}`] };
         await expect(io.run(request)).rejects.toMatchObject({ code: 'project_native_toolchain_output_incomplete' });
-        let capturedBytes = 0;
-        const pending = executeOwnServerReadOnlyDataQuery({ engine: 'postgresql', database: 'app',
-            sql: 'SELECT value FROM example', params: {}, password: 'fixture', signal: new AbortController().signal }, {
-            async run() {
-                const partialRequest = { ...request, allowTruncatedStdout: true as const };
-                const output = await io.run(partialRequest);
-                capturedBytes = Buffer.byteLength(output.stdout);
-                expect(output).toMatchObject({ exitCode, stdoutTruncated: true });
-                return { ...output, stdoutTruncated: 'stdoutTruncated' in output && output.stdoutTruncated === true };
-            },
-        });
-        if (exitCode !== 0) {
-            await expect(pending).rejects.toMatchObject({ code: 'query_failed', details: { exitCode } });
-            expect(capturedBytes).toBe(8 * 1024 * 1024);
-            return;
-        }
-        const result = await pending;
-        expect(capturedBytes).toBe(8 * 1024 * 1024);
-        expect(result).toMatchObject({ columns: [{ name: 'value' }], complete: false,
-            diagnostic: { code: 'native_output_truncated' } });
-        expect(result.rows.length).toBeGreaterThan(0);
-        expect(result.rows.length).toBeLessThan(9 * 1024);
-        expect(result.rows.every(row => row.length === 1 && row[0] === 'q'.repeat(1023))).toBe(true);
+        const output = await io.run({ ...request, allowTruncatedStdout: true });
+        expect(output).toMatchObject({ exitCode, stdoutTruncated: true });
+        expect(Buffer.byteLength(output.stdout)).toBe(8 * 1024 * 1024);
+        expect(output.stdout).toBe(('value\n' + ('q'.repeat(1023) + '\n').repeat(9 * 1024)).slice(0, 8 * 1024 * 1024));
     });
 
     it('streams native diagnostics without retaining a second result buffer when the reader owns projection', async () => {

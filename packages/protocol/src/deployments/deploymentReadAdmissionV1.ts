@@ -8,11 +8,10 @@ import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, isDeploymentReadAdmissionActionIdV1 
 import { ProjectReadinessReadInputV1Schema } from '../projects/readinessInputV1.js';
 import { PROJECT_READINESS_ACTION_IDS_V1 } from '../actions/projectReadinessActionIdsV1.js';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '../actions/actionIds.js';
-import { DeploymentDataQueryInputV1Schema, DeploymentDataSizeInputV1Schema } from './deploymentReadsV1.js';
+import { DeploymentDataSizeInputV1Schema } from './deploymentReadsV1.js';
 import { ActionInvokeInputSchema } from '../actions/actionInvokeInput.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
-import { DeploymentTargetDataQueryInputV1Schema } from '../plugins/contributions/deploymentTargetRolesV1.js';
 import { DatabaseDeploymentServiceTargetV1Schema, DatabaseManagedDeploymentTargetV1Schema } from '../databases/databaseTargetIdentityV1.js';
 import { isDatabaseActionIdV1 } from '../actions/actionIdsDatabaseV1.js';
 import { databaseActionOperationClass } from '../actions/databaseActionMetadata.js';
@@ -31,11 +30,8 @@ export const DeploymentReadAdmissionV1Schema = lazyZodSchema(() => z.union([z.di
   z.strictObject({ actionId: z.literal('deployments.drift.read'), ...references, expectedRevision: revision }),
   z.extend(z.omit(DeploymentStageLogsReadInputV1Schema, { serverId: true, ref: true, tail: true, cursor: true, kind: true }),
     { actionId: z.literal('deployments.logs.read'), kind: z.enum(['build', 'runtime']) }),
-  z.strictObject({ actionId: z.literal('deployments.data.query'), ...references, expectedRevision: revision }),
   z.extend(z.omit(DeploymentDataSizeInputV1Schema, { serverId: true, previous: true }),
     { actionId: z.literal(DEPLOYMENT_DATA_SIZE_ACTION_ID_V1) }),
-  z.strictObject({ actionId: z.literal(ACTION_INVOKE_ACTION_ID_V1), action: asProtocolZod(PluginContributionIdentityV1Schema),
-    environmentId: id, targetLinkId: id, expectedRevision: revision, expectedTargetLinkRevision: revision }),
 ]), z.strictObject({ actionId: z.literal(ACTION_INVOKE_ACTION_ID_V1), action: asProtocolZod(PluginContributionIdentityV1Schema).check(
     z.refine(action => isDatabaseActionIdV1(formatQualifiedPluginActionId(action)))),
   environmentId: id, targetLinkId: id, databaseTarget: deploymentDatabaseTarget, access: z.enum(['read', 'write']) })]));
@@ -55,10 +51,7 @@ export function projectDeploymentReadAdmissionV1(actionId: string, input: unknow
         environmentId: target.data.environment.environmentId, targetLinkId: target.data.targetLinkId, databaseTarget: target.data,
         access: databaseActionOperationClass(qualifiedId, operands) };
     }
-    const query = DeploymentTargetDataQueryInputV1Schema.safeParse(invoked.data.input);
-    if (!query.success) return undefined;
-    const { environmentId, targetLinkId, expectedRevision, expectedTargetLinkRevision } = query.data;
-    return { actionId: ACTION_INVOKE_ACTION_ID_V1, action: invoked.data.action, environmentId, targetLinkId, expectedRevision, expectedTargetLinkRevision };
+    return undefined;
   }
   if (!isDeploymentReadAdmissionActionIdV1(actionId)) return undefined;
   if (actionId === DEPLOYMENT_DATA_SIZE_ACTION_ID_V1) {
@@ -70,10 +63,7 @@ export function projectDeploymentReadAdmissionV1(actionId: string, input: unknow
     return { actionId, projectId, machineId,
       environments: environments.map(({ environmentId, expectedRevision }) => ({ environmentId, expectedRevision })) };
   }
-  if (actionId === 'deployments.data.query') {
-    const { environmentId, deploymentId, targetLinkId, machineId, installationId, expectedRevision } = DeploymentDataQueryInputV1Schema.parse(input);
-    return { actionId, environmentId, deploymentId, targetLinkId, machineId, installationId, expectedRevision };
-  }
+
   if (actionId === 'deployments.health.current') {
     const { environmentId, targetLinkId, machineId } = DeploymentHealthCurrentInputV1Schema.parse(input);
     return { actionId, environmentId, targetLinkId, machineId };
@@ -87,6 +77,9 @@ export function projectDeploymentReadAdmissionV1(actionId: string, input: unknow
     return { actionId, environmentId, deploymentId, kind, ...(targetLinkId ? { targetLinkId } : {}),
       ...(machineId ? { machineId } : {}), ...(installationId ? { installationId } : {}) };
   }
-  const { environmentId, deploymentId, targetLinkId, machineId, installationId } = DeploymentHealthReadInputV1Schema.parse(input);
-  return { actionId, environmentId, deploymentId, targetLinkId, machineId, installationId };
+  if (actionId === 'deployments.health.read') {
+    const { environmentId, deploymentId, targetLinkId, machineId, installationId } = DeploymentHealthReadInputV1Schema.parse(input);
+    return { actionId, environmentId, deploymentId, targetLinkId, machineId, installationId };
+  }
+  return undefined;
 }

@@ -57,20 +57,20 @@ describe('installed Environment secret launch reader', () => {
             error: 'action_forbidden (requester_account_projection_missing)' });
     });
 
-    it.each([false, true])('signs only the selected service read-role acquisition (semantic=%s)', async semantic => {
+    it('signs only the semantic selected service read-role acquisition', async () => {
         install();
         const reader = await import('./readEnvironmentSecretLaunchAdmissionForHost');
-        const actionId = semantic ? 'action.invoke' as const : 'deployments.data.query' as const;
+        const actionId = 'action.invoke' as const;
         const target = { kind: 'machine' as const, machineId: 'machine' };
         const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 3,
             deploymentId: 'deployment', targetLinkId: 'link', machineId: 'machine', installationId: 'installation',
             service: 'postgres', sql: 'SELECT 1', params: {} };
         const action = parseQualifiedPluginActionId(DATABASE_STATEMENT_RUN_ACTION_ID_V1);
         if (!action) throw new Error('The canonical database Action has a qualified identity');
-        const actionInput = semantic ? { action, input: { operation: 'statement.run', mode: 'read',
+        const actionInput = { action, input: { operation: 'statement.run', mode: 'read',
             target: { kind: 'deployment_service', environment: { serverId: 'home', projectSourceId: 'source',
                 environmentId: input.environmentId }, deploymentId: input.deploymentId, targetLinkId: input.targetLinkId,
-                serviceId: input.service, database: 'postgres' }, statement: { sql: input.sql, parameters: [] } } } : input;
+                serviceId: input.service, database: 'postgres' }, statement: { sql: input.sql, parameters: [] } } };
         const envelope = { v: 1 as const, requestId: 'query-request', target, input: actionInput };
         const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'query-root', binding: {
             accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'home',
@@ -158,16 +158,14 @@ describe('installed Environment secret launch reader', () => {
         install();
         const reader = await import('./readEnvironmentSecretLaunchAdmissionForHost');
         const actionId = 'action.invoke' as const;
-        const action = { pluginId: 'happier.deploy.neon', localId: 'query-read' };
+        const action = parseQualifiedPluginActionId(DATABASE_STATEMENT_RUN_ACTION_ID_V1);
+        if (!action) throw new Error('Expected the canonical database Action identity');
         const target = { kind: 'machine' as const, machineId: 'machine' };
-        const credentialRef = { service: { pluginId: 'happier.deploy.neon', localId: 'neon' }, accountId: 'connected' };
-        const query = { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 3,
-            targetLinkId: 'link', expectedTargetLinkRevision: 2, credentialRef,
-            credentialPrincipal: { kind: 'account' as const, accountId: 'owner', purpose: {
-                consumer: action, purpose: 'deploy-manage',
-            }, target: { kind: 'account' as const, account: credentialRef } },
-            providerIdentity: { providerAccountId: 'org', providerResourceId: 'project', providerEnvironment: 'branch' },
-            providerEnvironment: { kind: 'custom' as const, id: 'branch' }, database: 'neondb', sql: 'SELECT 1', params: {} };
+        const query = { operation: 'statement.run', mode: 'read', target: { kind: 'managed_deployment',
+            environment: { serverId: 'home', projectSourceId: 'source', environmentId: 'environment' }, targetLinkId: 'link',
+            contribution: { pluginId: 'happier.deploy.neon', contributionId: 'database' },
+            platformProjectId: 'project', branchId: 'branch', database: 'neondb' },
+            statement: { sql: 'SELECT 1', parameters: [] } };
         const envelope = { v: 1 as const, requestId: 'managed-query-request', target, input: { action, input: query } };
         const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'managed-query-root', binding: {
             accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'home', actionId,

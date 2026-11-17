@@ -208,9 +208,7 @@ async function readEnvironmentSecretAdmissionForHost(input: HostSecretAdmissionR
                 ? input.materialization.buildMachineId || input.environmentUpdate
                     ? 'deployments.environments.update' : 'deployments.bindings.set'
                 : input.materialization.kind === 'dataRole'
-                    ? dataRoleRoot ?? ('targetLinkId' in input.materialization
-                        || input.context.externalActionExecutionAuthorization?.binding.actionId === ACTION_INVOKE_ACTION_ID_V1
-                        ? ACTION_INVOKE_ACTION_ID_V1 : 'deployments.data.query')
+                    ? dataRoleRoot ?? ACTION_INVOKE_ACTION_ID_V1
                 : input.materialization.kind === 'domain' && !input.materialization.use
                     ? 'deployments.domains.add'
                     : (input.materialization.kind === 'deployment' || input.materialization.kind === 'copySourceRead') && (input.context.externalActionExecutionAuthorization?.binding.actionId === 'deployments.backups.restore'

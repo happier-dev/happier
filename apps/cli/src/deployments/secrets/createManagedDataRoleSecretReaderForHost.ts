@@ -1,6 +1,5 @@
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
-import type { DeploymentTargetDataQueryInputV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';
 import type { DatabaseOperationClassV1 } from '@happier-dev/database-protocol';
@@ -34,7 +33,7 @@ export function createManagedDataRoleSecretReaderForHost(input: Readonly<{
     host: Pick<DeploymentTargetRoleAdmissionHost,
         'credentials' | 'serverId' | 'serverHttpBaseUrl' | 'machineId' | 'installationId'>;
     environment: DeploymentEnvironmentDetailV1;
-    query: Pick<DeploymentTargetDataQueryInputV1, 'targetLinkId' | 'expectedRevision'>;
+    query: Readonly<{ targetLinkId: string; expectedRevision: number }>;
     context: ActionExecutorContext;
     access?: DatabaseOperationClassV1;
     database?: string;

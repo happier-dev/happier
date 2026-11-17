@@ -15,7 +15,6 @@ import { ScmCommitOidSchema } from '../../scm/commitPublication.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
 import { ManagedServiceNativeLogCursorV1Schema, ManagedServiceNativeLogResultV1Schema } from '../../local/services/nativeLogsV1.js';
 import { MachineDeploymentServiceIdentityV1Schema } from '../../local/services/serviceIdentityV1.js';
-import { DeploymentDataQueryStatementV1Schema } from '../../deployments/deploymentReadsV1.js';
 import { DeploymentDomainProviderResultV1Schema, DeploymentDomainProviderZoneV1Schema } from '../../deployments/deploymentDomainProviderResultV1.js';
 
 export { DeploymentStepV1Schema, type DeploymentStepV1 } from '../../deployments/deploymentStateV1.js';
@@ -190,11 +189,6 @@ export const DeploymentTargetVariablesSyncInputV1Schema = lazyZodSchema(() => z.
     useOurs: z.array(id), keepTheirs: z.array(id),
 }));
 export type DeploymentTargetVariablesSyncInputV1 = z.infer<typeof DeploymentTargetVariablesSyncInputV1Schema>;
-export const DeploymentTargetDataQueryInputV1Schema = lazyZodSchema(() => z.extend(DeploymentTargetDataInputV1Schema,
-    { ...DeploymentDataQueryStatementV1Schema.shape, database: id }));
-export type DeploymentTargetDataQueryInputV1 = z.infer<typeof DeploymentTargetDataQueryInputV1Schema>;
-export const DeploymentTargetDataQueryInputV1ProtocolSchema = projectZodProtocolSchema(DeploymentTargetDataQueryInputV1Schema);
-
 export const DeploymentTargetLifecycleInputV1Schema = lazyZodSchema(() => z.extend(DeploymentTargetRoleCommonInputV1Schema, {
     targetLinkId: id, expectedTargetLinkRevision: revision,
     deploymentId: id, expectedDeploymentRevision: revision, actionOperationId: id,
@@ -270,7 +264,7 @@ export const DeploymentTargetRoleInputSchemasV1 = {
     'projects.delete': DeploymentTargetDataInputV1Schema,
     'projects.observe': DeploymentTargetDataInputV1Schema,
     'branches.list': DeploymentTargetBranchesListInputV1Schema, 'branches.create': DeploymentTargetDataInputV1Schema,
-    'branches.delete': DeploymentTargetDataInputV1Schema, 'query.readOnly': DeploymentTargetDataQueryInputV1Schema,
+    'branches.delete': DeploymentTargetDataInputV1Schema,
     'connectionSecret.save': DeploymentTargetDataInputV1Schema,
 } as const;
 export type DeploymentTargetRoleV1 = keyof typeof DeploymentTargetRoleInputSchemasV1;
@@ -303,7 +297,6 @@ export const DeploymentTargetRoleInputProtocolSchemasV1 = {
     'branches.list': DeploymentTargetBranchesListInputV1ProtocolSchema,
     'branches.create': DeploymentTargetDataInputV1ProtocolSchema,
     'branches.delete': DeploymentTargetDataInputV1ProtocolSchema,
-    'query.readOnly': DeploymentTargetDataQueryInputV1ProtocolSchema,
     'connectionSecret.save': DeploymentTargetDataInputV1ProtocolSchema,
 } as const;
 

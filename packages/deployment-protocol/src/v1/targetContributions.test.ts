@@ -41,9 +41,10 @@ const dataTarget = {
     id: 'database', title: 'Managed database', icon: 'server-outline', role: 'data', targetKind: 'database',
     targetSchema: closed, linkSchema: closed,
     dataV1: {
-        projects: { list: 'projects/list', provisionOptions: 'provision/options', provision: 'projects/provision' },
+        database: { engineId: 'example-engine' },
+        projects: { list: 'projects/list', observe: 'projects/observe', provisionOptions: 'provision/options', provision: 'projects/provision' },
         branches: { list: 'branches/list', create: 'branches/create', delete: 'branches/delete' },
-        query: { readOnly: 'query/read-only' }, connectionSecret: { save: 'connection-secret/save' },
+        connectionSecret: { save: 'connection-secret/save' },
     },
 };
 
@@ -54,13 +55,13 @@ function dataManifest() {
             id, source: 'dynamic', kind: 'config', contentType: 'application/json', execution: { target: 'daemon' },
         })),
         actions: [...value.contributes.actions,
-            ...['projects/provision', 'branches/create', 'branches/delete', 'query/read-only', 'connection-secret/save'].map(id => ({
+            ...['projects/provision', 'branches/create', 'branches/delete', 'projects/observe', 'connection-secret/save'].map(id => ({
                 id, title: id, scopes: ['global'], surfaces: ['plugin'], execution: { target: 'daemon' },
                 inputSchema: DeploymentTargetRoleInputProtocolSchemasV1[
                     id === 'projects/provision' ? 'projects.provision' : id === 'branches/create' ? 'branches.create'
-                        : id === 'branches/delete' ? 'branches.delete' : id === 'query/read-only' ? 'query.readOnly'
-                            : 'connectionSecret.save'].jsonSchema, resultSchema: closed,
-                dangerLevel: id === 'query/read-only' ? 'safe' : 'writesLocal', readOnly: id === 'query/read-only',
+                        : id === 'branches/delete' ? 'branches.delete' : id === 'projects/observe' ? 'projects.observe'
+                            : 'connectionSecret.save'].jsonSchema, resultSchema: id === 'projects/observe' ? DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema : closed,
+                dangerLevel: id === 'projects/observe' ? 'safe' : 'writesLocal', readOnly: id === 'projects/observe',
             })),
         ],
     } };
@@ -81,15 +82,15 @@ describe('deployment target manifest admission', () => {
     it('keeps engine metadata separate from normalized Action and Resource ownership', () => {
         const source = { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'database' } };
         const dataV1 = { database: { engineId: 'example-engine' },
-            projects: { list: { kind: 'plugin', resourceId: 'example.deploy/projects/list' } },
+            projects: { list: { kind: 'plugin', resourceId: 'example.deploy/projects/list' }, observe: { kind: 'plugin', actionId: formatQualifiedPluginActionId({ pluginId: 'example.deploy', localId: 'projects/observe' }) } },
             branches: { previewInput: { kind: { kind: 'literal', value: 'preview' },
                 actionId: { kind: 'literal', value: 'provider-operand' } } },
-            query: { readOnly: { kind: 'plugin', actionId: formatQualifiedPluginActionId({ pluginId: 'example.deploy', localId: 'query/read-only' }) } } };
+ };
         const normalized = { ...dataTarget, v: 1, source, dataV1 };
         expect(DeploymentTargetV1Schema.safeParse(normalized).success).toBe(true);
         for (const foreign of [
             { ...dataV1, projects: { list: { kind: 'plugin', resourceId: 'foreign.plugin/projects/list' } } },
-            { ...dataV1, query: { readOnly: { kind: 'plugin', actionId: formatQualifiedPluginActionId({ pluginId: 'foreign.plugin', localId: 'query/read-only' }) } } },
+            { ...dataV1, projects: { observe: { kind: 'plugin', actionId: formatQualifiedPluginActionId({ pluginId: 'foreign.plugin', localId: 'projects/observe' }) } } },
         ]) expect(DeploymentTargetV1Schema.safeParse({ ...normalized, dataV1: foreign }).success).toBe(false);
     });
 
@@ -179,8 +180,8 @@ describe('deployment target manifest admission', () => {
 
     it.each([
         ['a missing branch Action', { ...dataTarget, dataV1: { ...dataTarget.dataV1, branches: { create: 'missing' } } }],
-        ['an Action used as a Resource', { ...dataTarget, dataV1: { ...dataTarget.dataV1, projects: { list: 'query/read-only' } } }],
-        ['a mutation used as a query', { ...dataTarget, dataV1: { ...dataTarget.dataV1, query: { readOnly: 'branches/create' } } }],
+        ['an Action used as a Resource', { ...dataTarget, dataV1: { ...dataTarget.dataV1, projects: { list: 'projects/observe' } } }],
+        ['a mutation used as an observation', { ...dataTarget, dataV1: { ...dataTarget.dataV1, projects: { observe: 'branches/create' } } }],
         ['a foreign Resource', { ...dataTarget, dataV1: { ...dataTarget.dataV1, projects: { list: 'foreign.plugin/projects/list' } } }],
         ['undeclared provider metadata', { ...dataTarget, dataV1: { ...dataTarget.dataV1, provider: { arbitrary: true } } }],
         ['runtime Actions on a data target', { ...dataTarget, actions: target.actions }],
@@ -201,9 +202,9 @@ describe('deployment target manifest admission', () => {
     it.each([
         { reason: 'a write effect', patch: { readOnly: false } },
         { reason: 'client placement', patch: { execution: { target: 'client', platforms: ['web'], client: { artifactId: 'client', exportName: 'activate' } } } },
-    ])('withdraws a query Action with $reason', ({ patch }) => {
+    ])('withdraws a project observation Action with $reason', ({ patch }) => {
         const value = dataManifest();
-        const actions = value.contributes.actions.map(action => action.id === 'query/read-only' ? { ...action, ...patch } : action);
+        const actions = value.contributes.actions.map(action => action.id === 'projects/observe' ? { ...action, ...patch } : action);
         expect(admittedTargets({ ...value, contributes: { ...value.contributes, actions } }).targets).toEqual([target]);
     });
 

@@ -74,41 +74,26 @@ describe('deployment current-health read admission', () => {
         expect(DeploymentReadAdmissionV1Schema.safeParse({ ...admission, deploymentId: 'fabricated' }).success).toBe(false);
     });
 
-    it('binds a qualified managed data query to its exact selected link and contributor', () => {
+    it('does not admit retired native or provider query operands', () => {
+        // P1 R6 retires both query surfaces after semantic selected-target coverage above.
+        const native = { serverId: 'home', environmentId: 'environment', expectedRevision: 4,
+            deploymentId: 'deployment', targetLinkId: 'link', machineId: 'machine', installationId: 'installation',
+            service: 'postgres', sql: 'SELECT 1', params: {} };
+        expect(projectDeploymentReadAdmissionV1('deployments.data.query', native)).toBeUndefined();
+        expect(DeploymentReadAdmissionV1Schema.safeParse({ actionId: 'deployments.data.query',
+            environmentId: native.environmentId, expectedRevision: native.expectedRevision, deploymentId: native.deploymentId,
+            targetLinkId: native.targetLinkId, machineId: native.machineId, installationId: native.installationId }).success).toBe(false);
         const action = { pluginId: 'happier.deploy.neon', localId: 'query-read' };
-        const credentialRef = { service: { pluginId: 'happier.deploy.neon', localId: 'neon' }, accountId: 'connected' };
-        const input = {
-            action,
-            input: {
-                v: 1, serverId: 'server', environmentId: 'environment', expectedRevision: 4,
-                targetLinkId: 'data-link', expectedTargetLinkRevision: 3, credentialRef,
-                credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
-                    consumer: action, purpose: 'deploy-manage',
-                }, target: { kind: 'account', account: credentialRef } },
-                providerIdentity: { providerAccountId: 'org', providerResourceId: 'project', providerEnvironment: 'branch' },
-                providerEnvironment: { kind: 'custom', id: 'branch' },
-                database: 'neondb', sql: 'select 1', params: {},
-            },
-        };
-
-        const admission = projectDeploymentReadAdmissionV1('action.invoke', input);
-
-        expect(DeploymentReadAdmissionV1Schema.parse(admission)).toEqual({
-            actionId: 'action.invoke', action, environmentId: 'environment', targetLinkId: 'data-link',
-            expectedRevision: 4, expectedTargetLinkRevision: 3,
-        });
-        expect(projectDeploymentReadAdmissionV1('action.invoke', {
-            ...input, action: { pluginId: 'happier.deploy.supabase', localId: 'query-read' },
-        })).toEqual({
-            actionId: 'action.invoke', action: { pluginId: 'happier.deploy.supabase', localId: 'query-read' },
-            environmentId: 'environment', targetLinkId: 'data-link', expectedRevision: 4, expectedTargetLinkRevision: 3,
-        });
-        expect(projectDeploymentReadAdmissionV1('action.invoke', {
-            ...input, input: { ...input.input, expectedTargetLinkRevision: 2 },
-        })).toEqual({
-            actionId: 'action.invoke', action, environmentId: 'environment', targetLinkId: 'data-link',
-            expectedRevision: 4, expectedTargetLinkRevision: 2,
-        });
-        expect(projectDeploymentReadAdmissionV1('action.invoke', { action, input: { arbitrary: true } })).toBeUndefined();
+        const credentialRef = { service: { pluginId: action.pluginId, localId: 'neon' }, accountId: 'connected' };
+        const input = { v: 1, serverId: native.serverId, environmentId: native.environmentId, expectedRevision: 4,
+            targetLinkId: 'data-link', expectedTargetLinkRevision: 3, credentialRef,
+            credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: action, purpose: 'deploy-manage' },
+                target: { kind: 'account', account: credentialRef } },
+            providerIdentity: { providerAccountId: 'org', providerResourceId: 'project', providerEnvironment: 'branch' },
+            providerEnvironment: { kind: 'custom', id: 'branch' }, database: 'neondb', sql: 'select 1', params: {} };
+        expect(projectDeploymentReadAdmissionV1('action.invoke', { action, input })).toBeUndefined();
+        expect(DeploymentReadAdmissionV1Schema.safeParse({ actionId: 'action.invoke', action,
+            environmentId: native.environmentId, targetLinkId: input.targetLinkId, expectedRevision: 4,
+            expectedTargetLinkRevision: 3 }).success).toBe(false);
     });
 });

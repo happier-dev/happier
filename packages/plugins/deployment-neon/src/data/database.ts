@@ -83,13 +83,11 @@ export const neonDatabaseRuntime: DeploymentTargetDatabaseRuntimeV1 = {
           || input.operation === 'statement.explain' && input.accessMode === 'write') return unsupported();
         try {
           return await executePostgresqlOperation(input, async statement => {
-            if (!selected.ok) throw new PostgresqlOperationError({ ok: false, status: 'unavailable', code: 'database_transport_unavailable',
-              reason: selected.diagnostic?.code ?? selected.error });
+            if (!selected.ok) throw new PostgresqlOperationError(selected);
             const response = await selected.execute({ sql: statement.text,
               parameters: statement.values.map(value => value instanceof Uint8Array
                 ? `\\x${Array.from(value, byte => byte.toString(16).padStart(2, '0')).join('')}` : value) }, operationSignal);
-            if (!response.ok) throw new PostgresqlOperationError({ ok: false, status: 'unavailable', code: 'database_transport_unavailable',
-              reason: response.diagnostic?.code ?? response.error });
+            if (!response.ok) throw new PostgresqlOperationError(response);
             return nativeResult(response.native);
           });
         } catch (error) {

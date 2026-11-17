@@ -47,7 +47,6 @@ export function createDeploymentTargetRoleAdmissionFixture(role: DeploymentTarge
     const input = { v: 1, serverId: 'home', environmentId: environment.environment.id, expectedRevision: 1,
         targetLinkId, expectedTargetLinkRevision: 1, credentialRef: account, credentialPrincipal,
         providerIdentity, providerEnvironment,
-        ...(role === 'query.readOnly' ? { sql: 'SELECT 1', params: {}, database: 'selected-database' } : {}),
         ...(lifecycle ? { deploymentId: receipt.deployment.id, expectedDeploymentRevision: 1, actionOperationId: receipt.deployment.actionOperationId } : {}),
         ...(role === 'deploy' || role === 'uploadDeploy' ? { sourceIntent: receipt.content.sourceIntent,
             sourceMethod: role === 'uploadDeploy' ? 'upload' : 'gitIntegration' } : {}),

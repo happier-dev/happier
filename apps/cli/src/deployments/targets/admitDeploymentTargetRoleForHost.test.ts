@@ -504,7 +504,7 @@ describe('deployment role host admission', () => {
             .rejects.toMatchObject({ code: 'deployment_access_denied' });
     });
 
-    it.each(['branches.list', 'branches.create', 'branches.delete', 'query.readOnly', 'connectionSecret.save'] as const)(
+    it.each(['branches.list', 'branches.create', 'branches.delete', 'connectionSecret.save'] as const)(
         'admits exact managed data %s on the controller without a runtime receipt', async role => {
             const fixture = createDeploymentTargetRoleAdmissionFixture(role);
             await expect(admitDeploymentTargetRoleForHost({ ...fixture.request,
@@ -533,7 +533,7 @@ describe('deployment role host admission', () => {
         ['foreign principal', 'deployment_access_denied'], ['wrong controller', 'machine_unavailable'],
         ['missing read capability', 'deployment_access_denied'],
     ] as const)('refuses managed data with %s', async (change, code) => {
-        const fixture = createDeploymentTargetRoleAdmissionFixture('query.readOnly');
+        const fixture = createDeploymentTargetRoleAdmissionFixture('branches.list');
         if (change === 'runtime link') fixture.state.environment.targetLinks[0]!.targetLink.role = 'runtime';
         if (change === 'foreign target') fixture.state.environment.targetLinks[0]!.targetLink.targetKind = 'foreign';
         if (change === 'foreign native resource') fixture.state.environment.targetLinks[0]!.content!.providerIdentity = {
@@ -547,8 +547,8 @@ describe('deployment role host admission', () => {
         if (change === 'missing read capability') fixture.state.environment.environment.capabilities.read = false;
         await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).rejects.toMatchObject({ code });
     });
-    it.each(['environment', 'link'] as const)('refuses a stale managed query %s before provider provenance', async stale => {
-        const fixture = createDeploymentTargetRoleAdmissionFixture('query.readOnly');
+    it.each(['environment', 'link'] as const)('refuses stale managed credential selection %s before provider provenance', async stale => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('connectionSecret.save');
         fixture.state.environment.targetLinks[0]!.content!.providerIdentity = {
             ...fixture.input.providerIdentity, providerResourceId: 'foreign-before-provenance',
         };

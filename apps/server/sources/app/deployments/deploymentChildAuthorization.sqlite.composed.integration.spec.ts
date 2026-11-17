@@ -90,7 +90,7 @@ import { signMachineInstallationProof } from '@happier-dev/protocol/machines/ide
 import type { DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import type { DeploymentBackupConfigureInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import type { DeploymentEnvironmentTelemetrySetInputV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
-import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_BACKUP_ACTION_IDS_V1, DEPLOYMENT_DATA_QUERY_ACTION_ID_V1,
+import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_BACKUP_ACTION_IDS_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1,
     DEPLOYMENT_DRIFT_READ_ACTION_ID_V1, DEPLOYMENT_HEALTH_READ_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { buildDeploymentBackupActionInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
@@ -2212,7 +2212,7 @@ describe('deployment children retain their controller Action authority', () => {
             'no authority re-evaluation on either admitted hop').toEqual([]);
     });
 
-    it.each([ACTION_INVOKE_ACTION_ID_V1, DEPLOYMENT_DATA_QUERY_ACTION_ID_V1, DEPLOYMENT_DRIFT_READ_ACTION_ID_V1,
+    it.each([ACTION_INVOKE_ACTION_ID_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, DEPLOYMENT_DRIFT_READ_ACTION_ID_V1,
         DEPLOYMENT_HEALTH_READ_ACTION_ID_V1])('K2 retains finite %s metadata and content after withdrawal, refusing new work', async actionId => {
         const f = await fixture('team', 'account', { separateMemberCustodian: true });
         await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded' } });
@@ -2225,8 +2225,8 @@ describe('deployment children retain their controller Action authority', () => {
             ? { action, input: { operation: 'describe', target: { kind: 'deployment_service',
                 environment: { serverId, projectSourceId: f.environment.projectSourceId, environmentId: f.environment.id },
                 targetLinkId: f.link.id, deploymentId: f.receipt.id, serviceId: 'database', database: 'database' } } }
-            : actionId === DEPLOYMENT_DATA_QUERY_ACTION_ID_V1
-            ? { ...references, expectedRevision: f.environmentRevision, service: 'database', sql: 'select 1', params: {} }
+            : actionId === DEPLOYMENT_DATA_SIZE_ACTION_ID_V1
+            ? { ...references, expectedRevision: f.environmentRevision, service: 'database' }
             : { ...references, ...(actionId === DEPLOYMENT_DRIFT_READ_ACTION_ID_V1
                 ? { expectedRevision: f.environmentRevision } : {}),
                 service: { kind: 'deployment', machineId: f.member.id, environmentId: f.environment.id,
