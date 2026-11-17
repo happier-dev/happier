@@ -2,6 +2,8 @@ import type { HappierPortableStyle } from '../portableTypes.js';
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, happierFocusRingStyle } from './focusVisible.js';
 
 export const HAPPIER_ICON_BUTTON_SIZE = 28;
+/** How far a plain icon button's box reaches past its drawn glyph on each side: a trailing button's glyph, not its box, ends on its row's edge, and a label that takes the button's place keeps that edge too. */
+export const HAPPIER_ICON_BUTTON_HIT_PAD = 4;
 /** A `well` is the object on its row (the phone toolbar's Filters and ⋯ beside the search), not a glyph in a rail. */
 export const HAPPIER_ICON_BUTTON_WELL_SIZE = 34;
 

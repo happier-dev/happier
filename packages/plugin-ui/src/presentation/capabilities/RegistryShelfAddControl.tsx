@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useHappierUiTheme } from '../../environment/context.js';
-import { HAPPIER_ICON_BUTTON_SIZE } from '../interaction/iconButtonChrome.js';
+import { HAPPIER_ICON_BUTTON_HIT_PAD, HAPPIER_ICON_BUTTON_SIZE } from '../interaction/iconButtonChrome.js';
 import { HappierMotionFeedback } from '../interaction/MotionFeedback.js';
 import { HappierPoliteAccessibilityStatus } from '../feedback/PoliteAccessibilityStatus.js';
 
@@ -33,7 +33,9 @@ export function HappierRegistryShelfAddControl(props: RegistryShelfAddControlPro
     setAcknowledged({ state: props.state, count });
   }
   const content = props.state === 'added' ? (
-    <View testID={`${props.testID}.added`} style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xsmall, minHeight: HAPPIER_ICON_BUTTON_SIZE }}>
+    // "Added" takes the Add button's place, so it ends where the button's glyph ends, not where its box does.
+    <View testID={`${props.testID}.added`} style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xsmall,
+      minHeight: HAPPIER_ICON_BUTTON_SIZE, paddingEnd: HAPPIER_ICON_BUTTON_HIT_PAD }}>
       {props.host.renderAddedIcon()}
       {props.host.renderAddedLabel(props.addedLabel)}
     </View>

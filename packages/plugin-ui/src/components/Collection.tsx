@@ -85,6 +85,7 @@ import { HappierResizeHandle } from '../presentation/layout/resize/HappierResize
 import { useCollectionRailLabels, useCollectionRailSizing } from './collectionRailSizing.js';
 import { useHappierCollectionViewport, type HappierCollectionModel, type HappierCollectionViewport } from '../presentation/collection/useCollection.js';
 import { HappierPressable } from '../presentation/interaction/Pressable.js';
+import { HAPPIER_ICON_BUTTON_HIT_PAD } from '../presentation/interaction/iconButtonChrome.js';
 import type { HappierLayoutChangeEvent, HappierPortableStyle } from '../presentation/portableTypes.js';
 import { HappierText } from '../presentation/text/Text.js';
 import { useHappierLayoutTextAlign } from '../presentation/text/layoutTextAlign.js';
@@ -818,8 +819,6 @@ const DIRECTORY_ROW_INSET = resolveHappierCatalogDirectoryRowEdges(0).contentIns
 const catalogDirectoryRowContentStyle: HappierPortableStyle = { paddingLeft: DIRECTORY_ROW_INSET - 1 };
 /** With no trailing control the content itself ends on the section's edge. */
 const catalogDirectoryRowTrailingStyle: HappierPortableStyle = { ...catalogDirectoryRowContentStyle, paddingRight: DIRECTORY_ROW_INSET - 1 };
-/** The trailing icon button's own hit padding: its glyph, not its box, ends on the section's edge. */
-const DIRECTORY_ACTION_HIT_PAD = 4;
 const NO_CELLS: readonly never[] = Object.freeze([]);
 const CollectionStageContext = createContext<CollectionStage<unknown> | null>(null);
 
@@ -1818,7 +1817,7 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string; befo
     <View style={lineStyle}>
       {listAction === null ? null : <View style={stage.directoryRow !== null
         // A directory's action: the accessory cell's end and the button's own hit padding make up the row's inset.
-        ? { marginRight: DIRECTORY_ROW_INSET - theme.spacing.medium - DIRECTORY_ACTION_HIT_PAD }
+        ? { marginRight: DIRECTORY_ROW_INSET - theme.spacing.medium - HAPPIER_ICON_BUTTON_HIT_PAD }
         : stage.ruledInsetPx === null ? listActionStyle : { marginRight: stage.ruledInsetPx - theme.spacing.medium }}>{listAction}</View>}
       {beneath === null ? rowAccessory : null}{chevron}
     </View>
