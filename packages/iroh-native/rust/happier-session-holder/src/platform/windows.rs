@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, LocalFree, ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE,
+    CloseHandle, GetLastError, LocalFree, ERROR_IO_PENDING, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
 use windows_sys::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
@@ -26,7 +26,7 @@ use windows_sys::Win32::Storage::FileSystem::{
 };
 use windows_sys::Win32::System::IO::{GetOverlappedResult, OVERLAPPED};
 use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, WaitNamedPipeW, NMPWAIT_WAIT_FOREVER, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
     PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 use windows_sys::Win32::System::Threading::{
@@ -167,10 +167,15 @@ impl ClientWriter for PipeWriter {
     }
 }
 
+/// Like a bound Unix socket, a bound listener always has a listening pipe instance: one is
+/// created at `bind` and the next before `accept` returns a connection, so a client that
+/// connects right after the readiness line (or between two accepts) finds the pipe. A
+/// named pipe with no listening instance does not exist for `CreateFileW`.
 pub struct Listener {
     path: Vec<u16>,
     security: PSECURITY_DESCRIPTOR,
     first: std::sync::atomic::AtomicBool,
+    listening: std::sync::Mutex<Option<PipeHandle>>,
 }
 unsafe impl Send for Listener {}
 unsafe impl Sync for Listener {}
@@ -192,7 +197,11 @@ impl Listener {
         if ok == 0 {
             return Err(io::Error::last_os_error());
         }
-        Ok(Self { path: wide(path), security, first: std::sync::atomic::AtomicBool::new(true) })
+        let listener = Self { path: wide(path), security, first: std::sync::atomic::AtomicBool::new(true),
+            listening: std::sync::Mutex::new(None) };
+        let instance = listener.create_instance()?;
+        *listener.listening.lock().unwrap() = Some(instance);
+        Ok(listener)
     }
 
     fn create_instance(&self) -> io::Result<PipeHandle> {
@@ -221,7 +230,11 @@ impl Listener {
     }
 
     pub fn accept(&self) -> io::Result<(Box<dyn Read + Send>, Box<dyn ClientWriter>)> {
-        let pipe = self.create_instance()?;
+        let listening = self.listening.lock().unwrap().take();
+        let pipe = match listening {
+            Some(pipe) => pipe,
+            None => self.create_instance()?,
+        };
         unsafe {
             let event = CreateEventW(null(), 1, 0, null());
             let mut overlapped: OVERLAPPED = std::mem::zeroed();
@@ -237,6 +250,9 @@ impl Listener {
                 return Err(io::Error::last_os_error());
             }
         }
+        // The next client finds a listening instance while this one is served; when it cannot
+        // be created now, the next `accept` creates it.
+        *self.listening.lock().unwrap() = self.create_instance().ok();
         let shared = Arc::new(pipe);
         Ok((Box::new(PipeReader(shared.clone())), Box::new(PipeWriter(shared))))
     }
@@ -267,7 +283,13 @@ pub fn connect(path: &str) -> io::Result<(Box<dyn Read + Send>, Box<dyn ClientWr
         )
     };
     if handle == INVALID_HANDLE_VALUE {
-        return Err(io::Error::last_os_error());
+        let error = io::Error::last_os_error();
+        // Every instance is serving a client (the holder is between two accepts): the named-pipe
+        // client contract is to wait for an instance, then open again (libuv does the same).
+        if error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) && unsafe { WaitNamedPipeW(wide(path).as_ptr(), NMPWAIT_WAIT_FOREVER) } != 0 {
+            return connect(path);
+        }
+        return Err(error);
     }
     let shared = Arc::new(PipeHandle(unsafe { OwnedHandle::from_raw_handle(handle as RawHandle) }));
     Ok((Box::new(PipeReader(shared.clone())), Box::new(PipeWriter(shared))))

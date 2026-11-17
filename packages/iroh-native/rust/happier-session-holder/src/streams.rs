@@ -219,8 +219,11 @@ mod tests {
 
     #[test]
     fn which_finds_a_path_executable_and_refuses_paths() {
-        assert!(which("sh").is_some_and(|path| path.ends_with("/sh")));
-        assert_eq!(which("./sh"), None);
+        // A shell every supported OS has on PATH; Windows resolves it through PATHEXT.
+        let (shell, file) = if cfg!(windows) { ("cmd", "\\cmd.exe") } else { ("sh", "/sh") };
+        assert!(which(shell).is_some_and(|path| path.to_lowercase().ends_with(file)), "{:?}", which(shell));
+        assert_eq!(which(&format!("./{shell}")), None);
+        assert_eq!(which(&format!(".\\{shell}")), None);
         assert_eq!(which("definitely-not-a-command-happier"), None);
     }
 

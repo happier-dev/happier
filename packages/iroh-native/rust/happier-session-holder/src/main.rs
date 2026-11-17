@@ -16,6 +16,8 @@
 //! that endpoint is on another Machine, `serve --session-mcp` lets the holder carry its
 //! Agent tree's relays on its own client channel (see `session_mcp.rs`).
 
+#[cfg(windows)]
+mod conpty;
 mod frame;
 mod mcp_relay;
 mod outbox;
@@ -126,7 +128,7 @@ fn serve(args: &ServeArgs) {
     let mut command = Command::new(&argv[0]);
     platform::add_agent_args(&mut command, &argv[1..], verbatim);
     let spawned = match args.pty {
-        Some((cols, rows)) => spawn_terminal_agent(&mut command, cols, rows),
+        Some((cols, rows)) => spawn_terminal_agent(&mut command, argv, verbatim, cols, rows),
         None => {
             command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
             platform::configure_agent_command(&mut command);
@@ -136,7 +138,7 @@ fn serve(args: &ServeArgs) {
                     (Box::new(child.stdout.take().expect("piped stdout")), b'o'),
                     (Box::new(child.stderr.take().expect("piped stderr")), b'e'),
                 ];
-                (child, stdin, outputs)
+                HeldAgent::of_child(child, stdin, outputs)
             }).map_err(|error| json!({
                 "ready": false,
                 "code": "agent_spawn_failed",
@@ -146,7 +148,7 @@ fn serve(args: &ServeArgs) {
             }))
         }
     };
-    let (mut child, agent_stdin, outputs) = match spawned {
+    let HeldAgent { pid: agent_pid, wait, after_exit, stdin: agent_stdin, outputs } = match spawned {
         Ok(spawned) => spawned,
         Err(refusal) => {
             listener.remove();
@@ -155,7 +157,6 @@ fn serve(args: &ServeArgs) {
             std::process::exit(1);
         }
     };
-    let agent_pid = child.id();
     let holder_pid = std::process::id();
     ready_line(json!({ "ready": true, "protocol": frame::PROTOCOL_VERSION, "holderPid": holder_pid, "agentPid": agent_pid }));
     // The spawner may exit or crash; the holder must never write to its pipes again.
@@ -175,9 +176,12 @@ fn serve(args: &ServeArgs) {
         thread::spawn(move || {
             // Root exit is reported as soon as it happens, like Node's `exit`; `z`
             // (streams closed) follows once every writer of the Agent's pipes is gone.
-            let status = platform::exit_json(child.wait());
+            let status = wait();
             *exit.lock().unwrap() = Some(status.clone());
             outbox.send(b'x', status.to_string().as_bytes());
+            if let Some(after_exit) = after_exit {
+                after_exit();
+            }
             for pump in pumps {
                 let _ = pump.join();
             }
@@ -236,28 +240,63 @@ fn serve(args: &ServeArgs) {
 }
 
 static SOCKET_PATH: Mutex<Option<String>> = Mutex::new(None);
-/// The held Agent's terminal master (`--pty`), for the primary client's `resize`.
-static AGENT_TERMINAL: Mutex<Option<i32>> = Mutex::new(None);
+/// The held Agent's terminal (`--pty`), for the primary client's `resize`: the master
+/// descriptor on Unix, the pseudoconsole handle on Windows.
+static AGENT_TERMINAL: Mutex<Option<isize>> = Mutex::new(None);
 
-type HeldAgent = (std::process::Child, Option<Box<dyn Write + Send>>, Vec<(Box<dyn Read + Send>, u8)>);
+/// The started Agent: its pid, how to wait for its exit status, what to do once it exited
+/// (Windows: close the pseudoconsole so its output ends), its input and its outputs.
+struct HeldAgent {
+    pid: u32,
+    wait: Box<dyn FnOnce() -> Value + Send>,
+    after_exit: Option<Box<dyn FnOnce() + Send>>,
+    stdin: Option<Box<dyn Write + Send>>,
+    outputs: Vec<(Box<dyn Read + Send>, u8)>,
+}
+
+impl HeldAgent {
+    fn of_child(mut child: std::process::Child, stdin: Option<Box<dyn Write + Send>>, outputs: Vec<(Box<dyn Read + Send>, u8)>) -> Self {
+        Self { pid: child.id(), wait: Box::new(move || platform::exit_json(child.wait())), after_exit: None, stdin, outputs }
+    }
+}
+
+fn terminal_refusal(code: &str) -> Value {
+    json!({ "ready": false, "code": "agent_spawn_failed", "kind": code, "message": format!("terminal Agent start failed: {code}") })
+}
 
 /// The Agent as the session leader of a new terminal: its output is one stream (`o`),
 /// input goes to the terminal (`i`), and the primary client resizes it (`resize`).
 #[cfg(unix)]
-fn spawn_terminal_agent(command: &mut Command, cols: u16, rows: u16) -> Result<HeldAgent, Value> {
+fn spawn_terminal_agent(command: &mut Command, _: &[String], _: bool, cols: u16, rows: u16) -> Result<HeldAgent, Value> {
     use std::fs::File;
     use std::os::fd::FromRawFd;
-    let (child, master) = terminal::spawn_in_pty(command, cols, rows)
-        .map_err(|code| json!({ "ready": false, "code": "agent_spawn_failed", "kind": code, "message": format!("terminal Agent start failed: {code}") }))?;
+    let (child, master) = terminal::spawn_in_pty(command, cols, rows).map_err(terminal_refusal)?;
     let reader = unsafe { File::from_raw_fd(libc::dup(master)) };
     let writer = unsafe { File::from_raw_fd(master) };
-    *AGENT_TERMINAL.lock().unwrap() = Some(master);
-    Ok((child, Some(Box::new(writer)), vec![(Box::new(reader), b'o')]))
+    *AGENT_TERMINAL.lock().unwrap() = Some(master as isize);
+    Ok(HeldAgent::of_child(child, Some(Box::new(writer)), vec![(Box::new(reader), b'o')]))
 }
 
-#[cfg(not(unix))]
-fn spawn_terminal_agent(_: &mut Command, _: u16, _: u16) -> Result<HeldAgent, Value> {
-    Err(json!({ "ready": false, "code": "agent_spawn_failed", "kind": "unsupported", "message": "terminal Agents are not supported on this platform yet" }))
+/// Windows: the Agent in the OS pseudoconsole (ConPTY), see `conpty.rs`.
+#[cfg(windows)]
+fn spawn_terminal_agent(_: &mut Command, argv: &[String], verbatim: bool, cols: u16, rows: u16) -> Result<HeldAgent, Value> {
+    let agent = conpty::spawn(argv, verbatim, cols, rows).map_err(|error| terminal_refusal(&error))?;
+    let console = agent.console;
+    *AGENT_TERMINAL.lock().unwrap() = Some(console);
+    Ok(HeldAgent {
+        pid: agent.pid,
+        wait: agent.waiter(),
+        // Taken under the lock, so a `resize` in flight finishes before the handle is closed
+        // and a later one finds the terminal absent.
+        after_exit: Some(Box::new(|| {
+            let console = AGENT_TERMINAL.lock().unwrap().take();
+            if let Some(console) = console {
+                conpty::close(console);
+            }
+        })),
+        stdin: Some(Box::new(agent.input)),
+        outputs: vec![(Box::new(agent.output), b'o')],
+    })
 }
 static OPS_SOCKET_PATH: Mutex<Option<String>> = Mutex::new(None);
 
@@ -446,17 +485,18 @@ fn operation(
 }
 
 fn resize_agent_terminal(request: &Value) -> Result<(), &'static str> {
-    let master = AGENT_TERMINAL.lock().unwrap().ok_or("agent_terminal_absent")?;
+    // Held for the call: the Windows pseudoconsole handle is closed once the Agent exited.
+    let terminal = AGENT_TERMINAL.lock().unwrap();
+    let master = terminal.ok_or("agent_terminal_absent")?;
     let size = |key: &str| request.get(key).and_then(Value::as_u64).and_then(|value| u16::try_from(value).ok()).filter(|value| *value > 0);
     let (Some(cols), Some(rows)) = (size("cols"), size("rows")) else { return Err("invalid_request") };
     #[cfg(unix)]
     {
-        terminal::set_size(master, cols, rows)
+        terminal::set_size(master as i32, cols, rows)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = (master, cols, rows);
-        Err("unsupported")
+        conpty::resize(master, cols, rows)
     }
 }
 

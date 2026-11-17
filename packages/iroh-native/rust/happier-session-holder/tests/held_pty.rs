@@ -26,6 +26,8 @@ struct Client {
 struct Seen {
     output: Vec<(u64, Vec<u8>)>,
     exit: Option<serde_json::Value>,
+    /// `z`: every writer of the Agent's output is gone; nothing follows it.
+    closed: bool,
     replies: Vec<serde_json::Value>,
 }
 
@@ -71,6 +73,7 @@ impl Client {
             match kind {
                 b'o' => seen.output.push((u64::from_be_bytes(payload[..8].try_into().unwrap()), payload[8..].to_vec())),
                 b'x' => seen.exit = Some(serde_json::from_slice(&payload[8..]).unwrap()),
+                b'z' => seen.closed = true,
                 b'r' => seen.replies.push(serde_json::from_slice(&payload).unwrap()),
                 _ => {}
             }
@@ -149,7 +152,7 @@ fn held_agent_terminal_replays_unacknowledged_output_and_takes_resize_and_input(
     // The same Agent keeps running: more input, then end of input (Ctrl-D) ends it.
     second.send(b'i', b"two\r\x04");
     let mut rest = Seen::default();
-    second.read_until(&mut rest, |seen| seen.exit.is_some());
+    second.read_until(&mut rest, |seen| seen.closed);
     assert!(rest.text().contains("got:two"), "{:?}", rest.text());
     assert_eq!(rest.exit.as_ref().map(|exit| exit["code"].clone()), Some(serde_json::json!(7)));
     second.ack(u64::MAX);
@@ -183,7 +186,7 @@ fn a_workspace_client_cannot_resize_the_held_agent_terminal() {
     let mut primary = Client::connect(&socket);
     primary.send(b'q', br#"{"id":"k","op":"signal","signal":"KILL"}"#);
     let mut end = Seen::default();
-    primary.read_until(&mut end, |seen| seen.exit.is_some());
+    primary.read_until(&mut end, |seen| seen.closed);
     primary.ack(u64::MAX);
     holder.wait().unwrap();
     let _ = std::fs::remove_dir_all(directory);
