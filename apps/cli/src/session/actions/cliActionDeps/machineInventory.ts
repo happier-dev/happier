@@ -11,7 +11,7 @@ import { AGENT_SIGN_IN_PREPARE_RPC_METHOD } from '@happier-dev/protocol/daemon/a
 import { ConnectedAccountAttemptResponseSchema, CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import { DaemonTerminalEnsureResponseSchema, DaemonTerminalListResponseV1Schema, DaemonTerminalCloseResponseSchema } from '@happier-dev/protocol/daemon/terminal';
 import type { createCliActionInventoryDeps } from './createCliActionInventoryDeps';
-import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import { readHostAdmittedReviewedChildV1, readHostReviewedChildRootV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { readSessionAgentReadinessChildActionV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { SESSION_AGENT_READINESS_CHILDREN_V1, isSessionAgentReadinessRootActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -22,23 +22,24 @@ export function createCliMachineInventoryActionDeps(
     inventoryDeps: ReturnType<typeof createCliActionInventoryDeps>;
   }>,
 ): Pick<ActionExecutorDeps, 'machinesAgentsList' | 'machineAgentSignInStart' | 'machineAgentSignInStatus' | 'machineAgentSignInCancel' | 'machineAgentSignInRestart' | 'workflowEventsList'> {
-  const signInOperations = (target: Readonly<{ machineId: string; serverId?: string; signal?: AbortSignal }>): Parameters<typeof restartMachineAgentSignIn>[1] => {
-    const { machineId, serverId, signal } = target;
+  const signInOperations = (target: Readonly<{ machineId: string; serverId?: string; signal?: AbortSignal;
+    context: ActionExecutorContext; effectActionId: string }>): Parameters<typeof restartMachineAgentSignIn>[1] => {
+    const { machineId, serverId, signal, context, effectActionId } = target;
     return {
       signal,
-      prepare: (request) => callMachineAction({ machineId, serverId, method: AGENT_SIGN_IN_PREPARE_RPC_METHOD, request, signal }),
+      prepare: (request) => callMachineAction({ machineId, serverId, method: AGENT_SIGN_IN_PREPARE_RPC_METHOD, request, signal, context, effectActionId }),
       beginConnect: async (command) => ConnectedAccountAttemptResponseSchema.parse(await callMachineAction({
-        machineId, serverId, method: CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, request: { v: 1, machineId, command }, signal,
+        machineId, serverId, method: CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, request: { v: 1, machineId, command }, signal, context, effectActionId,
       })),
       ensureTerminal: async (request) => DaemonTerminalEnsureResponseSchema.parse(await callMachineAction({
-        machineId, serverId, method: RPC_METHODS.DAEMON_TERMINAL_ENSURE, request,
+        machineId, serverId, method: RPC_METHODS.DAEMON_TERMINAL_ENSURE, request, context, effectActionId,
       })),
       listTerminals: async () => DaemonTerminalListResponseV1Schema.parse(await callMachineAction({
-        machineId, serverId, method: RPC_METHODS.DAEMON_TERMINAL_LIST, request: {}, signal,
+        machineId, serverId, method: RPC_METHODS.DAEMON_TERMINAL_LIST, request: {}, signal, context, effectActionId,
       })),
       // Cleanup must retain an acquired process even after the initiating request aborts.
       closeTerminal: async (terminalId) => DaemonTerminalCloseResponseSchema.parse(await callMachineAction({
-        machineId, serverId, method: RPC_METHODS.DAEMON_TERMINAL_CLOSE, request: { terminalId },
+        machineId, serverId, method: RPC_METHODS.DAEMON_TERMINAL_CLOSE, request: { terminalId }, context, effectActionId,
       })),
     };
   };
@@ -111,11 +112,12 @@ export function createCliMachineInventoryActionDeps(
         throw error;
       }
     },
-    machineAgentSignInStart: async ({ machineId, signal, serverId, ...request }) => {
+    machineAgentSignInStart: async ({ machineId, signal, serverId, ...request }, context) => {
       if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) {
         return { ok: false, errorCode: 'sign_in_unavailable', error: 'An authenticated machine transport is required.' };
       }
-      return startMachineAgentSignIn({ ...request, machineId }, signInOperations({ machineId, serverId, signal }));
+      return startMachineAgentSignIn({ ...request, machineId }, signInOperations({ machineId, serverId, signal, context,
+        effectActionId: context.externalActionExecutionAuthorization?.binding.actionId ?? 'machines.agents.signIn.start' }));
     },
     machineAgentSignInStatus: async ({ machineId, signal, serverId, agentId }, context) => {
       if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) {
@@ -126,17 +128,19 @@ export function createCliMachineInventoryActionDeps(
         context, effectActionId: context.externalActionExecutionAuthorization?.binding.actionId ?? 'machines.agents.signIn.status',
       }));
     },
-    machineAgentSignInCancel: async ({ machineId, serverId, signal, ...request }) => {
+    machineAgentSignInCancel: async ({ machineId, serverId, signal, ...request }, context) => {
       if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) {
         return { ok: false, errorCode: 'sign_in_unavailable', error: 'An authenticated machine transport is required.' };
       }
-      return await cancelMachineAgentSignIn({ ...request, machineId }, signInOperations({ machineId, serverId, signal }));
+      return await cancelMachineAgentSignIn({ ...request, machineId }, signInOperations({ machineId, serverId, signal, context,
+        effectActionId: context.externalActionExecutionAuthorization?.binding.actionId ?? 'machines.agents.signIn.cancel' }));
     },
-    machineAgentSignInRestart: async ({ machineId, serverId, signal, ...request }) => {
+    machineAgentSignInRestart: async ({ machineId, serverId, signal, ...request }, context) => {
       if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) {
         return { ok: false, errorCode: 'sign_in_unavailable', error: 'An authenticated machine transport is required.' };
       }
-      return await restartMachineAgentSignIn({ ...request, machineId }, signInOperations({ machineId, serverId, signal }));
+      return await restartMachineAgentSignIn({ ...request, machineId }, signInOperations({ machineId, serverId, signal, context,
+        effectActionId: context.externalActionExecutionAuthorization?.binding.actionId ?? 'machines.agents.signIn.restart' }));
     },
   
     workflowEventsList: async (args, context) => {

@@ -2363,10 +2363,10 @@ export type ActionExecutorDeps = Readonly<{
   agentsBackendsList?: (args: Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>) => Promise<AgentsBackendsListOutput>;
   /** Per Agent routing id: the Account's connected-service default satisfies authentication, cannot be read, or is native. */
   agentsConnectedDefaultRoutesRead?: (args: Readonly<{ agentIds: readonly string[]; signal?: AbortSignal }>, context: ActionExecutorContext) => Promise<Readonly<Record<string, 'connected' | 'unavailable' | 'native'>>>;
-  machineAgentSignInStart?: (args: MachinesAgentsSignInStartInput & { serverId?: string; signal?: AbortSignal }) => Promise<MachinesAgentsSignInStartOutput>;
+  machineAgentSignInStart?: (args: MachinesAgentsSignInStartInput & { serverId?: string; signal?: AbortSignal }, context: ActionExecutorContext) => Promise<MachinesAgentsSignInStartOutput>;
   machineAgentSignInStatus?: (args: MachinesAgentsSignInStatusInput & { serverId?: string; signal?: AbortSignal }, context: ActionExecutorContext) => Promise<AgentSignInStatusResponse>;
-  machineAgentSignInCancel?: (args: MachinesAgentsSignInCancelInput & { serverId?: string; signal?: AbortSignal }) => Promise<MachinesAgentsSignInCancelOutput>;
-  machineAgentSignInRestart?: (args: MachinesAgentsSignInCancelInput & { serverId?: string; signal?: AbortSignal }) => Promise<MachinesAgentsSignInStartOutput>;
+  machineAgentSignInCancel?: (args: MachinesAgentsSignInCancelInput & { serverId?: string; signal?: AbortSignal }, context: ActionExecutorContext) => Promise<MachinesAgentsSignInCancelOutput>;
+  machineAgentSignInRestart?: (args: MachinesAgentsSignInCancelInput & { serverId?: string; signal?: AbortSignal }, context: ActionExecutorContext) => Promise<MachinesAgentsSignInStartOutput>;
   machinesAgentsList?: (args: MachinesAgentsListInput & Readonly<{ draftDefinitions?: readonly MachineAcpInventoryDefinition[] }>, context: ActionExecutorContext) => Promise<MachinesAgentsListOutput | ActionExecuteFailure>;
   workflowEventsList?: (args: WorkflowEventsListInputV1, context: ActionExecutorContext) => Promise<WorkflowEventsListOutputV1 | ActionExecuteFailure>;
   workspaceFilesSearch?: (args: PublicActionInputById['workspace.files.search'], context: ActionExecutorContext) => Promise<DaemonWorkspaceFileSearchResponse | ActionExecuteFailure>;

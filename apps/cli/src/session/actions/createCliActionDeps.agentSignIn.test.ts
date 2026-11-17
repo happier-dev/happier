@@ -40,7 +40,7 @@ describe('machine Agent sign-in Actions', () => {
       .toMatchObject({ ok: true, result: { status: 'unavailable' } });
     expect(invoke).toHaveBeenLastCalledWith('daemon.connectedAccounts.authentication.command', expect.objectContaining({
       v: 1, machineId: 'machine', command: expect.objectContaining({ operation: 'beginConnect' }),
-    }), undefined);
+    }), expect.objectContaining({ localActionContext: { authority: 'present_user', surface: 'cli' } }));
   });
 
   it.each(['machines.agents.signIn.cancel', 'machines.agents.signIn.restart'] as const)(

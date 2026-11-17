@@ -33,7 +33,7 @@ export async function dispatchAgentsCatalog(inv: Pick<CoreInvocation, 'actionId'
           const request = parsed.data as AdmittedActionInputById[typeof actionId];
           return completeActionResult(await deps.machineAgentSignInStart({ ...request,
             ...(ctx.serverId ? { serverId: ctx.serverId } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}),
-          }), { treatReturnedErrorEnvelopeAsFailure: true });
+          }, ctx), { treatReturnedErrorEnvelopeAsFailure: true });
         }
         if (actionId === 'machines.agents.signIn.status') {
           if (!deps.machineAgentSignInStatus) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
@@ -47,7 +47,7 @@ export async function dispatchAgentsCatalog(inv: Pick<CoreInvocation, 'actionId'
           if (!operation) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
           return completeActionResult(await operation({ ...(parsed.data as AdmittedActionInputById[typeof actionId]),
             ...(ctx.serverId ? { serverId: ctx.serverId } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}),
-          }), { treatReturnedErrorEnvelopeAsFailure: true });
+          }, ctx), { treatReturnedErrorEnvelopeAsFailure: true });
         }
         if (actionId === 'machines.agents.install' || actionId === 'machines.agents.uninstall') {
           if (!deps.machineAgentInstallStart) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };

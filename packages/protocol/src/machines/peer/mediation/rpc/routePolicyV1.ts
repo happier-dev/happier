@@ -1151,6 +1151,7 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
   const signIn = binding && readMachineAgentSignInOperationV1(binding.actionId);
   if (binding && signIn) {
     const phase = method === RPC_METHODS.DAEMON_TERMINAL_CLOSE
+      || signIn === 'start' && method === CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD
       || signIn !== 'start' && method === RPC_METHODS.DAEMON_TERMINAL_LIST
       || signIn !== 'cancel' && (method === AGENT_SIGN_IN_PREPARE_RPC_METHOD || method === RPC_METHODS.DAEMON_TERMINAL_ENSURE);
     return phase && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId

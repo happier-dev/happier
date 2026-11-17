@@ -39,11 +39,15 @@ describe('MachineRpcRoutePolicyV1', () => {
       expect(resolve(method, binding, { machineId: 'machine', installationId: 'other' })).not.toBe(binding.actionId);
     }
     const cancel = { ...binding, actionId: 'machines.agents.signIn.cancel' };
+    expect(resolve(CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, binding)).toBe(binding.actionId);
+    expect(resolve(CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD, binding)).toBeNull();
+    expect(resolve(CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, cancel)).toBeNull();
     expect(resolve(RPC_METHODS.DAEMON_TERMINAL_LIST, cancel)).toBe(cancel.actionId);
     expect(resolve(RPC_METHODS.DAEMON_TERMINAL_CLOSE, cancel)).toBe(cancel.actionId);
     expect(resolve(RPC_METHODS.DAEMON_TERMINAL_ENSURE, cancel)).not.toBe(cancel.actionId);
     expect(resolve(RPC_METHODS.DAEMON_TERMINAL_INPUT, binding)).not.toBe(binding.actionId);
     const restart = { ...binding, actionId: 'machines.agents.signIn.restart' };
+    expect(resolve(CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, restart)).toBeNull();
     for (const method of [AGENT_SIGN_IN_PREPARE_RPC_METHOD, RPC_METHODS.DAEMON_TERMINAL_LIST,
       RPC_METHODS.DAEMON_TERMINAL_CLOSE, RPC_METHODS.DAEMON_TERMINAL_ENSURE]) {
       expect(resolve(method, restart)).toBe(restart.actionId);
