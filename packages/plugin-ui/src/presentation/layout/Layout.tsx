@@ -232,6 +232,16 @@ export function HappierScrollArea({
       scrollSourceRef.current?.scrollTo({ y: leadHeightRef.current, animated: false });
     }
   }, [selection]);
+  // A keyboard reaches a scroll area only through a focusable child; one whose content runs past it with none
+  // (an empty state a few pixels taller than its card) takes focus itself while, and only while, it overflows.
+  const viewportRef = useRef({ width: 0, height: 0 });
+  const contentRef = useRef({ width: 0, height: 0 });
+  const [overflowing, setOverflowing] = useState(false);
+  const axis = scrollProps.horizontal === true ? 'width' : 'height';
+  const remeasureOverflow = () => {
+    const next = viewportRef.current[axis] > 0 && contentRef.current[axis] > viewportRef.current[axis] + 0.5;
+    setOverflowing(previous => previous === next ? previous : next);
+  };
   const createTracker = host?.createScrollActivityTracker;
   const tracker = useMemo(() => createTracker?.(scrollSourceRef, scrollProps.horizontal === true) ?? null,
     [createTracker, scrollProps.horizontal]);
@@ -264,9 +274,16 @@ export function HappierScrollArea({
         {...(head === null ? {} : { stickyHeaderIndices: [1] })}
         onLayout={event => {
           if (head !== null) setViewportHeightPx(event.nativeEvent.layout.height);
+          viewportRef.current = { width: event.nativeEvent.layout.width, height: event.nativeEvent.layout.height };
+          remeasureOverflow();
           tracker?.onLayout(event); scrollProps.onLayout?.(event);
         }}
-        onContentSizeChange={tracker?.onContentSizeChange}
+        onContentSizeChange={(width: number, height: number) => {
+          contentRef.current = { width, height };
+          remeasureOverflow();
+          tracker?.onContentSizeChange(width, height);
+        }}
+        {...(overflowing && scrollProps.scrollEnabled !== false ? { focusable: true } : {})}
         scrollEventThrottle={scrollProps.scrollEventThrottle ?? (reportTop ? 16 : undefined)}
         testID={testID}
         accessibilityLabel={accessibilityLabel}

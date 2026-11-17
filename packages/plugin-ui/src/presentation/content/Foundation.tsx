@@ -125,14 +125,16 @@ export function HappierDivider(
   props: Readonly<{
     color: string;
     accessibilityLabel?: string;
+    /** A drawn hairline (a list row's foot), not a separator between content: hidden from assistive technology. */
+    decorative?: boolean;
     testID?: string;
     style?: HappierStyleProp;
   }>,
 ) {
   return (
     <View
-      role="separator"
-      accessibilityLabel={props.accessibilityLabel}
+      {...(props.decorative ? { 'aria-hidden': true } : { role: 'separator' as const })}
+      accessibilityLabel={props.decorative ? undefined : props.accessibilityLabel}
       testID={props.testID}
       style={[
         { height: 1, alignSelf: 'stretch', backgroundColor: props.color },

@@ -3480,7 +3480,9 @@ describe('render scope', () => {
     });
     try {
       view.measure(390);
-      const hasDivider = (key: string) => view.query(`row:${key}:cell`)!.querySelector('[role="separator"]') !== null;
+      // A row's hairline is decoration hidden from assistive technology, never a separator a grid row may not own (C77).
+      const hasDivider = (key: string) => view.query(`row:${key}:cell`)!.querySelector('[aria-hidden="true"]:empty') !== null;
+      expect(view.container.querySelector('[role="row"] [role="separator"]')).toBeNull();
       expect(hasDivider('a')).toBe(true);
       expect(hasDivider('b')).toBe(totals);
       expect(hasDivider('c')).toBe(true);

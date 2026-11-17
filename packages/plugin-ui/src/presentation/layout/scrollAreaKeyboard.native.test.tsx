@@ -60,3 +60,32 @@ describe('HappierScrollArea keyboard', () => {
     expect(scrollViewProps().keyboardShouldPersistTaps).toBe('handled');
   });
 });
+
+// C77 (Home widget cards, 11-17): a card's scroll area whose content ran past it held no control, so a keyboard could
+// never reach or scroll it. A scroll area takes focus exactly while its content overflows it.
+describe('HappierScrollArea keyboard reach', () => {
+  function layoutTo(view: { props: Record<string, unknown> }, size: Readonly<{ width: number; height: number }>, content: Readonly<{ width: number; height: number }>) {
+    act(() => {
+      (view.props.onLayout as (event: unknown) => void)({ nativeEvent: { layout: { x: 0, y: 0, ...size } } });
+      (view.props.onContentSizeChange as (width: number, height: number) => void)(content.width, content.height);
+    });
+  }
+  const area = () => renderer!.root.find((node) => (node.type as unknown) === 'ScrollView');
+
+  it('is focusable while its content overflows it, and not while everything fits', () => {
+    act(() => { renderer = create(<HappierScrollArea testID="area" />); });
+    expect(area().props.focusable).toBeUndefined();
+    layoutTo(area(), { width: 497, height: 232 }, { width: 497, height: 235 });
+    expect(area().props.focusable).toBe(true);
+    layoutTo(area(), { width: 497, height: 232 }, { width: 497, height: 200 });
+    expect(area().props.focusable).toBeUndefined();
+  });
+
+  it('measures a horizontal strip along its own axis, and never focuses a scroll area that cannot scroll', () => {
+    act(() => { renderer = create(<HappierScrollArea testID="row" horizontal />); });
+    layoutTo(area(), { width: 300, height: 40 }, { width: 640, height: 40 });
+    expect(area().props.focusable).toBe(true);
+    act(() => { renderer!.update(<HappierScrollArea testID="row" horizontal scrollEnabled={false} />); });
+    expect(area().props.focusable).toBeUndefined();
+  });
+});
