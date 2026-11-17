@@ -4,7 +4,7 @@ import { ThemeReferenceSchema, parseThemeProfileDocument } from '@happier-dev/pr
 import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { readReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
-import { readThemeSettingStateSnapshot, persistThemeProfilesForSetting, parseThemeProfileLegacyIds, readCanonicalThemeProfiles, withThemeProfilesForSetting, themeReferenceForViewId } from './themeProfiles/themeProfilesSettingBinding';
+import { readThemeSettingStateSnapshot, parseThemeProfileLegacyIds, readCanonicalThemeProfiles, withThemeProfilesForSetting, themeReferenceForViewId } from './themeProfiles/themeProfilesSettingBinding';
 import { SETTING_VALUE_UNAVAILABLE } from '@/components/settings/catalog/settingDeclarations';
 
 export const THEME_MODE_CHOICES = ['adaptive', 'light', 'dark'] as const;
@@ -77,18 +77,12 @@ export const themeModeStorageBinding = {
                     }
                     return;
                 }
-                const baseline = selection.activation.before ?? initial;
                 if (Object.keys(selection.activation.legacyProfileIds ?? {}).length) return SETTING_VALUE_UNAVAILABLE;
-                const saved = selection.activation.document ? await library.save({ document: selection.activation.document }) : undefined;
+                const parsedProfile = selection.activation.profile ? parseThemeProfileDocument(selection.activation.profile) : undefined;
+                const document = selection.activation.document ?? (parsedProfile?.ok ? parsedProfile.document : undefined);
+                const saved = document ? await library.save({ document }) : undefined;
                 if (saved && !saved.entry) return SETTING_VALUE_UNAVAILABLE;
-                let profileId = saved?.entry?.id ?? selection.activation.profileId;
-                if (selection.activation.profile) {
-                    const { upsertThemeProfile } = await import('./themeProfiles/themeProfileScreenUtils');
-                    const persisted = await persistThemeProfilesForSetting({ before: baseline,
-                        next: upsertThemeProfile(baseline, selection.activation.profile), context, library });
-                    if (persisted === SETTING_VALUE_UNAVAILABLE) return persisted;
-                    profileId = profileId ? persisted.profileIds.get(profileId) ?? profileId : null;
-                }
+                const profileId = saved?.entry?.id ?? selection.activation.profileId;
                 const reference = saved?.entry?.reference ?? await themeReferenceForViewId(library, profileId);
                 if (profileId && !reference) return SETTING_VALUE_UNAVAILABLE;
                 for (const mode of resolveActivationModes({ profileMode: selection.activation.profileMode, themePreference: preference })) {

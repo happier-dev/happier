@@ -1,4 +1,3 @@
-import { readThemeProfileLegacyAccountScope } from '@/sync/domains/state/themeProfileMigrationUiState';
 import { Appearance, Platform } from 'react-native';
 import * as SystemUI from 'expo-system-ui';
 import { setStatusBarStyle } from 'expo-status-bar';
@@ -12,23 +11,11 @@ import {
     runThemePreferenceChange as defaultRunThemePreferenceChange,
     type ThemeTransitionPlatform,
 } from '@/components/settings/appearance/themePreferenceTransition';
-import {
-    loadLocalSettings as defaultLoadLocalSettings,
-    loadThemeRuntimeLocalState,
-    saveLocalSettings as defaultSaveLocalSettings,
-} from '@/sync/domains/state/persistence';
+import { loadLocalSettings as defaultLoadLocalSettings } from '@/sync/domains/state/persistence';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
-import { loadPendingAccountSettingsState } from '@/sync/domains/state/accountSettingsPersistence';
-import { loadStartupAccountSettings } from '@/sync/domains/state/startupAccountSettings';
-import { canUseLegacyThemeProfiles, encodeThemeProfileSelection } from '@/sync/domains/settings/themeProfiles';
-import { applyLocalSettings, localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { addBreadcrumbIfEnabled } from '@/utils/system/sentry';
-import {
-    DEFAULT_THEME_PROFILES_LOCAL_STATE,
-    findActiveThemeProfileForMode,
-    setActiveThemeProfileForMode,
-} from './themeProfilePersistence';
+import { findActiveThemeProfileForMode } from './themeProfilePersistence';
 import { createThemeProfileResolver } from './resolveThemeProfile';
 import { applyThemeFontFamilyVariables } from '../themeFontFamilyVariables';
 import { applyThemeStylesheet } from '../css/themeStylesheet';
@@ -89,19 +76,6 @@ type ResolveThemeRuntimeStartupThemesInput = Readonly<{
 type ThemeRuntimeStartupThemes = Readonly<{
     themes: ThemeRuntimeThemes;
     backgroundColor: string;
-}>;
-
-type ActivateThemeProfileInput = Readonly<{
-    profileId: string | null;
-    resolveProfileId?: () => string | null;
-    profileMode?: ThemeProfileMode | 'all';
-    themePreference?: ThemePreference;
-    forceAnimate?: boolean;
-    reduceMotion?: boolean;
-    systemTheme?: AppThemeName | null;
-    platform?: ThemeTransitionPlatform;
-    loadLocalSettings?: () => Pick<LocalSettings, 'themePreference' | 'themeProfiles'>;
-    saveLocalSettings?: (settings: LocalSettings) => void;
 }>;
 
 type ThemeSelection = Pick<LocalSettings, 'themePreference' | 'themeProfiles'>;
@@ -464,52 +438,4 @@ export const resolveActivationModes = (input: Readonly<{
         return [themePreference];
     }
     return ['light', 'dark'];
-};
-
-export const activateThemeProfile = async (input: ActivateThemeProfileInput): Promise<void> => {
-    const loadLocalSettings = input.loadLocalSettings ?? (() => ({ ...defaultLoadLocalSettings(), ...loadThemeRuntimeLocalState() }));
-    const saveLocalSettings = input.saveLocalSettings ?? ((settings: LocalSettings) => {
-        const local = defaultLoadLocalSettings();
-        const { scope, settings: account } = loadStartupAccountSettings();
-        const pending = scope ? loadPendingAccountSettingsState(scope) : null;
-        const legacy = canUseLegacyThemeProfiles(readThemeProfileLegacyAccountScope(), scope)
-            ? local.themeProfiles : DEFAULT_THEME_PROFILES_LOCAL_STATE;
-        defaultSaveLocalSettings({
-            ...settings,
-            themeProfiles: local.themeProfiles,
-            themeProfileSelection: encodeThemeProfileSelection(account.themeProfiles, legacy, settings.themeProfiles.activeProfileIds,
-                pending?.themeProfileMigration, pending?.settings.themeProfiles),
-        });
-    });
-    const currentSettings = loadLocalSettings();
-    const resolveNextThemeProfiles = (
-        themeProfiles: ThemeProfilesLocalStateV1,
-        fallbackThemePreference: ThemePreference,
-    ): ThemeProfilesLocalStateV1 => (
-        resolveActivationModes({
-            profileMode: input.profileMode,
-            themePreference: input.themePreference ?? fallbackThemePreference,
-        }).reduce(
-            (nextThemeProfiles, mode) => setActiveThemeProfileForMode(nextThemeProfiles, mode, input.resolveProfileId ? input.resolveProfileId() : input.profileId),
-            themeProfiles,
-        )
-    );
-    const nextThemeProfiles = resolveNextThemeProfiles(currentSettings.themeProfiles, currentSettings.themePreference);
-    await commitThemeSelection({
-        currentPreference: currentSettings.themePreference,
-        nextPreference: input.themePreference ?? currentSettings.themePreference,
-        nextThemeProfiles,
-        reduceMotion: input.reduceMotion ?? false,
-        forceAnimate: input.forceAnimate ?? false,
-        systemTheme: input.systemTheme,
-        platform: input.platform,
-        resolveSelection: () => {
-            const latestSettings = loadLocalSettings();
-            return {
-                themePreference: input.themePreference ?? latestSettings.themePreference,
-                themeProfiles: resolveNextThemeProfiles(latestSettings.themeProfiles, latestSettings.themePreference),
-            };
-        },
-        writeLocal: delta => saveLocalSettings(applyLocalSettings({ ...localSettingsDefaults, ...loadLocalSettings() }, delta)),
-    });
 };

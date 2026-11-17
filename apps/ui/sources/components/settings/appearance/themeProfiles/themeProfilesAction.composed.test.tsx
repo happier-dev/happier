@@ -7,9 +7,11 @@ import type { Socket } from 'socket.io-client';
 import type { Theme } from '@/theme';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { THEME_ARTIFACT_KIND } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
+import { ArtifactReadHeadersBatchInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { parseThemeProfileDocument, type ThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 
 import { renderSettingsView } from '@/dev/testkit';
+import { measureMountedCollections } from '@/dev/testkit/render/renderInCollectionLayout';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -82,8 +84,7 @@ function document(id: string, name: string): ThemeProfileDocument {
 }
 
 /** Seed the Home's persisted bytes; the real Sync inventory reader must publish the private headers. */
-async function seedLibrary(account: SecretSettingsTestHarness) {
-    const documents = [document(firstId, 'Custom theme'), document(siblingId, 'Sibling theme')];
+async function seedLibrary(account: SecretSettingsTestHarness, documents = [document(firstId, 'Custom theme'), document(siblingId, 'Sibling theme')]) {
     for (const value of documents) {
         const entry = projectThemeLibraryEntry(value);
         const rawHeader = { v: 1, kind: THEME_ARTIFACT_KIND, title: entry.name, mode: entry.mode, themeSource: entry.source,
@@ -159,6 +160,30 @@ describe('theme profile library Action ingress', () => {
                 .rejects.toThrow('Artifact Account scope changed');
         } finally { standardCleanup(); await account.dispose(); }
     });
+    it('saves and selects a legacy activation beyond fifty profiles without removing siblings', async () => {
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({ actionsSettingsV1: { v: 1,
+            approvalWaivedSurfaces: { 'settings.set': ['ui'] },
+        } }) });
+        try {
+            const existing = [document(firstId, 'Custom theme'), document(siblingId, 'Sibling theme'),
+                ...Array.from({ length: 48 }, (_, index) => document(`aaaaaaaa-aaaa-4aaa-8aaa-${String(index).padStart(12, '0')}`, `Theme ${index}`))];
+            await seedLibrary(account, existing);
+            const profiles = existing.map(value => value.profile);
+            const extra = document('theme-extra', 'Extra theme');
+            const result = await createFrontDoorActionExecute()('settings.set', { anchor: 'appearance.themeMode', value: {
+                activation: { profileId: extra.profile.id, profileMode: 'light', nextThemePreference: 'light', profile: extra.profile,
+                    before: { profiles, activeProfileIds: { light: null, dark: null } } }, reduceMotion: true,
+            } }, { surface: 'ui' });
+            requireActionSuccess(result, 'settings.set');
+            const reference = storage.getState().localSettings.themeProfileSelection?.light;
+            expect(reference?.kind).toBe('artifact');
+            const entries = await sync.withThemeProfileLibrary(library => library.list(), { expectedScope: account.scope });
+            expect(entries.find(entry => entry.name === 'Extra theme')?.reference).toEqual(reference);
+            expect(entries.filter(entry => entry.source.kind === 'yours')).toHaveLength(51);
+            expect(account.artifacts.readPlainBody(siblingId)).not.toBeNull();
+        } finally { standardCleanup(); await account.dispose(); }
+    });
+
     it('activates the acknowledged saved document without acquiring the whole header library', async () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({ actionsSettingsV1: { v: 1,
             approvalWaivedSurfaces: { 'settings.set': ['ui'] },
@@ -191,12 +216,17 @@ describe('theme profile library Action ingress', () => {
             }, uiFontScale: 1.15 });
             const beforeBrowse = account.request.mock.calls.length;
             const screen = await renderSettingsView(React.createElement(ThemeProfilesSettingsScreen));
+            await measureMountedCollections(screen);
             const key = getThemePresetSourceReferenceId({ kind: 'artifact', id: firstId });
             expect(screen.findAllByProps({ testID: `settings-theme-light:${key}` }).length).toBeGreaterThan(0);
-            const browseRequests = account.request.mock.calls.slice(beforeBrowse).map(([url]) => String(url));
-            expect(browseRequests.filter(url => {
-                const path = new URL(url).pathname;
-                return path === `/v1/artifacts/${firstId}` || path === `/v1/artifacts/${siblingId}` || path === '/v1/artifacts/read';
+            const browseRequests = account.request.mock.calls.slice(beforeBrowse);
+            expect(browseRequests.flatMap(([url, init]) => {
+                const path = new URL(String(url)).pathname;
+                if (path === `/v1/artifacts/${firstId}` || path === `/v1/artifacts/${siblingId}`) return [{ path }];
+                if (path !== '/v1/artifacts/read') return [];
+                const body: unknown = JSON.parse(String(init?.body));
+                // Addressed header acquisition shares the endpoint, and never acquires a body.
+                return ArtifactReadHeadersBatchInputV1Schema.safeParse(body).success ? [] : [{ path, body }];
             })).toEqual([]);
             const siblingBefore = account.artifacts.readPlainBody(siblingId);
             vi.mocked(Modal.alert).mockClear();

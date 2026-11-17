@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-import { THEME_PROFILE_MAX_PROFILES } from '@/theme/profiles/themeProfileConstants';
 import type { ThemeProfilesLocalStateV1, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
 import { upsertThemeProfile } from './themeProfileScreenUtils';
 
@@ -14,9 +13,9 @@ const baseProfile = (id: string, overrides: ThemeProfileV1['overrides'] = { ligh
     overrides,
 });
 
-const maxProfileState = (): ThemeProfilesLocalStateV1 => ({
+const largeProfileState = (): ThemeProfilesLocalStateV1 => ({
     activeProfileIds: { light: null, dark: null },
-    profiles: Array.from({ length: THEME_PROFILE_MAX_PROFILES }, (_, index) => baseProfile(`theme_${index}`)),
+    profiles: Array.from({ length: 50 }, (_, index) => baseProfile(`theme_${index}`)),
 });
 
 const emptyThemeProfiles = (): ThemeProfilesLocalStateV1 => ({
@@ -25,21 +24,21 @@ const emptyThemeProfiles = (): ThemeProfilesLocalStateV1 => ({
 });
 
 describe('theme profile screen utilities', () => {
-    it('does not append a new profile after the local profile limit is reached', () => {
-        const state = maxProfileState();
+    it('appends a new profile beyond the former 50-profile limit', () => {
+        const state = largeProfileState();
 
         const result = upsertThemeProfile(state, baseProfile('theme_over_limit'));
 
-        expect(result.profiles).toHaveLength(THEME_PROFILE_MAX_PROFILES);
-        expect(result.profiles.some((entry) => entry.id === 'theme_over_limit')).toBe(false);
+        expect(result.profiles).toHaveLength(51);
+        expect(result.profiles.some((entry) => entry.id === 'theme_over_limit')).toBe(true);
     });
 
-    it('still updates an existing profile after the local profile limit is reached', () => {
-        const state = maxProfileState();
+    it('updates an existing profile in a large library', () => {
+        const state = largeProfileState();
 
         const result = upsertThemeProfile(state, { ...baseProfile('theme_0'), name: 'Updated profile' });
 
-        expect(result.profiles).toHaveLength(THEME_PROFILE_MAX_PROFILES);
+        expect(result.profiles).toHaveLength(50);
         expect(result.profiles[0]?.name).toBe('Updated profile');
     });
 

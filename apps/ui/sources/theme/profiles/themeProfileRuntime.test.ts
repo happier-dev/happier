@@ -1,4 +1,3 @@
-import { readThemeProfileLegacyAccountScope, writeThemeProfileLegacyAccountScope } from '@/sync/domains/state/themeProfileMigrationUiState';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { registerNativeThemePreferenceTransitionController } from '@/components/settings/appearance/themePreferenceTransition';
 
@@ -18,12 +17,9 @@ vi.mock('react-native-unistyles', async () => {
 });
 
 import { darkTheme, lightTheme, type Theme } from '@/theme';
-import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
-import { loadLocalSettings, saveLocalSettings } from '@/sync/domains/state/persistence';
-import { loadActiveAccountSettingsScope, saveAccountSettings, saveActiveAccountSettingsScope, savePendingAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
-import { settingsParse } from '@/sync/domains/settings/settings';
+import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import {
-    activateThemeProfile,
+    commitThemeSelection,
     applyThemeRuntimeSelection,
     resolveEffectiveThemeRuntimeBackground,
     resolveThemeRuntimeStartupThemes,
@@ -119,56 +115,6 @@ describe('theme profile runtime', () => {
         expect(input.unistylesRuntime.setTheme).toHaveBeenLastCalledWith('dark');
         expect(platformRuntime.setStatusBarStyle).toHaveBeenLastCalledWith('light', true);
     });
-
-    it('stores only the device selection when activating a profile through the default persistence path', async () => {
-        const previous = loadLocalSettings();
-        onTestFinished(() => saveLocalSettings(previous));
-        saveLocalSettings({ ...localSettingsDefaults, themePreference: 'dark' });
-        await activateThemeProfile({ profileId: 'nightDark', profileMode: 'dark', reduceMotion: true, platform: 'web' });
-        const saved = loadLocalSettings();
-        expect(saved.themeProfileSelection).toEqual({ light: null, dark: 'nightDark' });
-        expect(saved.themeProfiles).toEqual(localSettingsDefaults.themeProfiles);
-    });
-
-    it('retains legacy origin when activating a device theme before the account library arrives', async () => {
-        const previous = loadLocalSettings();
-        onTestFinished(() => saveLocalSettings(previous));
-        saveLocalSettings({ ...localSettingsDefaults, themePreference: 'light', themeProfiles: profileState });
-        await activateThemeProfile({ profileId: 'ocean', profileMode: 'light', reduceMotion: true, platform: 'web' });
-        expect(loadLocalSettings().themeProfileSelection).toEqual({
-            light: { legacyProfileId: 'ocean' }, dark: { legacyProfileId: 'ocean' },
-        });
-    });
-
-    it('stores a pending acknowledged profile as account selection while its legacy backup remains', async () => {
-        const previous = loadLocalSettings();
-        const previousScope = loadActiveAccountSettingsScope();
-        const previousLegacyScope = readThemeProfileLegacyAccountScope();
-        const scope = { serverId: 'runtime-pending-server', accountId: 'runtime-pending-account' };
-        onTestFinished(() => {
-            saveLocalSettings(previous);
-            saveActiveAccountSettingsScope(previousScope);
-            writeThemeProfileLegacyAccountScope(previousLegacyScope);
-            savePendingAccountSettings(scope, {}, null);
-        });
-        const original = profileState.profiles[0];
-        const cloud = { ...original, name: 'Account ocean' };
-        const committed = { ...original, id: 'ocean_2', name: 'Edited ocean' };
-        saveAccountSettings(scope, settingsParse({ themeProfiles: [cloud] }), 1);
-        saveActiveAccountSettingsScope(scope);
-        saveLocalSettings({ ...localSettingsDefaults, themePreference: 'light', themeProfiles: profileState,
-            themeProfileSelection: { light: { legacyProfileId: original.id }, dark: null } });
-        writeThemeProfileLegacyAccountScope(scope);
-        savePendingAccountSettings(scope, { themeProfiles: [cloud, committed] }, {
-            edits: [{ target: { kind: 'legacy', id: original.id }, profile: committed }],
-            legacyProfileIds: { [original.id]: committed.id }, acknowledged: true,
-        });
-        const legacyBackup = loadLocalSettings().themeProfiles;
-        await activateThemeProfile({ profileId: committed.id, profileMode: 'light', reduceMotion: true, platform: 'web' });
-        expect(loadLocalSettings().themeProfileSelection).toEqual({ light: committed.id, dark: null });
-        expect(loadLocalSettings().themeProfiles).toEqual(legacyBackup);
-    });
-
     it('falls back to canonical base themes when startup effective theme resolution fails', () => {
         const result = resolveThemeRuntimeStartupThemes({
             themeProfiles: profileState,
@@ -404,135 +350,72 @@ describe('theme profile runtime', () => {
         expect(finalDarkUpdater?.(registeredThemes.dark)).toBe(darkTheme);
     });
 
-    it('activates profiles through the theme transition path with forced animation', async () => {
-        const saveLocalSettings = vi.fn();
+    it('commits the resolved selection through the native transition with forced animation', async () => {
+        const writeLocal = vi.fn();
         const run = vi.fn(async (mutation: () => void) => mutation());
         onTestFinished(registerNativeThemePreferenceTransitionController({ run }));
 
-        await activateThemeProfile({
-            profileId: 'ocean',
+        await commitThemeSelection({
+            currentPreference: 'light', nextPreference: 'light', nextThemeProfiles: profileState,
             forceAnimate: true,
             reduceMotion: false,
             systemTheme: 'light',
             platform: 'ios',
-            loadLocalSettings: () => ({
-                themePreference: 'light',
-                themeProfiles: profileState,
-            }),
-            saveLocalSettings,
+            writeLocal,
         });
 
         expect(run).toHaveBeenCalledOnce();
-        expect(saveLocalSettings).toHaveBeenCalledWith(expect.objectContaining({
+        expect(writeLocal).toHaveBeenCalledWith(expect.objectContaining({
             themeProfiles: expect.objectContaining({
                 activeProfileIds: { light: 'ocean', dark: 'ocean' },
             }),
         }));
     });
 
-    it('merges profile activation with the latest local settings inside the transition mutation', async () => {
-        let currentSettings: LocalSettings = {
-            ...localSettingsDefaults,
-            themePreference: 'light' as const,
-            themeProfiles: profileState,
-            uiFontScale: 1,
-        };
-        const saveLocalSettings = vi.fn((nextSettings: LocalSettings) => {
-            currentSettings = nextSettings;
-        });
+    it('commits the latest resolved selection inside the native transition mutation', async () => {
+        let selection: Pick<LocalSettings, 'themePreference' | 'themeProfiles'> = { themePreference: 'light', themeProfiles: profileState };
+        const writeLocal = vi.fn((next: typeof selection) => { selection = next; });
         const run = vi.fn(async (mutation: () => void) => {
-            currentSettings = { ...currentSettings, uiFontScale: 1.2, themePreference: 'dark',
-                themeProfiles: { activeProfileIds: { light: null, dark: null },
+            selection = { themePreference: 'dark',
+                themeProfiles: { activeProfileIds: { light: null, dark: 'ocean' },
                     profiles: [...profileState.profiles, ...pairedProfileState.profiles] } };
             mutation();
         });
         onTestFinished(registerNativeThemePreferenceTransitionController({ run }));
 
-        await activateThemeProfile({
-            profileId: 'ocean',
+        await commitThemeSelection({
+            currentPreference: 'light', nextPreference: 'light', nextThemeProfiles: profileState,
             forceAnimate: true,
             reduceMotion: false,
             systemTheme: 'light',
             platform: 'ios',
-            loadLocalSettings: () => currentSettings,
-            saveLocalSettings,
+            resolveSelection: () => selection,
+            writeLocal,
         });
 
-        expect(saveLocalSettings).toHaveBeenCalledWith(expect.objectContaining({
-            uiFontScale: 1.2,
+        expect(writeLocal).toHaveBeenCalledWith(expect.objectContaining({
             themePreference: 'dark',
             themeProfiles: expect.objectContaining({
                 activeProfileIds: { light: null, dark: 'ocean' },
             }),
         }));
-        expect(currentSettings.themeProfiles.profiles).toHaveLength(3);
+        expect(selection.themeProfiles.profiles).toHaveLength(3);
         expect(platformRuntime.setTheme).toHaveBeenLastCalledWith('dark');
         expect(platformRuntime.setRootViewBackgroundColor).toHaveBeenLastCalledWith('#0a0a0a');
         expect(platformRuntime.setStatusBarStyle).toHaveBeenLastCalledWith('light', true);
     });
 
-    it('resolves the selected profile alias again inside the native transition mutation', async () => {
-        let target = 'ocean';
-        let currentSettings: LocalSettings = { ...localSettingsDefaults, themePreference: 'light',
-            themeProfiles: { profiles: profileState.profiles, activeProfileIds: { light: null, dark: null } } };
-        onTestFinished(registerNativeThemePreferenceTransitionController({ run: mutation => {
-            target = 'ocean_2';
-            currentSettings = { ...currentSettings, themeProfiles: {
-                profiles: [...profileState.profiles, { ...profileState.profiles[0], id: target }],
-                activeProfileIds: { light: null, dark: null },
-            } };
-            mutation();
-        } }));
-        const input = {
-            profileId: 'ocean', resolveProfileId: () => target,
-            profileMode: 'light' as const, forceAnimate: true, reduceMotion: false,
-            systemTheme: 'light' as const, platform: 'ios' as const,
-            loadLocalSettings: () => currentSettings,
-            saveLocalSettings: (next: LocalSettings) => { currentSettings = next; },
-        };
-        await activateThemeProfile(input);
-        expect(currentSettings.themeProfiles.activeProfileIds).toEqual({ light: 'ocean_2', dark: null });
-    });
-
-    it('activates built-in presets without adding them to the custom profile collection', async () => {
-        const saveLocalSettings = vi.fn();
-
-        await activateThemeProfile({
-            profileId: 'premiumDark',
-            forceAnimate: true,
-            reduceMotion: false,
-            systemTheme: 'dark',
-            platform: 'ios',
-            loadLocalSettings: () => ({
-                themePreference: 'dark',
-                themeProfiles: { activeProfileIds: { light: null, dark: null }, profiles: [] },
-            }),
-            saveLocalSettings,
-        });
-
-        expect(saveLocalSettings).toHaveBeenCalledWith(expect.objectContaining({
-            themeProfiles: {
-                activeProfileIds: { light: null, dark: 'premiumDark' },
-                profiles: [],
-            },
-        }));
-    });
-
-    it('keeps reduced motion authoritative for forced profile activation', async () => {
+    it('keeps reduced motion authoritative for a forced selection transition', async () => {
         const run = vi.fn(async (mutation: () => void) => mutation());
         onTestFinished(registerNativeThemePreferenceTransitionController({ run }));
 
-        await activateThemeProfile({
-            profileId: 'ocean',
+        await commitThemeSelection({
+            currentPreference: 'dark', nextPreference: 'dark', nextThemeProfiles: profileState,
             forceAnimate: true,
             reduceMotion: true,
             systemTheme: 'dark',
             platform: 'ios',
-            loadLocalSettings: () => ({
-                themePreference: 'dark',
-                themeProfiles: profileState,
-            }),
-            saveLocalSettings: vi.fn(),
+            writeLocal: vi.fn(),
         });
 
         expect(run).not.toHaveBeenCalled();
