@@ -6,6 +6,7 @@ import { SelectableRow } from './SelectableRow';
 import { MENU_ROW_METRICS } from './itemDensityMetrics';
 import { SelectionListSectionHeader } from '@/components/ui/selectionList/SelectionListSectionHeader';
 import { Text } from '@/components/ui/text/Text';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 
 
 export type ActionListItemContent = Readonly<{
@@ -21,6 +22,11 @@ export type ActionListItemContent = Readonly<{
     /** Keeps an interactive `right` (an inline button) outside the row's own press target. */
     rightElementOutsidePressable?: boolean;
     selected?: boolean;
+    /**
+     * A choice that is on or off among its siblings (a shown column): on draws the menu's check at the row's end (as a
+     * checked `DropdownMenu` row does) and the row is announced as a checkbox. Leave it off for one-shot operations.
+     */
+    checked?: boolean;
     onPress?: () => void;
     /** The pointer rests on the row (web): a menu that opens a submenu beside a row reads its intent here. */
     onHover?: () => void;
@@ -78,7 +84,7 @@ export function ActionListSection(props: {
     style?: StyleProp<ViewStyle>;
 }) {
     const styles = stylesheet;
-    useUnistyles();
+    const { theme } = useUnistyles();
 
     const actions = React.useMemo(() => {
         return (props.actions ?? []).filter(Boolean) as ActionListItem[];
@@ -103,7 +109,7 @@ export function ActionListSection(props: {
             onHover={action.onHover}
             onKeyDown={action.onKeyDown}
             left={action.icon ? <View>{renderActionIcon(action.icon)}</View> : null}
-            right={action.right ?? null}
+            right={action.right ?? (action.checked === true ? <Icon name="check" size={ICON_SIZE.sm} color={theme.colors.text.primary} /> : null)}
             rightElementOutsidePressable={action.rightElementOutsidePressable}
             title={action.label}
             accessibilityLabel={action.accessibilityLabel}
@@ -112,10 +118,11 @@ export function ActionListSection(props: {
             titleStyle={action.destructive ? [styles.label, styles.labelDestructive] : styles.label}
             selected={action.selected}
             accessibilityButtonSelected={action.selected}
+            {...(action.checked === undefined ? {} : { accessibilityRole: 'checkbox' as const, accessibilityChecked: action.checked })}
             variant="slim"
             presentation="menu"
         />
-    ), [renderActionIcon, styles.label, styles.labelDestructive]);
+    ), [renderActionIcon, styles.label, styles.labelDestructive, theme.colors.text.primary]);
 
     if (actions.length === 0) return null;
 

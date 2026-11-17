@@ -28,7 +28,8 @@ import { useDeploymentPresentationDemand } from './useDeploymentPresentationDema
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 
-import { DeploymentEnvironmentRows } from './DeploymentEnvironmentRows';
+import { DeploymentEnvironmentRows, deploymentEnvironmentColumns, SERVICES_APPS_COLLECTION_ID, type DeploymentEnvironmentColumnsBinding } from './DeploymentEnvironmentRows';
+import { CollectionColumnsMenuButton, collectionColumnsMenuColumns } from '@/components/ui/lists/collection/CollectionColumnsMenu';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useDeploymentInventory } from './useDeploymentProject';
 import { useDeploymentCollection } from './useDeploymentReads';
@@ -228,12 +229,21 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   const appsCount = React.useMemo(() => view === 'apps' ? describeAppsCount(shownItems, pagedRead, narrowed || needle !== '' ? undefined : total) : null,
     [shownItems, narrowed, needle, pagedRead, total, view]);
   const count = view === 'apps' ? appsCount : viewCount?.view === view ? viewCount.parts : null;
+  // Apps' one Columns menu (D35): the page head's ⋯ on a wide page; a phone draws no columns and has no menu.
+  const [fittedColumnIds, setFittedColumnIds] = React.useState<readonly string[] | null>(null);
+  const appsColumns = React.useMemo<DeploymentEnvironmentColumnsBinding>(() => ({ collectionId: SERVICES_APPS_COLLECTION_ID,
+    onColumnsFit: setFittedColumnIds }), []);
+  const appsMenuColumns = React.useMemo(() => collectionColumnsMenuColumns(
+    { id: 'title', title: t('projects.deployments.services.columnEnvironment') }, deploymentEnvironmentColumns(false)), []);
+  const columnsMenu = view === 'apps' && !phone ? <CollectionColumnsMenuButton collectionId={SERVICES_APPS_COLLECTION_ID}
+    columns={appsMenuColumns} fittedIds={fittedColumnIds} testID="all-deployments.columns" /> : null;
   const header = (create: boolean) => (
     <ServicesPageHeader servicesView={servicesView} placesSpaces={placesSpaces && create} header={{
       testID: 'all-deployments.header',
       title: t('projects.deployments.services.title'),
       ...(phone ? {} : { description: t('projects.deployments.services.description') }),
       alwaysShowTitle: true,
+      ...(columnsMenu ? { actions: columnsMenu } : {}),
       search: create && !besideColumn ? search : null,
       create: create && !besideColumn ? deployCreate : null,
       ...(create && !besideColumn && !phone ? { createTrigger: <DeployAppButton onPress={openDeployApp} /> } : {}),
@@ -360,7 +370,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
         </ItemGroup>
       ) : (
         <AllDeploymentsGroups items={shownItems} serverId={serverId} lifetime={props.lifetime ?? null}
-          openBackups={filtering} />
+          openBackups={filtering} columns={appsColumns} />
       )}
       <ServicesPaging testID="all-deployments.paging" page={read} onNewer={read.previousPage} onOlder={read.nextPage} />
     </ItemList>
@@ -415,6 +425,8 @@ export function AllDeploymentsGroups(
     openBackups?: boolean;
     /** On a Machine's own page: rows leave out the Machine they all run on (lab hereMachine). */
     hereMachine?: boolean;
+    /** Services → Apps: the table's Columns choice. */
+    columns?: DeploymentEnvironmentColumnsBinding;
   }>,
 ) {
   return (
@@ -426,6 +438,7 @@ export function AllDeploymentsGroups(
       accessibilityLabel={t('projects.deployments.services.apps')}
       {...(props.openBackups ? { openBackups: true } : {})}
       {...(props.hereMachine ? { hereMachine: true } : {})}
+      {...(props.columns ? { columns: props.columns } : {})}
     />
   );
 }

@@ -794,6 +794,13 @@ const settingsAppearanceTranslationExtension = {
   newSessionBackdropStrength: newSessionBackdropStrengthTranslations['ja'],
   switchToDarkTheme: 'ダークテーマに切り替え',
   switchToLightTheme: 'ライトテーマに切り替え',
+  collectionColumns: {
+    title: "列",
+    alwaysFirst: "常に先頭",
+    builtIn: "組み込み",
+    reset: "デフォルトに戻す",
+    tooNarrow: "非表示：幅が足りません",
+  },
   themeToggle: {
     title: 'ライト／ダーク切り替え',
     description: 'ウィンドウ上部に半分塗りの円を表示します。クリックで切り替え、長押しまたは右クリックでその他の操作。',
@@ -18851,6 +18858,9 @@ settingsSession: {
           needYou: ({ count }: { count: number }) => `${count} 件の対応が必要`,
           columnEnvironment: "環境",
           columnLastDeploy: "最終デプロイ",
+          columnLastDeployDescription: "バージョン、時刻、実行者",
+          columnRunsOnDescription: "マシンまたはプラットフォーム",
+          columnStateDescription: "対応が必要なもの、またはなし",
           columnRunsOn: "実行場所",
           columnState: "状態",
           noMatches: "一致するサービスはありません",

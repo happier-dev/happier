@@ -787,6 +787,13 @@ const settingsAppearanceTranslationExtension = {
   newSessionBackdropStrength: newSessionBackdropStrengthTranslations['fr'],
   switchToDarkTheme: 'Passer au thème sombre',
   switchToLightTheme: 'Passer au thème clair',
+  collectionColumns: {
+    title: "Colonnes",
+    alwaysFirst: "Toujours en premier",
+    builtIn: "Intégrées",
+    reset: "Rétablir par défaut",
+    tooNarrow: "Masquée : trop étroit",
+  },
   themeToggle: {
     title: 'Bascule clair et sombre',
     description: 'Affiche un cercle à moitié plein en haut de la fenêtre. Clique pour basculer ; maintiens appuyé ou fais un clic droit pour plus d’options.',
@@ -18811,6 +18818,9 @@ settingsSession: {
           needYou: ({ count }: { count: number }) => (count === 1 ? '1 a besoin de vous' : `${count} ont besoin de vous`),
           columnEnvironment: "Environnement",
           columnLastDeploy: "Dernier déploiement",
+          columnLastDeployDescription: "Version, heure et auteur",
+          columnRunsOnDescription: "Machine ou plateforme",
+          columnStateDescription: "Ce qui a besoin de vous, ou rien",
           columnRunsOn: "Tourne sur",
           columnState: "État",
           noMatches: "Aucun service ne correspond",

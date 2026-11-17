@@ -787,6 +787,13 @@ const settingsAppearanceTranslationExtension = {
   newSessionBackdropStrength: newSessionBackdropStrengthTranslations['pl'],
   switchToDarkTheme: 'Przełącz na ciemny motyw',
   switchToLightTheme: 'Przełącz na jasny motyw',
+  collectionColumns: {
+    title: "Kolumny",
+    alwaysFirst: "Zawsze pierwsza",
+    builtIn: "Wbudowane",
+    reset: "Przywróć domyślne",
+    tooNarrow: "Ukryta: za wąsko",
+  },
   themeToggle: {
     title: 'Przełącznik jasny i ciemny',
     description: 'Pokazuje u góry okna do połowy wypełnione kółko. Kliknij, aby przełączyć; przytrzymaj lub kliknij prawym przyciskiem, aby zobaczyć więcej.',
@@ -18762,6 +18769,9 @@ settingsSession: {
           needYou: ({ count }: { count: number }) => (count === 1 ? '1 wymaga uwagi' : `${count} wymaga uwagi`),
           columnEnvironment: "Środowisko",
           columnLastDeploy: "Ostatnie wdrożenie",
+          columnLastDeployDescription: "Wersja, czas i autor",
+          columnRunsOnDescription: "Maszyna lub platforma",
+          columnStateDescription: "To, co wymaga uwagi, albo nic",
           columnRunsOn: "Działa na",
           columnState: "Stan",
           noMatches: "Brak pasujących usług",

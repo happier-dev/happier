@@ -111,7 +111,7 @@ export function DeploymentEnvironmentRows(
     openBackups?: boolean;
     /** On a Machine's own page: rows leave out the Machine they all run on (lab hereMachine). */
     hereMachine?: boolean;
-    /** Services Apps column identity; preferences stay with the host. */
+    /** Services → Apps offers its Columns choice (`SERVICES_APPS_COLLECTION_ID`) and hears which columns fit. */
     columns?: DeploymentEnvironmentColumnsBinding;
   }>,
 ) {
@@ -175,15 +175,8 @@ export function DeploymentEnvironmentRows(
       color: theme.colors.text.secondary,
       flexShrink: 1,
     } as const;
-    const fields: CollectionField<Row>[] = [
-      {
-        key: 'lastDeploy',
-        title: t('projects.deployments.services.columnLastDeploy'),
-        // "469b2bb · 10m ago": the version and its age whole at a desktop width (lab envRow "ver · age").
-        minWidth: 152,
-        priority: 4,
-        listColumn: true,
-        render: (row) =>
+    const renders: Record<DeploymentEnvironmentColumn['key'], CollectionField<Row>['render']> = {
+      lastDeploy: (row) =>
           row.steps ? (
             <View style={{ gap: theme.space.s2 }}>
               <DeploymentStepStrip
@@ -200,30 +193,11 @@ export function DeploymentEnvironmentRows(
           ) : (
             row.lastDeploy
           ),
-      },
-      ...(hereMachine
-        ? []
-        : [
-            {
-              key: 'runsOn',
-              title: t('projects.deployments.services.columnRunsOn'),
-              minWidth: 184,
-              priority: 3,
-              listColumn: true,
-              // A long Machine name keeps its end, the short id that tells same-named Machines apart.
-              render: (row: Row) => row.runsOn ? <MiddleEllipsisText value={row.runsOn} style={meta} /> : null,
-            },
-          ]),
-      {
-        key: 'state',
-        title: t('projects.deployments.services.columnState'),
-        minWidth: 136,
-        priority: 5,
-        align: 'end',
-        listColumn: true,
-        render: (row) => row.stateWord ? <DeploymentEnvironmentStateMark state={row.stateWord} /> : null,
-      },
-    ];
+      // A long Machine name keeps its end, the short id that tells same-named Machines apart.
+      runsOn: (row) => row.runsOn ? <MiddleEllipsisText value={row.runsOn} style={meta} /> : null,
+      state: (row) => row.stateWord ? <DeploymentEnvironmentStateMark state={row.stateWord} /> : null,
+    };
+    const fields: CollectionField<Row>[] = deploymentEnvironmentColumns(hereMachine).map((column) => ({ ...column, render: renders[column.key] }));
     return {
       glyph: (row) => <DeploymentEnvironmentMark platform={row.platformMark} />,
       title: (row) =>
@@ -251,6 +225,8 @@ export function DeploymentEnvironmentRows(
       columnTitles: {
         title: t('projects.deployments.services.columnEnvironment'),
       },
+      // The name (then its reason, ellipsized) narrows to this floor before a chosen column gives way (UI refinements 11-17).
+      titleMinWidth: DEPLOYMENT_ENVIRONMENT_TITLE_MIN_WIDTH,
     };
   }, [groups, hereMachine, props.testID, theme.colors.text.secondary, theme.space.s2]);
   return (
@@ -334,6 +310,7 @@ export function deploymentEnvironmentRowLeadState<T extends Pick<Row, 'state'>>(
   return layout.columns ? null : row.state;
 }
 
+/** Services → Apps's table kind for the Columns choice: one id on every client, never a Project or Environment. */
 export const SERVICES_APPS_COLLECTION_ID = 'happier.services.apps';
 
 export type DeploymentEnvironmentColumnsBinding = Readonly<{
@@ -343,6 +320,35 @@ export type DeploymentEnvironmentColumnsBinding = Readonly<{
 }>;
 
 const SERVICES_APPS_COLUMNS_BINDING: DeploymentEnvironmentColumnsBinding = { collectionId: SERVICES_APPS_COLLECTION_ID };
+
+/** The Environment name's floor before a chosen column gives way. */
+const DEPLOYMENT_ENVIRONMENT_TITLE_MIN_WIDTH = 200;
+
+type DeploymentEnvironmentColumn = Readonly<{
+  key: 'lastDeploy' | 'runsOn' | 'state';
+  title: string;
+  description: string;
+  minWidth: number;
+  priority: number;
+  align?: 'end';
+  listColumn: true;
+}>;
+
+/**
+ * An Environment row's columns, as the rows draw them and the Columns menu names them: one declaration, so the menu
+ * and the table never disagree. A Machine's own page leaves out the Machine they all run on.
+ */
+export function deploymentEnvironmentColumns(hereMachine: boolean): readonly DeploymentEnvironmentColumn[] {
+  return [
+    // "469b2bb · 10m ago": the version and its age whole at a desktop width (lab envRow "ver · age").
+    { key: 'lastDeploy', title: t('projects.deployments.services.columnLastDeploy'),
+      description: t('projects.deployments.services.columnLastDeployDescription'), minWidth: 152, priority: 4, listColumn: true },
+    ...(hereMachine ? [] : [{ key: 'runsOn' as const, title: t('projects.deployments.services.columnRunsOn'),
+      description: t('projects.deployments.services.columnRunsOnDescription'), minWidth: 184, priority: 3, listColumn: true as const }]),
+    { key: 'state', title: t('projects.deployments.services.columnState'),
+      description: t('projects.deployments.services.columnStateDescription'), minWidth: 136, priority: 5, align: 'end', listColumn: true },
+  ];
+}
 
 /** Every band of a Services list stands on its one sheet, under the one bar that names the columns (lab envList). */
 export const SERVICES_ONE_SHEET = { key: 'services', title: '' } as const;
@@ -362,9 +368,10 @@ export function ServicesPageList<Item>(props: Readonly<{
   groupAction?: (groupKey: string) => CollectionGroupAction | null;
   /** A row's ⋯ (Collection `useRowActions`: one stable module-level hook). */
   useRowActions?: (item: Item) => CollectionRowActions;
-  columns?: DeploymentEnvironmentColumnsBinding;
   /** Rows by default; Monitoring can show its checks as the Collection's cards. */
   presentation?: 'list' | 'grid';
+  /** The table's Columns choice and the columns its width admits (Services → Apps). */
+  columns?: DeploymentEnvironmentColumnsBinding;
 }>) {
   // Inside a page section's body (an Environment's Domains under "1 domain") the section already stands its content on
   // the sheet edge, so the list's sheet takes that edge instead of adding its own inset; on the Services page it insets.
@@ -391,6 +398,7 @@ export function ServicesPageList<Item>(props: Readonly<{
             {...(props.groupAction ? { groupAction: props.groupAction } : {})}
             {...(props.useRowActions ? { useRowActions: props.useRowActions } : {})}
             {...(props.columns ? { columns: { collectionId: props.columns.collectionId } } : {})}
+            {...(props.columns?.onColumnsFit ? { onColumnsFit: props.columns.onColumnsFit } : {})}
           />
         </CoreCollectionScope>
       </ItemGroup>

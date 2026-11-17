@@ -57,6 +57,7 @@ type _AuthorCollectionKeysAreCurated = Assert<IsEqual<keyof CollectionProps<unkn
   | 'windowStatement' | 'testID' | 'listTestID' | 'detailTestID'
   | 'sort' | 'summaryRows' | 'labels'
   | 'listWidthPx' | 'onListWidthChange' | 'onListWidthCommit' | 'onListWidthReset' | 'resizeKey'
+  | 'columns' | 'onColumnsFit'
 >>;
 type _AuthorCollectionAnatomyKeysAreCurated = Assert<IsEqual<keyof CollectionAnatomy<unknown>,
   | 'card' | 'rowRole' | 'kindLabel' | 'destination' | 'wrapItem' | 'glyph' | 'loadingGlyph' | 'glyphBadge' | 'title' | 'titleIdentifier' | 'titleSuffix' | 'titleControls' | 'leadingControl' | 'needsYou' | 'where' | 'byline' | 'bylineLead'

@@ -130,6 +130,11 @@ export type CollectionField<Item> = Readonly<{
   render: (item: Item) => ReactNode;
   /** The narrowest readable width at normal text size; it scales with the reader's text size. */
   minWidth: number;
+  /**
+   * The widest the column grows to, at normal text size, from the room left beyond every admitted column's minimum
+   * (a long name). Omitted: the column stays at `minWidth` (a figure).
+   */
+  maxWidth?: number;
   /** Lower drops first when the table is narrow. */
   priority: number;
   align?: 'start' | 'end';
@@ -138,6 +143,10 @@ export type CollectionField<Item> = Readonly<{
    * (`CollectionProps.columns`). The collection's default stays the columns declared without it.
    */
   defaultHidden?: boolean;
+  /** What the column shows, for the Columns menu ("Version, time and who"). The header keeps the short `title`. */
+  description?: string;
+  /** Where the column comes from, naming its group among the Columns menu's hidden columns ("Telemetry"); omitted: built in. */
+  source?: string;
   /**
    * The column stands right after the title, before the anatomy's slot columns (a task's status word before its
    * Where). Otherwise field columns follow the slots, and the table's trailing Age (and title meta) stay last.
@@ -314,7 +323,8 @@ export type CollectionAnatomy<Item> = Readonly<{
   /**
    * The title column's narrowest readable width at normal text size, for a table whose titles are short codes
    * (a size, a version) so its comparison columns are not dropped for room the titles never use. Omitted, a title
-   * keeps the room a sentence needs.
+   * keeps the room a sentence needs. A page list's end columns (`listColumn`) also give way before its title
+   * narrows below it.
    */
   titleMinWidth?: number;
   /** Column titles for the table header, one per slot the anatomy declares. */
@@ -476,6 +486,11 @@ export type CollectionProps<Item> = HappierCollectionRailSizingProps & Readonly<
    * Fixed for the mounted Collection.
    */
   columns?: CollectionColumnsBinding;
+  /**
+   * The chosen fields the measured width admits, in order, each time that changes (none while the row draws no
+   * columns, a phone): the Columns menu marks a chosen column that doesn't fit as too narrow.
+   */
+  onColumnsFit?: (fieldKeys: readonly string[]) => void;
   /** The one detail component, in every container. */
   renderDetail?: (key: HappierCollectionKey, context: CollectionDetailRenderContext) => ReactNode;
   /**
@@ -907,6 +922,7 @@ function resolveColumns<Item>(
     key: `field:${field.key}`,
     title: field.title,
     minWidth: field.minWidth * textScale,
+    ...(field.maxWidth === undefined ? {} : { maxWidth: field.maxWidth * textScale }),
     priority: field.priority,
     align: field.align ?? 'start',
     render: field.render,
@@ -2419,19 +2435,26 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     if (rowWidth === null) return declared;
     const admitted = resolveHappierCollectionTableColumns({
       columns: [
-        { key: '', minWidth: listTitleMinWidth(textScale), priority: Number.POSITIVE_INFINITY, flex: true },
-        ...declared.map((field) => ({ key: field.key, minWidth: field.minWidth * textScale, priority: field.priority })),
+        // The title gives way to its declared floor before a column drops (a Services name, then its reason, ellipsized).
+        { key: '', minWidth: anatomy.titleMinWidth === undefined ? listTitleMinWidth(textScale) : anatomy.titleMinWidth * textScale,
+          priority: Number.POSITIVE_INFINITY, flex: true },
+        ...declared.map((field) => ({ key: field.key, minWidth: field.minWidth * textScale, priority: field.priority,
+          ...(field.maxWidth === undefined ? {} : { maxWidth: field.maxWidth * textScale }) })),
       ],
       // The page row's insets and its leading mark column; every column after the title stands one leading gap on.
       availableWidth: rowWidth - 2 * HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx
         - HAPPIER_PAGE_METRICS.rowLeadingColumnPx - HAPPIER_PAGE_METRICS.rowLeadingGapPx,
       gap: HAPPIER_PAGE_METRICS.rowLeadingGapPx,
     });
-    if (admitted.length === declared.length + 1) return declared;
-    const keys = new Set(admitted.map((column) => column.key));
-    const shown = declared.filter((field) => keys.has(field.key));
+    if (admitted.length === declared.length + 1 && declared.every((field) => field.maxWidth === undefined)) return declared;
+    // A column that grew toward its `maxWidth` stands at the width the column owner granted it (cells read `minWidth`).
+    const widths = new Map(admitted.map((column) => [column.key, column.minWidth / textScale]));
+    const shown = declared.flatMap((field) => {
+      const width = widths.get(field.key);
+      return width === undefined ? [] : [width === field.minWidth ? field : { ...field, minWidth: width }];
+    });
     return shown.length === 0 ? NO_FIELDS : shown;
-  }, [anatomy.fields, columnsShown, rowWidth, textScale]);
+  }, [anatomy.fields, anatomy.titleMinWidth, columnsShown, rowWidth, textScale]);
   const catalogList = rowRole === 'catalogRow' && rowGeometry === 'list' && !pageSections;
   const catalogSideList = catalogList && !wrapTitles;
   // Peeks exist in the resting table; while the table fades out (reduced motion) they stay and fade with it.
@@ -2623,6 +2646,15 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     () => resolveColumns(anatomy, tableWidth, accessibility.textScale, rowAccessoryWidth, treeLeadingWidth),
     [accessibility.textScale, anatomy, rowAccessoryWidth, tableWidth, treeLeadingWidth],
   );
+  // Which of the chosen fields the width admits, once per change: the Columns menu marks the rest too narrow.
+  const fittedFieldKeys = size === null ? null
+    : rowGeometry === 'table' ? columns.flatMap((column) => (column.fieldKey === null ? [] : [column.fieldKey])).join('\u0000')
+      : columnsShown ? listColumns.map((field) => field.key).join('\u0000') : '';
+  const onColumnsFit = props.onColumnsFit;
+  useEffect(() => {
+    if (fittedFieldKeys === null || onColumnsFit === undefined) return;
+    onColumnsFit(fittedFieldKeys === '' ? [] : fittedFieldKeys.split('\u0000'));
+  }, [fittedFieldKeys, onColumnsFit]);
   const setBranchOpen = model.actions.setBranchOpen;
   const treeStage = useMemo<CollectionTreeStage | null>(() => (tree === null || presentation !== 'table' ? null
     : { nodes: tree, openBranches, setBranchOpen }), [openBranches, presentation, setBranchOpen, tree]);

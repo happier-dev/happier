@@ -59,6 +59,7 @@ const FIELDS: readonly CollectionField<Row>[] = [
   field('runsOn', 'Runs on', { priority: 3 }),
   field('requests', 'Requests', {
     defaultHidden: true,
+    source: 'Telemetry',
     align: 'end',
   }),
   field('state', 'State', { priority: 5, align: 'end' }),
@@ -71,6 +72,8 @@ function mount(
     bound?: boolean;
     fields?: readonly CollectionField<Row>[];
     width?: number;
+    titleMinWidth?: number;
+    onColumnsFit?: (keys: readonly string[]) => void;
   }>,
 ) {
   const context = createSurfaceContext();
@@ -106,6 +109,7 @@ function mount(
         detail="none"
         scroll="page"
         testID="collection"
+        {...(input.onColumnsFit === undefined ? {} : { onColumnsFit: input.onColumnsFit })}
         {...(input.bound === false
           ? {}
           : { columns: { collectionId: 'happier.services.apps' } })}
@@ -117,6 +121,7 @@ function mount(
           fields: input.fields ?? FIELDS,
           accessibilityLabel: (row) => row.id,
           columnTitles: { title: 'Environment' },
+          ...(input.titleMinWidth === undefined ? {} : { titleMinWidth: input.titleMinWidth }),
         }}
       />
     );
@@ -222,4 +227,34 @@ describe('Collection Columns choice', () => {
     }
   });
 
+  it('grows a column toward its owner-declared maximum from the spare room, and keeps a figure at its minimum', () => {
+    const fields = [
+      field('runsOn', 'Runs on', { maxWidth: 220 }),
+      field('state', 'State', { align: 'end' }),
+    ];
+    const { view, query } = mount({ shownKeys: null, fields });
+    try {
+      const width = (key: string) =>
+        Number.parseFloat(
+          getComputedStyle(query(`row:billing-api:column:${key}`)!).width,
+        );
+      expect(width('runsOn')).toBeGreaterThan(96);
+      expect(width('runsOn')).toBeLessThanOrEqual(220);
+      expect(width('state')).toBe(96);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('yields chosen columns to width lowest priority first, keeps the title at its declared floor, and reports what fits', () => {
+    const fits: (readonly string[])[] = [];
+    // Title floor 200 + three 96 px figures (each a leading gap on) need more than a 520 px row: Runs on (priority 3) gives way.
+    const { view, drawnOrder } = mount({ shownKeys: null, width: 560, titleMinWidth: 200, onColumnsFit: (keys) => fits.push(keys) });
+    try {
+      expect(drawnOrder()).toEqual(['deploy', 'state']);
+      expect(fits.at(-1)).toEqual(['deploy', 'state']);
+      // One report per fit, not per render.
+      expect(fits).toHaveLength(1);
+    } finally { view.unmount(); }
+  });
 });

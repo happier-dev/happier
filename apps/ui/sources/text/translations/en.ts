@@ -897,6 +897,13 @@ const settingsAppearanceTranslationExtension = {
   newSessionBackdropStrength: newSessionBackdropStrengthTranslations['en'],
   switchToDarkTheme: 'Switch to dark theme',
   switchToLightTheme: 'Switch to light theme',
+  collectionColumns: {
+    title: "Columns",
+    alwaysFirst: "Always first",
+    builtIn: "Built in",
+    reset: "Reset to default",
+    tooNarrow: "Hidden: too narrow",
+  },
   themeToggle: {
     title: 'Light and dark switch',
     description:
@@ -22346,6 +22353,9 @@ const enProjects = {
         needYou: ({ count }: { count: number }) => (count === 1 ? '1 needs you' : `${count} need you`),
         columnEnvironment: "Environment",
         columnLastDeploy: "Last deploy",
+        columnLastDeployDescription: "Version, time and who",
+        columnRunsOnDescription: "Machine or platform",
+        columnStateDescription: "What needs you, or nothing",
         columnRunsOn: "Runs on",
         columnState: "State",
         noMatches: "No services match",

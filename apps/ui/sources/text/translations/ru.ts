@@ -788,6 +788,13 @@ const settingsAppearanceTranslationExtension = {
   newSessionBackdropStrength: newSessionBackdropStrengthTranslations['ru'],
   switchToDarkTheme: 'Переключить на тёмную тему',
   switchToLightTheme: 'Переключить на светлую тему',
+  collectionColumns: {
+    title: "Столбцы",
+    alwaysFirst: "Всегда первый",
+    builtIn: "Встроенные",
+    reset: "Сбросить по умолчанию",
+    tooNarrow: "Скрыт: слишком узко",
+  },
   themeToggle: {
     title: 'Переключатель светлой и тёмной темы',
     description: 'Показывает наполовину закрашенный круг вверху окна. Нажмите, чтобы переключить; удерживайте или нажмите правой кнопкой, чтобы увидеть больше.',
@@ -18890,6 +18897,9 @@ settingsSession: {
           needYou: ({ count }: { count: number }) => `Требуют внимания: ${count}`,
           columnEnvironment: "Окружение",
           columnLastDeploy: "Последний деплой",
+          columnLastDeployDescription: "Версия, время и автор",
+          columnRunsOnDescription: "Машина или платформа",
+          columnStateDescription: "Что требует внимания, или ничего",
           columnRunsOn: "Где работает",
           columnState: "Состояние",
           noMatches: "Нет подходящих сервисов",

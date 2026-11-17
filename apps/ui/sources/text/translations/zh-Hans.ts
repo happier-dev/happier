@@ -794,6 +794,13 @@ const settingsAppearanceTranslationExtension = {
   newSessionBackdropStrength: newSessionBackdropStrengthTranslations['zh-Hans'],
   switchToDarkTheme: '切换到深色主题',
   switchToLightTheme: '切换到浅色主题',
+  collectionColumns: {
+    title: "列",
+    alwaysFirst: "始终第一",
+    builtIn: "内置",
+    reset: "恢复默认",
+    tooNarrow: "已隐藏：宽度不足",
+  },
   themeToggle: {
     title: '浅色/深色切换',
     description: '在窗口顶部显示一个半填充的圆。点击即可切换；长按或右键可查看更多选项。',
@@ -18556,6 +18563,9 @@ settingsSession: {
           needYou: ({ count }: { count: number }) => `${count} 个需要你处理`,
           columnEnvironment: "环境",
           columnLastDeploy: "最近部署",
+          columnLastDeployDescription: "版本、时间和操作者",
+          columnRunsOnDescription: "机器或平台",
+          columnStateDescription: "需要你处理的内容，或不显示",
           columnRunsOn: "运行于",
           columnState: "状态",
           noMatches: "没有匹配的服务",

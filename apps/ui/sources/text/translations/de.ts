@@ -883,6 +883,13 @@ const settingsAppearanceTranslationExtension = {
   newSessionBackdropStrength: newSessionBackdropStrengthTranslations['de'],
   switchToDarkTheme: 'Zum dunklen Design wechseln',
   switchToLightTheme: 'Zum hellen Design wechseln',
+  collectionColumns: {
+    title: "Spalten",
+    alwaysFirst: "Immer zuerst",
+    builtIn: "Integriert",
+    reset: "Auf Standard zurücksetzen",
+    tooNarrow: "Ausgeblendet: zu schmal",
+  },
   themeToggle: {
     title: 'Hell-Dunkel-Schalter',
     description: 'Zeigt oben im Fenster einen halb gefüllten Kreis. Klicken zum Wechseln; gedrückt halten oder Rechtsklick für mehr.',
@@ -19049,6 +19056,9 @@ settingsSession: {
               needYou: ({ count }: { count: number }) => (count === 1 ? '1 braucht dich' : `${count} brauchen dich`),
               columnEnvironment: "Umgebung",
               columnLastDeploy: "Letztes Deployment",
+              columnLastDeployDescription: "Version, Zeit und wer",
+              columnRunsOnDescription: "Maschine oder Plattform",
+              columnStateDescription: "Was dich braucht, oder nichts",
               columnRunsOn: "Läuft auf",
               columnState: "Status",
               noMatches: "Keine passenden Dienste",
