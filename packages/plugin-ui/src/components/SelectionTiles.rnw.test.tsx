@@ -164,6 +164,22 @@ describe('SelectionTiles', () => {
     } finally { mount.unmount(); }
   });
 
+  it('marks a picture card by its outline alone and says its status where the check stood', () => {
+    // Theme slots (lab A1, finding 4): the ring alone marks the chosen slot; "Showing now" is a quiet fact of the card.
+    const mount = mountTiles(<HappierSelectionTiles variant="card" selectionMark="outline" density="compact" accessibilityLabel="Modes"
+      value="light" onChange={() => undefined} colors={TILE_COLORS} testIdPrefix="slot"
+      renderText={({ text }) => <span>{text}</span>}
+      renderGlyph={({ glyph }) => <span data-testid={`glyph:${glyph.kind}`} />}
+      options={[{ id: 'light', title: 'Paper', subtitle: 'Light mode', status: 'Showing now', preview: <Text>Light preview</Text> },
+        { id: 'dark', title: 'Ink', subtitle: 'Dark mode', preview: <Text>Dark preview</Text> }]} />);
+    try {
+      expect(mount.container.querySelector('[data-testid="glyph:check"]')).toBeNull();
+      expect(mount.container.querySelector('[data-testid="slot:light"]')?.textContent).toContain('Showing now');
+      expect(mount.container.querySelector('[data-testid="slot:light"]')?.getAttribute('aria-label')).toBe('Paper, Light mode, Showing now');
+      expect(mount.container.querySelector('[data-testid="slot:dark"]')?.textContent).not.toContain('Showing now');
+    } finally { mount.unmount(); }
+  });
+
   it('hides visual captions without losing accessible names or keyboard selection', async () => {
     const onChange = vi.fn();
     const mount = mountTiles(<SelectionTiles variant="visual" tileSizing="fill" labels="hidden"

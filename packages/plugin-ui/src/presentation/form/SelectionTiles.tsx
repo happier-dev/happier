@@ -50,6 +50,11 @@ export type HappierSelectionTileOption<T extends string, I extends string = stri
   disabled?: boolean;
   badge?: string;
   /**
+   * Card tiles: a quiet fact about this option right now ("Showing now"), at the card's top end where a chosen
+   * card's check stands; it is part of the tile's accessible name.
+   */
+  status?: string;
+  /**
    * A small rendering of what this option looks like (visual tiles or compact card rows). Pass the real component at
    * static props — not a drawn replica — so the preview cannot drift from the product.
    */
@@ -201,6 +206,11 @@ type HappierChoiceTilesBaseProps<T extends string, I extends string> = HappierSe
   /** The group's accessible name (the setting it chooses). */
   accessibilityLabel?: string;
   testIdPrefix?: string;
+  /**
+   * Card variant. `check` (default) marks the chosen card with a check beside its ink outline. `outline` marks it by the
+   * outline alone, as a visual tile's ring does, for cards that are pictures of their option (theme slots and options).
+   */
+  selectionMark?: 'check' | 'outline';
   density?: 'regular' | 'compact';
   minimumColumns?: number;
   maximumColumns?: number;
@@ -978,7 +988,7 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
               hitReach={sheet ? 0 : gap / 2}
               testID={tileTestID}
               accessibilityRole={selectionAccessibilityRole}
-              accessibilityLabel={hasSubtitle ? `${option.title}, ${option.subtitle}` : option.title}
+              accessibilityLabel={[option.title, hasSubtitle ? option.subtitle : null, option.status ?? null].filter(Boolean).join(', ')}
               accessibilityState={props.selectionMode === 'multiple'
                 ? { checked: selected, disabled }
                 : { checked: selected, selected, disabled }}
@@ -1038,11 +1048,13 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                   </View>
                 </View>
                 <View style={styles.selectionAccessory} pointerEvents="none" aria-hidden>
-                  {/* A tile marks only the chosen card, with a check beside its ink outline (lab f1src); a sheet's
-                      cells keep the one single-choice mark (`RadioMark`) that a table's or a list's radio draws. */}
+                  {option.status ? props.renderText({ role: 'badge', text: option.status, selected, compact, numberOfLines: 1 }) : null}
+                  {/* A tile marks only the chosen card, with a check beside its ink outline (lab f1src), or by the outline
+                      alone (`selectionMark="outline"`); a sheet's cells keep the one single-choice mark (`RadioMark`)
+                      that a table's or a list's radio draws. */}
                   {sheet && !(selected && props.selectionMode === 'multiple')
                     ? <View style={resolveHappierRadioMarkStyle({ selected, ink: props.colors.selection, quiet: props.colors.glyph, surface: 'transparent' })} />
-                    : selected ? props.renderGlyph({ glyph: { kind: 'check' }, size: 16, color: props.colors.selection }) : null}
+                    : selected && props.selectionMark !== 'outline' ? props.renderGlyph({ glyph: { kind: 'check' }, size: 16, color: props.colors.selection }) : null}
                 </View>
               </View>
               {below && hasSubtitle ? (
