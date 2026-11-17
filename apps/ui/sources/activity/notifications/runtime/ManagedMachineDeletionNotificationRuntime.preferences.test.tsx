@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
@@ -12,22 +12,20 @@ import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccou
 import { saveAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 
-installSettingsViewCommonModuleMocks({ storage: 'real', text: async () => vi.importActual<typeof import('@/text')>('@/text'),
-    reactNative: async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({ Platform: { OS: 'ios' } }),
-});
+installSettingsViewCommonModuleMocks({ storage: 'real', text: async () => vi.importActual<typeof import('@/text')>('@/text') });
+// Static Sync imports may have already resolved the shared settings helper's default web mock.
+vi.doMock('react-native', async () =>
+    (await import('@/dev/testkit/mocks/reactNative')).createReactNativeNativeMock({ platformOS: 'ios' }));
 const native = vi.hoisted(() => ({
     scheduleNotificationAsync: vi.fn(async (_request: Parameters<typeof import('expo-notifications')['scheduleNotificationAsync']>[0]) => 'scheduled-reminder'),
     cancelScheduledNotificationAsync: vi.fn(async (_identifier: string) => undefined),
 }));
-// The real Sync graph's Node loader and direct imports share this OS transport.
-beforeEach(async () => {
-    const notifications = await import('@/dev/expoNotificationsStub');
-    vi.spyOn(notifications, 'scheduleNotificationAsync').mockImplementation(async raw => {
-        // The shared native boundary accepts unknown; production supplies Expo's request shape.
-        return native.scheduleNotificationAsync(raw as Parameters<typeof import('expo-notifications')['scheduleNotificationAsync']>[0]);
-    });
-    vi.spyOn(notifications, 'cancelScheduledNotificationAsync').mockImplementation(native.cancelScheduledNotificationAsync);
-});
+// Sync's Node bridge and Vite can resolve different Expo stub instances. Observe the native
+// module acquisition boundary so every schedule reaches the same OS transport fixture.
+vi.mock('@/utils/platform/loadExpoNotifications', async importOriginal => ({
+    ...await importOriginal<typeof import('@/utils/platform/loadExpoNotifications')>(),
+    loadExpoNotifications: async () => ({ ...await import('expo-notifications'), ...native }),
+}));
 
 // Prepare the real application graph during collection, like the settings integration tests.
 await loadSyncSingletonForTests();
@@ -88,12 +86,17 @@ describe('managed Machine deletion reminder Account preference', () => {
             <ManagedMachineDeletionNotificationRuntime serverIds={serverIds} />
         </React.Profiler>);
         onTestFinished(() => screen.unmount());
-        await vi.waitFor(() => expect(native.scheduleNotificationAsync).toHaveBeenCalledTimes(2));
         const identifier = `managed-machine-deletion:${JSON.stringify([serverId, 'owner', machine.id])}`;
+        const siblingIdentifier = `managed-machine-deletion:${JSON.stringify([siblingServerId, sibling.custodianAccountId, sibling.id])}`;
+        await vi.waitFor(async () => {
+            // Inventory arrivals can mount a second Home after the initial render's act scope.
+            await act(async () => {});
+            expect(native.scheduleNotificationAsync.mock.calls.map(([request]) => request.identifier).sort())
+                .toEqual([identifier, siblingIdentifier].sort());
+        });
         expect(native.scheduleNotificationAsync).toHaveBeenCalledWith(expect.objectContaining({
             identifier, trigger: { type: 'date', date: new Date(deadline - day) },
         }));
-        const siblingIdentifier = `managed-machine-deletion:${JSON.stringify([siblingServerId, sibling.custodianAccountId, sibling.id])}`;
         expect(native.scheduleNotificationAsync).toHaveBeenCalledWith(expect.objectContaining({
             identifier: siblingIdentifier, trigger: { type: 'date', date: new Date(deadline - 2 * day) },
         }));

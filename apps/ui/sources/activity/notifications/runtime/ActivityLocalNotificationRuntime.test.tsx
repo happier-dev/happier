@@ -7,7 +7,7 @@ import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/
 import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { ConcurrentSessionListCacheByServerId } from '@/sync/domains/session/listing/concurrentSessionListCache';
-import { getActiveServerSnapshot, setActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, getActiveServerSnapshot, setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { markSessionSurfaceVisible, resetSessionSurfaceVisibilityForTests } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { localSettingsParse } from '@/sync/domains/settings/localSettings';
 import { settingsParse } from '@/sync/domains/settings/settings';
@@ -22,6 +22,7 @@ import { installBrowserNotificationApiStub } from '@/dev/testkit/mocks/browserNo
 import type { DesktopAppWindowSurface } from '@/desktop/window/appWindowSurface';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
+import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
 
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -58,7 +59,12 @@ let desktopAppWindowSurfaces: readonly DesktopAppWindowSurface[] = [];
 let browserRuntime: Awaited<ReturnType<typeof installBrowserRuntimeForTests>> | null = null;
 const notificationHttp: RuntimeFetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
-    if (url.pathname === '/v1/machines/managed/actions/list') return Response.json({ machines: managedMachines });
+    if (url.pathname === '/v1/machines/managed/actions/list') return Response.json({
+        machines: managedMachines.filter(machine => {
+            const home = homes.findByServerUrl(url.origin);
+            return home && areServerProfileIdentifiersEquivalent(machine.homeId, home.serverId);
+        }),
+    });
     if (url.pathname === '/v2/account/session-delivery-mutes') return Response.json({ scopes: mutedScopes });
     return createEmptyAccountBootstrapHttpResponse(`${url.pathname}${url.search}`, init) ?? homes.request(input, init);
 };
@@ -355,6 +361,53 @@ describe('ActivityLocalNotificationRuntime', () => {
             }
         } finally {
             await screen.unmount();
+        }
+    });
+
+    it('changes only the edited Home deadline through 2d→1d→2d and cancels its retired mounted browser schedule', async () => {
+        reactNativeRuntime.platformOs = 'web';
+        const browser = installBrowserNotificationApiStub('granted');
+        const day = 86_400_000;
+        const now = Date.now();
+        managedMachines = ['srv_home_a', 'srv_home_b'].map((homeId, index) => ManagedMachineV1Schema.parse({
+            id: 'same-managed-id', homeId, custodianAccountId: index === 0 ? 'account-a' : 'account-b',
+            launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: `Retained box ${index}`, choices: {} },
+            resource: { contributionRef: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, value: { id: `retained-${index}` } },
+            allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { observedAt: now, availability: 'present', power: 'stopped', storage: 'retained',
+                deletionNotices: [{ kind: 'stopped-storage', at: now + (3 + index) * day,
+                    rule: { kind: 'after-stop', afterMs: 14 * day }, consequence: 'disk-deleted' }] },
+        }));
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        vi.useFakeTimers();
+        vi.setSystemTime(now);
+        const census = installTimerCensus(stack => stack.includes('managedMachineDeletionNotification') ? 'reminder' : null);
+        const screen = await renderScreen(<ActivityLocalNotificationRuntime />);
+        try {
+            const deadlines = () => census.read().filter(timer => timer.consumer === 'reminder');
+            await vi.waitFor(async () => {
+                await act(async () => {});
+                expect(deadlines()).toHaveLength(2);
+            });
+            const siblingDeadline = deadlines().find(timer => timer.delayMs > day)!;
+            await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+            await act(async () => setActiveAccountSettings({ managedMachineDeletionReminderLeadTimeMs: day }));
+            await vi.waitFor(() => expect(deadlines()).toHaveLength(2));
+            // A sibling restart would shorten its recorded remaining delay after the clock moved.
+            expect(deadlines()).toContainEqual(siblingDeadline);
+            await act(async () => { await vi.advanceTimersByTimeAsync(day - 1_000); });
+            expect(browser.shown).toHaveLength(0);
+            await act(async () => setActiveAccountSettings({ managedMachineDeletionReminderLeadTimeMs: 2 * day }));
+            await vi.waitFor(() => expect(browser.shown.map(item => item.title)).toEqual(['Retained box 0']));
+            await act(async () => { await vi.advanceTimersByTimeAsync(day); });
+            expect(browser.shown.map(item => item.title)).toEqual(['Retained box 0', 'Retained box 1']);
+            expect(new Set(browser.shown.map(item => item.options?.tag)).size).toBe(2);
+            expect(deadlines()).toHaveLength(0);
+        } finally {
+            await screen.unmount();
+            census.stop();
+            vi.useRealTimers();
         }
     });
 

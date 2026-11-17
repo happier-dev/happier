@@ -30,6 +30,7 @@ import {
     areServerProfileIdentifiersEquivalent,
     getActiveServerSnapshot,
     getServerProfileById,
+    resolveServerProfileScopeId,
 } from '@/sync/domains/server/serverProfiles';
 import { isSessionPersonallyTrackedForViewer } from '@/sync/domains/session/readState/sessionViewer';
 import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
@@ -183,7 +184,11 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
     // streamed reply nor a Session row write renders it.
     const audienceSource = useActivityStoreSourceDetail();
     const personalMembership = useActivityPersonalSessionMembership();
-    const reminderServerIds = React.useMemo(() => [...audienceSource.audienceScopes.keys()], [audienceSource.audienceScopes]);
+    // Managed Machines can belong to a saved Home before it has any Session audience.
+    // The inventory owner resolves each Home's credential and exact Account scope.
+    const reminderServerIds = React.useMemo(() => [...new Set(
+        Object.values(audienceSource.serverProfilesById).map(resolveServerProfileScopeId),
+    )], [audienceSource.serverProfilesById]);
     const resolveAccountSettings = useExactHomeAccountSettings(audienceSource.audienceScopes);
     // A clicked browser notification opens its Session through the shared Home switch.
     const router = useDestinationRouter();
