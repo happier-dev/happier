@@ -240,6 +240,19 @@ describe('captured Account Action response decoding', () => {
         })).toEqual({ supported: true, result: { ok: true, result: { installed: true } } });
         expect(homes.requestsFor('/v1/actions/action.invoke')).toHaveLength(1);
     });
+    it('refuses a prepared placement on another Machine before requesting execution authority', async () => {
+        if (!account) throw new Error('Expected captured Account');
+        answerOwnedMachine();
+        const selectedTarget = { serverId, machineId: 'another-machine' };
+        await expect(executeOriginalAccountMachineAction({ account, actionId: 'session.spawn_new',
+            requestId: 'placement-mismatch', authority: 'present_user', machineId: 'machine-1',
+            input: { executionTarget: selectedTarget, sessionPlacement: { kind: 'machine', target: selectedTarget },
+                directory: { kind: 'path', path: '/tmp' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+        })).rejects.toMatchObject({ issues: [expect.objectContaining({ path: ['sessionPlacement'] })] });
+        expect(homes.requestsFor('/v1/actions/session.spawn_new/execution-authorization')).toEqual([]);
+        expect(homes.requestsFor('/v1/actions/session.spawn_new')).toEqual([]);
+    });
     it.each(['preset', 'shared', 'owned-spawn', 'delegated-accepted', 'delegated-declined', 'delegated-automation'] as const)('dispatches Home-admitted finite custody without controller inventory (%s)', async recipient => {
         if (!account) throw new Error('Expected captured Account');
         const guestKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
@@ -312,6 +325,7 @@ describe('captured Account Action response decoding', () => {
             machineId: row.id, input: !spawn ? { workspace: { serverId, workspaceId: 'workspace', machineId: row.id, rootPath: '/tmp' },
                 selection: { kind: 'named', name: 'test' } } : projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse({
                 creationKey: 'shared-guest-spawn', executionTarget: { serverId, machineId: row.id },
+                ...(recipient === 'shared' ? { sessionPlacement: { kind: 'machine', target: { serverId, machineId: row.id } } } : {}),
                 ...(recipient === 'preset' ? { sessionPlacement: { kind: 'preset', homeId: binding.serverIdentityId, presetId: 'selected-preset' } } : {}),
                 directory: { kind: 'path', path: '/tmp' }, permissionMode: 'default',
                 agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },

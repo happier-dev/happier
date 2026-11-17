@@ -46,6 +46,15 @@ type MachineCustody = Readonly<{
 type Material = Readonly<{ type: 'dataKey'; machineKey: Uint8Array }>;
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 
+/** Portable transport placement keeps the prepared Machine selection on the same Home as its target. */
+function projectSessionSpawnHome(input: Parameters<typeof admitSessionSpawnNewActionInputV2>[0],
+    executionTarget: { serverId: string; machineId: string }) {
+    return { ...input, executionTarget,
+        ...(input.sessionPlacement?.kind === 'machine'
+            ? { sessionPlacement: { ...input.sessionPlacement,
+                target: { ...input.sessionPlacement.target, serverId: executionTarget.serverId } } } : {}) };
+}
+
 export function readOriginalAccountActionAuthentication(token: string) {
     const claims = parseTokenPayload(token);
     const provenance = readAuthTokenProvenance(claims, { allowLegacyHome: false });
@@ -157,9 +166,8 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
         ...(params.machineServiceLogsGeneration ? { machineServiceLogsGeneration: params.machineServiceLogsGeneration } : {}),
     };
     const spawnInput = binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && binding.target.kind === 'machine'
-        ? admitSessionSpawnNewActionInputV2(SessionSpawnNewActionInputV2Schema.parse({
-            ...(input !== null && typeof input === 'object' && !Array.isArray(input) ? input : {}),
-            executionTarget: { serverId: binding.serverIdentityId, machineId: binding.target.machineId } })) : null;
+        ? admitSessionSpawnNewActionInputV2(projectSessionSpawnHome(SessionSpawnNewActionInputV2Schema.parse(input),
+            { serverId: binding.serverIdentityId, machineId: binding.target.machineId })) : null;
     const presetAcquisition = spawnInput?.sessionPlacement?.kind === 'preset'
         ? params.invocation?.sessionCreationDefaults?.managedPresetAcquisition : undefined;
     const sessionSpawnAdmission = spawnInput && (spawnInput.machineSetupPlanInput !== undefined || presetAcquisition)
@@ -401,8 +409,7 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     if ((foreignCustody || params.invocation) && !custody.installationPublicKey) return failure('content_unavailable');
     if (accountMode === 'e2ee' && !encryption) return failure('content_unavailable');
     const input = sessionInput
-        ? { ...sessionInput,
-            executionTarget: { serverId: account.serverIdentityId, machineId: params.machineId } } : params.input;
+        ? projectSessionSpawnHome(sessionInput, { serverId: account.serverIdentityId, machineId: params.machineId }) : params.input;
     return await executeOriginalAccountActionTransport({ account, input, authority: params.authority,
         ...(params.onTransportIssued ? { onTransportIssued: params.onTransportIssued } : {}),
         ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),

@@ -8,7 +8,9 @@ import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
     ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { buildApprovalOriginFailure, type ApprovalStaleReason } from '@happier-dev/protocol/approvals/approvalStaleReason';
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { readSpawnSessionRpcTimeoutMsFromEnv } from '@/sync/domains/session/spawn/spawnSessionRpcTimeout';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
@@ -36,10 +38,23 @@ const { createFrontDoorActionExecute } = await import('./frontDoorRuntimeActionE
 const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
 const { captureLazyActionAccountContext } = await import('./actionAccountContext');
 const { executeManualSessionSpawnNewAction, buildManualSessionCreationKey } = await import('./sessionSpawnNewAction');
+// Keep the real receiving owner in its own compiler program, as the composed spawn suite does.
+const currentnessSource = '../../../../../cli/src/daemon/externalActions/daemonExternalActionTargetResolver';
+const { createDaemonApprovalExecutionOriginCurrentness } = await vi.importActual<{
+    createDaemonApprovalExecutionOriginCurrentness(input: {
+        accountId: string; machineId: string; serverId: string;
+        resolveCurrentMachineExecutionOriginContext(): Promise<{ serverIdentityId: string; machineId: string }>;
+        resolveTarget(): Promise<{ kind: 'machine'; machineId: string }>;
+        isAccountCurrent(): Promise<boolean>; listAccountApiTokens(): Promise<{ tokens: [] }>;
+        externalActionMachinePublicKey: Uint8Array; verifyExternalExecutionAuthorization(): Promise<boolean>;
+    }): NonNullable<ActionExecutorDeps['isApprovalExecutionOriginCurrent']>;
+}>(currentnessSource);
 
 describe('requester credential disclosure at the human Action front door', () => {
     beforeEach(async () => {
-        await harness.reset(); machineDispatch.mockReset(); requesterConsent.mockReset();
+        await harness.reset(); machineDispatch.mockReset(); requesterConsent.mockReset().mockResolvedValue(false);
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.show).mockClear();
         machineDispatch.mockImplementation(async request => {
             if (request.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
                 return createExistingSessionDirectoryPreflightResult(request.payload);
@@ -83,7 +98,8 @@ describe('requester credential disclosure at the human Action front door', () =>
             executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
                 serverId, serverIdentityId: homeId, accountId: originalAccount, machineId, target: nativeEnvelope.target,
                 actionId, requestId: nativeEnvelope.requestId, externalActionExecutionAuthorization: nativeRoot,
-                externalActionInputSignature: 's'.repeat(86) },
+                externalActionInputSignature: signExternalActionApprovalInputV1({ authorizationToken: nativeRoot.token,
+                    actionId, input: nativeInput, target: nativeEnvelope.target, privateKey: installation.secretKey }) },
         });
         const account = await captureLazyActionAccountContext(serverId);
         let artifactId: string;
@@ -109,19 +125,34 @@ describe('requester credential disclosure at the human Action front door', () =>
             } }) };
         } });
         const nativeResult = { kind: 'conflict', currentRevision: 5 };
-        harness.answer(serverId, '/v1/actions/approval.request.decide', { select: body => {
+        const receiverCurrentness = createDaemonApprovalExecutionOriginCurrentness({
+            accountId: 'bob', machineId, serverId,
+            // The authenticated Home and its authorization verifier are external boundaries.
+            resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId }),
+            resolveTarget: async () => ({ kind: 'machine', machineId }), isAccountCurrent: async () => true,
+            listAccountApiTokens: async () => ({ tokens: [] }), externalActionMachinePublicKey: installation.publicKey,
+            verifyExternalExecutionAuthorization: async () => true,
+        });
+        let effects = 0;
+        harness.answer(serverId, '/v1/actions/approval.request.decide', { select: async body => {
             const carried = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
             expect(openExternalActionRequesterAccountContextV1({ authorization: carried.executionAuthorization,
                 purpose: { kind: 'external_action' }, machineId, installationId: 'alice-installation', serverIdentityId: homeId,
                 installationPrivateKey: installation.secretKey })).toEqual({ token });
             expect(JSON.stringify(carried)).not.toContain(token);
-            const stored = JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId) ?? 'null');
+            const stored = ApprovalRequestSchema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId) ?? 'null'));
             expect(stored).toMatchObject({ status: 'approved', executionOriginV1: {
                 requestId: 'original-native-request', externalActionExecutionAuthorization: nativeRoot } });
             expect(JSON.stringify(stored)).not.toContain('requesterAccountContext');
             boxedDecisions += 1;
+            let reason: ApprovalStaleReason | undefined;
+            const admitted = await receiverCurrentness({ origin: stored.executionOriginV1!, request: stored,
+                reportStale: value => { reason = value; } });
+            if (admitted) effects++;
+            if (!admitted && !reason) throw new Error('Receiver omitted its stale reason');
             return { body: { v: 1, actionId: 'approval.request.decide', requestId: decisionRequestId,
-                execution: { ok: true, result: nativeResult } } };
+                execution: admitted ? { ok: true, result: nativeResult }
+                    : { ...buildApprovalOriginFailure(reason!), effectAttempted: false } } };
         } });
         machineDispatch.mockResolvedValue({ ok: false, errorCode: 'missing_private_requester', error: 'missing_private_requester' });
         if (scenario === 'lost-home') {
@@ -139,8 +170,12 @@ describe('requester credential disclosure at the human Action front door', () =>
         const result = await pending;
         expect(requesterConsent).not.toHaveBeenCalled();
         expect(machineDispatch).not.toHaveBeenCalled();
-        expect(boxedDecisions, JSON.stringify(result)).toBe(scenario === 'accept' ? 1 : 0);
+        expect(boxedDecisions, JSON.stringify(result)).toBe(scenario === 'accept' || scenario === 'substituted-origin' ? 1 : 0);
+        expect(effects).toBe(scenario === 'accept' ? 1 : 0);
         if (scenario === 'accept') expect(result).toEqual({ ok: true, result: nativeResult });
+        else if (scenario === 'substituted-origin') expect(result).toMatchObject({ ok: true, result: {
+            status: 'failed', execution: { ok: false, errorCode: 'approval_stale',
+                effectAttempted: false, details: { reason: 'credential_changed' } } } });
         else if (result.ok) expect(result.result).toMatchObject({ status: 'failed', execution: { ok: false } });
         else expect(result.errorCode).toBeTruthy();
     });
@@ -332,6 +367,7 @@ describe('requester credential disclosure at the human Action front door', () =>
         const homeId = 'srv_requester_confirm';
         const serverId = await harness.addHome({ name: 'Original requester Home', serverUrl: 'https://requester-confirm.test',
             serverIdentityId: homeId, accountId: 'bob', currentAccount: true });
+        harness.answer(serverId, '/v1/home/governance/get', { body: { homeDefaults: null } });
         harness.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
         const custodian = { accountId: 'alice', displayName: 'Alice' };
         const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(5));
