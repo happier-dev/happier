@@ -353,9 +353,10 @@ describe('ApiMachineClient connect ordering', () => {
       return { result: 'success', revision: 1 };
     } });
     bindApiSessionSocketSequenceMock(ioMock, [socket]);
+    // A Machine row written before the field was retired still carries it.
+    const retainedDaemonState = { status: 'running' as const, managedActivity: { kind: 'busy', reasons: ['finite'] } };
     const client = new ApiMachineClient(String(1), { id: 'machine-1', encryptionMode: 'plain',
-      metadata: null, metadataVersion: 0, daemonStateVersion: 0,
-      daemonState: { status: 'running', managedActivity: { kind: 'busy', reasons: ['finite'] } },
+      metadata: null, metadataVersion: 0, daemonStateVersion: 0, daemonState: retainedDaemonState,
     }, undefined, { managedActivity: { activity, admissionDrain: createDaemonAdmissionDrain() } });
     const manager = Reflect.get(client, 'rpcHandlerManager') as RpcHandlerManager;
     registerRequiredMachineControlHandlers(manager);

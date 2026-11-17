@@ -1,5 +1,4 @@
-import type { UnicodeGraphemesAddon as XtermUnicodeGraphemesAddon } from '@xterm/addon-unicode-graphemes';
-import type { IBufferCell, Terminal as XtermTerminal } from '@xterm/headless';
+import type { IBufferCell, ITerminalAddon, Terminal as XtermTerminal } from '@xterm/headless';
 
 /**
  * The PTY terminal host's one screen model: `@xterm/headless` (the parser the app's terminal
@@ -24,7 +23,9 @@ export type TerminalScreen = Readonly<{
   dispose(): void;
 }>;
 
-type XtermModule = { Terminal: typeof XtermTerminal; UnicodeGraphemesAddon: typeof XtermUnicodeGraphemesAddon };
+// The addon's typings name `@xterm/xterm`'s Terminal (the app's browser build); it loads into the
+// headless Terminal, so it is typed against headless's own addon contract.
+type XtermModule = { Terminal: typeof XtermTerminal; UnicodeGraphemesAddon: new () => ITerminalAddon };
 
 let loading: Promise<XtermModule> | undefined;
 
@@ -38,7 +39,7 @@ function exported<T extends object>(module: unknown, name: keyof T): T {
 export function loadTerminalScreenModel(): Promise<XtermModule> {
   loading ??= Promise.all([import('@xterm/headless'), import('@xterm/addon-unicode-graphemes')]).then(([terminal, graphemes]) => ({
     Terminal: exported<{ Terminal: typeof XtermTerminal }>(terminal, 'Terminal').Terminal,
-    UnicodeGraphemesAddon: exported<{ UnicodeGraphemesAddon: typeof XtermUnicodeGraphemesAddon }>(graphemes, 'UnicodeGraphemesAddon').UnicodeGraphemesAddon,
+    UnicodeGraphemesAddon: exported<{ UnicodeGraphemesAddon: new () => ITerminalAddon }>(graphemes, 'UnicodeGraphemesAddon').UnicodeGraphemesAddon,
   }));
   return loading;
 }

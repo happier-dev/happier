@@ -137,7 +137,7 @@ export type TerminalPtyAgentLaunch = Readonly<{
   requiredFiles?: readonly string[];
   /** Native launch material for a fresh Agent; an adopted Agent already consumed it. */
   stdinPreamble?: Uint8Array;
-  onOutput(bytes: Buffer): void;
+  onOutput(bytes: Uint8Array): void;
   onExit(exit: Readonly<{ exitCode: number | null; signal: number | null }>): void;
   /** The terminal took a new size (the host's screen model follows it). */
   onResize(cols: number, rows: number): void;
