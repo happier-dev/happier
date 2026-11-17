@@ -42,6 +42,7 @@ import { buildUnsupportedSessionPendingInputInterruptAndRunResult } from '@happi
 import { buildUnsupportedSessionTerminalComposerClearResult } from '@happier-dev/protocol/sessions/control/terminalComposerClearV1';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
+import { projectSessionModelSelectionV2ToV1 } from '@happier-dev/protocol/providers/selection/v2';
 import { SessionModelSelectionResolutionError, SessionModelSelectionV1Schema, resolveSessionModelSelectionInputRefV1 } from '@happier-dev/protocol/providers/model-selection';
 import type { SessionModelSelectionV1, AgentSessionStartupInstructionsV1 } from '@happier-dev/protocol';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
@@ -753,11 +754,14 @@ export function resolvePublicSessionModelSelection(params: Readonly<{
     sessionInput: PluginSessionBindingInput;
     metadata: Readonly<Record<string, unknown>>;
 }>): SessionModelSelectionV1 | undefined {
-    const intentV2 = readSessionModelSelectionV2FromMetadata(params.metadata);
-    const hasMetadataIntent = intentV2 !== null
+    const launchSelection = params.sessionInput.runtimePreferences.modelSelection;
+    const metadataIntentV2 = readSessionModelSelectionV2FromMetadata(params.metadata);
+    const hasMetadataIntent = metadataIntentV2 !== null
         || Object.prototype.hasOwnProperty.call(params.metadata, 'modelSelectionIntentV1')
         || Object.prototype.hasOwnProperty.call(params.metadata, 'modelOverrideV1');
-    if (!hasMetadataIntent) return params.sessionInput.runtimePreferences.modelSelection;
+    const intentV2 = metadataIntentV2
+        ?? (!hasMetadataIntent && launchSelection?.v === 2 ? launchSelection : null);
+    if (!hasMetadataIntent && !intentV2) return launchSelection?.v === 1 ? launchSelection : undefined;
 
     const backendTarget = params.sessionInput.bootstrap.target
         ? readBackendTargetRefV2(params.sessionInput.bootstrap.target)
@@ -768,10 +772,10 @@ export function resolvePublicSessionModelSelection(params: Readonly<{
     if (!targetKey) {
         throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
     }
+    if (intentV2 && intentV2.ref.agentTargetKey !== targetKey) {
+        throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
+    }
     if (intentV2?.ref.source === 'team_resource') {
-        if (intentV2.ref.agentTargetKey !== targetKey) {
-            throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
-        }
         const accepted = params.sessionInput.teamCredentialBindings?.find(binding => binding.slot.kind === 'provider_model')
             ?? params.sessionInput.resume.sessionAttachSecret?.snapshot?.acceptedTeamCredentialBinding;
         const requested = intentV2.ref;
@@ -788,7 +792,11 @@ export function resolvePublicSessionModelSelection(params: Readonly<{
         return SessionModelSelectionV1Schema.parse({ v: 1, updatedAt: intentV2.updatedAt,
             ref: { agentTargetKey: requested.agentTargetKey, providerConnectionId: null, modelId: requested.modelId } });
     }
-    const intent = resolveModelSelectionIntentFromSessionMetadata(params.metadata, targetKey);
+    const projected = intentV2 ? projectSessionModelSelectionV2ToV1(intentV2) : null;
+    const intent = resolveModelSelectionIntentFromSessionMetadata(projected ? {
+        ...params.metadata,
+        modelSelectionIntentV1: { v: 1, updatedAt: projected.updatedAt, selection: projected.ref },
+    } : params.metadata, targetKey);
     return intent?.selection
         ? SessionModelSelectionV1Schema.parse({
             v: 1,

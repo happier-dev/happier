@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { projectSessionModelSelectionV2ToV1, SessionModelSelectionV2Schema, sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
+import { resolvePublicSessionModelSelection } from './session';
+
 import type { StoredCredentials } from '@/persistence';
 import * as persistence from '@/persistence';
 import { bindRequesterSessionCredentialScope, decodeStoredCredentials } from '@/persistence';
@@ -21,6 +24,41 @@ const credentials = {
 afterEach(() => vi.restoreAllMocks());
 
 describe('plugin session launch binding', () => {
+  describe.each(['native', 'account_provider_connection', 'team_resource'] as const)('session.spawn_new V2 %s', source => {
+    const ref = { agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'selected-model' };
+    const selection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 7, ref: {
+      ...ref, source,
+      ...(source === 'account_provider_connection' ? { providerConnectionId: 'pc_work' } : {}),
+      ...(source === 'team_resource' ? { teamId: 'team-1', resourceId: 'resource-1',
+        expectedResourceRevision: 3, deliveryMode: 'brokered' } : {}),
+    } });
+    const binding = sessionModelSelectionV2TeamBindingIntent(selection);
+    const raw = { credentials, backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      modelSelection: selection, ...(source === 'team_resource' ? { teamCredentialBindings: [binding] } : {}) };
+    const tuple = projectSessionModelSelectionV2ToV1(selection) ?? {
+      v: 1, updatedAt: selection.updatedAt, ref: { ...ref, providerConnectionId: null },
+    };
+
+    it('retains source identity through launch and resolves the native tuple', () => {
+      // V1 is the known-good control at exactly the same launch ingress.
+      expect(buildPluginSessionBindingInput({ ...raw, modelSelection: tuple }).runtimePreferences.modelSelection).toEqual(tuple);
+      const input = buildPluginSessionBindingInput(raw);
+      expect(buildPluginHostSessionRuntimeOptions(input).modelSelection).toEqual(selection);
+      expect(resolvePublicSessionModelSelection({ sessionInput: input, metadata: {} })).toEqual(tuple);
+      if (source === 'team_resource') {
+        expect(input.teamCredentialBindings).toEqual([binding]);
+        expect(() => resolvePublicSessionModelSelection({
+          sessionInput: buildPluginSessionBindingInput({ ...raw, teamCredentialBindings: [{ ...binding, resourceId: 'other-resource' }] }), metadata: {},
+        })).toThrow();
+      }
+    });
+
+    it('resolves persisted V2 intent through the existing converter and accepted Team binding', () => {
+      const input = buildPluginSessionBindingInput({ ...raw, modelSelection: tuple });
+      expect(resolvePublicSessionModelSelection({ sessionInput: input, metadata: { modelSelectionIntentV2: selection } })).toEqual(tuple);
+    });
+  });
+
   it.each(['child', 'local', 'server-only', 'authored-scope', 'authored-getter'])('preserves only actual host credential context through Session normalization (%s)', async kind => {
     let sourceCredentials = decodeStoredCredentials({ token: 'normalizer-fixture' });
     if (!sourceCredentials) throw new Error('Invalid stored credential fixture');

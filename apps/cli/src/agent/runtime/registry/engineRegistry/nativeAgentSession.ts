@@ -1,3 +1,4 @@
+import { readSessionModelSelectionProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import { createSessionHolderAdoptedTurnReader, hasSessionHolderAdoptToken } from '@/subprocess/supervision/sessionHolder';
 import { resolveSessionAgentPath, resolveSessionAgentSkills } from '@/subprocess/supervision/sessionTargetRelay';
 import { SessionGoalControlFailureV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
@@ -1274,7 +1275,7 @@ function buildNativeAgentSessionOpenInputs(
     }
     if (
         launchModelSelection?.ref.agentTargetKey !== modelSelection?.ref.agentTargetKey
-        || launchModelSelection?.ref.providerConnectionId !== providerConnectionId
+        || (launchModelSelection ? readSessionModelSelectionProviderConnectionId(launchModelSelection) : null) !== providerConnectionId
         || launchModelSelection?.ref.modelId !== modelSelection?.ref.modelId
     ) {
         throw new Error('Attached Provider model selection does not match launch binding');

@@ -10,12 +10,13 @@ import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/r
 import { BackendTargetRefV2Schema, normalizeBackendTargetRefV2InputToV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { MachinePoolSelectionOriginV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { SessionModelSelectionSchema, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { resolveSessionModelSelectionInputRefV1, SessionModelSelectionResolutionError, SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { SessionInitialAccessDraftV1Schema } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import type { BackendTargetRefV2Input, AcpConfigOptionOverridesV1, AgentSessionStartupInstructionsV1, MachinePoolSelectionOriginV1, SessionCreationCorrespondenceV1, SessionCreationTagV1, SessionModelSelectionV1, SessionInitialAccessDraftV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2Input, AcpConfigOptionOverridesV1, AgentSessionStartupInstructionsV1, MachinePoolSelectionOriginV1, SessionCreationCorrespondenceV1, SessionCreationTagV1, SessionInitialAccessDraftV1 } from '@happier-dev/protocol';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { SessionTeamCredentialBindingIntentsV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
@@ -69,7 +70,7 @@ export type PluginSessionBindingInput = Readonly<{
             id: string;
             updatedAt?: number;
         }>;
-        modelSelection?: SessionModelSelectionV1;
+        modelSelection?: SessionModelSelection;
         configurationOptions?: AcpConfigOptionOverridesV1;
     }>;
 }>;
@@ -110,7 +111,7 @@ export type PluginHostSessionRuntimeOptions = Readonly<{
     permissionModeUpdatedAt?: number;
     sessionModeId?: string;
     sessionModeUpdatedAt?: number;
-    modelSelection?: SessionModelSelectionV1;
+    modelSelection?: SessionModelSelection;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     existingSessionId?: string;
     sessionAttachFilePath?: string;
@@ -262,10 +263,10 @@ function readBackendTargetKey(value: unknown): string | null {
     return parsed.success ? buildBackendTargetKeyV2(parsed.data) : null;
 }
 
-function readModelSelection(raw: Record<string, unknown>): SessionModelSelectionV1 | undefined {
+function readModelSelection(raw: Record<string, unknown>): SessionModelSelection | undefined {
     const targetKey = readBackendTargetKey(raw.backendTarget);
     const hasCanonicalModelSelection = raw.modelSelection !== undefined;
-    const parsed = SessionModelSelectionV1Schema.safeParse(raw.modelSelection);
+    const parsed = SessionModelSelectionSchema.safeParse(raw.modelSelection);
     if (parsed.success) {
         if (!targetKey) {
             throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
