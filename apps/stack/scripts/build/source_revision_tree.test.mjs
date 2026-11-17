@@ -569,6 +569,40 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   assert.deepEqual((await readFile(witness, 'utf8')).trim().split('\n'), ['full', 'mysql']);
 });
 
+// P03 ORCH 2026-11-17: a replacement that fails readiness after retirement restarts
+// the incumbent's revision, so the retirement stop keeps that tree until the reload settles.
+test('the retirement stop keeps the incumbent tree a pending reload rollback names', { skip: process.platform === 'win32' }, async t => {
+  const { fixture, repoDir } = await createRevisionFixture(t);
+  const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
+  await gitIn('checkout', '--quiet', '--', '.');
+  await gitIn('clean', '-fdq');
+  const stackBaseDir = fixture.path('stacks-root/qa');
+  const selection = join(stackBaseDir, 'source-runtime/selected-server.json');
+  let described = 0;
+  const reload = async () => {
+    const revision = await resolveSourceTreeRevision({ repoDir, treesRoot: sourceRevisionTreesRoot(stackBaseDir), rev: 'HEAD', overlay: [],
+      outputDir: fixture.path(`descriptors-${described += 1}`) });
+    const { server } = await prepareSourceTreeRuntimeComponents({ repoDir, env: { ...process.env, HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: join(repoDir, 'manual-payload') }, stackBaseDir, descriptorPath: revision.descriptorPath,
+      components: [{ component: 'server' }], logger: { error() {} } });
+    return server;
+  };
+  const select = async record => { await mkdir(dirname(selection), { recursive: true }); await writeFile(selection, JSON.stringify({ entrypoint: record.entrypoint })); };
+  const incumbent = await reload();
+  await select(incumbent);
+  await writeFile(join(repoDir, 'apps/server/sources/main.light.ts'), 'export const marker = "next-commit";');
+  await gitIn('commit', '--quiet', '-am', 'next');
+  const replacement = await reload();
+  const { recordSourceSelectionRollback, settleSourceSelectionRollback } = await import('../runtime/shared/source_selection_rollback.mjs');
+  await recordSourceSelectionRollback({ stackBaseDir });
+  await select(replacement);
+  await releaseStackSourceTrees({ stackBaseDir, components: ['server'] });
+  assert.equal(await lstat(incumbent.entrypoint).then(() => true, () => false), true, 'the rollback revision survives retirement');
+  await settleSourceSelectionRollback({ stackBaseDir });
+  await releaseStackSourceTrees({ stackBaseDir, components: ['server'] });
+  assert.equal(await lstat(incumbent.serverDir).catch(error => error.code), 'ENOENT', 'a settled reload releases the incumbent tree');
+  assert.equal(await lstat(replacement.entrypoint).then(() => true, () => false), true);
+});
+
 // nl3 2026-11-17 (P03-NL3-DISK): beds that are reloaded but rarely stopped kept every
 // refused reload's tree (pfc1113-bed: 5 of 7 trees, ~2.8 GiB each), and those trees
 // pinned their bases. The Stack's next preparation releases them; the selected tree stays.

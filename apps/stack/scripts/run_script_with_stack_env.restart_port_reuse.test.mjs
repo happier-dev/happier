@@ -630,6 +630,48 @@ test('a source reload waits for an active dependency refresh before any retireme
   assert.deepEqual(probes, ['placement', 'sync:list', 'sync:list', 'sync:flush']);
 });
 
+test('a reload whose replacement fails readiness after retirement restarts the incumbent revision', async t => {
+  // P03 ORCH 2026-11-17: retirement is followed only by start and readiness;
+  // when that fails, the reload restarts the still-prepared incumbent revision.
+  const { rootDir, stackName, runtimeStatePath, markerPath } = await createRestartPreflightFixture(t, 'run.mjs');
+  const sourceRoot = join(dirname(runtimeStatePath), 'source-runtime');
+  await mkdir(sourceRoot, { recursive: true });
+  const selection = join(sourceRoot, 'selected-server.json');
+  const entries = {};
+  for (const name of ['incumbent', 'replacement']) {
+    entries[name] = join(dirname(markerPath), `${name}/main.mjs`);
+    await mkdir(dirname(entries[name]), { recursive: true });
+    await writeFile(entries[name], '');
+  }
+  // Preparation recorded the incumbent's selection, then activated the replacement.
+  await writeFile(selection, JSON.stringify({ entrypoint: entries.incumbent }));
+  const { recordSourceSelectionRollback } = await import('./runtime/shared/source_selection_rollback.mjs');
+  await recordSourceSelectionRollback({ stackBaseDir: dirname(runtimeStatePath) });
+  await writeFile(selection, JSON.stringify({ entrypoint: entries.replacement }));
+  // Inert runner fixture: it records what each launch would serve, then exits
+  // before readiness (a replacement that cannot become ready).
+  await writeFile(join(rootDir, 'scripts', 'run.mjs'), `import {appendFile, readFile} from 'node:fs/promises';
+    const selected = JSON.parse(await readFile(${JSON.stringify(selection)}, 'utf8')).entrypoint;
+    await appendFile(${JSON.stringify(markerPath)}, JSON.stringify({ selected,
+      rollback: process.env.HAPPIER_STACK_SOURCE_SELECTION_ROLLBACK ?? null }) + '\\n');
+    process.exit(1);`);
+  const healthy = { code: 0, out: JSON.stringify([{ name: 'remote', paused: false, status: 'watching', successfulCycles: 1,
+    alpha: { connected: true, scanned: true }, beta: { connected: true, scanned: true } }]) };
+  await assert.rejects(stackEnvRunner.runStackScriptWithStackEnv({
+    rootDir, stackName, scriptPath: 'run.mjs', background: true,
+    args: ['--restart', '--no-daemon', '--no-ui', '--no-browser'],
+    extraEnv: { HAPPIER_STACK_PREPARED_SOURCE_RELOAD: '1' },
+  }, {
+    runCaptureResult: async () => ({ ok: true, out: 'HSTACK_QA_HOST={"platform":"linux","arch":"x64","remote":true}\n', err: '' }),
+    runProcess: async () => healthy,
+  }), { code: 'ESOURCERELOADROLLBACKFAILED' });
+  const launches = (await readFile(markerPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(launches, [
+    { selected: entries.replacement, rollback: null },
+    { selected: entries.incumbent, rollback: '1' },
+  ]);
+});
+
 test('outer start publication records requested UI truth before the child runner starts', () => {
   const base = {
     stackName: 'runtime-ui',

@@ -1234,6 +1234,8 @@ export async function startStackDevTargets(
           excludedOwnerStartedAt: refreshSourceRuntime ? retainedSourceRuntime?.startedAt : undefined,
           reuseSourceRuntime: !refreshSourceRuntime && (transportRecovery || Boolean(retainedSourceRuntime) || env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD === '1'),
           preparedSourceReload: !refreshSourceRuntime && sourceSnapshot && !retainedSourceRuntime && env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD === '1',
+          // The controller restarts the incumbent revision after its replacement failed.
+          sourceSelectionRollback: env.HAPPIER_STACK_SOURCE_SELECTION_ROLLBACK === '1',
           sourceUiLaunch: refreshSourceRuntime ? null : retainedSourceRuntime?.sourceUiLaunch,
           runtimeSnapshotId: selectedSnapshot?.snapshotId,
           borrowedExpoProducerStackName,

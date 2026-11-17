@@ -59,6 +59,7 @@ import { spawnBackgroundStackRunner } from './background_runner.mjs';
 import { resolveStackRuntimeLaunchContext } from '../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 import { prepareSourceRuntimeReload, resolveSourceRuntimeReloadArguments } from '../runtime/launch/prepareSourceRuntimeReload.mjs';
 import { SOURCE_START_SUPERSEDED_MARKER, supersededError } from '../runtime/shared/pending_source_start.mjs';
+import { restoreSourceSelectionRollback, settleSourceSelectionRollback } from '../runtime/shared/source_selection_rollback.mjs';
 import { isBorrowedExpoConsumer, projectBorrowedExpoWebappEnv, resolveSourceQaUiMode } from '../runtime/shared/borrowed_expo.mjs';
 import { resolveRuntimeRemoteServiceObservation } from '../utils/tui/runtime_placement_summary.mjs';
 import { loadDevTargetsConfig, resolveDevTargetExecutionPolicy } from '../utils/dev_targets/config.mjs';
@@ -793,7 +794,37 @@ async function preflightRestartDevTargets({ rootDir, stackName, baseDir, scriptP
     plans.targets.filter(plan => Object.values(plan.services).some(Boolean)).map(plan => plan.target));
 }
 
-export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPath, args, extraEnv = {}, background = false },
+/**
+ * Start-like scripts through the restart owner. A source reload whose prepared
+ * replacement fails start or readiness after the incumbent's retirement
+ * restarts the incumbent's revision once (still prepared: its selection was
+ * recorded before activation), then reports the reload's failure.
+ */
+export async function runStackScriptWithStackEnv(input, dependencies = {}) {
+  try {
+    return await runStackScriptWithStackEnvOnce(input, dependencies);
+  } catch (error) {
+    const rollback = error?.sourceReloadRollback;
+    if (!rollback) throw error;
+    delete error.sourceReloadRollback;
+    const reason = error instanceof Error ? error.message.split('\n')[0] : String(error);
+    console.error(`[reload] replacement failed after the incumbent was retired (${reason}); restarting the incumbent revision`);
+    try {
+      await restoreSourceSelectionRollback({ stackBaseDir: rollback.baseDir });
+      await runStackScriptWithStackEnvOnce({ ...input, args: rollback.args,
+        extraEnv: { ...input.extraEnv, HAPPIER_STACK_PREPARED_SOURCE_RELOAD: '1', HAPPIER_STACK_SOURCE_SELECTION_ROLLBACK: '1' } },
+      dependencies);
+    } catch (rollbackError) {
+      throw Object.assign(new Error(`[reload] replacement failed after retirement and the incumbent revision did not restart: ${
+        rollbackError instanceof Error ? rollbackError.message.split('\n')[0] : String(rollbackError)}`, { cause: error }),
+      { code: 'ESOURCERELOADROLLBACKFAILED', reason: rollbackError?.code ?? null });
+    }
+    throw Object.assign(new Error(`[reload] replacement failed after retirement; the incumbent revision is serving again: ${reason}`,
+      { cause: error }), { code: 'ESOURCERELOADROLLEDBACK', reason: error?.code ?? null });
+  }
+}
+
+async function runStackScriptWithStackEnvOnce({ rootDir, stackName, scriptPath, args, extraEnv = {}, background = false },
   { runCaptureResult: capture = runCaptureResult, runProcess = runDevTargetControlProcess } = {}) {
   const isStartLikeScript = scriptPath === 'dev.mjs' || scriptPath === 'run.mjs';
   const isStartLikeJsonDryRun = isStartLikeScript && args.includes('--json');
@@ -821,6 +852,16 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           throw new Error('[reload] prepared activation is restricted to the remote source restart owner');
         }
         env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD = '1';
+      }
+      if (args.includes('--source-selection-rollback')) {
+        if (env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD !== '1') {
+          throw new Error('[reload] an incumbent revision restart is restricted to the source restart owner');
+        }
+        // The controller is restarting the incumbent revision after its
+        // replacement failed: this host selects it again before starting.
+        await restoreSourceSelectionRollback({ stackBaseDir: resolveStackEnvPath(stackName, env).baseDir });
+        env.HAPPIER_STACK_SOURCE_SELECTION_ROLLBACK = '1';
+        args = args.filter(arg => arg !== '--source-selection-rollback');
       }
       if (isStartLikeJsonDryRun) {
         // Dry-run JSON must never allocate ports, write runtime state, or wait for readiness.
@@ -873,6 +914,18 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           : false;
       // A background start reports a readiness budget it left pending on a live runner.
       let startOutcome = { readiness: 'ready' };
+      // Set when a source reload retires its incumbent: from then on a failure
+      // restarts the incumbent's revision (see runStackScriptWithStackEnv). On
+      // an execution host the controller's restart owner decides both: a host
+      // keeps its record (released by its next reload) for that restart.
+      let retiredForSourceReload = false;
+      const ownsSourceReloadRollback = env.HAPPIER_DEV_TARGET_EXECUTION !== '1';
+      const settleSourceReload = async () => {
+        if (!retiredForSourceReload || !ownsSourceReloadRollback || startOutcome.readiness !== 'ready') return;
+        await settleSourceSelectionRollback({ stackBaseDir: baseDir });
+        const { releaseStackSourceTrees } = await import('../build/source_revision_tree.mjs');
+        await releaseStackSourceTrees({ stackBaseDir: baseDir });
+      };
       let preservedDaemonForRestart = false;
       let preserveDaemonForRestart = true;
       let restartIdentityDaemons = [];
@@ -958,6 +1011,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
               serverUrl: identityEndpoint.internalServerUrl,
               env,
             });
+            retiredForSourceReload = scriptPath === 'run.mjs' && env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD === '1';
             const stopResult = await stopObservedStackForRestart({
               rootDir,
               stackName,
@@ -1376,6 +1430,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
             console.log(`[stack] ${stackName}: logs: ${logPath}`);
           }
           release();
+          await settleSourceReload();
           return startOutcome;
         }
 
@@ -1555,6 +1610,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           console.log(`[stack] ${stackName}: logs: ${logPath}`);
         }
         release();
+        await settleSourceReload();
         return startOutcome;
         }
         if (isTrueRestart && !wantsJson) {
@@ -1578,6 +1634,12 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
             expectedRuntimeState: restartCleanupExpectedRuntimeState,
             wantsJson,
           });
+        }
+        if (retiredForSourceReload && ownsSourceReloadRollback && env.HAPPIER_STACK_SOURCE_SELECTION_ROLLBACK !== '1'
+          && error?.code !== 'ESOURCESTARTSUPERSEDED' && error && typeof error === 'object') {
+          // The incumbent revision restarts with the same reuse arguments; the
+          // replacement's prepared UI directory is not the incumbent's.
+          error.sourceReloadRollback = { baseDir, args: args.filter(arg => !arg.startsWith('--source-ui-dir=')) };
         }
         throw error;
       }

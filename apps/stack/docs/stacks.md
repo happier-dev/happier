@@ -368,6 +368,21 @@ selection too. `stack info` reports `runtime.sourceReload`, including the failur
 and its `run.reload.*.log` path. Selection and loaded process identity remain
 separate facts.
 
+The cutover retires the incumbent only after every wait the replacement start
+would make has finished while the incumbent still serves: the checkout's
+dependency refresh and, for a Stack placed on dev targets, the sync flush of
+each placed target. Retirement is then followed only by the start and
+readiness of the prepared replacement. Activation records the selection it
+replaces (`source-runtime/rollback.json`), and retirement keeps that
+revision's tree. If the replacement fails to start or become ready after
+retirement, the controller's restart owner selects the incumbent revision
+again (on each execution host too) and restarts it once, then reports
+`ESOURCERELOADROLLEDBACK`, or `ESOURCERELOADROLLBACKFAILED` if the incumbent
+revision did not restart either. A readiness budget that runs out on a live
+runner is reported as pending, not rolled back. A successful reload releases
+the controller's record; an execution host keeps the previous revision's tree
+until that Stack's next reload.
+
 A successful source daemon start or Session-preserving restart clears a retained
 daemon reload refusal after the loaded identity is confirmed. It preserves a
 refusal for another component and any refusal whose selected daemon generation

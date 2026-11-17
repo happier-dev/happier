@@ -37,6 +37,7 @@ import { resolveRuntimeBuildAuthority } from '../runtime/shared/runtime_build_au
 import { readGreenSourceRuntimeCandidateGroups, sourceRuntimeCaptureUnavailable } from './source_runtime_last_green.mjs';
 import { assertSourceReloadBundledPluginFailures } from '../runtime/launch/sourceReloadPluginFailures.mjs';
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
+import { readSourceSelectionRollbackPaths } from '../runtime/shared/source_selection_rollback.mjs';
 import { applySourceRevision, canResolveSourceRevisions, parseSourceOverlayPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
 import { SOURCE_CONDITION, SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS, assertSourceRuntimeCodeAscii, dropRedundantSourceRuntimeChunkImports, stripUnusedSourceRuntimeBanners, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
@@ -396,6 +397,8 @@ function readSourceRetentionStack(stackBaseDir) {
   if (pending && isPidAlive(pending.pid)) references.push(...(pending.preparationDirs ?? []), pending.preparationDir);
   const selections = ['daemon', 'server', 'ui'].flatMap(component =>
     sourceRecordReferencePaths(readSourceRetentionRecord(join(sourceRoot, `selected-${component}.json`))));
+  // An unsettled reload may still restart the incumbent revision it replaced.
+  references.push(...readSourceSelectionRollbackPaths(stackBaseDir));
   if ([state?.ownerPid, state?.processes?.daemonPid, ...(state?.processes?.daemonPids ?? [])].some(isPidAlive)) {
     references.push(...sourceRecordReferencePaths(state?.sourceRuntimeLaunch));
   }

@@ -19,6 +19,7 @@ import { inspectDependencyRefresh, resolveDependencyInstallRoot, resolveDependen
 import { CURRENT_GENERATION_LINK, createDependencyGeneration, resolveDependencyGenerationContainer } from '../utils/proc/dependency_generations.mjs';
 import { SOURCE_RELOAD_ADMISSION_CLASS } from '../utils/dev_targets/remote_commands.mjs';
 import { runSourceBuildCommand, sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
+import { readSourceSelectionRollbackPaths } from '../runtime/shared/source_selection_rollback.mjs';
 import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH } from '../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
 import { deriveRevisionGeneratedInputs, isRevisionGeneratorInput, isRevisionKeptUntrackedPath, readDeclaredShippedPaths, readSourceRevisionDescriptor, readSourceRevisionOverlayBytes, resolveSourceRevisionIdentity, sourceRevisionKey, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
@@ -877,6 +878,8 @@ export async function releaseStackSourceTrees({ stackBaseDir, components = ['ser
   // The preparing request is that in-flight reload itself (`preparing`).
   if (!preparing && isPidAlive((await readJson(join(sourceRoot, 'start.pending.json')))?.pid)) return [];
   const entries = await readdir(sourceRoot, { withFileTypes: true }).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
+  // A reload that has not settled may still restart the incumbent's revision.
+  const rollbackPaths = readSourceSelectionRollbackPaths(stackBaseDir).map(path => resolve(path));
   const released = [];
   let liveCommands;
   for (const component of components) {
@@ -888,6 +891,7 @@ export async function releaseStackSourceTrees({ stackBaseDir, components = ['ser
       if (!entry.isDirectory() || !pattern.test(entry.name)) continue;
       const treeDir = join(sourceRoot, entry.name);
       if (selectedEntrypoint?.startsWith(treeDir + sep)) continue;
+      if (rollbackPaths.some(path => path.startsWith(treeDir + sep))) continue;
       // A superseded preparation may still be writing its tree; its marker comes last.
       if (preparing && !existsSync(join(treeDir, TREE_MARKER))) continue;
       // One observation per release sweep, shared with the low-level release owner.

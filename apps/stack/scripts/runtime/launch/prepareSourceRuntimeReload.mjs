@@ -24,6 +24,7 @@ import { resolveDevServerConnection } from '../../utils/dev/resolveDevServerConn
 import { resolveStackServerEndpoint } from '../../utils/server/urls.mjs';
 import { emitSourceReloadRefusal, formatSourceReloadRefusal, recordSourceReloadRefusal } from '../shared/source_reload_refusal.mjs';
 import { preflightSourceRuntimeMigrations } from './preflightSourceRuntimeMigrations.mjs';
+import { recordSourceSelectionRollback } from '../shared/source_selection_rollback.mjs';
 import { emitSourceRuntimeSourceTimes, formatSourceRuntimeSourceTimes } from '../shared/source_bundle_record.mjs';
 import { redactFailureDiagnostic } from '../../utils/proc/proc.mjs';
 import { readLoadSentinelPasses } from '../../perf/load-sentinel.mjs';
@@ -228,6 +229,9 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       await onPrepared({ ui, sourceTimes, sourceCaptures });
       if (!await activation) throw new Error('[reload] preparation cancelled before selection; incumbent retained');
       pending.signal.throwIfAborted();
+      // The selection this activation replaces is the incumbent's revision. Its
+      // restart owner restarts it if the replacement fails after retirement.
+      await recordSourceSelectionRollback({ stackBaseDir });
       await remote?.activate();
       await admitted.activate();
       // Successful selection is already authoritative. A diagnostic write must

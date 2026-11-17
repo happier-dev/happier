@@ -2510,6 +2510,7 @@ function resolveRemoteStackStartInvocation(target, {
   refreshSourceRuntime = false,
   sourceUiLaunch = null,
   preparedSourceReload = false,
+  sourceSelectionRollback = false,
   sourceStartRequestId,
   sourceCapturedAfter,
   loadSentinelPasses,
@@ -2609,7 +2610,7 @@ function resolveRemoteStackStartInvocation(target, {
       ...(runtimeMode === 'source-snapshot' && sourceStartRequestId ? [`--source-start-request-id=${sourceStartRequestId}`] : []),
       ...(runtimeMode === 'source-snapshot' ? ['--restart'] : []),
       ...(runtimeMode === 'source-snapshot' && reuseSourceRuntime && !refreshSourceRuntime ? ['--reuse-source-runtime',
-        ...(preparedSourceReload ? ['--prepared-source-reload'] : []),
+        ...(preparedSourceReload ? ['--prepared-source-reload', ...(sourceSelectionRollback ? ['--source-selection-rollback'] : [])] : []),
         ...(normalizedServices.server && sourceUi === 'export' && sourceUiLaunch?.uiDir
           ? [`--source-ui-dir=${sourceUiLaunch.uiDir}`] : [])] : []),
       ...(!normalizedServices.server ? ['--no-server', `--server-url=${serverUrl}`] : []),

@@ -36,6 +36,7 @@ const readExistingEnv = readTextOrEmpty;
 const FOREIGN_STACK_CALLER_KEYS = [
   'HAPPIER_STACK_RUNTIME_MODE',
   'HAPPIER_STACK_PREPARED_SOURCE_RELOAD',
+  'HAPPIER_STACK_SOURCE_SELECTION_ROLLBACK',
   'HAPPIER_STACK_EXPO_DEV_PORT',
   'HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY',
   'HAPPIER_STACK_EXPO_DEV_PORT_BASE',
@@ -138,6 +139,7 @@ export async function withStackEnv({
   if (process.env.HAPPIER_STACK_REPO_DIR?.trim()
       && getRepoDir(null, process.env) !== getRepoDir(null, env)) {
     delete env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD;
+    delete env.HAPPIER_STACK_SOURCE_SELECTION_ROLLBACK;
   }
   env = applyStackActiveServerScopeEnv({
     env,
