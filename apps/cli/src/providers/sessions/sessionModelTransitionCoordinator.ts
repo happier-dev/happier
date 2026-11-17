@@ -1226,7 +1226,11 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     }
     if (await settleIfInterruptedBeforeRuntimeEffect(proposal)) return;
 
-    if (target.selection.providerConnectionId !== null || target.providerBinding !== null) {
+    // Restart-only targets have no materialized binding yet. The replacement
+    // factory admits that binding before apply/publication; checking the
+    // unopened target here would refuse every changed model before restart.
+    if (target.policy !== 'restart_session'
+      && (target.selection.providerConnectionId !== null || target.providerBinding !== null)) {
       const authorizationStillCurrent =
         await targetAuthorizationStillCurrent(target);
       if (await settleIfInterruptedBeforeRuntimeEffect(proposal)) return;

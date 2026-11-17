@@ -513,6 +513,83 @@ it.each([
 });
 
 describe('createSessionModelTransitionCoordinator', () => {
+  it('opens a restart-only Provider model after next_prompt intent before checking its materialized binding', async () => {
+    const selection = provider('pc_work', 'next');
+    const initial = authorized(provider('pc_work', 'old'), 'restart_session');
+    const input = createSessionProviderInputConsumer({
+      messageQueue: new MessageQueue2<{ id: string }, string>(() => 'mode'),
+      session: { waitForMetadataUpdate: () => new Promise<boolean>(() => {}) },
+    });
+    let coordinator!: ReturnType<typeof createSessionModelTransitionCoordinator>;
+    const authorize = createSessionModelTransitionAuthorizer({
+      sessionId: 'session-1', machineId: 'machine-1', agentId: 'claude',
+      agentTargetKey: selection.agentTargetKey, nativeModelApplyPolicy: 'restart_session',
+      readActiveTarget: () => coordinator.readActiveTarget(),
+      // The daemon authorization transport is the boundary. Keep the real
+      // authorizer's binding projection, coordinator and input custody below it.
+      authorizeProviderTarget: async request => {
+        const target = authorized(request.selection, 'restart_session');
+        return { selection: request.selection, policy: 'restart_session',
+          model: target.sessionBindingMetadata!.model,
+          sessionBindingMetadata: target.sessionBindingMetadata!, runtimeBindingBasis: target.runtimeBindingBasis! };
+      },
+    });
+    let durableIntent = initial.selection;
+    let runtimeModelId = initial.selection.modelId;
+    let opened = 0;
+    let dispatched = false;
+    coordinator = createSessionModelTransitionCoordinator({
+      runId: 'restart-only-provider', agentTargetKey: selection.agentTargetKey,
+      initialActiveTarget: initial, initialActiveTargetConfirmed: true,
+      readModelSelectionIntent: () => null, isCurrentRun: () => true,
+      checkCurrentPublisherAuthority: async () => true, authorize,
+      publishIntent: async ref => {
+        if ('source' in ref) throw new Error('Expected Provider tuple');
+        durableIntent = ref;
+        return { accepted: true, updatedAt: 1 };
+      },
+      // Native configuration and reopen are external effects.
+      applyRuntime: async target => {
+        expect(target.providerBinding?.model.id).toBe(selection.modelId);
+        runtimeModelId = target.selection.modelId;
+        return { status: 'applied' };
+      },
+      publishActive: async () => {}, revokeActiveSelectionProof: async () => {},
+      fencePromptAdmission: async epochId => {
+        await input.enforceProviderInputAdmission({ kind: 'action_required', reason: 'generation_pending',
+          serviceId: 'host-runtime', groupId: 'model-transition', epochId });
+      },
+      clearPromptAdmission: async epochId => {
+        await input.clearProviderInputAdmission({ serviceId: 'host-runtime', groupId: 'model-transition', epochId });
+      },
+      transferPromptAdmission: async (epochId, opts) => await input.runProviderInputDispatchFromAdmission({
+        admission: { kind: 'action_required', reason: 'generation_pending',
+          serviceId: 'host-runtime', groupId: 'model-transition', epochId }, ...opts,
+      }),
+    });
+    try {
+      await expect(coordinator.submit(selection, { source: 'command', applyTiming: 'next_prompt' }))
+        .resolves.toMatchObject({ ok: false, status: 'restart_required' });
+      expect(durableIntent).toEqual(selection);
+      await expect(coordinator.submit(durableIntent, {
+        source: 'prompt', restartRuntime: { required: false, run: async () => {
+          opened++;
+          const successor = authorize.bindCurrentAuthorizationProof(authorized(selection, 'restart_session'));
+          await coordinator.admitReplacementTarget(successor);
+          runtimeModelId = selection.modelId;
+        } },
+        runWithActiveSelection: async transfer => {
+          await transfer({ abortSignal: new AbortController().signal, dispatch: async () => {
+            expect(runtimeModelId).toBe(selection.modelId);
+            dispatched = true;
+          } });
+        },
+      })).resolves.toMatchObject({ ok: true, activeSelection: selection });
+      expect(opened).toBe(1);
+      expect(dispatched).toBe(true);
+    } finally { await coordinator.dispose(); }
+  });
+
   it.each(['metadata', 'prompt'] as const)('retains an admitted Connected Account source when %s echoes its native model intent', async source => {
     const selection = native('meta/muse-spark-1.3-contributor');
     const descriptor = runtimeBinding(ProviderConnectionIdSchema.parse('pc_fixture'), 'muse-spark-1.3-contributor');
