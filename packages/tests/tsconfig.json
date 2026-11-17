@@ -62,6 +62,7 @@
     "suites/core-e2e/machines.accountArtifact.journey.slow.e2e.test.ts",
     "suites/core-e2e/sessionHost.closedAdmission.journey.slow.e2e.test.ts",
     "suites/core-layer/muse.nativeImport.journey.composed.test.ts",
+    "suites/core-layer/databaseWorkbench.brief.F8.composed.test.ts",
     "suites/core-layer/guardApproval.resourceProposal.layer.test.ts",
     "suites/core-layer/teamCredentialModelPicker.test.ts"
   ]
