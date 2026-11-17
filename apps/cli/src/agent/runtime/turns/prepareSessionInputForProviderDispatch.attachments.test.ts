@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { HappierStructuredInputV1Schema } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { buildComposerReferenceMentionPayloadV1 } from '@happier-dev/protocol/runtime/input/composerReferenceProviderV1';
 
 import {
   prepareSessionInputForProviderDispatch,
@@ -23,9 +24,13 @@ const structuredInput = HappierStructuredInputV1Schema.parse({
   }],
 });
 
-function prepare(services: SessionInputDispatchServices) {
+function prepare(services: SessionInputDispatchServices, boundary: 'attachment' | 'reference' = 'attachment') {
+  const input = boundary === 'attachment' ? structuredInput : HappierStructuredInputV1Schema.parse({ v: 1, mentions: [{
+    ...buildComposerReferenceMentionPayloadV1({ reference: { pluginId: 'acme.issue-context', localId: 'issue' },
+      candidate: { id: 'issue-42', label: 'Issue #42' } }), token: '@Issue #42',
+  }] });
   return prepareSessionInputForProviderDispatch({
-    prompt: { text: 'Review this issue', localId: 'input-1', structuredInput },
+    prompt: { text: 'Review this issue', localId: 'input-1', structuredInput: input },
     transformedUserText: 'Review this issue',
     providerNativeCommand: false,
     signal: new AbortController().signal,
@@ -95,10 +100,43 @@ describe('Composer attachment dispatch failure classification', () => {
   });
 
   it.each([
-    createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect'),
-    new PluginError({ code: 'triage_account_storage_unavailable', message: 'PRIVATE_CREDENTIAL',
-      details: { cause: { code: 'PRIVATE_CREDENTIAL', stage: 'not_a_stage' } } }),
-  ])('retains a typed refusal when no valid nested cause is available ($code)', async error => {
+    ['attachment', 'authority_unavailable_before_effect'], ['attachment', 'outcome_unknown_after_dispatch'],
+    ['reference', 'authority_unavailable_before_effect'], ['reference', 'outcome_unknown_after_dispatch'],
+  ] as const)(
+    'retains native refusal evidence and retry policy at %s preparation (%s)', async (boundary, kind) => {
+      const error = createNativeAgentSessionEffectBoundaryError(kind);
+      error.message = 'PRIVATE_NATIVE_EXCEPTION';
+      const failed = await prepare({ sessionId: 'session-1',
+        resolveComposerAttachmentForDispatch: async () => { throw error; },
+        resolveComposerReference: async () => { throw error; },
+      }, boundary).catch((failure: unknown) => failure);
+      expect(readStructuredInputPreparationFailure(failed)).toMatchObject({
+        code: boundary === 'attachment' ? 'composer_attachment_resolution_failed' : 'composer_reference_unavailable',
+      });
+      expect(readStructuredInputPreparationFailure(failed)).toMatchObject({
+        retryable: error.retryable, preparationCause: { code: error.code, stage: 'dispatch' },
+      });
+      expect(JSON.stringify(failed)).not.toContain('PRIVATE_NATIVE_EXCEPTION');
+    },
+  );
+
+  it.each(['attachment', 'reference'] as const)('excludes an arbitrary private exception code from %s preparation evidence', async boundary => {
+    const privateText = 'PRIVATE_PROMPT_AND_CREDENTIAL_CODE';
+    const error = Object.assign(new Error(privateText), { code: privateText });
+    const failed = await prepare({ sessionId: 'session-1',
+      resolveComposerAttachmentForDispatch: async () => { throw error; },
+      resolveComposerReference: async () => { throw error; },
+    }, boundary).catch((failure: unknown) => failure);
+    expect(readStructuredInputPreparationFailure(failed)).toMatchObject({
+      code: boundary === 'attachment' ? 'composer_attachment_resolution_failed' : 'composer_reference_unavailable',
+    });
+    expect(readStructuredInputPreparationFailure(failed)).not.toHaveProperty('preparationCause');
+    expect(JSON.stringify(failed)).not.toContain(privateText);
+  });
+
+  it('retains a typed PluginError refusal when no valid nested cause is available', async () => {
+    const error = new PluginError({ code: 'triage_account_storage_unavailable', message: 'PRIVATE_CREDENTIAL',
+      details: { cause: { code: 'PRIVATE_CREDENTIAL', stage: 'not_a_stage' } } });
     const failed = await prepare({ sessionId: 'session-1',
       resolveComposerAttachmentForDispatch: async () => { throw error; },
     }).catch((failure: unknown) => failure);

@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { UsagePromptCompositionSchema, type UsagePromptComposition, type UsagePromptCompositionComponent } from '@happier-dev/protocol/usage/coach/usagePromptComposition';
 import { createPromptCompositionScope, type PromptCompositionScope } from '@/agent/prompting/promptComposition';
 import { logger } from '@/ui/logger';
+import { projectNativeAgentSessionHostServiceError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
 import { renderRunFollowNotice } from '@/agent/runtime/session/follow/sessionFollowNotice';
 import { normalizePermissionModeQueuedPromptLocalIds, type PermissionModeQueuedPrompt } from '@/agent/runtime/permissions/queuedPrompt';
 import { SessionInputDispatchAdmissionError } from '@/api/session/sessionInputDispatchAdmissionError';
@@ -130,7 +131,8 @@ export async function resolveSessionInputForProviderDispatch(input: Readonly<{
       resolve: async request => {
         try {
           return await services.resolveComposerReference!(request);
-        } catch (error) {
+        } catch (cause) {
+          const error = projectNativeAgentSessionHostServiceError(cause);
           if (isAbortLikeError(error) || error instanceof StructuredInputComposerReferenceUnavailableError) throw error;
           throw new StructuredInputComposerReferenceUnavailableError(
             isPluginError(error) ? error.retryable : true, readComposerPreparationCause(error),
@@ -146,7 +148,8 @@ export async function resolveSessionInputForProviderDispatch(input: Readonly<{
       resolve: async (request: Parameters<StructuredInputComposerAttachmentResolver['resolve']>[0]) => {
         try {
           return await attachmentResolver(projectSessionComposerAttachmentDispatchInput(request, sessionId));
-        } catch (error) {
+        } catch (cause) {
+          const error = projectNativeAgentSessionHostServiceError(cause);
           if (isAbortLikeError(error) || error instanceof StructuredInputComposerAttachmentResolutionError) throw error;
           const pluginError = isPluginError(error);
           throw new StructuredInputComposerAttachmentResolutionError(

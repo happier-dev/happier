@@ -1,5 +1,5 @@
 import { readSessionRuntimeFailureCause } from '@/agent/runtime/session/errors/readSessionRuntimeFailureCause';
-import { SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { RunnerDaemonPluginServicesPreparationCauseV1Schema, SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { projectNativeStartupFailureMessage, readNativeStartupFailureDetail } from '@/agent/runtime/session/errors/nativeStartupFailureDetail';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
@@ -79,6 +79,29 @@ export function projectNativeAgentSessionHostServiceError(error: unknown): unkno
     // services) construct canonical PluginErrors themselves, so only foreign host
     // domain errors are projected here.
     if (isPluginError(error)) return error;
+    const nativeKind = classifyNativeAgentSessionEffectBoundaryError(error);
+    if (nativeKind && error && typeof error === 'object') {
+        const refusal = createNativeAgentSessionEffectBoundaryError(nativeKind);
+        const retainedSessionCause = readSessionRuntimeFailureCause(error);
+        // Vendor text and unbounded vendor codes stay at their native producer.
+        const sessionCause = retainedSessionCause
+            ? (({ providerErrorMessage: _message, providerErrorCode: _code, ...typed }) => typed)(retainedSessionCause)
+            : undefined;
+        const rawCause = readOwnDataProperty(error, 'failureCause');
+        const actionCause = sessionCause?.actionCause
+            ?? (!sessionCause && rawCause !== undefined ? readActionFailureCauseV1(rawCause) : undefined);
+        const preparationCause = RunnerDaemonPluginServicesPreparationCauseV1Schema.safeParse(
+            readOwnDataProperty(error, 'preparationCause'),
+        );
+        return new PluginError({
+            code: refusal.code, message: refusal.message, retryable: refusal.retryable,
+            ...(sessionCause || preparationCause.success ? { details: {
+                ...(sessionCause ? { failureCause: sessionCause } : {}),
+                ...(preparationCause.success ? { cause: preparationCause.data } : {}),
+            } } : {}),
+            ...(actionCause ? { failureCause: actionCause } : {}),
+        });
+    }
     if (error instanceof RuntimeTranscriptRequiredAdmissionError) {
         return new PluginError({
             code: error.code,

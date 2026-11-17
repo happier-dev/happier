@@ -7,6 +7,7 @@ import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-commo
 import { describe, expect, it } from 'vitest';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { readSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
 import { SessionStartupInputRefusalError } from '@/agent/runtime/session/input/sessionStartupInputRefusal';
@@ -130,6 +131,71 @@ describe('native Agent session boundary error sanitization', () => {
                 outcomeUnknown,
             ),
         ).toBe('outcome_unknown_after_dispatch');
+    });
+
+    it.each(['authority_unavailable_before_effect', 'outcome_unknown_after_dispatch'] as const)(
+        'preserves native refusal semantics through the public PluginError projection (%s)', kind => {
+            const original = createNativeAgentSessionEffectBoundaryError(kind);
+            original.message = 'PRIVATE_NATIVE_ERROR_TEXT';
+            const projected = projectNativeAgentSessionHostServiceError(original);
+            expect(isPluginError(projected)).toBe(true);
+            expect(projected).toMatchObject({ code: original.code, retryable: original.retryable });
+            expect(classifyNativeAgentSessionEffectBoundaryError(projected)).toBe(kind);
+            expect(projectActionFailureCauseV1(projected)).toMatchObject({ errorCode: original.code });
+            expect(JSON.stringify(projected)).not.toContain('PRIVATE_NATIVE_ERROR_TEXT');
+        },
+    );
+
+    it('preserves ordinary exception identity without promoting its private code', () => {
+        const error = Object.assign(new Error('PRIVATE_NATIVE_ERROR_TEXT'), { code: 'PRIVATE_NATIVE_CODE' });
+        const projected = projectNativeAgentSessionHostServiceError(error);
+        expect(projected).toBe(error);
+        expect(isPluginError(projected)).toBe(false);
+        expect(projectActionFailureCauseV1(projected).errorCode).toBeNull();
+    });
+
+    it('preserves distinct authored Action and Session causes through native refusal public projection', () => {
+        const actionCause = projectActionFailureCauseV1(
+            Object.assign(new Error('Permission refused'), { code: 'EACCES' }), 'native.host.effect',
+        );
+        const sessionCause = { phase: 'turn_start', failureReason: 'unknown', actionCause,
+            requestId: 'native-request' } as const;
+        for (const cause of [actionCause, sessionCause]) {
+            const original = Object.assign(createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect'), {
+                failureCause: cause,
+            });
+            const projected = projectNativeAgentSessionHostServiceError(original);
+            expect(isPluginError(projected)).toBe(true);
+            if (!isPluginError(projected)) throw new Error('The native refusal lost its public error carrier');
+            expect(projected.data.failureCause).toEqual(actionCause);
+            expect(projectActionFailureCauseV1(projected)).toEqual(actionCause);
+            if (cause === sessionCause) expect(readSessionRuntimeFailureCause(projected)).toEqual(sessionCause);
+        }
+    });
+
+    it('preserves admitted preparation evidence through native refusal public projection', () => {
+        const preparationCause = { code: 'triage_account_storage_unavailable', stage: 'dispatch',
+            requestId: 'native-preparation-request' } as const;
+        const original = Object.assign(createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect'), {
+            preparationCause,
+        });
+        const projected = projectNativeAgentSessionHostServiceError(original);
+        expect(isPluginError(projected)).toBe(true);
+        expect(projected).toMatchObject({ details: { cause: preparationCause } });
+    });
+
+    it('excludes raw vendor prose and vendor code from native refusal Session cause projection', () => {
+        const privateText = 'PRIVATE_NATIVE_VENDOR_SENTINEL';
+        const original = Object.assign(createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect'), {
+            failureCause: { phase: 'turn_start', failureReason: 'unknown', providerErrorMessage: privateText,
+                providerErrorCode: privateText, requestId: 'native-request' },
+        });
+        const projected = projectNativeAgentSessionHostServiceError(original);
+        expect(isPluginError(projected)).toBe(true);
+        expect(readSessionRuntimeFailureCause(projected)).toEqual({
+            phase: 'turn_start', failureReason: 'unknown', requestId: 'native-request',
+        });
+        expect(JSON.stringify(projected)).not.toContain(privateText);
     });
 
     it('preserves safe own string codes without invoking accessors or Proxy get traps', () => {
