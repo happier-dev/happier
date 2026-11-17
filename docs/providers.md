@@ -123,6 +123,11 @@ Model and catalog probes admit only the selected Agent's declared Account
 purposes. A saved GitHub or other machine CLI Account does not supply credentials
 to that probe or block it when unavailable. Actual Session and setup processes
 retain their explicitly selected CLI Account purposes and delivery refusals.
+Associated terminals keep the Session's own selection. If its in-memory purpose
+snapshot is unavailable after reattachment, retained Session selections can still
+establish that no CLI Account is bound, so native authentication remains usable.
+A bound or unreadable selection still refuses credential acquisition; it never
+switches to current Account defaults or native authentication.
 
 Machine CLI sign-in status exposes `credentialSource` as `connectedAccount`,
 `machineLogin`, `none`, or `null` while the source cannot be resolved. The daemon

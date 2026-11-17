@@ -317,12 +317,21 @@ export function resolveLaunchPurposeDeclarations(input: Parameters<typeof resolv
     const agent = resolveAgentSpawnPurposeDeclarations(input);
     if (!agent) return [];
     if (input.purposeDemand === 'agent') return [agent];
-    const tools = resolveSystemToolLaunchPurposeDeclarations(input.contributions).filter(declaration =>
-        !input.bindings || declaration.snapshot.authorizedPurposes.some(scope => scope.serviceRefs.some(service => {
-            const selection = input.bindings?.bindingsByServiceId[buildQualifiedPluginContributionKey(service)];
-            return selection !== undefined && selection.source !== 'native';
-        })));
+    const declaredTools = resolveSystemToolLaunchPurposeDeclarations(input.contributions);
+    const tools = input.bindings ? selectBoundSystemToolLaunchPurposeDeclarations(declaredTools, input.bindings) : declaredTools;
     return [agent, ...tools];
+}
+
+/** Apply the launch owner's explicit tool selection rule to retained Session
+ * selections as well as a new Agent launch; native/unselected tools demand no material. */
+export function selectBoundSystemToolLaunchPurposeDeclarations(
+    declarations: readonly ResolvedAgentSpawnPurposeDeclarations[],
+    bindings: ConnectedServiceBindingsV2,
+): readonly ResolvedAgentSpawnPurposeDeclarations[] {
+    return declarations.filter(declaration => declaration.snapshot.authorizedPurposes.some(scope => scope.serviceRefs.some(service => {
+        const selection = bindings.bindingsByServiceId[buildQualifiedPluginContributionKey(service)];
+        return selection !== undefined && selection.source !== 'native';
+    })));
 }
 
 /** The same tool purposes also apply to admitted processes with no Agent. */

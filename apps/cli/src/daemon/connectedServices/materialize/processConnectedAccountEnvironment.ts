@@ -1,9 +1,10 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import type { DaemonConnectedAccountPurposeBindingRuntime } from '../purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 import type { resolveSystemToolLaunchPurposeDeclarations } from '../requestAuth/agentPurposeDeclarations';
 import type { ActionPurposeBindingAdmissionInput } from '../purposeBindings/teamDirectMaterialAdmission';
-import { assertLaunchPurposeDeliverySupported, mergeLaunchPurposeDeclarationSnapshots } from '../requestAuth/agentPurposeDeclarations';
+import { assertLaunchPurposeDeliverySupported, mergeLaunchPurposeDeclarationSnapshots, selectBoundSystemToolLaunchPurposeDeclarations } from '../requestAuth/agentPurposeDeclarations';
 import { materializeQualifiedConnectedAccountLaunchUses } from './materializeQualifiedConnectedAccountLaunchUses';
 import { stripUnsetEnvironmentVariables } from '@/utils/processEnv/buildScopedProcessEnv';
 
@@ -61,23 +62,32 @@ export async function prepareFiniteConnectedAccountProcessEnvironment(input: Rea
 /** Associated processes consume the Session's admitted selection, including an
  * explicitly unbound choice. They never resolve current Account defaults. */
 export async function materializeSessionConnectedAccountProcessEnvironment(input: Readonly<{
-  runtime: Pick<DaemonConnectedAccountPurposeBindingRuntime, 'owner' | 'readSessionPurposeBindingSnapshot'>;
+  runtime: Pick<DaemonConnectedAccountPurposeBindingRuntime, 'owner' | 'readSessionPurposeBindingSnapshot'> | undefined;
+  /** Exact retained Session selections, never current Account defaults. Read only after lost in-memory admission. */
+  readSessionBindings?: () => Promise<ConnectedServiceBindingsV2 | null>;
   declarations: ToolDeclarations;
   sessionId: string;
   environment: ConnectedAccountProcessEnvironment;
   signal: AbortSignal;
 }>): Promise<ConnectedAccountProcessEnvironmentMaterialization> {
   if (!input.declarations.length) return { environment: input.environment, secretValues: [] };
-  const admitted = input.runtime.readSessionPurposeBindingSnapshot(input.sessionId);
-  if (!admitted) throw new PluginError({ code: 'credential_unavailable',
-    message: 'The admitted Session credential binding is unavailable', retryable: false });
+  const runtime = input.runtime;
+  const admitted = runtime?.readSessionPurposeBindingSnapshot(input.sessionId);
+  if (!runtime || !admitted) {
+    const retained = await input.readSessionBindings?.();
+    if (retained && !selectBoundSystemToolLaunchPurposeDeclarations(input.declarations, retained).length) {
+      return { environment: input.environment, secretValues: [] };
+    }
+    throw new PluginError({ code: 'credential_unavailable',
+      message: 'The admitted Session credential binding is unavailable', retryable: false });
+  }
   const covered = new Set(admitted.purposes.map(qualifiedPurposeKey));
   const declarations = mergeLaunchPurposeDeclarationSnapshots(input.declarations.map(declaration => declaration.snapshot));
   // A tool added after this Session began has no admitted credential selection.
   const snapshot = { ...declarations, purposes: admitted.purposes, bindings: admitted.bindings,
     environmentUses: declarations.environmentUses?.filter(use => covered.has(qualifiedPurposeKey(use.purpose))),
     environmentUnsetUses: declarations.environmentUnsetUses?.filter(use => covered.has(qualifiedPurposeKey(use.purpose))) };
-  const result = await materializeQualifiedConnectedAccountLaunchUses({ connectedAccountsOwner: input.runtime.owner,
+  const result = await materializeQualifiedConnectedAccountLaunchUses({ connectedAccountsOwner: runtime.owner,
     snapshot, exactPurposeBindingSubjectId: admitted.subjectId, sessionId: input.sessionId,
     processEnvironment: input.environment, signal: input.signal });
   return { environment: stripUnsetEnvironmentVariables({ ...input.environment, ...result.env }, result.unsetEnvKeys),

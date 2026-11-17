@@ -115,7 +115,7 @@ export type AttachedManagedRunFixture = Readonly<{
 /** A genuine installed Agent/Provider and live daemon service dispatcher for
  * consumer delivery tests. No source projection, runtime owner or token is
  * fabricated by this fixture. */
-export async function createAttachedManagedRunFixture(input: Readonly<{ directory?: string; issuedRequester?: boolean; coldProviderCatalog?: boolean;
+export async function createAttachedManagedRunFixture(input: Readonly<{ directory?: string; issuedRequester?: boolean; coldProviderCatalog?: boolean; includeBundledDeclarations?: boolean;
   resolveRunAuthority?(request: SessionExecutionRunBrokerAuthorityRequestV1, signal?: AbortSignal): SessionExecutionRunBrokerAuthorityResponseV1 | Promise<SessionExecutionRunBrokerAuthorityResponseV1>;
   browserStartup?: Pick<Parameters<typeof startDaemonSessionControlRuntime>[0],
     'browserSidecarControlAdapterFactory' | 'resolveServerFeaturesSnapshot' | 'onBrowserControlRoutesReady'
@@ -130,7 +130,8 @@ export async function createAttachedManagedRunFixture(input: Readonly<{ director
   const env = createEnvKeyScope(['HAPPIER_HOME_DIR']);
   env.patch({ HAPPIER_HOME_DIR: join(directory, 'home') });
   reloadConfiguration();
-  const fixture = await createManagedRunLaunchFixture({ directory, controller: pluginReloadController, physicalGateway: true });
+  const fixture = await createManagedRunLaunchFixture({ directory, controller: pluginReloadController, physicalGateway: true,
+    ...(input.includeBundledDeclarations ? { includeBundledDeclarations: true } : {}) });
   preparationPhase = 'initial Provider authorization';
   const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.fixture`;
   const credentials: StoredCredentials = { token, encryption: null };

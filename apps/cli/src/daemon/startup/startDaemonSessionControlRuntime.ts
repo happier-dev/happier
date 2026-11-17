@@ -15625,11 +15625,24 @@ export async function startDaemonSessionControlRuntime(
         await assertSessionAccountCurrent(input.sessionId, context);
         const runtime = context ? { owner: context.connectedAccountsOwner,
           readSessionPurposeBindingSnapshot: context.readSessionPurposeBindingSnapshot } : params.sessionConnectedAccountProcessRuntime;
-        if (!runtime) throw new PluginError({ code: 'credential_unavailable',
-          message: 'Session credential bindings are unavailable', retryable: false });
         const registry = pluginRuntimeController.getState().activeRegistry;
         const declarations = registry ? resolveSystemToolLaunchPurposeDeclarations(registry.contributes) : [];
-        return await materializeSessionConnectedAccountProcessEnvironment({ ...input, runtime, declarations });
+        return await materializeSessionConnectedAccountProcessEnvironment({ ...input, runtime, declarations,
+          readSessionBindings: async () => {
+            const tracked = findTrackedSessionByHappySessionId(params.trackedSessionsByKey.values(), input.sessionId);
+            let raw: unknown;
+            if (tracked?.spawnOptions || tracked?.happySessionMetadataFromLocalWebhook) {
+              raw = resolveTrackedConnectedServiceBindingsRaw(tracked);
+            } else {
+              const credentials = context?.bootstrap.credentials ?? params.credentials;
+              const persisted = await withSessionAccountHome(context, () => resolvePersistedConnectedServiceSwitchSessionState({
+                token: credentials.token, credentials, sessionId: input.sessionId }));
+              if (!persisted.metadata) return null;
+              raw = persisted.metadata.connectedServices;
+            }
+            const parsed = ConnectedServiceBindingsV2IngressSchema.safeParse(raw ?? { v: 2, bindingsByServiceId: {} });
+            return parsed.success ? parsed.data : null;
+          } });
       } finally { await releaseSessionAccountContext(context); }
     },
     resolveExecutionRunLiveBrokerAuthority,
