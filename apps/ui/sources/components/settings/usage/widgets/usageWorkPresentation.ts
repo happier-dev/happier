@@ -246,7 +246,13 @@ export function partitionUsageWorkMoneyRows<Row extends MoneyDisplay>(rows: read
 /** Scatter fallback rows belong to the ledger; a plot needs a witnessed outcome axis. */
 export function projectUsageSessionValuePlots(rows: readonly UsageWorkSessionRow[], metric: UsageWorkAmount['metric']) {
   return partitionUsageWorkMoneyRows(rows.filter((row): row is UsageWorkSessionRow & { amount: number } =>
-    row.amount !== null && row.outcomes.length > 0), metric);
+    row.amount !== null && row.outcomes.length > 0), metric).map(plot => {
+      const amounts = plot.rows.map(row => row.amount).sort((left, right) => left - right);
+      const middle = Math.floor(amounts.length / 2);
+      const medianAmount = amounts.length <= 1 ? null : amounts.length % 2 ? amounts[middle]!
+        : amounts[middle - 1]! + (amounts[middle]! - amounts[middle - 1]!) / 2;
+      return { ...plot, medianAmount };
+    });
 }
 
 type BranchGroup = Marks & { branch: UsageWorkBranch; amount: AmountAccumulator; parts: Map<string, AmountAccumulator>;

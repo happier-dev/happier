@@ -128,7 +128,6 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
   // A Session several Agents worked on belongs to none of them alone.
   const slotOf = (row: UsageWorkSessionRow) =>
     row.agentIds.length === 1 && slots.includes(row.agentIds[0]!) ? row.agentIds[0]! : null;
-  const plots = projectUsageSessionValuePlots(summary.sessions, props.query.metric);
   // One Session's page is its autopsy: no ranking of a list of one, no scatter of one point.
   if (props.query.session) return (
     <View style={styles.body} testID={`${props.testID}.value`}>
@@ -139,13 +138,11 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
   return (
     <View style={styles.body} testID={`${props.testID}.value`}>
       <UsageWorkAutopsy {...props} testID={`${props.testID}.autopsy`} />
-      {showScatter ? plots.map(plot => {
+      {showScatter ? projectUsageSessionValuePlots(summary.sessions, props.query.metric).map(plot => {
         const usedSlots = slots.filter(agentId => plot.rows.some(row => slotOf(row) === agentId));
         const costliest = plot.rows[0];
         const mostMerged = plot.rows.reduce<(typeof plot.rows)[number] | undefined>(
           (best, row) => merged(row) > (best ? merged(best) : 0) ? row : best, undefined);
-        const ordered = plot.rows.map(row => row.amount).sort((left, right) => left - right);
-        const median = ordered.length > 1 ? ordered[Math.floor((ordered.length - 1) / 2)]! : null;
         return (
         <OutcomeScatter
           key={plot.key}
@@ -173,9 +170,9 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
               : []),
           ]}
           xGuides={
-            median === null
+            plot.medianAmount === null
               ? undefined
-              : [{ id: 'median', value: median, label: t('usage.board.work.medianSession') }]
+              : [{ id: 'median', value: plot.medianAmount, label: t('usage.board.work.medianSession') }]
           }
           points={plot.rows.map((row) => {
             const slot = slotOf(row);

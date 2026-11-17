@@ -230,6 +230,21 @@ describe('Work display grouping of the canonical allocation', () => {
       contributions: [unlinkedEuro], evidence: [],
     }), { metric: 'tokens', costBasis: 'auto' }).sessions, 'tokens')).toEqual([]);
   });
+  it.each([
+    { amounts: [10, 30], median: 20 },
+    { amounts: [10, 50, 30], median: 30 },
+    { amounts: [10, null, 30], median: 20 },
+    { amounts: [30], median: null },
+    { amounts: [null, null], median: null },
+  ])('projects the median of comparable witnessed Session amounts $amounts', ({ amounts, median }) => {
+    const summary = summarizeUsageWork(allocateUsageOutcomes({
+      contributions: amounts.map((amount, index) => ({ ...contribution(`c${index}`, `s${index}`, `t${index}`),
+        cost: { reportedUsd: amount, estimatedUsd: null, currency: 'USD' } })),
+      evidence: amounts.map((_, index) => evidence(`s${index}`, `t${index}`, index + 1)),
+    }), { metric: 'cost', costBasis: 'reported' });
+    const plots = projectUsageSessionValuePlots(summary.sessions, 'cost');
+    expect(plots.length === 0 ? null : plots[0]!.medianAmount).toBe(median);
+  });
   it('expands a project, a PR and a branch into exact per-Session parts that add back to the row', () => {
     const bound = (id: string, sessionId: string, turnId: string, projectKey: string) => ({ ...contribution(id, sessionId, turnId, projectKey),
       providerId: 'provider.openrouter', providerConnectionId: 'connection' });
