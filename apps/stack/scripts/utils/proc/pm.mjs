@@ -1021,7 +1021,7 @@ export async function ensureCliBuilt(cliDir, {
       const reused = await ensureCliBuiltUnderLock(request, envIn, false);
       if (reused !== null) return reused;
     }
-    const { runWorkspaceBuildAdmission } = await import('./workspace_build_admission.mjs');
+    const { incompleteWorkerError, runWorkspaceBuildAdmission } = await import('./workspace_build_admission.mjs');
     const { requiresTypeScriptAdmission } = await loadSourceWorkspaceModule('resolveTypeScriptCliInvocation.mjs');
     const resultDir = await mkdtemp(join(tmpdir(), 'happier-cli-readiness-result-'));
     const resultPath = join(resultDir, 'result.json');
@@ -1035,13 +1035,11 @@ export async function ensureCliBuilt(cliDir, {
           } })],
         locks: [{ path: lockPath }], cwd: cliDir, env: envIn,
         admissionClass: 'compilation', admissionRequired: requiresTypeScriptAdmission({ env: envIn }),
-        stdio: quiet ? ['ignore', 'ignore', 'inherit'] : 'inherit',
+        stdio: quiet ? ['ignore', 'ignore', 'inherit'] : 'inherit', stderrTail: true,
       });
       if (!existsSync(resultPath)) {
         if (terminal.error) throw terminal.error;
-        const error = new Error('[local] CLI readiness worker did not complete');
-        Object.assign(error, { code: 'EEXIT', exitCode: terminal.status, signal: terminal.signal });
-        throw error;
+        throw incompleteWorkerError('[local] CLI readiness worker did not complete', terminal, envIn);
       }
       const response = JSON.parse(await readFile(resultPath, 'utf8'));
       if (response.error) {

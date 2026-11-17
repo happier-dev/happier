@@ -392,6 +392,41 @@ if [ -f '${keepChanging}' ]; then '${process.execPath}' '${mutation}'; fi
   assert.equal(idle.waitingCount, 0);
 });
 
+// QA-INBOX 2026-11-17 12:11Z: a batch that ended without its result reported
+// only "package batch did not complete (EEXIT)"; the child's own cause went to
+// an inherited stderr the caller's envelope never kept.
+test('a package batch that ends without its result names the exit and the child cause', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
+  const root = mkdtempSync(join(tmpdir(), 'happier-batch-cause-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const native = await installWorkspaceAdmissionProcessFixture(t, root);
+  const repoRoot = join(root, 'native-owner');
+  writePnpmWorkspaceFixture(repoRoot, { private: true, workspaces: ['apps/*', 'packages/*'] });
+  for (const app of ['cli', 'server', 'ui']) {
+    mkdirSync(join(repoRoot, 'apps', app), { recursive: true });
+    writeFileSync(join(repoRoot, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+  }
+  const packageDir = join(repoRoot, 'packages/requested');
+  mkdirSync(join(packageDir, 'src'), { recursive: true });
+  writeFileSync(join(packageDir, 'src/index.ts'), 'export const ready = true;\n');
+  writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: '@happier-dev/requested', type: 'module',
+    main: './dist/index.js', scripts: { build: 'fixture-build' } }));
+  // The admission launcher is the process boundary that fails before the worker runs.
+  const launcher = join(root, 'refusing-launcher.sh');
+  writeFileSync(launcher, `#!/bin/sh\ncase "$1" in --heavyweight-admission) echo 'fixture admission refused: broker closed' >&2; exit 7 ;; esac\nexec /bin/sh '${native.launcher}' "$@"\n`);
+  chmodSync(launcher, 0o755);
+  const env = { ...native.env, CI: '', HAPPIER_DEV_TARGET_EXECUTION: '1', HAPPIER_HSTACK_EXECUTION: '' };
+  await assert.rejects(ensureWorkspacePackagesBuiltByName(repoRoot, ['@happier-dev/requested'], {
+    env, quiet: true, signal: t.signal,
+    workspaceBuildBoundary: { ...defaultWorkspaceBuildBoundary, workerLauncherPath: launcher },
+  }), error => {
+    assert.equal(error.code, 'EEXIT');
+    assert.equal(error.exitCode, 7);
+    assert.match(error.message, /exit 7/u);
+    assert.match(error.message, /fixture admission refused: broker closed/u);
+    return true;
+  });
+});
+
 test('captured public package builds keep their manifest identity through native self-dispatch', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
   const root = mkdtempSync(join(tmpdir(), 'happier-captured-public-build-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));

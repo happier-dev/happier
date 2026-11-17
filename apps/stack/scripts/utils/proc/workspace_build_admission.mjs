@@ -6,7 +6,7 @@ import { callerHoldsWorkspaceBundleLock, createWorkspaceBundleLockPriorityScope,
   observeWorkspaceBundleLock, observeWorkspaceBundleLockPriority, withWorkspaceBundleLock, WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE } from '../../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { parseWorkspaceLockLeaseValue } from '../../../../../packages/cli-common/workspaceLockLease.mjs';
 import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
-import { getForegroundCommandResult, spawnForegroundCommand } from './proc.mjs';
+import { appendBoundedTail, formatFailureDiagnostic, getForegroundCommandResult, spawnForegroundCommand } from './proc.mjs';
 import { callerHoldsDependencyConsumption, callerHoldsDependencyResourceBlocking, resolveDependencyRefreshLockPath, resolveLockedInstallEnv, withDependencyConsumption, withDependencyRefreshLock } from './dependency_refresh.mjs';
 import { JSON_OWNER_FILE_LOCK_BUSY_ERROR_CODE } from './jsonOwnerFileLock.mjs';
 
@@ -109,7 +109,12 @@ export async function runWorkspaceBuildAdmission({ command, args = [], locks = [
   repoDir = sourceRoot, launcherPath = resolve(repoDir, 'apps/stack/bin/hstack-exec'), env = process.env,
   signal, admissionClass = 'package-dist', admissionRequired = true, devStartup = false,
   inheritedAdmission = false,
-  stdio = 'inherit', onStdout, onStderr, captureStdout = true, captureStderr = true }) {
+  stdio = 'inherit', onStdout, onStderr, captureStdout = true, captureStderr = true, stderrTail = false }) {
+  // A worker whose result file is its outcome can still end before writing it
+  // (an admission refusal, a crash, a signal). Its cause is on stderr: keep
+  // streaming it to this process and retain a bounded tail for the error.
+  const tailsStderr = stderrTail && (stdio === 'inherit' || (Array.isArray(stdio) && stdio[2] === 'inherit'));
+  if (tailsStderr) stdio = Array.isArray(stdio) ? [stdio[0], stdio[1], 'pipe'] : ['inherit', 'inherit', 'pipe'];
   const invocation = resolveWorkspaceBuildAdmissionInvocation({ command, args, locks, repoDir,
     launcherPath, env, admissionClass, admissionRequired, devStartup, inheritedAdmission });
   if (isWorkspaceBuildStartup({ env, devStartup })) env = { ...env, HAPPIER_HSTACK_DISPATCH_CONTROL: '1' };
@@ -124,17 +129,35 @@ export async function runWorkspaceBuildAdmission({ command, args = [], locks = [
     const handlers = new Map(['SIGINT', 'SIGTERM', 'SIGHUP'].map(name =>
       [name, () => { callerSignal ??= name; }]));
     for (const [name, handler] of handlers) process.on(name, handler);
-    let stdout = '', stderr = '', error;
+    let stdout = '', stderr = '', tail = '', tailTruncated = false, error;
     child.stdout?.on('data', value => { if (captureStdout) stdout += value; onStdout?.(value); });
-    child.stderr?.on('data', value => { if (captureStderr) stderr += value; onStderr?.(value); });
+    child.stderr?.on('data', value => {
+      if (tailsStderr) {
+        process.stderr.write(value);
+        const next = appendBoundedTail(tail, value);
+        tailTruncated ||= next.length < tail.length + String(value).length;
+        tail = next;
+        return;
+      }
+      if (captureStderr) stderr += value; onStderr?.(value);
+    });
     child.once('error', value => { error = value; });
     child.once('close', (nativeStatus, nativeSignal) => {
       const { status, signal: terminalSignal } = getForegroundCommandResult(child, nativeStatus, nativeSignal);
       for (const [name, handler] of handlers) process.off(name, handler);
       resolveResult({ status: callerSignal ? null : status, signal: callerSignal ?? terminalSignal,
-        ...(child.stdout ? { stdout } : {}), ...(child.stderr ? { stderr } : {}), ...(error ? { error } : {}) });
+        ...(child.stdout ? { stdout } : {}), ...(child.stderr && !tailsStderr ? { stderr } : {}),
+        ...(tailsStderr ? { stderrTail: tail, stderrTailTruncated: tailTruncated } : {}), ...(error ? { error } : {}) });
     });
   });
+}
+
+/** The error for an admitted worker that ended without its result: its exit and its stderr tail. */
+export function incompleteWorkerError(message, terminal, env = process.env) {
+  const exit = terminal.signal ? `signal ${terminal.signal}` : `exit ${terminal.status ?? 'unknown'}`;
+  const diagnostic = formatFailureDiagnostic({ err: terminal.stderrTail ?? '', truncated: terminal.stderrTailTruncated, env });
+  return Object.assign(new Error(`${message} (${exit})${diagnostic}`),
+    { code: 'EEXIT', exitCode: terminal.status, signal: terminal.signal });
 }
 
 function parseLocks(raw) {

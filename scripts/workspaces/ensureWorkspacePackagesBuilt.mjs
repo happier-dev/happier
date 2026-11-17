@@ -17,7 +17,7 @@ import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
 import { readWorkspaceBuildInputs } from '../../apps/stack/scripts/utils/fs/workspaceBuildInputs.mjs';
 export { readWorkspaceBuildInputs } from '../../apps/stack/scripts/utils/fs/workspaceBuildInputs.mjs';
 import { coerceHappyMonorepoRootFromPath } from '../../apps/stack/scripts/utils/paths/paths.mjs';
-import { runWorkspaceBuildAdmission, withWorkspaceBuildResources } from '../../apps/stack/scripts/utils/proc/workspace_build_admission.mjs';
+import { incompleteWorkerError, runWorkspaceBuildAdmission, withWorkspaceBuildResources } from '../../apps/stack/scripts/utils/proc/workspace_build_admission.mjs';
 import { createWorkspaceBuildWaitNotifier } from '../../apps/stack/scripts/utils/proc/workspaceBuildWaitNotifier.mjs';
 import { run } from '../../apps/stack/scripts/utils/proc/proc.mjs';
 import { collectWorkspacePackageJsonPaths } from '../../apps/stack/scripts/utils/proc/workspace_package_manifests.mjs';
@@ -1583,7 +1583,7 @@ async function ensureWorkspacePackageBuilt(packageDir, {
         admissionRequired: requiresTypeScriptAdmission({ env }),
         admissionClass: await resolveWorkspacePackageBuildAdmissionClass({ packageJson, cwd: packageDir, env, repoRoot: monorepoRoot }),
         inheritedAdmission,
-        stdio: ['inherit', 'pipe', 'inherit'],
+        stdio: ['inherit', 'pipe', 'inherit'], stderrTail: true,
         captureStdout: false,
         onStdout: consumeStdout,
       });
@@ -1599,11 +1599,7 @@ async function ensureWorkspacePackageBuilt(packageDir, {
       if (callbackError) throw callbackError;
       if (!existsSync(resultPath)) {
         if (terminal.error) throw terminal.error;
-        const error = new Error(`[workspace-build] preparation worker failed for ${packageJson.name ?? packageDir}`);
-        error.code = 'EEXIT';
-        error.exitCode = terminal.status;
-        error.signal = terminal.signal;
-        throw error;
+        throw incompleteWorkerError(`[workspace-build] preparation worker failed for ${packageJson.name ?? packageDir}`, terminal, env);
       }
       const response = JSON.parse(await readFile(resultPath, 'utf8'));
       if (response.error) throw deserializeWorkspaceBuildError(response.error);
@@ -1958,7 +1954,7 @@ async function buildWorkspacePackageNamesInOneAdmission(monorepoRoot, packageNam
       args: [fileURLToPath(import.meta.url), '--workspace-package-batch-worker', JSON.stringify(request)],
       locks: resources.locks, admissionClass: resources.admissionClass, admissionRequired: true,
       ...(workspaceBuildBoundary.workerLauncherPath ? { launcherPath: workspaceBuildBoundary.workerLauncherPath } : {}),
-      cwd: monorepoRoot, env, signal, stdio: ['inherit', 'pipe', 'inherit'], captureStdout: false,
+      cwd: monorepoRoot, env, signal, stdio: ['inherit', 'pipe', 'inherit'], stderrTail: true, captureStdout: false,
       onStdout: chunk => {
         buffered += decoder.write(chunk);
         for (let index; (index = buffered.indexOf('\n')) !== -1;) {
@@ -1978,8 +1974,7 @@ async function buildWorkspacePackageNamesInOneAdmission(monorepoRoot, packageNam
     if (response?.error) throw deserializeWorkspaceBuildError(response.error);
     if (terminal.error) throw terminal.error;
     if (!response?.result || terminal.status !== 0 || terminal.signal) {
-      throw Object.assign(new Error('[workspace-build] package batch did not complete'),
-        { code: 'EEXIT', exitCode: terminal.status, signal: terminal.signal });
+      throw incompleteWorkerError('[workspace-build] package batch did not complete', terminal, env);
     }
     return response.result;
   } finally {
