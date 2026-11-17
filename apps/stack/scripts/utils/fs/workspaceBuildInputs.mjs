@@ -7,6 +7,7 @@ import { resolveBundledPluginUiProjectionInputPaths } from '../../../../cli/scri
 import { readSourcePluginUiGraph } from '../../../../ui/scripts/sourcePluginUiGraph.mjs';
 import { SOURCE_UI_ASSET_OUTPUT_PATHS, SOURCE_UI_ASSET_RECORD_FILENAME } from '../../../../ui/scripts/sourceUiAssetPaths.mjs';
 import { readBuildInputIdentity } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { readWorkspaceExportSourceInputs } from '../../../../../scripts/workspaces/workspaceExportSourceInputs.mjs';
 import { readSourceRuntimeDependencyIdentity } from '../../build/source_author_inputs.mjs';
 import { EMBEDDED_FEATURE_POLICIES_OUTPUT } from '../../../../../packages/protocol/scripts/generate-embedded-feature-policies.mjs';
 export { EMBEDDED_FEATURE_POLICIES_OUTPUT };
@@ -419,6 +420,13 @@ export function readWorkspaceBuildInputs(packageDir, {
     // owner so admission, watching and capture observe the same source tree.
     if (packageJson.name === '@happier-dev/protocol' && existsSync(join(packageDir, 'scripts/generate-exports.mjs'))) {
       visit(join(packageDir, 'src'), { ignoreTests: false, matches: path => path.endsWith('.ts') });
+    } else {
+      for (const path of readWorkspaceExportSourceInputs(packageDir, packageJson)) {
+        visit(join(packageDir, path), { ignoreTests: false });
+        if (includeDirectories) {
+          for (let parent = dirname(path); parent !== '.'; parent = dirname(parent)) inputs.add(parent.split(sep).join('/'));
+        }
+      }
     }
     const buildScript = String(packageJson.scripts?.build ?? '');
     for (const match of buildScript.matchAll(/(?:^|\s)(\.{1,2}\/[^\s;&|]+\.(?:[cm]?[jt]sx?|json))(?=$|\s|[;&|])/g)) {

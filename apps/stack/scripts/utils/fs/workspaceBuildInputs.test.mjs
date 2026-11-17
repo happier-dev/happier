@@ -6,8 +6,74 @@ import test from 'node:test';
 
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { captureBuildInputFiles, readBuildInputIdentity } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
-import { readSourceComponentBuildInputs, readSourcePluginUiBuildInputs, readSourcePluginUiBuildInputRecord, readWorkspaceBuildInputs, resolveWorkspaceBuildInputWatchPaths } from './workspaceBuildInputs.mjs';
+import { createWorkspaceBuildInputIgnorePath, readSourceComponentBuildInputs, readSourcePluginUiBuildInputs, readSourcePluginUiBuildInputRecord, readWorkspaceBuildInputs, resolveWorkspaceBuildInputWatchPaths } from './workspaceBuildInputs.mjs';
 import { SOURCE_UI_ASSET_OUTPUT_PATHS, SOURCE_UI_ASSET_RECORD_FILENAME } from '../../../../ui/scripts/sourceUiAssetPaths.mjs';
+
+test('workspace capture retains declared testkit source exports and their local fixture closure', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-exported-testkit-inputs-' });
+  const root = fixture.path('package');
+  const entry = 'src/triage/testkit/taskWrites.test-support.ts';
+  const helper = 'src/triage/__fixtures__/taskValue.ts';
+  const aliasedHelper = 'src/triage/__fixtures__/aliasedValue.ts';
+  const privateSpec = 'src/triage/testkit/private.test.ts';
+  const sources = {
+    'package.json': JSON.stringify({ name: '@fixture/exported-testkit', files: ['src', 'dist'], exports: {
+      './testkit': { 'happier-source': `./${entry}`, types: './dist/triage/testkit/taskWrites.test-support.d.ts',
+        default: './dist/triage/testkit/taskWrites.test-support.js' },
+    } }),
+    [entry]: 'export { value } from "../__fixtures__/taskValue.js";',
+    'tsconfig.json': JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '#fixture/*': ['src/triage/__fixtures__/*'] } } }),
+    [helper]: 'export { value } from "#fixture/aliasedValue";',
+    [aliasedHelper]: 'export const value: string = "before";',
+    [privateSpec]: 'throw new Error("private test must not enter capture");',
+  };
+  for (const [path, source] of Object.entries(sources)) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), source);
+  }
+  for (const includeShippedFiles of [false, true]) {
+    const inputs = readWorkspaceBuildInputs(root, { includeShippedFiles });
+    assert.ok(inputs.includes(entry), 'declared authored export must survive test-name filtering');
+    assert.ok(inputs.includes(helper), 'the exported leaf needs its imported source fixture');
+    assert.ok(inputs.includes(aliasedHelper), 'package-local aliases retain their consumed fixture');
+    assert.equal(inputs.includes(privateSpec), false, 'unconsumed private tests stay excluded');
+  }
+  const ignore = createWorkspaceBuildInputIgnorePath(root);
+  assert.equal(ignore(join(root, entry)), false);
+  assert.equal(ignore(join(root, helper)), false);
+  assert.equal(ignore(dirname(join(root, entry))), false, 'recursive watching must reach the admitted leaf');
+  assert.equal(ignore(dirname(join(root, helper))), false);
+  assert.equal(ignore(join(root, privateSpec)), true);
+  const captureDir = fixture.path('capture');
+  const captured = await captureBuildInputFiles({ sourceDir: root, captureDir,
+    readPaths: () => readWorkspaceBuildInputs(root, { includeShippedFiles: true }) });
+  assert.equal(await readFile(join(captureDir, helper), 'utf8'), sources[helper]);
+  assert.equal(captured.files.includes(privateSpec), false);
+  const initial = await readBuildInputIdentity({ sourceDir: root, files: captured.files });
+  await writeFile(join(root, privateSpec), 'throw new Error("private edit");');
+  assert.equal(await readBuildInputIdentity({ sourceDir: root, files: captured.files }), initial);
+  await writeFile(join(root, aliasedHelper), 'export const value: string = "after";');
+  assert.notEqual(await readBuildInputIdentity({ sourceDir: root, files: captured.files }), initial,
+    'editing the consumed fixture must invalidate admission and capture identity');
+});
+
+test('workspace capture respects private null subpaths beneath wildcard source exports', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-private-export-inputs-' });
+  const root = fixture.path('package');
+  await mkdir(join(root, 'src', '__fixtures__'), { recursive: true });
+  await writeFile(join(root, 'package.json'), JSON.stringify({ exports: {
+    './*': { 'happier-source': './src/*.ts', default: './dist/*.js' },
+    './*.test': null,
+    './__fixtures__/*': null,
+  } }));
+  await writeFile(join(root, 'src', 'public.ts'), 'export const value = true;');
+  await writeFile(join(root, 'src', 'private.test.ts'), 'import "./__fixtures__/private.js";');
+  await writeFile(join(root, 'src', '__fixtures__', 'private.ts'), 'throw new Error("private fixture");');
+  const files = readWorkspaceBuildInputs(root, { includeShippedFiles: true });
+  assert.ok(files.includes('src/public.ts'));
+  assert.equal(files.includes('src/private.test.ts'), false, 'null export selection excludes the private spec');
+  assert.equal(files.includes('src/__fixtures__/private.ts'), false, 'the excluded spec cannot admit its private fixture');
+});
 
 test('plugin UI inputs follow consumed workspace files instead of dependency package membership', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-ui-graph-inputs-' });
