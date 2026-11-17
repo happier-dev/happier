@@ -8,22 +8,6 @@ import { importWorkflowDocument } from './workflowInterchange';
 import { createWorkflowEditorDraft } from './workflowEditorDraft';
 
 describe('workflow document file boundary', () => {
-  it('reads both browser and native picker results through their platform owner', async () => {
-    const readNative = vi.fn(async () => '{"native":true}');
-    const web = await readPickedWorkflowDocument(
-      { kind: 'web', file: new File(['{"web":true}'], 'review.json') },
-      readNative,
-    );
-    const native = await readPickedWorkflowDocument(
-      { kind: 'native', uri: 'file:///review.json', name: 'review.json', sizeBytes: null, mimeType: 'application/json' },
-      readNative,
-    );
-
-    expect(web).toBe('{"web":true}');
-    expect(native).toBe('{"native":true}');
-    expect(readNative).toHaveBeenCalledWith('file:///review.json');
-  });
-
   it('downloads on web and shares on native without changing the JSON', async () => {
     const downloadWeb = vi.fn(async () => undefined);
     const shareNative = vi.fn(async () => undefined);
@@ -37,7 +21,7 @@ describe('workflow document file boundary', () => {
     expect(shareNative).toHaveBeenCalledWith(artifact);
   });
 
-  it('reads and canonically imports the 500-file workflow without truncation or an invented size limit', async () => {
+  it('reads through each platform owner and canonically imports the 500-file workflow without truncation', async () => {
     const files = Array.from({ length: 500 }, (_, index) => `src/file-${index}.ts`);
     const source = JSON.stringify({
       kind: 'happier.workflow',
@@ -59,10 +43,19 @@ describe('workflow document file boundary', () => {
         }],
       },
     });
+    const readNative = vi.fn(async () => '{"native":true}');
     const pickedText = await readPickedWorkflowDocument(
       { kind: 'web', file: new File([source], 'review-500.workflow.json') },
-      async () => { throw new Error('native reader should not be used'); },
+      readNative,
     );
+    expect(pickedText).toBe(source);
+    expect(readNative).not.toHaveBeenCalled();
+    const native = await readPickedWorkflowDocument(
+      { kind: 'native', uri: 'file:///review.json', name: 'review.json', sizeBytes: null, mimeType: 'application/json' },
+      readNative,
+    );
+    expect(native).toBe('{"native":true}');
+    expect(readNative).toHaveBeenCalledWith('file:///review.json');
     const imported = importWorkflowDocument({
       source: pickedText,
       currentDraft: createWorkflowEditorDraft({ draftId: 'current' }),
