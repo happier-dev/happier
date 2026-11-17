@@ -9127,6 +9127,14 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 requester registry reads may carry the private
+`registryThemeContent` operand in the original Account envelope. E2EE requests
+keep it inside the encrypted payload; the receiving daemon opens it into host
+context. Ordinary registry Action input remains metadata-only. Matching
+development UI, Protocol and CLI readers must reload together: older strict
+plain-envelope readers reject the added operand, and older encrypted readers do
+not implement it. This adds no Action id, stored format or released ABI change.
+
 Unreleased 0.3 preparation ready results accept optional `artifactSizeBytes` from
 native artifact inspection. The existing private prepared state retains the same
 optional measurement; older records without it remain readable and unknown. The

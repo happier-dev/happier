@@ -150,12 +150,13 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
         return listRegistrySourcesV1({ record: read.record.value, pluginSources: projectPluginRegistrySources(
             readCurrentAppShellPluginUiProjection({ scope: account, declarationsOnly: true })) });
     };
-    const executeOnMachine = async (machineId: string, actionId: ActionId, input: unknown) => {
+    const executeOnMachine = async (machineId: string, actionId: ActionId, input: unknown, registryThemeContent?: true) => {
         const [{ executeOriginalAccountMachineAction }, { randomUUID }] = await Promise.all([
             import('@/sync/api/externalActionAccountTransport'), import('@/platform/randomUUID'),
         ]);
         account.assertCurrent(); context.signal?.throwIfAborted();
         return executeOriginalAccountMachineAction({ account, machineId, actionId, input,
+            ...(registryThemeContent ? { registryThemeContent } : {}),
             requestId: context.actionRequestId ?? randomUUID(), authority: context.authority,
             actionCaller: context.actionCaller, signal: context.signal });
     };
@@ -249,7 +250,8 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
                     ...(request.query === undefined ? {} : { query: request.query }), ...(request.cursor === undefined ? {} : { cursor: request.cursor }) }
                     : { kind: request.kind, sourceId: request.sourceId, itemId: request.itemId,
                         ...(request.version === undefined ? {} : { version: request.version }) };
-                const result = await executeOnMachine(machineId, actionId, input);
+                const result = await executeOnMachine(machineId, actionId, input,
+                    request.op === 'read' ? request.themeContent : undefined);
                 account.assertCurrent(); context.signal?.throwIfAborted();
                 if (!result.ok) throw Object.assign(new Error(result.error), result, { code: result.errorCode });
                 if (actionId === 'registries.items.list') {

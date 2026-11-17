@@ -102,6 +102,7 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
     resourceContinuation?: Parameters<typeof sealExternalActionRequestV2>[0]['resourceContinuation'];
     managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
     machineServiceLogsGeneration?: Parameters<typeof sealExternalActionRequestV2>[0]['machineServiceLogsGeneration'];
+    registryThemeContent?: Parameters<typeof sealExternalActionRequestV2>[0]['registryThemeContent'];
     signal?: AbortSignal;
     /** The invoking Action owns its budget; other Actions retain caller lifetime. */
     timeoutMs?: number;
@@ -151,6 +152,7 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
     try { input = projectNativeJsonValueForTransport(params.input); }
     catch { return failure('invalid_parameters'); }
     const logsOperands = {
+        ...(params.registryThemeContent ? { registryThemeContent: params.registryThemeContent } : {}),
         ...(params.resourceContinuation ? { resourceContinuation: params.resourceContinuation } : {}),
         ...(params.machineServiceLogsGeneration ? { machineServiceLogsGeneration: params.machineServiceLogsGeneration } : {}),
     };
@@ -319,6 +321,7 @@ type OriginalAccountMachineActionParams = Readonly<{
     resourceContinuation?: Parameters<typeof sealExternalActionRequestV2>[0]['resourceContinuation'];
     managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
     machineServiceLogsGeneration?: Parameters<typeof sealExternalActionRequestV2>[0]['machineServiceLogsGeneration'];
+    registryThemeContent?: Parameters<typeof sealExternalActionRequestV2>[0]['registryThemeContent'];
     onTransportIssued?: () => void;
 }>;
 
@@ -386,6 +389,7 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
         ...(params.reviewedChild ? { reviewedChild: params.reviewedChild } : {}),
         ...(params.resourceContinuation ? { resourceContinuation: params.resourceContinuation } : {}),
         ...(params.managedContinuation ? { managedContinuation: params.managedContinuation } : {}),
+        ...(params.registryThemeContent ? { registryThemeContent: params.registryThemeContent } : {}),
         ...(params.machineServiceLogsGeneration ? { machineServiceLogsGeneration: params.machineServiceLogsGeneration } : {}),
         // Open owns checkout effects; an untrusted post-dispatch response cannot
         // authorize a fresh materialization. Read Actions keep their output errors.

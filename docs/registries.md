@@ -95,6 +95,16 @@ Action; the retained registry-install shim uses the same custody with its explic
 Machine target. A received content ACK survives later cancellation or projection
 failure; preview/read content still requires the captured Account to be current.
 
+Theme listing acquisition uses this same requester-safe carrier for tokened
+sources. The placement owner carries the internal `registryThemeContent` operand
+inside the original Account envelope and opens it into executor context; the
+daemon registry host consumes it as `themeContent`. Ordinary
+`registries.items.read` input remains metadata-only. In E2EE mode the operand is
+inside the encrypted request payload. The public Open VSX source keeps its
+existing direct/browser and native/daemon placements. Opening an unversioned theme
+resolves latest in the acquisition itself, without a preceding metadata read.
+
+
 Plugin declarations are read-only locations from the existing lazy contribution
 catalog. Their Account union retains proven Machine suppliers, including retained
 offline declarations for the same Account. Supplier retirement removes the

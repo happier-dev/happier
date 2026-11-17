@@ -1,3 +1,7 @@
+import { initializeArtifactInventoryDemandHarness } from '@/dev/testkit/harness/artifactInventoryDemandHarness';
+import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from '@zip.js/zip.js';
+import { sha256 } from '@noble/hashes/sha256';
+import { bytesToHex } from '@noble/hashes/utils';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { expect, it, vi, onTestFailed, onTestFinished } from 'vitest';
@@ -271,6 +275,92 @@ it('opens an empty web skill recommendation shelf without a daemon browse even w
     await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
     expect(hook.getCurrent()).toMatchObject({ items: [], sourceId: null });
     expect(transport.calls.length).toBe(before);
+});
+
+await initializeArtifactInventoryDemandHarness();
+
+it('opens authenticated Open VSX theme faces through captured requester custody while public reads stay metadata-only', async () => {
+    const machineId = 'private-theme-machine', installationId = 'private-theme-installation', homeIdentityId = 'srv_private_theme_home';
+    const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(19));
+    const machineRow = { ...ExternalActionMachineBootstrapV1Schema.parse({ id: machineId, kind: 'persistent', active: true,
+        installationId, revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
+        access: { custodian: { accountId: 'theme-custodian', displayName: 'Custodian' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } }),
+        installationPublicKey: encodeBase64(installation.publicKey) };
+    const { runnerClaim: _runnerClaim, ...publishedThemeMachine } = machineRow;
+    const themeSource: RegistrySourceV1 = { id: 'requester-private-themes', title: 'Private themes', enabled: true, addedAt: 0,
+        token: { secretRef: 'happier:shared-secret:v1:requester-secret' },
+        format: 'open-vsx', kinds: ['theme'], url: 'https://private-themes.example.test/api' };
+    const themeManifest = { publisher: 'sample', name: 'palette', version: '1.0.0', contributes: { themes: [
+        { label: 'Private Night', uiTheme: 'vs-dark', path: './themes/night.json' },
+    ] } };
+    const themeZip = new ZipWriter(new Uint8ArrayWriter());
+    for (const [path, content] of Object.entries({ 'extension/package.json': themeManifest,
+        'extension/themes/night.json': { colors: { 'editor.background': '#123456' } } })) {
+        await themeZip.add(path, new Uint8ArrayReader(new TextEncoder().encode(JSON.stringify(content))), { useWebWorkers: false });
+    }
+    const themeBytes = await themeZip.close();
+    const themeReads: string[] = [];
+    // Remote HTTP is the boundary; source placement, requester sealing and the full registry adapter stay real.
+    const daemonThemeHost = createRegistryHostV1({ host: 'node', readSources: async () => listRegistrySourcesV1({
+        record: { v: 2, sources: [themeSource], disabledSourceIds: [] }, pluginSources: [] }), http: {
+        async getJson(url) { themeReads.push(url); return { ok: true, fetchedAt: 1, value: url.endsWith('/manifest.json')
+            ? themeManifest : { namespace: 'sample', name: 'palette', version: '1.0.0', files: {
+                manifest: 'https://private-themes.example.test/manifest.json', download: 'https://private-themes.example.test/package.vsix',
+                sha256: 'https://private-themes.example.test/package.sha256' } } }; },
+        async getBytes(url) { themeReads.push(url); return { ok: true, fetchedAt: 1, value: themeBytes }; },
+        async getText(url) { themeReads.push(url); return { ok: true, fetchedAt: 1, value: bytesToHex(sha256(themeBytes)) }; },
+    } });
+    const catalog = createPromptLibraryCatalogBoundary({ records: [{ key: 'registry-sources',
+        value: { v: 2, sources: [themeSource], disabledSourceIds: [] } }] });
+    const homes = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://private-theme-home.example.test',
+        accountId: 'theme-requester', serverIdentityId: homeIdentityId, currentAccount: true }], route: async request => {
+        const catalogResponse = await catalog.handle(request.path, { method: request.method, headers: request.headers,
+            ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) });
+        if (catalogResponse) return catalogResponse;
+        if (request.path === '/v1/machines') return Response.json([machineRow]);
+        if (request.path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(request.body, id => id === machineId
+            ? { ...createPlainMachineRowFixture({ id: machineId, accountId: 'theme-custodian' }), ...publishedThemeMachine } : null);
+        if (!request.path.startsWith('/v1/actions/')) return undefined;
+        expect(request.accountId).toBe('theme-requester');
+        const body = request.body as Readonly<{ envelope: unknown; executionAuthorization?: unknown }>;
+        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body.envelope);
+        const actionId = request.path.split('/')[3]!;
+        expect(actionId).toBe('registries.items.read');
+        if (request.path.endsWith('/execution-authorization')) return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({
+            v: 1, token: 'home-signed-theme-requester', binding: { accountId: request.accountId, authentication: { kind: 'account', tokenEpoch: 0 },
+                serverIdentityId: homeIdentityId, machineId, installationId, custodianAccountId: 'theme-custodian', accountEncryptionMode: 'plain',
+                actionId, requestId: envelope.requestId, target: envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
+        }));
+        expect(openExternalActionRequesterAccountContextV1({ authorization: body.executionAuthorization,
+            purpose: { kind: 'external_action' }, machineId, installationId, serverIdentityId: homeIdentityId,
+            installationPrivateKey: installation.secretKey })).toMatchObject({ token: expect.any(String) });
+        const result = await daemonThemeHost.execute('registries.items.read', envelope.input,
+            envelope.registryThemeContent ? { themeContent: envelope.registryThemeContent } : undefined);
+        return Response.json({ v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result } });
+    } });
+    onTestFinished(async () => { await standardCleanup(); await homes.dispose(); });
+    setRuntimeFetch((input, init) => String(input) === DEFAULT_CURATED_MARKETPLACE_SOURCE_URL
+        ? Promise.resolve(new Response(null, { status: 503 })) : homes.fetch(input, init));
+    await setServerProfileIdentityForUrl(homes.homes.home!.serverUrl, homeIdentityId);
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    const account = await captureLazyActionAccountContext(homes.homes.home!.id);
+    onTestFinished(() => account.dispose());
+    await storage.getState().activateSettingsScope({ serverId: account.serverId, accountId: account.accountId });
+    storage.getState().applySettingsForScope({ serverId: account.serverId, accountId: account.accountId }, storage.getState().settings, 1);
+    await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: machineId, activeAt: Date.now() })]);
+    const port = createUiPromptLibraryArtifactStore(account.workflowArtifacts, account).organization!;
+    transport.calls.length = 0;
+    const host = await createUiRegistryHostV1(account, port, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+    expect(REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await host.execute('registries.items.read',
+        { kind: 'theme', sourceId: themeSource.id, itemId: 'sample/palette' })).item.payload).toMatchObject({ kind: 'theme', state: 'listing' });
+    expect(themeReads).toHaveLength(2);
+    themeReads.length = 0;
+    const privateTheme = await host.readRegistryTheme({ sourceId: themeSource.id, itemId: 'sample/palette' });
+    expect(privateTheme.item.payload.themes[0]).toMatchObject({ mode: 'dark', document: { profile: {
+        assetAppearance: 'dark', overrides: { dark: { 'background.canvas': '#123456' } },
+    } } });
+    expect(themeReads).toHaveLength(4);
+    expect(transport.calls).toEqual([]);
 });
 
 it('refreshes daemon-created sources in the UI and reads tokened sources through the captured requester Account', async () => {
