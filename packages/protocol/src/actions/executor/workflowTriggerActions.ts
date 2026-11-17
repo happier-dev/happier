@@ -1542,9 +1542,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     add: async (raw: WorkflowTriggerAddRequestV1, caller?: Caller) => {
       const input = WorkflowTriggerAddRequestV1Schema.parse(raw);
       if (!('lifetimeSession' in input) || input.lifetimeSession === undefined) return actions.add(input, caller);
-      const { lifetimeSession, ...fields } = input;
+      const { lifetimeSession, workflow, target, ...fields } = input;
       return sessionActions.sessionAdd({ ...fields,
-        target: input.target ?? { kind: 'workflow', ref: input.workflow! },
+        target: target ?? { kind: 'workflow', ref: workflow! },
         sessionId: lifetimeSession.sessionId,
         ...(lifetimeSession.onComplete === undefined ? {} : { onComplete: lifetimeSession.onComplete }) }, caller);
     },

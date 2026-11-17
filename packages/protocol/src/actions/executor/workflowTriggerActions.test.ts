@@ -1971,6 +1971,22 @@ describe('workflow trigger Automation composition', () => {
     expect(f.rows.size).toBe(1);
   });
 
+  it.each(['workflow', 'target'] as const)('links a Workflow with Session lifetime through the public %s input', async form => {
+    const f = fixture();
+    const actions = createWorkflowTriggerActions({ ...f.deps,
+      resolveSession: async () => ({ project, nativeGoalOwner: false }) });
+    const result = await f.executor(actions).execute('workflow.trigger.add', {
+      lifetimeSession: { sessionId: 'session-link' },
+      ...(form === 'workflow' ? { workflow } : { target: { kind: 'workflow', ref: workflow } }),
+      trigger,
+    }, { surface: 'ui', authority: 'present_user', actionsSettings: triggerAdmissionWaiver });
+    expect(result).toMatchObject({ ok: true, result: { set: {
+      scopeSessionId: 'session-link', project, target: { kind: 'workflow', ref: workflow },
+    } } });
+    expect([...f.rows.values()]).toMatchObject([{ scopeSessionId: 'session-link',
+      assignments: [{ machineId: project.machineId }] }]);
+  });
+
   it('keeps the watched Session independent from habit lifetime and refuses mismatched execution placement', async () => {
     const f = fixture();
     const boundary = f.executor(createWorkflowTriggerActions({ ...f.deps,
