@@ -9,6 +9,5 @@ export async function readBundledPluginUiDeclarationAsset(
     asset: BundledPluginUiAppArtifactFile['asset'],
 ): Promise<PluginHostBundledUiDeclaration> {
     const bytes = await readBundledAssetBytes(asset);
-    if (!bytes) throw new Error('Bundled plugin declaration asset is unavailable');
     return JSON.parse(new TextDecoder().decode(bytes));
 }

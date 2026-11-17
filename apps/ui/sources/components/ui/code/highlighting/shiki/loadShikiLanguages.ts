@@ -14,7 +14,6 @@ function loadRegistration(asset: AssetModule): Promise<LanguageRegistration> {
     if (cached) return cached;
     const promise = (async () => {
         const bytes = await readBundledAssetBytes(asset);
-        if (!bytes) throw new Error('Packaged Shiki grammar is unavailable');
         return JSON.parse(new TextDecoder().decode(bytes)) as LanguageRegistration;
     })().catch(error => {
         registrations.delete(asset);
