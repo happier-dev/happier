@@ -1,3 +1,4 @@
+import { getDbProviderFromEnv, prismaRuntime } from '@/storage/prisma';
 import { computeTeamCredentialSourceMemberKeyV1, matchesTeamCredentialSourceVersionBasisV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import { TeamCredentialDeliveryModeV1Schema, TeamCredentialDisclosureCeilingV1Schema, TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialResourceAudienceGrantV1Schema, TeamCredentialResourceMemberGrantV1Schema, TeamCredentialResourceSummaryV1Schema, TeamCredentialSessionUsePolicyV1Schema, decodeTeamCredentialResourcesCursorV1, encodeTeamCredentialResourcesCursorV1, teamCredentialResourcesQueryKeyV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { TeamCredentialSourceBindingV1Schema, type TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams/credentials/sourceBindingV1';
@@ -25,7 +26,9 @@ import { readTeamCredentialBrokerPlacement } from "./brokerPlacementResolver";
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import {
     projectTeamCredentialEntitlement,
+    isTeamCredentialEntitlementCatalogVisible,
     type TeamCredentialEntitlementDecision,
+    teamCredentialRecipientCatalogSql,
 } from "./resourceAccess";
 import { isEffectiveTeamMembership, type TeamMembershipLifetimeContext } from "../memberships/effectiveMembership";
 import { isEffectiveTeamGroupMembership, type TeamGroupMembershipLifetimeContext } from "../groups/effectiveGroupMembership";
@@ -47,6 +50,9 @@ import { classifyTeamCredentialBrokerMachineEligibility } from './brokerMachineE
 import { projectMachinePoolPrivateLabelForRecipient } from '@/app/machines/pools/privateLabels';
 import { projectTeamCredentialResourceAdministrationCapabilities } from './resourceAdministrationCapabilities';
 import { projectTeamCredentialResourceDisplayNameForRecipient } from './privateLabels';
+import { isServerFeatureEnabledForHome } from '@/app/features/catalog/serverFeatureGate';
+import { resourceTeamShareScopeV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
+import { resolveTeamResourceGrantMatchedContributionsFromFacts } from '../resourceGrantAccess';
 import {
     evaluateTeamCredentialUsageAdmissionLimitsForResourcesInTx,
     type TeamCredentialUsageAdmissionLimitEvaluation,
@@ -729,7 +735,6 @@ async function projectCatalogEntryInTx(
         serialized: row.displayName,
         recipientAccountId: actorAccountId,
     });
-    if (displayName === null) return null;
     const usageCapabilities = resolveCurrentTeamCredentialUsageCapabilitiesForResource({
         allMembersDeliveryMode: row.allMembersDeliveryMode,
         groupGrants: audience.groupGrants,
@@ -754,10 +759,12 @@ async function projectCatalogEntryInTx(
         usageCapabilities,
     });
 
+    if (!isTeamCredentialEntitlementCatalogVisible(entitlement)) return null;
+    // A malformed opaque label cannot hide an otherwise admitted resource.
+    if (displayName === null) return projectCorruptCatalogEntry();
     if (!entitlement.ok) {
         // These failures are returned only after the shared owner matched an
         // audience grant; unavailable source/delivery facts do not erase it.
-        if (entitlement.reason !== "resource_corrupt" && entitlement.reason !== "source_owner_required") return null;
         const policy = TeamCredentialResourceCatalogEntryV1Schema.shape.sessionUsePolicy.safeParse(row.sessionUsePolicy);
         const projected = TeamCredentialResourceCatalogEntryV1Schema.safeParse({
             id: row.id,
@@ -953,13 +960,34 @@ type CredentialReadInput = Readonly<{
     filter?: 'all' | 'needs_attention' | 'brokered' | 'direct' | 'external_api';
 }>;
 
+/** Recipient metadata counts share the catalog's admitted candidate owner. */
+export async function countTeamCredentialResourcesInTx(tx: Tx, input: CredentialReadInput) {
+    if (!await isServerFeatureEnabledForHome('teams.credentialResources', { tx, env: input.authentication.env })) {
+        return { ok: false as const, error: 'feature_disabled' as const };
+    }
+    const actor = await resolveTeamActorContextInTx(tx, input);
+    if (!actor?.capabilities.viewTeam) return { ok: false as const, error: 'not_found_or_not_visible' as const };
+    const qualification = await qualifyTeamCredentialOperationInTx(tx, actor, input.authentication);
+    if (!qualification.ok) return qualification;
+    const sql = prismaRuntime.sql;
+    const resourceTable = prismaRuntime.raw(getDbProviderFromEnv(process.env, 'postgres') === 'mysql'
+        ? '`TeamCredentialResource`' : '"TeamCredentialResource"');
+    const predicate = teamCredentialRecipientCatalogSql({ accountId: input.actorAccountId,
+        teamIds: [input.teamId], resourceId: input.resourceId });
+    const [row] = await tx.$queryRaw<{ count: bigint | number }[]>(sql`
+        SELECT COUNT(*) AS count FROM ${resourceTable} a WHERE ${predicate}
+    `);
+    const count = Number(row?.count ?? 0);
+    return { ok: true as const, count };
+}
+
 export async function readTeamCredentialCatalogInTx(tx: Tx, input: CredentialReadInput) {
     const actor = await resolveTeamActorContextInTx(tx, input);
     if (!actor?.capabilities.viewTeam) return { ok: false as const, error: "not_found_or_not_visible" as const };
     const qualification = await qualifyTeamCredentialOperationInTx(tx, actor, input.authentication);
     if (!qualification.ok) return qualification;
     const queryKey = `v1:credential-recipient:${input.teamId}:${input.application ? JSON.stringify(input.application) : ''}${input.resourceId ? `:resource:${JSON.stringify(input.resourceId)}` : ''}`;
-    return readAdmittedTeamCredentialCatalogInTx(tx, { ...input, teamIds: [input.teamId], queryKey });
+    return readAdmittedTeamCredentialCatalogInTx(tx, { ...input, teamIds: [input.teamId], queryKey, selectedTeamScope: true });
 }
 
 /** One Account/application read; the existing authority and qualification owners decide every Team. */
@@ -999,6 +1027,7 @@ export async function readTeamCredentialDiscoveryInTx(tx: Tx, input: Omit<Creden
 async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<CredentialReadInput, 'teamId'> & Readonly<{
     teamIds: readonly string[];
     queryKey: string;
+    selectedTeamScope?: true;
 }>) {
     const limit = input.limit ?? 50;
     const queryKey = input.queryKey;
@@ -1008,7 +1037,7 @@ async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<Credent
     const projected: Array<{ row: ResourceRow; resource: NonNullable<Awaited<ReturnType<typeof projectCatalogEntryInTx>>> }> = [];
     const projectionFactsByResourceId = new Map<string, Parameters<NonNullable<Parameters<typeof projectCatalogEntryInTx>[7]>>[0]>();
     const candidateWindow = await readTeamCredentialResourceCandidatesInTx(tx, {
-        selection: { kind: 'recipient', teamIds: input.teamIds, resourceId: input.resourceId }, after, limit,
+        selection: { kind: 'recipient', accountId: input.actorAccountId, teamIds: input.teamIds, resourceId: input.resourceId }, after, limit,
     });
     const hasMoreCandidates = candidateWindow.length > limit;
     const candidates = candidateWindow.slice(0, limit);
@@ -1072,7 +1101,18 @@ async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<Credent
                 custodianMembership: custodianRow ? projectExternalKeyMembership(custodianRow) : null,
                 groupMemberships: actorGroups,
             });
-            return { row, index, audience, entitlement,
+            const scopeContributions = input.selectedTeamScope ? resolveTeamResourceGrantMatchedContributionsFromFacts({
+                teamId: row.teamId, membership: actorMembership, groupMemberships: actorGroups,
+                grants: [
+                    ...(row.allMembersDeliveryMode === null ? [] : [{ principal: { kind: 'team' as const }, contribution: 'team' as const }]),
+                    ...audience.groupGrants.map(grant => ({ principal: { kind: 'team_group' as const, teamGroupId: grant.teamGroupId }, contribution: 'group' as const })),
+                    ...audience.memberGrants.map(grant => ({ principal: { kind: 'team_member' as const, teamMembershipId: grant.teamMembershipId }, contribution: 'team' as const })),
+                ],
+            }) : [];
+            const sharedWithTeamScope = input.selectedTeamScope ? resourceTeamShareScopeV1({
+                team: scopeContributions.includes('team'), group: scopeContributions.includes('group'),
+            }) : undefined;
+            return { row, index, audience, entitlement, sharedWithTeamScope,
                 sourceOwnerDisplayName: custodianRow ? resolveAccountDisplayLabelV1(custodianRow.account) : null };
         });
         const usageEvaluations = await evaluateTeamCredentialUsageAdmissionLimitsForResourcesInTx(tx, {
@@ -1081,9 +1121,10 @@ async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<Credent
             )),
             actorAccountId: input.actorAccountId,
         });
-        const page = await Promise.all(candidateProjectionInputs.map(async ({ row, index, audience, entitlement, sourceOwnerDisplayName }) => ({
+        const page = await Promise.all(candidateProjectionInputs.map(async ({ row, index, audience, entitlement, sourceOwnerDisplayName, sharedWithTeamScope }) => ({
             row,
             sourceOwnerDisplayName,
+            sharedWithTeamScope,
             resource: await projectCatalogEntryInTx(
                 tx,
                 row,
@@ -1106,6 +1147,7 @@ async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<Credent
         })));
         projected.push(...page.flatMap(value => value.resource ? [{ row: value.row, resource: {
             ...value.resource, sourceOwnerDisplayName: value.sourceOwnerDisplayName,
+            ...(value.sharedWithTeamScope === undefined ? {} : { sharedWithTeamScope: value.sharedWithTeamScope }),
         } }] : []));
     }
     const selected = projected.slice(0, limit);

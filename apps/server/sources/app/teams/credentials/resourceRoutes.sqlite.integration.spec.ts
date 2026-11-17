@@ -125,6 +125,30 @@ describe("Team credential resource routes (SQLite integration)", () => {
         expect(result.statusCode, result.body).toBe(200);
         expect(result.json().resources.map((row: { id: string }) => row.id)).toEqual([resources[1]!.id]);
         expect(result.json().nextCursor).toBeNull();
+        for (const url of ["/v1/teams/credential-resources/entitled/list", TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1]) {
+            const payload = url === TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1
+                ? { teamIds: [team.id] } : input;
+            const custodian = await post(url, owner.id, payload);
+            expect(custodian.statusCode, custodian.body).toBe(200);
+            expect(custodian.json().resources).toEqual([]);
+            const member = await post(url, recipient.id, payload);
+            expect(member.statusCode, member.body).toBe(200);
+            expect(member.json().resources.map((row: { id: string }) => row.id)).toEqual(
+                url === TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1 ? resources.map(row => row.id).sort() : [resources[1]!.id]);
+        }
+        const foreign = await db.teamCredentialResource.create({ data: {
+            id: `zz-foreign-${team.id}`, teamId: team.id, custodianAccountId: recipient.id,
+            displayName: "Member source", sourceBindingJson: "{}", disclosureCeiling: "brokered_only",
+            sessionUsePolicy: "personal_allowed", allMembersDeliveryMode: "brokered",
+        } });
+        for (const url of ["/v1/teams/credential-resources/entitled/list", TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1]) {
+            const payload = url === TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1
+                ? { teamIds: [team.id], limit: 1 } : { teamId: team.id, limit: 1 };
+            const page = await post(url, owner.id, payload);
+            expect(page.statusCode, page.body).toBe(200);
+            expect(page.json().resources.map((row: { id: string }) => row.id)).toEqual([foreign.id]);
+            expect(page.json().nextCursor).toBeNull();
+        }
         await db.teamCredentialResource.update({ where: { id: resources[1]!.id }, data: { allMembersDeliveryMode: null } });
         const withdrawn = await read();
         expect(withdrawn.statusCode, withdrawn.body).toBe(200);

@@ -1,15 +1,13 @@
-import { resolveTeamMembershipContextInTx, resolveTeamMembershipContextsInTx, type TeamMembershipLifetimeContext } from "../memberships/effectiveMembership";
-import { resolveTeamGroupMembershipsForAccountInTx, resolveTeamGroupMembershipsForAccountsInTx, type TeamGroupMembershipLifetimeContext } from "../groups/effectiveGroupMembership";
+import { resolveTeamMembershipContextsInTx, type TeamMembershipLifetimeContext } from "../memberships/effectiveMembership";
+import { resolveTeamGroupMembershipsForAccountsInTx, type TeamGroupMembershipLifetimeContext } from "../groups/effectiveGroupMembership";
 import type { Tx } from "@/storage/inTx";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
+import { getDbProviderFromEnv, prismaRuntime } from '@/storage/prisma';
 import { TEAM_CREDENTIAL_ROUTES_V1, type TeamCredentialRouteV1, type TeamCredentialDeliveryPolicyV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { readTeamCredentialAllowedRoutes, readTeamCredentialDeliveryConfiguration } from './resourceDeliveryRead';
-import { isTeamPrincipalRoleV1 } from '@happier-dev/protocol/teams';
+import { resourceGrantMembershipSqlPredicate, resolveTeamResourceGrantMatchedContributionsFromFacts, type ResourceGrantTeamPrincipal } from '../resourceGrantAccess';
 
-export type TeamCredentialMatchedGrant =
-    | Readonly<{ kind: "team" }>
-    | Readonly<{ kind: "team_group"; teamGroupId: string }>
-    | Readonly<{ kind: "team_member"; teamMembershipId: string }>;
+export type TeamCredentialMatchedGrant = ResourceGrantTeamPrincipal;
 
 export type TeamCredentialEntitlementInput = Readonly<{
     resource: Readonly<{
@@ -40,6 +38,74 @@ export type TeamCredentialEntitlementDecision =
         mayReceiveDirect: boolean;
     }>
     | Readonly<{ ok: false; reason: "access_removed" | "disabled" | "resource_corrupt" | "source_owner_required" }>;
+
+/** Matched audiences retain unavailable source/configuration rows in their catalog. */
+export function isTeamCredentialEntitlementCatalogVisible(entitlement: TeamCredentialEntitlementDecision): boolean {
+    return entitlement.ok || entitlement.reason === 'resource_corrupt' || entitlement.reason === 'source_owner_required';
+}
+
+/** One eligibility projection for recipient pages and scalar metadata counts.
+ * Principal arms start at their existing indexes. Custodian withdrawal is tested
+ * against the resource's own Team, retaining the same unavailable-source row as
+ * projectTeamCredentialEntitlement without expanding one predicate per Team.
+ * The caller supplies the resource table as alias `a`.
+ */
+export function teamCredentialRecipientCatalogSql(input: Readonly<{
+    accountId: string; teamIds: readonly string[]; resourceId?: string;
+}>): ReturnType<typeof prismaRuntime.sql> {
+    const sql = prismaRuntime.sql;
+    if (input.teamIds.length === 0) return sql`1 = 0`;
+    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    const identifier = (name: string) => prismaRuntime.raw(provider === 'mysql'
+        ? `\`${name.replaceAll('`', '``')}\`` : `"${name.replaceAll('"', '""')}"`);
+    const column = (alias: string, name: string) => sql`${identifier(alias)}.${identifier(name)}`;
+    const members = identifier('TeamMembership');
+    const accounts = identifier('Account');
+    const teams = identifier('Team');
+    const resources = identifier('TeamCredentialResource');
+    const member = resourceGrantMembershipSqlPredicate({ actorAccountId: input.accountId,
+        membershipAlias: 'm', accountAlias: 'c', teamAlias: 't', principal: 'member' });
+    const teamMember = resourceGrantMembershipSqlPredicate({ actorAccountId: input.accountId,
+        membershipAlias: 'm', accountAlias: 'c', teamAlias: 't', principal: 'team' });
+    const custodian = resourceGrantMembershipSqlPredicate({ actorAccountId: column('a', 'custodianAccountId'),
+        membershipAlias: 'cm', accountAlias: 'cc', teamAlias: 'ct', principal: 'member' });
+    return sql`${column('a', 'teamId')} IN (${prismaRuntime.join([...input.teamIds])})
+        AND ${column('a', 'custodianAccountId')} <> ${input.accountId}
+        ${input.resourceId === undefined ? sql`` : sql`AND ${column('a', 'id')} = ${input.resourceId}`}
+        AND (${column('a', 'enabled')} = ${true} OR NOT EXISTS (
+            SELECT 1 FROM ${members} cm
+            JOIN ${accounts} cc ON ${column('cc', 'id')} = ${column('cm', 'accountId')}
+            JOIN ${teams} ct ON ${column('ct', 'id')} = ${column('cm', 'teamId')}
+            WHERE ${column('cm', 'teamId')} = ${column('a', 'teamId')} AND ${custodian}
+        ))
+        AND ${column('a', 'id')} IN (
+            SELECT ${column('r', 'id')} FROM ${members} m
+            JOIN ${accounts} c ON ${column('c', 'id')} = ${column('m', 'accountId')}
+            JOIN ${teams} t ON ${column('t', 'id')} = ${column('m', 'teamId')}
+            JOIN ${resources} r ON ${column('r', 'teamId')} = ${column('m', 'teamId')}
+            WHERE ${teamMember} AND ${column('r', 'allMembersDeliveryMode')} IS NOT NULL
+            UNION ALL
+            SELECT ${column('g', 'resourceId')} FROM ${members} m
+            JOIN ${accounts} c ON ${column('c', 'id')} = ${column('m', 'accountId')}
+            JOIN ${teams} t ON ${column('t', 'id')} = ${column('m', 'teamId')}
+            JOIN ${identifier('TeamGroupMembership')} gm ON ${column('gm', 'teamMembershipId')} = ${column('m', 'id')}
+                AND ${column('gm', 'teamId')} = ${column('m', 'teamId')}
+            JOIN ${identifier('TeamGroup')} gr ON ${column('gr', 'id')} = ${column('gm', 'teamGroupId')}
+                AND ${column('gr', 'teamId')} = ${column('m', 'teamId')}
+            JOIN ${identifier('TeamCredentialGroupGrant')} g ON ${column('g', 'teamGroupId')} = ${column('gr', 'id')}
+            JOIN ${resources} r ON ${column('r', 'id')} = ${column('g', 'resourceId')}
+                AND ${column('r', 'teamId')} = ${column('m', 'teamId')}
+            WHERE ${member} AND ${column('gr', 'archivedAt')} IS NULL
+            UNION ALL
+            SELECT ${column('g', 'resourceId')} FROM ${members} m
+            JOIN ${accounts} c ON ${column('c', 'id')} = ${column('m', 'accountId')}
+            JOIN ${teams} t ON ${column('t', 'id')} = ${column('m', 'teamId')}
+            JOIN ${identifier('TeamCredentialMemberGrant')} g ON ${column('g', 'teamMembershipId')} = ${column('m', 'id')}
+            JOIN ${resources} r ON ${column('r', 'id')} = ${column('g', 'resourceId')}
+                AND ${column('r', 'teamId')} = ${column('m', 'teamId')}
+            WHERE ${member}
+        )`;
+}
 
 /** Resolve current database authority in the transaction that admits resource use. */
 export async function resolveTeamCredentialEntitlementInTx(
@@ -96,79 +162,34 @@ export async function resolveTeamCredentialEntitlementsInTx(
     })]));
 }
 
-/**
- * Determines only whether a current Team principal is named by an audience.
- * This deliberately does not reinterpret a corrupt grant as usable; it lets
- * the catalog keep an already-authorized row visible as `resource_corrupt`
- * while the entitlement decision itself continues to fail closed.
- */
-export async function hasCurrentTeamCredentialAudienceMatchInTx(
-    tx: Tx,
-    input: Readonly<{ resourceId: string; accountId: string }>,
-): Promise<boolean> {
-    const resource = await tx.teamCredentialResource.findUnique({
-        where: { id: input.resourceId },
-        select: {
-            teamId: true,
-            allMembersDeliveryMode: true,
-            groupGrants: { select: { teamGroupId: true } },
-            memberGrants: { select: { teamMembershipId: true } },
-        },
-    });
-    if (!resource) return false;
-    const membershipRow = await tx.teamMembership.findUnique({
-        where: { teamId_accountId: { teamId: resource.teamId, accountId: input.accountId } },
-        select: { id: true },
-    });
-    if (!membershipRow) return false;
-    const membershipResult = await resolveTeamMembershipContextInTx(tx, {
-        teamId: resource.teamId,
-        teamMembershipId: membershipRow.id,
-        expectedAccountId: input.accountId,
-    });
-    if (!membershipResult.ok || !membershipResult.membership.effective) return false;
-    if (resource.allMembersDeliveryMode !== null && isTeamPrincipalRoleV1(membershipResult.membership.role)) return true;
-    if (resource.memberGrants.some(grant => grant.teamMembershipId === membershipRow.id)) return true;
-    const groupMemberships = resource.groupGrants.length === 0 ? [] : await resolveTeamGroupMembershipsForAccountInTx(tx, {
-        teamId: resource.teamId, credentialResourceId: input.resourceId, accountId: input.accountId,
-    });
-    return groupMemberships.some(group => group.effective);
-}
-
 /** Current audience entitlement only; source readiness and Session policy remain required. */
 export function projectTeamCredentialEntitlement(
     input: TeamCredentialEntitlementInput,
 ): TeamCredentialEntitlementDecision {
-    const { resource, membership, custodianMembership } = input;
-    if (!membership?.effective || membership.teamId !== resource.teamId) {
-        return { ok: false, reason: "access_removed" };
-    }
+    const { resource, custodianMembership } = input;
 
     const candidates = [
         ...(resource.allMembersDeliveryMode === null ? [] : [{
             source: { kind: "team" } as const,
             mode: resource.allMembersDeliveryMode,
-            matches: isTeamPrincipalRoleV1(membership.role),
         }]),
         ...resource.groupGrants.map(grant => ({
             source: { kind: "team_group", teamGroupId: grant.teamGroupId } as const,
             mode: grant.deliveryMode,
-            matches: input.groupMemberships.some(group => group.effective
-                && group.teamId === resource.teamId
-                && group.accountId === membership.accountId
-                && group.teamMembershipId === membership.teamMembershipId
-                && group.teamGroupId === grant.teamGroupId),
         })),
         ...resource.memberGrants.map(grant => ({
             source: { kind: "team_member", teamMembershipId: grant.teamMembershipId } as const,
             mode: grant.deliveryMode,
-            matches: grant.teamMembershipId === membership.teamMembershipId,
         })),
     ];
+    const matched = new Set(resolveTeamResourceGrantMatchedContributionsFromFacts({
+        teamId: resource.teamId, membership: input.membership, groupMemberships: input.groupMemberships,
+        grants: candidates.map(candidate => ({ principal: candidate.source, contribution: candidate })),
+    }));
     // Custodian standing, enablement and the source owner's ceiling are the
     // audience's business. A same-Team caller who matches no grant learns only
     // that they have no access, exactly as the catalog read already decides.
-    if (!candidates.some((candidate) => candidate.matches)) {
+    if (matched.size === 0) {
         return { ok: false, reason: "access_removed" };
     }
     if (!custodianMembership?.effective || custodianMembership.teamId !== resource.teamId
@@ -188,7 +209,7 @@ export function projectTeamCredentialEntitlement(
         if (!routes.success || routes.data.some(route => !allowed.includes(route))) {
             return { ok: false, reason: "resource_corrupt" };
         }
-        if (!candidate.matches) continue;
+        if (!matched.has(candidate)) continue;
         matchedGrants.push(candidate.source);
         for (const route of routes.data) entitledRoutes.add(route);
     }

@@ -44,7 +44,7 @@ export function teamCredentialUnavailableReason(
         case 'limit_reached': return [
             t('teams.credentials.limits.reached'), limitMetricLabel(readiness.metric), formatLimitResetUtc(readiness.resetsAtUtc),
         ].filter((part): part is string => Boolean(part)).join(' · ');
-        case 'resource_corrupt':
+        case 'resource_corrupt': return resourceStateLabel(readiness);
         case 'resource_unavailable': return t('teams.credentials.detail.notFound');
     }
 }
@@ -58,7 +58,7 @@ function teamCredentialModelUnavailableReason(
     switch (row.availability) {
         case 'available': return teamCredentialUnavailableReason(resource, row.selection.deliveryMode, short);
         case 'source_owner_required': return t(short ? 'teams.credentials.unavailableShort.askOwner' : 'teams.credentials.errors.sourceOwnerRequired');
-        case 'resource_corrupt': return short ? resourceShortUnavailableLabel({ kind: 'resource_corrupt' }) : t('teams.credentials.detail.notFound');
+        case 'resource_corrupt': return short ? resourceShortUnavailableLabel({ kind: 'resource_corrupt' }) : resourceStateLabel({ kind: 'resource_corrupt' });
         case 'policy_denied': return short ? resourceShortUnavailableLabel({ kind: 'policy_denied' }) : t('teams.credentials.forbidden');
     }
 }

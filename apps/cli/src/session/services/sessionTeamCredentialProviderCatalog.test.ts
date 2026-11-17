@@ -206,7 +206,7 @@ describe('Session Team runtime catalog', () => {
       const worker = await createManagedRunLaunchFixture();
       try {
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-          id: 'resource', teamId: 'team', displayName: resourceDisplayName, resourceRevision: 1,
+          id: 'resource', teamId: 'team', displayName: readiness.kind === 'resource_corrupt' ? null : resourceDisplayName, resourceRevision: 1,
           readiness, recoveryAction: readiness.kind === 'source_unavailable' ? 'source_owner_action' : null,
           mayBroker: true, mayReceiveDirect: true,
           directMaterialState: 'current', sessionUsePolicy: 'personal_allowed', connectedServiceSelections: [],

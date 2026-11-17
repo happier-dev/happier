@@ -21,7 +21,7 @@ export function resourceStateLabel(
     switch (state) {
         case 'available': return t('teams.credentials.state.available');
         case 'resource_unavailable': return t('teams.credentials.state.disabled');
-        case 'resource_corrupt':
+        case 'resource_corrupt': return t('common.unavailable');
         case 'source_unavailable': return t('teams.credentials.errors.sourceMissing');
         case 'broker_unavailable': return t('teams.credentials.errors.brokerUnavailable');
         case 'update_required': return t('teams.unavailable.updateRequired');
@@ -48,7 +48,7 @@ export function resourceShortUnavailableLabel(
         case 'source_unavailable': return teamCredentialReconnectPresentation(readiness.reason)
             ? presentConnectedAccountSignedOut().state
             : t('teams.credentials.unavailableShort.sourceRemoved');
-        case 'resource_corrupt':
+        case 'resource_corrupt': return t('common.unavailable');
         case 'resource_unavailable': return t('teams.credentials.unavailableShort.sourceRemoved');
         case 'update_required': return t('teams.credentials.unavailableShort.updateNeeded');
         case 'policy_denied': return t('teams.credentials.unavailableShort.notAllowed');

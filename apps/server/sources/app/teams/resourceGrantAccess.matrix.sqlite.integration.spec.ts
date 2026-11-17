@@ -47,4 +47,33 @@ describe('grant policy facts / Prisma / SQL equivalence', () => {
             }
         });
     });
+
+    it('narrows Team and Group grant arms to the selected Team without widening administrator Group access', async () => {
+        const [owner, administrator, groupMember] = await Promise.all(Array.from({ length: 3 }, () => db.account.create({ data: { encryptionMode: 'plain' } })));
+        const teams = await Promise.all(['Selected', 'Other'].map(name => db.team.create({ data: { name } })));
+        const resources: string[] = [];
+        for (const team of teams) {
+            await db.teamMembership.createMany({ data: [
+                { teamId: team.id, accountId: administrator.id, role: 'admin' },
+                { teamId: team.id, accountId: groupMember.id, role: 'member' },
+            ] });
+            const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Members only' } });
+            const member = await db.teamMembership.findUniqueOrThrow({ where: { teamId_accountId: { teamId: team.id, accountId: groupMember.id } } });
+            await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: member.id, nativeContribution: true } });
+            for (const principal of [{ principalKind: 'team' as const, teamId: team.id },
+                { principalKind: 'group' as const, teamGroupId: group.id }]) {
+                const artifact = await db.artifact.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
+                    header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array() } });
+                resources.push(artifact.id);
+                await db.artifactGrant.create({ data: { artifactId: artifact.id, ...principal, accessLevel: 'view', createdByAccountId: owner.id } });
+            }
+        }
+        await inReadSnapshot(async tx => {
+            for (const [actor, expected] of [[administrator, [resources[0]!]], [groupMember, resources.slice(0, 2)]] as const) {
+                const arms = resourceGrantArmWheres(actor.id, teams[0]!.id);
+                const grants = await tx.artifactGrant.findMany({ where: { OR: [arms.team, arms.group] }, select: { artifactId: true } });
+                expect(grants.map(row => row.artifactId).sort()).toEqual([...expected].sort());
+            }
+        });
+    });
 });

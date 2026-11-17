@@ -11,6 +11,12 @@ export const ResourceAccessLevelV1Schema = lazyZodSchema(() => z.enum(['view', '
 export type ResourceAccessLevelV1 = z.infer<typeof ResourceAccessLevelV1Schema>;
 export const ResourceCallerAccessV1Schema = lazyZodSchema(() => z.enum(['owner', 'view', 'edit', 'admin']));
 export type ResourceCallerAccessV1 = z.infer<typeof ResourceCallerAccessV1Schema>;
+/** Selected-Team page provenance, without disclosing private Group identities. */
+export const ResourceTeamShareScopeV1Schema = z.enum(['team', 'group', 'team_and_group']);
+export type ResourceTeamShareScopeV1 = z.infer<typeof ResourceTeamShareScopeV1Schema>;
+export function resourceTeamShareScopeV1(input: Readonly<{ team: boolean; group: boolean }>): ResourceTeamShareScopeV1 | undefined {
+  return input.team ? input.group ? 'team_and_group' : 'team' : input.group ? 'group' : undefined;
+}
 export const ResourceAccessGrantRowV1Schema = lazyZodSchema(() => z.strictObject({
   principal: PrincipalRefV1Schema,
   accessLevel: ResourceAccessLevelV1Schema,

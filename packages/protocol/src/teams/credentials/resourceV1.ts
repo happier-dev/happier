@@ -1,5 +1,6 @@
 import { ConnectedAccountDirectExportProjectionV1Schema } from '../../connect/pluginConnectedAccountAuthenticationV2.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { ResourceTeamShareScopeV1Schema } from '../resourceGrantAccessV1.js';
 import { TeamCredentialResourceCustodianListInputV1Schema } from './resourceSelectionV1.js';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '../../connect/connectedServiceUxDiagnostics.js';
 import { z } from '../../zodRuntimePolicy.js';
@@ -538,11 +539,12 @@ export const TeamCredentialResourceRecoveryActionV1Schema = lazyZodSchema(() => 
 ]));
 
 export const TeamCredentialResourceCatalogEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  sharedWithTeamScope: z.optional(ResourceTeamShareScopeV1Schema),
   /** Public human label for recovery; no private source Account identity. */
   sourceOwnerDisplayName: sourceOwnerDisplayNameV1Schema,
   id: z.string(),
   teamId: z.string(),
-  displayName: PrivateLabelReadV1Schema,
+  displayName: z.nullable(PrivateLabelReadV1Schema),
   resourceRevision: z.number().check(z.int(), z.nonnegative()),
   readiness: TeamCredentialResourceReadinessV1Schema,
   recoveryAction: z.nullable(TeamCredentialResourceRecoveryActionV1Schema),

@@ -278,7 +278,7 @@ export function resourceAdministrationSummaryLines(
  * a row out from under someone who is reaching for it. Ties fall back to the
  * resource id so two identically named resources still have a stable order.
  */
-export function orderTeamCredentialResources<T extends Pick<TeamCredentialResourceSummaryV1, 'id' | 'displayName'>>(
+export function orderTeamCredentialResources<T extends Pick<TeamCredentialResourceSummaryV1, 'id'>>(
     resources: readonly T[],
     displayNames: Readonly<Record<string, string | null>> = {},
 ): readonly T[] {

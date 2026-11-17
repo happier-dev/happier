@@ -32,8 +32,11 @@ afterEach(async () => {
 });
 
 describe('Team catalog private labels in the model picker', () => {
-    it.each([{ locked: false, available: false }, { locked: true, available: false }, { locked: false, available: true }])(
-        'renders recipient labels and selects healthy models (locked=$locked, available=$available)', async ({ locked, available }) => {
+    it.each([
+        { locked: false, available: false, missing: false }, { locked: true, available: false, missing: false },
+        { locked: false, available: true, missing: false }, { locked: false, available: false, missing: true },
+    ])(
+        'renders recipient labels and selects healthy models (locked=$locked, available=$available, missing=$missing)', async ({ locked, available, missing }) => {
         const agentTargetKey = 'agent:happier.agent.pi/pi';
         const serverId = await home.addHome({ name: 'Muse Home', serverUrl: 'https://muse-labels.example.test',
             accountId: 'recipient', teamsEnabled: true, credentialResourcesEnabled: true });
@@ -41,12 +44,12 @@ describe('Team catalog private labels in the model picker', () => {
         const resources = ['muse-one', 'muse-two'].map(id => TeamCredentialResourceCatalogEntryV1Schema.parse({
             id, teamId: 'team-1', resourceRevision: 1,
             // The recipient read carrier from READY125, including legacyPlaintext.
-            displayName: locked
+            displayName: missing ? null : locked
                 ? { content: { t: 'encrypted', c: encodeBase64(new Uint8Array(40).fill(7), 'base64') }, recipientEnvelope: null }
                 : { content: { t: 'plain', v: `Shared ${id}` }, recipientEnvelope: null, legacyPlaintext: true },
-            readiness: available ? { kind: 'available' } : { kind: 'broker_unavailable' }, recoveryAction: available ? null : 'source_owner_action',
-            mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
-            connectedServiceSelections: [{ source: 'team_resource', resourceId: id, deliveryMode: 'brokered' }],
+            readiness: missing ? { kind: 'resource_corrupt' } : available ? { kind: 'available' } : { kind: 'broker_unavailable' }, recoveryAction: available ? null : 'source_owner_action',
+            mayBroker: !missing, mayReceiveDirect: false, directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
+            connectedServiceSelections: missing ? [] : [{ source: 'team_resource', resourceId: id, deliveryMode: 'brokered' }],
             providerModels: available ? [{
                 selection: { kind: 'team_credential_provider_model', teamId: 'team-1', resourceId: id,
                     expectedResourceRevision: 1, deliveryMode: 'brokered', agentTargetKey, modelId: `${id}-model` },
@@ -54,7 +57,7 @@ describe('Team catalog private labels in the model picker', () => {
                 application: { agentTargetKey, implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
                     endpointTemplateId: 'responses', protocol: 'openai-responses' },
             }] : [],
-            sourcePresentation: { kind: 'connected_service', service: { pluginId: 'happier.agent.muse', localId: 'muse-account' } },
+            sourcePresentation: missing ? null : { kind: 'connected_service', service: { pluginId: 'happier.agent.muse', localId: 'muse-account' } },
         }));
         home.answer(serverId, '/v1/teams/credential-resources/entitled/list', { body: { resources, nextCursor: null } });
         home.answer(serverId, '/v1/teams/credential-resources/entitled/discover', { body: { resources, nextCursor: null, failures: [] } });
@@ -76,12 +79,22 @@ describe('Team catalog private labels in the model picker', () => {
                 teamNameById={catalog.teamNameById} homeNameByTeamId={catalog.homeNameByTeamId} /></>;
         }
         const screen = await renderScreen(<Picker />);
+        if (missing) {
+            await waitForHomeGovernance(() => {
+                expect(screen.getTextContent()).toContain(`${t('common.unavailable')} (2)`);
+            });
+            await screen.pressByTestIdAsync(`selection-list-section-disclosure:unavailable:${t('common.unavailable')}`);
+        }
         await waitForHomeGovernance(() => {
             const rendered = screen.getTextContent();
-            expect(rendered).toContain(locked ? t('common.unavailable') : 'Shared muse-one');
-            if (!locked) expect(rendered).toContain('Shared muse-two');
+            expect(rendered).toContain(missing ? t('teams.credentials.title') : locked ? t('common.unavailable') : 'Shared muse-one');
+            if (!locked && !missing) expect(rendered).toContain('Shared muse-two');
             expect(rendered).not.toContain(encodeBase64(new Uint8Array(40).fill(7), 'base64'));
             expect(rendered).not.toContain('[object Object]');
+            if (missing) {
+                expect(rendered).not.toContain(t('teams.credentials.unavailableShort.sourceRemoved'));
+                expect(rendered).not.toContain(t('teams.credentials.detail.notFound'));
+            }
         });
         if (available) {
             const chosen = resources[1]!.providerModels[0]!.selection;

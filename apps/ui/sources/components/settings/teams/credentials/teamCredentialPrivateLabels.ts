@@ -1,6 +1,5 @@
 import * as React from 'react';
-import type { PrivateLabelReadV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
-import type { TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams';
+import type { TeamCredentialResourceCatalogEntryV1, TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { teamCredentialDisplayNameBinding } from '@/sync/ops/teams/teamCredentialLabels';
@@ -25,10 +24,7 @@ export function teamCredentialBrokerPoolNameBinding(poolId: string) {
     };
 }
 
-type TeamCredentialLabelCarrier = Readonly<{
-    id: string;
-    displayName: PrivateLabelReadV1;
-}>;
+type TeamCredentialLabelCarrier = Pick<TeamCredentialResourceCatalogEntryV1, 'id' | 'displayName'>;
 
 /** Opens already-authorized resource labels locally; it never fetches detail rows. */
 export function useOpenedTeamCredentialDisplayNames(params: Readonly<{

@@ -176,12 +176,14 @@ export function resolveResourceGrantTeamIdsFromFacts(row: ResourceGrantAccessFac
  * The actor and lifecycle predicates must match the SAME membership row.
  * Resource adapters still own visibility and final private-content admission.
  */
-export function resourceGrantArmWheres(actorAccountId: string) {
+export function resourceGrantArmWheres(actorAccountId: string, sharedWithTeamId?: string) {
     const member = { ...EFFECTIVE_TEAM_MEMBERSHIP_WHERE, accountId: actorAccountId };
     return {
         account: { accountId: actorAccountId, account: { status: 'active' as const } },
-        team: { team: { memberships: { some: { ...member, role: { in: [...TEAM_PRINCIPAL_ROLES_V1] } } } } },
-        group: { teamGroup: { memberships: { some: { ...EFFECTIVE_TEAM_GROUP_MEMBERSHIP_WHERE, teamMembership: member } } } },
+        team: { ...(sharedWithTeamId === undefined ? {} : { teamId: sharedWithTeamId }),
+            team: { memberships: { some: { ...member, role: { in: [...TEAM_PRINCIPAL_ROLES_V1] } } } } },
+        group: { teamGroup: { ...(sharedWithTeamId === undefined ? {} : { teamId: sharedWithTeamId }),
+            memberships: { some: { ...EFFECTIVE_TEAM_GROUP_MEMBERSHIP_WHERE, teamMembership: member } } } },
     };
 }
 
@@ -199,9 +201,34 @@ export async function resolveResourceGrantPageAccessWhere(actorAccountId: string
 
 /** The non-owner arm alone, for lists that already exclude the caller's own resources. */
 export async function resolveReceivedResourceGrantWhere(actorAccountId: string,
-    readGrantedResourceIds: (grants: ReturnType<typeof resourceGrantArmWheres>) => Promise<readonly (readonly string[])[]>) {
-    const granted = await readGrantedResourceIds(resourceGrantArmWheres(actorAccountId));
+    readGrantedResourceIds: (grants: ReturnType<typeof resourceGrantArmWheres>) => Promise<readonly (readonly string[])[]>,
+    sharedWithTeamId?: string) {
+    const granted = await readGrantedResourceIds(resourceGrantArmWheres(actorAccountId, sharedWithTeamId));
     return { id: { in: [...new Set(granted.flat())] } };
+}
+
+/** SQL projection of the effective-membership owner, shared by resource adapters. */
+export function resourceGrantMembershipSqlPredicate(input: Readonly<{
+    actorAccountId: string | ReturnType<typeof prismaRuntime.sql>;
+    membershipAlias: string; accountAlias: string; teamAlias: string;
+    principal: 'team' | 'member';
+}>): ReturnType<typeof prismaRuntime.sql> {
+    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    const sql = prismaRuntime.sql;
+    const identifier = (name: string) => prismaRuntime.raw(provider === 'mysql'
+        ? `\`${name.replaceAll('`', '``')}\`` : `"${name.replaceAll('"', '""')}"`);
+    const column = (alias: string, name: string) => sql`${identifier(alias)}.${identifier(name)}`;
+    const status = (value: AccountStatus | TeamMembershipStatus, enumName: 'AccountStatus' | 'TeamMembershipStatus') =>
+        provider === 'postgres' || provider === 'pglite' ? sql`CAST(${value} AS ${identifier(enumName)})` : sql`${value}`;
+    const member = EFFECTIVE_TEAM_MEMBERSHIP_WHERE;
+    const membership = sql`${column(input.membershipAlias, 'accountId')} = ${input.actorAccountId}
+        AND ${column(input.membershipAlias, 'status')} = ${status(member.status, 'TeamMembershipStatus')}
+        AND ${column(input.accountAlias, 'status')} = ${status(member.account.status, 'AccountStatus')}
+        AND ${column(input.teamAlias, 'archivedAt')} IS NULL`;
+    if (input.principal === 'member') return membership;
+    const roles = prismaRuntime.join(TEAM_PRINCIPAL_ROLES_V1.map(role =>
+        provider === 'postgres' || provider === 'pglite' ? sql`CAST(${role} AS ${identifier('TeamRole')})` : sql`${role}`));
+    return sql`${membership} AND ${column(input.membershipAlias, 'role')} IN (${roles})`;
 }
 
 /** SQL projection for bounded candidate queries that Prisma cannot express.
@@ -225,16 +252,12 @@ export function resourceGrantAccessSqlPredicate(input: Readonly<{
     const status = (value: AccountStatus | TeamMembershipStatus, enumName: 'AccountStatus' | 'TeamMembershipStatus') =>
         provider === 'postgres' || provider === 'pglite' ? sql`CAST(${value} AS ${identifier(enumName)})` : sql`${value}`;
     const activeAccount = status(member.account.status, 'AccountStatus');
-    const activeMember = status(member.status, 'TeamMembershipStatus');
     const actor = input.actorAccountId;
     const resourceId = column('a', 'id');
-    const memberMatches = sql`${column('m', 'accountId')} = ${actor}
-        AND ${column('m', 'status')} = ${activeMember}
-        AND ${column('c', 'status')} = ${activeAccount}
-        AND ${column('t', 'archivedAt')} IS NULL`;
-    const teamRoles = prismaRuntime.join(TEAM_PRINCIPAL_ROLES_V1.map(role =>
-        provider === 'postgres' || provider === 'pglite' ? sql`CAST(${role} AS ${identifier('TeamRole')})` : sql`${role}`));
-    const teamMemberMatches = sql`${memberMatches} AND ${column('m', 'role')} IN (${teamRoles})`;
+    const memberMatches = resourceGrantMembershipSqlPredicate({ actorAccountId: actor,
+        membershipAlias: 'm', accountAlias: 'c', teamAlias: 't', principal: 'member' });
+    const teamMemberMatches = resourceGrantMembershipSqlPredicate({ actorAccountId: actor,
+        membershipAlias: 'm', accountAlias: 'c', teamAlias: 't', principal: 'team' });
     return sql`(${column('a', 'accountId')} = ${actor}
         OR EXISTS (SELECT 1 FROM ${identifier(`${input.resourceTablePrefix}Grant`)} g
             JOIN ${account} c ON ${column('c', 'id')} = ${column('g', 'accountId')}

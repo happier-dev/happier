@@ -1,9 +1,11 @@
 import type { TeamCredentialSourceLocatorV1, TeamCredentialResourcesCursorV1 } from '@happier-dev/protocol/teams';
 import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import { teamCredentialRecipientCatalogSql } from './resourceAccess';
+import { getDbProviderFromEnv, prismaRuntime } from '@/storage/prisma';
 
 type ResourceSelection = Readonly<
-    | { kind: 'recipient'; teamIds: readonly string[]; resourceId?: string }
+    | { kind: 'recipient'; accountId: string; teamIds: readonly string[]; resourceId?: string }
     | { kind: 'custodian'; accountId: string; source?: TeamCredentialSourceLocatorV1; directOnly?: true }
 >;
 
@@ -54,20 +56,27 @@ export async function readTeamCredentialResourceCandidatesInTx(tx: Tx, input: Re
             orderBy: { id: 'asc' }, take: input.limit + 1,
         });
     }
-    let candidates: Awaited<ReturnType<Tx['teamCredentialResource']['findMany']>> = [];
-    // The database orders the union of bind chunks, retaining only its leading
-    // page. The portable bind budget includes the optional exact-id predicate.
-    for (const teamIds of portableQueryChunks({ values: selection.teamIds, bindingsPerValue: 1,
-        fixedBindings: input.limit + 1 + 5 + (selection.resourceId ? 1 : 0) })) {
-        candidates = await tx.teamCredentialResource.findMany({
-            where: { AND: [
-                { OR: [{ teamId: { in: [...teamIds] } },
-                    ...(candidates.length > 0 ? [{ id: { in: candidates.map(row => row.id) } }] : [])] },
-                ...(selection.resourceId ? [{ id: selection.resourceId }] : []),
-                ...keyset,
-            ] },
-            orderBy: { id: 'asc' }, take: input.limit + 1,
-        });
+    const sql = prismaRuntime.sql;
+    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    const resourceTable = prismaRuntime.raw(provider === 'mysql' ? '`TeamCredentialResource`' : '"TeamCredentialResource"');
+    const idColumn = prismaRuntime.raw(provider === 'mysql' ? '`a`.`id`' : '"a"."id"');
+    let candidateIds: string[] = [];
+    // Derive the actual fixed bind cost from the one eligibility owner, retaining
+    // room for the previous top page, the keyset and SQL LIMIT.
+    const fixedBindings = teamCredentialRecipientCatalogSql({ accountId: selection.accountId,
+        teamIds: [''], resourceId: selection.resourceId }).values.length - 1
+        + input.limit + 1 + (after ? 1 : 0) + 1;
+    for (const teamIds of portableQueryChunks({ values: selection.teamIds, bindingsPerValue: 1, fixedBindings })) {
+        const eligible = teamCredentialRecipientCatalogSql({ accountId: selection.accountId,
+            teamIds, resourceId: selection.resourceId });
+        const rows = await tx.$queryRaw<{ id: string }[]>(sql`
+            SELECT ${idColumn} AS id FROM ${resourceTable} a
+            WHERE (${eligible} ${candidateIds.length === 0 ? sql`` : sql`OR ${idColumn} IN (${prismaRuntime.join(candidateIds)})`})
+                ${after ? sql`AND ${idColumn} > ${after.id}` : sql``}
+            ORDER BY ${idColumn} ASC LIMIT ${input.limit + 1}
+        `);
+        candidateIds = rows.map(row => row.id);
     }
-    return candidates;
+    if (candidateIds.length === 0) return [];
+    return tx.teamCredentialResource.findMany({ where: { id: { in: candidateIds } }, orderBy: { id: 'asc' } });
 }

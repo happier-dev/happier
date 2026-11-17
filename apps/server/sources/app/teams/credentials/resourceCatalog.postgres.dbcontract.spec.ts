@@ -43,10 +43,9 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Account credent
         const observed = client.$extends({ query: { teamCredentialResource: {
             async findMany({ args, query }) {
                 const rows = await query(args);
-                // Count the candidate window, not the existing exact usage
-                // identity projection (teamCredentialUsageLimits.ts:441).
+                // Count the candidate window separately from the narrow usage
+                // identity projection.
                 if (args.select) {
-                    expect(args.select).toEqual({ id: true, teamId: true });
                     expect(rows.map(row => row.id)).toEqual([ids[350]]);
                     usageIdentityRows += rows.length;
                 } else candidates += rows.length;
@@ -74,16 +73,52 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Account credent
             await client.teamCredentialResource.update({ where: { id: ids[350] }, data: { allMembersDeliveryMode: null } });
             const withdrawn = await read();
             expect(withdrawn.ok && withdrawn.page.resources).toEqual([]);
-            expect(candidates).toBe(2);
+            expect(candidates).toBe(1);
             expect(usageIdentityRows).toBe(1);
             await client.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: actor.id } },
                 data: { status: "suspended" } });
             expect(await read()).toEqual({ ok: false, error: "not_found_or_not_visible" });
-            expect(candidates).toBe(2);
+            expect(candidates).toBe(1);
             console.info("EXACT_TEAM_CATALOG", { inventory: ids.length, candidatesPerRead: candidates / 2, usageIdentityRows });
         } finally {
             await client.team.delete({ where: { id: team.id } });
             await client.account.deleteMany({ where: { id: { in: [actor.id, owner.id] } } });
+        }
+    });
+
+    it('excludes self-custody before recipient pagination on PostgreSQL', async () => {
+        const owner = await client.account.create({ data: { encryptionMode: 'plain' } });
+        const member = await client.account.create({ data: { encryptionMode: 'plain' } });
+        const team = await client.team.create({ data: { name: 'Recipient custody' } });
+        const ownId = `aa-${randomUUID()}`;
+        const foreignId = `zz-${randomUUID()}`;
+        try {
+            await client.teamMembership.createMany({ data: [
+                { teamId: team.id, accountId: owner.id, role: 'owner' },
+                { teamId: team.id, accountId: member.id, role: 'member' },
+            ] });
+            const base = { teamId: team.id, sourceBindingJson: '{}', disclosureCeiling: 'brokered_only',
+                sessionUsePolicy: 'personal_allowed', allMembersDeliveryMode: 'brokered' };
+            await client.teamCredentialResource.createMany({ data: [
+                { ...base, id: ownId, custodianAccountId: owner.id, displayName: 'Own source' },
+                { ...base, id: foreignId, custodianAccountId: member.id, displayName: 'Member source' },
+            ] });
+            const input = { actorAccountId: owner.id, limit: 1,
+                authentication: { authenticationAuthority: 'present_user' as const } };
+            const page = await client.$transaction(tx => catalog.readTeamCredentialCatalogInTx(tx as unknown as Tx,
+                { ...input, teamId: team.id }));
+            const discovery = await client.$transaction(tx => catalog.readTeamCredentialDiscoveryInTx(tx as unknown as Tx,
+                { ...input, teamIds: [team.id] }));
+            for (const result of [page, discovery]) {
+                expect(result.ok && result.page.resources.map(row => row.id)).toEqual([foreignId]);
+                expect(result.ok && result.page.nextCursor).toBeNull();
+            }
+            const memberPage = await client.$transaction(tx => catalog.readTeamCredentialCatalogInTx(tx as unknown as Tx,
+                { ...input, actorAccountId: member.id, teamId: team.id }));
+            expect(memberPage.ok && memberPage.page.resources.map(row => row.id)).toEqual([ownId]);
+        } finally {
+            await client.team.delete({ where: { id: team.id } });
+            await client.account.deleteMany({ where: { id: { in: [owner.id, member.id] } } });
         }
     });
 
@@ -185,7 +220,12 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Account credent
             const old = await client.$transaction(tx => catalog.readTeamCredentialCatalogInTx(tx, {
                 teamId: teamIds[0]!, actorAccountId: actor.id, authentication,
             }));
-            expect(single.result.ok && single.result.page.resources).toEqual(old.ok && old.page.resources);
+            expect(single.result.ok && single.result.page.resources).toEqual(old.ok && old.page.resources.map(
+                ({ sharedWithTeamScope, ...resource }) => {
+                    expect(sharedWithTeamScope).toBe('team');
+                    return resource;
+                },
+            ));
             await client.teamMembership.update({ where: { teamId_accountId: { teamId: teamIds[0]!, accountId: actor.id } },
                 data: { status: "suspended" } });
             await client.teamMembership.delete({ where: { teamId_accountId: { teamId: teamIds[1]!, accountId: actor.id } } });

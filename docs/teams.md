@@ -131,6 +131,9 @@ remains the recipient. Open, refresh, model disclosure and request admission
 recheck current authority; a retained AccessKey cannot preserve a revoked grant.
 The broker still requires distinct initiator and target Machine/endpoint
 identities, including for co-hosted daemons, and refuses self-custodian Team use.
+Recipient catalogs exclude resources held by the viewing Account before pagination;
+that person uses their own connection instead. Custodian administration still lists
+the resources they share with other members.
 
 The development New Session catalog qualifies entitled model reads with the selected
 Agent's admitted Provider applications. Generic resource discovery and each application
