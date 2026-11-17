@@ -87,9 +87,11 @@ function AccountTriggersContent(props: Readonly<{ first?: boolean; accountLifeti
     return <AccountTriggersReadContent {...props} read={read} />;
 }
 
-/** Library rows open the incumbent settings popover, including retained-template review. No list read. */
+/** Hydrate an interacted row through its admitted scope; opening the list never inventories private bodies. */
 export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: ServerAccountScopeLifetime | null;
-    read: ReturnType<typeof useWorkflowTriggerSets> }>) {
+    read: ReturnType<typeof useWorkflowTriggerSets>;
+    /** A selected Session attachment can arrive before its admitted lifetime page. */
+    lifetimeSessionId?: string }>) {
     const { sets, retry: refresh } = props.read;
     const captureLifetime = () => props.accountLifetime === undefined
         ? captureActiveServerAccountScopeLifetime() : props.accountLifetime;
@@ -105,8 +107,16 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
         return write;
     }, [refresh]);
     const readSet = async (automationId: string) => {
-        const set = sets.find(candidate => candidate.automationId === automationId)
-            ?? (await listWorkflowTriggerSets({ automationId }, actionOptions)).find(candidate => candidate.automationId === automationId);
+        const held = sets.find(candidate => candidate.automationId === automationId);
+        if (held) return held;
+        // The exact Account query intentionally excludes Session-lifetime records.
+        // Hydrate a cold Session through its existing admitted query and select this row.
+        if (props.lifetimeSessionId) {
+            const scoped = (await listWorkflowTriggerSets({ lifetimeSession: { sessionId: props.lifetimeSessionId } }, actionOptions))
+                .find(candidate => candidate.automationId === automationId);
+            if (scoped) return scoped;
+        }
+        const set = (await listWorkflowTriggerSets({ automationId }, actionOptions)).find(candidate => candidate.automationId === automationId);
         if (!set) throw new WorkflowActionError({ message: 'source_unavailable', rawCode: 'source_unavailable' });
         return set;
     };

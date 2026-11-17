@@ -85,14 +85,18 @@ export type ResourceAutomationsSectionRead = SelectedAutomationsSectionRead & Re
 }>;
 
 /** The selected read owns membership; every section consumes the same admitted rows and editor. */
+type SessionEditorContext = Readonly<{ sessionId: string; sets: readonly WorkflowTriggerSetV1[] }>;
+
 function useSelectedAutomationsSection(request: WorkflowTriggerListRequestV1 | null,
-    accountLifetime: ServerAccountScopeLifetime | null | undefined, demanded: boolean): SelectedAutomationsSectionRead {
-    return useSelectedAutomationsProjection(useWorkflowTriggerSets(request, accountLifetime, { demanded }), accountLifetime);
+    accountLifetime: ServerAccountScopeLifetime | null | undefined, demanded: boolean,
+    session?: SessionEditorContext): SelectedAutomationsSectionRead {
+    return useSelectedAutomationsProjection(useWorkflowTriggerSets(request, accountLifetime, { demanded }), accountLifetime, session);
 }
 
 function useSelectedAutomationsProjection(read: ReturnType<typeof useWorkflowTriggerSets>,
-    accountLifetime: ServerAccountScopeLifetime | null | undefined): SelectedAutomationsSectionRead {
-    const editor = useAccountWorkflowEditor({ read, accountLifetime });
+    accountLifetime: ServerAccountScopeLifetime | null | undefined, session?: SessionEditorContext): SelectedAutomationsSectionRead {
+    const editor = useAccountWorkflowEditor({ read: session ? { ...read, sets: session.sets } : read, accountLifetime,
+        ...(session ? { lifetimeSessionId: session.sessionId } : {}) });
     const projected = React.useMemo(() => read.attachedPage ? projectAccountTriggerRows({
         sets: read.sets, attachedPage: read.attachedPage, accountId: accountLifetime?.scope.accountId,
         resolveWorkflowTitle: editor.resolveWorkflowTitle,
@@ -161,14 +165,14 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
     const subject: AutomationSubjectV1 | null = 'serverId' in props.subject ? props.subject : !serverId ? null
         : props.subject.kind === 'environment' ? { kind: 'environment', serverId, environmentId: props.subject.environmentId }
             : { kind: 'machine', serverId, machineId: props.subject.machineId };
+    const sessionContext = useSessionWorkflowContext(subject?.kind === 'session' ? subject.sessionId : null,
+        { demanded, accountLifetime });
     const { read, editor, rows, also, skippedNotSharedCount } = useSelectedAutomationsSection(
         subject ? { subject, ...(props.contextSubjects ? { contextSubjects: [...props.contextSubjects] } : {}) } : null,
-        accountLifetime, demanded);
+        accountLifetime, demanded, subject?.kind === 'session' ? { sessionId: subject.sessionId, sets: sessionContext.sets } : undefined);
     const legacyMachineId = legacySubject?.machineId;
     const project = React.useMemo(() => props.executionContext ?? (legacyMachineId ? { machineId: legacyMachineId, directory: '~' } : undefined),
         [props.executionContext, legacyMachineId]);
-    const sessionContext = useSessionWorkflowContext(subject?.kind === 'session' ? subject.sessionId : null,
-        { demanded, accountLifetime });
     const createSentenceIntent = React.useCallback((options?: SessionWorkflowSentenceOptions) => subject?.kind === 'session'
         ? createSessionWorkflowSentenceIntent({ name: props.subjectName ?? '', project,
             session: { subject, ...(Array.isArray(sessionContext.pullRequestLinks)

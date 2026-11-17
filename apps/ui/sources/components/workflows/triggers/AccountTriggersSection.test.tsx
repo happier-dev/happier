@@ -22,6 +22,7 @@ import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automa
 import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, createAccountTokenForTests, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { selectWorkflowAutomationDetailsFixture, selectWorkflowAutomationListFixture } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -244,7 +245,7 @@ afterEach(async () => {
 });
 function serve(set: ReturnType<typeof fixture>) {
     const row = AutomationDefinitionDetailSchema.parse({ id: set.automationId, name: 'Morning digest', description: null,
-        enabled: set.enabled, workflowDefinitionId: set.target?.kind === 'workflow' ? set.target.ref : null, scopeSessionId: null, templateVersion: set.revision,
+        enabled: set.enabled, workflowDefinitionId: set.target?.kind === 'workflow' ? set.target.ref : null, scopeSessionId: set.scopeSessionId ?? null, templateVersion: set.revision,
         targetType: set.legacy ? 'existingSession' : null, existingSessionId: set.legacy ? 'session-old' : null,
         lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: (set.placements ?? [set.project ?? project]).map(value => ({ machineId: value.machineId,
             enabled: true, priority: 0, updatedAt: 1 })), triggers: set.triggers,
@@ -275,37 +276,81 @@ function writtenContext(input: ReturnType<typeof AutomationDefinitionReconcileRe
 // The retained Account adapter below exercises settings, source intake and legacy
 // links. Primary Library presentation consumes the unified view tested alongside it.
 describe('Account Workflow Library and settings', () => {
-    it('hydrates only an interacted selected attachment and uses its set revision for ordinary edits', async () => {
+    it.each(['account', 'session', 'session-cold'] as const)('hydrates only an interacted selected attachment and uses its set revision through the mounted shared section (%s)', async scope => {
         const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
+        const { SubjectTriggersSectionContent } = await import('./SubjectTriggersSection');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const sessionId = 'session-selected';
+        if (scope !== 'account') storage.getState().applySessions([createSessionFixture({ id: sessionId, serverId,
+            active: false, encryptionMode: 'plain', metadataLayoutVersion: 1,
+            metadata: { name: 'Selected Session' } as ReturnType<typeof createSessionFixture>['metadata'],
+            ownerMetadataView: { path: '/repo', host: 'test', homeDir: '/home/test', machineId: project.machineId, flavor: 'claude' } })]);
         const set = WorkflowTriggerSetV1Schema.parse({ ...fixture(), revision: 7,
+            ...(scope !== 'account' ? { scopeSessionId: sessionId } : {}),
             triggers: [{ ...trigger('t1'), nextRunAt: 123 }] });
         serve(set);
-        const subject = { kind: 'machine', serverId, machineId: project.machineId } as const;
+        if (scope !== 'account') {
+            rows = [AutomationDefinitionDetailSchema.parse({ ...rows[0], id: 'other-habit' }), ...rows];
+            installRow('other-habit');
+        }
+        const subject = scope !== 'account' ? { kind: 'session' as const, serverId, sessionId }
+            : { kind: 'machine' as const, serverId, machineId: project.machineId };
         const selected = { automationId: set.automationId, triggerId: 't1', workflowDefinitionId: null,
             relation: 'direct' as const, enabled: true, revision: 1,
             summary: { kind: 'schedule' as const, schedule: trigger('t1').schedule },
             setUpBy: { accountId: 'account-a', displayName: 'Owner' } };
         const exactReads = () => home.requests.filter(request => request.method === 'GET'
             && request.path === `/v3/automations/${set.automationId}`);
-        home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({ automations: [],
-            attached: [selected], nextCursor: null, skippedNotSharedCount: 0 }) });
-        const hook = await renderHook(() => useResourceAutomationsSection({ subject }), {
-            wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider>,
-        });
-        await waitForHomeGovernance(() => expect(hook.getCurrent().rows).toHaveLength(1));
+        const lifetimePage = createDeferred<void>();
+        if (scope !== 'session-cold') lifetimePage.resolve();
+        home.answer(serverId, 'POST /v3/automations/query', { select: async input => {
+            // Both the Session page and the existing Account destination census can
+            // hold this body. Keep both cold until the person opens its selected row.
+            if (input !== null && typeof input === 'object' && 'details' in input && input.details === true) await lifetimePage.promise;
+            const saved = rows.find(row => row.id === set.automationId);
+            const savedTrigger = saved?.triggers.find(trigger => trigger.id === selected.triggerId);
+            if (!saved || !savedTrigger) throw new Error('Expected the persisted selected trigger');
+            return { body:
+            input !== null && typeof input === 'object' && 'subject' in input
+                ? AutomationDefinitionListResponseSchema.parse({ automations: [], attached: [{ ...selected,
+                    enabled: saved.enabled && savedTrigger.enabled, revision: savedTrigger.revision }], nextCursor: null, skippedNotSharedCount: 0 })
+                : input !== null && typeof input === 'object' && 'details' in input && input.details === true
+                    ? selectWorkflowAutomationDetailsFixture(rows, input) : selectWorkflowAutomationListFixture(rows, input),
+            };
+        } });
+        let current!: ReturnType<typeof useResourceAutomationsSection>;
+        function SharedSection() {
+            current = useResourceAutomationsSection({ subject });
+            return <SubjectTriggersSectionContent subject={subject} subjectName="Selected resource" automations={current} />;
+        }
+        const screen = await renderAccountScreen(<PluginSurfaceFocusEligibilityProvider active><SharedSection /></PluginSurfaceFocusEligibilityProvider>);
+        await waitForHomeGovernance(() => expect(current.rows).toHaveLength(1));
+        if (scope === 'session') await waitForHomeGovernance(() => expect(current.session?.sets).toHaveLength(2));
+        if (scope === 'session-cold') expect(current.session?.sets).toEqual([]);
         expect(exactReads()).toEqual([]);
-        expect(hook.getCurrent().read.sets).toEqual([]);
-        await act(async () => hook.getCurrent().editor.open(hook.getCurrent().rows[0]!, { current: null }));
-        expect(hook.getCurrent().editor.popover?.props.set.revision).toBe(7);
-        expect(exactReads()).toHaveLength(1);
+        expect(current.read.sets).toEqual([]);
+        await screen.pressByTestIdAsync(`subject-triggers:${set.automationId}:t1`);
+        await act(async () => lifetimePage.resolve());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('workflows-column-trigger-popover-toggle'),
+            JSON.stringify({ writes: writes().length, text: screen.getTextContent() })).not.toBeNull());
+        expect(current.editor.popover?.props.set).toMatchObject({ automationId: set.automationId, revision: 7 });
+        expect(exactReads()).toHaveLength(scope === 'account' ? 1 : 0);
         expect(Object.hasOwn(storage.getState().workflowTriggerSetIdsByQuery, '')).toBe(false);
-        await act(async () => hook.getCurrent().editor.popover?.props.onHistory());
-        expect(hook.getCurrent().editor.popover?.props.pushedPage.content.props.nextRunAt).toBe(123);
-        await act(async () => hook.getCurrent().editor.toggle(hook.getCurrent().rows[0]!, false));
+        await act(async () => current.editor.popover?.props.onHistory());
+        expect(current.editor.popover?.props.pushedPage.content.props.nextRunAt).toBe(123);
+        await act(async () => current.editor.popover?.props.pushedPage.onBack());
+        await screen.pressByTestIdAsync('workflows-column-trigger-popover-toggle');
+        await waitForHomeGovernance(() => {
+            expect(writes()).toHaveLength(1);
+            expect(current.editor.pending.size).toBe(0);
+            expect(current.rows[0]?.off).toBe(true);
+            expect(screen.findByTestId('workflows-column-trigger-popover')).toBeNull();
+        });
         expect(writes()).toMatchObject([{ expectedTemplateVersion: 7 }]);
-        expect(rows[0]?.triggers[0]?.enabled).toBe(false);
+        expect(rows.find(row => row.id === set.automationId)?.triggers[0]?.enabled).toBe(false);
+        if (scope !== 'account') expect(rows.find(row => row.id === 'other-habit')?.triggers[0]?.enabled).toBe(true);
         expect(home.requests.filter(request => request.method === 'GET' && request.path.startsWith('/v3/automations?'))).toEqual([]);
+        await screen.unmount();
     });
 
     it.each([false, true])('names a selected saved Workflow without hydrating its trigger set or opening the picker (addressed=%s)', async (addressed) => {

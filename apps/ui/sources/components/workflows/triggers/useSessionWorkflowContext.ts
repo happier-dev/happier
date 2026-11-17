@@ -36,10 +36,8 @@ export function useSessionWorkflowContext(sessionId: string | null, options: Rea
     const lifetime = options.accountLifetime === undefined ? activeLifetime : options.accountLifetime;
     const machineId = getStorage()((state) => sessionId === null || lifetime === null ? null
         : resolveMachineControlTargetForSessionFromState(state, { ...lifetime.scope, sessionId })?.machineId ?? null);
-    const context = React.useMemo(() => machineId
-        ? { externalActionTarget: { kind: 'machine' as const, machineId } } : undefined, [machineId]);
     const read = useWorkflowTriggerSets(sessionId === null ? null : { lifetimeSession: { sessionId } },
-        options.accountLifetime, { demanded: options.demanded, context });
+        options.accountLifetime, { demanded: options.demanded });
     // Account-lifetime schedules can write here without watching this Session.
     const accountRead = useWorkflowTriggerSets(sessionId === null ? null : ACCOUNT_TRIGGERS,
         options.accountLifetime, { demanded: options.demanded });
