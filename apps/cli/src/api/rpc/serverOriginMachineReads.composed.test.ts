@@ -7,6 +7,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'socket.io';
 import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, ProviderSettingsV1Schema, splitProviderSettingsV1 } from '@happier-dev/protocol';
+import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-dev/protocol';
+import { AgentModelsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol';
+import type { InvokeConnectedAccountNativeModels } from '@/providers/modelManagement/connectedAccountModelObservation';
 import { TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams';
 import { createAccountProviderActionExecuteV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
 import { parseProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
@@ -25,7 +29,7 @@ import { createRuntimeProviderModelManagementServices } from '@/providers/modelM
 import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
 import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { registerMachineProviderRpcHandlers } from '@/api/machine/rpcHandlers.providers';
-import { resolveTeamCredentialSourceModelCatalog } from '@/providers/broker/resourceTestCandidate';
+import { resolveTeamCredentialBrokerSourceCatalog } from '@/providers/broker/resourceTestCandidate';
 import { projectManagedProviderBrokerApplication, resolveManagedProviderBrokerPurpose } from '@/providers/broker/applicationProjection';
 import { resolveProviderContributionRegistryView } from '@/providers/registry/contributions';
 import { resolveProviderConnectionForMachine } from '@/providers/registry';
@@ -77,6 +81,29 @@ const eligible = { status: 'eligible' as const };
 
 afterEach(() => { resetActiveAccountSettingsSnapshotForTests(); vi.restoreAllMocks(); });
 
+// Model the installed Machine capability transport, as daemon bootstrap does.
+// runtimeServices still constructs the real native source observation owner;
+// no static catalog or projector is substituted here.
+function nativeSourceModels(account: QualifiedConnectedAccountRef): InvokeConnectedAccountNativeModels {
+    return async (request, signal) => {
+        signal.throwIfAborted();
+        expect(request).toMatchObject({ id: 'cli.codex', method: 'probeModels', params: {
+            currentOnly: true, bypassCache: false,
+            connectedServices: { v: 2, bindingsByServiceId: {
+                [`${account.service.pluginId}/${account.service.localId}`]: { source: 'connected', profileId: account.accountId },
+            } },
+        } });
+        return { ok: true, result: AgentModelsProbeObservationSchema.parse({
+            agentId: 'codex', source: 'dynamic', supportsFreeform: false, observedAt: 1,
+            availableModels: [
+                { id: 'gpt-5.5', name: 'GPT-5.5' },
+                { id: 'gpt-image-1.5', name: 'GPT Image 1.5', capabilities: { toolRoundTrips: 'unsupported' } },
+                { id: 'gpt-image-2', name: 'GPT Image 2', capabilities: { toolRoundTrips: 'unsupported' } },
+            ],
+        }) };
+    };
+}
+
 function createDaemon() {
     let executions = 0;
     const manager = new RpcHandlerManager({ scopePrefix: machineId, localMachineId: machineId,
@@ -122,7 +149,10 @@ describe('server-origin Machine reads across the E2EE RPC seam', () => {
             const registry = {
                 generation: 7,
                 contributes: {
-                    agentDefinitionsById: worker.lease.registry.contributes.agentDefinitionsById,
+                    agentDefinitionsById: new Map([...worker.lease.registry.contributes.agentDefinitionsById,
+                        ['codex', { id: 'codex', pluginId: codexManifest.id,
+                            identity: { pluginId: codexManifest.id, localId: 'codex' },
+                            definition: codexManifest.contributes.agents.find(agent => agent.id === 'codex')! }]]),
                     providersByContributionKey: new Map([[`${gatewayManifest.id}/${CLIPROXYAPI_PROVIDER_CONTRIBUTION.id}`, {
                         identity: { pluginId: gatewayManifest.id, localId: CLIPROXYAPI_PROVIDER_CONTRIBUTION.id },
                         pluginId: gatewayManifest.id, definition: CLIPROXYAPI_PROVIDER_CONTRIBUTION,
@@ -133,7 +163,8 @@ describe('server-origin Machine reads across the E2EE RPC seam', () => {
                 agentRuntimesByAgentId: worker.lease.registry.agentRuntimesByAgentId,
             } as unknown as ResolvedExecutablePluginRuntimeRegistry;
             const sourceOnlyRegistry = { ...registry, contributes: { ...registry.contributes,
-                agentDefinitionsById: new Map(),
+                // Keep the source observer installed while removing the worker Agent.
+                agentDefinitionsById: new Map([['codex', registry.contributes.agentDefinitionsById.get('codex')!]]),
             }, agentRuntimesByAgentId: new Map() } as ResolvedExecutablePluginRuntimeRegistry;
             const target = { kind: 'group' as const, service: { pluginId: codexManifest.id, localId: 'openai-codex' }, groupId: 'source-pool' };
             const selectedAccount = { service: target.service, accountId: 'source-account' };
@@ -154,6 +185,7 @@ describe('server-origin Machine reads across the E2EE RPC seam', () => {
                 acquireRuntimeLease: async () => ({ registry: installedAtBroker ? registry : sourceOnlyRegistry,
                     source: 'active', durableRevision: -1, release: async () => {} }),
                 resolveManagedPurposeBindingIntentSelection: purposeOwner.resolveBindingIntentSelection,
+                invokeConnectedAccountNativeModels: nativeSourceModels(selectedAccount),
                 modelSettingsMutation: unused,
             });
             const request = { machineId, agentTargetKey: worker.agentTargetKey,
@@ -193,7 +225,11 @@ describe('server-origin Machine reads across the E2EE RPC seam', () => {
             });
             const workerRequest = { machineId: worker.machineId, agentTargetKey: worker.agentTargetKey,
                 teamCredentialResources: [TeamCredentialResourceCatalogEntryV1Schema.parse({
-                    id: 'resource-1', teamId: 'team-1', displayName: 'Team source', resourceRevision: 1,
+                    id: 'resource-1', teamId: 'team-1', displayName: projectPrivateLabelForRecipientV1({
+                    stored: sealPrivateLabelV1({ mode: 'plain',
+                        binding: { entity: 'team_credential_resource', field: 'displayName', id: 'resource-1' }, value: 'Team source' }),
+                    recipientAccountId: 'requester-B',
+                }), resourceRevision: 1,
                     readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
                     directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
                     connectedServiceSelections: [], sourcePresentation: null,
@@ -384,6 +420,7 @@ describe('server-origin Machine reads across the E2EE RPC seam', () => {
                 acquireRuntimeLease: async () => ({ registry: executable, source: 'active', durableRevision: -1, release: async () => {} }),
                 resolveManagedPurposeBindingIntent: connectedAccounts.resolveBindingIntent,
                 resolveManagedPurposeBindingIntentSelection: connectedAccounts.resolveBindingIntentSelection,
+                invokeConnectedAccountNativeModels: nativeSourceModels(selectedAccount),
                 modelSettingsMutation: unused,
             });
             const agentTargetKey = `agent:${codexManifest.id}/${agent.id}`;
@@ -449,12 +486,12 @@ describe('server-origin Machine reads across the E2EE RPC seam', () => {
                     expect(projection.groups.length).toBeGreaterThan(0);
                     expect(projection.groups.every(group => group.authorization.authorized && group.rows.length > 0)).toBe(true);
                     const rows = projection.groups.flatMap(group => group.rows);
-                    // CLIProxyAPI publishes the pinned SDK's explicit image-only capability.
+                    // Native observation preserves explicit image-only capability.
                     // Unknown chat support still uses experimental confirmation.
                     const unsupported = rows.filter(row => row.descriptor.capabilities?.toolRoundTrips === 'unsupported');
                     expect(new Set(unsupported.map(row => row.ref.modelId))).toEqual(new Set(['gpt-image-1.5', 'gpt-image-2']));
                     for (const row of rows) {
-                        expect(row.confidence).toBe('account_unverified');
+                        expect(row.confidence).toBe('probe');
                         expect(row.compatibility.confirmed).toBe(false);
                         expect(row.compatibility.result.status).toBe(
                             row.descriptor.capabilities?.toolRoundTrips === 'unsupported' ? 'incompatible' : 'experimental');
@@ -503,9 +540,9 @@ describe('server-origin Machine reads across the E2EE RPC seam', () => {
                 method: `${machineId}:${RPC_METHODS.DAEMON_PROVIDERS_TEAM_CREDENTIAL_REQUEST_POLICY_SUPPORT}`,
                 params: { machineId, source, refreshPolicy: 'current_only' },
             })).resolves.toMatchObject({ ok: true, result: { status: 'success' } });
-            await expect(resolveTeamCredentialSourceModelCatalog({ machineId,
-                teamId: input.teamId, resourceId: input.resourceId, resourceRevision: 1,
-                source, application, projectModels: request => runtime.projectModels({ ...request, refreshPolicy: 'current_only' }),
+            await expect(resolveTeamCredentialBrokerSourceCatalog({ machineId,
+                teamId: input.teamId, resourceId: input.resourceId, expectedResourceRevision: 1,
+                source, application, refreshPolicy: 'current_only', readSourceModelCatalogs: runtime.readSourceModelCatalogs,
             })).resolves.not.toBeNull();
         } finally {
             await rm(home, { recursive: true, force: true });
