@@ -8,9 +8,11 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
  * Dev-only specimen of the Artifacts browser (lab `app-surfaces/artifacts`, frames A1–A8) drawn
  * through the real `ArtifactsBrowser` with the lab's fixtures, so lab and app compare side by side.
  * `state`: `grid` (A1, the root-cause document open beside the grid), `empty` (A3), `loading` (A4),
- * `quota` (A8, an operator budget that is full), `failed` (first load failed).
+ * `quota` (A8, an operator budget that is full), `failed` (first load failed), `elsewhere` (only kinds that live in
+ * their own place: the default list says what it keeps and offers every kind).
  */
-export type ArtifactsSpecimenState = 'grid' | 'empty' | 'loading' | 'quota' | 'failed';
+export const ARTIFACTS_SPECIMEN_STATES = ['grid', 'empty', 'loading', 'quota', 'failed', 'elsewhere'] as const;
+export type ArtifactsSpecimenState = typeof ARTIFACTS_SPECIMEN_STATES[number];
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -54,6 +56,7 @@ function specimenArtifacts(now: number): readonly DecryptedArtifact[] {
         fixture('a6', { kind: 'prompt_doc.v2', title: 'Code review' }, 5 * DAY, 'Review the diff like a senior engineer on this team. Lead with correctness, then the canonical owner, then tests that would fail without the change.\n\n> Skip style nits the formatter owns.', now),
         fixture('a7', { kind: 'workflow-definition.v1', title: 'Morning triage' }, 7 * DAY, undefined, now),
         fixture('a8', { title: 'Weekly digest · Sep 29', source: { sessionId: 'specimen-s4', machineId: 'specimen-m2', path: 'digest/2026-09-29.md' } }, 8 * DAY, '## Weekly digest · Sep 29\n14 sessions finished, 3 PRs merged. **#2493** fixed the relay 503 loop; the settings remount is ready for review.', now),
+        fixture('a9', { kind: 'memory_doc.v1', title: 'Relay team memory' }, 9 * DAY, undefined, now),
     ];
 }
 
@@ -69,6 +72,7 @@ export function ArtifactsSpecimen(props: Readonly<{ state: ArtifactsSpecimenStat
         case 'loading': return <ArtifactsBrowser artifacts={[]} loaded={false} loadFailed={false} onRetry={NOOP} usage={null} />;
         case 'failed': return <ArtifactsBrowser artifacts={[]} loaded={false} loadFailed onRetry={NOOP} usage={null} />;
         case 'quota': return <ArtifactsBrowser artifacts={artifacts} loaded loadFailed={false} onRetry={NOOP} usage={FULL} />;
+        case 'elsewhere': return <ArtifactsBrowser artifacts={artifacts.filter((artifact) => ['a5', 'a6', 'a7'].includes(artifact.id))} loaded loadFailed={false} onRetry={NOOP} usage={BUDGET} />;
         case 'grid': return <ArtifactsBrowser artifacts={artifacts} loaded loadFailed={false} onRetry={NOOP} usage={BUDGET} initialOpenId="a1" />;
     }
 }

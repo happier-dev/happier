@@ -15,6 +15,7 @@ import { getStorage } from '@/sync/domains/state/storage';
 import { useArtifactStorageUsage } from './artifactActionsClient';
 import { useArtifactOperations } from './useArtifactOperations';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { Modal } from '@/modal';
 import { router } from 'expo-router';
 import { ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
@@ -71,7 +72,8 @@ function MeterBrowser() {
 function RecoveryBrowser({ loadFailed, onRetry, artifacts = [] }: Readonly<{
     loadFailed: boolean; onRetry: () => void; artifacts?: readonly DecryptedArtifact[];
 }>) {
-    return <AppPaneProvider><ArtifactsBrowser artifacts={artifacts} loaded loadFailed={loadFailed} onRetry={onRetry} usage={null} /></AppPaneProvider>;
+    // A phone main screen's head carries the Home line, which reads the signed-in identity as the app always provides it.
+    return <InjectedAuthProvider credentials={null}><AppPaneProvider><ArtifactsBrowser artifacts={artifacts} loaded loadFailed={loadFailed} onRetry={onRetry} usage={null} /></AppPaneProvider></InjectedAuthProvider>;
 }
 
 function artifactFixture(id: string, extra: Partial<Extract<DecryptedArtifact, { isDecrypted: true }>> = {}): DecryptedArtifact {
@@ -654,8 +656,8 @@ describe('Artifacts browser recovery', () => {
         vi.spyOn(ReactNative.Dimensions, 'get').mockImplementation(() => viewport);
         getStorage().setState(state => ({ localSettings: { ...state.localSettings, uiMultiPanePanelsEnabled: true } }));
         const artifacts = [artifactFixture('retained-view'), artifactFixture('fresh-view')];
-        const element = () => <AppPaneProvider><ArtifactsBrowser artifacts={artifacts} initialOpenId="retained-view"
-            loaded loadFailed={false} onRetry={() => {}} usage={null} /></AppPaneProvider>;
+        const element = () => <InjectedAuthProvider credentials={null}><AppPaneProvider><ArtifactsBrowser artifacts={artifacts} initialOpenId="retained-view"
+            loaded loadFailed={false} onRetry={() => {}} usage={null} /></AppPaneProvider></InjectedAuthProvider>;
         const screen = await renderScreen(element());
         const viewer = screen.root.findByType(ArtifactView);
         if (transition === 'phone') viewport = { width: 390, height: 844, scale: 1, fontScale: 1 };
