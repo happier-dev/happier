@@ -68,7 +68,7 @@ function ownerFromRow(row: SourceRow) {
 }
 
 /** Current membership and credential owners decide; Home governance never grants Source management. */
-async function admissionInTx(tx: Tx, actorAccountId: string, grants: readonly ProjectSourceGrantV1[], authentication: Authentication,
+export async function resolveProjectSourceAdmissionInTx(tx: Tx, actorAccountId: string, grants: readonly ProjectSourceGrantV1[], authentication: Authentication,
     owners: readonly ProjectSourceOwnerV1[] = []) {
     const account = await tx.account.findUnique({ where: { id: actorAccountId }, select: { status: true } });
     const active = account?.status === 'active';
@@ -137,7 +137,7 @@ export function composeProjectSourceAdmission(input: Readonly<{
  * Team and Group principals additionally need the actor's Team settings authority. */
 async function validateAudienceInTx(tx: Tx, actorAccountId: string, audience: readonly ProjectSourceGrantV1[], authentication: Authentication,
     previousAudience: readonly ProjectSourceGrantV1[] = []): Promise<boolean> {
-    const admission = await admissionInTx(tx, actorAccountId, audience, authentication);
+    const admission = await resolveProjectSourceAdmissionInTx(tx, actorAccountId, audience, authentication);
     if (!admission.active) return false;
     const accountIds = (principals: readonly ProjectSourceGrantV1[]) => principals.flatMap(({ principal }) =>
         principal.kind === 'account' && principal.accountId !== actorAccountId ? [principal.accountId] : []);
@@ -265,7 +265,7 @@ async function admitSourceRowsInTx(tx: Tx, actorAccountId: string, rows: readonl
         const parsedOwner = ownerFromRow(row);
         return { row, grants: audience.success ? audience.data : [], owner: parsedOwner.success ? parsedOwner.data : undefined };
     });
-    const admission = await admissionInTx(tx, actorAccountId, entries.flatMap(entry => entry.grants), authentication,
+    const admission = await resolveProjectSourceAdmissionInTx(tx, actorAccountId, entries.flatMap(entry => entry.grants), authentication,
         entries.flatMap(entry => entry.owner ? [entry.owner] : []));
     return admitProjectSourceEntries(entries, admission);
 }
@@ -411,7 +411,7 @@ async function applyAttachmentInTx(tx: Tx, actorAccountId: string, serverId: str
 /** The Source owner also admits an intended owner before a Source exists. */
 export async function canManageProjectSourceOwnerInTx(tx: Tx, actorAccountId: string, owner: ProjectSourceOwnerV1,
     authentication: Authentication = {}): Promise<boolean> {
-    return (await admissionInTx(tx, actorAccountId, [], authentication, [owner])).canManageOwner(owner);
+    return (await resolveProjectSourceAdmissionInTx(tx, actorAccountId, [], authentication, [owner])).canManageOwner(owner);
 }
 
 /** Create metadata once per actor's intent; replay reads current admitted state, never duplicates an unavailable row. */
@@ -471,7 +471,7 @@ export async function updateProjectSourceInTx(tx: Tx, actorAccountId: string, in
     if (patch.owner && !isDeepStrictEqual(patch.owner, loaded.owner)) {
         // Move only transfers the actor's own Account Source to a Team; owner admission decides whose Account it is.
         if (!loaded.canManageOwner || loaded.owner.kind !== 'account' || patch.owner.kind !== 'team') return denied();
-        const admission = await admissionInTx(tx, actorAccountId, patch.audience ?? source.audience, authentication, [patch.owner]);
+        const admission = await resolveProjectSourceAdmissionInTx(tx, actorAccountId, patch.audience ?? source.audience, authentication, [patch.owner]);
         if (!admission.canManageOwner(patch.owner)) return denied();
     }
     if (patch.audience && !(await validateAudienceInTx(tx, actorAccountId, patch.audience, authentication, source.audience))) return denied();
@@ -509,7 +509,7 @@ export async function updateProjectSourceInTx(tx: Tx, actorAccountId: string, in
         await retireDeploymentPreviewsForSourceReplacementInTx(tx, { projectSourceId: source.id });
     }
     if (changed) { next.revision++; await publishInTx(tx, [source, next]); }
-    const admission = await admissionInTx(tx, actorAccountId, next.audience, authentication, [nextOwner]);
+    const admission = await resolveProjectSourceAdmissionInTx(tx, actorAccountId, next.audience, authentication, [nextOwner]);
     return { ok: true, source: next, canManage: admission.canManage(nextOwner, next.audience) };
 }
 
@@ -538,7 +538,7 @@ export async function listProjectSourcesInTx(tx: Tx, actorAccountId: string, inp
     const rows = await tx.projectSource.findMany({ orderBy: { id: 'asc' }, where: { deletedAt: null,
         ...(parsed.data.cursor ? { id: { gt: parsed.data.cursor } } : {}) } });
     const parsedRows = rows.map(row => ({ row, owner: ownerFromRow(row) }));
-    const admission = await admissionInTx(tx, actorAccountId, rows.flatMap(row => {
+    const admission = await resolveProjectSourceAdmissionInTx(tx, actorAccountId, rows.flatMap(row => {
         const audience = storedAudience.safeParse(row.audience);
         return audience.success ? audience.data : [];
     }), authentication, parsedRows.flatMap(({ owner }) => owner.success ? [owner.data] : []));
