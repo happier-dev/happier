@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { ExecutionRunGetResponseSchema, ExecutionRunListResponseSchema, ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryResultResponseSchema } from '@happier-dev/protocol';
+import { MachineAccessGrantsListResultV1Schema, MachineAccessMutationResultV1Schema, MachineKeyPreparationResultV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
 import { readFakeCodexAppServerRequestLog, writeFakeCodexAppServerScript } from '../../src/testkit/codexAppServerRemoteHarness';
@@ -12,6 +12,7 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { startProjectDaemonFixture, type ProjectDaemonFixture } from '../../src/testkit/daemon/projectDaemon';
 import { execGit, initGitRepo } from '../../src/testkit/uiE2e/gitRepoFixtures';
 import { waitFor } from '../../src/testkit/timing';
+import { addFriend, fetchAccountId, setUsername } from '../../src/testkit/socialFriends';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -39,7 +40,8 @@ it.each(['claude', 'codex'] as const)('generates comparison outputs with explici
   let ui: Awaited<ReturnType<typeof connectUiPersonActionClient>> | undefined;
   let journeyFailure: unknown;
   try {
-    fixture = await startProjectDaemonFixture({ testDir, serverEnv: { ...process.env, DATABASE_URL: postgres.homeDatabaseUrl } });
+    fixture = await startProjectDaemonFixture({ testDir, serverEnv: { ...process.env, DATABASE_URL: postgres.homeDatabaseUrl,
+      HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED: '1', HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME: '1' } });
     const account = await fixture.createAccount('comparison-owner');
     const machine = await fixture.enrollDaemon(account, { env: {
       ...process.env,
@@ -89,9 +91,33 @@ it.each(['claude', 'codex'] as const)('generates comparison outputs with explici
       // MATRIX-1110 row 91: B has actual Manage access to this same Machine,
       // so an empty Run store proves requester scoping rather than Machine denial.
       const other = await fixture.createAccount('comparison-observer');
-      expect(await ui.executeConfirmed('machines.access.grant.set', { ...machine.target,
-        principal: { kind: 'account', accountId: readAccountIdFromToken(other.credentials.token) }, level: 'admin' }, context))
-        .toMatchObject({ ok: true });
+      const ownerId = await fetchAccountId(fixture.server.baseUrl, account.credentials.token);
+      const observerId = await fetchAccountId(fixture.server.baseUrl, other.credentials.token);
+      const grantObserver = async () => {
+        const response = await ui!.executeConfirmed('machines.access.grant.set', { ...machine.target,
+          principal: { kind: 'account' as const, accountId: observerId }, level: 'admin' }, context);
+        expect(response, JSON.stringify(response)).toMatchObject({ ok: true });
+        if (!response.ok) throw new Error('Observer Machine grant Action refused');
+        return MachineAccessMutationResultV1Schema.parse(response.result);
+      };
+      expect(await grantObserver()).toEqual({ kind: 'refused', code: 'principal_ineligible' });
+      await setUsername(fixture.server.baseUrl, account.credentials.token, 'comparison_owner');
+      await setUsername(fixture.server.baseUrl, other.credentials.token, 'comparison_observer');
+      await addFriend(fixture.server.baseUrl, account.credentials.token, observerId);
+      await addFriend(fixture.server.baseUrl, other.credentials.token, ownerId);
+      expect(await grantObserver()).toMatchObject({ kind: 'saved' });
+      const prepared = await ui.executeConfirmed('machines.access.prepareKeys', machine.target, context);
+      expect(prepared, JSON.stringify(prepared)).toMatchObject({ ok: true });
+      if (!prepared.ok) throw new Error('Observer Machine key preparation Action refused');
+      expect(MachineKeyPreparationResultV1Schema.parse(prepared.result)).toEqual({ kind: 'prepared' });
+      const grants = await ui.execute('machines.access.grants.list', machine.target, context);
+      expect(grants, JSON.stringify(grants)).toMatchObject({ ok: true });
+      if (!grants.ok) throw new Error('Observer Machine grant readiness unavailable');
+      expect(MachineAccessGrantsListResultV1Schema.parse(grants.result))
+        .toMatchObject({ grants: expect.arrayContaining([expect.objectContaining({
+          principal: { kind: 'account', accountId: observerId }, readiness: 'ready',
+          audience: expect.arrayContaining([expect.objectContaining({ accountId: observerId, readiness: 'ready' })]),
+        })]) });
       const owned = await ui.execute('execution.run.get', { runId: generated.runId }, context);
       expect(owned, JSON.stringify(owned)).toMatchObject({ ok: true });
       if (!owned.ok) throw new Error('Owner Run is unavailable before foreign probes');
