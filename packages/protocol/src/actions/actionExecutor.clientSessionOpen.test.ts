@@ -3,6 +3,30 @@ import { createActionExecutor } from './actionExecutor.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './executor/types.js';
 
 describe('client Session-open continuation', () => {
+  it('routes a client-authored child through its own Session operand declaration', async () => {
+    const sent: Array<{ sessionId: string; serverId?: string | null }> = [];
+    let childResult: unknown;
+    const executor = createActionExecutor({
+      resolveSessionReference: async ({ sessionId, context }) => ({ kind: 'unique',
+        address: { serverId: context.serverId!, sessionId: sessionId! } }),
+      clientActionExecute: async request => {
+        childResult = await request.executeChild!('session.message.send', { sessionId: 'reviewed', message: 'verify' });
+        return request.execute();
+      },
+      sessionSendMessage: async ({ sessionId, serverId }) => {
+        sent.push({ sessionId, serverId }); return { status: 'accepted', localId: 'input-reviewed' };
+      },
+      sessionOpen: async ({ sessionId }) => ({ status: 'opened', sessionId }),
+    });
+    const opened = await executor.execute('session.open', { sessionId: 'reviewed' }, {
+      serverId: 'home', surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      expectedSessionAddress: { serverId: 'home', sessionId: 'reviewed' },
+    });
+    expect(childResult).toMatchObject({ ok: true, result: { status: 'accepted', localId: 'input-reviewed' } });
+    expect(opened).toMatchObject({ ok: true, result: { status: 'opened', sessionId: 'reviewed' } });
+    expect(sent).toEqual([{ sessionId: 'reviewed', serverId: 'home' }]);
+  });
+
   it('resolves an exact Session once per open and retains its leaf through local client delivery', async () => {
     let reads = 0;
     const opened: string[] = [];

@@ -315,6 +315,30 @@ export function validateActionSessionAddressV1(input: Readonly<{
   return { ok: true, sessionAddress: address.data };
 }
 
+/** A child consumes its parent's exact leaf address through its own declaration. */
+export function projectChildActionSessionTargetsV1(params: Readonly<{
+  parentActionId: ActionId;
+  actionId: ActionId;
+  input: unknown;
+  declaration: ActionSessionTargetDeclarationV1 | undefined;
+  snapshot: ActionResolvedSessionTargetsV1 | undefined;
+  sameHome: boolean;
+}>): ActionResolvedSessionTargetsV1 | undefined {
+  const { snapshot, declaration } = params;
+  // Fanout invokes each parent with one address. A collection snapshot does
+  // not identify the child's one concrete operand; retain its existing refusal.
+  if (!snapshot || snapshot.actionId !== params.parentActionId || snapshot.actionId === params.actionId
+    || !params.sameHome || !declaration || snapshot.targets.length !== 1) return snapshot;
+  const target = snapshot.targets[0]!;
+  const binding = validateActionSessionAddressV1({ sessionTarget: declaration, input: params.input, sessionAddress: target });
+  if (!binding.ok) return snapshot;
+  const operands = declaration.field.includes('*')
+    ? readActionSessionTargetOperands(params.input as Readonly<Record<string, unknown>>, declaration.field)
+      .map(({ field }) => ({ field, target })) : undefined;
+  return { actionId: params.actionId, field: declaration.field, targets: [target], selector: false,
+    ...(operands ? { operands } : {}) };
+}
+
 /** Replace only the declared target leaf, preserving its surrounding intent. */
 export function replaceActionSessionTargetField(
   input: Readonly<Record<string, unknown>>, field: string, target: SessionTargetV1,

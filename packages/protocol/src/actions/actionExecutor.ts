@@ -131,7 +131,7 @@ import { SessionSpawnNewActionResultV1Schema, readSessionSpawnNewActionResultV1 
 import { SessionArchiveResultSchema, SessionArchiveActionInputV1Schema, SessionArchiveActionResultV1Schema, type SessionArchiveReportOutcomeV1 } from '../sessions/control/contract.js';
 import { readSessionManagerSessionIdV1 } from '../sessions/follow/sessionManagerV1.js';
 import { SESSION_LIST_PAGE_MAX_LIMIT } from '../sessions/listing/query.js';
-import { bindActionSessionTargetOperands, previewActionSessionTargets, readActionSessionTargetField, readActionSessionTargetOperands, replaceActionSessionTargetField, resolveActionSessionAddress, resolveActionSessionTargets } from './executor/sessionTargets.js';
+import { bindActionSessionTargetOperands, previewActionSessionTargets, projectChildActionSessionTargetsV1, readActionSessionTargetField, readActionSessionTargetOperands, replaceActionSessionTargetField, resolveActionSessionAddress, resolveActionSessionTargets } from './executor/sessionTargets.js';
 import { SessionMessageExplicitReplyV1Schema, SessionMessageReplyMutationResultV1Schema,
   classifySessionMessageReplyPublicationFailureV1, deriveSessionMessageReplyReturnLocalIdV1,
   type SessionMessageReplyAccountMutationV1 } from '../sessions/messages/sessionMessageReplyV1.js';
@@ -2343,6 +2343,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // and routed branches. Count per Action so a completed grant/read on retry
     // cannot shift another Action's slots. Nested parents extend the same path.
     const childPositions = new Map<ActionId, number>();
+    const childSessionContext = (childId: ActionId, childInput: unknown, caller: ActionExecutorContext): ActionExecutorContext => {
+      if (!caller.sessionTargetsV1) return caller;
+      const sessionTargetsV1 = projectChildActionSessionTargetsV1({ parentActionId: actionId, actionId: childId,
+        input: childInput, declaration: readActionSessionTargetDeclaration(childId, childInput, caller), snapshot: caller.sessionTargetsV1,
+        sameHome: isSameHome(caller.sessionTargetsV1?.targets[0]?.serverId, caller.serverId, caller) });
+      return sessionTargetsV1 === caller.sessionTargetsV1 ? caller : { ...caller, sessionTargetsV1 };
+    };
     const executeChild = (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext, hostInternal: boolean,
       execute?: (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>) => {
       const position = childPositions.get(childId) ?? 0;
@@ -2353,11 +2360,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       const { sessionCreationDefaults: _parentCreationDefaults,
         actionAutomationAdmission: _parentAutomationAdmission,
         prepareAdmittedExecutionOrigin: _parentExecutionOrigin, ...caller } = inheritedCaller;
-      const parentRequestId = normalizeId(caller.actionRequestId);
-      const derivedContext = parentRequestId ? { ...caller,
+      const childCaller = childSessionContext(childId, childInput, caller);
+      const parentRequestId = normalizeId(childCaller.actionRequestId);
+      const derivedContext = parentRequestId ? { ...childCaller,
         actionRequestId: deriveActionChildRequestIdV1({ parentRequestId, parentActionId: actionId,
           childActionId: childId, position }),
-      } : caller;
+      } : childCaller;
       if (!hostInternal && execute) return execute(childId, childInput, derivedContext);
       return !hostInternal && deps.executeOrdinaryChildAction
         ? deps.executeOrdinaryChildAction({ actionId: childId, input: childInput, context: derivedContext })
@@ -4142,7 +4150,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             const position = childPositions.get(childId) ?? 0;
             childPositions.set(childId, position + 1);
             const parent = normalizeId(parentRequestId);
-            return executeInvocation(childId, childInput, { ...caller, ...(parent ? {
+            return executeInvocation(childId, childInput, { ...childSessionContext(childId, childInput, caller), ...(parent ? {
               actionRequestId: deriveWorkflowReplacementId(['action.client_child', parent, actionId, childId, position]),
             } : {}) });
           } });

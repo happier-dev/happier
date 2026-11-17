@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ActionResolvedSessionTargetsV1 } from '../sessionTargetV1.js';
 import { createActionExecutor } from '../actionExecutor.js';
-import { registerHostSelectedActionSessionAddressV1, resolveActionSessionTargets, validateActionSessionAddressV1, validateContributedActionSessionAddressV1 } from './sessionTargets.js';
+import { bindActionSessionTargetOperands, projectChildActionSessionTargetsV1, registerHostSelectedActionSessionAddressV1, resolveActionSessionTargets, validateActionSessionAddressV1, validateContributedActionSessionAddressV1 } from './sessionTargets.js';
 
 describe('exact Action Session address binding', () => {
   it('rejects a shorthand even when the raw operand equals the proposed exact id', () => {
@@ -22,6 +22,58 @@ describe('exact Action Session address binding', () => {
   ])('refuses a missing, mismatched or non-single exact operand', ({ sessionTarget, input }) => {
     expect(validateActionSessionAddressV1({ sessionTarget, input,
       sessionAddress: { serverId: 'reviewed-home', sessionId: 'reviewed' } })).toMatchObject({ ok: false });
+  });
+});
+
+describe('child Action exact Session address projection', () => {
+  const parent: ActionResolvedSessionTargetsV1 = { actionId: 'review.apply', field: 'sessionId',
+    targets: [{ serverId: 'home', sessionId: 'reviewed' }], selector: false };
+  const declaration = { field: 'sessionId', cardinality: 'many' as const };
+
+  it.each([
+    { name: 'another Session', input: { sessionId: 'another', message: 'verify' }, snapshot: parent, sameHome: true },
+    { name: 'another Home', input: { sessionId: 'reviewed', message: 'verify' }, snapshot: parent, sameHome: false },
+    { name: 'an unrelated parent', input: { sessionId: 'reviewed', message: 'verify' },
+      snapshot: { ...parent, actionId: 'session.role.set' }, sameHome: true },
+    { name: 'a group without an exact parent leaf', input: { sessionId: 'reviewed', message: 'verify' },
+      snapshot: { ...parent, targets: [...parent.targets, { serverId: 'home', sessionId: 'another' }] }, sameHome: true },
+    { name: 'new selector intent', input: { sessionId: { selector: 'self' }, message: 'verify' }, snapshot: parent, sameHome: true },
+  ])('refuses $name before the message transport', async ({ input, snapshot, sameHome }) => {
+    let effects = 0;
+    const sessionTargetsV1 = projectChildActionSessionTargetsV1({ parentActionId: 'review.apply',
+      actionId: 'session.message.send', input, declaration, snapshot, sameHome });
+    const executor = createActionExecutor({ sessionSendMessage: async () => {
+      effects += 1; return { status: 'accepted', localId: 'message' };
+    } });
+    expect(await executor.execute('session.message.send', input, { surface: 'ui',
+      serverId: sameHome ? 'home' : 'foreign-home', sessionTargetsV1 }))
+      .toMatchObject({ ok: false, errorCode: 'approval_stale' });
+    expect(effects).toBe(0);
+  });
+
+  it('preserves a child-owned address rather than replacing it with the parent address', async () => {
+    const input = { sessionId: 'child-owned', message: 'verify' };
+    const snapshot = { ...parent, actionId: 'session.message.send',
+      targets: [{ serverId: 'home', sessionId: input.sessionId }] };
+    const sessionTargetsV1 = projectChildActionSessionTargetsV1({ parentActionId: 'review.apply',
+      actionId: 'session.message.send', input, declaration, snapshot, sameHome: true });
+    const effects: string[] = [];
+    const executor = createActionExecutor({ sessionSendMessage: async ({ sessionId }) => {
+      effects.push(sessionId); return { status: 'accepted', localId: 'message' };
+    } });
+    expect(await executor.execute('session.message.send', input, { surface: 'ui', serverId: 'home', sessionTargetsV1 }))
+      .toMatchObject({ ok: true });
+    expect(effects).toEqual(['child-owned']);
+  });
+
+  it('binds the actual single collection operand through the existing slot owner', () => {
+    const input = { participants: [{ sessionId: 'reviewed' }] };
+    const childDeclaration = { field: 'participants.*.sessionId', cardinality: 'one' as const };
+    const snapshot = projectChildActionSessionTargetsV1({ parentActionId: 'review.apply', actionId: 'discussion.create',
+      input, declaration: childDeclaration, snapshot: parent, sameHome: true });
+    expect(snapshot?.operands).toEqual([{ field: 'participants.0.sessionId', target: parent.targets[0] }]);
+    expect(bindActionSessionTargetOperands(input, snapshot!, childDeclaration, true)).toEqual(input);
+    expect(bindActionSessionTargetOperands({ participants: [{ sessionId: 'another' }] }, snapshot!, childDeclaration, true)).toBeNull();
   });
 });
 

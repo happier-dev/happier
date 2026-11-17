@@ -285,6 +285,49 @@ describe('SessionTarget at the Actions front door', () => {
     expect(effects).toEqual([expect.objectContaining({ sessionId: 'manager', managerSessionId: 'new-manager', expectedManagerSessionId: 'self' })]);
   });
 
+  it('projects the coordinator leaf into role, manager and nested Follow child operands', async () => {
+    const h = harness();
+    const effects: unknown[] = [];
+    const filter = normalizeSessionListFilterV1({ show: 'sessions', startedBy: ['you'], scope: 'all_accessible', homeServerIds: ['home'] });
+    const rule = OpenedSessionFollowRuleV1Schema.parse({ ruleId: 'home-rule',
+      receiver: { kind: 'session', sessionId: 'coordinator-session' }, version: 0,
+      definition: { v: 1, enabled: true, filter, policy: { preset: 'important' } } });
+    const executor = createActionExecutor({ ...h.deps,
+      readSessionManager: async () => ({ kind: 'manager', address: { serverId: 'home', sessionId: 'coordinator-session' } }),
+      roleActionExecute: async args => {
+        const input = RoleActionInputSchemasV1[args.actionId].parse(args.input);
+        effects.push({ actionId: args.actionId, input, serverId: args.context.serverId });
+        return { updated: true };
+      },
+      sessionManagerSet: async args => {
+        effects.push({ actionId: 'session.manager.set', input: args });
+        return { ok: true, sessionId: 'coordinator-session', managerSessionId: 'new-manager', attachedAt: 1 };
+      },
+      sessionFollowAction: async args => {
+        effects.push({ actionId: args.actionId, input: args.input, serverId: args.serverId });
+        return { rule };
+      },
+    });
+    const result = await executor.execute('session.coordinator.enable', {
+      sessionId: { selector: 'manager' }, roleId: 'orchestrator', keep: 'none',
+      managedBy: { managerSessionId: 'new-manager', expectedManagerSessionId: null },
+      ruleSuggestions: [{ source: { kind: 'rule', ruleId: 'home-rule' }, expectedVersion: -1,
+        ruleDefinition: { v: 1, enabled: true, filter } }],
+    }, { ...context, surface: 'ui' });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { sessionId: 'coordinator-session', status: 'configured', effects: [
+      { operation: 'role', status: 'accepted' }, { operation: 'manager', status: 'accepted' },
+      { operation: 'rule', ruleId: 'home-rule', status: 'accepted', version: 0 },
+    ] } });
+    expect(effects).toEqual([
+      { actionId: 'session.role.set', input: { sessionId: 'coordinator-session', roleId: 'orchestrator' }, serverId: 'home' },
+      { actionId: 'session.manager.set', input: expect.objectContaining({ sessionId: 'coordinator-session',
+        managerSessionId: 'new-manager', expectedManagerSessionId: null }) },
+      { actionId: 'follow.set', input: { receiver: { kind: 'session', sessionId: 'coordinator-session' },
+        source: { kind: 'rule', ruleId: 'home-rule' }, expectedVersion: -1,
+        ruleDefinition: { v: 1, enabled: true, filter }, policy: { preset: 'important' } }, serverId: 'home' },
+    ]);
+  });
+
   it('refuses Workflow report-copy before native preparation or recipient effects', async () => {
     const h = harness();
     const effects: unknown[] = [];
