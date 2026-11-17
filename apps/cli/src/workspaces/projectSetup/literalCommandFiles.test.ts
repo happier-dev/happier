@@ -27,6 +27,20 @@ describe('files a literal Project command runs', () => {
       ['scripts/setup.ps1'],
     ],
     ['pwsh -Command ./inline.ps1', []],
+    ['pwsh -ep bypass -file setup.ps1', ['setup.ps1']],
+    ['pwsh -executionpolicy bypass -f setup.ps1', ['setup.ps1']],
+    ['powershell.exe -ep Bypass -File setup.ps1', ['setup.ps1']],
+    ['pwsh -configurationname Remote -file setup.ps1', ['setup.ps1']],
+    ['pwsh -custompipename Pipe -file setup.ps1', ['setup.ps1']],
+    ['pwsh -ex bypass -fi setup.ps1', ['setup.ps1']],
+    ['powershell.exe -exec bypass -fi setup.ps1', ['setup.ps1']],
+    ['pwsh -wo sub -fi setup.ps1', ['setup.ps1']],
+    ['pwsh -configurationname Remote -fi setup.ps1', ['setup.ps1']],
+    ['pwsh -File setup.ps1 -Command ./ignored.ps1', ['setup.ps1']],
+    ['powershell.exe -Command ./inline.ps1 -File ignored.ps1', []],
+    ['pwsh -e ZQB4AGkAdAA= -File setup.ps1', ['setup.ps1']],
+    ['pwsh -EncodedCommand ZQB4AGkAdAA=', []],
+    ['powershell.exe -ec ZQB4AGkAdAA= -f setup.ps1', ['setup.ps1']],
     ['cmd /c scripts\\a.cmd', ['scripts/a.cmd']],
     ['setup.cmd --fast', ['setup.cmd']],
     // Runtime subcommands, valued flags and versioned interpreters.
@@ -180,6 +194,9 @@ describe('files a literal Project command runs', () => {
     ['node -r ./preload main.js', 'preload.js'],
     ['ruby -C sub app.rb', 'sub/app.rb'],
     ['pwsh -WorkingDirectory sub -File app.ps1', 'app.ps1'],
+    ['pwsh -ep bypass -file setup.ps1', 'setup.ps1'],
+    ['powershell.exe -executionpolicy bypass -file setup.ps1', 'setup.ps1'],
+    ['pwsh -ex bypass -fi setup.ps1', 'setup.ps1'],
   ])('binds consent to the runtime-selected input: %s → %s', async (command, selected) => {
     const checkout = await mkdtemp(join(tmpdir(), 'happier-launcher-table-'));
     try {

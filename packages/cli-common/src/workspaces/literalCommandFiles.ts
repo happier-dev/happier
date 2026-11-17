@@ -57,8 +57,9 @@ const FAMILIES: Readonly<Record<string, Family>> = {
     perl: { inline: ['-e', '-E'] },
     php: { inline: ['-r'], valued: ['-d', '-c'], script: ['-f'] },
     // PowerShell resolves -File before applying -WorkingDirectory (unlike bun --cwd).
-    pwsh: { inline: ['-command', '-c', '-encodedcommand', '-ec', '-e'], script: ['-file', '-f'], caseInsensitive: true,
-        valued: ['-executionpolicy', '-ep', '-configurationname', '-workingdirectory', '-wd', '-windowstyle', '-outputformat', '-of', '-inputformat', '-if', '-settingsfile', '-custompipename', '-version', '-v'] },
+    pwsh: { inline: ['-command', '-c'], script: ['-file', '-f'], caseInsensitive: true,
+        // EncodedCommand does not consume the remaining arguments: a later -File wins.
+        valued: ['-encodedcommand', '-ec', '-e', '-executionpolicy', '-ep', '-configurationname', '-workingdirectory', '-wd', '-windowstyle', '-outputformat', '-of', '-inputformat', '-if', '-settingsfile', '-custompipename', '-version', '-v'] },
 };
 const WRAPPERS = new Set(['env', 'sudo', 'exec', 'command', 'time', 'nohup', 'call']);
 const SUDO_VALUED = new Set(['-u', '-g', '-C', '-D', '-h', '-p', '-r', '-t', '-U']);
@@ -137,7 +138,15 @@ function scanLiteralCommand(root: string, cwd: string, command: LiteralCommandLi
             if (/[\\/]/.test(program) || /\.(?:cmd|bat|ps1)$/i.test(program)) add(program);
             const family = familyOf(program);
             if (!family) continue;
-            const normalize = (flag: string) => family.caseInsensitive ? flag.toLowerCase() : flag;
+            const normalize = (flag: string) => {
+                if (!family.caseInsensitive) return flag;
+                const lower = flag.toLowerCase();
+                const options = [...family.inline, ...(family.valued ?? []), ...(family.script ?? [])];
+                if (options.includes(lower)) return lower;
+                // PowerShell accepts abbreviated parameter names, e.g. -ex and -fi.
+                const matches = options.filter(option => option.startsWith(lower));
+                return matches.length === 1 ? matches[0]! : lower;
+            };
             const shellCwd = segmentCwd;
             let operand = index + 1;
             let subcommandSeen = false;
@@ -147,7 +156,7 @@ function scanLiteralCommand(root: string, cwd: string, command: LiteralCommandLi
                 const equal = token.indexOf('=');
                 const flag = normalize(equal < 0 ? token : token.slice(0, equal));
                 if (!optionsEnded && !subcommandSeen && token === family.subcommand) { subcommandSeen = true; operand += 1; continue; }
-                if (!optionsEnded && (family.inline.includes(flag) || family.inline.some(inline => inline.length === 2 && token.startsWith(inline) && token.length > 2))) break;
+                if (!optionsEnded && (family.inline.includes(flag) || !family.caseInsensitive && family.inline.some(inline => inline.length === 2 && token.startsWith(inline) && token.length > 2))) break;
                 if (token === '-') break; // stdin, not the following argument
                 if (!optionsEnded && token === '--') { optionsEnded = true; operand += 1; continue; }
                 if (!optionsEnded && family.script?.includes(flag)) { if (tokens[operand + 1] !== undefined) add(tokens[operand + 1]!); break; }
