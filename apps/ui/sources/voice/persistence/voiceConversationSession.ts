@@ -45,6 +45,7 @@ import {
     completePendingMachineSpawnAttemptCustodyForSession,
 } from '@/sync/ops/machines';
 import { executeSessionSpawnNewAction } from '@/sync/ops/actions/sessionSpawnNewAction';
+import { readSessionSpawnNewFailure } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 import { executeWithInPlaceApprovalReview } from '@/components/approvals/executeWithInPlaceApprovalReview';
 import { getVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -582,33 +583,28 @@ async function spawnVoiceConversationSession(params: Readonly<{
             signal,
         }, executor),
     });
-    if (!action.ok) {
-        throw toVoiceConversationSpawnError({
-            errorCode: action.errorCode,
-            errorMessage: action.errorCode,
-            details: action.details,
-        });
-    }
-    if (action.result.type !== 'success') {
-        // The strict Action result already carries the launch owner's typed
-        // cause. Keep its code without exposing diagnostic prose to Voice.
-        const launchErrorCode = 'launchError' in action.result ? action.result.launchError?.code : undefined;
-        throw toVoiceConversationSpawnError(action.result.type === 'error'
+    if (!action.ok || action.result.type !== 'success') {
+        // Creation refusals keep their typed result inside the Action settlement.
+        const failure = readSessionSpawnNewFailure(action);
+        const launchErrorCode = failure && 'launchError' in failure ? failure.launchError?.code : undefined;
+        throw toVoiceConversationSpawnError(failure
             ? {
-                errorCode: launchErrorCode ?? action.result.code,
-                errorMessage: launchErrorCode ?? action.result.code,
-                ...('details' in action.result ? { details: action.result.details } : {}),
-                errorDetail: 'launchError' in action.result ? action.result.launchError : undefined,
-                providerError: 'providerError' in action.result ? action.result.providerError : undefined,
+                errorCode: launchErrorCode ?? failure.code,
+                errorMessage: launchErrorCode ?? failure.code,
+                ...('details' in failure ? { details: failure.details } : {}),
+                errorDetail: 'launchError' in failure ? failure.launchError : undefined,
+                providerError: 'providerError' in failure ? failure.providerError : undefined,
                 retryableProviderFailure:
-                    'providerError' in action.result
-                    && action.result.providerError?.retryable === true
-                    && action.result.providerError.action === 'retry',
+                    'providerError' in failure
+                    && failure.providerError?.retryable === true
+                    && failure.providerError.action === 'retry',
             }
-            : {
-                errorCode: 'VOICE_CONVERSATION_SPAWN_PENDING',
-                errorMessage: 'voice_conversation_spawn_pending',
-            });
+            : !action.ok
+                ? { errorCode: action.errorCode, errorMessage: action.errorCode, details: action.details }
+                : {
+                    errorCode: 'VOICE_CONVERSATION_SPAWN_PENDING',
+                    errorMessage: 'voice_conversation_spawn_pending',
+                });
     }
     return action.result;
 }
