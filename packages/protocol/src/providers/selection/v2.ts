@@ -1,9 +1,10 @@
+import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModelIdSchema } from '../ids.js';
-import { SessionActiveModelSelectionV1Schema, SessionModelSelectionV1Schema, type SessionActiveModelSelectionV1, type SessionModelSelectionV1 } from './v1.js';
+import { SessionActiveModelSelectionV1Schema, SessionModelSelectionV1Schema, serializeSessionModelSelectionV1, deserializeSessionModelSelectionV1, type SessionActiveModelSelectionV1, type SessionModelSelectionV1 } from './v1.js';
 import { TeamCredentialProviderModelSelectionV1Schema, TeamCredentialRouteV1Schema, type TeamCredentialProviderModelSelectionV1, type TeamCredentialRouteV1 } from '../../teams/credentials/resourceV1.js';
 import { SessionTeamCredentialNativeDeliveryV1Schema, type SessionTeamCredentialNativeDeliveryV1, type SessionTeamCredentialProviderModelSelectionV1 } from '../../teams/credentials/sessionBindingIntentV1.js';
 
@@ -96,6 +97,42 @@ export const SessionModelSelectionV2Schema = lazyZodSchema(() => z.union([
   TeamResourceSessionModelSelectionV2Schema,
 ]));
 export type SessionModelSelectionV2 = z.infer<typeof SessionModelSelectionV2Schema>;
+
+/** Current Session launch carrier; retained V1 inputs keep their original source. */
+export const SessionModelSelectionSchema = lazyZodSchema(() => z.union([
+  SessionModelSelectionV2Schema, SessionModelSelectionV1Schema,
+]));
+export type SessionModelSelection = z.infer<typeof SessionModelSelectionSchema>;
+
+const modelSelectionEncoder = new TextEncoder();
+const modelSelectionDecoder = new TextDecoder('utf-8', { fatal: true });
+
+/** Process transport preserves the authored source; the retained V1 encoding is unchanged. */
+export function serializeSessionModelSelection(value: SessionModelSelection): string {
+  if (value.v === 1) return serializeSessionModelSelectionV1(value);
+  const selection = SessionModelSelectionV2Schema.parse(value);
+  return `sms2:${encodeBase64(modelSelectionEncoder.encode(JSON.stringify(selection)), 'base64url').replace(/=+$/u, '')}`;
+}
+
+export function deserializeSessionModelSelection(value: string): SessionModelSelection {
+  if (value.startsWith('sms1:')) return deserializeSessionModelSelectionV1(value);
+  if (!value.startsWith('sms2:')) throw new Error('Invalid session model selection transport');
+  try {
+    const selection = SessionModelSelectionV2Schema.parse(JSON.parse(
+      modelSelectionDecoder.decode(decodeBase64(value.slice(5), 'base64url')),
+    ) as unknown);
+    if (serializeSessionModelSelection(selection) !== value) throw new Error('Invalid session model selection transport');
+    return selection;
+  } catch {
+    throw new Error('Invalid session model selection transport');
+  }
+}
+
+/** Account Provider binding is a distinct source from native and Team-resource binding. */
+export function readSessionModelSelectionProviderConnectionId(selection: SessionModelSelection): string | null {
+  return selection.v === 1 ? selection.ref.providerConnectionId
+    : selection.ref.source === 'account_provider_connection' ? selection.ref.providerConnectionId : null;
+}
 
 /** Older readers may consume only the two sources they can represent. */
 export function projectSessionModelSelectionV2ToV1(
