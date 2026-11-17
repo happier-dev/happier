@@ -36,6 +36,8 @@ import {
 import { executeContributedAction } from '@/plugins/runtime/invocation/actions/executeContributedAction';
 import { createDaemonPluginActionExecutor } from '@/session/actions/createDaemonPluginActionExecutor';
 import { createClientActionMachineRpcExecutor } from '@/plugins/runtime/invocation/actions/clientActionMachineRpc';
+import { ApiMachineClient } from '@/api/apiMachine';
+import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { UiContributedActionExecuteRequestV1Schema } from '@happier-dev/protocol/plugins/actions/clientInvocationV1';
@@ -829,6 +831,40 @@ describe('executeContributedAction', () => {
     } finally {
       await fixture.dispose();
     }
+  });
+
+  it('keeps a hosted member client-target Action out of the Machine owner Apps whichever host route invokes it', async () => {
+    // MACH-PRINCIPAL-AUDIT-1116 A-R4 / SEC 1117D F1: the structured-message execute RPC stamps
+    // only approvalContext.runtimeAccountId (the member); the daemon socket reaches the owner's Apps.
+    const base = createAction('/unused/client-action.mjs', 'open-client');
+    const action: SafeResolvedActionContribution = {
+      ...base,
+      definition: { ...base.definition,
+        execution: { target: 'client', client: { artifactId: 'client-actions', exportName: 'activate' }, platforms: ['web'] },
+      },
+    };
+    const emitted: string[] = [];
+    const socket = createApiSessionSocketStub({ connected: true, emitWithAck: async (_event, payload) => {
+      emitted.push(String((payload as { method?: unknown }).method));
+      return { ok: true, result: { ok: true, result: { handledBy: 'client' } } };
+    } });
+    // Boundary fixture: the daemon's JWT-shaped token names the Machine owner.
+    const machine = new ApiMachineClient(`h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`,
+      { id: 'machine-plain-1', encryptionMode: 'plain', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+    Reflect.set(machine, 'socket', socket);
+    const runtimeRegistry = {
+      ...(await createExecutableRegistry({ action, activateContributionsOnDemand: async () => [] })),
+      executeClientAction: createClientActionMachineRpcExecutor(() => machine),
+    };
+    const invoke = (accountId: string) => executeContributedAction({
+      runtimeRegistry, actionId: buildQualifiedPluginContributionKey({ pluginId: action.pluginId ?? '', localId: action.definition.id }), input: {},
+      approvalContext: { surface: 'agent', authority: 'account_automation', runtimeAccountId: accountId },
+      context: { surface: 'agent' },
+    });
+    expect(await invoke('member')).toMatchObject({ matched: true, result: { ok: false, actionHandlerInvocation: 'notStarted' } });
+    expect(emitted).toEqual([]);
+    await invoke('owner');
+    expect(emitted).toHaveLength(1);
   });
 
   it('keeps caller provenance and retired occurrences out of the host client Action transport', async () => {

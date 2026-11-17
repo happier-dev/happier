@@ -153,10 +153,13 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     // Its owning App retains that admission and executes through its front door.
     if (authority.actionInvocation?.surface === 'voice' && authority.actionInvocation.caller.kind === 'host'
       && operation.executionRun) {
+      const sessionAccountId = readAccountIdFromToken(params.token);
       return await createClientActionReverseDispatcher(params.getMachineClient ?? (() => null), {
         ...operation.executionRun, sessionId: authority.sessionId, turnId: operation.witness.turnId,
         actionRequestId: operation.requestId,
       })({ actionId: operation.actionId, input: operation.input, context: {
+        // The Session's Account; the daemon socket reaches only its own Apps.
+        ...(sessionAccountId ? { runtimeAccountId: sessionAccountId } : {}),
         ...(authority.signal ? { signal: authority.signal } : {}),
       } });
     }

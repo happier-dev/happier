@@ -50,6 +50,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { isOriginalOwnAccountActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { parseActionSurfaceKey } from '@happier-dev/protocol/actions/executor/callerContext';
+import { readActionPrincipalAccountId } from '@/session/actions/actionPrincipalAccount';
 import { checkManagedProviderOperationCustody, isAdmittedManagedProviderCustodyCurrent, type AdmittedManagedProviderOperationExecutionRequest,
   type AdmittedConnectedAccountPurposeBindingExecutionRequest } from './managedProviderCustody';
 export type { AdmittedManagedProviderOperationExecutionRequest, AdmittedConnectedAccountPurposeBindingExecutionRequest } from './managedProviderCustody';
@@ -414,8 +415,6 @@ export async function executeContributedAction(params: Readonly<{
       & Pick<RpcHandlerContext, 'callerInputAuthorization'>;
     /** Host-owned custody transition after final admission, before plugin code. */
     beforeHandlerInvocation?: () => Promise<void>;
-    /** Host-stamped acting Account; the daemon's client transport reaches only its own Apps. */
-    principalAccountId?: string;
   }>;
 }>): Promise<PluginActionExecutionAttempt> {
   const actionId = String(params.actionId);
@@ -632,9 +631,12 @@ export async function executeContributedAction(params: Readonly<{
     if (!request.success) {
       return { matched: true, result: actionHandlerNotStartedFailure('plugin_action_input_invalid', 'Client Action request is invalid') };
     }
+    // The host-stamped admission names the acting Account; the daemon's client transport
+    // reaches only its own Account's Apps, whichever host route invoked this Action.
+    const principalAccountId = readActionPrincipalAccountId(params.approvalContext);
     return { matched: true, result: await runtimeRegistry.executeClientAction(request.data, {
       ...(params.context.signal ? { signal: params.context.signal } : {}),
-      ...(params.context.principalAccountId ? { principalAccountId: params.context.principalAccountId } : {}),
+      ...(principalAccountId ? { principalAccountId } : {}),
       ...(params.clientId === undefined ? {} : { clientId: params.clientId }),
     }) };
   }
