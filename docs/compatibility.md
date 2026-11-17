@@ -2832,14 +2832,6 @@ mode with its slot selection. The existing device-local Undo restores that inten
 An explicit Reset removes known seeds, style or CSS while retaining unknown
 presentation children; omitted sections in a partial edit remain unchanged.
 
-VS Code imports resolve local `include` chains through the portable Protocol
-resolver before creating an editable copy. Native imports retain the selected
-file URI and use Expo's File API to read relatives when the platform makes them
-available. Document-picker cache copies may lack those siblings. A browser's
-single selected File cannot expose unselected siblings, and pasted JSON has no
-local resource reader. Missing resources and include cycles are reported inline;
-an incomplete child is never silently imported.
-
 Device `themeProfileSelection` entries are tagged Artifact, built-in or plugin
 references. An unavailable reference renders the mode's base theme without
 rewriting the saved choice. Pure light/dark/adaptive changes retain both mode
