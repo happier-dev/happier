@@ -28,6 +28,12 @@ export function WorkNotificationOperationView(props: Readonly<{
       <Item
         testID={id(props.armed ? '-cancel' : '')}
         title={props.title}
+        // A failed change is said on the row's own line, on its text column, never beside the row.
+        subtitle={props.error ? (
+          <Text testID={id('-error')} accessibilityLiveRegion="polite" style={stylesheet.error}>
+            {t('sessionWork.notify.failed')}
+          </Text>
+        ) : undefined}
         density="compact"
         disabled={props.disabled}
         loading={props.pending}
@@ -44,9 +50,6 @@ export function WorkNotificationOperationView(props: Readonly<{
           />
         )}
       />
-      {props.error ? <Text testID={id('-error')} accessibilityLiveRegion="polite" style={stylesheet.error}>
-        {t('sessionWork.notify.failed')}
-      </Text> : null}
     </View>
   );
 }

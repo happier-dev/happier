@@ -31,7 +31,8 @@ import { Typography } from '@/constants/Typography';
  * Fixture facts only; no RPC, store or send.
  */
 
-const NOW = Date.UTC(2026, 10, 17, 9, 30);
+// The rows' own times read the app clock, so the fixture is dated from it.
+const NOW = Date.now();
 const noop = () => {};
 const idleRefresh = { sending: false, send: noop };
 
@@ -143,7 +144,7 @@ const RECAP_STATES: ReadonlyArray<
       recap: {
         source: 'worker_update',
         atMs: NOW - 12 * 60_000,
-        text: 'Asks a question',
+        text: 'needs you · asks whether to mention refunds',
         workerSessionId: 'faq',
       },
     },
@@ -156,7 +157,7 @@ const RECAP_STATES: ReadonlyArray<
       recap: {
         source: 'worker_update',
         atMs: NOW - 3 * 60_000,
-        text: 'Runbook done',
+        text: 'finished',
         body: 'The support runbook converged in one round; overnight triage found 3 flaky tests, all in webkit.',
       },
     },
