@@ -1699,7 +1699,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                     portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false }}>
                     {({ maxHeight }) => <View style={{ height: maxHeight }}>
                         <WorkflowLiveEventsPane testID={`${testIDPrefix}-live-events`} active
-                            onAddTrigger={props.onAddTriggerWhen ?? null} onClose={closeSettings} />
+                            onAddTrigger={props.onAddTriggerWhen ?? null} onClose={null} />
                     </View>}
                 </Popover>
             ) : null}

@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import {
   usePathname,
@@ -50,7 +49,7 @@ export type WorkflowsColumnEventsState = ReturnType<
   typeof useWorkflowsColumnEvents
 >;
 
-/** "Listening since 14:02" (the band's lead in the column, its own line on a page). */
+/** "Listening since 14:02": its own line under the view switch, above the kind pills. */
 export function WorkflowsColumnEventsListening(
   props: Readonly<{ state: WorkflowsColumnEventsState }>,
 ) {
@@ -65,16 +64,13 @@ export function WorkflowsColumnEventsListening(
   );
 }
 
-/** The kind chips under the band. */
+/** The kind pills under the listening line. */
 export function WorkflowsColumnEventsFilters(
-  props: Readonly<{
-    state: WorkflowsColumnEventsState;
-    edge?: 'column' | 'page';
-  }>,
+  props: Readonly<{ state: WorkflowsColumnEventsState }>,
 ) {
   const { feed, filter, setFilter } = props.state;
   return (
-    <View style={props.edge === 'page' ? styles.pageEdge : styles.columnEdge}>
+    <View style={styles.filters}>
       <WorkflowEventsFilters
         testID="workflows-column:events:filter"
         projection={feed.projection}
@@ -118,9 +114,5 @@ export const WorkflowsColumnEventsRows = React.memo(
 );
 
 const styles = StyleSheet.create((theme) => ({
-  columnEdge: {
-    paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset,
-    paddingBottom: theme.space.s4,
-  },
-  pageEdge: { paddingBottom: theme.space.s4 },
+  filters: { paddingBottom: theme.space.s4 },
 }));

@@ -119,7 +119,7 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
               {eventsShown ? (
                 <View style={styles.eventsHead}>
                   <WorkflowsColumnEventsListening state={events} />
-                  <WorkflowsColumnEventsFilters state={events} edge="page" />
+                  <WorkflowsColumnEventsFilters state={events} />
                 </View>
               ) : null}
             </>

@@ -222,10 +222,14 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
         {...(spaceControls ? { titleControl: header.titleControl } : {})}
         strip={<>
             <View testID="workflows-column:view-band" style={styles.viewBand}>
-                <View style={styles.viewBandLead}>{spaceControls ? header.strip : eventsShown ? <WorkflowsColumnEventsListening state={events} /> : null}</View>
+                <View style={styles.viewBandLead}>{spaceControls ? header.strip : null}</View>
                 {viewSwitch}
             </View>
-            {eventsShown ? <WorkflowsColumnEventsFilters state={events} /> : null}
+            {/* The listening line takes its own line under the switch: beside it, its time would be cut (r3 live). */}
+            {eventsShown ? <View style={styles.eventsHead}>
+                <WorkflowsColumnEventsListening state={events} />
+                <WorkflowsColumnEventsFilters state={events} />
+            </View> : null}
             {spaceControls ? header.conditionRow : null}
             {spaceControls ? header.overlays : null}
         </>}
@@ -464,6 +468,8 @@ const styles = StyleSheet.create((theme) => ({
     /** The page form's head keeps no page-end padding of its own: the views' content follows it. */
     pageHead: { paddingBottom: 0 },
     pageRuns: { flex: 1, paddingBottom: 0 },
+    // The strip is already on the column's edge: the line and pills start where the title does.
+    eventsHead: { gap: theme.space.s4, paddingTop: theme.space.s4 },
     eventsPageHead: { paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx, paddingTop: theme.space.s12, gap: theme.space.s4 },
     // Under the page's large title, the same gap the Inbox's tabs keep (lab `phone-P4`).
     viewsUnderPageTitle: { paddingTop: theme.space.s8, paddingBottom: 0 },
@@ -487,7 +493,7 @@ const WorkflowsColumnEventsPage = React.memo(function WorkflowsColumnEventsPage(
     return <PageFrame column="wide" content="column" style={styles.pageRuns}>
         <View style={styles.eventsPageHead}>
             <WorkflowsColumnEventsListening state={events} />
-            <WorkflowsColumnEventsFilters state={events} edge="page" />
+            <WorkflowsColumnEventsFilters state={events} />
         </View>
         <ItemList presentation="grouped" style={styles.definitionsList}>
             <WorkflowsColumnEventsRows feed={events.feed} scope={events.scope} filter={events.filter} surface="page" active={presented && props.active} />

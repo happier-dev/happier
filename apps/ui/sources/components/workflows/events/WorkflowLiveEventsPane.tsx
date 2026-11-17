@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { PaneHeader } from '@/components/appShell/panes/PaneHeader';
+import { HEADER_BAND_HORIZONTAL_PADDING_PX } from '@/components/ui/layout/headerBand';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -42,7 +43,8 @@ export const WorkflowLiveEventsPane = React.memo(
       active: boolean;
       /** Adds the event's start to the mounted draft's triggers; absent when this person cannot manage them. */
       onAddTrigger: ((when: TriggerWhenValue) => void) | null;
-      onClose: () => void;
+      /** Closes the companion; `null` inside the phone sheet, whose own title and close already stand above. */
+      onClose: (() => void) | null;
       testID: string;
     }>,
   ) {
@@ -75,11 +77,13 @@ export const WorkflowLiveEventsPane = React.memo(
     );
     return (
       <View testID={props.testID} style={styles.pane}>
-        <PaneHeader
-          testID={`${props.testID}:header`}
-          title={t('workflows.events.liveEvents')}
-          onClose={props.onClose}
-        />
+        {props.onClose === null ? null : (
+          <PaneHeader
+            testID={`${props.testID}:header`}
+            title={t('workflows.events.liveEvents')}
+            onClose={props.onClose}
+          />
+        )}
         <View style={styles.head}>
           <WorkflowEventsListening
             testID={`${props.testID}:listening`}
@@ -163,8 +167,9 @@ const LiveEventBody = React.memo(function LiveEventBody(
 
 const styles = StyleSheet.create((theme) => ({
   pane: { flex: 1, minHeight: 0 },
+  // On the pane title's edge.
   head: {
-    paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset,
+    paddingHorizontal: HEADER_BAND_HORIZONTAL_PADDING_PX,
     gap: theme.space.s4,
     paddingBottom: theme.space.s4,
   },
