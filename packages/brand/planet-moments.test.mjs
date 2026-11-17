@@ -146,3 +146,16 @@ test('the trigger windows the policies enforce are the exported windows', () => 
   const settle = (nowMs) => moments.idleResettleTrigger({ nowMs, lastTriggeredAtMs: 0, homeIdle: true, homeVisible: true }).trigger;
   assert.deepEqual([rip(ripple - 1), rip(ripple), settle(resettle - 1), settle(resettle)], [false, true, false, true]);
 });
+test('the theme switch digits take the destination ink they are given, and leave the alpha as they found it', () => {
+  for (const dir of ['sunrise', 'night']) {
+    const { commands } = moments.themeSwitchFrame(0.6, { w: 390, h: 844, dir, kind: 'horizon', ink: '#f2efe9' });
+    let fill = null, alpha = 1, texts = 0;
+    for (const [kind, key, value] of commands) {
+      if (kind === 'set' && key === 'fillStyle') fill = value;
+      if (kind === 'set' && key === 'globalAlpha') alpha = value;
+      if (kind === 'fillText') { texts++; assert.equal(fill, '#f2efe9'); assert.ok(alpha > 0 && alpha <= 1); }
+    }
+    assert.ok(texts > 0);
+    assert.equal(alpha, 1);
+  }
+});

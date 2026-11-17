@@ -232,16 +232,21 @@ export function themeSwitchFrame(t, o) {
       for (let a = a0; a <= a1; a += step) { const x = B.cx + Math.cos(a) * B.R * sgn * (sgn < 0 ? -1 : 1), y = B.cy + Math.sin(a) * B.R * sgn; if (x < -4 || x > w + 4 || y < -4 || y > h + 4) continue;
         const tt = clamp(0.06 + (x / w) * 0.45); c.fillStyle = rgba(M.ramp(stops, warm ? 0.5 - tt : tt), 0.9 * band); c.fillRect(Math.round(x) - 1, Math.round(y) - 1, 2, 2); } }
     // 3 · the wavefront of typewriter digits on a fixed grid, densest just inside the new theme
+    // With the destination theme's ink the digits read on whatever it paints; without it, the lab's planet colours.
     const dp = o.dp || 13, cw = dp * 0.62; c.font = `500 ${dp * 0.8}px ${M.MONO}`; c.textAlign = 'center'; c.textBaseline = 'middle';
+    if (o.ink) c.fillStyle = o.ink;
     const nx = Math.ceil(w / cw), ny = Math.ceil(h / dp); const depth = o.depth || 120;
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
       if (i & 1) continue; // digit, space: single digits on the typewriter grid, like the engine's field (no clumps)
       const x = (i + 0.5) * cw, y = (j + 0.5) * dp; const d = B.d(x, y); if (d > 26 || d < -depth) continue;
       const f = d > 0 ? Math.exp(-d / 9) : Math.exp(d / (depth * 0.38)); const dens = 0.24 + 0.7 * f; if (hash(i, j + 77) > dens) continue;
       const a = band * f * (0.45 + 0.55 * hash(i + 9, j)); if (a < 0.03) continue;
-      const tc = clamp(warm ? 0.08 + (-d / depth) * 0.55 + hash(i, j) * 0.12 : (-d / depth) * 0.8 + hash(i, j) * 0.15);
-      c.fillStyle = rgba(M.ramp(stops, tc), clamp(a)); c.fillText(String(M.digitOf(i, j, t, 14)), x, y);
+      if (o.ink) c.globalAlpha = clamp(a);
+      else { const tc = clamp(warm ? 0.08 + (-d / depth) * 0.55 + hash(i, j) * 0.12 : (-d / depth) * 0.8 + hash(i, j) * 0.15);
+        c.fillStyle = rgba(M.ramp(stops, tc), clamp(a)); }
+      c.fillText(String(M.digitOf(i, j, t, 14)), x, y);
     }
+    if (o.ink) c.globalAlpha = 1;
     return { commands, clipPath, visibility };
 }
 

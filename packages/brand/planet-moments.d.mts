@@ -68,6 +68,8 @@ export interface ThemeSwitchOptions {
   readonly w: number; readonly h: number; readonly dir?: 'sunrise' | 'night';
   /** Horizon/TH3 is the product moment; radial/curtain preserve the lab's comparison scenes. */
   readonly kind?: 'horizon' | 'radial' | 'curtain'; readonly dp?: number; readonly depth?: number;
+  /** The destination theme's text ink (any CSS colour); the digits take it so they read on the incoming theme. */
+  readonly ink?: string;
 }
 export function themeSwitchFrame(timeSeconds: number, options: ThemeSwitchOptions): Readonly<{
   commands: readonly MomentPaintCommand[]; clipPath: string; visibility: 'hidden' | 'visible';
