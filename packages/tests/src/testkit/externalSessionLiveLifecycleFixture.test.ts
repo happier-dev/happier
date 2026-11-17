@@ -555,6 +555,20 @@ describe('external-session live lifecycle fixture', () => {
     })).rejects.toThrow('plugin_dev_invalid_manifest');
   });
 
+  it('retains the owner reason when development registration fails to build the UI', async () => {
+    const postJson = async () => ({ status: 200, data: { kind: 'failed',
+      code: 'plugin_dev_ui_build_failed', message: 'Cannot resolve the declared workbench renderer',
+      status: { roots: [], plugins: [] },
+    } });
+    await expect(applyTrustedLocalPluginFixture({
+      daemonPort: 32123,
+      pluginRoot: '/tmp/external-session-live-plugin',
+      pluginId: 'acme.external-session-live',
+      interactionId: 'install-live-plugin',
+      postJson,
+    })).rejects.toThrow('Cannot resolve the declared workbench renderer');
+  });
+
   it('installs with explicit local-user review and reloads through daemon plugin change routes', async () => {
     let requestedChanges = 0;
     const postJson = vi.fn(async (request: Readonly<{

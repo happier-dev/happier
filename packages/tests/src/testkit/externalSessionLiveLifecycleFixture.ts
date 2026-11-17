@@ -581,7 +581,7 @@ export async function applyTrustedLocalPluginFixture(params: Readonly<{
     return result;
   }
   if (result.kind !== 'failed' || result.code !== 'plugin_dev_reviewRequired') {
-    throw new Error(`Local plugin development registration failed (kind=${result.kind}, code=${result.kind === 'failed' ? result.code : 'trustRequired'})`);
+    throw new Error(`Local plugin development registration failed (kind=${result.kind}, code=${result.kind === 'failed' ? result.code : 'trustRequired'}, message=${result.kind === 'failed' ? result.message : 'trustRequired'})`);
   }
   const requested = await postJson({
     port: params.daemonPort,
