@@ -40,7 +40,7 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
     const subscribePreview = React.useCallback((listener: () => void) => presented ? owner.subscribe(listener) : () => {}, [presented, owner]);
     const readPreview = React.useCallback(() => {
         const current = owner.read();
-        return current?.origin.kind === 'store' && current.origin.listing.sourceId === sourceId
+        return current?.origin.kind === 'store' && 'listing' in current.origin && current.origin.listing.sourceId === sourceId
             && current.origin.listing.itemId === itemId ? current : null;
     }, [owner, sourceId, itemId]);
     const matching = React.useSyncExternalStore(subscribePreview, readPreview, readPreview);

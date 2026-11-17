@@ -73,13 +73,17 @@ describe('theme Actions through real library and try-on owners', () => {
                 detailedCoverage: value => prepareThemeCss(value.profile.css ?? '').detailedCoverage },
         }) });
         expect(await execute.execute(THEME_ACTION_IDS.apply, { ref: null, mode: 'dark' }, actionContext)).toMatchObject({ ok: true });
-        expect(await execute.execute(THEME_ACTION_IDS.tryOn, { document: plugin, mode: 'dark', origin: { kind: 'editor' } }, actionContext))
+        expect(await execute.execute(THEME_ACTION_IDS.tryOn, { document: plugin, mode: 'dark', origin: { kind: 'store' } }, actionContext))
             .toMatchObject({ ok: true });
+        expect(owner.read()?.origin).toEqual({ kind: 'store', reference });
         expect(f.writes()).toBe(0);
         expect(owner.read()?.selection).toEqual(reference);
         expect(await execute.execute(THEME_ACTION_IDS.keep, { previewRef: owner.read()!.previewRef }, actionContext)).toMatchObject({ ok: true });
         expect(f.selection.dark).toEqual(reference);
         expect(f.writes()).toBe(0);
+        expect(await execute.execute(THEME_ACTION_IDS.tryOn, { document: mergeThemeProfileDocumentEdit(plugin, { name: 'Edited plugin' }),
+            mode: 'dark', origin: { kind: 'store' } }, actionContext)).toMatchObject({ ok: false, errorCode: 'invalid_action_input' });
+        expect(owner.read()).toBeNull();
     });
     it('preserves immutable-source refusals for installed Artifact saves and deletes through the Action receiver', async () => {
         const f = setup();

@@ -132,7 +132,7 @@ export function createThemeRegistryLifecycle(deps: Readonly<{
     const install = async (input: Readonly<{ listing: ThemeRegistryItemKey; faceIds?: readonly string[] }>, options: ThemeRegistryOperationOptions): Promise<ThemeInstallResult> =>
         ({ faces: (await installFaces({ ...input, acquired: await acquire(input.listing, options) }, options)).faces });
     const keepStore = async (snapshot: ThemeTryOnSnapshot, options: ThemeRegistryOperationOptions): Promise<ThemeLibraryMutationResult> => {
-        if (snapshot.origin.kind !== 'store' || !snapshot.document || snapshot.document.profile.source?.kind !== 'store') {
+        if (snapshot.origin.kind !== 'store' || !('listing' in snapshot.origin) || !snapshot.document || snapshot.document.profile.source?.kind !== 'store') {
             throw createActionExecuteFailureError({ ok: false, errorCode: 'theme_not_found', error: 'theme_not_found' });
         }
         const { provenance, contributionId } = snapshot.document.profile.source;

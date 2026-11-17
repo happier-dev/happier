@@ -56,6 +56,33 @@ function setup() {
 }
 
 describe('one-document theme try-on', () => {
+    it('keeps Store detail-close recovery but clears only the active Store preview on Store exit', () => {
+        const state = setup();
+        const origin = { kind: 'store', listing: { sourceId: 'catalog', itemId: 'theme' } } as const;
+        const preview = state.owner.begin({ document: document('store'), mode: 'dark', origin });
+        const closeDetail = state.owner.present(preview.previewRef);
+        closeDetail();
+        expect(state.owner.read()).toBe(preview);
+        expect(state.owner.readGlobalPresentation()).toBe(preview);
+        let publications = 0;
+        state.owner.subscribe(() => { publications++; });
+        state.owner.leaveStore();
+        expect(state.owner.read()).toBeNull();
+        expect(publications).toBe(1);
+        state.owner.leaveStore();
+        expect(publications).toBe(1);
+        for (const kind of ['agent', 'editor'] as const) {
+            state.owner.begin({ document: document('store'), mode: 'dark', origin });
+            const replacement = state.owner.begin({ document: document(kind), mode: 'dark', origin: { kind } });
+            publications = 0;
+            state.owner.leaveStore();
+            expect(state.owner.read()).toBe(replacement);
+            expect(publications).toBe(0);
+        }
+        expect(state.writes()).toBe(0);
+        expect(state.selection).toEqual({ light: null, dark: null });
+    });
+
     it('hands controls back to the global host when the matching origin presenter leaves', () => {
         const state = setup();
         for (const kind of ['editor', 'agent', 'store'] as const) {

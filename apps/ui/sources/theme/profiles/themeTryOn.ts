@@ -39,6 +39,8 @@ export interface ThemeTryOnOwner {
     present(previewRef: PreviewRef): () => void;
     readGlobalPresentation(): ThemeTryOnSnapshot | null;
     revert(previewRef: PreviewRef): void;
+    /** Store navigation ends its active preview; detail controls may release independently. */
+    leaveStore(): void;
     keep(previewRef: PreviewRef): Promise<ThemeLibraryMutationResult>;
     subscribe(listener: () => void): () => void;
 }
@@ -81,6 +83,7 @@ export function createThemeTryOnOwner(deps: Readonly<{
     };
     const read = (previewRef?: PreviewRef) => previewRef !== undefined ? requireScopedCurrent(previewRef).preview.snapshot
         : current && areAccountSettingsScopesEqual(current.scope, deps.captureScope()) ? current.snapshot : null;
+    const revert = (previewRef: PreviewRef) => { requireCurrent(previewRef); current = null; publish(); };
     return {
         begin,
         replace(previewRef, input) { requireScopedCurrent(previewRef); return begin(input); },
@@ -102,7 +105,11 @@ export function createThemeTryOnOwner(deps: Readonly<{
             const snapshot = read();
             return snapshot && !presenters.has(presentationKey(snapshot)) ? snapshot : null;
         },
-        revert(previewRef) { requireCurrent(previewRef); current = null; publish(); },
+        revert,
+        leaveStore() {
+            const snapshot = read();
+            if (snapshot?.origin.kind === 'store') revert(snapshot.previewRef);
+        },
         async keep(previewRef) {
             const { preview, scope } = requireScopedCurrent(previewRef);
             if (!preview.keeping) {

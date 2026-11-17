@@ -24,7 +24,7 @@ const registry = createThemeRegistryLifecycle({
     readMode: () => resolveThemeRuntimeVisualTheme(getStorage().getState().localSettings.themePreference, readSystemTheme()),
     revertStorePreview: listing => {
         const current = preview.read();
-        if (current?.origin.kind === 'store' && current.origin.listing.sourceId === listing.sourceId
+        if (current?.origin.kind === 'store' && 'listing' in current.origin && current.origin.listing.sourceId === listing.sourceId
             && current.origin.listing.itemId === listing.itemId) preview.revert(current.previewRef);
     },
 });

@@ -89,17 +89,20 @@ export function createThemeActionExecute(host: ThemeActionHost): NonNullable<Act
                     if (!runtime) return clientActionUnavailable(request.actionId);
                     const { origin, ...input } = request.input;
                     let previewOrigin: ThemeTryOnOrigin;
-                    if (origin.kind === 'store') {
+                    if (origin.kind === 'store' && origin.listing) {
                         const listing = origin.listing;
-                        if (!listing) return { ok: false, errorCode: 'invalid_action_input', error: 'invalid_action_input' };
                         if (!host.withRegistryLifecycle) return clientActionUnavailable(request.actionId);
                         const acquired = await host.withRegistryLifecycle(lifecycle => lifecycle.prepareStorePreview(listing), request.context);
                         previewOrigin = { kind: 'store', listing, acquired };
+                    } else if (origin.kind === 'store') {
+                        const source = input.document?.profile.source;
+                        if (source?.kind !== 'plugin') return { ok: false, errorCode: 'invalid_action_input', error: 'invalid_action_input' };
+                        previewOrigin = { kind: 'store', reference: { kind: 'plugin', pluginId: source.pluginId, contributionId: source.contributionId } };
                     } else {
                         previewOrigin = { kind: origin.kind };
                     }
                     if (!input.document) {
-                        const preview = runtime.preview.begin({ document: null, selection: null, mode: input.mode, origin: previewOrigin });
+                        const preview = runtime.preview.begin({ ...input, document: null, selection: null, origin: previewOrigin });
                         return { previewRef: preview.previewRef, coverage: { total: 0, native: 0, webOnly: 0, affectedSurfaces: [], hides: [] },
                             compatibility: { status: 'supported', unsupportedPaths: [] } };
                     }
@@ -109,8 +112,11 @@ export function createThemeActionExecute(host: ThemeActionHost): NonNullable<Act
                         pluginId: source.pluginId, contributionId: source.contributionId }
                         : source?.kind === 'built-in' ? { kind: 'built-in', presetId: source.presetId }
                         : { kind: 'artifact', id: input.document.profile.id };
-                    const existing = origin.kind !== 'store' ? await library.get(reference) : null;
+                    const existing = previewOrigin.kind !== 'store' || 'reference' in previewOrigin ? await library.get(reference) : null;
                     const selection = existing && sameStrictJsonValue(existing.raw, input.document.raw) ? reference : undefined;
+                    if (previewOrigin.kind === 'store' && 'reference' in previewOrigin && !selection) {
+                        return { ok: false, errorCode: 'invalid_action_input', error: 'invalid_action_input' };
+                    }
                     const preview = runtime.preview.begin({ ...input, origin: previewOrigin,
                         ...(selection ? { selection } : {}) });
                     return { previewRef: preview.previewRef, coverage: runtime.coverage(input.document), compatibility: input.document.compatibility };
