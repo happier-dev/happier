@@ -56,21 +56,28 @@ it.each(['plain', 'e2ee'] as const)('recovers the accepted %s CAS operation with
     });
 });
 
-it('replays a framed HTTP upload after a lost ACK without another version or orphan upload', async () => {
-    const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+it.each(['plain', 'e2ee'] as const)('replays a framed %s HTTP upload after a lost ACK without another version or orphan upload', async mode => {
+    const owner = await db.account.create({ data: { encryptionMode: mode,
+        ...(mode === 'e2ee' ? createSignedAccountContentBinding() : {}) } });
     const id = crypto.randomUUID();
+    const header = mode === 'plain' ? encodePlainArtifactStoredContent({ title: 'Binary replay' }) : encodeBase64(Uint8Array.of(2, 0, 3));
+    const body = mode === 'plain' ? encodePlainArtifactStoredContent({ body: 'before' }) : encodeBase64(Uint8Array.of(2, 0, 4));
+    const dataEncryptionKey = mode === 'plain' ? Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64')
+        : sealEncryptedDataKeyEnvelopeV1({ dataKey: tweetnacl.randomBytes(32),
+            recipientPublicKey: owner.contentPublicKey!, randomBytes: tweetnacl.randomBytes });
     await db.artifact.create({ data: { id, accountId: owner.id,
-        header: Buffer.from(encodePlainArtifactStoredContent({ title: 'Binary replay' }), 'base64'),
-        body: Buffer.from(encodePlainArtifactStoredContent({ body: 'before' }), 'base64'),
-        dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64'), headerVersion: 1, bodyVersion: 1 } });
+        header: Buffer.from(header, 'base64'), body: Buffer.from(body, 'base64'),
+        dataEncryptionKey, headerVersion: 1, bodyVersion: 1 } });
     const bytes = Buffer.from([0, 255, 42]);
     const blobId = crypto.randomUUID();
     const destination = { kind: 'update', artifactId: id, blobId,
         updateOperationId: crypto.randomUUID(), expectedHeaderVersion: 1, expectedBodyVersion: 1,
-        header: encodePlainArtifactStoredContent({ title: 'Binary replay accepted' }),
-        body: encodePlainArtifactStoredContent({ body: { blobId, mime: 'application/octet-stream',
-            sizeBytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') } }) } satisfies ArtifactUploadDestinationV1;
-    const frame = encodeArtifactUploadFrameV1(destination, { t: 'plain', v: encodeBase64(bytes) });
+        header: mode === 'plain' ? encodePlainArtifactStoredContent({ title: 'Binary replay accepted' }) : encodeBase64(Uint8Array.of(2, 0, 5)),
+        body: mode === 'plain' ? encodePlainArtifactStoredContent({ body: { blobId, mime: 'application/octet-stream',
+            sizeBytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') } }) : encodeBase64(Uint8Array.of(2, 0, 6)) } satisfies ArtifactUploadDestinationV1;
+    const content = mode === 'plain' ? { t: 'plain' as const, v: encodeBase64(bytes) }
+        : { t: 'encrypted' as const, c: encodeBase64(bytes) };
+    const frame = encodeArtifactUploadFrameV1(destination, content);
     let loseAck = true;
     // Drop only the network acknowledgement, after the real handler has committed its effect.
     const dropAck: onSendHookHandler = async (request, reply, payload) => {
@@ -115,6 +122,6 @@ it('replays a framed HTTP upload after a lost ACK without another version or orp
         const blob = await app.inject({ method: 'GET', url: `/v1/artifacts/${id}/blobs/${blobId}`,
             headers: { 'x-test-user-id': owner.id } });
         expect(blob.statusCode, blob.body).toBe(200);
-        expect(blob.json()).toEqual({ blobId, content: { t: 'plain', v: encodeBase64(bytes) } });
+        expect(blob.json()).toEqual({ blobId, content });
     });
 });
