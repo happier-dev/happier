@@ -5,11 +5,12 @@ import { ArtifactCallerAccessV1Schema, ArtifactHttpReadV1Schema } from '../artif
 import type { ArtifactCallerAccessV1 } from '../artifacts/artifactAccessV1.js';
 import type { ArtifactListSelectionOptionsV1 } from '../artifacts/artifactListSelectionV1.js';
 import type { ArtifactSharingKindAdapterV1, ArtifactSharingResourceV1 } from '../artifacts/artifactSharingV1.js';
+import { APPROVAL_PROFILE_ARTIFACT_KIND_V1 } from '../artifacts/artifactKindV1.js';
+export { APPROVAL_PROFILE_ARTIFACT_KIND_V1 } from '../artifacts/artifactKindV1.js';
 import { ArtifactRevisionV1Schema } from '../artifacts/artifactRevisionV1.js';
 import { ApprovalProfileIdV1Schema, ApprovalProfileV1Schema,
   type BoundApprovalProfileV1, type ReadableApprovalProfileV1 } from './approvalProfiles.js';
 
-export const APPROVAL_PROFILE_ARTIFACT_KIND_V1 = 'approval-profile.v1' as const;
 export const ApprovalProfileContentV1Schema = lazyZodSchema(() => z.omit(ApprovalProfileV1Schema, { id: true }));
 export type ApprovalProfileContentV1 = z.infer<typeof ApprovalProfileContentV1Schema>;
 export function toApprovalProfileContentV1(profile: ReadableApprovalProfileV1['profile']): ApprovalProfileContentV1 {

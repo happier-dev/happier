@@ -5,8 +5,8 @@ import { getArtifactKindPolicyV1 } from './artifactSharingV1.js';
 import type { ArtifactActionInputV1 } from './artifactActionsV1.js';
 import { BOT_TEMPLATE_ARTIFACT_KIND_V1 } from '../bots/templates/botTemplateV1.js';
 
-/** Existing structural /v1/artifacts transport page, shared by dependent page reads. */
-export const ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 = 500;
+import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from './artifactListPageV1.js';
+export { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from './artifactListPageV1.js';
 
 export type ArtifactListSelectionOptionsV1 = Readonly<{
   audience?: 'received';

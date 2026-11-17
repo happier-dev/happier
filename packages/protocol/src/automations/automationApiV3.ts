@@ -55,7 +55,7 @@ import { AutomationSessionLifecycleConfigurationSchema } from './automationSessi
 export * from './automationRunLifecycle.js';
 import type { AutomationTriggerDetail, AutomationTriggerListItem } from './automationTriggerProjectionV1.js';
 import { WorkflowDefinitionRefV1StringSchema } from '../workflows/workflowDefinitionRefV1.js';
-import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '../artifacts/artifactListSelectionV1.js';
+import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '../artifacts/artifactListPageV1.js';
 import { WorkflowTriggerSummaryV1Schema, WorkflowIntendedPluginEventV1Schema } from '../workflows/triggers/workflowTriggerActionsV1.js';
 import { WorkflowTriggerEventDeclarationV1Schema } from '../workflows/workflowTriggerEventReferenceV1.js';
 

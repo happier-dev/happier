@@ -2,7 +2,7 @@ import type { ArtifactCallerAccessV1 } from './artifactAccessV1.js';
 import type { ArtifactAccessGrantsListResponseV1 } from './artifactAccessV1.js';
 import type { ArtifactPublicAudienceV1 } from './artifactActionsV1.js';
 import type { ArtifactBodyV1 } from './artifactBinaryV1.js';
-import { THEME_PROFILE_ARTIFACT_KIND_V1, getArtifactContentDeliveryPolicyV1, type ArtifactContentDeliveryPolicyV1 } from './artifactKindV1.js';
+import { APPROVAL_PROFILE_ARTIFACT_KIND_V1, THEME_PROFILE_ARTIFACT_KIND_V1, getArtifactContentDeliveryPolicyV1, type ArtifactContentDeliveryPolicyV1 } from './artifactKindV1.js';
 import { isArtifactHtmlHeaderV1 } from './artifactHtmlV1.js';
 import { APPROVAL_ARTIFACT_KINDS_V1 } from '../approvals/approvalArtifactKindV1.js';
 import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from './deploymentArtifactKindsV1.js';
@@ -210,7 +210,8 @@ const kindPolicies: readonly Readonly<Omit<ArtifactKindPolicyV1, keyof ArtifactC
     useKind: 'open', requiresTextBody: true, browserListed: false, publicLinkAllowed: false, signedInLinkAllowed: true, grantInspection: 'owner_only' },
   { ...documentPolicy, kind: WIDGET_SURFACE_ARTIFACT_KIND_V1, adapter: widgetSurfaceArtifactSharingAdapterV1, useKind: 'open', requiresTextBody: false,
     browserListed: false, ownerDeleteAllowed: false, publicLinkAllowed: false },
-  { ...privatePolicy, kind: approvalProfileArtifactSharingAdapterV1.kind, adapter: approvalProfileArtifactSharingAdapterV1,
+  { ...privatePolicy, kind: APPROVAL_PROFILE_ARTIFACT_KIND_V1,
+    get adapter() { return approvalProfileArtifactSharingAdapterV1; },
     peopleSharingAllowed: true, useKind: 'approval_profile', requiresTextBody: true },
   { ...privatePolicy, kind: THEME_PROFILE_ARTIFACT_KIND_V1, ownerDeleteAllowed: true, useKind: 'open', requiresTextBody: true },
   { ...privatePolicy, kind: HOME_HUB_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: false },

@@ -7,6 +7,7 @@ export const ArtifactCoarseKindV1Schema = z.enum(['skill', 'prompt', 'plugin_ui'
 export type ArtifactCoarseKindV1 = z.infer<typeof ArtifactCoarseKindV1Schema>;
 
 export const THEME_PROFILE_ARTIFACT_KIND_V1 = 'theme_profile.v1';
+export const APPROVAL_PROFILE_ARTIFACT_KIND_V1 = 'approval-profile.v1';
 
 export type ArtifactContentDeliveryPolicyV1 = Readonly<{
   legacySocketPublication: boolean;
