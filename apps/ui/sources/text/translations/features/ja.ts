@@ -8198,6 +8198,10 @@ const homeSetupTranslations = { ja: {
         addNameSubtitle: '一緒に作業する人にあなたの名前が表示されます。',
         addNameAction: '名前を追加',
         notNow: '後で',
+        teamSetupTitle: ({ team }) => `${team} 用にセットアップ`,
+        teamSetupSubtitle: "チームのツール、リポジトリ、エージェントを、選んだマシンに。各ステップは事前に確認できます。",
+        teamSetupAction: 'セットアップ',
+        teamSetupHint: ({ team }) => `${team} がこのリポジトリのセットアップを共有しています`,
     } } satisfies Pick<Readonly<Record<string, HomeSetupTranslation>>, "ja">;
 
 return { homeSetupTranslations };

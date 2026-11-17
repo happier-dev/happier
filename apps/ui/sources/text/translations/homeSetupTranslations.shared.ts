@@ -60,6 +60,10 @@ export type HomeSetupTranslation = Readonly<{
     addNameSubtitle: string;
     addNameAction: string;
     notNow: string;
+    teamSetupTitle: (params: Readonly<{ team: string }>) => string;
+    teamSetupSubtitle: string;
+    teamSetupAction: string;
+    teamSetupHint: (params: Readonly<{ team: string }>) => string;
 }>;
 
 
@@ -123,4 +127,8 @@ export const homeSetupTranslationsEnglish = { en: {
         addNameSubtitle: 'So people you work with see your name.',
         addNameAction: 'Add name',
         notNow: 'Not now',
+        teamSetupTitle: ({ team }) => `Set up for ${team}`,
+        teamSetupSubtitle: "The Team’s tools, repositories and agents, on a machine you choose. You see each step first.",
+        teamSetupAction: 'Set up',
+        teamSetupHint: ({ team }) => `${team} shares a setup for this repository`,
     } } satisfies Pick<Readonly<Record<string, HomeSetupTranslation>>, "en">;

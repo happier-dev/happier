@@ -8136,6 +8136,10 @@ const homeSetupTranslations = { es: {
         addNameSubtitle: 'Para que las personas con las que trabajas vean tu nombre.',
         addNameAction: 'Añadir nombre',
         notNow: 'Ahora no',
+        teamSetupTitle: ({ team }) => `Configurar para ${team}`,
+        teamSetupSubtitle: "Las herramientas, repositorios y agentes del equipo, en una máquina que elijas. Ves cada paso antes.",
+        teamSetupAction: 'Configurar',
+        teamSetupHint: ({ team }) => `${team} comparte una configuración para este repositorio`,
     } } satisfies Pick<Readonly<Record<string, HomeSetupTranslation>>, "es">;
 
 return { homeSetupTranslations };

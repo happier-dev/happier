@@ -8142,6 +8142,10 @@ const homeSetupTranslations = { 'zh-Hant': {
         addNameSubtitle: '讓與你協作的人看到你的名字。',
         addNameAction: '新增名字',
         notNow: '以後再說',
+        teamSetupTitle: ({ team }) => `為 ${team} 設定`,
+        teamSetupSubtitle: "團隊的工具、程式庫和代理，部署到你選擇的機器上。每一步都會先給你看。",
+        teamSetupAction: '設定',
+        teamSetupHint: ({ team }) => `${team} 為此儲存庫共享了一套設定`,
     } } satisfies Pick<Readonly<Record<string, HomeSetupTranslation>>, "zh-Hant">;
 
 return { homeSetupTranslations };

@@ -65,6 +65,7 @@ import {
   readSourceTeamId,
 } from './ProjectSourcesRail';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
+import { SourceTeamSetupRow } from './SourceTeamSetupRow';
 
 function lastSegment(nameWithOwner: string): string {
   return nameWithOwner.split('/').filter(Boolean).pop() ?? nameWithOwner;
@@ -782,6 +783,7 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
               : null
           }
         />
+        {current ? <SourceTeamSetupRow serverId={props.controller.scope.serverId} source={current} /> : null}
       </ItemGroup>
       {current && dashboards.length > 0 ? (
         <ItemGroup

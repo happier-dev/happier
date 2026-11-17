@@ -8143,6 +8143,10 @@ const homeSetupTranslations = { 'zh-Hans': {
         addNameSubtitle: '让与你协作的人看到你的名字。',
         addNameAction: '添加名字',
         notNow: '以后再说',
+        teamSetupTitle: ({ team }) => `为 ${team} 设置`,
+        teamSetupSubtitle: "团队的工具、代码库和智能体，部署到你选择的机器上。每一步都会先给你看。",
+        teamSetupAction: '设置',
+        teamSetupHint: ({ team }) => `${team} 为此仓库共享了一套设置`,
     } } satisfies Pick<Readonly<Record<string, HomeSetupTranslation>>, "zh-Hans">;
 
 return { homeSetupTranslations };
