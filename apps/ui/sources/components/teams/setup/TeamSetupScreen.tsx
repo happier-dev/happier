@@ -15,6 +15,11 @@ import { buildMachineAddHref } from '@/components/settings/machines/collection/m
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { MachineSetupPlanReview } from '@/components/settings/machines/managed/MachineSetupPlanReview';
 import { TeamHeaderAvatar } from '@/components/settings/teams/TeamHeaderAvatar';
+import {
+  deliveryModeLabel,
+  recipientDeliveryMode,
+  resourceStateLabel,
+} from '@/components/settings/teams/credentials/teamCredentialPresentation';
 import { TeamSection } from '@/components/settings/teams/TeamSection';
 import type { TeamSectionContext } from '@/components/settings/teams/teamSectionContext';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -50,6 +55,8 @@ import {
   useTeamSetupResources,
   type TeamSetupResources,
 } from './useTeamSetupResources';
+
+const NO_KEYS: readonly never[] = Object.freeze([]);
 
 type RunState =
   | Readonly<{ kind: 'idle' }>
@@ -331,8 +338,11 @@ function TeamSetupPlanPage(
   const sourcesLoading = sourcesState.status === 'initial' || sourcesState.status === 'loading';
   const sourcesFailed = sourcesState.status === 'offline' || sourcesState.status === 'refused';
   const sourceIssue = sourcesFailed ? presentProjectSourceIssue(sourcesState.issue, context.homeName) : null;
+  // Keys the Team already shares: sessions on any of the member's Machines use them without the value
+  // reaching the member, so they need no step here. Keys a repository asks each member for are owed.
+  const sharedKeys = resources.credentialsEnabled ? resources.credentials.resources : NO_KEYS;
   if (resources.sharedResources.status === 'ready' && sourcesState.status === 'ready' && sourcesState.coverage.complete
-    && !hasPreset && repositories.length === 0) {
+    && !hasPreset && repositories.length === 0 && sharedKeys.length === 0) {
     return (
       <>
       <TeamSetupHeader context={context} lead={false} />
@@ -514,6 +524,30 @@ function TeamSetupPlanPage(
               }
             />
           ))}
+        </ItemGroup>
+      ) : null}
+      {sharedKeys.length > 0 ? (
+        <ItemGroup
+          testID="team-setup-keys"
+          title={t('teams.join.setupPage.keysTitle')}
+          description={t('teams.join.setupPage.keysDescription', { team: teamName })}
+        >
+          {sharedKeys.map((resource) => {
+            const mode = recipientDeliveryMode(resource);
+            const subtitle = [mode ? deliveryModeLabel(mode) : null, resourceStateLabel(resource.readiness)]
+              .filter((part): part is string => Boolean(part)).join(' · ');
+            return (
+              <Item
+                key={resource.id}
+                testID={`team-setup-key:${resource.id}`}
+                icon={<Icon name="key" size={20} color={theme.colors.text.secondary} />}
+                title={resources.credentialDisplayNames[resource.id] ?? t('teams.credentials.title')}
+                subtitle={subtitle || undefined}
+                detail={t('teams.join.setupPage.keyShared')}
+                showChevron={false}
+              />
+            );
+          })}
         </ItemGroup>
       ) : null}
     </PageAsideColumns>
