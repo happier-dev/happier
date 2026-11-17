@@ -1051,6 +1051,12 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
     const measuredSurfaceHeight = contentRectState
         ? Math.max(0, contentRectState.height - nativePortalShadowOutset * 2)
         : null;
+    // Hung below its trigger, a box never stands taller than the cap it was given there (the room below). Content first
+    // renders under the initial cap and is measured a frame after placement already gave it a smaller one: placing by
+    // that older height lifted a field's picker over its field for a few frames before it snapped under (MACH-SANDBOX
+    // r5). Above a trigger, and for a designed panel that keeps its own size (`fit: 'shift'`), the measured height stays
+    // authoritative, so a box still out of date never starts above the window.
+    const belowSurfaceHeight = measuredSurfaceHeight === null ? null : Math.min(measuredSurfaceHeight, computed.maxHeight);
     // The side the popover is shown on, which its position and its entrance both follow. A designed panel
     // (`fit: 'shift'`) that placement hung below its trigger is measured at its own height: when it does not fit
     // below but fits above, it opens above, whole, instead of sliding up over the trigger; it slides only when it
@@ -1865,7 +1871,7 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
                 // top/bottom
                 const contentHeight = measuredSurfaceHeight ?? computed.maxHeight;
                 const topForBottom = Math.min(
-                    boundaryRect.y + boundaryRect.height - contentHeight,
+                    boundaryRect.y + boundaryRect.height - (props.fit === 'shift' ? contentHeight : belowSurfaceHeight ?? computed.maxHeight),
                     Math.max(boundaryRect.y, anchorRectState.y + anchorRectState.height + gap),
                 );
                 const topForTop = Math.max(
