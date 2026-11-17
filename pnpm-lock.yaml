@@ -3968,6 +3968,9 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk
+      '@happier-dev/protocol':
+        specifier: 0.0.0
+        version: link:../../protocol
     devDependencies:
       '@happier-dev/agents':
         specifier: 0.0.0
@@ -3975,9 +3978,6 @@ importers:
       '@happier-dev/cli-common':
         specifier: 0.0.0
         version: link:../../cli-common
-      '@happier-dev/protocol':
-        specifier: 0.0.0
-        version: link:../../protocol
       '@happier-dev/tests':
         specifier: 0.0.0
         version: link:../../tests
