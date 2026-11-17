@@ -2081,13 +2081,33 @@ describe('Team credential Provider broker admission', () => {
             // private broker exactly as it is on the external path.
             usageEventId: expect.any(String),
         });
-        await expect(admitTeamCredentialProviderBrokerRequest({
-            authenticatedBrokerAccountId: custodian.id,
-            request: detachedRequest('detached-idle-generation', true),
-            observedAt: new Date('2026-09-09T09:27:00.000Z'),
-            verifyAuthority: candidate => candidate.payload.grantId === detachedOpen.authority.payload.grantId,
-            resolveExecutionRunCurrentness: resolveDetachedRun,
-        })).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
+        // Pino is the external diagnostic sink. The wire keeps one public code;
+        // the settled record names which Run currentness fact refused.
+        const detachedRefusalSink = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+        try {
+            await expect(admitTeamCredentialProviderBrokerRequest({
+                authenticatedBrokerAccountId: custodian.id,
+                request: detachedRequest('detached-idle-generation', true),
+                observedAt: new Date('2026-09-09T09:27:00.000Z'),
+                verifyAuthority: candidate => candidate.payload.grantId === detachedOpen.authority.payload.grantId,
+                resolveExecutionRunCurrentness: resolveDetachedRun,
+            })).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
+            await expect(admitTeamCredentialProviderBrokerRequest({
+                authenticatedBrokerAccountId: custodian.id,
+                request: detachedRequest('detached-retired-occurrence', false),
+                observedAt: new Date('2026-09-09T09:27:30.000Z'),
+                verifyAuthority: candidate => candidate.payload.grantId === detachedOpen.authority.payload.grantId,
+                resolveExecutionRunCurrentness: async () => ({ ...await resolveDetachedRun(), occurrenceId: 'detached-occurrence-replaced' }),
+            })).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
+            expect(detachedRefusalSink.mock.calls).toEqual([
+                [{ module: 'provider-broker-admission', operation: 'request',
+                    reasonCode: 'operation_not_current', refusalReason: 'execution_run_turn_not_active' }],
+                [{ module: 'provider-broker-admission', operation: 'request',
+                    reasonCode: 'operation_not_current', refusalReason: 'execution_run_occurrence_mismatch' }],
+            ]);
+        } finally {
+            detachedRefusalSink.mockRestore();
+        }
         await expect(admitTeamCredentialProviderBrokerRequest({
             authenticatedBrokerAccountId: custodian.id,
             request: detachedRequest('detached-active-generation', true),

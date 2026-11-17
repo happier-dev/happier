@@ -83,7 +83,7 @@ type BrokerRefusalReason = Extract<TeamCredentialBrokerPlacementResolution, { er
     | 'binding_broker_entitlement_missing' | 'runner_selection_missing' | 'resource_lookup_missing'
     | 'execution_run_resource_entitlement_unavailable' | 'execution_run_broker_entitlement_missing'
     | 'consumer_machine_access_missing' | 'session_missing_or_inactive' | 'session_turn_not_in_progress'
-    | 'session_turn_binding_mismatch';
+    | 'session_turn_binding_mismatch' | 'execution_run_occurrence_mismatch' | 'execution_run_turn_not_active';
 
 type Failure = Readonly<{
     ok: false;
@@ -288,7 +288,7 @@ async function authorizeTeamCredentialProviderModelCatalogUnreported(
         if (!current.ok) return current;
         if (!authority.data.payload.executionRunOccurrenceId
             || current.occurrenceId !== authority.data.payload.executionRunOccurrenceId) {
-            return failure('operation_not_current');
+            return closedFailure('operation_not_current', 'execution_run_occurrence_mismatch');
         }
         executionRun = current;
     }
@@ -430,7 +430,7 @@ async function resolveOpenExecutionRunCurrentness(
         ? request.refreshAuthority.payload.executionRunOccurrenceId ?? null
         : null;
     if (expectedOccurrenceId !== null && current.occurrenceId !== expectedOccurrenceId) {
-        return failure('operation_not_current');
+        return closedFailure('operation_not_current', 'execution_run_occurrence_mismatch');
     }
     return current;
 }
@@ -1097,10 +1097,14 @@ async function readActiveBrokerJobInTx(
         // The Run owner's own currentness, resolved before this transaction.
         const run = input.executionRun;
         if (run === null) return failure('execution_run_authority_unavailable');
-        if (!grant.executionRunOccurrenceId || run.occurrenceId !== grant.executionRunOccurrenceId) return failure('operation_not_current');
+        if (!grant.executionRunOccurrenceId || run.occurrenceId !== grant.executionRunOccurrenceId) {
+            return closedFailure('operation_not_current', 'execution_run_occurrence_mismatch');
+        }
         // Generation needs an active turn; admitted non-generation work
         // (token counting) is still accounted against the Run below.
-        if (input.generation && run.runtimeState !== 'active_turn') return failure('operation_not_current');
+        if (input.generation && run.runtimeState !== 'active_turn') {
+            return closedFailure('operation_not_current', 'execution_run_turn_not_active');
+        }
         const consumer = brokerOperationConsumer(grant.consumer, run, grant.resourceId);
         if ('ok' in consumer) return consumer;
         sessionId = run.parentSessionId;
