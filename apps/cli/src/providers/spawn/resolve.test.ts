@@ -2829,7 +2829,8 @@ describe('provider spawn authorization resolver', () => {
         },
         support: { authIsolation: { suppressConnectedServiceIds: [CODEX_OPENAI_CONNECTED_ACCOUNT_SERVICE_KEY] } },
         credentialReference: { kind: 'apiKey', secretId: 'secret-a' },
-        ticket: { connectionRevision: 7, selectedSecretBindingId: 'secret-a' },
+        ticket: { connectionRevision: 7, selectedSecretBindingId: 'secret-a',
+          grantFingerprint: createProviderAccountGrantFingerprintV1(settings.accountGrants[0]!), },
         sessionBindingMetadata: {
           v: 1,
           connectionId,
@@ -3007,18 +3008,6 @@ describe('provider spawn authorization resolver', () => {
     }
   });
 
-  it('uses the canonical account grant fingerprint in the ticket', () => {
-    const settings = grantedSettings();
-    const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
-      selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId: 'model-a' } },
-      machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex', accountSettings: accountSettings(settings),
-      providerSettings: settings, registry, dnsEvidenceByEndpointUrl: dns, lease: lease(),
-    }));
-    if (!result.ok) throw new Error('Expected authorization');
-    expect(result.authorization.ticket.grantFingerprint)
-      .toBe(createProviderAccountGrantFingerprintV1(settings.accountGrants[0]!));
-  });
-
   it('authorizes a current probe descriptor without granting missing catalog-only models freeform authority', () => {
     const catalogOnlyContribution: ResolvedProviderContribution = {
       ...contribution,
@@ -3110,7 +3099,7 @@ describe('provider spawn authorization resolver', () => {
     const inheritedNameConnectionId = ProviderConnectionIdSchema.parse('toString');
     const settings = grantedSettingsForConnection(inheritedNameConnectionId);
 
-    expect(() => resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
+    expect(resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: {
         v: 1,
         updatedAt: 1,
@@ -3128,7 +3117,7 @@ describe('provider spawn authorization resolver', () => {
       registry,
       dnsEvidenceByEndpointUrl: dns,
       lease: lease(),
-    }))).not.toThrow();
+    }))).toMatchObject({ ok: false, error: { code: 'provider_compatibility_unverified' } });
   });
 
   it('refuses an exact configured target mismatch even when both targets share one runtime agent adapter', () => {
