@@ -2,10 +2,22 @@ import type {
   AgentCatalogEntry,
   CatalogAgentLookupId,
 } from './types';
-import type { ConnectedAccountServiceKey, ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey, ConnectedServiceId, PluginAgentContributionV2 } from '@happier-dev/protocol';
 import { resolveAgentIdFromSessionMetadata, type AgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import { readAgentCatalogSnapshot } from './snapshot';
 import { readHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
+
+/**
+ * The current declaration of one Agent. A hosted Session's own Agent is the daemon-admitted
+ * declaration bound to its scope: the same definition the catalog projects as
+ * `richDefinition.definition`. Reading it there keeps a session host serving that Session from
+ * building the full built-in registry for per-Session fields; any other Agent reads the catalog.
+ */
+export function readCurrentAgentDefinition(agentId: string): PluginAgentContributionV2 | undefined {
+  const admitted = readHostedSessionScope()?.runnerBootstrap?.bootstrap.descriptor;
+  if (admitted?.agentDeclaration && admitted.agentId === agentId) return admitted.agentDeclaration.definition;
+  return readAgentCatalogSnapshot().agentDefinitionsById.get(agentId)?.richDefinition?.definition;
+}
 
 /** Reads only the selected current declaration, including its absence of coverage. */
 export function resolveCatalogAgentRequestCoverageOptions(input: Readonly<{
@@ -14,14 +26,7 @@ export function resolveCatalogAgentRequestCoverageOptions(input: Readonly<{
 }>): AgentStateRequestCoverageOptions | undefined {
   const agentId = input.agentId ?? resolveAgentIdFromSessionMetadata(input.metadata);
   if (!agentId) return undefined;
-  // A hosted Session's own Agent is the daemon-admitted declaration bound to its scope: the
-  // same definition the catalog projects as `richDefinition.definition`. Reading it there
-  // keeps the session host from building the full built-in registry for one field.
-  const admitted = readHostedSessionScope()?.runnerBootstrap?.bootstrap.descriptor;
-  if (admitted?.agentDeclaration && admitted.agentId === agentId) {
-    return admitted.agentDeclaration.definition.requestCoverage;
-  }
-  return readAgentCatalogSnapshot().agentDefinitionsById.get(agentId)?.richDefinition?.definition.requestCoverage;
+  return readCurrentAgentDefinition(agentId)?.requestCoverage;
 }
 
 /**

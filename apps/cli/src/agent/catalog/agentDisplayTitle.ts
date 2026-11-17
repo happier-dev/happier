@@ -3,6 +3,7 @@ import { getAgentCliRuntimeSpec, type AgentId } from '@happier-dev/agents';
 import { readDeclaredAgentTitle } from '@/plugins/projection/registry/agentCliMetadata';
 import type { ResolvedAgentContribution } from '@/plugins/projection/registry/types';
 
+import { readCurrentAgentDefinition } from './registry';
 import { readAgentCatalogSnapshot } from './snapshot';
 
 /**
@@ -36,6 +37,10 @@ export function readAgentContributionDisplayTitle(
  * Agent's title for it.
  */
 export function resolveAgentDisplayTitle(agentId: AgentId): string | null {
+  // A hosted Session's own Agent answers from its admitted declaration (the catalog's
+  // `richDefinition.definition`); only an undeclared title needs the catalog's runtime spec.
+  const declared = readDeclaredAgentTitle(readCurrentAgentDefinition(agentId)?.title);
+  if (declared) return declared;
   const { agentDefinitionsById } = readAgentCatalogSnapshot();
   const contribution = agentDefinitionsById.get(agentId);
   if (!contribution) return null;

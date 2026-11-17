@@ -5,6 +5,8 @@ import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { AgentRuntimeRunnerBootstrapV1Schema } from '@/agent/runtime/session/process/agentRuntimeRunnerProtocol';
 import { resolveCatalogAgentRequestCoverageOptions } from './registry';
+import { resolveAgentDisplayTitle } from './agentDisplayTitle';
+import { resolveCodingProviderBehaviorBlocks } from '@/agent/prompting/coding/providerPromptBehaviorRegistry';
 import { PLUGIN_MANIFEST as claudeManifest } from '../../../../../packages/plugins/claude/src/manifest';
 
 type Coverage = { result: Array<{ functions: Array<{ functionName: string; ranges: Array<{ count: number }> }> }> };
@@ -69,5 +71,22 @@ describe('Agent request coverage in a hosted Session', () => {
             environment: {}, workingDirectory: '/admitted', end: () => {}, runnerBootstrap,
         }, () => resolveCatalogAgentRequestCoverageOptions({ agentId: 'codex' })));
         expect(builds).toBeGreaterThan(0);
+    });
+
+    // A host serving one Session reads its own Agent's prompt behavior and title on the first turn;
+    // only a catalog-wide reader (or the New Session hold's prewarm) builds the full registry.
+    it('reads the admitted Agent\'s coding prompt behavior and title without building the full registry', async () => {
+        const { definition, runnerBootstrap } = admittedClaudeBootstrap();
+        const declaredBlocks = definition.catalog?.codingPromptBehavior?.blocks ?? [];
+        expect(declaredBlocks.length).toBeGreaterThan(0);
+        const { value, builds } = await countRegistryBuilds(() => runAddedHostedSession({
+            environment: {}, workingDirectory: '/admitted', end: () => {}, runnerBootstrap,
+        }, () => ({
+            blocks: resolveCodingProviderBehaviorBlocks({ agentId: definition.id, disableTodos: true }),
+            title: resolveAgentDisplayTitle(definition.id),
+        })));
+        expect(value.blocks.map(block => block.id)).toEqual(declaredBlocks.map(block => block.id));
+        expect(value.title).toBe(definition.title);
+        expect(builds).toBe(0);
     });
 });
