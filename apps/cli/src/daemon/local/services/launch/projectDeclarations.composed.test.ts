@@ -811,7 +811,7 @@ describe('accepted Project Service declaration starter', () => {
         // The installed host has admitted an exact saved Home. A local alias
         // alone is no longer an identity for original-Account SOURCE admission.
         await updateSettings(settings => ({ ...settings, activeServerId: profileId, servers: {
-            ...settings.servers, [profileId]: { id: profileId, name: 'Service', serverUrl, webappUrl: serverUrl,
+            [profileId]: { id: profileId, name: 'Service', serverUrl, webappUrl: serverUrl,
                 createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact' as const,
                 homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1,
                     homeServerIdentityId: serverIdentityId, canonicalServerUrl: serverUrl, revision: 1,
@@ -3235,6 +3235,9 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
 
     it('keeps setup consent separate and refuses foreign requester credentials before reading Home', async () => {
         const h = await fixture(true);
+        // Accepted declaration discovery has already read the owner's rows.
+        // Measure only this foreign request's admission boundary.
+        h.post.mockClear();
         expect(await h.starter.resolveStartTarget(h.request, { ...h.ingress, machineAdmission: { ...h.ingress.machineAdmission!, actorAccountId: 'teammate' } }, h.context))
             .toMatchObject({ ok: false, reasonCode: 'project_requester_credentials_unavailable' });
         expect(h.post).not.toHaveBeenCalled();
