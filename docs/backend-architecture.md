@@ -555,6 +555,14 @@ erDiagram
 - `Machine`: explicit plain or encrypted metadata and daemon state selected by the
   persisted Machine representation.
 - `Artifact`: explicit plain or encrypted header/body plus its mode/key marker.
+- In current 0.3 development, a `review.v1` Artifact keeps its title, comparison,
+  round history and qualified run references in that content. Its one-to-one
+  `ReviewMetadata` relation holds only source identifiers, subject/source kinds,
+  current round, lifecycle state and timestamps for discovery. The existing
+  Artifact mutation calls `writeReviewRoundState` in the content transaction:
+  one start and one whole-round settlement, including reviews with no findings.
+  Historical rounds stay in the sealed content; there is no round table or
+  per-reviewer progress mirror.
 - `AccessKey`: encrypted per-session-per-machine access keys.
 - `UserKVStore`: domain-owned opaque bytes with optimistic versions; each domain,
   such as Todo, owns its plain/encrypted envelope.

@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import type { ArtifactSignedInLink } from '@prisma/client';
 import { ArtifactHeaderMetadataV1Schema, type ArtifactSignedInLinkJoinReadV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { ArtifactBodyEnvelopeV1StoredSchema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
-import { getArtifactUseTargetV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { getArtifactKindPolicyV1, getArtifactUseTargetV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { decodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { inReadSnapshot, inTx, type Tx } from '@/storage/inTx';
 import { artifactVisibleWhere } from '@/app/artifacts/artifactClassification';
@@ -36,6 +37,9 @@ export async function writeArtifactSignedInLink(input: Readonly<{
         if (mode.status !== 'ready') return { ok: false, error: 'account_content_encryption_mismatch' } as const;
         const opened = openArtifactStoredContentPair({ ...artifact, artifactId: artifact.id, mode: mode.mode });
         if (!opened) return { ok: false, error: 'account_content_encryption_mismatch' } as const;
+        if (mode.mode === 'e2ee' && !getArtifactKindPolicyV1(decodeArtifactKindV1(artifact.kind).kindHint, 'signed_in').publicLinkAllowed) {
+            return { ok: false, error: 'artifact_kind_not_shareable' } as const;
+        }
         if (mode.mode === 'plain') {
             const header = ArtifactHeaderMetadataV1Schema.safeParse(decodePlainArtifactStoredContent(Buffer.from(opened.header).toString('base64')));
             const body = ArtifactBodyEnvelopeV1StoredSchema.safeParse(decodePlainArtifactStoredContent(Buffer.from(opened.body).toString('base64')));

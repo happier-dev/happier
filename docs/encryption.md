@@ -683,6 +683,13 @@ the existing effective-membership policy. The Workflow library carries this
 actor-filtered audience to the Team overview; it never exposes another owner's
 inaccessible Team ids or infers a Team grant from a personal share.
 
+In current 0.3 development, `review.v1` uses the same Account-mode Artifact
+content and authenticated grants. Both anonymous and signed-in links are
+unavailable for Reviews in Plain and E2EE modes. The server applies the canonical
+kind policy to the stored kind even when it cannot open E2EE content. Review
+metadata contains identifiers, enum values and lifecycle timestamps; titles,
+comparisons, summaries and round/run evidence remain in the Artifact content.
+
 Team-visible schedule summaries use the selected Run audience, not personal
 definition-sharing access. The Account recipe-seal owner also writes optional
 `visibleTeamId` structural metadata outside the private Workflow envelope. A

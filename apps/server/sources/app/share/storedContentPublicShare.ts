@@ -20,6 +20,7 @@ import { isSessionTranscriptShareable, SESSION_TRANSCRIPT_PUBLICATION_SELECT, } 
 import { isSessionMetadataPrivacyUpgradeRequiredError, projectSessionMetadataForRecipient, readSessionMetadataOwnerAccountMode, } from "@/app/session/metadata/sessionMetadataRecipientProjection";
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { decodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import * as privacyKit from "privacy-kit";
 import { enforceSessionPublicLinkExternalSharingPolicyInTx, type SessionExternalSharingPolicyError } from "@/app/session/access/sessionAccessExternalSharingPolicy";
@@ -341,15 +342,14 @@ export async function writeArtifactPublicShare(input: Omit<SessionPublicShareWri
         if (!opened) {
             return { type: "error" as const, error: "account_content_encryption_mismatch" as const };
         }
-        // Only Plain Account headers are server-readable, including sealed-at-rest storage.
-        // E2EE admission belongs to the clients that can open the header.
+        let shareKind: unknown = decodeArtifactKindV1(artifact.kind).kindHint;
         if (mode.mode === "plain") {
             const header = decodePlainArtifactStoredContent(privacyKit.encodeBase64(opened.header));
-            const kind = header && typeof header === "object" && !Array.isArray(header) && "kind" in header
+            shareKind = header && typeof header === "object" && !Array.isArray(header) && "kind" in header
                 ? header.kind : undefined;
-            if (!getArtifactKindPolicyV1(kind).publicLinkAllowed) {
-                return { type: "error" as const, error: "artifact_kind_not_shareable" as const };
-            }
+        }
+        if (!getArtifactKindPolicyV1(shareKind).publicLinkAllowed) {
+            return { type: "error" as const, error: "artifact_kind_not_shareable" as const };
         }
         const existing = await tx.publicSessionShare.findUnique({ where: { artifactId: artifact.id } });
         const result = await persistStoredContentPublicShare(tx, { ...input, subject: { kind: "artifact", id: artifact.id }, mode: mode.mode,

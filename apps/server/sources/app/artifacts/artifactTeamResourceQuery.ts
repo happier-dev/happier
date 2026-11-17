@@ -82,7 +82,8 @@ function artifactTeamBucketWhere(kind: ArtifactTeamResourceKindV1, documentIds: 
             { kind: { in: [...stored.projectDocument] } }, { id: { in: [...documentIds] } },
         ] } };
         case 'workflows': return { kind: { in: [...stored.workflows] } };
-        case 'otherArtifacts': return { OR: [{ kind: null }, { kind: { notIn: [...stored.prompts, ...stored.workflows] } }] };
+        case 'reviews': return { kind: { in: [...stored.reviews] } };
+        case 'otherArtifacts': return { OR: [{ kind: null }, { kind: { notIn: [...stored.prompts, ...stored.workflows, ...stored.reviews] } }] };
     }
 }
 

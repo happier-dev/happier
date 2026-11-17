@@ -1,0 +1,37 @@
+import type { ReviewMetadataWriteV1, ReviewRoundBindingV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import type { Tx } from '@/storage/inTx';
+import { inReadSnapshot } from '@/storage/inTx';
+
+function notAdmitted(): never {
+    throw Object.assign(new Error('review_round_not_admitted'), { code: 'review_round_not_admitted' });
+}
+
+/** Admission only. The admitted materializer carries this binding through its later writes. */
+export async function assertReviewRoundBindingInTx(tx: Tx, binding: ReviewRoundBindingV1): Promise<void> {
+    const current = await tx.reviewMetadata.findUnique({ where: { artifactId: binding.reviewId }, select: { currentRoundOrdinal: true } });
+    if (current?.currentRoundOrdinal !== binding.roundOrdinal) notAdmitted();
+}
+export async function assertReviewRoundBinding(binding: ReviewRoundBindingV1): Promise<void> {
+    await inReadSnapshot(tx => assertReviewRoundBindingInTx(tx, binding));
+}
+
+/** The existing Artifact mutation calls this once inside its content/publication transaction. */
+export async function writeReviewRoundState(tx: Tx, input: Readonly<{ reviewId: string; metadata: ReviewMetadataWriteV1 }>): Promise<boolean> {
+    const { reviewId, metadata } = input;
+    const current = await tx.reviewMetadata.findUnique({ where: { artifactId: reviewId } });
+    if (metadata.state === 'running') {
+        if (current?.currentRoundOrdinal === metadata.currentRoundOrdinal) return false;
+        if (metadata.currentRoundOrdinal !== (current?.currentRoundOrdinal ?? 0) + 1) notAdmitted();
+        const data = { ...metadata, startedAt: new Date(metadata.startedAt), finishedAt: null };
+        if (current) await tx.reviewMetadata.update({ where: { artifactId: reviewId }, data });
+        else await tx.reviewMetadata.create({ data: { artifactId: reviewId, ...data } });
+        return true;
+    }
+    if (current?.currentRoundOrdinal !== metadata.currentRoundOrdinal) notAdmitted();
+    if (current.state !== 'running') {
+        if (current.state === metadata.state && current.finishedAt?.getTime() === metadata.finishedAt) return false;
+        notAdmitted();
+    }
+    await tx.reviewMetadata.update({ where: { artifactId: reviewId }, data: { state: metadata.state, finishedAt: new Date(metadata.finishedAt) } });
+    return true;
+}

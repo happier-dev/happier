@@ -1,3 +1,5 @@
+import { REVIEW_ARTIFACT_KIND_V1, type ReviewMetadataWriteV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { writeReviewRoundState } from '@/app/reviews/reviewRecordService';
 import { isTransactionStorageError } from '@/storage/transactionErrors';
 import type { ApprovalInputCustody } from '@happier-dev/protocol/approvals/approvalInputCustody';
 import { artifactIdScopeMatchesAccountV1, type ArtifactIdScopeV1 } from '@happier-dev/protocol';
@@ -736,6 +738,7 @@ export async function createArtifact(params: {
     idScope?: ArtifactIdScopeV1;
     mutationGuard?: ArtifactMutationTransactionGuard;
     kind?: string;
+    reviewMetadata?: ReviewMetadataWriteV1;
     header: Uint8Array;
     body: Uint8Array;
     dataEncryptionKey: Uint8Array;
@@ -767,6 +770,7 @@ export async function createArtifact(params: {
             ...(params.idScope === undefined ? {} : { idScope: params.idScope }),
             mutationGuard: params.mutationGuard,
             kind: params.kind,
+            reviewMetadata: params.reviewMetadata,
             approvalState: params.approvalState, approvalSessionId: params.approvalSessionId,
             header,
             body,
@@ -808,6 +812,7 @@ type CreateArtifactTxParams = {
     idScope?: ArtifactIdScopeV1;
     mutationGuard?: ArtifactMutationTransactionGuard;
     kind?: string;
+    reviewMetadata?: ReviewMetadataWriteV1;
     header: Uint8Array;
     body: Uint8Array;
     dataEncryptionKey: Uint8Array;
@@ -965,6 +970,8 @@ export async function createArtifactTx(tx: Tx, params: CreateArtifactTxParams): 
     const plain = isPlainArtifactDataKeyBytes(params.dataEncryptionKey);
     const kind = artifactWriteKind(params.header, params.dataEncryptionKey, params.kind, params);
     if (!kind) return { ok: false, error: 'invalid-params' };
+    const isReview = decodeArtifactKindV1(kind.kind).kindHint === REVIEW_ARTIFACT_KIND_V1;
+    if (isReview !== (params.reviewMetadata !== undefined) || (params.reviewMetadata && params.reviewMetadata.state !== 'running')) return { ok: false, error: 'invalid-params' };
     if (params.provenanceDataEncryptionKey && !params.provenance) return { ok: false, error: 'invalid-params' };
     if (!artifactProvenanceMatchesAccountMode({ mode,
         artifactId: params.artifactId, bodyVersion: 1, provenance: params.provenance,
@@ -1041,6 +1048,8 @@ export async function createArtifactTx(tx: Tx, params: CreateArtifactTxParams): 
         if (isPrismaErrorCode(error, "P2002")) throw new ArtifactCreateIdConflictError();
         throw error;
     });
+
+    if (params.reviewMetadata) await writeReviewRoundState(tx, { reviewId: params.artifactId, metadata: params.reviewMetadata });
 
     if (params.preparedBlob?.candidate) {
         await tx.artifactBlob.create({ data: params.preparedBlob.row });
@@ -1121,6 +1130,7 @@ export async function updateArtifact(params: {
     artifactId: string;
     mutationGuard?: ArtifactMutationTransactionGuard;
     kind?: string;
+    reviewMetadata?: ReviewMetadataWriteV1;
     expectedHeaderVersion?: number;
     header?: { bytes: Uint8Array; expectedVersion: number };
     body?: { bytes: Uint8Array; expectedVersion: number };
@@ -1171,6 +1181,7 @@ export async function updateArtifact(params: {
             artifactId,
             mutationGuard: params.mutationGuard,
             kind: params.kind,
+            reviewMetadata: params.reviewMetadata,
             approvalState: params.approvalState, approvalSessionId: params.approvalSessionId,
             expectedHeaderVersion: params.expectedHeaderVersion,
             header,
@@ -1202,6 +1213,7 @@ export async function updateArtifactTx(
         artifactId: string;
         mutationGuard?: ArtifactMutationTransactionGuard;
         kind?: string;
+        reviewMetadata?: ReviewMetadataWriteV1;
         expectedHeaderVersion?: number;
         header?: { bytes: Uint8Array; expectedVersion: number };
         body?: { bytes: Uint8Array; expectedVersion: number };
@@ -1337,6 +1349,7 @@ export async function updateArtifactTx(
             approvalSessionId: params.approvalSessionId === undefined ? current.approvalSessionId : params.approvalSessionId,
         }) : undefined;
     if (nextKind === null) return { ok: false, error: 'invalid-params' };
+    if (params.reviewMetadata && (!params.header || !params.body || decodeArtifactKindV1(nextKind?.kind ?? current.kind).kindHint !== REVIEW_ARTIFACT_KIND_V1)) return { ok: false, error: 'invalid-params' };
     const legacySocketPublication = getArtifactContentDeliveryPolicyV1(
         decodeArtifactKindV1(nextKind?.kind ?? current.kind).kindHint).legacySocketPublication;
     if (params.transcriptVisualPublication) {
@@ -1506,6 +1519,8 @@ export async function updateArtifactTx(
             },
         };
     }
+
+    if (params.reviewMetadata) await writeReviewRoundState(tx, { reviewId: params.artifactId, metadata: params.reviewMetadata });
 
     if (params.preparedBlob?.candidate) {
         await tx.artifactBlob.create({ data: params.preparedBlob.row });

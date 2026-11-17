@@ -3646,7 +3646,25 @@ model ProjectDeploymentDefaults {
     @@index([contentArtifactId])
 }
 
+model ReviewMetadata {
+    artifactId String @id
+    artifact Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+    projectSourceId String?
+    workflowId String?
+    subjectKind String
+    sourceKind String
+    state String
+    currentRoundOrdinal Int
+    startedAt DateTime
+    finishedAt DateTime?
+
+    @@index([projectSourceId, state, artifactId])
+    @@index([workflowId, startedAt(sort: Desc), artifactId])
+    @@index([state, startedAt(sort: Desc), artifactId])
+}
+
 model Artifact {
+    reviewMetadata ReviewMetadata?
     deploymentDomains DeploymentDomain[]
     projectDeploymentDefaults ProjectDeploymentDefaults[]
     deploymentEnvironments DeploymentEnvironment[]

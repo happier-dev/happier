@@ -1,3 +1,4 @@
+import type { ReviewMetadataWriteV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { createHash } from 'node:crypto';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
@@ -19,8 +20,8 @@ import type { ArtifactIdScopeV1 } from '@happier-dev/protocol';
 import type { ApprovalTranscriptVisualPublicationV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 
 export type ArtifactHttpMutationResult = Awaited<ReturnType<typeof createArtifactHttpMutation | typeof updateArtifactHttpMutation>>;
-export type ArtifactCreateHttpInput = Readonly<{ id: string; idScope?: ArtifactIdScopeV1; kind?: string; header: string; body: string; dataEncryptionKey: string; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteV1; memoryDecisionSource?: CoordinationMessageRefV1 } & Partial<ApprovalArtifactQueryHintsV1>>;
-export type ArtifactUpdateHttpInput = Readonly<{ updateOperationId?: string; transcriptVisualPublication?: ApprovalTranscriptVisualPublicationV1; approvalInputCustody?: ApprovalInputCustody; kind?: string; header?: string; expectedHeaderVersion?: number; body?: string; expectedBodyVersion?: number; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteV1 | null; memoryDecisionSource?: CoordinationMessageRefV1 } & Partial<ApprovalArtifactQueryHintsV1>>;
+export type ArtifactCreateHttpInput = Readonly<{ id: string; idScope?: ArtifactIdScopeV1; kind?: string; reviewMetadata?: ReviewMetadataWriteV1; header: string; body: string; dataEncryptionKey: string; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteV1; memoryDecisionSource?: CoordinationMessageRefV1 } & Partial<ApprovalArtifactQueryHintsV1>>;
+export type ArtifactUpdateHttpInput = Readonly<{ updateOperationId?: string; transcriptVisualPublication?: ApprovalTranscriptVisualPublicationV1; approvalInputCustody?: ApprovalInputCustody; kind?: string; reviewMetadata?: ReviewMetadataWriteV1; header?: string; expectedHeaderVersion?: number; body?: string; expectedBodyVersion?: number; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteV1 | null; memoryDecisionSource?: CoordinationMessageRefV1 } & Partial<ApprovalArtifactQueryHintsV1>>;
 
 function memoryDecisionHttpFailure(error: string) {
     if (error === 'memory_decision_source_unavailable') return { statusCode: 404 as const, body: { error: 'memory_decision_source_unavailable' as const } };
@@ -43,6 +44,7 @@ export async function createArtifactHttpMutation(userId: string, input: Artifact
                 mutationGuard,
                 ...(input.idScope === undefined ? {} : { idScope: input.idScope }),
                 kind: input.kind,
+                reviewMetadata: input.reviewMetadata,
                 approvalState: input.approvalState, approvalSessionId: input.approvalSessionId,
                 header: privacyKit.decodeBase64(header),
                 body: privacyKit.decodeBase64(body),
@@ -135,6 +137,7 @@ export async function updateArtifactHttpMutation(userId: string, artifactId: str
                 artifactId: id,
                 mutationGuard,
                 kind: input.kind,
+                reviewMetadata: input.reviewMetadata,
                 approvalState: input.approvalState, approvalSessionId: input.approvalSessionId,
                 expectedHeaderVersion,
                 header: headerParam,
