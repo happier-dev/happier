@@ -11,6 +11,19 @@ const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
 describe('production collector host', () => {
+    it('uses only the explicit deployed-App port and refuses malformed declarations when the role reads it', () => {
+        function createWithPort(port?: string) {
+            return createDeploymentTelemetryHost({ serverBaseUrl: 'http://fixture', token: 'token', machineId: 'collector',
+                environment: port === undefined ? {} : { HAPPIER_DEPLOYED_TELEMETRY_PORT: port },
+                subscribeMachineChanges: () => () => {}, onRefreshError: () => {} });
+        }
+        expect(createWithPort().bind(new AbortController().signal).deployedAppPort).toBeUndefined();
+        expect(createWithPort('4318').bind(new AbortController().signal).deployedAppPort).toBe(4318);
+        for (const value of ['0', '-1', '65536', '4318oops', '']) {
+            const host = createWithPort(value);
+            expect(() => host.bind(new AbortController().signal).deployedAppPort).toThrow('HAPPIER_DEPLOYED_TELEMETRY_PORT');
+        }
+    });
     it('reconciles durable assignments over the open Account channel without refreshing unrelated changes', async () => {
         const channel = await createRequesterCurrentnessSocketHarness();
         cleanups.push(channel.close);

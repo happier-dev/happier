@@ -5,6 +5,19 @@ import axios from '@/api/client/credentialAxios';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { createDefaultPluginInstallationPublisherHeader, type CreatePluginInstallationPublisherHeader } from '@/plugins/installations/publisherProof';
 
+export const DEPLOYED_TELEMETRY_PORT_ENV = 'HAPPIER_DEPLOYED_TELEMETRY_PORT';
+
+/** The declared TCP listener belongs only to the deployed collector App. */
+export function readDeployedTelemetryPort(environment: Readonly<Record<string, string | undefined>>): number | undefined {
+    const declared = environment[DEPLOYED_TELEMETRY_PORT_ENV];
+    if (declared === undefined) return undefined;
+    const port = Number(declared);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        throw new Error(`${DEPLOYED_TELEMETRY_PORT_ENV} must declare a TCP port between 1 and 65535`);
+    }
+    return port;
+}
+
 export interface DeploymentTelemetryHostOptions {
     serverBaseUrl: string;
     token: string;
@@ -13,6 +26,7 @@ export interface DeploymentTelemetryHostOptions {
     subscribeMachineChanges(listener: (machineId: string | null) => void): () => void;
     onRefreshError(error: unknown): void;
     createPublisherHeader?: CreatePluginInstallationPublisherHeader;
+    environment?: NodeJS.ProcessEnv;
 }
 
 /** One runtime endpoint publication, owned by the existing background invocation. */
@@ -38,6 +52,9 @@ export function createDeploymentTelemetryHost(options: DeploymentTelemetryHostOp
                 return release;
             }
             return {
+                get deployedAppPort() {
+                    return readDeployedTelemetryPort(options.environment ?? process.env);
+                },
                 async readAssignments(request = {}) {
                     signal.throwIfAborted();
                     const body = {};

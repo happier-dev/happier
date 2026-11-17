@@ -39,6 +39,8 @@ export type DeploymentTelemetryAssignmentV1 = Readonly<DeploymentTelemetryAssign
 
 /** Same daemon's production collector, bound to its captured Account and Machine. */
 export interface DeploymentTelemetryServiceV1 {
+    /** Explicit deployed-App listener declaration; absent on ordinary Machines. */
+    readonly deployedAppPort?: number;
     readAssignments(options?: Readonly<{ signal?: AbortSignal }>): Promise<readonly DeploymentTelemetryAssignmentV1[]>;
     subscribeAssignmentsChanged(refresh: () => Promise<void>): () => void;
     /** Runtime-only endpoint getter; launch never reads assignments or starts another listener. */
