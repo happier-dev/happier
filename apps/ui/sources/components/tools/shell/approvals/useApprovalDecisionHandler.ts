@@ -210,6 +210,8 @@ export type ApprovalDecisionOptions = Readonly<{
     narrowedInput?: unknown;
     /** A resource proposal's turned-down items, as the person last saw them (plan 60 AGW-8). */
     declinedItems?: readonly Readonly<Record<string, unknown>>[];
+    /** The present person's answer for one selected shared check (D15); approving the Action is not consent. */
+    triggerConsent?: Readonly<{ automationId: string; triggerId: string; decision: 'allow' | 'skip' }>;
 }>;
 
 /** Presentation and decisions use the same proven Home, including portable replay origins. */
@@ -303,9 +305,11 @@ export function useApprovalDecisionHandler(
                 artifactId: artifact.id,
                 decision,
                 ...(decision === 'approve' && narrowedInput !== undefined ? { narrowedInput } : {}),
+                ...(decision === 'approve' && options?.triggerConsent ? { triggerConsent: options.triggerConsent } : {}),
             };
+            const presentUser = decision === 'approve' && (narrowedInput !== undefined || options?.triggerConsent !== undefined);
             const decisionContext: ActionExecutorContext = { surface: 'ui',
-                ...(decision === 'approve' && narrowedInput !== undefined ? { authority: 'present_user' as const } : {}),
+                ...(presentUser ? { authority: 'present_user' as const } : {}),
                 ...(serverId ? { serverId } : {}),
                 ...(account ? { expectedAccountId: account.accountId } : {}) };
             let result = await executor.execute(
