@@ -1,11 +1,26 @@
 import { describe, expect, it } from 'vitest';
 
 import { getActionSpec } from './actionSpecs.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+import { isApprovalRequiredByActionsSettings, resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 
 const workspace = { serverId: 'home', workspaceId: 'checkout', machineId: 'machine', rootPath: '/repo' };
 
 describe('project definition Actions', () => {
+  it('offers stopped-worktree port replacement as a scoped dangerous Action on every entry', () => {
+    const reassign = getActionSpec('projects.worktree.ports.reassign');
+    expect(reassign.inputSchema.safeParse({ workspace }).success).toBe(true);
+    expect(reassign.inputSchema.safeParse({ workspace, rootPath: '/another-root' }).success).toBe(false);
+    expect(reassign.safety).toBe('danger');
+    expect(reassign.sideEffectClass).toBe('write');
+    expect(reassign.surfaces).toMatchObject({ ui: true, agent: true, cli: true, mcp: true, rpc: true });
+    expect(reassign.cli?.commands[0]?.path).toEqual(['project', 'worktree', 'ports', 'reassign']);
+    expect(isApprovalRequiredByActionsSettings(reassign.id, { v: 1, actions: {} }, { surface: 'agent' })).toBe(true);
+    expect(resolveActionApprovalRouting({ actionId: reassign.id, spec: reassign,
+      context: { surface: 'ui', authority: 'present_user' } })).toMatchObject({ required: false, uiConfirmationRequired: true });
+    expect(reassign.outputSchema.safeParse({ kind: 'unavailable', code: 'project_worktree_ports_active', reason: 'active' }).success).toBe(true);
+    expect(reassign.outputSchema.safeParse({ kind: 'ready', assignment: { ports: [4100], listenerPorts: {} } }).success).toBe(true);
+  });
+
   it('admits exact qualified inspection and a strict guarded write while retaining document bytes as data', () => {
     const inspect = getActionSpec('projects.inspect');
     expect(inspect).toBeDefined();

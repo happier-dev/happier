@@ -61,10 +61,7 @@ import {
     getSharedTerminalProcessRegistry,
     type TerminalProcessRegistry,
 } from './inventory/terminalRegistry';
-import {
-    discoverLocalServiceRunTargets,
-    type LocalServiceLauncherRunTarget,
-} from './launch/runTargets';
+import { discoverLocalServiceRunTargets } from './launch/runTargets';
 import {
     scanPlatformLocalServices,
     type LocalServicesScanResult,
@@ -216,6 +213,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     machineId: string;
     serverId?: string;
     accountId?: string;
+    projectDefinitionAccount?: import('./launch/runTargets').LocalServiceRunTargetDiscoveryOptions['projectDefinitionAccount'];
     previewServer?: LocalServicePreviewServerInput;
     processEnv?: NodeJS.ProcessEnv;
     inventoryEnabled?: () => boolean;
@@ -243,7 +241,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     processOwnershipRuntime?: ReturnType<typeof createProcessOwnershipRuntime>;
     internalProcessPids?: () => readonly number[];
     internalEndpointUrls?: () => readonly string[];
-    runTargets?: () => Promise<readonly LocalServiceLauncherRunTarget[]> | readonly LocalServiceLauncherRunTarget[];
+    runTargets?: LocalServiceRunTargetsProvider;
     projectServiceStarter?: ProjectServiceDeclarationStarterInput;
     projectManagedServices?: Pick<ReturnType<typeof createManagedServicesOwner>, 'listProjectServices' | 'resolveProjectService' | 'readProcessRoots'>
         & Partial<Pick<ReturnType<typeof createManagedServicesOwner>, 'activity' | 'restoreProjectServices'>>;
@@ -606,6 +604,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         const source = await readWorkspaceFacts();
         const requestedRoots = selectRequestedRoots(source, roots);
         return await discoverLocalServiceRunTargets({ ...options, roots: requestedRoots,
+            projectDefinitionAccount: params.projectDefinitionAccount,
             acceptedWorkspaceRefs: source.acceptedWorkspaceRefs.filter(ref => requestedRoots.some(root =>
                 isWorkspacePathWithin(root, ref.rootPath) || isWorkspacePathWithin(ref.rootPath, root))) });
     };

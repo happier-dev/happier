@@ -31,6 +31,7 @@ import { admitLocalServicePreviewRequest } from './requester';
 import type { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { matchesProjectManagedServiceTarget } from '@/plugins/runtime/invocation/services/projectServiceResolution';
 import { readProjectManagedServicePreviewEndpoint } from './projectEndpoint';
+import { isProjectServiceDeclarationTargetIdV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { formatLocalServiceLauncherTitle } from '../launch/suggestions';
 import { readProcessCensus } from '@/processes/census/processCensus';
 import { scanPlatformLocalServices } from '../inventory/platform/scan';
@@ -97,7 +98,8 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
     server?: LocalServicePreviewServerInput;
     registry: LocalServicePreviewRegistry;
     inventoryRegistry?: LocalServiceInventoryRegistry;
-    projectManagedServices?: Pick<ReturnType<typeof createManagedServicesOwner>, 'resolveProjectService'>;
+    projectManagedServices?: Pick<ReturnType<typeof createManagedServicesOwner>, 'resolveProjectService'>
+        & Partial<Pick<ReturnType<typeof createManagedServicesOwner>, 'resolveProjectServiceDeclaration'>>;
     endpointEnricher?: LocalServiceEndpointEnricher;
     signal?: AbortSignal;
     now?: () => number;
@@ -213,17 +215,28 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
                 return { ok: false, reasonCode: 'wrong_machine' };
             }
 
+            if (request.launchTargetId && !request.serviceTarget) {
+                const declaration = input.projectManagedServices?.resolveProjectServiceDeclaration?.(request.launchTargetId);
+                if (!declaration && isProjectServiceDeclarationTargetIdV1(request.launchTargetId)) return { ok: false, reasonCode: 'service_not_listening' };
+                if (declaration?.kind === 'workspace') request = { ...request, serviceTarget: {
+                    kind: 'managed_service', managedServiceId: declaration.instanceId, machineId: declaration.workspace.machineId,
+                    workspaceId: declaration.workspace.id, cwd: declaration.cwd, declaration: declaration.declaration,
+                } };
+            }
+
             if (request.serviceTarget) {
                 const requestedServiceTarget = request.serviceTarget;
                 if (!await admission.canAccess(requestedServiceTarget)) return { ok: false, reasonCode: 'unknown_managed_service' };
                 if (request.sessionId !== undefined) return { ok: false, reasonCode: 'preview_target_unresolved' };
                 const resolved = input.projectManagedServices?.resolveProjectService(requestedServiceTarget);
+                if (resolved?.status === 'stale') return { ok: false, reasonCode: 'stale_service' };
                 if (resolved?.status === 'unknown') return { ok: false, reasonCode: 'unknown_managed_service' };
                 if (resolved?.status !== 'found') return { ok: false, reasonCode: 'preview_target_unresolved' };
                 const handle = resolved.handle;
                 if (handle.kind !== 'workspace') return { ok: false, reasonCode: 'preview_target_unresolved' };
                 const endpoint = readProjectManagedServicePreviewEndpoint(handle);
-                if (!endpoint) return { ok: false, reasonCode: 'preview_target_unresolved' };
+                if (!endpoint) return { ok: false, reasonCode: request.launchTargetId
+                    ? 'service_not_listening' : 'preview_target_unresolved' };
                 const serviceTarget = { kind: 'managed_service' as const, managedServiceId: handle.instanceId,
                     machineId: handle.workspace.machineId, workspaceId: handle.workspace.id,
                     cwd: handle.cwd, declaration: handle.declaration };
@@ -240,6 +253,9 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
                     previewId: existing?.previewId ?? handle.instanceId,
                     // Existing server registrations retain their original immutable binding.
                     machineId: input.machineId, serviceTarget: existing?.serviceTarget ?? serviceTarget,
+                    browserTarget: { kind: 'localServicePreview', targetId: handle.serviceId, machineId: input.machineId,
+                        display: { title: formatLocalServiceLauncherTitle(handle.declaration.selection.kind === 'manifest'
+                            ? handle.declaration.selection.name : handle.declaration.selection.source.target) } },
                     owner: { kind: 'user', id: handle.requester.accountId }, target: endpoint,
                     initialPath: request.initialPath ?? existing?.initialPath ?? { pathname: '/', search: '' },
                     display: existing?.display ?? { title: formatLocalServiceLauncherTitle(selection.kind === 'manifest' ? selection.name : selection.source.target),

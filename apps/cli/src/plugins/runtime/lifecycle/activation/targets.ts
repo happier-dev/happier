@@ -51,6 +51,8 @@ const PRODUCT_DEMAND_READY_REGISTRATION_FAMILIES = new Set([
     // Project inspection and native launch resolve the selected identity via
     // resolveProjectNativeAdapter before reading its registration.
     'projectNativeAdapters',
+    // Prepared only from already-active registrations; service startup never waits for activation.
+    'serviceLaunchEnvironments',
     // Managed operations demand the selected descriptor; its existing Action
     // registrations supply all native roles without a provisioner runtime API.
     'machineProvisioners',

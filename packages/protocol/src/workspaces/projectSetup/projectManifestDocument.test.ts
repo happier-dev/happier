@@ -4,6 +4,30 @@ import { ProjectManifestV1Schema, ProjectManifestV1StoredSchema } from './projec
 import { editProjectManifestDocument, readProjectManifestDocument } from './projectManifestDocument.js';
 
 describe('project manifest documents', () => {
+  it('preserves opted-in worktree slots and named service runtime declarations through document projection', () => {
+    const manifest = { version: 1, worktreePorts: { enabled: true, slots: 2 }, services: {
+      web: { source: { kind: 'command', command: 'serve' }, runtime: { primary: true, terminal: true, title: 'Web', autostart: true } },
+      api: { source: { kind: 'command', command: 'api' }, runtime: { portSlot: 1 } },
+      worker: { source: { kind: 'command', command: 'jobs' } },
+    } };
+    const document = readProjectManifestDocument(JSON.stringify(manifest));
+    expect(document).toMatchObject({ status: 'valid', manifest });
+    expect(ProjectManifestV1Schema.safeParse(manifest).success).toBe(true);
+    const disabled = { ...manifest, worktreePorts: { enabled: false } };
+    expect(readProjectManifestDocument(JSON.stringify(disabled)))
+      .toMatchObject({ status: 'valid', manifest: disabled });
+  });
+  it('rejects conflicting allocated service slots before a launch consumer selects a port', () => {
+    const source = { kind: 'command', command: 'serve' };
+    for (const services of [
+      { web: { source, runtime: { portSlot: 2 } } },
+      { web: { source, runtime: { primary: true, portSlot: 1 } } },
+      { web: { source, runtime: { primary: true } }, api: { source, runtime: { primary: true } } },
+      { web: { source, runtime: { portSlot: 1 } }, api: { source, runtime: { portSlot: 1 } } },
+    ]) {
+      expect(ProjectManifestV1Schema.safeParse({ version: 1, worktreePorts: { enabled: true, slots: 2 }, services }).success).toBe(false);
+    }
+  });
   it('explains invalid fields with their location and required value instead of schema jargon', () => {
     const document = readProjectManifestDocument('{"version":2,"scripts":{"test":{"execution":false,"source":{"kind":"command","command":"echo ok"}}}}');
     expect(document.status).toBe('invalid');

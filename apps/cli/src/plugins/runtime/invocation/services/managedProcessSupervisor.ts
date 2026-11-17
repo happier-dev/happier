@@ -86,6 +86,9 @@ import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
 import { captureProcessBirthWitness, type ProcessBirthWitness } from '@/daemon/processIdentity';
 import { captureManagedServiceProcessRecoveryRecord, restoreManagedServiceProcess,
     type ManagedServiceProcessRecoveryRecord } from './managedProcessRecovery';
+import type { TerminalPtySessionManager, TerminalPtyProjectCustody } from '@/terminal/pty/sessions';
+import type { SessionTerminalViewTargetV1 } from '@happier-dev/protocol/terminal/workspace';
+import { PROCESS_OWNER_ENV_KEY } from '@/processes/ownerTag';
 
 export type { ManagedServiceProcessRecoveryRecord } from './managedProcessRecovery';
 
@@ -239,6 +242,8 @@ export type ManagedServiceProcessSpec = Readonly<{
             credential?: ManagedServiceProcessCredential;
         }>;
         durableLog?: { enabled: boolean; keepCount: number };
+        interactiveTerminal?: Readonly<{ sessions: Pick<TerminalPtySessionManager, 'spawnManagedService'>;
+            custody: TerminalPtyProjectCustody; terminalKey: string }>;
     }> & ManagedServiceProcessLaunch
     | Readonly<{
         mode: Readonly<{
@@ -257,6 +262,7 @@ export type ManagedServiceProcessSpec = Readonly<{
             releaseObservation?: () => Promise<void>;
         }>;
         durableLog?: never;
+        interactiveTerminal?: never;
     }> & (ManagedServiceProcessLaunch | Readonly<{
         mode: Readonly<{ kind: 'native'; builtinLifecycle: ProjectBuiltinNativeLifecycle; observationOnly: true; releaseObservation: () => Promise<void> }>;
         launch?: never;
@@ -271,6 +277,7 @@ export type ManagedServiceProcessSpec = Readonly<{
         launch?: never;
         authorizeLaunch?: never;
         durableLog?: never;
+        interactiveTerminal?: never;
     }>
 );
 
@@ -305,6 +312,8 @@ export type ManagedServiceProcessStopResult = Readonly<{
 
 export interface ManagedServiceProcessHandle {
     snapshot(): ManagedServiceProcessSnapshot;
+    readonly terminalView?: SessionTerminalViewTargetV1;
+    readonly portSource?: import('@happier-dev/protocol/local/services/launcher/v1').LocalServicePortSourceV1;
     readNativeLogs?(options?: ManagedServiceNativeLogReadOptionsForHost): Promise<ManagedServiceNativeLogResultV1>;
     watchNativeLogs?(options: Omit<ManagedServiceNativeLogWatchV1, 'kind' | 'maxBytes'>): Promise<Readonly<{ dispose(): Promise<void> }>>;
     /** Host-private live admission read; absent boundary doubles cannot admit previews. */
@@ -388,7 +397,9 @@ Readonly<{
 export type ProjectManagedServiceLaunchAuthorizer = (input: Readonly<{
     endpoint: Readonly<{ baseUrl: string; port: number }> | null;
     signal: AbortSignal;
-}>) => Promise<HostAuthorizedPluginExecLaunch>;
+}>) => Promise<HostAuthorizedPluginExecLaunch & Readonly<{
+    portSource?: import('@happier-dev/protocol/local/services/launcher/v1').LocalServicePortSourceV1;
+}>>;
 
 type ManagedServiceProcessSupervision = {
     readonly lifecycle: AbortController;
@@ -1099,10 +1110,16 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         const processOwnerTag = formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir, owner: processOwner });
 
         let process: PluginProcessHandle | null = null;
+        let serviceTerminal: Awaited<ReturnType<TerminalPtySessionManager['spawnManagedService']>> | undefined;
+        let terminalView: SessionTerminalViewTargetV1 | undefined;
+        let portSource: import('@happier-dev/protocol/local/services/launcher/v1').LocalServicePortSourceV1 | undefined;
         let retainedLaunchRelease: HostAuthorizedPluginExecLaunch['release'] | null = null;
         let launchRedactedValues: readonly string[] = Object.values(spec.launch?.env ?? {})
             .flatMap(value => readCredentialRedactionValues({ rawCredential: value }));
-        const retainLaunchDiagnostics = (launch: HostAuthorizedPluginExecLaunch): void => {
+        const retainLaunchDiagnostics = (launch: HostAuthorizedPluginExecLaunch & Readonly<{
+            portSource?: import('@happier-dev/protocol/local/services/launcher/v1').LocalServicePortSourceV1;
+        }>): void => {
+            portSource = launch.portSource;
             // Project secrets may use arbitrary environment names. Treat values
             // as private rather than inferring secrecy from a variable's name.
             launchRedactedValues = Object.values(launch.env)
@@ -1250,6 +1267,12 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                 }
                 lifecycleProbeController.abort();
                 stopWatchdog();
+                if (spec.mode.kind === 'managedSpawn' && spec.interactiveTerminal) {
+                    // An interactive exit settles this occurrence. Only an explicit
+                    // declaration Start may create its replacement.
+                    void cleanup().catch(() => setUnhealthy('plugin_managed_server_termination_incomplete'));
+                    return;
+                }
                 const observed = result.termination.observed;
                 const message = processFailureMessage(result);
                 setUnhealthy('plugin_managed_server_process_exited', {
@@ -1307,7 +1330,8 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         };
         async function establishmentFailure(result: PluginProcessResult | undefined, declaredPort?: number): Promise<LocalServiceEstablishmentFailureV1> {
             const observed = result?.termination.observed;
-            const stderr = result ? Buffer.from(result.stderr).toString('utf8') : '';
+            const stderr = result ? Buffer.from(spec.mode.kind === 'managedSpawn' && spec.interactiveTerminal
+                ? result.stdout : result.stderr).toString('utf8') : '';
             // Retained stderr can end in a runtime footer, stack or error metadata.
             // Keep the latest error summary, otherwise the latest substantive line.
             let lastMeaningfulLine: string | undefined;
@@ -1688,6 +1712,9 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             endpoint = selected ? Object.freeze({ host, port: selected.port,
                 baseUrl: host === '::1' ? `http://[::1]:${selected.port}` : `http://127.0.0.1:${selected.port}`,
                 hostPolicy: 'ownedLoopback' as const }) : null;
+            // A command may ignore its assigned PORT. Only the observed owned
+            // listener can establish that the service uses its isolated slot.
+            if (endpoint && portSource === 'assigned' && endpoint.port !== spec.mode.port) portSource = 'fixed';
             if (snapshot.baseUrl !== (endpoint?.baseUrl ?? null) || snapshot.port !== (endpoint?.port ?? null)) {
                 setSnapshot({ ...snapshot, baseUrl: endpoint?.baseUrl ?? null, port: endpoint?.port ?? null });
             }
@@ -1785,6 +1812,10 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                     // The disclosure option is host-private, never a plugin SDK input.
                     const { allowIncompleteSecretMasking: _allowIncompleteSecretMasking, ...pluginRequest } = request;
                     return spec.mode.lifecycle.logs!(spec.mode.instance, pluginRequest);
+                },
+            } : spec.mode.kind === 'managedSpawn' && spec.interactiveTerminal ? {
+                async invoke(request: ManagedServiceNativeLogReadForHost | ManagedServiceNativeLogWatchV1) {
+                    return serviceTerminal ? serviceTerminal.logs(request) : { kind: 'unavailable' as const, reason: 'unavailable' as const };
                 },
             } : {}),
         });
@@ -2177,7 +2208,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             startWatchdog();
         } else if (spec.mode.kind === 'managedSpawn') {
             let managedProcessCustody: ProcessCustodySpawnSpec | null = null;
-            if (hostPlatform === 'win32') {
+            if (hostPlatform === 'win32' && !spec.interactiveTerminal) {
                 // Windows managed spawn is real job custody — but it is
                 // fail-closed about its helper: without the staged custody
                 // runtime the host cannot prove containment, so it refuses
@@ -2383,6 +2414,20 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                         await authorized.release();
                         throw error;
                     }
+                    if (spec.interactiveTerminal) {
+                        const terminal = spec.interactiveTerminal;
+                        try {
+                            serviceTerminal = await terminal.sessions.spawnManagedService({ terminalKey: terminal.terminalKey,
+                                custody: terminal.custody, signal: entry.lifecycle.signal,
+                                launch: { ...authorized, env: { ...authorized.env, [PROCESS_OWNER_ENV_KEY]: processOwnerTag } } });
+                            retainLaunch(authorized.release);
+                            projectWindowsJobName = serviceTerminal.windowsJobName;
+                        } catch (error) { await authorized.release(); throw error; }
+                        terminalView = { kind: 'terminal_view', machineId: terminal.custody.machineId,
+                            terminalId: serviceTerminal.terminalId, terminalKey: terminal.terminalKey,
+                            cwd: serviceTerminal.cwd, interactive: true };
+                        return serviceTerminal.process;
+                    }
                     const linuxProcessLaunchScope = hostPlatform === 'linux' ? await prepareCgroupProcessLaunchScope() : null;
                     try {
                         assertGenerationUsable();
@@ -2492,7 +2537,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                     return fail('plugin_managed_server_process_identity_unavailable',
                         'Managed service process birth could not be observed');
                 }
-                projectWindowsJobName = custodyFacts?.jobName;
+                projectWindowsJobName = custodyFacts?.jobName ?? projectWindowsJobName;
             }
             if (entry.lifecycle.signal.aborted) {
                 return fail('plugin_managed_server_aborted', 'Managed server operation was aborted');
@@ -2623,6 +2668,8 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             ? spec.mode.builtinLifecycle : undefined;
         const handle: ManagedServiceProcessHandle = Object.freeze({
             snapshot: () => snapshot,
+            ...(terminalView ? { terminalView } : {}),
+            get portSource() { return portSource; },
             nativeControlCapabilities: Object.freeze({ start: Boolean(nativeControl?.start),
                 stop: Boolean(nativeControl?.stop), restart: Boolean(nativeControl?.restart) }),
             readNativeLogs,

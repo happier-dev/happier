@@ -14,6 +14,19 @@ import { prepareProjectOpenReceiptPersistence } from './projectOpenReceiptPersis
 const ACCOUNT_SCOPE = { accountId: 'account-1', machineId: 'machine-1' } as const;
 
 describe('action operation store', () => {
+  it('projects active Project commands before PTY attachment and removes them at actual settlement', () => {
+    const store = createActionOperationStore();
+    const command = { kind: 'projectCommand' as const, purpose: 'setup' as const,
+      serverId: 'home', machineId: ACCOUNT_SCOPE.machineId, workspaceRefId: 'workspace', cwd: '/checkout' };
+    store.create({ operationId: 'preparing', scope: ACCOUNT_SCOPE, actionId: 'projects.prepare',
+      title: 'Prepare', cancellation: 'supported', domainRef: command, inputIdentity: '{}' });
+    expect(store.readActiveProjectCommands()).toEqual([command]);
+    store.markRunning('preparing');
+    expect(store.readActiveProjectCommands()).toEqual([command]);
+    store.succeed('preparing', {});
+    expect(store.readActiveProjectCommands()).toEqual([]);
+  });
+
   it('emits one outcome per backup run settlement, never for progress, replay or maintenance', () => {
     const outcomes: unknown[] = [];
     const store = createActionOperationStore({ onBackupOutcome: outcome => outcomes.push(outcome) });

@@ -776,7 +776,7 @@ describe('Account API token HTTP adapter', () => {
         await mkdir(ref.rootPath);
         await writeFile(join(ref.rootPath, 'package.json'), JSON.stringify({ name: 'native-service', scripts: { dev: 'package-owned server' } }));
       }
-      const declarations = await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [source, worker] });
+      const declarations = (await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [source, worker] })).targets;
       const sourceTarget = declarations.find(target => 'declaration' in target && target.workspaceId === source.id);
       const workerTarget = declarations.find(target => 'declaration' in target && target.workspaceId === worker.id);
       if (!sourceTarget || !workerTarget || !('declaration' in sourceTarget) || !('declaration' in workerTarget)) throw new Error('Expected native declarations');

@@ -12,8 +12,10 @@ import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/work
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { ProjectSetupConsentFailureDetailsV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
+import { createProjectDotenvPreparation, type ProjectDotenvPreparation } from './projectDotenv';
 import { isProjectNativeProcessUncertain } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 import { ProjectNativeToolchainUncertainError } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
+import { prepareProjectWorktreeRuntime } from '@/workspaces/execution/projectWorktreeRuntime';
 
 
 /** An invocation's existing Project IO custody, activated only by an exact native launch. */
@@ -55,6 +57,9 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                     : reason.name === 'TimeoutError' ? 'timeout' : 'error' : 'other' } : {}) };
         },
         async prepare(signal: AbortSignal, cwd?: string, environment?: Readonly<Record<string, string>>) {
+            const dotenvPreparations = new Map<string, ProjectDotenvPreparation>();
+            const runtimeEnvironments = new Map<string, Readonly<Record<string, string>>>();
+            const originalEnvironment = Object.freeze({ ...(environment ?? runtime.hostEnvironment ?? process.env) });
             launchSignal = signal;
             signal = AbortSignal.any([signal, ingress.signal, ...(input.operation ? [input.operation.signal] : [])]);
             preparationSignal = signal;
@@ -68,6 +73,22 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                 requesterIdentity: runtime.requesterIdentity,
                 serverHttpBaseUrl: runtime.serverHttpBaseUrl, account: projectRuntimeAccountRowsInput(runtime),
                 nativeIo: runtime.nativeIo, plugins: runtime.plugins, successHomeDir: runtime.successHomeDir,
+                originalEnvironment,
+                async readRuntimeEnvironment(workspace, manifest) {
+                    let selected = runtimeEnvironments.get(workspace.rootPath);
+                    if (!selected) {
+                        const bindings = await prepareProjectWorktreeRuntime({ workspace, manifest, signal });
+                        if (bindings.kind !== 'ready') return fail(bindings.code, { reason: bindings.reason });
+                        selected = bindings.runtimeEnvironment;
+                        runtimeEnvironments.set(workspace.rootPath, selected);
+                    }
+                    return selected;
+                },
+                readDotenvPreparation(root) {
+                    let selected = dotenvPreparations.get(root);
+                    if (!selected) { selected = createProjectDotenvPreparation(root, originalEnvironment); dotenvPreparations.set(root, selected); }
+                    return selected;
+                },
                 platform: { os: (runtime.platform ?? process.platform) === 'win32' ? 'windows' : runtime.platform ?? process.platform,
                     arch: runtime.arch ?? process.arch },
                 ...(environment ? { configEnvironment: environment } : runtime.configEnvironment ? { configEnvironment: runtime.configEnvironment } : {}),
@@ -151,7 +172,7 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                                     pendingPhase = 'setup_execution';
                                 },
                                 ...(runtime.platform ? { platform: runtime.platform } : {}),
-                                ...(environment ?? runtime.hostEnvironment ? { hostEnvironment: environment ?? runtime.hostEnvironment } : {}) });
+                                hostEnvironment: originalEnvironment });
                             kind = executed.kind;
                             return executed;
                         } catch (error) {
@@ -184,7 +205,7 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                 if (current.kind === 'pendingApproval') fail(current.code);
             })();
             const projectLaunch = { ...createProjectNativeLaunchAdmission({
-                preparation: preparation(), environmentIo: runtime.environmentIo, hostEnvironment: environment ?? runtime.hostEnvironment,
+                preparation: preparation(), environmentIo: runtime.environmentIo, hostEnvironment: originalEnvironment,
                 platform: runtime.platform, operation: { signal },
             }, plan), verifyCurrent } satisfies HostProjectNativeLaunchAdmission;
             return { projectLaunch, ...(projectLaunch.nativeAdapter

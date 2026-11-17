@@ -19,6 +19,8 @@ const ProjectServiceRecoveryRecordSchema = z.strictObject({
     specIdentity: z.string().check(z.minLength(1)),
     endpointNone: z.optional(z.literal(true)),
     execution: LocalServiceLaunchTargetV1Schema.shape.execution,
+    interactive: z.optional(z.literal(true)),
+    portSource: LocalServiceLaunchTargetV1Schema.shape.portSource,
     process: ManagedServiceProcessRecoveryRecordSchema,
 });
 export type ProjectServiceRecoveryRecord = z.infer<typeof ProjectServiceRecoveryRecordSchema>;

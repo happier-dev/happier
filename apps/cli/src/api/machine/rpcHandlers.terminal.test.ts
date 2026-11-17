@@ -1685,7 +1685,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
       let runTargetId = 'web; echo untrusted:dev';
       if (sibling) {
         await writeFile(join(sibling, 'package.json'), JSON.stringify({ name: 'web; echo untrusted', scripts: { dev: 'vite' } }));
-        const target = (await discoverLocalServiceRunTargets({ roots: [h.root, sibling] })).find(candidate => candidate.cwd === h.root);
+        const target = ((await discoverLocalServiceRunTargets({ roots: [h.root, sibling] })).targets).find(candidate => candidate.cwd === h.root);
         if (!target) throw new Error('Accepted package target missing');
         expect(target.id).not.toBe(runTargetId);
         runTargetId = target.id;

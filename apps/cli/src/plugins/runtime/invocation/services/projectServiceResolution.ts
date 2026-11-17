@@ -21,7 +21,13 @@ export function resolveProjectManagedService(
     services: readonly ProjectManagedServiceHandle[],
 ): ProjectManagedServiceResolution {
     const handle = services.find(candidate => candidate.instanceId === target.managedServiceId);
-    if (!handle) return Object.freeze({ status: 'unknown' });
+    if (!handle) {
+        const replacement = target.declaration && services.some(candidate => candidate.kind === 'workspace'
+            && candidate.workspace.machineId === target.machineId
+            && (target.workspaceId === undefined || target.workspaceId === candidate.workspace.id)
+            && JSON.stringify(candidate.declaration) === JSON.stringify(target.declaration));
+        return Object.freeze({ status: replacement ? 'stale' : 'unknown' });
+    }
     const binding = { kind: 'managed_service' as const, managedServiceId: handle.instanceId,
         ...(handle.kind === 'environment' ? { machineId: handle.machineId } : {
             machineId: handle.workspace.machineId, cwd: handle.cwd, declaration: handle.declaration, workspaceId: handle.workspace.id,

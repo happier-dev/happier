@@ -60,6 +60,14 @@ export type ProjectDefinitionsActionInputById = {
         };
         bytes: string;
     };
+    readonly "projects.worktree.ports.reassign": {
+        workspace: {
+            serverId: string;
+            workspaceId: string;
+            machineId: string;
+            rootPath: string;
+        };
+    };
 };
 export type ProjectDefinitionsActionResultById = {
     readonly "projects.inspect": {
@@ -101,6 +109,12 @@ export type ProjectDefinitionsActionResultById = {
                     };
                     devcontainer?: undefined | {
                         configPath?: string | undefined;
+                    };
+                    worktreePorts?: undefined | {
+                        enabled: false;
+                    } | {
+                        enabled: true;
+                        slots: number;
                     };
                     environmentVariables?: undefined | {
                         name: string;
@@ -218,6 +232,13 @@ export type ProjectDefinitionsActionResultById = {
                         };
                         execution?: 'portable' | 'primary' | undefined;
                         port?: number | undefined;
+                        runtime?: undefined | {
+                            portSlot?: number | undefined;
+                            primary?: boolean | undefined;
+                            terminal?: boolean | undefined;
+                            title?: string | undefined;
+                            autostart?: boolean | undefined;
+                        };
                     }> | undefined;
                 };
                 diagnostics: {
@@ -483,6 +504,12 @@ export type ProjectDefinitionsActionResultById = {
                     devcontainer?: undefined | {
                         configPath?: string | undefined;
                     };
+                    worktreePorts?: undefined | {
+                        enabled: false;
+                    } | {
+                        enabled: true;
+                        slots: number;
+                    };
                     environmentVariables?: undefined | {
                         name: string;
                         kind: 'config' | 'secret';
@@ -599,6 +626,13 @@ export type ProjectDefinitionsActionResultById = {
                         };
                         execution?: 'portable' | 'primary' | undefined;
                         port?: number | undefined;
+                        runtime?: undefined | {
+                            portSlot?: number | undefined;
+                            primary?: boolean | undefined;
+                            terminal?: boolean | undefined;
+                            title?: string | undefined;
+                            autostart?: boolean | undefined;
+                        };
                     }> | undefined;
                 };
                 diagnostics: {
@@ -648,6 +682,12 @@ export type ProjectDefinitionsActionResultById = {
                 };
                 devcontainer?: undefined | {
                     configPath?: string | undefined;
+                };
+                worktreePorts?: undefined | {
+                    enabled: false;
+                } | {
+                    enabled: true;
+                    slots: number;
                 };
                 environmentVariables?: undefined | {
                     name: string;
@@ -765,6 +805,13 @@ export type ProjectDefinitionsActionResultById = {
                     };
                     execution?: 'portable' | 'primary' | undefined;
                     port?: number | undefined;
+                    runtime?: undefined | {
+                        portSlot?: number | undefined;
+                        primary?: boolean | undefined;
+                        terminal?: boolean | undefined;
+                        title?: string | undefined;
+                        autostart?: boolean | undefined;
+                    };
                 }> | undefined;
             };
             diagnostics: {
@@ -774,5 +821,17 @@ export type ProjectDefinitionsActionResultById = {
                 offset?: number | undefined;
             }[];
         };
+    };
+    readonly "projects.worktree.ports.reassign": {
+        kind: 'ready';
+        assignment: {
+            ports: number[];
+            listenerPorts: Record<string, number>;
+        };
+    } | {
+        kind: 'unavailable';
+        code: 'cancelled' | 'project_worktree_ports_active' | 'project_worktree_ports_unavailable';
+        reason: 'active' | 'activity_unavailable' | 'cancelled' | 'port_selection_failed' | 'root_unavailable' | 'state_corrupt' | 'state_read_failed' | 'state_write_failed';
+        causeCode?: string | undefined;
     };
 };

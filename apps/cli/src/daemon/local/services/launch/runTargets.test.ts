@@ -19,6 +19,21 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 }
 
 describe('discoverLocalServiceRunTargets', () => {
+    it('retains opted-in roots without service declarations and removes an explicit opt-out on refresh', async () => {
+        const root = await makeRepo();
+        try {
+            await mkdir(join(root, '.happier'));
+            const manifestPath = join(root, '.happier/project.json');
+            await writeJson(manifestPath, { version: 1, worktreePorts: { enabled: true, slots: 2 } });
+            const workspace = { id: 'checkout', serverId: 'home', machineId: 'machine', rootPath: root, createdAtMs: 1 };
+            const input = { roots: [root], acceptedWorkspaceRefs: [workspace], includePackageScripts: false };
+            const enabled = await discoverLocalServiceRunTargets(input);
+            expect(enabled.targets).toEqual([]);
+            expect(enabled.worktreePortRoots).toEqual([root]);
+            await writeJson(manifestPath, { version: 1, worktreePorts: { enabled: false } });
+            expect((await discoverLocalServiceRunTargets(input)).worktreePortRoots).toEqual([]);
+        } finally { await rm(root, { recursive: true, force: true }); }
+    });
     it('reads each package tree once, retaining declared Workspace services and one implicit script per physical package', async () => {
         const root = await makeRepo();
         const reads = vi.spyOn(filesystem, 'readdir'); // Observe the real filesystem boundary; internal discovery stays real.
@@ -29,7 +44,7 @@ describe('discoverLocalServiceRunTargets', () => {
                 id: `workspace-${index}`, serverId: 'home', machineId: 'machine', rootPath: root, createdAtMs: 1,
             }));
             const input = { roots: Array.from({ length: 32 }, () => root), acceptedWorkspaceRefs: refs };
-            const targets = await discoverLocalServiceRunTargets(input);
+            const targets = (await discoverLocalServiceRunTargets(input)).targets;
             expect(reads.mock.calls.filter(([directory]) => directory === root)).toHaveLength(1);
             for (const workspace of refs) {
                 expect(targets.filter(target => 'workspaceId' in target && target.workspaceId === workspace.id)
@@ -41,7 +56,7 @@ describe('discoverLocalServiceRunTargets', () => {
             await writeFile(join(root, 'Procfile'), 'api: node api.js\nworker: node worker.js\n');
             await mkdir(join(root, 'nested'));
             await writeJson(join(root, 'nested', 'package.json'), { name: 'nested', scripts: { start: 'node server.js' } });
-            const changed = await discoverLocalServiceRunTargets({ ...input, roots: [...input.roots, join(root, 'nested')] });
+            const changed = (await discoverLocalServiceRunTargets({ ...input, roots: [...input.roots, join(root, 'nested')] })).targets;
             expect(reads.mock.calls.filter(([directory]) => directory === root)).toHaveLength(1);
             expect(reads.mock.calls.filter(([directory]) => directory === join(root, 'nested'))).toHaveLength(1);
             for (const workspace of refs) {
@@ -65,7 +80,7 @@ describe('discoverLocalServiceRunTargets', () => {
             await writeFile(join(root, 'compose.yaml'), 'services:\n  db:\n    image: postgres\n  cache:\n    image: redis\n');
             await writeFile(join(root, 'Procfile'), 'web: node server.js\n');
             const refs = ['one', 'two'].map(id => ({ id, serverId: 'home', machineId: 'machine', rootPath: root, createdAtMs: 1 }));
-            const targets = await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: refs });
+            const targets = (await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: refs })).targets;
             const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(buildLocalServiceLauncherSnapshot({
                 machineId: 'machine', updatedAt: 1, runTargets: targets, inventoryEntries: [], previewResources: [],
             }));
@@ -87,9 +102,9 @@ describe('discoverLocalServiceRunTargets', () => {
             } });
             await writeFile(join(root, 'compose.yaml'), 'services:\n  db:\n    image: postgres\n  cache:\n    image: redis\n');
             const refs = ['one', 'two'].map(id => ({ id, serverId: 'home', machineId: 'machine', rootPath: root, createdAtMs: 1 }));
-            const targets = await discoverLocalServiceRunTargets({ roots: [root], acceptedWorkspaceRefs: refs });
-            const machineTargets = await discoverLocalServiceRunTargets({ roots: [root], acceptedWorkspaceRefs: refs,
-                includePackageScripts: false });
+            const targets = (await discoverLocalServiceRunTargets({ roots: [root], acceptedWorkspaceRefs: refs })).targets;
+            const machineTargets = (await discoverLocalServiceRunTargets({ roots: [root], acceptedWorkspaceRefs: refs,
+                includePackageScripts: false })).targets;
             for (const ref of refs) {
                 expect(targets.filter(target => 'workspaceId' in target && target.workspaceId === ref.id)
                     .map(target => 'title' in target ? target.title : target.id).sort())
@@ -110,9 +125,9 @@ describe('discoverLocalServiceRunTargets', () => {
                 duplicateA: { source: { kind: 'command', command: 'node a.js' }, port: 6006 },
                 duplicateB: { source: { kind: 'command', command: 'node b.js' }, port: 6006 },
             } });
-            const runTargets = await discoverLocalServiceRunTargets({ roots: [root], acceptedWorkspaceRefs: [{
+            const runTargets = (await discoverLocalServiceRunTargets({ roots: [root], acceptedWorkspaceRefs: [{
                 id: 'accepted', serverId: 'home', machineId: 'machine', rootPath: root, createdAtMs: 1,
-            }] });
+            }] })).targets;
             const entry = (id: string, port: number, cwd: string, command: string) => ({
                 id, machineId: 'machine', address: { kind: 'wildcard' as const, host: '::', family: 'ipv6' as const },
                 port, protocol: 'tcp' as const, detectedAt: 1, lastSeenAt: 1, state: 'listening' as const,
@@ -146,9 +161,9 @@ describe('discoverLocalServiceRunTargets', () => {
             await writeJson(join(parent, 'package.json'), { packageManager: 'bun@1.2.8' });
             await mkdir(root);
             await writeJson(join(root, 'package.json'), { name: 'accepted', scripts: { dev: 'vite' } });
-            const targets = await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [{
+            const targets = (await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [{
                 id: 'accepted', serverId: 'home', machineId: 'machine', rootPath: root, createdAtMs: 1, projectKey: 'project',
-            }] });
+            }] })).targets;
             const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(buildLocalServiceLauncherSnapshot({
                 machineId: 'machine', updatedAt: 1, runTargets: targets, inventoryEntries: [], previewResources: [],
             }));
@@ -162,9 +177,9 @@ describe('discoverLocalServiceRunTargets', () => {
             await mkdir(join(root, '.happier'));
             await writeJson(join(root, '.happier', 'project.json'), { version: 1, services: { [name]: { source: { kind: 'command', command: 'echo service' } } } });
             await writeJson(join(root, 'package.json'), { name, scripts: { dev: 'vite' } });
-            const targets = await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [{
+            const targets = (await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [{
                 id: 'accepted', serverId: 'home', machineId: 'machine', rootPath: root, createdAtMs: 1, projectKey: 'project',
-            }] });
+            }] })).targets;
             const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(buildLocalServiceLauncherSnapshot({
                 machineId: 'machine', updatedAt: 1, runTargets: targets, inventoryEntries: [], previewResources: [],
             }));
@@ -187,7 +202,7 @@ describe('discoverLocalServiceRunTargets', () => {
             await writeJson(join(root, 'web', 'package.json'), { name: 'accepted-web', scripts: { start: 'next start' } });
             await writeJson(join(unrelated, 'package.json'), { name: 'unqualified', scripts: { dev: 'vite' } });
             const workspace = { id: 'accepted', serverId: 'home', machineId: 'machine', rootPath: root, createdAtMs: 1, projectKey: 'project' };
-            const targets = await discoverLocalServiceRunTargets({ roots: [root, unrelated], acceptedWorkspaceRefs: [workspace] });
+            const targets = (await discoverLocalServiceRunTargets({ roots: [root, unrelated], acceptedWorkspaceRefs: [workspace] })).targets;
             const qualified = targets.filter(target => 'declaration' in target);
             expect(qualified).toHaveLength(2);
             expect(qualified).toEqual(expect.arrayContaining([
@@ -221,7 +236,7 @@ describe('discoverLocalServiceRunTargets', () => {
             const parentRef = { id: 'parent', serverId: 'home', machineId: 'machine', rootPath: root, createdAtMs: 1 };
             const childRef = { ...parentRef, id: 'child', rootPath: child };
             for (const acceptedWorkspaceRefs of [[parentRef, childRef], [childRef, parentRef]]) {
-                const runTargets = await discoverLocalServiceRunTargets({ roots: [root], acceptedWorkspaceRefs });
+                const runTargets = (await discoverLocalServiceRunTargets({ roots: [root], acceptedWorkspaceRefs })).targets;
                 const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(buildLocalServiceLauncherSnapshot({
                     machineId: 'machine', updatedAt: 1, runTargets, inventoryEntries: [], previewResources: [],
                 }));
@@ -244,7 +259,7 @@ describe('discoverLocalServiceRunTargets', () => {
         try {
             await writeJson(join(outside, 'package.json'), { name: 'outside', scripts: { dev: 'echo private' } });
             await symlink(join(outside, 'package.json'), join(root, 'package.json'));
-            expect(await discoverLocalServiceRunTargets({ roots: [root] })).toEqual([]);
+            expect((await discoverLocalServiceRunTargets({ roots: [root] })).targets).toEqual([]);
             expect(await resolveLocalServiceRunTargetCommand({ cwd: root, runTargetId: 'outside:dev' })).toBeNull();
         } finally {
             await Promise.all([root, outside].map((directory) => rm(directory, { recursive: true, force: true })));
@@ -259,7 +274,7 @@ describe('discoverLocalServiceRunTargets', () => {
             const cwd = join(root, 'web');
             await mkdir(cwd);
             await writeJson(join(cwd, 'package.json'), { name: 'web', scripts: { dev: 'vite' } });
-            const targets = await discoverLocalServiceRunTargets({ roots: [root] });
+            const targets = (await discoverLocalServiceRunTargets({ roots: [root] })).targets;
             expect(targets[0]?.packageManager).toBe('bun');
             expect(await resolveLocalServiceRunTargetCommand({ cwd, runTargetId: targets[0]!.id })).toBe('bun run dev');
         } finally {
@@ -273,7 +288,7 @@ describe('discoverLocalServiceRunTargets', () => {
         await mkdir(cwd);
         await writeFile(join(cwd, 'package-lock.json'), '{}');
         await writeJson(join(cwd, 'package.json'), { name: 'web;echo injected', scripts: { dev: 'vite' } });
-        const targets = await discoverLocalServiceRunTargets({ roots: [root] });
+        const targets = (await discoverLocalServiceRunTargets({ roots: [root] })).targets;
         expect(targets[0]?.packageManager).toBe('npm');
         expect(await resolveLocalServiceRunTargetCommand({ cwd, runTargetId: targets[0]!.id })).toBe('npm run dev');
         expect(await resolveLocalServiceRunTargetCommand({ cwd, runTargetId: 'web;echo injected:dev & malicious' })).toBeNull();
@@ -298,7 +313,7 @@ describe('discoverLocalServiceRunTargets', () => {
             },
         });
 
-        const targets = await discoverLocalServiceRunTargets({ roots: [root] });
+        const targets = (await discoverLocalServiceRunTargets({ roots: [root] })).targets;
 
         expect(targets.map((target) => ({
             id: target.id,
@@ -346,7 +361,7 @@ describe('discoverLocalServiceRunTargets', () => {
             scripts: { dev: 'vite' },
         });
 
-        const targets = await discoverLocalServiceRunTargets({ roots: [root] });
+        const targets = (await discoverLocalServiceRunTargets({ roots: [root] })).targets;
 
         expect(targets).toHaveLength(1);
         expect(targets[0]?.launchIntent).toEqual({
@@ -371,7 +386,7 @@ describe('discoverLocalServiceRunTargets', () => {
             });
         }
 
-        const targets = await discoverLocalServiceRunTargets({ roots: [root] });
+        const targets = (await discoverLocalServiceRunTargets({ roots: [root] })).targets;
 
         expect(targets).toHaveLength(2);
         expect(new Set(targets.map((target) => target.id)).size).toBe(targets.length);
@@ -380,10 +395,10 @@ describe('discoverLocalServiceRunTargets', () => {
             join(root, 'examples', 'web'),
         ]));
         for (const target of targets) {
-            const scoped = await discoverLocalServiceRunTargets({ roots: [target.cwd] });
+            const scoped = (await discoverLocalServiceRunTargets({ roots: [target.cwd] })).targets;
             expect(scoped.map(candidate => candidate.id)).toEqual([target.id]);
-            expect((await discoverLocalServiceRunTargets({ roots: [target.cwd] })).map(candidate => candidate.id)).toEqual([target.id]);
-            expect((await discoverLocalServiceRunTargets({ roots: [`${target.cwd}/`] })).map(candidate => candidate.id)).toEqual([target.id]);
+            expect(((await discoverLocalServiceRunTargets({ roots: [target.cwd] })).targets).map(candidate => candidate.id)).toEqual([target.id]);
+            expect(((await discoverLocalServiceRunTargets({ roots: [`${target.cwd}/`] })).targets).map(candidate => candidate.id)).toEqual([target.id]);
         }
     });
 
@@ -398,7 +413,7 @@ describe('discoverLocalServiceRunTargets', () => {
         });
         await writeFile(join(root, 'broken', 'package.json'), '{ this is not json', 'utf8');
 
-        await expect(discoverLocalServiceRunTargets({ roots: [root] })).resolves.toHaveLength(1);
+        expect((await discoverLocalServiceRunTargets({ roots: [root] })).targets).toHaveLength(1);
     });
 
     it('discovers scripts beyond the former directory cutoff and in subsequent roots', async () => {
@@ -410,7 +425,7 @@ describe('discoverLocalServiceRunTargets', () => {
             }
             await writeJson(join(root, 'folder-05000', 'package.json'), { name: 'late', scripts: { dev: 'vite' } });
             await writeJson(join(secondRoot, 'package.json'), { name: 'second', scripts: { dev: 'vite' } });
-            const targets = await discoverLocalServiceRunTargets({ roots: [root, secondRoot] });
+            const targets = (await discoverLocalServiceRunTargets({ roots: [root, secondRoot] })).targets;
             expect(targets.map((target) => target.id)).toEqual([
                 expect.stringMatching(/^late:dev:[a-f0-9]{12}$/u), expect.stringMatching(/^second:dev:[a-f0-9]{12}$/u),
             ]);

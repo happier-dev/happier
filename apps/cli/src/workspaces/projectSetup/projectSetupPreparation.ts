@@ -24,7 +24,10 @@ import { preserveUnconfirmedNativeProcess, type ProjectNativeAdapterLeaseV1, typ
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { resolveProjectToolchainSelection, inspectProjectNativeCommand, type ProjectNativeCommandIo, type ProjectNativeCommandResult, type ProjectNativeFileFact } from './projectNativeResolution';
-import { readProjectManifest } from './projectManifestFile';
+import { readProjectEffectiveDefinition } from './projectEffectiveDefinition';
+import type { ProjectSetupReadV1 } from '@happier-dev/protocol/projects/projectSetupV1';
+import { prepareProjectLaunchEnvironment, type PreparedProjectLaunchInput } from './projectLaunchEnvironment';
+import { createProjectDotenvPreparation, type ProjectDotenvPreparation } from './projectDotenv';
 import { readLiteralCommandExecutedFiles, type LiteralCommandFileFactV1 } from './literalCommandFiles';
 import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceSyncTargetAuthority';
 import { isManagedDevcontainerChildProjectionCurrentV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
@@ -38,6 +41,7 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { performance } from 'node:perf_hooks';
 import { logger } from '@/utils/logger';
 import { isHostRequesterUnrestrictedOwner, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 
 export type PreparedProjectSetupCommand = Readonly<(
     { kind: 'literal'; source: Extract<ProjectCommandSourceV1, { kind: 'command' }>; cwd: string }
@@ -51,6 +55,8 @@ export type ProjectSetupPreparationInput = Readonly<{
     /** Resolved by the accepted Workspace/Project row owner, never from Action input. */
     projectAssociation: Readonly<{ workspace: WorkspaceRefV1; project: QualifiedProjectTrustProjectV1 }>;
     requester: ProjectSetupTrustClientInput;
+    /** Already opened detail retained by the same review/preparation; never Action input. */
+    acceptedSetup?: ProjectSetupReadV1;
     /** Host-selected execution identity; never inferred from credentials or Action operands. */
     requesterIdentity?: HostRequesterExecutionIdentity;
     purpose: 'setup' | 'teardown';
@@ -59,6 +65,13 @@ export type ProjectSetupPreparationInput = Readonly<{
     environmentBindings?: SecretReferenceOverlayV1;
     secretEnvironment?: Omit<ProjectSecretReferenceEnvironmentInput, 'requirements' | 'secretReferenceOverlay'>;
     configEnvironment?: Readonly<Record<string, string>>;
+    profileEnvironment?: Readonly<Record<string, string>>;
+    invocationEnvironment?: ProcessEnvInput;
+    /** Prepared on the execution host after admission; never persisted in consent. */
+    runtimeEnvironment?: Readonly<Record<string, string>>;
+    /** Invocation-private snapshot shared by review, launch and declared-name discovery. */
+    dotenvPreparation?: ProjectDotenvPreparation;
+    originalEnvironment?: Readonly<NodeJS.ProcessEnv>;
     /** Host SCM catalog port; never a caller-provided repository or commit claim. */
     scmRegistry?: ScmBackendRegistry;
     plugins?: Pick<ResolvedExecutablePluginRuntimeRegistry, 'resolveProjectNativeAdapter'>
@@ -111,6 +124,12 @@ export type PreparedProjectSetupPlan = Readonly<{
     /** Host-private config facts consumed by the same selected adapter at final production. */
     toolchainReviewInputs: readonly ProjectNativeFileFact[];
     toolchainInputFiles?: readonly LiteralCommandFileFactV1[];
+    /** Never part of the serializable reviewed effect or its consent digest. */
+    privateConfigEnvironment?: Readonly<Record<string, string>>;
+    preparedLaunchInput: PreparedProjectLaunchInput;
+    /** The same invocation-private file snapshot is reused after runtime assignment. */
+    dotenvPreparation: ProjectDotenvPreparation;
+    runtimeEnvironment?: Readonly<Record<string, string>>;
     configEnvironment: Readonly<Record<string, string>>;
     /** Host-private execution baseline; excludes setup/teardown commands and explicit setupInputs. */
     executionEnvironmentEffectDigest: string;
@@ -136,7 +155,9 @@ export function resolveProjectSetupConfigEnvironment(manifest: ProjectManifestV1
     const environment: Record<string, string> = Object.create(null);
     for (const requirement of manifest?.environmentVariables?.filter(requirement => requirement.kind === 'config') ?? []) {
         const value = values?.[requirement.name];
-        if (requirement.required && (value === undefined || value === '') || value?.includes('\0')) return refuse('project_environment_binding_unavailable');
+        // Required-value readiness belongs to the demanded private launch preparation.
+        // Passive effect selection records only deliberate, non-secret config values.
+        if (value?.includes('\0')) return refuse('project_environment_binding_unavailable');
         if (value !== undefined) environment[requirement.name] = value;
     }
     return { kind: 'ready', environment: Object.freeze(environment) };
@@ -261,9 +282,15 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
     if (input.signal?.aborted) return refuse('project_setup_cancelled');
     const root = resolve(input.workspace.rootPath);
     try {
-        const snapshot = await readProjectManifest({ root });
-        if (snapshot.document?.status === 'invalid') return refuse('invalid_manifest');
-        const manifest = snapshot.document?.manifest ?? null;
+        const requester = input.requester;
+        const account = requester.authorization ? { authorization: requester.authorization,
+            effectActionId: requester.effectActionId ?? requester.authorization.binding.actionId }
+            : requester.credentials ? { credentials: requester.credentials } : null;
+        if (!account) return refuse('project_requester_credentials_unavailable');
+        const { snapshot, effectiveDefinition } = await readProjectEffectiveDefinition({ root, account,
+            project: input.projectAssociation.project, serverHttpBaseUrl: requester.serverHttpBaseUrl,
+            signal: input.signal, ...(input.acceptedSetup ? { acceptedSetup: input.acceptedSetup } : {}) });
+        const manifest = effectiveDefinition.effectiveManifest;
         const namespaceRefusal = await readProjectSetupNamespaceRefusal(input, manifest);
         if (namespaceRefusal) return namespaceRefusal;
         const toolchainSelection = manifest?.toolchain ?? { kind: 'host' as const };
@@ -336,9 +363,20 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
                 displayBindings.push({ ...binding, source: description.source, displayName: description.displayName });
             }
         }
-        const config = resolveProjectSetupConfigEnvironment(manifest, input.configEnvironment);
-        if (config.kind === 'refused') return config;
-        const configEnvironment = config.environment;
+        const declaredConfigNames = new Set(requirements.filter(requirement => requirement.kind === 'config').map(requirement => requirement.name));
+        const configEnvironment = Object.freeze(Object.fromEntries(Object.entries(input.configEnvironment ?? {})
+            .filter(([name]) => declaredConfigNames.has(name))));
+        const originalEnvironment = input.originalEnvironment ?? process.env;
+        const dotenvPreparation = input.dotenvPreparation ?? createProjectDotenvPreparation(root, originalEnvironment);
+        const privateLaunch = await prepareProjectLaunchEnvironment({ workspace: input.workspace, requirements,
+            originalEnvironment, dotenvPreparation,
+            runtimeEnvironment: input.runtimeEnvironment, projectEnvironment: configEnvironment,
+            profileEnvironment: input.profileEnvironment, invocationEnvironment: input.invocationEnvironment,
+            platform: input.platform.os === 'windows' ? 'win32' : input.platform.os as NodeJS.Platform });
+        if (privateLaunch.kind === 'refused') return refuse(privateLaunch.code);
+        const privateConfigEnvironment = Object.fromEntries(requirements.filter(requirement => requirement.kind === 'config')
+            .flatMap(requirement => privateLaunch.launchInput.environment[requirement.name] === undefined ? []
+                : [[requirement.name, privateLaunch.launchInput.environment[requirement.name]]]));
         const reviewedToolchain = {
             selection: toolchain,
             // Files the environment loads beyond its config file (imported .nix, locks, hook-run and sourced scripts).
@@ -444,6 +482,8 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
             fileBasis: snapshot.basis, commands, toolchain, toolchainReviewInputs,
             toolchainInputFiles: [...toolchainReviewInputs.map(fact => ({ file: fact.file, digest: hash(fact.content) })),
                 ...(selectedToolchain.executedFiles ?? [])], ...(toolchainAdapterLease ? { toolchainAdapterLease } : {}),
+            privateConfigEnvironment, preparedLaunchInput: privateLaunch.launchInput, dotenvPreparation,
+            ...(input.runtimeEnvironment ? { runtimeEnvironment: input.runtimeEnvironment } : {}),
             configEnvironment: Object.freeze(configEnvironment), executionEnvironmentEffectDigest, reviewedEffect, reviewedEffectDigest, successBasis } };
     } catch (error) {
         preserveUnconfirmedNativeProcess(error);

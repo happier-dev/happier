@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { realpath } from 'node:fs/promises';
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { PROJECT_DEFINITION_ACTION_IDS, PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS, type ProjectDefinitionActionId, type ProjectDefinitionWorkspace } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import type { ProjectDefinitionDetectionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
@@ -8,7 +9,10 @@ import { readProjectDefinitionFile } from '@/workspaces/projectSetup/nativeDefin
 import { readProjectManifest, updateProjectManifest } from '@/workspaces/projectSetup/projectManifestFile';
 import type { ProjectNativeCommandIo } from '@/workspaces/projectSetup/projectNativeResolution';
 import { projectNativeSystemIo } from '@/workspaces/projectSetup/projectNativeSystemIo';
-import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
+import { getHostWorktreePortsOwner } from '@/workspaces/execution/worktreePorts';
+import type { TerminalPtySessionManager } from '@/terminal/pty/sessions';
+import { PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
+import { canonicalAbsolutePathsEqual, isCanonicalAbsolutePathInsideRoot, expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { validatePath, validateWorkspaceInspectionPath } from './pathSecurity';
 import type { FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
 import { registerActionSpecRpcHandlers, type ActionSpecRpcRegistrar } from './registerActionSpecRpcHandlers';
@@ -21,7 +25,8 @@ import { logger } from '@/ui/logger';
 import { selectProjectDefinitionRead } from '@/workspaces/projectSetup/projectDefinitionRead';
 
 type NativeInspectionRuntimeLease = Readonly<{
-  registry: Pick<ResolvedExecutablePluginRuntimeRegistry, 'contributes' | 'resolveProjectNativeAdapter'>;
+  registry: Pick<ResolvedExecutablePluginRuntimeRegistry, 'contributes' | 'resolveProjectNativeAdapter'>
+    & Partial<Pick<ResolvedExecutablePluginRuntimeRegistry, 'projectManagedServices'>>;
   release(): Promise<void>;
 }>;
 
@@ -81,6 +86,8 @@ export function createProjectDefinitionAction(params: Readonly<{
   serverId: string; machineId: string; workingDirectory: string; accessPolicy: FilesystemAccessPolicy;
   acquirePluginRuntime?: () => Promise<NativeInspectionRuntimeLease>;
   nativeIo?: ProjectNativeCommandIo;
+  getTerminalSessions?: () => TerminalPtySessionManager | null;
+  readActiveProjectCommands?: () => ReturnType<import('@/daemon/actionOperations/actionOperationStore').ActionOperationStore['readActiveProjectCommands']> | null;
   /** Captured requester/private-review boundary; the host owns its native lifetime and uses inspectProjectSetupReadiness. */
   inspectSetup?: (input: Readonly<{ workspace: ProjectDefinitionWorkspace; root: string; context: ActionExecutorContext;
     reviewSetupConsent?: true }>) => Promise<ProjectSetupInspection>;
@@ -113,6 +120,54 @@ export function createProjectDefinitionAction(params: Readonly<{
     if (!authorized.valid || !authorized.resolvedPath) return failure('access_denied');
     context.signal?.throwIfAborted();
     const root = authorized.resolvedPath;
+    if (actionId === PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID) {
+      // Admission consumes installed lifetime facts once. The port owner receives the decision.
+      let runtime: NativeInspectionRuntimeLease | undefined;
+      try {
+        const physicalRoot = await realpath(root);
+        const commands = params.readActiveProjectCommands?.();
+        if (!commands) return { kind: 'unavailable' as const, code: 'project_worktree_ports_unavailable' as const, reason: 'activity_unavailable' as const };
+        for (const command of commands) {
+          // The attachment starts at the accepted root, then follows the current native step's cwd.
+          if (command.machineId === params.machineId
+            && isCanonicalAbsolutePathInsideRoot(physicalRoot, await realpath(command.cwd))) {
+            return await getHostWorktreePortsOwner().reassign({ rootPath: physicalRoot, isActive: true });
+          }
+        }
+        const terminals = params.getTerminalSessions?.();
+        if (!terminals) return { kind: 'unavailable' as const, code: 'project_worktree_ports_unavailable' as const, reason: 'activity_unavailable' as const };
+        const terminalActivity = await terminals.getLiveWorkProducer().read();
+        if (terminalActivity.coverage !== 'complete') return { kind: 'unavailable' as const, code: 'project_worktree_ports_unavailable' as const, reason: 'activity_unavailable' as const };
+        for (const terminal of terminals.readGuardResources()) {
+          if (!terminal.custody || terminal.custody.kind !== undefined
+            || !terminalActivity.items.some(item => item.ownerRef === terminal.terminalId && item.state !== 'settled')) continue;
+          if (canonicalAbsolutePathsEqual(physicalRoot, await realpath(terminal.custody.rootPath))) {
+            return await getHostWorktreePortsOwner().reassign({ rootPath: physicalRoot, isActive: true });
+          }
+        }
+        if (!params.acquirePluginRuntime) return { kind: 'unavailable' as const, code: 'project_worktree_ports_unavailable' as const, reason: 'activity_unavailable' as const };
+        runtime = await params.acquirePluginRuntime();
+        const services = runtime.registry.projectManagedServices;
+        if (!services) return { kind: 'unavailable' as const, code: 'project_worktree_ports_unavailable' as const, reason: 'activity_unavailable' as const };
+        // A lexical workspace filter would hide a service admitted through a symlink.
+        const handles = await services.listProjectServices({ requireComplete: true });
+        const serviceActivity = await services.activity.read();
+        if (serviceActivity.coverage !== 'complete') return { kind: 'unavailable' as const, code: 'project_worktree_ports_unavailable' as const, reason: 'activity_unavailable' as const };
+        let isActive = false;
+        for (const handle of handles) {
+          if (handle.kind !== 'workspace' || !serviceActivity.items.some(item => item.ownerRef === handle.instanceId
+            && item.state !== 'settled')) continue;
+          if (canonicalAbsolutePathsEqual(physicalRoot, await realpath(handle.workspace.rootPath))) { isActive = true; break; }
+        }
+        return await getHostWorktreePortsOwner().reassign({ rootPath: physicalRoot, isActive,
+          ...(context.signal ? { signal: context.signal } : {}) });
+      } catch (error) {
+        const causeCode = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+        return { kind: 'unavailable' as const, code: context.signal?.aborted ? 'cancelled' as const : 'project_worktree_ports_unavailable' as const,
+          reason: context.signal?.aborted ? 'cancelled' as const : 'activity_unavailable' as const,
+          ...(causeCode ? { causeCode } : {}) };
+      } finally { await runtime?.release(); }
+    }
     if (actionId === 'projects.manifest.update') {
       const request = PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS[actionId].parse(input);
       return await updateProjectManifest({ root, expectedBasis: request.expectedBasis, bytes: request.bytes });

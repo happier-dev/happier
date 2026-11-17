@@ -3,7 +3,9 @@ import type { ActionApprovalScopeV1 } from '@happier-dev/protocol/actions/action
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import type { MachineServiceControlResultV1 } from '@happier-dev/protocol';
 import type { MachineServiceExecResultV1 } from '@happier-dev/protocol';
-import type { EnvironmentProjectManagedServiceHandle, MachineManagedServiceHandle, createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import type { EnvironmentProjectManagedServiceHandle, WorkspaceProjectManagedServiceHandle, MachineManagedServiceHandle, createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import { matchesTerminalRequesterCustody } from '@/terminal/pty/custody';
+import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { machineNativeEffectAdmission } from './machineNativeEffectAdmission';
@@ -13,7 +15,7 @@ import { readColdNativeComposeTargetsForHost } from './nativeComposeDiscovery';
 export type MachineServiceTargetHandle = EnvironmentProjectManagedServiceHandle | MachineManagedServiceHandle;
 
 /** Log-only native discovery never supplies a mounted service or execution custody. */
-export type MachineServiceLogTargetHandle = MachineManagedServiceHandle | Pick<EnvironmentProjectManagedServiceHandle,
+export type MachineServiceLogTargetHandle = WorkspaceProjectManagedServiceHandle | MachineManagedServiceHandle | Pick<EnvironmentProjectManagedServiceHandle,
   'kind' | 'environmentId' | 'deploymentId' | 'actionScope' | 'instanceId' | 'readLogs' | 'watchLogs' | 'isCurrent' | 'retirementSignal'>;
 
 type MachineServiceTargetInput = Readonly<{
@@ -22,6 +24,7 @@ type MachineServiceTargetInput = Readonly<{
   serverId: string;
   signal?: AbortSignal;
   approvalScope?: ActionApprovalScopeV1;
+  requester?: RequesterWorkAttributionV1;
   assertCurrent(): Promise<void>;
 }>;
 
@@ -33,6 +36,28 @@ export function withMachineServiceTarget<T>(input: MachineServiceTargetInput,
 export async function withMachineServiceLogTarget<T>(input: MachineServiceTargetInput,
   consume: (handle: MachineServiceLogTargetHandle) => Promise<T>): Promise<T | ActionExecuteFailure> {
   try {
+    const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+    if (lease) try {
+      const handle = lease.registry.projectManagedServices.listProjectServices().find(candidate =>
+        candidate.kind === 'workspace' && candidate.serviceId === input.request.serviceId);
+      if (handle?.kind === 'workspace') {
+        const refused = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
+        if (input.machineId !== input.request.machineId || handle.workspace.machineId !== input.machineId) return refused('machine_target_mismatch');
+        if (!await isServerProfileHomeIdentity(input.serverId, input.request.serverId)
+          || !await isServerProfileHomeIdentity(input.serverId, handle.workspace.serverId)) return refused('server_target_mismatch');
+        await input.assertCurrent();
+        input.signal?.throwIfAborted();
+        if (handle.interactive && (!input.requester || !await isServerProfileHomeIdentity(input.serverId, input.requester.serverId)
+          || !matchesTerminalRequesterCustody({
+          serverId: handle.requester.serverId, requesterAccountId: handle.requester.accountId,
+          machineId: handle.requester.machineId, installationId: handle.requester.installationId,
+        }, { ...input.requester, serverId: handle.requester.serverId }))) return refused('terminal_forbidden');
+        if (!handle.isCurrent() || handle.retirementSignal.aborted) return refused('service_unavailable');
+        if (input.approvalScope && (input.approvalScope.kind !== 'machine' || input.approvalScope.machineId !== input.machineId)) return refused('approval_stale');
+        if (input.request.expectedGeneration !== undefined && input.request.expectedGeneration !== handle.instanceId) return refused('service_generation_changed');
+        return await consume(handle);
+      }
+    } finally { await lease.release(); }
     return await withSelectedMachineServiceTarget(input, consume, undefined, owner => withColdNativeLogTarget(input, consume, owner));
   } catch (error) {
     // Preserve the native owner's typed refusal across Action/Resource dispatch;

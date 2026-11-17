@@ -38,6 +38,7 @@ import { createLocalServiceInventoryRegistry } from '@/daemon/local/services/inv
 import { createLocalServiceActionConfirmationNonceV1, isLocalServiceActionConfirmationNonceV1, LocalServiceActionRequestV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 import { createWindowsJobCustodyName } from '@/subprocess/supervision/processCustody';
 import { createStablePluginExecService } from './exec';
+import { readProcessCensus } from '@/processes/census/processCensus';
 
 // The native helper's marker is an OS boundary; retain real filesystem behavior outside that marker.
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -681,6 +682,36 @@ describe('createManagedServiceProcessSupervisorHost', () => {
             expect(result.handle.snapshot()).toMatchObject({ state: 'healthy', port: 5173,
                 baseUrl: address === '::' ? 'http://[::1]:5173' : 'http://127.0.0.1:5173' });
         } finally { await result.handle.dispose(); }
+    });
+
+    it.skipIf(process.platform === 'win32').each([4312, 5173])('projects the actual owned port source when assigned PORT is 4312 and listener is %s', async servingPort => {
+        await withTempDir('project-port-provenance-', async directory => {
+            const pidPath = join(directory, 'pid');
+            vi.spyOn(localServiceScan, 'scanPlatformLocalServices').mockImplementation(async () => {
+                const pid = Number(await readFile(pidPath, 'utf8').catch(() => '0'));
+                const census = pid ? await readProcessCensus({ freshness: 'fresh', pids: [pid], includeAncestors: true, fields: [] }) : undefined;
+                if (census?.status === 'unavailable') throw new Error(`Fixture process census unavailable: ${census.reason}`);
+                return { listeners: pid ? [{ address: '127.0.0.1', port: servingPort, protocol: 'tcp', pid }] : [],
+                    processes: new Map((census?.rows ?? []).map(row => [row.pid, { pid: row.pid, command: 'fixture server', censusRow: row }] as const)),
+                    workspaces: [], diagnostics: [] };
+            });
+            const supervisor = createManagedServiceProcessSupervisorHost().bind({ kind: 'project', projectRoot: directory,
+                isOccurrenceCurrent: () => true });
+            const lifetime = new AbortController();
+            let handle: ManagedServiceProcessHandle | undefined;
+            try {
+                handle = await supervisor.supervise({ id: 'project-port-provenance',
+                    watchdog: { intervalMs: 5_000, missedIntervals: 2 },
+                    // Keep the real carrier ancestry and principal under the TCP boundary fixture.
+                    mode: { kind: 'managedSpawn', port: 4312, endpointDetection: { kind: 'detectAfterLaunch', minimumConfidence: 'high' } },
+                    authorizeLaunch: async () => ({ command: process.execPath,
+                        args: ['-e', "require('node:fs').writeFileSync(process.argv[1],String(process.pid));setInterval(()=>{},1000)", pidPath],
+                        env: { PORT: '4312' }, portSource: 'assigned', release: async () => {} }),
+                }, { signal: lifetime.signal });
+                expect(handle.snapshot()).toMatchObject({ port: servingPort });
+                expect(handle.portSource).toBe(servingPort === 4312 ? 'assigned' : 'fixed');
+            } finally { lifetime.abort(); await handle?.dispose(); }
+        });
     });
 
     it('discovers an owned endpoint after the former startup cutoff without an authored deadline', async () => {

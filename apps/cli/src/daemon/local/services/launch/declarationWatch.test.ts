@@ -39,7 +39,7 @@ describe('Local Service declaration observation scope', () => {
             readWorkspaceFacts: async () => ({ facts: [{ path: retained }, { path: join(retained, '.cache') }, { path: root }],
                 acceptedWorkspaceRefs: [workspace], diagnostics: [] }),
             onChanged: async (_roots, _signal, options) => {
-                services = (await discoverLocalServiceRunTargets({ roots: [root], acceptedWorkspaceRefs: [workspace], ...options }))
+                services = ((await discoverLocalServiceRunTargets({ roots: [root], acceptedWorkspaceRefs: [workspace], ...options })).targets)
                     .flatMap(target => 'title' in target ? [target.title] : []);
                 observations++;
             }, onError: error => errors.push(error),

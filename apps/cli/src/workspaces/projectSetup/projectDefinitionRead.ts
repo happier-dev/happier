@@ -1,11 +1,13 @@
 import type { ProjectDefinitionInspectRead, ProjectDefinitionInspectOutput, ProjectManifestInspectionSnapshot } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import type { ProjectDefinitionDetectionV1, ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import { resolveProjectDefinitionV1, type ProjectEffectiveDefinitionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectDefinitionCompositionV1';
 
 /** All query projections select from the same fresh discovery; they never decide readiness or execution. */
 export function selectProjectDefinitionRead(definition: ProjectManifestInspectionSnapshot, detection: ProjectDefinitionDetectionV1,
-    read: ProjectDefinitionInspectRead = { kind: 'scripts' }) {
-    const manifest = definition.document?.status === 'valid' ? definition.document.manifest : undefined;
+    read: ProjectDefinitionInspectRead = { kind: 'scripts' },
+    effectiveDefinition = resolveProjectDefinitionV1({ repositoryManifest: definition.document?.status === 'valid' ? definition.document.manifest : null })) {
+    const manifest = effectiveDefinition.effectiveManifest ?? undefined;
     const compact = read.kind === 'overview' || read.kind === 'rail';
     const declaredSources = new Set(read.kind === 'scripts' && manifest ? [
         ...Object.values(manifest.scripts ?? {}).map(declaration => declaration.source),
@@ -76,7 +78,11 @@ export function selectProjectDefinitionRead(definition: ProjectManifestInspectio
     // The Scripts list shows each found reference's name and file; an opened row resolves
     // its own native candidate through `detail`, so the list resolves none.
     const candidateEntries = read.kind === 'scripts' ? [] : entries;
-    return { read, definition: projectedDefinition, ...(statusOnly ? { definitionScope: 'statusOnly' as const } : {}),
+    const projectedEffective: ProjectEffectiveDefinitionV1 = { ...effectiveDefinition,
+        effectiveManifest: manifest ? statusOnly ? { version: 1 }
+            : compact ? { ...manifest, services: undefined } : manifest : null,
+        origins: read.kind === 'editor' || read.kind === 'setup' || read.kind === 'scripts' ? effectiveDefinition.origins : [] };
+    return { read, definition: projectedDefinition, effectiveDefinition: projectedEffective, ...(statusOnly ? { definitionScope: 'statusOnly' as const } : {}),
         detection: projectedDetection, detectionSummary, entries, candidateEntries, commandManifest,
         includeTools: read.kind === 'create' || read.kind === 'tools',
         includeInvocation: read.kind === 'create' || read.kind === 'detail' || read.kind === 'execution' || read.kind === 'overview' || read.kind === 'services',

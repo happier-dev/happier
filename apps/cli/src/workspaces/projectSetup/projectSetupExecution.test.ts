@@ -1,3 +1,6 @@
+import { getHostWorktreePortsOwner } from '@/workspaces/execution/worktreePorts';
+import { createProjectDotenvPreparation } from './projectDotenv';
+import { prepareProjectLaunchEnvironment } from './projectLaunchEnvironment';
 import axios from 'axios';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -8,7 +11,7 @@ import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
 import type { PtyProcess, PtyProvider, PtySpawnParams, PtyExitEvent } from '@/terminal/pty/provider';
 import { createProjectSetupSuccessStore } from './projectSetupSuccess';
 import { reviewProjectSetupEffect, type ProjectSetupPreparationInput } from './projectSetupPreparation';
-import { executeProjectSetup, type ProjectSetupExecutionInput } from './projectSetupExecution';
+import { executeProjectSetup, projectBaseEnvironment, type ProjectSetupExecutionInput } from './projectSetupExecution';
 import { createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
 import { currentWorkspaceSource, runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { ProjectCommandAttachmentV1Schema } from '@happier-dev/protocol/actions/operations/v1';
@@ -49,6 +52,7 @@ describe('finite Project setup execution', () => {
         await writeFile(join(root, '.happier/project.json'), JSON.stringify(manifest));
         const workspace = { id: 'workspace', serverId: 'home', machineId: 'machine', rootPath: root, projectKey: 'project', createdAtMs: 1 };
         const preparation: ProjectSetupPreparationInput = {
+            acceptedSetup: { kind: 'ready' },
             workspace, projectAssociation: { workspace, project: { serverId: 'home', projectId: 'project' } },
             requester: { credentials: { token: 'requester', encryption: null }, serverHttpBaseUrl: 'https://requester.example' },
             purpose: 'setup', platform: { os: 'linux', arch: 'x64' }, successHomeDir: join(root, 'completed'),
@@ -99,6 +103,67 @@ describe('finite Project setup execution', () => {
         return { root, preparation, plan: review.plan, spawned, updates, store, target, start, manager,
             stopped: () => stopped, unconfirmedStop: () => { stopUnconfirmed = true; }, trust: (digest: string | null) => { trustDigest = digest; } };
     }
+
+    it('composes private defaults and assigned ports beneath deliberate config while excluding plaintext secret inheritance', async () => {
+        const f = await fixture([]);
+        await writeFile(join(f.root, '.env'), 'DATABASE_URL=private-dotenv-sentinel\nPORT=3000\n');
+        const requirements = [{ name: 'TOKEN', kind: 'secret' as const, required: true },
+            { name: 'DATABASE_URL', kind: 'config' as const, required: true }, { name: 'PORT', kind: 'config' as const, required: false }];
+        const prepared = await prepareProjectLaunchEnvironment({ workspace: f.plan.workspace, requirements,
+            originalEnvironment: { TOKEN: 'must-not-inherit', PORT: 'host', HAPPIER_WORKTREE_PORT: 'stale', KEEP: 'host' },
+            runtimeEnvironment: { HAPPIER_WORKTREE_PORT: '42000', PORT: '42000' }, projectEnvironment: { PORT: '43000', CUSTOM: '$literal' } });
+        if (prepared.kind !== 'prepared') throw new Error(prepared.code);
+        const plan = { ...f.plan,
+            preparedLaunchInput: prepared.launchInput,
+        };
+        expect(projectBaseEnvironment({ hostEnvironment: { TOKEN: 'late-secret', PORT: 'late-host' } }, plan))
+            .toEqual({ PORT: '43000', HAPPIER_WORKTREE_PORT: '42000', KEEP: 'host', DATABASE_URL: 'private-dotenv-sentinel', CUSTOM: '$literal' });
+        expect(JSON.stringify(plan.reviewedEffect)).not.toContain('private-dotenv-sentinel');
+    });
+
+    it('consumes prepared service replacements without recomposing their original host or private inputs', async () => {
+        const f = await fixture([]);
+        const plan = { ...f.plan, privateConfigEnvironment: { URL: 'original-private' },
+            preparedLaunchInput: { environment: { URL: 'prepared-proxy', PORT: '42000' },
+                originalEnvironment: { URL: 'original-host' }, provenance: [], service: { kind: 'ready' as const } } };
+        expect(projectBaseEnvironment({ hostEnvironment: { URL: 'original-host', UNREVIEWED: 'absent' } }, plan))
+            .toEqual({ URL: 'prepared-proxy', PORT: '42000' });
+    });
+
+    it('assigns runtime ports before required config readiness and consumes the retained private snapshot at setup launch', async () => {
+        const f = await fixture(['echo setup']);
+        await writeFile(join(f.root, '.happier/project.json'), JSON.stringify({ version: 1,
+            workspace: { setup: [{ kind: 'command', command: 'echo setup' }], teardown: [] },
+            worktreePorts: { enabled: true, slots: 1 }, environmentVariables: [
+                { name: 'HAPPIER_WORKTREE_PORT', kind: 'config', required: true },
+                { name: 'PRIVATE_CONFIG', kind: 'config', required: true },
+            ] }));
+        await writeFile(join(f.root, '.env.local'), 'PRIVATE_CONFIG=retained-private-sentinel\n');
+        const originalEnvironment = { SHELL: '/bin/bash', KEEP: 'captured-host', REMOVE: 'remove-me' };
+        const dotenvPreparation = createProjectDotenvPreparation(f.root, originalEnvironment);
+        const review = await reviewProjectSetupEffect({ ...f.preparation, originalEnvironment, dotenvPreparation,
+            runtimeEnvironment: { HAPPIER_WORKTREE_PORT: '42000', PORT: '42000' } });
+        if (review.kind !== 'reviewed') throw new Error(review.code);
+        f.trust(review.plan.reviewedEffectDigest);
+        await writeFile(join(f.root, '.env.local'), 'PRIVATE_CONFIG=late-file-must-not-win\n');
+        const run = f.start({ originalEnvironment, dotenvPreparation, invocationEnvironment: { REMOVE: undefined } });
+        let settled = false;
+        void run.completion.finally(() => { settled = true; });
+        try {
+            await expect.poll(() => f.spawned.length || settled).toBeTruthy();
+            expect(f.spawned).toHaveLength(1);
+            const env = f.spawned[0]!.launch.options.env;
+            expect(env).toMatchObject({ KEEP: 'captured-host', PRIVATE_CONFIG: 'retained-private-sentinel' });
+            expect(Number(env?.HAPPIER_WORKTREE_PORT)).toBeGreaterThan(0);
+            expect(env?.PORT).toBe(env?.HAPPIER_WORKTREE_PORT);
+            expect(env).not.toHaveProperty('REMOVE');
+            f.spawned[0]!.pty.exit(0);
+            expect(await run.completion).toMatchObject({ ok: true });
+        } finally {
+            for (const child of f.spawned) child.pty.exit(0);
+            await getHostWorktreePortsOwner().release({ rootPath: f.root });
+        }
+    });
 
     it('refuses trusted setup commands when the held Agent isolation authority is unavailable', async () => {
         const f = await fixture(['echo must-not-run']);

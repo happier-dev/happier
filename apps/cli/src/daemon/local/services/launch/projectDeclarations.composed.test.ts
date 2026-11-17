@@ -118,6 +118,8 @@ import { ACTION_OPERATION_REQUEST_ID_MAX_LENGTH_V1, ActionOperationSnapshotV1Sch
 import { ActionOperationSnapshotV1Schema as PredecessorOperationSchema } from '@/daemon/actionOperations/testFixtures/predecessorActionOperationV1';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
+import { projectSharedSetupDigestV1 } from '@happier-dev/protocol/projects/projectSetupV1';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 
 class ObservedSetupPty implements PtyProcess {
     constructor(private readonly observed?: () => void) {}
@@ -133,6 +135,21 @@ class ObservedSetupPty implements PtyProcess {
 }
 
 describe('accepted Project Service declaration starter', () => {
+    it('discovers, reviews and starts an accepted shared-only Service without a repository manifest', async () => {
+        const h = await fixture(false, undefined, true, undefined, 'home', 'home', undefined, undefined, true);
+        const discovered = await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [h.workspace],
+            projectDefinitionAccount: { account: { credentials: h.runtime.credentials }, serverHttpBaseUrl: h.runtime.serverHttpBaseUrl } });
+        expect(discovered.targets).toMatchObject([{ declaration: { selection: { kind: 'manifest', name: 'worker' } } }]);
+        const snapshot = await h.routes.getSnapshot({ workspaceRoot: h.root });
+        expect(snapshot.targets.some(target => target.id === h.request.targetId)).toBe(true);
+        const review = await h.selectStart();
+        expect(review.reviewedEffectDigest).toEqual(expect.any(String));
+        expect(await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context))
+            .toMatchObject({ status: 'succeeded' });
+        expect(h.owner.listProjectServices()[0]?.snapshot().state).toBe('running');
+        expect(h.setupProcesses).toEqual([]);
+        await h.owner.listProjectServices()[0]?.stop();
+    });
     it('starts the same declaration again after its original process is stopped', async () => {
         const h = await fixture();
         const review = await h.selectStart();
@@ -678,14 +695,16 @@ describe('accepted Project Service declaration starter', () => {
     }
 
     async function fixture(setup = false, source?: unknown, finiteAccepting = true, workerExecution?: 'portable' | 'primary', profileId = 'home', homeId = profileId, supervisorPlatform?: NodeJS.Platform,
-        toolchain?: import('@happier-dev/protocol/workspaces/projectSetup/projectManifestV1').ProjectToolchainSelectionV1) {
+        toolchain?: import('@happier-dev/protocol/workspaces/projectSetup/projectManifestV1').ProjectToolchainSelectionV1, acceptedSharedSetup = false) {
         const root = await mkdtemp(join(tmpdir(), 'happier-project-service-'));
         await mkdir(join(root, '.happier'));
         const command = `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"`;
         const manifest = ProjectManifestV1Schema.parse({ version: 1, services: { worker: { source: source ?? { kind: 'command', command },
             ...(workerExecution ? { execution: workerExecution } : {}) } },
             ...(setup ? { workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } } : {}), ...(toolchain ? { toolchain } : {}) });
-        await writeFile(join(root, '.happier/project.json'), JSON.stringify(manifest));
+        if (!acceptedSharedSetup) await writeFile(join(root, '.happier/project.json'), JSON.stringify(manifest));
+        const setupSelection = { sourceId: 'published-service-source', contentRevision: { headerVersion: 1, bodyVersion: 1 },
+            digest: projectSharedSetupDigestV1(manifest) };
         const workspace = { id: 'accepted', serverId: homeId, machineId: 'machine', rootPath: root, createdAtMs: 1, projectKey: 'project' };
         const targetRoot = workerExecution ? await mkdtemp(join(tmpdir(), 'happier-project-service-target-')) : root;
         const targetWorkspace = workerExecution ? { ...workspace, id: 'worker-ref', machineId: 'worker-machine', rootPath: targetRoot } : workspace;
@@ -754,6 +773,12 @@ describe('accepted Project Service declaration starter', () => {
         // HTTP is the only replaced boundary: A2 opening, trust and placement codecs remain real.
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             const path = new URL(String(url)).pathname;
+            if (path === '/v1/artifacts/accepted-service-setup') return { status: 200, data: {
+                id: 'accepted-service-setup', ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+                dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, header: encodePlainArtifactStoredContent({ kind: 'project_setup.v1' }),
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'project_setup.v1', acceptedSharedSetup: { ...setupSelection, manifest } }) }),
+                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+            } };
             if (path === '/v1/account/profile') return { status: 200, data: { id: 'owner' } };
             if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
                 mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
@@ -846,6 +871,11 @@ describe('accepted Project Service declaration starter', () => {
             const refs = workerExecution ? [workspace, targetWorkspace] : [workspace];
             const rows: ProjectAccountRowV1[] = refs.map(value => { const key = { kind: 'workspace-ref' as const, serverId: homeId, id: value.id };
                 return { key, revision: 1, content: { t: 'plain', v: { key, value } } }; });
+            if (acceptedSharedSetup) {
+                const key = { kind: 'project-organization' as const, serverId: homeId, projectKey: 'project' };
+                rows.push({ key, revision: 1, content: { t: 'plain', v: { key, value: { setupSelection,
+                    setupContent: { artifactId: 'accepted-service-setup', headerVersion: 1, bodyVersion: 1 } } } } });
+            }
             if (workerExecution) {
                 const key = { kind: 'relationship-graph' as const };
                 rows.push({ key, revision: relationshipCurrent ? 1 : 2, content: { t: 'plain', v: { key, value: { relationships: relationshipCurrent ? [relationship] : [] } } } });
@@ -944,7 +974,8 @@ describe('accepted Project Service declaration starter', () => {
         const projectionLifetime = new AbortController();
         const starter = createProjectServiceDeclarationStarter({ resolveRuntime: async () => runtime,
             acquirePluginRuntime: async () => ({ registry: { projectManagedServices: owner, retirementSignal: projectionLifetime.signal }, release: async () => {} }) });
-        const targets = await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [workspace] });
+        const projectDefinitionAccount = { account: { credentials }, serverHttpBaseUrl: runtime.serverHttpBaseUrl };
+        const targets = (await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [workspace], projectDefinitionAccount })).targets;
         const target = targets.find(target => 'declaration' in target && target.declaration.selection.kind === 'manifest');
         if (!target || !('declaration' in target)) throw new Error('Fixture manifest did not produce a Service declaration');
         const request = { machineId: targetWorkspace.machineId, targetId: target.id, workspace: { serverId: homeId, machineId: 'machine', workspaceId: workspace.id, rootPath: root }, declaration: target.declaration,
@@ -961,7 +992,7 @@ describe('accepted Project Service declaration starter', () => {
             projectManagedServices: owner,
             startOperations: () => operationRuntime.store.list({ accountId: 'owner', machineId: targetWorkspace.machineId,
                 states: ['accepted', 'running'] }).items,
-            runTargets: () => discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [targetWorkspace] }) });
+            runTargets: () => discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [targetWorkspace], projectDefinitionAccount }) });
         const routes = createLocalServiceLauncherRoutes({ feed, history, ...starter });
         return { root, workspace, targetRoot, targetWorkspace, serverIdentityId, machineInstallationKeys, projectDefinitionActionFor, manifest, starter, routes, history, request, ingress, context, owner, post, setupProcesses, setupStarted, operationRuntime, operationSnapshots, operationPublished, runtime, admissionDrain, prepareBetween,
             async selectStart(selectedIngress: Parameters<typeof starter.resolveStartTarget>[1] = ingress) {
@@ -3008,7 +3039,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         await writeFile(join(h.root, 'package.json'), JSON.stringify({ name: 'package', scripts: { dev: 'package-authored server command' } }));
         // A system-tool wrapper is a genuine OS resolution boundary. The native codec must retain its argv prefix.
         h.setNativeTool({ executablePath: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)', '--'] });
-        const directTargets = await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [h.workspace] });
+        const directTargets = (await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [h.workspace] })).targets;
         const target = directTargets.find(target => 'declaration' in target && target.declaration.selection.kind === 'native'
             && target.declaration.selection.source.kind === 'native' && target.declaration.selection.source.tool === 'package_script');
         if (!target || !('declaration' in target)) throw new Error('Expected direct accepted package declaration');

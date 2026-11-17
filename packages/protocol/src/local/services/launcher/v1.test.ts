@@ -7,9 +7,15 @@ import {
   DaemonLocalServiceLauncherStartResponseV1Schema,
   LocalServiceLaunchTargetV1Schema,
   LocalServiceLauncherSnapshotV1Schema,
+  LocalServiceEstablishmentFailureV1Schema,
 } from './v1.js';
 
 describe('LocalServiceLauncherSnapshotV1Schema', () => {
+  it('retains the allocator reason and native cause in service establishment failures', () => {
+    const failure = { cause: 'runtime_unavailable', reason: 'state_write_failed', causeCode: 'EACCES' };
+    expect(LocalServiceEstablishmentFailureV1Schema.parse(failure)).toEqual(failure);
+    expect(LocalServiceEstablishmentFailureV1Schema.safeParse({ ...failure, reason: 'invented_reason' }).success).toBe(false);
+  });
   it('admits the exact adopted watch identity without inventing infrastructure authority', () => {
     const raw = { kind: 'adopted', machineId: 'machine-a', serviceId: 'watch-a', watchId: 'watch-a', watchRevision: 'watch-revision-a' };
     const identity = MachineServiceIdentityV1Schema.parse(raw);

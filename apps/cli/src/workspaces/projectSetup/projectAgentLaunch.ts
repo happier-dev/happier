@@ -3,7 +3,7 @@ import { configuration } from '@/configuration';
 import { prepareProjectSetup, readProjectSetupNamespaceRefusal, type ProjectSetupPreparationInput, type ProjectSetupPreparationOutcome, type ProjectSetupReviewPresentation } from './projectSetupPreparation';
 import { resolveProjectSetupAcceptedWorkspace } from './projectSetupAcceptedWorkspace';
 import { projectNativeSystemIo } from './projectNativeSystemIo';
-import { readProjectManifest } from './projectManifestFile';
+import { readProjectEffectiveDefinition } from './projectEffectiveDefinition';
 import { resolveProjectRequesterSecretBindings } from './projectSetupRequesterInputs';
 import { SavedSecretOperationAdmissionError } from '@/settings/secrets/savedSecretCatalogRead';
 import { performance } from 'node:perf_hooks';
@@ -27,6 +27,12 @@ export type ProjectAgentLaunchPreparationInput = Readonly<{
     /** Bound Account/Profile owner, demanded only after an accepted Project is found. */
     resolveSecretInputs?: (projectBindings?: ProjectSetupPreparationInput['environmentBindings']) => Promise<Readonly<Pick<ProjectAgentLaunchPreparationInput, 'secretEnvironment' | 'environmentBindings'>>>;
     configEnvironment?: ProjectSetupPreparationInput['configEnvironment'];
+    /** One native invocation shares its private selected file family across review and launch. */
+    readDotenvPreparation?: (root: string) => NonNullable<ProjectSetupPreparationInput['dotenvPreparation']>;
+    originalEnvironment?: ProjectSetupPreparationInput['originalEnvironment'];
+    /** Active native preparation supplies B's placed-worktree defaults before value validation. */
+    readRuntimeEnvironment?: (workspace: import('@happier-dev/protocol/workspaces/workspaceRefV1').WorkspaceRefV1,
+        manifest: import('@happier-dev/protocol/workspaces/projectSetup/projectManifestV1').ProjectManifestV1 | null) => Promise<Readonly<Record<string, string>>>;
     approvalContext?: ProjectSetupPreparationInput['approvalContext'];
     successHomeDir?: string;
     platform?: ProjectSetupPreparationInput['platform'];
@@ -49,11 +55,11 @@ export async function preflightProjectAgentLaunch(input: Pick<ProjectAgentLaunch
                 ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}) },
             allowUnassociated: true, ...(input.signal ? { signal: input.signal } : {}) });
         if (!association) return { kind: 'notAssociated' };
-        const snapshot = await readProjectManifest({ root: association.workspace.rootPath });
-        if (snapshot.document?.status === 'invalid') return { kind: 'refused', code: 'invalid_manifest' };
+        const definition = await readProjectEffectiveDefinition({ root: association.workspace.rootPath,
+            account: input.account, project: association.project, serverHttpBaseUrl: input.serverHttpBaseUrl, signal: input.signal });
         return await readProjectSetupNamespaceRefusal({ workspace: association.workspace,
             requester: { ...input.account, serverHttpBaseUrl: input.serverHttpBaseUrl }, signal: input.signal },
-        snapshot.document?.manifest ?? null) ?? { kind: 'ready' };
+        definition.effectiveDefinition.effectiveManifest) ?? { kind: 'ready' };
     } catch (error) {
         return { kind: 'refused', code: input.signal?.aborted ? 'cancelled'
             : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'project_workspace_unavailable' };
@@ -78,8 +84,9 @@ export async function prepareProjectAgentLaunch(input: ProjectAgentLaunchPrepara
         logger.debug('[ProjectSetup] launch phase', { phase: 'association', durationMs: Math.round(performance.now() - associationStartedAt) });
         if (!association) return { kind: 'notAssociated' };
         input.onPhase?.('manifest');
-        const manifest = await readProjectManifest({ root: association.workspace.rootPath });
-        const requirements = manifest.document?.status === 'valid' ? manifest.document.manifest.environmentVariables ?? [] : [];
+        const definition = await readProjectEffectiveDefinition({ root: association.workspace.rootPath,
+            account: input.account, project: association.project, serverHttpBaseUrl: input.serverHttpBaseUrl, signal: input.signal });
+        const requirements = definition.effectiveDefinition.effectiveManifest?.environmentVariables ?? [];
         input.onPhase?.('secret_inputs');
         const secretsStartedAt = performance.now();
         const environmentBindings = await resolveProjectRequesterSecretBindings(input.account, {
@@ -90,6 +97,11 @@ export async function prepareProjectAgentLaunch(input: ProjectAgentLaunchPrepara
         const secretNames = new Set(requirements.filter(requirement => requirement.kind === 'secret').map(requirement => requirement.name));
         const bindings = Object.fromEntries(Object.entries(secretInputs.environmentBindings?.bindings ?? {}).filter(([name]) => secretNames.has(name)));
         const preparation: ProjectSetupPreparationInput = {
+            acceptedSetup: definition.acceptedSetup,
+            originalEnvironment: input.originalEnvironment ?? process.env,
+            ...(input.readRuntimeEnvironment ? { runtimeEnvironment: await input.readRuntimeEnvironment(association.workspace,
+                definition.effectiveDefinition.effectiveManifest) } : {}),
+            ...(input.readDotenvPreparation ? { dotenvPreparation: input.readDotenvPreparation(association.workspace.rootPath) } : {}),
             workspace: association.workspace, projectAssociation: association,
             requesterIdentity: input.requesterIdentity,
             requester: { ...input.account, serverHttpBaseUrl: input.serverHttpBaseUrl },

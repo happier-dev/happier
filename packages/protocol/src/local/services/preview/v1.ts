@@ -6,6 +6,32 @@ import { LocalServiceLoopbackHostV1Schema } from '../hosts.js';
 import { LocalServicePreviewDiagnosticV1Schema } from './diagnostics/v1.js';
 import { LocalServiceManagedServiceActionTargetV1Schema } from '../actions/v1.js';
 
+export type LocalServiceDeclarationPreviewLocatorV1 = Readonly<{ serverId: string; machineId: string; targetId: string }>;
+
+/** Private UI route consumer opens this stable target through the existing preview Action.
+ * This URL carries no grant; each visit requires the person's current Home admission.
+ */
+export function formatLocalServiceDeclarationPreviewLandingPathV1(locator: LocalServiceDeclarationPreviewLocatorV1): string {
+  return `/preview-service/${encodeURIComponent(locator.machineId)}/${encodeURIComponent(locator.targetId)}?serverId=${encodeURIComponent(locator.serverId)}`;
+}
+
+export function buildLocalServiceDeclarationPreviewLandingUrlV1(uiBaseUrl: string, locator: LocalServiceDeclarationPreviewLocatorV1): string {
+  return new URL(formatLocalServiceDeclarationPreviewLandingPathV1(locator), uiBaseUrl).toString();
+}
+
+export function parseLocalServiceDeclarationPreviewLandingUrlV1(value: string): LocalServiceDeclarationPreviewLocatorV1 | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+    const match = /^\/preview-service\/([^/]+)\/([^/]+)$/.exec(url.pathname);
+    const serverId = url.searchParams.get('serverId');
+    if (!match || !serverId?.trim()) return null;
+    const target = BrowserLocalServicePreviewTargetV1Schema.safeParse({ kind: 'localServicePreview',
+      machineId: decodeURIComponent(match[1]!), targetId: decodeURIComponent(match[2]!) });
+    return target.success ? { serverId, machineId: target.data.machineId, targetId: target.data.targetId } : null;
+  } catch { return null; }
+}
+
 export const LocalServicePreviewOwnerV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('user'), id: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)) }),
   z.strictObject({ kind: z.literal('session'), id: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)) }),

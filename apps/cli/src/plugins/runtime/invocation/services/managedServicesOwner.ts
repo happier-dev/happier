@@ -152,6 +152,8 @@ export type WorkspaceProjectManagedServiceWitness = Readonly<{
     serviceId: string;
     /** Declaration execution class captured by the admitted native start. */
     execution?: 'primary' | 'portable';
+    interactive?: true;
+    portSource?: import('@happier-dev/protocol/local/services/launcher/v1').LocalServicePortSourceV1;
 }>;
 
 export type EnvironmentProjectManagedServiceWitness = Readonly<{
@@ -192,6 +194,7 @@ export type ManagedServiceResourceTarget = Readonly<{
     }>[];
 }>;
 export type ProjectManagedServiceHandle = ManagedServiceHandle & ProjectManagedServiceWitness & Readonly<{
+    terminalView?: import('@happier-dev/protocol/terminal/workspace').SessionTerminalViewTargetV1;
     /** Host-owned retained dependencies publish through the existing diagnostic projection. */
     reportDependencyFailure?(failure: ActionExecuteFailure | null): void;
     readDependencyFailure?(): ActionExecuteFailure | undefined;
@@ -243,6 +246,7 @@ export type ProjectManagedServiceSupervisionInput = ProjectManagedServiceWitness
     processSpec: Readonly<{
         mode: Extract<ManagedServiceProcessSpec['mode'], { kind: 'managedSpawn' | 'native' }>;
         startupTimeoutMs?: number;
+        interactiveTerminal?: Extract<ManagedServiceProcessSpec, { mode: { kind: 'managedSpawn' } }>['interactiveTerminal'];
         watchdog?: ManagedServiceProcessSpec['watchdog'];
         healthCheck?: Extract<NonNullable<ManagedServiceProcessSpec['healthCheck']>, { kind: 'http' }>;
     }>;
@@ -259,7 +263,7 @@ export type WorkspaceProjectManagedServiceSupervisionInput = Extract<ProjectMana
 export type EnvironmentProjectManagedServiceSupervisionInput = Extract<ProjectManagedServiceSupervisionInput, { kind: 'environment' }>;
 export type ProjectManagedServiceResolution =
     | Readonly<{ status: 'found'; handle: ProjectManagedServiceHandle }>
-    | Readonly<{ status: 'unknown' | 'mismatch' }>;
+    | Readonly<{ status: 'unknown' | 'mismatch' | 'stale' }>;
 type ProjectManagedServicesScope = Readonly<{
     signal: AbortSignal;
     isOccurrenceCurrent(): boolean;
@@ -4397,6 +4401,8 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 await establishProject({ kind: 'workspace', workspace: record.workspace, declaration: record.declaration,
                     requester: record.requester, cwd: record.cwd, specIdentity: record.specIdentity,
                     serviceId: record.process.snapshot.id, ...(record.execution ? { execution: record.execution } : {}),
+                    ...(record.interactive ? { interactive: true as const } : {}),
+                    ...(record.portSource ? { portSource: record.portSource } : {}),
                     isCurrent: () => true,
                     // Re-adoption has no launch authority, executable or credential lease.
                     authorizeLaunch: async () => fail('plugin_managed_service_unavailable', 'Recovered service cannot replay Start'),
@@ -4513,6 +4519,8 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
             }
             witness = Object.freeze({ kind: 'workspace', workspace, declaration, requester, cwd: request.cwd,
                 serviceId: request.serviceId, ...(request.execution ? { execution: request.execution } : {}),
+                ...(request.interactive ? { interactive: true as const } : {}),
+                ...(request.portSource ? { portSource: request.portSource } : {}),
                 ...(request.nativeTool ? { nativeTool: request.nativeTool } : {}) });
             entryKey = JSON.stringify(['project-service', workspace.serverId, workspace.machineId, workspace.id, declaration, request.cwd]);
         }
@@ -4619,7 +4627,8 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     } };
                 processSpec = request.processSpec.mode.kind === 'native'
                     ? { ...launchSpec, mode: request.processSpec.mode }
-                    : { ...launchSpec, mode: request.processSpec.mode };
+                    : { ...launchSpec, mode: request.processSpec.mode, ...(request.processSpec.interactiveTerminal
+                        ? { interactiveTerminal: request.processSpec.interactiveTerminal } : {}) };
             }
             const process = restoredProcess ?? await input.processSupervisorHost.bind({
                 kind: 'project',
@@ -4651,8 +4660,8 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 throw error;
             }
             let failedSnapshot: ManagedServiceSnapshot | undefined;
-            const retainStoppedProcess = input.projectServiceStateDirectory !== undefined
-                && witness.kind === 'workspace' && request.processSpec.mode.kind === 'managedSpawn';
+            const retainStoppedProcess = witness.kind === 'workspace' && request.processSpec.mode.kind === 'managedSpawn'
+                && (input.projectServiceStateDirectory !== undefined || witness.interactive === true);
             const clearFailedAttempt = () => {
                 if (!failedSnapshot) return;
                 failedSnapshot = undefined;
@@ -4739,6 +4748,11 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 ...wrapped,
                 ...witness,
                 homeServerIdentityId,
+                get portSource() { return process.portSource ?? (witness.kind === 'workspace' ? witness.portSource : undefined); },
+                ...(process.terminalView && witness.kind === 'workspace' ? { terminalView: {
+                    ...process.terminalView, workspace: { serverId: witness.workspace.serverId,
+                        machineId: witness.workspace.machineId, workspaceId: witness.workspace.id, rootPath: witness.workspace.rootPath },
+                } } : {}),
                 nativeControlCapabilities: process.nativeControlCapabilities,
                 lifecyclePurpose: witness.kind === 'environment' ? 'deployment' as const : 'development' as const,
                 actionScope: witness.kind === 'environment' ? { kind: 'environment' as const, environmentId: witness.environmentId }
@@ -4932,7 +4946,9 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     await projectServiceRecovery.record({ v: 1, workspace: witness.workspace, declaration: witness.declaration,
                         requester: witness.requester, cwd: witness.cwd, specIdentity: request.specIdentity,
                         ...(request.processSpec.mode.kind === 'managedSpawn' && request.processSpec.mode.endpointNone ? { endpointNone: true } : {}),
-                        ...(witness.execution ? { execution: witness.execution } : {}), process: recovery });
+                        ...(witness.execution ? { execution: witness.execution } : {}),
+                        ...(witness.interactive ? { interactive: true as const } : {}),
+                        ...(handle.kind === 'workspace' && handle.portSource ? { portSource: handle.portSource } : {}), process: recovery });
                 } catch (error) {
                     await releaseEntryProcessHandle(entry, true);
                     throw error;
@@ -5166,6 +5182,9 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
         resolveNativeService,
         resolveProjectService(target: Extract<LocalServiceActionTargetV1, { kind: 'managed_service' }>) {
             return resolveProjectManagedService(target, listProjectServices());
+        },
+        resolveProjectServiceDeclaration(targetId: string) {
+            return listProjectServices().find(handle => handle.kind === 'workspace' && handle.serviceId === targetId) ?? null;
         },
         isAvailable({ occurrenceId, contributionQualifiedId }) {
             return input.resolveScope({

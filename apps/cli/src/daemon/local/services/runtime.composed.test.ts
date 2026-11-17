@@ -145,7 +145,7 @@ describe('createLocalServicesDaemonRuntime', () => {
         let discoveries = 0;
         let publications = 0;
         const runtime = createLocalServicesDaemonRuntime({ machineId, accountId, startLoop: false, inventoryEnabled: () => true,
-            runTargets: () => { discoveries++; return []; },
+            runTargets: () => { discoveries++; return ({ targets: [], worktreePortRoots: [] }); },
             scan: async () => { scans++; return { listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }; } });
         const detach = runtime.launcherRoutes.bindStartOperations?.(operations.store, accountId);
         const unsubscribe = runtime.inventoryRegistry.subscribe(() => { publications++; });
@@ -192,8 +192,8 @@ describe('createLocalServicesDaemonRuntime', () => {
         let discoveries = 0;
         const runtime = createLocalServicesDaemonRuntime({ machineId, accountId, startLoop: false,
             inventoryEnabled: () => true, projectManagedServices: owner,
-            runTargets: () => { discoveries++; return [{ id: serviceId, cwd: workspace.rootPath,
-                workspaceId: workspace.id, workspace: address, declaration, title: 'worker' }]; },
+            runTargets: () => { discoveries++; return ({ targets: [{ id: serviceId, cwd: workspace.rootPath,
+                workspaceId: workspace.id, workspace: address, declaration, title: 'worker' }], worktreePortRoots: [] }); },
             scan: async () => { scans++; return { listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }; } });
         const detach = runtime.launcherRoutes.bindStartOperations?.(operations.store, accountId);
         let release!: () => void;
@@ -283,7 +283,7 @@ describe('createLocalServicesDaemonRuntime', () => {
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-a', startLoop: false,
             inventoryEnabled: () => true, now: () => observedAt, projectManagedServices: owner,
             // Discovery's filesystem boundary may be pending while native custody already knows readiness.
-            runTargets: async () => { discoveries++; if (holdDiscovery) await discoveryGate; return runTargets; },
+            runTargets: async () => { discoveries++; if (holdDiscovery) await discoveryGate; return ({ targets: runTargets, worktreePortRoots: [] }); },
             scan: async () => { scans++; return { listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }; } });
         const cancellation = new AbortController();
         try {
@@ -325,7 +325,7 @@ describe('createLocalServicesDaemonRuntime', () => {
     it('pushes preview registration and revocation through the existing Machine watch without another scan', async () => {
         const scan = vi.fn(async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }));
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-a', startLoop: false,
-            inventoryEnabled: () => true, runTargets: () => [], scan, now: () => 1_000 });
+            inventoryEnabled: () => true, runTargets: () => ({ targets: [], worktreePortRoots: [] }), scan, now: () => 1_000 });
         const cancellation = new AbortController();
         try {
             await runtime.refreshInventoryNow();
@@ -366,7 +366,7 @@ describe('createLocalServicesDaemonRuntime', () => {
         const server = previewServerBoundary();
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-a', startLoop: false,
             accountId: 'owner', previewServer: server.input,
-            inventoryEnabled: () => true, runTargets: () => [], now: () => observedAt,
+            inventoryEnabled: () => true, runTargets: () => ({ targets: [], worktreePortRoots: [] }), now: () => observedAt,
             endpointEnricher: createLocalServiceEndpointEnricher({ now: () => observedAt,
                 probe: async () => true }),
             scan: async () => ({ listeners: [{ address: '127.0.0.1', port: 5173, protocol: 'tcp' as const, pid: 400 }],
@@ -451,7 +451,7 @@ describe('createLocalServicesDaemonRuntime', () => {
         operations.store.markRunning(operation.operationId);
         let observedAt = 1_000;
         const runtime = createLocalServicesDaemonRuntime({ machineId, accountId, startLoop: false,
-            inventoryEnabled: () => true, now: () => observedAt, projectManagedServices: owner, runTargets: () => [],
+            inventoryEnabled: () => true, now: () => observedAt, projectManagedServices: owner, runTargets: () => ({ targets: [], worktreePortRoots: [] }),
             scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
         const cancellation = new AbortController();
         let detach: (() => void) | undefined;
@@ -519,7 +519,7 @@ describe('createLocalServicesDaemonRuntime', () => {
             processes: new Map(), workspaces: [], diagnostics: [],
         }));
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-a', startLoop: false,
-            inventoryEnabled: () => true, scan, runTargets: () => [], now: () => observedAt });
+            inventoryEnabled: () => true, scan, runTargets: () => ({ targets: [], worktreePortRoots: [] }), now: () => observedAt });
         const cancellation = new AbortController();
         try {
             const first = await runtime.refreshInventoryNow();
@@ -556,7 +556,7 @@ describe('createLocalServicesDaemonRuntime', () => {
     it('keeps native action freshness independent of a silent material generation', async () => {
         let observedAt = 1_000;
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-a', startLoop: false,
-            inventoryEnabled: () => true, now: () => observedAt, runTargets: () => [],
+            inventoryEnabled: () => true, now: () => observedAt, runTargets: () => ({ targets: [], worktreePortRoots: [] }),
             scan: async () => ({ listeners: [{ address: '127.0.0.1', port: 5173, protocol: 'tcp', pid: 400 }],
                 processes: new Map([[400, { pid: 400, ppid: 1, command: 'server', cwd: '/repo' }]]),
                 workspaces: [], diagnostics: [] }) });
@@ -583,7 +583,7 @@ describe('createLocalServicesDaemonRuntime', () => {
             ? [{ address: '127.0.0.1', port: 5173, protocol: 'tcp' as const }] : [],
             processes: new Map(), workspaces: [], diagnostics: [] }));
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-a', inventoryEnabled: () => true,
-            scan, runTargets: () => [] });
+            scan, runTargets: () => ({ targets: [], worktreePortRoots: [] }) });
         const cancellation = new AbortController();
         try {
             const initial = await runtime.inventoryRoutes.getSnapshot();
@@ -615,7 +615,7 @@ describe('createLocalServicesDaemonRuntime', () => {
         const serviceActivity = createLiveWorkProducerGroup(() => [owner.activity]);
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-a', startLoop: false,
             inventoryEnabled: () => true, now: () => observedAt, projectManagedServices: { ...owner, activity: serviceActivity },
-            runTargets: () => runTargets,
+            runTargets: () => ({ targets: runTargets, worktreePortRoots: [] }),
             scan: async () => { scans++; return { listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }; } });
         const workspaceRef = { id: 'checkout', serverId: 'home', machineId: 'machine-a', rootPath: process.cwd(), createdAtMs: 1 };
         const workspace = { serverId: workspaceRef.serverId, machineId: workspaceRef.machineId, workspaceId: workspaceRef.id,
@@ -683,7 +683,7 @@ describe('createLocalServicesDaemonRuntime', () => {
         const serviceActivity = createLiveWorkProducerGroup(() => [owner.activity]);
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-a', accountId: 'account-a',
             previewServer: server.input, startLoop: false, inventoryEnabled: () => true,
-            projectManagedServices: { ...owner, activity: serviceActivity }, runTargets: () => [],
+            projectManagedServices: { ...owner, activity: serviceActivity }, runTargets: () => ({ targets: [], worktreePortRoots: [] }),
             scan: async () => { scans++; return { listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }; } });
         const workspace = { id: 'checkout', serverId: 'home', machineId: 'machine-a', rootPath: process.cwd(), createdAtMs: 1 };
         const declaration = { workspaceRefId: workspace.id, selection: { kind: 'manifest' as const, name: 'native-web' } };
@@ -773,7 +773,7 @@ describe('createLocalServicesDaemonRuntime', () => {
             dependencies: Object.freeze({}) as never, resolveScope: scope => scope,
         });
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-a', startLoop: false,
-            inventoryEnabled: () => true, now: () => observedAt, projectManagedServices: owner, runTargets: () => [],
+            inventoryEnabled: () => true, now: () => observedAt, projectManagedServices: owner, runTargets: () => ({ targets: [], worktreePortRoots: [] }),
             scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
         try {
             const handle = await owner.superviseProject({
@@ -844,7 +844,7 @@ describe('createLocalServicesDaemonRuntime', () => {
             dependencies: Object.freeze({}) as never, resolveScope: scope => scope,
         });
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-a', startLoop: false,
-            inventoryEnabled: () => true, now: () => observedAt, projectManagedServices: owner, runTargets: () => [],
+            inventoryEnabled: () => true, now: () => observedAt, projectManagedServices: owner, runTargets: () => ({ targets: [], worktreePortRoots: [] }),
             scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
         const start = () => owner.superviseProject({
             kind: 'workspace',
@@ -937,7 +937,7 @@ describe('createLocalServicesDaemonRuntime', () => {
             dependencies: Object.freeze({}) as never, resolveScope: scope => scope,
         });
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-a', startLoop: false,
-            inventoryEnabled: () => true, projectManagedServices: owner, runTargets: () => [],
+            inventoryEnabled: () => true, projectManagedServices: owner, runTargets: () => ({ targets: [], worktreePortRoots: [] }),
             scan: async () => { await scanned; return { listeners: [{ address: '127.0.0.1', port: 5173, protocol: 'tcp' as const, pid: 400 }],
                 processes: new Map([[400, { pid: 400, command: 'node vite' }]]), workspaces: [], diagnostics: [] }; } });
         const inventory = runtime.refreshInventoryNow();

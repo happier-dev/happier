@@ -109,6 +109,13 @@ export function reduceSessionTerminalWorkspace(state: SessionTerminalWorkspaceV1
     const replace = (tab: SessionTerminalTabV1) => ({ ...state, tabs: state.tabs.map((current) => current.id === tab.id ? tab : current) });
     switch (command.type) {
         case 'open': {
+            const target = command.terminal.target;
+            const retained = findSessionTerminalViewMember(state, target);
+            if (retained) {
+                const tab = state.tabs.find(tab => tab.terminals.includes(retained))!;
+                return { ...replace({ ...tab, focusedTerminalId: retained.id, terminals: tab.terminals.map(member => member === retained
+                    ? { ...retained, ...command.terminal, id: retained.id, title: retained.title ?? command.terminal.title } : member) }), activeTabId: tab.id };
+            }
             if (contains(command.terminal.id) || state.tabs.some((tab) => tab.id === command.terminal.id)) return state;
             return { ...state, tabs: [...state.tabs, { id: command.terminal.id, terminals: [command.terminal], focusedTerminalId: command.terminal.id, root: { kind: 'leaf', terminalId: command.terminal.id } }], activeTabId: command.terminal.id };
         }
@@ -200,4 +207,11 @@ export function reduceSessionTerminalWorkspace(state: SessionTerminalWorkspaceV1
             return replace({ ...tab, root: fromCanvas(next.root) });
         }
     }
+}
+
+/** Stable declaration attachment identity; process replacement updates its retained pane. */
+export function findSessionTerminalViewMember(state: SessionTerminalWorkspaceV1, target: SessionTerminalMemberV1['target']) {
+    return target.kind === 'terminal_view' ? state.tabs.flatMap(tab => tab.terminals).find(member =>
+        member.target.kind === 'terminal_view' && member.target.machineId === target.machineId
+        && member.target.terminalKey === target.terminalKey) : undefined;
 }

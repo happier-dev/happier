@@ -2538,6 +2538,9 @@ export class ApiMachineClient {
             serverId, machineId: this.machine.id, workingDirectory: this.machineRpcWorkingDirectory,
             accessPolicy: this.filesystemAccessPolicy,
             acquirePluginRuntime: acquireAuthoritativePluginRuntimeRegistryLease,
+            getTerminalSessions: () => this.getFiniteTerminalSessions(),
+            readActiveProjectCommands: () => this.projectionSchedulingClosed ? null
+                : this.rpcLifecycleRegistrations.at(-1)?.readActiveProjectCommands?.() ?? null,
             ...(ingress ? { inspectSetup: async ({ workspace, context, reviewSetupConsent }) => {
                 const startedAt = performance.now();
                 const runtime = await this.resolveProjectFiniteRuntime(ingress);

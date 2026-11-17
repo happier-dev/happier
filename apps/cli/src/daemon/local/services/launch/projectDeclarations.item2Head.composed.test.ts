@@ -754,7 +754,7 @@ describe('accepted Project Service declaration starter', () => {
         const projectionLifetime = new AbortController();
         const starter = createProjectServiceDeclarationStarter({ resolveRuntime: async () => runtime,
             acquirePluginRuntime: async () => ({ registry: { projectManagedServices: owner, retirementSignal: projectionLifetime.signal }, release: async () => {} }) });
-        const targets = await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [workspace] });
+        const targets = (await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [workspace] })).targets;
         const target = targets.find(target => 'declaration' in target && target.declaration.selection.kind === 'manifest');
         if (!target || !('declaration' in target)) throw new Error('Fixture manifest did not produce a Service declaration');
         const request = { machineId: targetWorkspace.machineId, targetId: target.id, workspace: { serverId: homeId, machineId: 'machine', workspaceId: workspace.id, rootPath: root }, declaration: target.declaration,
@@ -2620,7 +2620,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         await writeFile(join(h.root, 'package.json'), JSON.stringify({ name: 'package', scripts: { dev: 'package-authored server command' } }));
         // A system-tool wrapper is a genuine OS resolution boundary. The native codec must retain its argv prefix.
         h.setNativeTool({ executablePath: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)', '--'] });
-        const targets = await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [h.workspace] });
+        const targets = (await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [h.workspace] })).targets;
         expect(targets.filter(target => 'declaration' in target)).toHaveLength(1);
         const review = await h.selectStart();
         expect(review).toMatchObject({ reviewedEffect: {

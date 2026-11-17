@@ -1,4 +1,5 @@
 import { readAgentIsolationMemberDirectories } from '@/daemon/agentIsolation/prepareNativeOperation';
+import { matchesTerminalRequesterCustody } from '@/terminal/pty/custody';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { DaemonTerminalCloseRequestSchema, DaemonTerminalEnsureRequestSchema, DaemonTerminalListRequestV1Schema, DaemonTerminalListResponseV1Schema, DaemonTerminalInputRequestSchema, DaemonTerminalResizeRequestSchema, DaemonTerminalRestartRequestSchema, DaemonTerminalStreamReadRequestSchema } from '@happier-dev/protocol/daemon/terminal';
 import { TerminalStreamAckRequestSchema, TerminalStreamAckResponseSchema, TerminalStreamReadRequestSchema, TerminalStreamReadResponseSchema } from '@happier-dev/protocol/terminal/stream';
@@ -23,6 +24,8 @@ import { resolveLocalServiceRunTargetScriptName } from '@/daemon/local/services/
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { projectRuntimeAccountRowsInput, readProjectAccountRows, type ProjectRuntimeAccountAccess } from '@/workspaces/projectAccountRows';
 import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
+import { prepareProjectWorktreeRuntime } from '@/workspaces/execution/projectWorktreeRuntime';
+import { createProjectDotenvPreparation } from '@/workspaces/projectSetup/projectDotenv';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { dispatchActionFromRpc, type RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 import { resolveMachineRpcWorkingDirectory } from './resolveMachineRpcWorkingDirectory';
@@ -422,8 +425,8 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       return custody === null;
     }
     const admission = context.machineAdmission;
-    if (!custody || custody.requesterAccountId !== admission.actorAccountId || custody.machineId !== admission.machineId
-      || custody.installationId !== admission.installationId) return false;
+    if (!custody || !matchesTerminalRequesterCustody(custody, { serverId: params.deps?.serverId ?? '',
+      accountId: admission.actorAccountId, machineId: admission.machineId, installationId: admission.installationId })) return false;
     if (custody.kind === 'machine') return (admission.role === 'manage' || !!manager.getNativeExecutionIdentity?.(terminalId))
       && custody.serverId === params.deps?.serverId && !context.signal.aborted;
     if (custody.kind === 'session') {
@@ -443,6 +446,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
 
   const settleTerminalClose = async (terminalId: string, signal?: AbortSignal) => {
     const manager = getSessionManager();
+    if (manager.isServiceOwned(terminalId)) return err('terminal_busy');
     const requested = await manager.requestStop({ terminalId });
     if (requested.kind === 'unconfirmed' || requested.kind === 'unavailable') return err('terminal_busy');
     if (requested.kind === 'requested') {
@@ -490,10 +494,10 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       if (runtime.terminalSessions !== getSessionManager()) return refused('project_terminal_owner_mismatch');
       const [{ resolveProjectSetupAcceptedWorkspace }, { reviewProjectExecutionEnvironment },
         { createProjectNativeInvocationCustody, createProjectNativeLaunchAdmission }, { authorizeResolvedProjectExecLaunchForHost },
-        { readProjectManifest }, { resolveProjectRequesterSecretInputs }] = await Promise.all([
+        { readProjectEffectiveDefinition }, { resolveProjectRequesterSecretInputs }] = await Promise.all([
         import('@/workspaces/projectSetup/projectSetupAcceptedWorkspace'), import('@/workspaces/projectSetup/projectSetupPreparation'),
         import('@/workspaces/projectSetup/projectSetupExecution'), import('@/plugins/runtime/invocation/services/exec'),
-        import('@/workspaces/projectSetup/projectManifestFile'), import('@/workspaces/projectSetup/projectSetupRequesterInputs'),
+        import('@/workspaces/projectSetup/projectEffectiveDefinition'), import('@/workspaces/projectSetup/projectSetupRequesterInputs'),
       ]);
       const assertCurrent = async () => {
         context.signal.throwIfAborted();
@@ -504,11 +508,17 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal: context.signal,
         address: { serverId: custody.serverId, workspaceId: custody.workspaceRefId, machineId: custody.machineId, rootPath: custody.rootPath } });
       if (association.workspace.projectKey !== custody.projectKey) return refused('project_workspace_changed');
-      const definition = await readProjectManifest({ root: association.workspace.rootPath });
+      const definition = await readProjectEffectiveDefinition({ root: association.workspace.rootPath, account: accountAccess,
+        project: association.project, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal: context.signal });
       const { environmentBindings, secretEnvironment } = await resolveProjectRequesterSecretInputs(runtime, {
         project: association.project,
-        requirements: definition.document?.status === 'valid' ? definition.document.manifest.environmentVariables ?? [] : [],
+        requirements: definition.effectiveDefinition.effectiveManifest?.environmentVariables ?? [],
       }, context.signal);
+      const platform = runtime.platform ?? params.deps?.platform ?? process.platform;
+      const hostEnvironment = Object.freeze({ ...(runtime.hostEnvironment ?? env) });
+      const runtimeBindings = await prepareProjectWorktreeRuntime({ workspace: association.workspace,
+        manifest: definition.effectiveDefinition.effectiveManifest, signal: context.signal });
+      if (runtimeBindings.kind !== 'ready') return refused(runtimeBindings.code, { reason: runtimeBindings.reason });
       const nativeCustody = createProjectNativeInvocationCustody({ signal: context.signal });
       let authorized: Awaited<ReturnType<typeof authorizeResolvedProjectExecLaunchForHost>> | undefined;
       release = async () => {
@@ -518,8 +528,11 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
           finally { nativeCustody.dispose(); }
         }
       };
-      const platform = runtime.platform ?? params.deps?.platform ?? process.platform;
       const preparation = { workspace: association.workspace, projectAssociation: association, requesterIdentity,
+        acceptedSetup: definition.acceptedSetup,
+        dotenvPreparation: createProjectDotenvPreparation(association.workspace.rootPath, hostEnvironment),
+        originalEnvironment: hostEnvironment, runtimeEnvironment: runtimeBindings.runtimeEnvironment,
+        invocationEnvironment: launchProcess?.env,
         approvalContext: projectActionContext(context),
         requester: { ...accountAccess, serverHttpBaseUrl: runtime.serverHttpBaseUrl }, purpose: 'setup' as const,
         platform: { os: platform === 'win32' ? 'windows' : platform, arch: runtime.arch ?? process.arch },
@@ -537,11 +550,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         if (outcome.kind === 'refused') throw Object.assign(new Error(outcome.code), { code: outcome.code });
         return outcome;
       };
-      const { plan } = await inspect();
-      const base = launchProcess ?? resolveTerminalShell(runtime.hostEnvironment ?? env, platform);
-      const hostEnvironment: NodeJS.ProcessEnv = { ...(runtime.hostEnvironment ?? env), ...launchProcess?.env, ...plan.configEnvironment };
-      const launchEnv: Record<string, string> = {};
-      for (const [key, value] of Object.entries(hostEnvironment)) if (value !== undefined) launchEnv[key] = value;
+      const inspected = await inspect();
+      const plan = inspected.plan;
+      const base = launchProcess ?? resolveTerminalShell(hostEnvironment, platform);
       const agentIsolation = nativeOperation?.agentIsolation ?? resolveTerminalAgentIsolation(requesterIdentity, context);
       const execution = requesterIdentity.kind === 'owner_person' ? { executionKind: 'person_break_glass' as const } : {};
       const projectLaunch = createProjectNativeLaunchAdmission({ preparation, hostEnvironment, platform,
@@ -549,7 +560,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         beforeNativeEffect: assertCurrent,
         environmentIo: runtime.environmentIo, operation: { signal: context.signal } }, plan);
       authorized = await authorizeResolvedProjectExecLaunchForHost({
-        launch: { command: base.file, args: base.args, cwd: association.workspace.rootPath, env: launchEnv }, projectLaunch, signal: context.signal,
+        launch: { command: base.file, args: base.args, cwd: association.workspace.rootPath, env: projectLaunch.launchEnvironment }, projectLaunch, signal: context.signal,
         agentIsolation, ...execution, requesterIdentity, agentLaunchKind: 'terminal',
         assertCurrent() {
           if (context.signal.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });

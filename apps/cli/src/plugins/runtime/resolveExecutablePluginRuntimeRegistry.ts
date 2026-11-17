@@ -1,3 +1,4 @@
+import { prepareServiceLaunchEnvironments } from './lifecycle/contributions/targetServiceLaunchEnvironments';
 import { deploymentUnavailableDiagnostic } from '@/deployments/deploymentFailure';
 import { createAccountMachineSourceDeclarationReader } from './invocation/actions/accountMachineSourceDeclarations';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
@@ -6689,6 +6690,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         },
         activateContributionsOnDemand,
         acquireAgentCatalogEntry,
+        prepareServiceLaunchEnvironments: input => prepareServiceLaunchEnvironments({ targets: authoritativeContributes.activationTargets, registry: activatedRegistry, input }),
         secretSources: createTargetSecretSources({
             targets: authoritativeContributes.activationTargets,
             registry: {

@@ -464,9 +464,10 @@ export function createAccountArtifactStore(params: Readonly<{
     return { Authorization: `Bearer ${params.credentials.token}` };
   };
   const fetchStoredResponse = async (artifactId: string, signal?: AbortSignal, authorizationHeaders?: ArtifactRequestAuthorizationHeaders,
-    projection?: 'headers'): Promise<Readonly<{ data: unknown }> | null> => {
+    projection?: 'headers', projectSourceId?: string): Promise<Readonly<{ data: unknown }> | null> => {
     signal?.throwIfAborted();
-    const path = projection ? '/v1/artifacts/read' : `/v1/artifacts/${encodeURIComponent(artifactId)}`;
+    const path = projection ? '/v1/artifacts/read' : `/v1/artifacts/${encodeURIComponent(artifactId)}`
+      + (projectSourceId ? `?projectSourceId=${encodeURIComponent(projectSourceId)}` : '');
     const body = projection ? ArtifactReadHeadersBatchInputV1Schema.parse({ artifactIds: [artifactId], projection }) : undefined;
     const config = { headers: authorizationHeaders ? await authorizationHeaders({ method: body ? 'POST' : 'GET', path,
       ...(body ? { body } : {}) }) : headers(), ...(signal ? { signal } : {}), validateStatus: () => true };
@@ -498,8 +499,9 @@ export function createAccountArtifactStore(params: Readonly<{
     }
     return { data: response.data };
   };
-  const fetchStored = async (artifactId: string, signal?: AbortSignal, authorizationHeaders?: ArtifactRequestAuthorizationHeaders): Promise<StoredArtifact | null> => {
-    const response = await fetchStoredResponse(artifactId, signal, authorizationHeaders);
+  const fetchStored = async (artifactId: string, signal?: AbortSignal, authorizationHeaders?: ArtifactRequestAuthorizationHeaders,
+    projectSourceId?: string): Promise<StoredArtifact | null> => {
+    const response = await fetchStoredResponse(artifactId, signal, authorizationHeaders, undefined, projectSourceId);
     if (!response) return null;
     const stored = parseStoredArtifact(response.data);
     if (!stored) throw Object.assign(new Error('artifact_read_invalid'), { code: 'artifact_read_invalid' });
@@ -677,6 +679,7 @@ export function createAccountArtifactStore(params: Readonly<{
     return { current, shared };
   };
   const projectStoredArtifact = async (stored: StoredArtifact, options?: Readonly<{
+    projectSourceId?: string;
     signal?: AbortSignal;
     authorizationHeaders?: ArtifactRequestAuthorizationHeaders;
     /** Decision preparation observes content without repairing recipient key delivery. */
@@ -711,7 +714,7 @@ export function createAccountArtifactStore(params: Readonly<{
   };
   const readStoredArtifact = async (artifactId: string, options?: Parameters<typeof projectStoredArtifact>[1]) => {
     options?.signal?.throwIfAborted();
-    return timeWebLatencyPhase('artifact.read.http', () => fetchStored(artifactId, options?.signal, options?.authorizationHeaders));
+    return timeWebLatencyPhase('artifact.read.http', () => fetchStored(artifactId, options?.signal, options?.authorizationHeaders, options?.projectSourceId));
   };
   const read = async (artifactId: string, options?: Parameters<typeof projectStoredArtifact>[1] & Readonly<{ ownerOnly?: boolean }>): Promise<AccountArtifact | null> => {
     const stored = await readStoredArtifact(artifactId, options);

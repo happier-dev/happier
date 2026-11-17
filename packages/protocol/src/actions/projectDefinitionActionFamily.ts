@@ -1,15 +1,19 @@
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
-import { PROJECT_DEFINITION_ACTION_IDS, PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from './projectDefinitionActionIdsV1.js';
-export { PROJECT_DEFINITION_ACTION_IDS, PROJECT_DEFINITION_INSPECT_ACTION_ID } from './projectDefinitionActionIdsV1.js';
+import { PROJECT_DEFINITION_ACTION_IDS, PROJECT_DEFINITION_ACTION_RPC_METHODS_V1, PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID } from './projectDefinitionActionIdsV1.js';
+export { PROJECT_DEFINITION_ACTION_IDS, PROJECT_DEFINITION_INSPECT_ACTION_ID, PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID } from './projectDefinitionActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { ProjectDefinitionDetectionV1Schema, ProjectDefinitionImportCandidateV1Schema, ProjectExecutionInputV1Schema, ProjectNativeInvocationPreviewV1Schema, ProjectNativeRefV1Schema, ProjectToolInspectionV1Schema } from '../workspaces/projectSetup/projectManifestV1.js';
 import { ProjectManifestDiagnosticSchema, ProjectManifestFileBasisV1Schema, ProjectManifestUpdateResultSchema } from '../workspaces/projectSetup/projectManifestDocument.js';
 import { ProjectManifestV1Schema } from '../workspaces/projectSetup/projectManifestV1.js';
+import { ProjectEffectiveDefinitionV1Schema } from '../workspaces/projectSetup/projectDefinitionCompositionV1.js';
+import { EnvVarRequirementSchema } from '../profiles/environmentVariables.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { WorkspaceAddressV1Schema } from '../workspaces/workspaceRefV1.js';
-import { ProjectSetupReviewV1Schema } from './projectSetupConsentFailure.js';
+import { ProjectSetupReviewV1Schema, ProjectSetupReadinessV1Schema } from './projectSetupConsentFailure.js';
+export { ProjectSetupReadinessV1Schema, type ProjectSetupReadinessV1 } from './projectSetupConsentFailure.js';
 import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { WorktreePortsResultV1Schema } from '../workspaces/projectSetup/worktreePortsV1.js';
 export type ProjectDefinitionActionId = typeof PROJECT_DEFINITION_ACTION_IDS[number];
 
 // These public Action roots retain Classic composition/JSON Schema projection;
@@ -36,15 +40,9 @@ export const ProjectDefinitionInspectInputSchema = lazyZodSchema(() => z.strictO
 export const ProjectManifestUpdateInputSchema = lazyZodSchema(() => z.strictObject({
   workspace: ProjectDefinitionWorkspaceSchema, expectedBasis: ProjectManifestFileBasisV1Schema, bytes: z.string(),
 }));
-/** Current reviewed target facts; retained operation completion is never a readiness input. */
-export const ProjectSetupReadinessV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('current'), reviewedEffectDigest: z.string().check(z.minLength(1)), completedAtMs: z.number().check(z.int(), z.nonnegative()) }),
-  z.strictObject({ kind: z.literal('unprepared'), reviewedEffectDigest: z.string().check(z.minLength(1)) }),
-  z.strictObject({ kind: z.literal('notRequired'), reviewedEffectDigest: z.string().check(z.minLength(1)) }),
-  z.strictObject({ kind: z.literal('needsReview'), code: z.string().check(z.minLength(1)) }),
-  z.strictObject({ kind: z.literal('unknown'), code: z.string().check(z.minLength(1)) }),
-]));
-export type ProjectSetupReadinessV1 = z.infer<typeof ProjectSetupReadinessV1Schema>;
+export const ProjectWorktreePortsReassignInputSchema = lazyZodSchema(() => z.strictObject({
+  workspace: ProjectDefinitionWorkspaceSchema,
+}));
 /** Raw author text is delivered only to an open editor or a guarded authoring operation. */
 export const ProjectManifestInspectionSnapshotSchema = lazyZodSchema(() => z.strictObject({
   basis: ProjectManifestFileBasisV1Schema,
@@ -57,12 +55,20 @@ export const ProjectManifestInspectionSnapshotSchema = lazyZodSchema(() => z.str
 }).check(z.refine(snapshot => (snapshot.basis.kind === 'absent') === (snapshot.document === null),
   'An absent file has no document; a present file has an inspected document')));
 export type ProjectManifestInspectionSnapshot = z.infer<typeof ProjectManifestInspectionSnapshotSchema>;
+/** Names only: an example's values never cross the Machine inspection boundary. */
+export const ProjectEnvironmentImportV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('environment'), file: z.literal('.env.example'), requirements: z.array(EnvVarRequirementSchema),
+  diagnostics: z.array(z.strictObject({ line: z.optional(z.number().check(z.int(), z.positive())),
+    code: z.enum(['malformed_dotenv', 'outside_root', 'unreadable_definition']) })),
+}));
+export type ProjectEnvironmentImportV1 = z.infer<typeof ProjectEnvironmentImportV1Schema>;
 export const ProjectDefinitionInspectOutputSchema = lazyZodSchema(() => z.strictObject({
   /** Content hash of this projected result, for a later `ifRevision` revalidation. */
   revision: z.optional(z.string().check(z.minLength(1))),
   /** Import/native/tool detail reads carry only file status, not a complete declaration projection. */
   definitionScope: z.optional(z.literal('statusOnly')),
   definition: ProjectManifestInspectionSnapshotSchema, detection: ProjectDefinitionDetectionV1Schema,
+  effectiveDefinition: z.optional(ProjectEffectiveDefinitionV1Schema),
   detectionSummary: z.optional(z.strictObject({ total: z.number().check(z.int(), z.nonnegative()),
     scripts: z.number().check(z.int(), z.nonnegative()), services: z.number().check(z.int(), z.nonnegative()),
     sourceFiles: z.optional(z.array(z.string())),
@@ -70,6 +76,7 @@ export const ProjectDefinitionInspectOutputSchema = lazyZodSchema(() => z.strict
       scripts: z.number().check(z.int(), z.nonnegative()), services: z.number().check(z.int(), z.nonnegative()) })),
   })),
   importCandidates: z.array(ProjectDefinitionImportCandidateV1Schema),
+  environmentImport: z.optional(ProjectEnvironmentImportV1Schema),
   commands: z.optional(z.array(z.strictObject({
     name: z.string().check(z.minLength(1)), usage: z.enum(['script', 'service', 'setup']), source: ProjectNativeRefV1Schema,
     availability: z.enum(['available', 'unavailable', 'unresolved', 'ambiguous']), code: z.optional(z.string()),
@@ -103,14 +110,26 @@ export const ProjectManifestUpdateOutputSchema = lazyZodSchema(() => z.lazy(() =
 export const PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS = {
   'projects.inspect': ProjectDefinitionInspectInputSchema,
   'projects.manifest.update': ProjectManifestUpdateInputSchema,
+  [PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID]: ProjectWorktreePortsReassignInputSchema,
 } as const;
 export const PROJECT_DEFINITION_ACTION_OUTPUT_SCHEMAS = {
   'projects.inspect': ProjectDefinitionInspectResultSchema,
   'projects.manifest.update': ProjectManifestUpdateOutputSchema,
+  [PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID]: WorktreePortsResultV1Schema,
 } as const;
 
 function createProjectDefinitionActionSpecs() {
   return [
+  {
+    id: PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID, approvalPolicy: { uiConfirmation: 'policy' }, approval: { result: 'required' },
+    title: 'Choose new worktree ports', description: 'Replace retained host-port assignments after all services, commands and Project terminals for this worktree have stopped. New runs use the replacement addresses.',
+    safety: 'danger', sideEffectClass: 'write', executionPlacement: 'machine', placements: [],
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    bindings: { mcpToolName: 'projects_worktree_ports_reassign', rpcMethod: PROJECT_DEFINITION_ACTION_RPC_METHODS_V1[PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID] },
+    cli: { acceptsServerId: true, commands: [{ path: ['project', 'worktree', 'ports', 'reassign'], visibility: 'canonical' }] },
+    inputSchema: ProjectWorktreePortsReassignInputSchema, outputSchema: WorktreePortsResultV1Schema,
+    inputHints: { fields: [{ path: 'workspace', title: 'Qualified checkout', prompt: 'Which worktree?', widget: 'json', required: true }] },
+  },
   {
     id: 'projects.inspect', approval: {result: 'required'}, title: 'Inspect project definitions', description: 'Read current project declarations and detect native references without evaluating project code. Setup readiness uses the same requester-bound review as Scripts; unknown includes the actual unavailable or failed-read reason and never proves setup is unnecessary. Reading readiness does not approve or run setup. To inspect this checkout from an ongoing Session, first call session.status.get with {"sessionId":"self","includeAcceptedWorkspace":true}; pass its result.acceptedWorkspace.checkout unchanged as workspace. If that proof is absent, report the checkout identity unavailable; do not guess identifiers from a folder name or path. Then read projects.worker.preferences.get with the checkout serverId and workspaceId as refId. A script is worker-portable only when its declaration permits it; absent execution permission and detected native commands remain primary-only. An unavailable or invalid definition is not an empty script list. The default read (read.kind "scripts") lists undeclared native Script references (name and file) with empty importCandidates; to get a reference\'s resolved command, availability and invocation, call again with read {"kind":"detail","sources":[...]} passing the chosen detection.entries unchanged. Every result carries a revision; passing it back as ifRevision returns {unchanged:true, revision} with no body while the result is equal, so keep using the result you hold. Use these current reads rather than an earlier authoring prompt.',
     safety: 'safe', sideEffectClass: 'read', executionPlacement: 'machine', placements: [],

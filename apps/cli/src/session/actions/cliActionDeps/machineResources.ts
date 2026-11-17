@@ -347,12 +347,14 @@ export function createCliMachineResourceActionDeps(
       const { withMachineServiceTarget, withMachineServiceLogTarget } = await import('@/daemon/local/services/launch/machineServiceTarget');
       const select = actionId === MACHINE_SERVICE_LOGS_READ_ACTION_ID ? withMachineServiceLogTarget : withMachineServiceTarget;
       const resource = context.machineServiceLogsResource;
+      const scopeRequester = selectHostRequesterExecutionIdentity({ actionContext: context, hostHomeServerIdentityId: projectHomeId });
       return select({ request: { ...input, ...(resource ? { expectedGeneration: resource.expectedGeneration } : {}) }, machineId: direct.machineId, serverId: projectHomeId,
+        ...(scopeRequester.kind !== 'unknown' ? { requester: scopeRequester.requester } : {}),
         ...(context.signal ? { signal: context.signal } : {}), assertCurrent: async () => {
           if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
           await assertProjectRequesterCurrent(context);
         } }, async handle => {
-        if (handle.kind === 'adopted') return handle.actionScope;
+        if (handle.kind !== 'environment') return handle.actionScope;
         const allowed = await canReadServiceEnvironment(input.serverId, handle.environmentId, context);
         return allowed === true ? handle.actionScope : allowed;
       });
@@ -370,13 +372,15 @@ export function createCliMachineResourceActionDeps(
         import('@/plugins/runtime/invocation/services/managedServiceNativeLogs'),
       ]);
       const resource = context.machineServiceLogsResource;
+      const logRequester = selectHostRequesterExecutionIdentity({ actionContext: context, hostHomeServerIdentityId: projectHomeId });
       return withMachineServiceLogTarget({ request: { ...input, ...(resource ? { expectedGeneration: resource.expectedGeneration } : {}) }, machineId: direct.machineId, serverId: projectHomeId,
+        ...(logRequester.kind !== 'unknown' ? { requester: logRequester.requester } : {}),
         ...(signal ? { signal } : {}), ...(approvalScope ? { approvalScope } : {}), assertCurrent: async () => {
           if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
           await assertProjectRequesterCurrent(context);
         } }, async handle => {
         if (!approvalScope) return { ok: false as const, errorCode: 'approval_stale', error: 'approval_stale' };
-        if (handle.kind !== 'adopted') {
+        if (handle.kind === 'environment') {
           const allowed = await canReadServiceEnvironment(input.serverId, handle.environmentId, context);
           if (allowed !== true) return allowed;
         }
@@ -399,7 +403,7 @@ export function createCliMachineResourceActionDeps(
           try {
             subscription = await handle.watchLogs({ signal: observation.signal,
               ...(cursor ? { cursor } : {}), emit(value) {
-                if (handle.kind === 'adopted') { observation.emit(value); return; }
+                if (handle.kind !== 'environment') { observation.emit(value); return; }
                 // Native invalidations carry no page, but must stop demanding
                 // output once this Environment is no longer readable.
                 void canReadServiceEnvironment(input.serverId, handle.environmentId, context).then(allowed => {
@@ -413,7 +417,7 @@ export function createCliMachineResourceActionDeps(
             handle.retirementSignal.removeEventListener('abort', retired);
             await subscription.dispose();
           } });
-          if (handle.kind !== 'adopted') {
+          if (handle.kind === 'environment') {
             const allowed = await canReadServiceEnvironment(input.serverId, handle.environmentId, context);
             if (allowed !== true) { observation.retire(); return allowed; }
           }

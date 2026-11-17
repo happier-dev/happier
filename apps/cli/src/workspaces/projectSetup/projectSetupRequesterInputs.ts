@@ -5,6 +5,7 @@ import { readSavedSecretMaterializerForOperation } from "@/settings/secrets/save
 import { projectRuntimeAccountRowsInput, readProjectAccountRows, type ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
 import type { ProjectFiniteActionRuntime } from './projectFiniteAction';
 import type { ProjectSetupAcceptedAssociation } from './projectSetupAcceptedWorkspace';
+import { mergeProjectLaunchLayers } from './projectLaunchEnvironment';
 
 /** Project defaults are references in the existing Account row; invocation refs override selected defaults. */
 export async function resolveProjectRequesterSecretBindings(account: ProjectAccountRowsInput, input: Readonly<{
@@ -23,7 +24,7 @@ export async function resolveProjectRequesterSecretBindings(account: ProjectAcco
         // Removed or renamed requirements do not acquire stale Project references.
         projectBindings = Object.fromEntries(secretNames.flatMap(name => saved?.[name] ? [[name, saved[name]]] : []));
     }
-    const bindings = { ...projectBindings, ...input.environmentBindings?.bindings };
+    const bindings = mergeProjectLaunchLayers(projectBindings, undefined, input.environmentBindings?.bindings);
     return Object.keys(bindings).length ? { v: 1, bindings } : undefined;
 }
 

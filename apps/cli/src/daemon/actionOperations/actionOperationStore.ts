@@ -395,6 +395,12 @@ export function createActionOperationStore(options?: Readonly<{
       if (removed) notifySubscribers(removedWork ? undefined : 'observation');
     },
 
+    /** Host-private installed work facts, including preparation before a terminal exists. */
+    readActiveProjectCommands(): readonly Extract<ActionOperationDomainRefV1, { kind: 'projectCommand' }>[] {
+      return [...snapshots.values()].flatMap(snapshot => !isTerminal(snapshot) && snapshot.domainRef?.kind === 'projectCommand'
+        ? [snapshot.domainRef] : []);
+    },
+
     create(input: CreateActionOperationInput): ActionOperationSnapshotV1 {
       if (snapshots.has(input.operationId)) {
         throw new Error(`Duplicate action operation id: ${input.operationId}`);

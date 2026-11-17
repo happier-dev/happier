@@ -159,7 +159,7 @@ describe('inspectProjectDefinitions', () => {
         expect(detection.entries).toContainEqual({ source: { kind: 'native', tool: 'package_script', file: 'web/package.json', target: 'dev' }, usage: 'script' });
         expect(detection.entries.every((entry) => !('command' in entry.source))).toBe(true);
         expect(await resolveNativePackageManager(join(root, 'web'))).toEqual({ manager, version: '1.2.3', root });
-        expect((await discoverLocalServiceRunTargets({ roots: [root] }))[0]?.packageManager).toBe(manager);
+        expect(((await discoverLocalServiceRunTargets({ roots: [root] })).targets)[0]?.packageManager).toBe(manager);
         expect(await readFile(join(root, 'web/package.json'), 'utf8')).toBe(before);
         expect((await readdir(root)).sort()).toEqual(['package.json', 'web']);
     });

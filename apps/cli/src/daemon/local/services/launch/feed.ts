@@ -1,7 +1,8 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionOperationSnapshotV1, LocalServiceLauncherSnapshotV1, LocalServiceLaunchTargetV1 } from '@happier-dev/protocol';
 
-import { expandHomeDirPath } from '../../../../utils/path/expandHomeDirPath';
+import { getHostWorktreePortsOwner, type WorktreePortsOwner } from '@/workspaces/execution/worktreePorts';
+import { canonicalAbsolutePathsEqual, expandHomeDirPath } from '../../../../utils/path/expandHomeDirPath';
 import { waitForChangeOrDeadline } from '@/daemon/lifecycle/waitForChangeOrDeadline';
 import { isWorkspacePathWithin } from '../inventory/provenance';
 import type { LocalServiceInventoryRegistry } from '../inventory/registry';
@@ -9,7 +10,7 @@ import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner'
 import { buildLocalServicePreviewBrowserTarget, listLocalServicePreviewResources, type LocalServicePreviewRegistry } from '../preview/registry';
 import { readProjectManagedServicePreviewEndpoint } from '../preview/projectEndpoint';
 import { selectVisibleMachineProjectServices } from './machineServiceDisclosure';
-import type { LocalServiceLauncherRunTarget, LocalServiceRunTargetDiscoveryOptions } from './runTargets';
+import type { LocalServiceLauncherRunTarget, LocalServiceRunTargetDiscovery, LocalServiceRunTargetDiscoveryOptions } from './runTargets';
 import type { LocalServiceLauncherHistoryStore } from './leaves';
 import { buildLocalServiceLauncherSnapshot, formatLocalServiceLauncherTitle } from './suggestions';
 import type { createManagedServicesOwner, ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
@@ -42,7 +43,7 @@ export type LocalServiceLauncherFeed = Readonly<{
 }>;
 
 export type LocalServiceRunTargetsProvider =
-    (workspaceRoots?: readonly string[], options?: LocalServiceRunTargetDiscoveryOptions) => readonly LocalServiceLauncherRunTarget[] | Promise<readonly LocalServiceLauncherRunTarget[]>;
+    (workspaceRoots?: readonly string[], options?: LocalServiceRunTargetDiscoveryOptions) => LocalServiceRunTargetDiscovery | Promise<LocalServiceRunTargetDiscovery>;
 
 /**
  * Resolves the workspace PATH(s) a session id is anchored to. The feed turns a
@@ -60,6 +61,7 @@ export type CreateLocalServiceLauncherFeedInput = Readonly<{
     previewRegistry: LocalServicePreviewRegistry;
     runTargets?: readonly LocalServiceLauncherRunTarget[] | LocalServiceRunTargetsProvider;
     projectManagedServices?: ProjectManagedServicesFeed;
+    worktreePorts?: Pick<WorktreePortsOwner, 'read'>;
     /** Already scoped by the installed Account operation owner, never client pending state. */
     startOperations?: () => readonly ActionOperationSnapshotV1[];
     history?: Pick<LocalServiceLauncherHistoryStore, 'isDismissed'>;
@@ -119,6 +121,10 @@ function managedTarget(handle: ProjectManagedServiceHandle): LocalServiceLaunchT
         declaration: handle.declaration, cwd: handle.cwd,
         ...(handle.execution ? { execution: handle.execution } : {}), startedByAccountId: handle.requester.accountId }),
         title,
+        ...(handle.terminalView ? { terminalView: handle.terminalView } : {}),
+        ...(handle.kind === 'workspace' && handle.portSource ? { portSource: handle.portSource } : {}),
+        ...(handle.kind === 'workspace' ? { browserTarget: { kind: 'localServicePreview' as const,
+            targetId: handle.serviceId, machineId: handle.workspace.machineId, display: { title } } } : {}),
         ...(handle.kind === 'workspace' ? { subtitle: handle.cwd } : {}), confidence: 'high',
         state: snapshot.state === 'starting' ? 'starting' : 'available',
         serviceState: snapshot.state,
@@ -155,9 +161,9 @@ async function resolveRunTargets(
     onError: CreateLocalServiceLauncherFeedInput['onRunTargetsError'],
     workspaceRoots?: readonly string[],
     options?: LocalServiceRunTargetDiscoveryOptions,
-): Promise<readonly LocalServiceLauncherRunTarget[] | undefined> {
-    if (!value) return [];
-    if (typeof value !== 'function') return value;
+): Promise<LocalServiceRunTargetDiscovery | undefined> {
+    if (!value) return { targets: [], worktreePortRoots: [] };
+    if (typeof value !== 'function') return { targets: value, worktreePortRoots: [] };
 
     try {
         return await value(workspaceRoots, options);
@@ -205,6 +211,7 @@ export function createLocalServiceLauncherFeed(
     // checkout × script collection, including after a Workspace read or watch update.
     let observedDeclarations: readonly LocalServiceLauncherRunTarget[] = [];
     let observedPackageScripts: readonly LocalServiceLauncherRunTarget[] = [];
+    let observedWorktreePortRoots: readonly string[] = [];
     // Record which scopes have their first observation; the collections above remain
     // the sole data owner. An unscoped read does not admit a later, newly requested root.
     const declarationScopes = new Set<string | undefined>();
@@ -220,13 +227,13 @@ export function createLocalServiceLauncherFeed(
             // Decide inside the existing serial read so concurrent first demands share it.
             if (reuseObservation && hasObservation(declarationScopes, workspaceRoots)
                 && (options?.includePackageScripts === false || hasObservation(packageScriptScopes, workspaceRoots))) return;
-            const observation = resolveRunTargets(input.runTargets, input.onRunTargetsError, workspaceRoots, options).then(targets => {
+            const observation = resolveRunTargets(input.runTargets, input.onRunTargetsError, workspaceRoots, options).then(result => {
                 // A retired read can finish native I/O, but may neither hold a
                 // fresh viewer nor replace its admitted declarations afterward.
-                if (signal?.aborted || targets === undefined) return;
+                if (signal?.aborted || result === undefined) return;
                 const declarations: LocalServiceLauncherRunTarget[] = [];
                 const packageScripts: LocalServiceLauncherRunTarget[] = [];
-                for (const target of targets) {
+                for (const target of result.targets) {
                     if ('launchIntent' in target || target.packageScript) packageScripts.push(target);
                     else declarations.push(target);
                 }
@@ -235,6 +242,10 @@ export function createLocalServiceLauncherFeed(
                     ...next.filter(target => workspaceRoots.some(root => isWorkspacePathWithin(root, target.cwd))),
                 ] : next;
                 observedDeclarations = replaceObservation(observedDeclarations, declarations);
+                observedWorktreePortRoots = workspaceRoots ? [
+                    ...observedWorktreePortRoots.filter(observed => !workspaceRoots.some(root => isWorkspacePathWithin(root, observed))),
+                    ...result.worktreePortRoots.filter(observed => workspaceRoots.some(root => isWorkspacePathWithin(root, observed))),
+                ] : result.worktreePortRoots;
                 for (const root of workspaceRoots ?? [undefined]) declarationScopes.add(root);
                 // A declarations-only read has no new observation of Workspace suggestions.
                 if (options?.includePackageScripts !== false) {
@@ -273,6 +284,10 @@ export function createLocalServiceLauncherFeed(
             if (!bindingsOnly && request?.discovery !== 'cached') {
                 await refreshRunTargets(workspaceScopePaths, request?.signal, { includePackageScripts }, true);
             }
+            const selectedRoot = !bindingsOnly && workspaceScopePaths?.length === 1 ? workspaceScopePaths[0] : undefined;
+            const worktreePorts = selectedRoot && observedWorktreePortRoots.some(root => canonicalAbsolutePathsEqual(root, selectedRoot))
+                ? { rootPath: selectedRoot, result: await (input.worktreePorts ?? getHostWorktreePortsOwner()).read({ rootPath: selectedRoot }) }
+                : undefined;
             const runTargets = bindingsOnly ? [] : includePackageScripts
                 ? [...observedDeclarations, ...observedPackageScripts] : observedDeclarations;
             // The scan publisher projects this same observation before deciding whether to wake
@@ -353,6 +368,7 @@ export function createLocalServiceLauncherFeed(
             }
             return {
                 ...snapshot,
+                ...(worktreePorts ? { worktreePorts } : {}),
                 targets: [...sortTargets(projectStartingServiceTargets([
                     ...snapshot.targets.filter(target => !managedIds.has(target.id)
                         && !(target.sourceClass?.kind === 'inventory_entry' && correlatedInventoryIds.has(target.sourceClass.inventoryEntryId)))

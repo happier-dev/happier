@@ -5,6 +5,7 @@ import type { ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/o
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { QualifiedProjectTrustProjectV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
 import { createHash } from 'node:crypto';
+import { composeProjectLaunchEnvironment, prepareProjectLaunchEnvironment } from './projectLaunchEnvironment';
 import { relative, resolve } from 'node:path';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import type { TerminalPtySessionManager, TerminalPtyCustody, TerminalPtyEnsureInput } from '@/terminal/pty/sessions';
@@ -28,6 +29,9 @@ import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
 import { resolveProjectNativeCommand } from './projectNativeResolution';
 import { readLiteralCommandExecutedFiles } from './literalCommandFiles';
+import { prepareProjectWorktreeRuntime } from '@/workspaces/execution/projectWorktreeRuntime';
+import { readProjectEffectiveDefinition } from './projectEffectiveDefinition';
+import { createProjectDotenvPreparation } from './projectDotenv';
 
 export type ProjectSetupOperationContext = Parameters<Parameters<HostActionOperationRuntime['observeExecution']>[0]['execute']>[0]
     & Pick<ActionExecutorContext, 'externalActionExecutionAuthorization' | 'externalActionTarget'>;
@@ -237,6 +241,11 @@ export function createProjectNativeLaunchAdmission(input: Pick<ProjectSetupExecu
     }
     return {
         status: 'ready' as const, reviewedEffectDigest: plan.reviewedEffectDigest,
+        launchEnvironment: command?.kind === 'native'
+            ? composeProjectLaunchEnvironment({ originalEnvironment: projectBaseEnvironment(input, plan),
+                requirements: plan.manifest?.environmentVariables ?? [], invocationEnvironment: command.resolution.environmentOverlay,
+                platform: input.platform }).environment
+            : projectBaseEnvironment(input, plan),
         toolchain: { selection: plan.toolchain, root: plan.workspace.rootPath,
             platform: input.platform ?? process.platform, io: environmentIo,
             ...(nativeCommandToolchain ? { nativeCommandToolchain } : {}),
@@ -264,11 +273,21 @@ export async function authorizePreparedProjectCommand(input: ProjectSetupExecuti
         }
     };
     assertCurrent();
-    const env = projectBaseEnvironment(input, plan);
+    if (plan.runtimeEnvironment === undefined) {
+        const runtime = await prepareProjectWorktreeRuntime({ workspace: plan.workspace, manifest: plan.manifest, signal });
+        if (runtime.kind !== 'ready') throw Object.assign(new Error(runtime.code), { code: runtime.code, details: { reason: runtime.reason } });
+        const finalInput = await prepareProjectLaunchEnvironment({ workspace: plan.workspace,
+            requirements: plan.manifest?.environmentVariables ?? [], originalEnvironment: plan.preparedLaunchInput.originalEnvironment,
+            dotenvPreparation: plan.dotenvPreparation, projectEnvironment: plan.configEnvironment,
+            runtimeEnvironment: runtime.runtimeEnvironment, profileEnvironment: input.preparation.profileEnvironment,
+            invocationEnvironment: input.preparation.invocationEnvironment, platform: input.platform });
+        if (finalInput.kind === 'refused') throw Object.assign(new Error(finalInput.code), { code: finalInput.code });
+        plan = { ...plan, runtimeEnvironment: runtime.runtimeEnvironment, preparedLaunchInput: finalInput.launchInput };
+    }
     if (command.kind === 'pluginNativeReference') {
         if (!input.preparation.retainNativeInvocation) throw Object.assign(new Error('native_adapter_invocation_unavailable'), { code: 'native_adapter_invocation_unavailable' });
         const acquired = command.lease.acquireProduction({ root: plan.workspace.rootPath,
-            environment: plan.configEnvironment, signal, executionKind: input.executionKind,
+            environment: projectBaseEnvironment(input, plan), signal, executionKind: input.executionKind,
             requesterIdentity: input.requesterIdentity,
             assertLaunchCurrent: input.beforeNativeEffect });
         if (acquired.kind !== 'ready') throw Object.assign(new Error(acquired.code), { code: acquired.code });
@@ -298,8 +317,8 @@ export async function authorizePreparedProjectCommand(input: ProjectSetupExecuti
         assertCurrent();
         command = { kind: 'pluginNative', source: command.source, resolution: resolved.command, lease };
     }
-    Object.assign(env, command.kind === 'native' ? command.resolution.environmentOverlay : {});
     const projectLaunch = createProjectNativeLaunchAdmission(input, plan, command, signal);
+    const env = projectLaunch.launchEnvironment;
     if (command.kind === 'pluginNative') {
         const launch = await authorizePluginExecLaunchForHost(command.lease.exec, {
             executable: command.resolution.executable, args: command.resolution.args,
@@ -320,12 +339,8 @@ export async function authorizePreparedProjectCommand(input: ProjectSetupExecuti
     });
 }
 
-export function projectBaseEnvironment(input: Pick<ProjectSetupExecutionInput, 'hostEnvironment'>, plan: PreparedProjectSetupPlan): Record<string, string> {
-    const env: Record<string, string> = {};
-    for (const [key, value] of Object.entries(input.hostEnvironment ?? process.env)) {
-        if (value !== undefined) env[key] = value;
-    }
-    return Object.assign(env, plan.configEnvironment);
+export function projectBaseEnvironment(_input: Pick<ProjectSetupExecutionInput, 'hostEnvironment'>, plan: PreparedProjectSetupPlan): Record<string, string> {
+    return { ...plan.preparedLaunchInput.environment };
 }
 
 /** Only bytes consumed by this command/environment can change its admitted launch. */
@@ -365,7 +380,24 @@ async function executePreparedProjectSetup(input: ProjectSetupExecutionInput): P
         return failure(signal.aborted ? 'cancelled' : error instanceof Error && 'code' in error && typeof error.code === 'string'
             ? error.code : 'project_setup_launch_refused');
     };
-    const preparation = { ...input.preparation, signal,
+    const originalEnvironment = Object.freeze({ ...(input.preparation.originalEnvironment ?? admittedInput.hostEnvironment) });
+    const dotenvPreparation = input.preparation.dotenvPreparation
+        ?? createProjectDotenvPreparation(input.preparation.workspace.rootPath, originalEnvironment);
+    let runtimeEnvironment = input.preparation.runtimeEnvironment;
+    let acceptedSetup = input.preparation.acceptedSetup;
+    if (runtimeEnvironment === undefined) {
+        try {
+            const definition = await readProjectEffectiveDefinition({ root: input.preparation.workspace.rootPath,
+                account: input.preparation.requester, project: input.preparation.projectAssociation.project,
+                serverHttpBaseUrl: input.preparation.requester.serverHttpBaseUrl, acceptedSetup, signal });
+            acceptedSetup = definition.acceptedSetup;
+            const runtime = await prepareProjectWorktreeRuntime({ workspace: input.preparation.workspace,
+                manifest: definition.effectiveDefinition.effectiveManifest, signal });
+            if (runtime.kind !== 'ready') return failure(runtime.code, { reason: runtime.reason });
+            runtimeEnvironment = runtime.runtimeEnvironment;
+        } catch (error) { return launchFailure(error); }
+    }
+    const preparation = { ...input.preparation, signal, originalEnvironment, dotenvPreparation, runtimeEnvironment, acceptedSetup,
         requesterIdentity: input.preparation.requesterIdentity ?? input.requesterIdentity,
         successHomeDir: input.preparation.successHomeDir ?? configuration.happyHomeDir };
     const prepared = await prepareProjectSetup(preparation);

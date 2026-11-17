@@ -7,18 +7,24 @@ const id = z.string().check(z.trim(), z.minLength(1));
 const shellLaunch = {
   launch: z.optional(DaemonTerminalLaunchIntentSchema),
 };
+export const SessionTerminalViewTargetV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('terminal_view'), machineId: id, terminalId: id, terminalKey: id, cwd: id,
+  workspace: z.optional(WorkspaceAddressV1Schema), sessionId: z.optional(id),
+  /** Only the service supervisor grants input to its existing process. */
+  interactive: z.optional(z.literal(true)),
+}).check(z.refine(target => !target.workspace || target.workspace.machineId === target.machineId, {
+  message: 'Borrowed output and its checkout must address the same Machine',
+})));
+export type SessionTerminalViewTargetV1 = z.infer<typeof SessionTerminalViewTargetV1Schema>;
 export const SessionTerminalTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('workspace_shell'), workspace: z.optional(WorkspaceAddressV1Schema), ...shellLaunch }),
   z.strictObject({ kind: z.literal('session_attach') }),
   z.strictObject({ kind: z.literal('machine_shell'), machineId: id, cwd: id, ...shellLaunch }),
-  z.strictObject({ kind: z.literal('terminal_view'), machineId: id, terminalId: id, terminalKey: id, cwd: id,
-    workspace: z.optional(WorkspaceAddressV1Schema), sessionId: z.optional(id) }),
+  SessionTerminalViewTargetV1Schema,
 ]).check(z.refine((target) => !('launch' in target && target.launch?.kind === 'session_attach'), {
   message: 'Agent attachments use the dedicated target',
 }), z.refine(target => !('launch' in target && target.launch?.kind === 'service_shell'), {
   message: 'Service shells use the Machine terminal owner',
-}), z.refine(target => target.kind !== 'terminal_view' || !target.workspace || target.workspace.machineId === target.machineId, {
-  message: 'Borrowed output and its checkout must address the same Machine',
 })));
 export type SessionTerminalTargetV1 = z.infer<typeof SessionTerminalTargetV1Schema>;
 /** Reference only: the existing approval Artifact owns the original strict Action input and receipt. */

@@ -1,3 +1,4 @@
+import { projectBaseEnvironment } from './projectSetupExecution';
 import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
 import axios from 'axios';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
@@ -24,7 +25,7 @@ import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/
 import { pixiAdapter, pixiPlugin, pixiRuntime, importedPixiToolchain } from '../../../../../packages/plugin-sdk/fixtures/external-targeted-packages/project-native-source';
 
 import { createProjectSetupSuccessStore } from './projectSetupSuccess';
-import { prepareProjectSetup, reviewProjectSetupEffect, inspectProjectSetup, inspectProjectSetupReadiness, type ProjectSetupPreparationInput } from './projectSetupPreparation';
+import { prepareProjectSetup, reviewProjectSetupEffect, reviewProjectExecutionEnvironment, inspectProjectSetup, inspectProjectSetupReadiness, type ProjectSetupPreparationInput } from './projectSetupPreparation';
 import { projectNativeSystemIo } from './projectNativeSystemIo';
 import * as scmProcess from '@/scm/runtime';
 import { performance } from 'node:perf_hooks';
@@ -57,6 +58,8 @@ describe('current Project setup effect and preparation admission', () => {
         for (const [file, content] of Object.entries(files)) await writeFile(join(root, file), content);
         const workspace = { id: 'workspace', serverId: 'home', machineId: 'machine-a', rootPath: root, projectKey: 'project-p', createdAtMs: 1 };
         const input: ProjectSetupPreparationInput = {
+            acceptedSetup: { kind: 'ready' },
+            originalEnvironment: {},
             workspace, projectAssociation: { workspace, project: { serverId: 'home', projectId: 'project-p' } },
             requester: { credentials: { token: 'approving-user', encryption: null }, serverHttpBaseUrl: 'https://requester.example' },
             requesterIdentity: requesterIdentity(),
@@ -88,6 +91,69 @@ describe('current Project setup effect and preparation admission', () => {
         if (result.kind !== 'reviewed') throw new Error(result.code);
         return result.plan;
     }
+
+    it('prepares only declared private dotenv values without publishing them in review or consent', async () => {
+        const { root, input } = await fixture({ version: 1, environmentVariables: [
+            { name: 'DATABASE_URL', kind: 'config', required: true },
+            { name: 'MODE', kind: 'config', required: false },
+        ] }, { '.env': 'DATABASE_URL=postgres://private-sentinel/db\nMODE=base\nUNDECLARED=private-other\n',
+            '.env.local': 'MODE=local\n' });
+        const plan = await reviewed({ ...input, configEnvironment: { MODE: 'invocation' } });
+        expect(projectBaseEnvironment({ hostEnvironment: { MODE: 'host' } }, plan)).toEqual({
+            DATABASE_URL: 'postgres://private-sentinel/db', MODE: 'invocation',
+        });
+        expect(JSON.stringify(plan.reviewedEffect)).not.toContain('private-sentinel');
+        await writeFile(join(root, '.env'), 'DATABASE_URL=postgres://changed-secret/db\nMODE=base\n');
+        const changed = await reviewed({ ...input, configEnvironment: { MODE: 'invocation' } });
+        expect(changed.reviewedEffectDigest).toBe(plan.reviewedEffectDigest);
+    });
+
+    it('admits required invocation config in the final private shell input and preserves explicit removals', async () => {
+        const { input } = await fixture({ version: 1, environmentVariables: [
+            { name: 'MODE', kind: 'config', required: true },
+        ] });
+        const result = await reviewProjectExecutionEnvironment({ ...input, originalEnvironment: { REMOVE: 'host' },
+            profileEnvironment: { MODE: 'profile' }, invocationEnvironment: { MODE: 'invocation', REMOVE: undefined } });
+        expect(result.kind).toBe('reviewed');
+        if (result.kind !== 'reviewed') throw new Error(result.code);
+        expect(result.plan.preparedLaunchInput?.environment).toEqual({ MODE: 'invocation' });
+        expect(JSON.stringify(result.plan.reviewedEffect)).not.toContain('invocation');
+    });
+
+    it('keeps required secret references unavailable despite same-named dotenv or explicit plaintext', async () => {
+        const { input } = await fixture({ version: 1, environmentVariables: [
+            { name: 'TOKEN', kind: 'secret', required: true },
+        ] }, { '.env': 'TOKEN=dotenv-secret-sentinel\n' });
+        expect(await reviewProjectSetupEffect({ ...input, configEnvironment: { TOKEN: 'plaintext-secret-sentinel' } }))
+            .toEqual({ kind: 'refused', code: 'project_environment_binding_unavailable' });
+    });
+
+    it('omits plaintext for an unbound optional secret instead of inheriting the host credential', async () => {
+        const { input } = await fixture({ version: 1, environmentVariables: [
+            { name: 'TOKEN', kind: 'secret', required: false },
+        ] }, { '.env': 'TOKEN=dotenv-secret-sentinel\n' });
+        const plan = await reviewed({ ...input, configEnvironment: { TOKEN: 'explicit-plaintext' },
+            originalEnvironment: { TOKEN: 'host-credential', OTHER: 'preserved' } });
+        expect(projectBaseEnvironment({ hostEnvironment: { TOKEN: 'host-credential', OTHER: 'preserved' } }, plan))
+            .toEqual({ OTHER: 'preserved' });
+    });
+
+    it('prepares shared-only setup and keeps consent when a personal override masks a publication', async () => {
+        const { root, input } = await fixture({ version: 1 });
+        await rm(join(root, '.happier/project.json'));
+        const shared = { sourceId: 'shared-source', contentRevision: { headerVersion: 1, bodyVersion: 1 }, digest: 'a'.repeat(64),
+            manifest: { version: 1 as const, workspace: { setup: [{ kind: 'command' as const, command: 'echo shared' }] } } };
+        const sharedOnly = await reviewed({ ...input, acceptedSetup: { kind: 'ready', acceptedSharedSetup: shared } });
+        expect(sharedOnly.fileBasis).toEqual({ kind: 'absent' });
+        expect(sharedOnly.commands).toMatchObject([{ source: { command: 'echo shared' } }]);
+        const setupOverrides = { version: 1 as const, workspace: { setup: [{ kind: 'command' as const, command: 'echo personal' }] } };
+        const before = await reviewed({ ...input, acceptedSetup: { kind: 'ready', acceptedSharedSetup: shared, setupOverrides } });
+        const after = await reviewed({ ...input, acceptedSetup: { kind: 'ready', setupOverrides,
+            acceptedSharedSetup: { ...shared, contentRevision: { headerVersion: 1, bodyVersion: 2 }, digest: 'b'.repeat(64),
+                manifest: { version: 1, workspace: { setup: [{ kind: 'command', command: 'echo publication' }] } } } } });
+        expect(before.commands).toMatchObject([{ source: { command: 'echo personal' } }]);
+        expect(after.reviewedEffectDigest).toBe(before.reviewedEffectDigest);
+    });
 
     it('projects current target completion from reviewed inputs rather than retained operation success', async () => {
         const f = await fixture({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }], setupInputs: ['input.txt'] } }, { 'input.txt': 'first' });

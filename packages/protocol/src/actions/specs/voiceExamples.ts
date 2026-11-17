@@ -79,6 +79,7 @@ export const ACTION_VOICE_ARGS_EXAMPLES: Readonly<Partial<Record<ActionId, strin
   "projects.script.run": "{\"workspace\":{\"serverId\":\"home\",\"workspaceId\":\"example\",\"machineId\":\"machine-1\",\"rootPath\":\"/workspace\"},\"selection\":{\"kind\":\"named\",\"name\":\"example\"}}",
   "projects.compute.exec": "{\"workspace\":{\"serverId\":\"home\",\"workspaceId\":\"example\",\"machineId\":\"machine-1\",\"rootPath\":\"/workspace\"},\"executable\":\"example\",\"argv\":[],\"cwd\":\"example\"}",
   "projects.inspect": "{\"workspace\":{\"serverId\":\"home\",\"workspaceId\":\"example\",\"machineId\":\"machine-1\",\"rootPath\":\"/workspace\"}}",
+  "projects.worktree.ports.reassign": "{\"workspace\":{\"serverId\":\"home\",\"workspaceId\":\"example\",\"machineId\":\"machine-1\",\"rootPath\":\"/workspace\"}}",
   "projects.manifest.update": "{\"workspace\":{\"serverId\":\"home\",\"workspaceId\":\"example\",\"machineId\":\"machine-1\",\"rootPath\":\"/workspace\"},\"expectedBasis\":{\"kind\":\"absent\"},\"bytes\":\"example\"}",
   "session.organization.pin.set": "{\"pinned\":false,\"sessionId\":\"session-1\"}",
   "widgets.catalog.list": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}}}",

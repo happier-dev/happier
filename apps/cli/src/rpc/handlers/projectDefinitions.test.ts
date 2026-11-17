@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,6 +17,7 @@ import { updateSettings } from '@/persistence';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { assertActionOutputContract } from '@/testkit/actionOutputContract';
 import { logger } from '@/ui/logger';
+import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -580,4 +581,30 @@ describe('project definition Actions through registered Machine RPC', () => {
     })).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
     await expect(readFile(join(root, '.happier/project.json'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
+});
+
+it('refuses port reassignment when the installed worktree activity owners are unavailable', async () => {
+  const h = await setup();
+  const result = await h.producer({ actionId: 'projects.worktree.ports.reassign', input: { workspace: h.workspace },
+    context: { serverId: h.workspace.serverId } });
+  expect(result).toMatchObject({ kind: 'unavailable', code: 'project_worktree_ports_unavailable', reason: 'activity_unavailable' });
+});
+
+it('refuses reassignment for a preparing Project command in a nested directory through a symlink root', async () => {
+  const h = await setup();
+  const nested = join(h.root, 'package');
+  const alias = join(h.root, 'alias');
+  await mkdir(nested);
+  await symlink(h.root, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const store = createActionOperationStore();
+  store.create({ operationId: 'preparing', scope: { accountId: 'account', machineId: h.workspace.machineId },
+    actionId: 'projects.prepare', title: 'Prepare', cancellation: 'supported', inputIdentity: '{}',
+    domainRef: { kind: 'projectCommand', purpose: 'setup', serverId: h.workspace.serverId,
+      machineId: h.workspace.machineId, workspaceRefId: h.workspace.workspaceId, cwd: nested } });
+  const action = createProjectDefinitionAction({ serverId: h.workspace.serverId, machineId: h.workspace.machineId,
+    workingDirectory: h.root, accessPolicy: { kind: 'restrictedRoots', roots: [h.root] },
+    readActiveProjectCommands: store.readActiveProjectCommands });
+  expect(await action({ actionId: 'projects.worktree.ports.reassign', input: { workspace: { ...h.workspace, rootPath: alias } },
+    context: { serverId: h.workspace.serverId } })).toMatchObject({ kind: 'unavailable',
+      code: 'project_worktree_ports_active', reason: 'active' });
 });

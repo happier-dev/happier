@@ -107,6 +107,8 @@ export type HostProjectNativeLaunchAdmission =
     | Readonly<{
         status: 'ready';
         reviewedEffectDigest: string;
+        /** Complete private input from the Project composition owner, before native replacement. */
+        launchEnvironment?: Readonly<Record<string, string>>;
         verifyCurrent?: () => Promise<void>;
         toolchain: Omit<ProjectNativeToolchainInput, 'cwd' | 'env' | 'signal' | 'pluginAdapter'>;
         nativeAdapter?: Omit<ProjectNativePluginAdapterInput, 'launch'>;
@@ -924,7 +926,7 @@ async function produceHostProjectEnvironment(input: HostProjectEnvironmentInput,
     await admitted.verifyCurrent?.();
     assertCurrent();
     const native = await prepareProjectNativeToolchain({
-        ...admitted.toolchain, cwd: input.cwd, env: input.env, signal: input.signal,
+        ...admitted.toolchain, cwd: input.cwd, env: admitted.launchEnvironment ?? input.env, signal: input.signal,
         ...(admitted.nativeAdapter ? { pluginAdapter: { ...admitted.nativeAdapter,
             ...(launch ? { launch } : {}),
         } } : {}),

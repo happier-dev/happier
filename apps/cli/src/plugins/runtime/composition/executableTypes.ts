@@ -280,6 +280,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     activatedPluginIds: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['activatedPluginIds'];
     activateContributionsOnDemand: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['activateContributionsOnDemand'];
     resolveProjectNativeAdapter(reference: PluginContributionIdentityV1, role: ProjectNativeAdapterRoleV1): Promise<ProjectNativeAdapterResolutionV1>;
+    prepareServiceLaunchEnvironments?(input: import('../lifecycle/contributions/targetServiceLaunchEnvironments').ServiceLaunchEnvironmentHostInput): Promise<readonly import('../lifecycle/contributions/targetServiceLaunchEnvironments').PreparedServiceLaunchEnvironmentContribution[]>;
     secretSources?: import('../lifecycle/contributions/targetSecretSources').TargetSecretSourcesV1;
     resolveCaptureSource(reference: PluginContributionIdentityV1): Promise<Readonly<{
             declaration: import('@happier-dev/protocol/plugins/contributions/v2').PluginCaptureSourceContributionV1;

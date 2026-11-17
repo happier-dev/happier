@@ -23,6 +23,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import { normalizeLocalServiceScan } from '../inventory/scanner';
+import { createProjectServiceDeclarationTargetIdV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { createLocalServiceLauncherFeed } from '../launch/feed';
 import { buildBrowserLaunchpadRows, selectRunningServiceForEndedPreview } from '../../../../../../ui/sources/sync/domains/browser/targets/suggestions';
 
@@ -162,7 +163,7 @@ describe('createLocalServicePreviewRoutes lifecycle', () => {
             await new Promise<void>(resolve => replacement.close(() => resolve()));
         }
     });
-    it('refuses retained external-plugin native Service bytes after its exact resource ends', async () => {
+    it('reopens a stable declaration locator while refusing retained bytes after its exact resource ends', async () => {
         const original = createServer((_request, response) => response.end('PLUGIN_A_BYTES'));
         await new Promise<void>(resolve => original.listen(0, '127.0.0.1', resolve));
         const address = original.address();
@@ -173,6 +174,7 @@ describe('createLocalServicePreviewRoutes lifecycle', () => {
         });
         const workspace = { id: 'checkout', serverId: 'home', machineId: MACHINE_ID, rootPath: process.cwd(), createdAtMs: 1 };
         const declaration = { workspaceRefId: workspace.id, selection: { kind: 'manifest' as const, name: 'web' } };
+        const launchTargetId = createProjectServiceDeclarationTargetIdV1(workspace, declaration.selection);
         let adapter: Awaited<ReturnType<typeof startLocalServicePreviewNativeAdapter>> | undefined;
         let reopenedAdapter: Awaited<ReturnType<typeof startLocalServicePreviewNativeAdapter>> | undefined;
         let replacement: ReturnType<typeof createServer> | undefined;
@@ -181,7 +183,7 @@ describe('createLocalServicePreviewRoutes lifecycle', () => {
             // The external program's native lifecycle is the SDK system boundary.
             // Host supervision, preview registration and HTTP adapters remain real.
             const start = (nativeResourceId: string, resource: typeof original) => owner.superviseProject({ kind: 'workspace', workspace, declaration, cwd: workspace.rootPath,
-                serviceId: 'web', specIdentity: 'web', isCurrent: () => true,
+                serviceId: launchTargetId, specIdentity: 'web', isCurrent: () => true,
                 requester: { serverId: 'home', accountId: 'account-1', machineId: MACHINE_ID, installationId: 'installation' },
                 processSpec: { mode: { kind: 'native',
                     instance: { adapter: { pluginId: 'external.fixture', localId: 'web' }, nativeResourceId },
@@ -194,8 +196,7 @@ describe('createLocalServicePreviewRoutes lifecycle', () => {
             });
             const handle = await start('exact-A', original);
             const routes = createLocalServicePreviewRoutes({ machineId: MACHINE_ID, registry: createLocalServicePreviewRegistry(), projectManagedServices: owner });
-            const opened = await routes.openOrCreate({ machineId: MACHINE_ID,
-                serviceTarget: { kind: 'managed_service', machineId: MACHINE_ID, managedServiceId: handle.instanceId, workspaceId: workspace.id, declaration, cwd: workspace.rootPath } });
+            const opened = await routes.openOrCreate({ machineId: MACHINE_ID, launchTargetId });
             if (!opened.ok) throw new Error(opened.reasonCode);
             const preview = opened.response.preview.resource;
             adapter = await startLocalServicePreviewNativeAdapter({ preview, signal: new AbortController().signal,
@@ -221,8 +222,9 @@ describe('createLocalServicePreviewRoutes lifecycle', () => {
             // managed occurrence. That must not revive the retained A view.
             await handle.stop(); // The existing restart path first settles the old starter's custody.
             const restarted = await start('exact-B', replacement);
-            const reopened = await routes.openOrCreate({ machineId: MACHINE_ID,
-                serviceTarget: { kind: 'managed_service', machineId: MACHINE_ID, managedServiceId: restarted.instanceId, workspaceId: workspace.id, declaration, cwd: workspace.rootPath } });
+            expect(await routes.openOrCreate({ machineId: MACHINE_ID, serviceTarget: preview.serviceTarget! }))
+                .toMatchObject({ ok: false, reasonCode: 'stale_service' });
+            const reopened = await routes.openOrCreate({ machineId: MACHINE_ID, launchTargetId });
             if (!reopened.ok) throw new Error(reopened.reasonCode);
             const newPreview = reopened.response.preview.resource;
             expect(newPreview.previewId).not.toBe(preview.previewId);

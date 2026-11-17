@@ -52,6 +52,7 @@ export type SessionTerminalsActionInputById = {
                 rootPath: string;
             };
             sessionId?: string | undefined;
+            interactive?: true | undefined;
         } | {
             kind: 'workspace_shell';
             launch?: undefined | {
@@ -130,6 +131,7 @@ export type SessionTerminalsActionInputById = {
                 rootPath: string;
             };
             sessionId?: string | undefined;
+            interactive?: true | undefined;
         } | {
             kind: 'workspace_shell';
             launch?: undefined | {
@@ -296,6 +298,7 @@ export type SessionTerminalsActionResultById = {
                             rootPath: string;
                         };
                         sessionId?: string | undefined;
+                        interactive?: true | undefined;
                     } | {
                         kind: 'workspace_shell';
                         launch?: undefined | {

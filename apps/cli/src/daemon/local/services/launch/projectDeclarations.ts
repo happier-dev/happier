@@ -1,3 +1,8 @@
+import { composeProjectLaunchEnvironment, prepareProjectLaunchEnvironment, type PreparedProjectLaunchInput } from '@/workspaces/projectSetup/projectLaunchEnvironment';
+import { createProjectDotenvPreparation, type ProjectDotenvPreparation } from '@/workspaces/projectSetup/projectDotenv';
+import { prepareProjectWorktreeRuntime } from '@/workspaces/execution/projectWorktreeRuntime';
+import { getHostWorktreePortsOwner } from '@/workspaces/execution/worktreePorts';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createHash } from 'node:crypto';
 import { isAbsolute, relative } from 'node:path';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
@@ -7,7 +12,7 @@ import type { ProjectCommandSourceV1, ProjectExecutionInputV1 } from '@happier-d
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { readProjectFiniteIngressRefusal, readProjectRuntimeAdmissionRefusal, type ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 import { resolveProjectRequesterSecretInputs } from '@/workspaces/projectSetup/projectSetupRequesterInputs';
-import { readProjectManifest } from '@/workspaces/projectSetup/projectManifestFile';
+import { readProjectEffectiveDefinition } from '@/workspaces/projectSetup/projectEffectiveDefinition';
 import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/projectSetupAcceptedWorkspace';
 import { prepareProjectSetup, type PreparedProjectSetupCommand, type PreparedProjectSetupPlan, type ProjectSetupPreparationInput } from '@/workspaces/projectSetup/projectSetupPreparation';
@@ -45,6 +50,7 @@ import type { ProjectNativeEffectCaptureForHost } from '@/plugins/runtime/invoca
 import { assertNativeComposeAvailable, createNativeComposeLifecycle, NativeComposePrerequisiteError, type NativeComposeObservationIo, type NativeComposeActivatedProject } from './nativeComposeLifecycle';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { logger } from '@/ui/logger';
+import { WorktreePortsUnavailableV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/worktreePortsV1';
 
 type ActionContext = RuntimeActionExecuteArgs['context'];
 type CanonicalPoolRead = RuntimeActionExecuteArgs['executeCanonicalAction'];
@@ -53,6 +59,10 @@ type AdmittedReview = Readonly<{
     request: DaemonLocalServiceLauncherStartRequestV1 & Required<Pick<DaemonLocalServiceLauncherStartRequestV1, 'workspace' | 'declaration'>>;
     ingress: RpcHandlerContext & Required<Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent'>>;
     context: NonNullable<ActionContext>;
+    originalEnvironment: Readonly<NodeJS.ProcessEnv>;
+    /** One Start invocation shares its selected files across remeasurements. */
+    dotenvPreparations?: Map<string, ProjectDotenvPreparation>;
+    runtimeEnvironments?: Map<string, Readonly<Record<string, string>>>;
 }>;
 type SupportedServiceCommand = Exclude<PreparedProjectSetupCommand, { kind: 'pluginNativeReference' }>;
 type SelectedDeclaration = Readonly<{
@@ -64,7 +74,8 @@ type SelectedDeclaration = Readonly<{
     source?: SourceReview;
 }>;
 type PluginRuntimeLease = Readonly<{
-    registry: Readonly<{ projectManagedServices: Pick<ReturnType<typeof createManagedServicesOwner>, 'superviseProject'> }>;
+    registry: Readonly<{ projectManagedServices: Pick<ReturnType<typeof createManagedServicesOwner>, 'superviseProject'> }>
+        & Partial<Pick<ResolvedExecutablePluginRuntimeRegistry, 'prepareServiceLaunchEnvironments'>>;
     release(): Promise<void>;
 }>;
 export type ProjectServiceDeclarationStarterInput = Readonly<{
@@ -170,7 +181,10 @@ const refusal = (error: unknown): Extract<LocalServiceLauncherStartResolution<Se
         && !Array.isArray(error.details) ? error.details : undefined;
     const prerequisite = LocalServiceNativePrerequisiteV1Schema.safeParse(isPluginError(error) && error.code === 'native_tool_unavailable'
         && details && 'prerequisite' in details ? details.prerequisite : undefined);
-    const failure = LocalServiceEstablishmentFailureV1Schema.safeParse(isPluginError(error)
+    const runtimeFailure = WorktreePortsUnavailableV1Schema.safeParse(error && typeof error === 'object' && 'runtimeFailure' in error ? error.runtimeFailure : undefined);
+    const failure = LocalServiceEstablishmentFailureV1Schema.safeParse(runtimeFailure.success
+        ? { cause: 'runtime_unavailable', reason: runtimeFailure.data.reason,
+            ...(runtimeFailure.data.causeCode ? { causeCode: runtimeFailure.data.causeCode } : {}) } : isPluginError(error)
         && error.code === 'plugin_managed_service_establishment_failed'
         && details && 'establishmentFailure' in details ? details.establishmentFailure : undefined);
     return { ok: false, reasonCode: codeOf(error), ...(error instanceof ServiceStartRefusal && error.review ? error.review : {}),
@@ -225,13 +239,14 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
         if (!runtime.isCurrent) throw new ServiceStartRefusal('project_requester_credentials_unavailable');
         const refusal = await readProjectRuntimeAdmissionRefusal(runtime, { ...ingress, signal });
         if (refusal) throw new ServiceStartRefusal(refusal.errorCode);
-        return { runtime, request: { ...request, workspace: request.workspace, declaration: request.declaration },
+        return { runtime, originalEnvironment: Object.freeze({ ...(runtime.hostEnvironment ?? process.env) }),
+            request: { ...request, workspace: request.workspace, declaration: request.declaration },
             ingress: { ...ingress, machineAdmission: admission, verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent }, context };
     }
-    async function review(nativeInvocations: Set<ProjectNativeEffectCaptureForHost>, { runtime: authorityRuntime, request, ingress, context }: AdmittedReview,
+    async function review(nativeInvocations: Set<ProjectNativeEffectCaptureForHost>, { runtime: authorityRuntime, request, ingress, context, dotenvPreparations, runtimeEnvironments, originalEnvironment }: AdmittedReview,
         afterCopy = false, executeCanonicalAction?: CanonicalPoolRead,
         nativeCustody?: Pick<ReturnType<typeof createProjectNativeInvocationCustody>, 'retain'>,
-        approvalPreparation = false, copiedSource?: SourceReview): Promise<Review | SourceReview> {
+        approvalPreparation = false, copiedSource?: SourceReview, admittedLaunch = false): Promise<Review | SourceReview> {
         const phase = async <T>(name: string, read: () => T | Promise<T>): Promise<T> => {
             const startedAt = performance.now();
             let status: 'completed' | 'failed' = 'failed';
@@ -266,6 +281,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 } } : {}) });
         };
         let worker: SourceReview | undefined;
+        let localDefinition: Awaited<ReturnType<typeof readProjectEffectiveDefinition>> | undefined;
         if (association.workspace.machineId !== runtime.machineId) {
             if (!runtime.inspectSourceProjectManifest) throw new ServiceStartRefusal('project_source_declaration_unavailable');
             // These are independent passive reads. Placement stays current;
@@ -282,7 +298,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             ]);
             assertNotCancelled();
             if (snapshot.document?.status === 'invalid') throw new ServiceStartRefusal('invalid_manifest');
-            const manifest = snapshot.document?.manifest;
+            const manifest = snapshot.effectiveDefinition?.effectiveManifest ?? snapshot.document?.manifest;
             const selection = request.declaration.selection;
             const service = selection.kind === 'manifest' ? manifest?.services?.[selection.name] : undefined;
             if (selection.kind === 'manifest' && !service) throw new ServiceStartRefusal('project_service_not_found');
@@ -351,26 +367,52 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             assertNotCancelled();
             if (!copiedInputs || digest(copiedInputs) !== digest(executionInputs)) throw new ServiceStartRefusal('project_service_effect_changed');
         } else {
-            const currentTargets = await phase('local_declarations', () => discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [association.workspace] }));
+            const selectedDefinition = await phase('local_manifest', () => readProjectEffectiveDefinition({ root: association.workspace.rootPath,
+                account: projectRuntimeAccountRowsInput(runtime), project: association.project,
+                serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal }));
+            localDefinition = selectedDefinition;
+            const currentTargets = await phase('local_declarations', () => discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [association.workspace],
+                effectiveDefinitions: new Map([[association.workspace, selectedDefinition.effectiveDefinition]]) }));
             assertNotCancelled();
-            if (!currentTargets.some(target => 'declaration' in target && target.id === request.targetId && digest(target.declaration) === digest(request.declaration))) throw new ServiceStartRefusal('launcher_target_unknown');
+            if (!currentTargets.targets.some(target => 'declaration' in target && target.id === request.targetId && digest(target.declaration) === digest(request.declaration))) throw new ServiceStartRefusal('launcher_target_unknown');
         }
-        const manifest = worker?.manifest ?? await phase('local_manifest', async () => {
-            const { document } = await readProjectManifest({ root: association.workspace.rootPath });
-            return document?.status === 'valid' ? document.manifest : undefined;
-        });
+        const definition = localDefinition ?? await phase('local_manifest', () => readProjectEffectiveDefinition({ root: association.workspace.rootPath,
+            account: projectRuntimeAccountRowsInput(runtime), project: association.project,
+            serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal,
+            ...(worker ? { repositorySnapshot: worker.snapshot } : {}) }));
+        const manifest = worker?.manifest ?? definition.effectiveDefinition.effectiveManifest;
         const { environmentBindings, secretEnvironment } = await phase('requester_environment', () => resolveProjectRequesterSecretInputs(runtime, {
             project: sourceAssociation.project, requirements: manifest?.environmentVariables ?? [],
         }, signal));
         if (approval && !sameStrictJsonValue(approval.target, workspaceAddressFromRefV1(association.workspace))) {
             throw new ServiceStartRefusal('project_service_effect_changed');
         }
+        const dotenvKey = JSON.stringify([association.workspace.machineId, association.workspace.rootPath]);
+        let dotenvPreparation = dotenvPreparations?.get(dotenvKey);
+        if (!dotenvPreparation) {
+            dotenvPreparation = createProjectDotenvPreparation(association.workspace.rootPath, originalEnvironment);
+            dotenvPreparations?.set(dotenvKey, dotenvPreparation);
+        }
+        const selection = request.declaration.selection;
+        let runtimeEnvironment = admittedLaunch ? runtimeEnvironments?.get(dotenvKey) : undefined;
+        if (admittedLaunch && runtimeEnvironment === undefined) {
+            const runtimeBindings = await prepareProjectWorktreeRuntime({ workspace: association.workspace, manifest,
+                ...(selection.kind === 'manifest' ? { serviceName: selection.name } : {}), signal });
+            if (runtimeBindings.kind !== 'ready') throw Object.assign(new Error(runtimeBindings.code), {
+                code: runtimeBindings.code, runtimeFailure: runtimeBindings });
+            runtimeEnvironment = runtimeBindings.runtimeEnvironment;
+            runtimeEnvironments?.set(dotenvKey, runtimeEnvironment);
+        }
         const preparation: ProjectSetupPreparationInput = { workspace: association.workspace, projectAssociation: association,
+            acceptedSetup: definition.acceptedSetup,
+            ...(runtimeEnvironment ? { runtimeEnvironment } : {}),
             requesterIdentity: runtime.requesterIdentity,
             approvalContext: context,
             requester: { ...projectRuntimeAccountRowsInput(runtime), serverHttpBaseUrl: runtime.serverHttpBaseUrl }, purpose: 'setup',
             platform: platformFor(runtime),
             nativeIo: runtime.nativeIo, signal,
+            dotenvPreparation,
+            originalEnvironment,
             ...(approval?.setup?.required ? { effectDecision: { authority: 'present_user' as const,
                 project: approval.setup.project, reviewedEffectDigest: approval.setup.reviewedEffectDigest } } : {}),
             retainNativeInvocation: production => nativeCustody ? nativeCustody.retain(production) : nativeInvocations.add(production),
@@ -393,7 +435,6 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
         if (!eligibility.eligible) throw new ServiceStartRefusal(eligibility.reason ?? 'project_service_admission_unavailable');
         assertNotCancelled();
         if (worker && (digest(plan.fileBasis) !== digest(worker.snapshot.basis) || digest(plan.manifest) !== digest(worker.manifest))) throw new ServiceStartRefusal('project_service_effect_changed');
-        const selection = request.declaration.selection;
         const service = selection.kind === 'manifest' ? plan.manifest?.services?.[selection.name] : undefined;
         const source: ProjectCommandSourceV1 | undefined = selection.kind === 'native' ? selection.source : service?.source;
         if (!source) throw new ServiceStartRefusal('project_service_not_found');
@@ -411,8 +452,12 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
         let nativeLifecycleLease: ProjectNativeAdapterLeaseV1 | undefined;
         let builtinNative: Review['builtinNative'];
         let releaseNativeLifecycle: Review['releaseNativeLifecycle'];
-        let processMode: Review['processMode'] = service?.port
-            ? { kind: 'managedSpawn', port: service.port, endpointDetection: { kind: 'detectAfterLaunch', minimumConfidence: 'high' } }
+        const assignedPort = service?.runtime && (service.runtime.primary || service.runtime.portSlot !== undefined)
+            ? Number(projectBaseEnvironment({ hostEnvironment: runtime.hostEnvironment }, plan).PORT) : undefined;
+        const servicePort = assignedPort !== undefined && Number.isInteger(assignedPort) && assignedPort > 0 && assignedPort <= 65_535
+            ? assignedPort : service?.port;
+        let processMode: Review['processMode'] = servicePort
+            ? { kind: 'managedSpawn', port: servicePort, onPortCollision: 'fail', endpointDetection: { kind: 'detectAfterLaunch', minimumConfidence: 'high' } }
             : { kind: 'managedSpawn', endpointNone: true,
                 endpointDetection: { kind: 'detectAfterLaunch', minimumConfidence: 'high' } };
         if (source.kind === 'command') {
@@ -426,7 +471,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 if (selected.kind === 'refused') throw new ServiceStartRefusal(selected.code);
                 nativeLifecycleLease = selected.lease;
                 const acquired = selected.lease.acquireProduction({ root: association.workspace.rootPath,
-                    environment: preparation.configEnvironment, signal });
+                    environment: projectBaseEnvironment({ hostEnvironment: runtime.hostEnvironment }, plan), signal });
                 if (acquired.kind !== 'ready') throw new ServiceStartRefusal(acquired.code);
                 production = acquired.production;
                 preparation.retainNativeInvocation!(production);
@@ -450,7 +495,9 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                         && !plan.manifest?.environmentVariables?.some(requirement => requirement.kind !== 'config')) {
                         await phase('native_prerequisite', () => assertNativeComposeAvailable({ io: runtime.environmentIo, command: resolved.command,
                             prefix: resolved.args.slice(0, resolved.args.length - resolved.reviewInvocation.args.length), cwd: resolved.cwd,
-                            env: { ...projectBaseEnvironment({ hostEnvironment: runtime.hostEnvironment }, plan), ...resolved.environmentOverlay }, signal }));
+                            env: composeProjectLaunchEnvironment({ originalEnvironment: plan.preparedLaunchInput.environment,
+                                requirements: plan.manifest?.environmentVariables ?? [], invocationEnvironment: resolved.environmentOverlay,
+                                platform: runtime.platform }).environment, signal }));
                         assertNotCancelled();
                     }
                     builtinNative = createNativeComposeLifecycle({ args: resolved.reviewInvocation.args, io: runtime.environmentIo });
@@ -466,7 +513,8 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 command = { kind: 'pluginNative', source, resolution: resolved.command, lease: production };
                 const instance = resolved.command.nativeInstance;
                 if (instance) {
-                const lifecycleInput = { root: association.workspace.rootPath, environment: preparation.configEnvironment };
+                const lifecycleInput = { root: association.workspace.rootPath,
+                    environment: projectBaseEnvironment({ hostEnvironment: runtime.hostEnvironment }, plan) };
                 const captured = nativeLifecycleLease.captureNativeServiceLifecycle(instance, lifecycleInput);
                 if (captured.kind !== 'ready') throw new ServiceStartRefusal(captured.code);
                 releaseNativeLifecycle = captured.release;
@@ -591,7 +639,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
 
     async function reviewTarget(nativeInvocations: Set<ProjectNativeEffectCaptureForHost>, reviewInputs: AdmittedReview, executeCanonicalAction?: CanonicalPoolRead,
         nativeCustody?: Pick<ReturnType<typeof createProjectNativeInvocationCustody>, 'retain'>, copiedSource?: SourceReview): Promise<Review> {
-        const result = await review(nativeInvocations, reviewInputs, true, executeCanonicalAction, nativeCustody, false, copiedSource);
+        const result = await review(nativeInvocations, reviewInputs, true, executeCanonicalAction, nativeCustody, false, copiedSource, true);
         if (result.kind !== 'target') throw new ServiceStartRefusal('project_service_effect_changed');
         return result;
     }
@@ -712,10 +760,11 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             if (!ingress?.machineAdmission || !ingress.verifyMachineAdmissionCurrent) throw new ServiceStartRefusal('machine_admission_required');
             if (!context) throw new ServiceStartRefusal('project_service_action_context_unavailable');
             if (!request.workspace || !request.declaration) throw new ServiceStartRefusal('launcher_start_declaration_unavailable');
-            const reviewInputs: AdmittedReview = { runtime: selected.runtime,
+            const reviewInputs: AdmittedReview = { runtime: selected.runtime, dotenvPreparations: new Map(), runtimeEnvironments: new Map(),
+                originalEnvironment: Object.freeze({ ...(selected.runtime.hostEnvironment ?? process.env) }),
                 request: { ...request, workspace: request.workspace, declaration: request.declaration },
                 ingress: { ...ingress, machineAdmission: ingress.machineAdmission, verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent }, context };
-            const initial = await review(nativeInvocations, reviewInputs, false, executeCanonicalAction, undefined, false, selected.source);
+            const initial = await review(nativeInvocations, reviewInputs, false, executeCanonicalAction, undefined, false, selected.source, true);
             const initialSource = initial.kind === 'source' ? initial : initial.source;
             // Without durable approval, a native TARGET review has already made
             // its causal copy to inspect native facts. Retain that SOURCE basis
@@ -844,12 +893,41 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                     const nativeCustody = createProjectNativeInvocationCustody({ signal }, launchInvocations);
                     let launchUncertain = false;
                     let retained = false;
+                    let preparedLaunchInput: PreparedProjectLaunchInput | undefined;
                     try {
                     current = await reviewTarget(launchInvocations, reviewInputs, executeCanonicalAction, nativeCustody, initialSource);
                     unchanged(current);
                     if (current.setupReview) throw new ServiceStartRefusal(current.setupReview.code, current.setupReview);
                     if (!isCurrent()) throw new ServiceStartRefusal('native_adapter_retired');
-                    const launch = await authorizePreparedProjectCommand({ ...setupInput!, preparation: current.preparation }, current.plan, current.command, signal);
+                    const runtimeInputs = await prepareProjectWorktreeRuntime({ workspace: current.plan.workspace,
+                        manifest: current.plan.manifest, signal,
+                        ...(current.declaration.selection.kind === 'manifest' ? { serviceName: current.declaration.selection.name } : {}) });
+                    if (runtimeInputs.kind !== 'ready') throw Object.assign(new Error(runtimeInputs.code), {
+                        code: runtimeInputs.code, runtimeFailure: runtimeInputs });
+                    const listenerRootPath = current.plan.workspace.rootPath;
+                    const preparedEnvironment = await prepareProjectLaunchEnvironment({ workspace: current.plan.workspace,
+                        requirements: current.plan.manifest?.environmentVariables ?? [],
+                        originalEnvironment: current.plan.preparedLaunchInput.originalEnvironment,
+                        projectEnvironment: current.plan.configEnvironment, runtimeEnvironment: runtimeInputs.runtimeEnvironment,
+                        dotenvPreparation: current.plan.dotenvPreparation, platform: current.runtime.platform,
+                        ...(registry.prepareServiceLaunchEnvironments ? { service: {
+                            project: current.plan.project, serviceId: current.serviceId,
+                            executionPlacement: { mode: current.processMode.kind === 'native' ? 'native' as const : 'spawn' as const,
+                                machineId: current.plan.workspace.machineId },
+                            assignedPorts: runtimeInputs.assignment.listenerPorts,
+                            requestListenerPorts: listenerKeys => getHostWorktreePortsOwner().assign({
+                                rootPath: listenerRootPath, listenerKeys, signal }),
+                            prepareServiceLaunchEnvironments: environmentInput => registry.prepareServiceLaunchEnvironments!({
+                                ...environmentInput, workspace: current.plan.workspace }),
+                        } } : {}),
+                    });
+                    if (preparedEnvironment.kind !== 'prepared') throw new ServiceStartRefusal(preparedEnvironment.code);
+                    preparedLaunchInput = preparedEnvironment.launchInput;
+                    if (preparedLaunchInput.service.kind === 'unavailable' || preparedLaunchInput.service.kind === 'conflict') {
+                        context.operationProgress?.update({ phase: 'starting', label: 'Service capture unavailable. Restart the service to retry capture.' });
+                    }
+                    const launch = await authorizePreparedProjectCommand({ ...setupInput!, preparation: current.preparation },
+                        { ...current.plan, preparedLaunchInput }, current.command, signal);
                     try {
                         if (!isCurrent() || signal.aborted) throw new ServiceStartRefusal('cancelled');
                         builtinNative?.bindLaunch(launch);
@@ -858,12 +936,14 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                         // its existing cleanup proves the owned process tree settled.
                         retained = true;
                         return { ...launch,
+                            ...(preparedLaunchInput.portSource ? { portSource: preparedLaunchInput.portSource } : {}),
                             ...(current.command.kind === 'native' && current.command.source.tool === 'flox'
                                 ? { waitForGracefulRootExitBeforeTreeStop: true as const } : {}),
                             async release() {
                             try { await launch.release(); }
-                            finally { try { await releaseNativeLifecycle?.(); }
-                                finally { await nativeCustody.release({ waitForSettlement: false }); nativeCustody.dispose(); } }
+                            finally { try { await preparedLaunchInput?.releaseServiceEnvironment?.(); }
+                                finally { try { await releaseNativeLifecycle?.(); }
+                                finally { await nativeCustody.release({ waitForSettlement: false }); nativeCustody.dispose(); } } }
                         } };
                     } catch (error) {
                         if (!isProjectNativeProcessUncertain(error) && !(error instanceof ProjectNativeToolchainUncertainError)) await launch.release();
@@ -874,6 +954,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                         if (launchUncertain) uncertain = true;
                         throw error;
                     } finally { if (!launchUncertain && !retained) {
+                        await preparedLaunchInput?.releaseServiceEnvironment?.();
                         await nativeCustody.release();
                         nativeCustody.dispose();
                     } }

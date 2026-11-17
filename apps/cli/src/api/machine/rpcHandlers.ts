@@ -319,7 +319,8 @@ export type MachineRpcHandlerDeps = Readonly<{
     getV2: (request: SessionRunnerStatusGetRequestV1) => Promise<SessionRunnerRuntimeStatusV2>;
   }>;
   actionOperations?: Readonly<{
-    store?: Pick<HostActionOperationRuntime['store'], 'get'>;
+    store?: Pick<HostActionOperationRuntime['store'], 'get'>
+      & Partial<Pick<HostActionOperationRuntime['store'], 'readActiveProjectCommands'>>;
     runner?: ProjectTerminalRuntime['operationRuntime']['runner'];
     attachOwner?: import('@/daemon/actionOperations/createHostActionOperationRuntime').HostActionOperationRuntime['attachOwner'];
     handlers: ActionOperationRpcHandlers;
@@ -472,6 +473,7 @@ export type MachineRpcLifecycleRegistration = Readonly<{
   liveWorkProducers?: readonly LiveWorkProducerV1[];
   cleanupRequesterMachineTerminals: MachineTerminalRpcRegistration['cleanupRequesterMachineTerminals'];
   getFiniteTerminalSessions: MachineTerminalRpcRegistration['getSessionManager'];
+  readActiveProjectCommands?: import('@/daemon/actionOperations/actionOperationStore').ActionOperationStore['readActiveProjectCommands'];
   projectFiniteExecutionInstalled: boolean;
   /** The same installed PTY/operation factory consumed by finite and Service effects. */
   resolveProjectFiniteRuntime?: (ingress: RpcHandlerContext) => Promise<ProjectFiniteActionRuntime | null>;
@@ -1226,6 +1228,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
       terminalRegistration.getSessionManager().getLiveWorkProducer(),
     ],
     cleanupRequesterMachineTerminals: terminalRegistration.cleanupRequesterMachineTerminals,
+    ...(operationStore?.readActiveProjectCommands ? { readActiveProjectCommands: operationStore.readActiveProjectCommands } : {}),
     projectFiniteExecutionInstalled: Boolean(resolveProjectFiniteRuntime && params.deps?.currentMachineId && params.deps.currentServerId),
     ...(resolveProjectFiniteRuntime ? { resolveProjectFiniteRuntime } : {}),
     sessionsRoleFamily,

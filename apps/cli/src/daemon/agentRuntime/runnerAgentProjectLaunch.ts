@@ -22,6 +22,7 @@ import { logger } from '@/utils/logger';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { mergeProjectLaunchLayers } from '@/workspaces/projectSetup/projectLaunchEnvironment';
 
 /** The retained producer owns review; its runner controller owns lifecycle and Stop. */
 function retainRunSetup(input: Readonly<{
@@ -179,16 +180,16 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
                         () => resolveAccountSettingsScopeKey(credentials))) {
                         return unavailable('project_requester_credentials_unavailable', 'settings_scope_unavailable');
                     }
-                    let bindings = { ...projectBindings?.bindings, ...selected.secretReferenceOverlay?.bindings };
+                    let bindings = mergeProjectLaunchLayers(projectBindings?.bindings, undefined, selected.secretReferenceOverlay?.bindings);
                     if (selected.profileId) {
                         const profiles = await readAccountLaunchProfiles(readProfileSettingsFromAccountSnapshot(snapshot), credentials,
                             signal, snapshot.profileCatalog, operationContext);
                         await assertCurrent();
                         const profile = profiles.visibleProfiles.find(profile => profile.id === selected.profileId && profile.enabled !== false);
                         if (!profile) return unavailable('profile_catalog_unavailable');
-                        bindings = { ...projectBindings?.bindings, ...resolveEffectiveLaunchProfileSecretBindings({ profile,
+                        bindings = mergeProjectLaunchLayers(projectBindings?.bindings, resolveEffectiveLaunchProfileSecretBindings({ profile,
                             accountSettings: readProfileSettingsFromAccountSnapshot(operationContext.readSnapshot() ?? snapshot) ?? {},
-                            ...(selected.secretReferenceOverlay ? { secretReferenceOverlay: selected.secretReferenceOverlay } : {}) }) };
+                            ...(selected.secretReferenceOverlay ? { secretReferenceOverlay: selected.secretReferenceOverlay } : {}) }));
                     }
                     const { snapshot: current, materializer } = await readSavedSecretMaterializerForOperation({ expectedScopeKey: snapshot.scopeKey,
                         secretSources: runtime.plugins?.secretSources,

@@ -50,7 +50,7 @@ export async function refreshManagedLocalServicePreviewOccurrences(registry: Loc
         .map(row => resolveLocalServicePreviewApplication(registry, localServicePreviewDirectBindingV1(row.resource), 'retained')));
 }
 
-export type RegisterLocalServicePreviewInput = Omit<LocalServicePreviewResourceV1, "browserTarget">;
+export type RegisterLocalServicePreviewInput = Omit<LocalServicePreviewResourceV1, "browserTarget"> & Partial<Pick<LocalServicePreviewResourceV1, 'browserTarget'>>;
 
 export type RegisterLocalServicePreviewResult =
     | Readonly<{ ok: true; resource: LocalServicePreviewResourceV1 }>
@@ -61,6 +61,7 @@ export type UnregisterLocalServicePreviewResult =
     | Readonly<{ ok: false; reasonCode: "not_found" }>;
 
 export function buildLocalServicePreviewBrowserTarget(resource: RegisterLocalServicePreviewInput): BrowserLocalServicePreviewTargetV1 {
+    if (resource.browserTarget) return resource.browserTarget;
     return {
         kind: "localServicePreview",
         targetId: resource.previewId,

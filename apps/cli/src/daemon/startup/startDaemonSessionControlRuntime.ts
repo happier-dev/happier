@@ -8875,6 +8875,7 @@ export async function startDaemonSessionControlRuntime(
   const localServicesRuntime = createLocalServicesDaemonRuntime({
     processOwnershipRuntime,
     serverId: params.serverId,
+    projectDefinitionAccount: { account: { credentials: params.credentials }, serverHttpBaseUrl: params.serverBaseUrl },
     get machineId() { return params.machineId; },
     projectManagedServices,
     projectServiceStarter: {

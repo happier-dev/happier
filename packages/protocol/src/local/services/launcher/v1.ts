@@ -1,7 +1,9 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
+import { WorktreePortsResultV1Schema, WorktreePortsUnavailableV1Schema } from '../../../workspaces/projectSetup/worktreePortsV1.js';
 import { z } from '../../../zodRuntimePolicy.js';
 
 import { BrowserViewTargetV1Schema } from '../../../browser/target/v1.js';
+import { SessionTerminalViewTargetV1Schema } from '../../../terminal/workspace.js';
 import { LocalServiceInventoryConfidenceV1Schema } from '../inventory/v1.js';
 import { ProjectExecutionChoiceV1Schema } from '../../../workspaces/projectWorkerPreferencesV1.js';
 import { ProjectServiceDeclarationRefV1Schema, LocalServiceManagedServiceActionTargetV1Schema } from '../actions/v1.js';
@@ -28,6 +30,8 @@ export type LocalServiceLaunchTargetSourceV1 = z.infer<typeof LocalServiceLaunch
 const LocalServiceLauncherIdV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
 const LocalServiceLauncherLabelV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(512)));
 const LocalServiceLauncherAssetRefV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(2_048)));
+export const LocalServicePortSourceV1Schema = lazyZodSchema(() => z.enum(['fixed', 'assigned']));
+export type LocalServicePortSourceV1 = z.infer<typeof LocalServicePortSourceV1Schema>;
 
 export const LocalServicePackageScriptLaunchSourceClassV1Schema = lazyZodSchema(() => z.strictObject({
     kind: z.literal('package_script'),
@@ -142,6 +146,7 @@ export const LocalServiceLaunchTargetV1Schema = lazyZodSchema(() => z.strictObje
     startedAtMs: z.optional(z.number().check(z.int(), z.nonnegative())),
     startedByAccountId: z.optional(z.string().check(z.minLength(1))),
     endpointKind: z.optional(z.enum(['none', 'http', 'native'])),
+    portSource: z.optional(LocalServicePortSourceV1Schema),
     title: z.string().check(z.trim(), z.minLength(1), z.maxLength(LOCAL_SERVICE_LAUNCH_TARGET_TITLE_MAX_LENGTH)),
     subtitle: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
     kind: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
@@ -153,6 +158,7 @@ export const LocalServiceLaunchTargetV1Schema = lazyZodSchema(() => z.strictObje
     unavailableMachineId: z.optional(WorkspaceRefV1WriteSchema.shape.machineId),
     actions: z._default(z.array(LocalServiceLaunchTargetActionV1Schema), []),
     browserTarget: z.optional(BrowserViewTargetV1Schema),
+    terminalView: z.optional(SessionTerminalViewTargetV1Schema),
   }).check(z.superRefine((target, ctx) => {
     if (target.environment && (
       target.source !== 'managed_service'
@@ -211,6 +217,9 @@ export const LocalServiceLauncherSnapshotV1Schema = lazyZodSchema(() => z.strict
     sessionId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
     updatedAt: z.number().check(z.int(), z.nonnegative()),
     targets: z.array(LocalServiceLaunchTargetV1Schema),
+    /** One selected worktree only; host assignment ledger and sibling roots stay private. */
+    worktreePorts: z.optional(z.strictObject({ rootPath: WorkspaceRefV1WriteSchema.shape.rootPath,
+      result: WorktreePortsResultV1Schema })),
   }));
 export type LocalServiceLauncherSnapshotV1 = z.infer<typeof LocalServiceLauncherSnapshotV1Schema>;
 
@@ -294,13 +303,18 @@ export type LocalServiceNativePrerequisiteV1 = z.infer<typeof LocalServiceNative
 
 /** Sanitized process evidence for the existing establishment-failure family. */
 export const LocalServiceEstablishmentFailureV1Schema = lazyZodSchema(() => z.strictObject({
-  cause: z.enum(['process_exited', 'port_in_use']),
+  cause: z.enum(['process_exited', 'port_in_use', 'runtime_unavailable']),
+  reason: z.optional(WorktreePortsUnavailableV1Schema.shape.reason),
+  causeCode: WorktreePortsUnavailableV1Schema.shape.causeCode,
   exitCode: z.optional(z.number().check(z.int())),
   signal: z.optional(z.string().check(z.minLength(1))),
   lastStderrLine: z.optional(z.string().check(z.minLength(1), z.maxLength(2_048))),
   port: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(65_535))),
   sameProject: z.optional(z.boolean()),
 }).check(z.superRefine((failure, ctx) => {
+  if (failure.cause === 'runtime_unavailable' && failure.reason === undefined) {
+    ctx.addIssue({ code: 'custom', path: ['reason'], message: 'Runtime allocation evidence requires its owner reason.' });
+  }
   if (failure.cause === 'port_in_use' && failure.port === undefined) {
     ctx.addIssue({ code: "custom", path: ['port'], message: 'Port-in-use evidence requires a port.' });
   }
@@ -318,6 +332,7 @@ export const DaemonLocalServiceLauncherStartResponseV1Schema = lazyZodSchema(() 
     reviewedEffect: z.optional(StrictJsonValueSchema),
     reviewedEffectDigest: z.optional(z.string().check(z.regex(/^[a-f0-9]{64}$/))),
     currentTarget: z.optional(LocalServiceManagedServiceActionTargetV1Schema),
+    terminalView: z.optional(SessionTerminalViewTargetV1Schema),
     snapshot: LocalServiceLauncherSnapshotV1Schema,
   }).check(z.superRefine((response, ctx) => {
     if (response.snapshot.machineId !== response.machineId) {

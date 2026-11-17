@@ -14,6 +14,16 @@ export const ProjectSetupReviewV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type ProjectSetupReviewV1 = z.infer<typeof ProjectSetupReviewV1Schema>;
 
+/** Current reviewed target facts; retained operation completion is never a readiness input. */
+export const ProjectSetupReadinessV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('current'), reviewedEffectDigest: z.string().check(z.minLength(1)), completedAtMs: z.number().check(z.int(), z.nonnegative()) }),
+  z.strictObject({ kind: z.literal('unprepared'), reviewedEffectDigest: z.string().check(z.minLength(1)) }),
+  z.strictObject({ kind: z.literal('notRequired'), reviewedEffectDigest: z.string().check(z.minLength(1)) }),
+  z.strictObject({ kind: z.literal('needsReview'), code: z.string().check(z.minLength(1)) }),
+  z.strictObject({ kind: z.literal('unknown'), code: z.string().check(z.minLength(1)) }),
+]));
+export type ProjectSetupReadinessV1 = z.infer<typeof ProjectSetupReadinessV1Schema>;
+
 /** Redacted producer facts on the incumbent typed Action failure envelope. */
 export const ProjectSetupConsentFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('pendingApproval'),

@@ -1,11 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildLocalServiceDeclarationPreviewLandingUrlV1,
+  parseLocalServiceDeclarationPreviewLandingUrlV1,
   LocalServicePreviewAccessUrlV1Schema,
   LocalServicePreviewResourceV1Schema,
   LocalServicePreviewSnapshotRowV1Schema,
   LocalServicePreviewSnapshotV1Schema,
 } from './v1.js';
 import { LocalServicePreviewNativeRegistrationRequestV1Schema } from './nativeDirect.js';
+
+describe('private declaration preview locator', () => {
+  it('round trips a declaration without binding a service occurrence or access grant', () => {
+    const locator = { serverId: 'home', machineId: 'machine', targetId: 'declaration/one' };
+    const url = buildLocalServiceDeclarationPreviewLandingUrlV1('https://ui.example.test', locator);
+    expect(parseLocalServiceDeclarationPreviewLandingUrlV1(url)).toEqual(locator);
+    expect(parseLocalServiceDeclarationPreviewLandingUrlV1('https://ui.example.test/preview-link/public-exposure')).toBeNull();
+    expect(new URL(url).searchParams.has('previewToken')).toBe(false);
+  });
+});
 
 type PreviewModule = typeof import('./v1.js');
 

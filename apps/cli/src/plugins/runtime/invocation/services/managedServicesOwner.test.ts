@@ -2349,7 +2349,7 @@ describe('managed-services SVC09 owner', () => {
             };
             expect(owner.listProjectServices()).toEqual([handle]);
             expect(owner.resolveProjectService(target)).toEqual({ status: 'found', handle });
-            expect(owner.resolveProjectService({ ...target, managedServiceId: input.serviceId })).toEqual({ status: 'unknown' });
+            expect(owner.resolveProjectService({ ...target, managedServiceId: input.serviceId })).toEqual({ status: 'stale' });
             expect(owner.resolveProjectService({ ...target, machineId: 'other-machine' })).toEqual({ status: 'mismatch' });
             expect(owner.resolveProjectService({ ...target, cwd: `${workspace.rootPath}/other` })).toEqual({ status: 'mismatch' });
             // b15b25302c9: omitted qualifiers use the retained instance's binding;
@@ -8609,9 +8609,9 @@ describe('Project Local Services control composition', () => {
                 feed: createLocalServiceLauncherFeed({ machineId: workspace.machineId, inventoryRegistry: createLocalServiceInventoryRegistry(),
                     previewRegistry, projectManagedServices: owner }), previewRoutes, history: createLocalServiceLauncherHistoryStore() });
             expect(await leaves.registerPreview({ machineId: workspace.machineId, targetId: handle.serviceId }))
-                .toMatchObject({ status: 'existing', previewId: handle.instanceId, browserTarget: { kind: 'localServicePreview', targetId: handle.instanceId } });
+                .toMatchObject({ status: 'existing', previewId: handle.instanceId, browserTarget: { kind: 'localServicePreview', targetId: handle.serviceId } });
             expect(await leaves.openPreview({ machineId: workspace.machineId, targetId: handle.serviceId }))
-                .toMatchObject({ status: 'opened', browserTarget: { kind: 'localServicePreview', targetId: handle.instanceId } });
+                .toMatchObject({ status: 'opened', browserTarget: { kind: 'localServicePreview', targetId: handle.serviceId } });
             const waiting = call({ v: 1, kind: 'wait_retirement', target, instanceId: handle.instanceId });
             await new Promise<void>(resolve => setImmediate(resolve));
             await handle.stop();

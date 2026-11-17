@@ -58,6 +58,19 @@ export type ProjectToolchainSelectionV1 = z.infer<typeof ProjectToolchainSelecti
 export const ProjectDevcontainerSelectionV1Schema = z.strictObject({ configPath: z.optional(containedPath) });
 export type ProjectDevcontainerSelectionV1 = z.infer<typeof ProjectDevcontainerSelectionV1Schema>;
 
+/** Deliberate Project intent; absent preserves fixed-port behavior. */
+export const ProjectWorktreePortsV1Schema = z.discriminatedUnion('enabled', [
+  z.strictObject({ enabled: z.literal(false) }),
+  z.strictObject({ enabled: z.literal(true), slots: z.number().check(z.int(), z.minimum(1)) }),
+]);
+export type ProjectWorktreePortsV1 = z.infer<typeof ProjectWorktreePortsV1Schema>;
+export const ProjectServiceRuntimeV1Schema = z.strictObject({
+  portSlot: z.optional(z.number().check(z.int(), z.minimum(0))),
+  primary: z.optional(z.boolean()), terminal: z.optional(z.boolean()),
+  title: z.optional(nonempty), autostart: z.optional(z.boolean()),
+});
+export type ProjectServiceRuntimeV1 = z.infer<typeof ProjectServiceRuntimeV1Schema>;
+
 function isFiniteSource(source: ProjectCommandSourceV1): boolean {
   return source.kind !== 'native' || (source.tool !== 'compose' && source.tool !== 'procfile');
 }
@@ -68,14 +81,29 @@ export const ProjectManifestV1Schema = z.strictObject({
   $schema: z.optional(nonempty),
   toolchain: z.optional(ProjectToolchainSelectionV1Schema),
   devcontainer: z.optional(ProjectDevcontainerSelectionV1Schema),
+  worktreePorts: z.optional(ProjectWorktreePortsV1Schema),
   environmentVariables: z.optional(z.array(lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(EnvVarRequirementSchema)))),
   workspace: z.optional(z.strictObject({
     setup: z.optional(z.array(finiteSource)), teardown: z.optional(z.array(finiteSource)),
     setupInputs: z.optional(z.array(containedPath)), memoryDemand: z.optional(ProjectMemoryDemandV1Schema),
   })),
   scripts: z.optional(z.record(nonempty, z.strictObject({ source: finiteSource, execution, memoryDemand: z.optional(ProjectMemoryDemandV1Schema) }))),
-  services: z.optional(z.record(nonempty, z.strictObject({ source: ProjectCommandSourceV1Schema, execution, port: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(65535))) }))),
-});
+  services: z.optional(z.record(nonempty, z.strictObject({ source: ProjectCommandSourceV1Schema, execution,
+    port: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(65535))), runtime: z.optional(ProjectServiceRuntimeV1Schema) }))),
+}).check(z.refine(manifest => {
+  if (!manifest.worktreePorts?.enabled) return true;
+  const used = new Set<number>();
+  for (const service of Object.values(manifest.services ?? {})) {
+    const runtime = service.runtime;
+    if (!runtime) continue;
+    if (runtime.primary && runtime.portSlot !== undefined && runtime.portSlot !== 0) return false;
+    const slot = runtime.primary ? 0 : runtime.portSlot;
+    if (slot === undefined) continue;
+    if (slot >= manifest.worktreePorts.slots || used.has(slot)) return false;
+    used.add(slot);
+  }
+  return true;
+}, 'Allocated services must select distinct declared slots; the primary service uses slot zero'));
 export type ProjectManifestV1 = z.infer<typeof ProjectManifestV1Schema>;
 export const ProjectManifestV1StoredSchema = createStoredReadSchema(ProjectManifestV1Schema);
 

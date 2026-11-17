@@ -12,6 +12,9 @@ import { buildBrowserLaunchpadRows, selectRunningServiceForEndedPreview } from '
 import { createProjectServiceRelocation } from '@/workspaces/execution/projectServiceRelocation';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { join } from 'node:path';
+import * as fs from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { createWorktreePortsOwner } from '@/workspaces/execution/worktreePorts';
 
 function inventoryEntry(
     overrides: Partial<NormalizedLocalServiceInventoryEntry> = {},
@@ -70,6 +73,33 @@ function inventoryEntry(
 }
 
 describe('createLocalServiceLauncherFeed', () => {
+    it('projects only the selected opted-in worktree assignment, including a checkout with no services', async () => {
+        const directory = await fs.mkdtemp(join(tmpdir(), 'happier-ports-feed-'));
+        try {
+            const selected = join(directory, 'selected');
+            const sibling = join(directory, 'sibling');
+            await Promise.all([fs.mkdir(selected), fs.mkdir(sibling)]);
+            const owner = createWorktreePortsOwner({ statePath: join(directory, 'ports.json') });
+            const assignment = await owner.assign({ rootPath: selected, slots: 2 });
+            await owner.assign({ rootPath: sibling, slots: 1 });
+            const feed = createLocalServiceLauncherFeed({ machineId: 'machine-a',
+                inventoryRegistry: createLocalServiceInventoryRegistry(), previewRegistry: createLocalServicePreviewRegistry(),
+                runTargets: () => ({ targets: [], worktreePortRoots: [selected] }), worktreePorts: owner });
+            const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(await feed.getSnapshot({ scope: 'workspace', workspaceRoot: selected }));
+            expect(snapshot.worktreePorts).toEqual({ rootPath: selected, result: assignment });
+            expect(JSON.stringify(snapshot)).not.toContain(sibling);
+            await fs.writeFile(join(directory, 'ports.json'), '{damaged');
+            expect((await feed.getSnapshot({ scope: 'workspace', workspaceRoot: selected })).worktreePorts)
+                .toMatchObject({ rootPath: selected, result: { kind: 'unavailable', reason: 'state_corrupt' } });
+            const read = vi.spyOn(fs, 'readFile');
+            try {
+                expect(await feed.getSnapshot({ scope: 'machine' })).not.toHaveProperty('worktreePorts');
+                expect(await feed.getSnapshot({ scope: 'workspace', workspaceRoot: sibling })).not.toHaveProperty('worktreePorts');
+                expect(read).not.toHaveBeenCalled();
+            } finally { read.mockRestore(); }
+        } finally { await fs.rm(directory, { recursive: true, force: true }); }
+    });
+
     it.each([
         ['Start', 'source'], ['Start', 'worker'], ['Move', 'source'], ['Move', 'worker'],
     ] as const)('keeps a complete binding read pending through %s settlement on %s, then offers Open without prior registration', async (operation, destination) => {
@@ -280,7 +310,9 @@ describe('createLocalServiceLauncherFeed', () => {
                 const handoff = LocalServiceLauncherSnapshotV1Schema.parse(await feed.getSnapshot());
                 expect(handoff.targets.map(target => target.id)).toEqual([handle.serviceId, 'inventory:unrelated']);
                 expect(handoff.targets[0]?.actions).toEqual(['manage']);
-                expect(handoff.targets[0]?.browserTarget).toBeUndefined();
+                expect(handoff.targets[0]?.browserTarget).toMatchObject({
+                    kind: 'localServicePreview', machineId: 'machine-a', targetId: handle.serviceId,
+                });
                 // A first read during retirement must also correlate the live root.
                 expect((await createFeed().getSnapshot()).targets.map(target => target.id)).toEqual([
                     handle.serviceId, 'inventory:unrelated',
@@ -359,7 +391,10 @@ describe('createLocalServiceLauncherFeed', () => {
             if (nativePhase === 'no-endpoint') {
                 expect(snapshot.targets).toEqual([expect.objectContaining({ serviceState: 'healthy', endpointKind: 'native', actions: ['manage'] })]);
                 expect(snapshot.targets[0]).not.toHaveProperty('endpointUrl');
-                expect(buildLocalServiceRows({ inventoryRows: [], launchTargets: snapshot.targets, sessionId: null, scope: 'workspace' })[0]?.primaryAction).toBeNull();
+                expect(buildLocalServiceRows({ inventoryRows: [], launchTargets: snapshot.targets, sessionId: null, scope: 'workspace' })[0]?.primaryAction)
+                    .toMatchObject({ kind: 'open', openTarget: { browserTarget: {
+                        kind: 'localServicePreview', machineId: 'machine-a', targetId: handle.serviceId,
+                    } } });
                 return;
             }
             expect(snapshot.targets).toEqual([expect.objectContaining({
@@ -824,7 +859,7 @@ describe('createLocalServiceLauncherFeed', () => {
                 inventoryRegistry,
                 previewRegistry,
                 now: () => 3_000,
-                runTargets: () => runTargets,
+                runTargets: async () => ({ targets: await runTargets, worktreePortRoots: [] }),
             });
 
             let settled = false;

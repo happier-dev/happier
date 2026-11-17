@@ -22,6 +22,7 @@ import { PROJECT_ACTION_INPUT_SCHEMAS_V1, ProjectWorkerNoAcceptanceFailureDetail
     readProjectSetupConsentFailureV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { resolveProjectExecutionChoiceV1, projectExecutionChoicesEqualV1, type ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import { assertProjectReceivingPlacement } from '@/workspaces/execution/projectReceivingPlacement';
+import { prepareProjectWorktreeRuntime } from '@/workspaces/execution/projectWorktreeRuntime';
 import type { ActionExecuteResult, ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ProjectNativeToolchainUncertainError } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
@@ -44,10 +45,11 @@ import { resolveProjectToolchainSelection, inspectProjectNativeCommand, resolveP
 import { inspectProjectDefinitionExecutionFacts } from './projectDefinitionInspection';
 import { selectProjectDefinitionRead } from './projectDefinitionRead';
 import { readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
-import { readProjectManifest } from './projectManifestFile';
+import { readProjectEffectiveDefinition } from './projectEffectiveDefinition';
+import { createProjectDotenvPreparation, type ProjectDotenvPreparation } from './projectDotenv';
 import { readLiteralCommandExecutedFiles } from './literalCommandFiles';
 import { prepareProjectSetup, resolveProjectSetupConfigEnvironment, type PreparedProjectSetupCommand, type PreparedProjectSetupPlan } from './projectSetupPreparation';
-import { executeProjectSetup, executeProjectFiniteProcess, publishProjectFiniteAdmission, authorizePreparedProjectCommand,
+import { executeProjectSetup, executeProjectFiniteProcess, publishProjectFiniteAdmission, authorizePreparedProjectCommand, projectBaseEnvironment,
     createProjectNativeLaunchAdmission, createProjectNativeInvocationCustody, type ProjectSetupExecutionOutcome, type ProjectSetupOperationContext } from './projectSetupExecution';
 
 export type ProjectFiniteActionRuntime = ProjectRuntimeAccountAccess & Readonly<{
@@ -87,7 +89,7 @@ export type ProjectFiniteActionRuntime = ProjectRuntimeAccountAccess & Readonly<
     /** Canonical projects.inspect on the exact accepted SOURCE, with requester Home authority. */
     inspectSourceProjectManifest?: (input: Readonly<{ source: WorkspaceRefV1; signal: AbortSignal;
         command?: Extract<ProjectDefinitionInspectRead, { kind: 'execution' }>['command'] }>) => Promise<ProjectDefinitionInspectOutput['definition']
-        & Pick<ProjectDefinitionInspectOutput, 'commands' | 'toolchainExecutionInputs' | 'commandExecutedFiles'>>;
+        & Pick<ProjectDefinitionInspectOutput, 'commands' | 'toolchainExecutionInputs' | 'commandExecutedFiles' | 'effectiveDefinition'>>;
     resolveWorkerTarget?: (input: Readonly<{ source: WorkspaceRefV1; signal: AbortSignal }>) => Promise<WorkspaceSyncWorkerTargetBasis>;
     /** Real B7 Sync/dequeue preparation; revalidation follows this callback. */
     prepareDequeue?: (input: Readonly<{ workspace: WorkspaceRefV1; choice: ProjectExecutionChoiceV1; basis?: WorkspaceSyncWorkerTargetBasis; signal: AbortSignal }>) => Promise<Extract<WorkspaceSyncPrepareBetweenResultV1, { ok: true }> | void>;
@@ -297,9 +299,15 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         let workerRelativeCwd: string | undefined;
         const selectedCommand = request.actionId === 'projects.script.run' && request.input.selection.kind === 'named'
             ? { usage: 'script' as const, name: request.input.selection.name } : undefined;
-        const selectedExecutionDeclaration = (definition: ProjectDefinitionInspectOutput['definition']) => {
+        const readEffective = async (selected: typeof association) => {
+            const read = await readProjectEffectiveDefinition({ root: selected.workspace.rootPath,
+                account: projectRuntimeAccountRowsInput(runtime), serverHttpBaseUrl: runtime.serverHttpBaseUrl,
+                project: selected.project, signal });
+            return { ...read.snapshot, effectiveDefinition: read.effectiveDefinition };
+        };
+        const selectedExecutionDeclaration = (definition: ProjectDefinitionInspectOutput['definition'] & Pick<ProjectDefinitionInspectOutput, 'effectiveDefinition'>) => {
             if (definition.document?.status === 'invalid') throw coded('invalid_manifest');
-            const manifest = definition.document?.manifest ?? null;
+            const manifest = definition.effectiveDefinition?.effectiveManifest ?? definition.document?.manifest ?? null;
             const config = resolveProjectSetupConfigEnvironment(manifest, runtime.configEnvironment);
             if (config.kind === 'refused') throw coded(config.code);
             const named = request.actionId === 'projects.script.run' && request.input.selection.kind === 'named'
@@ -333,15 +341,15 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             // failures retain precedence and neither read authorizes execution.
             const [definitionRead, policyRead] = await Promise.allSettled([
                 sourceAssociation.workspace.machineId === runtime.machineId
-                    ? readProjectManifest({ root: sourceAssociation.workspace.rootPath })
+                    ? readEffective(sourceAssociation)
                     : runtime.inspectSourceProjectManifest!({ source: sourceAssociation.workspace, signal, ...(selectedCommand ? { command: selectedCommand } : {}) }),
                 request.actionId === 'projects.prepare' ? null : readExecutionPolicy(),
             ]);
             if (definitionRead.status === 'rejected') throw definitionRead.reason;
-            const sourceDefinition: ProjectDefinitionInspectOutput['definition'] & Pick<ProjectDefinitionInspectOutput, 'commands' | 'toolchainExecutionInputs' | 'commandExecutedFiles'> = definitionRead.value;
+            const sourceDefinition: ProjectDefinitionInspectOutput['definition'] & Pick<ProjectDefinitionInspectOutput, 'commands' | 'toolchainExecutionInputs' | 'commandExecutedFiles' | 'effectiveDefinition'> = definitionRead.value;
             await assertNotCancelled();
             if (sourceDefinition.document?.status === 'invalid') throw coded('invalid_manifest');
-            const sourceManifest = sourceDefinition.document?.manifest;
+            const sourceManifest = sourceDefinition.effectiveDefinition?.effectiveManifest ?? sourceDefinition.document?.manifest;
             if (acceptedDeclaration) {
                 let current: ReturnType<typeof selectedExecutionDeclaration>;
                 try { current = selectedExecutionDeclaration(sourceDefinition); }
@@ -409,11 +417,11 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             }
         } else if (sourceAssociation.workspace.machineId !== runtime.machineId) return failure('target_not_local');
         const readWorkerExecutionBasis = async (definition: typeof initialSourceDefinition) => {
-            const manifest = definition.document?.status === 'valid' ? definition.document.manifest : undefined;
+            const manifest = definition.effectiveDefinition?.effectiveManifest ?? (definition.document?.status === 'valid' ? definition.document.manifest : undefined);
             const declaredEffect = selectedExecutionDeclaration(definition);
             const selected = selectProjectDefinitionRead(definition, {
                 entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [],
-            }, { kind: 'execution', ...(selectedCommand ? { command: selectedCommand } : {}) });
+            }, { kind: 'execution', ...(selectedCommand ? { command: selectedCommand } : {}) }, definition.effectiveDefinition);
             const inspection = sourceAssociation.workspace.machineId === runtime.machineId
                 ? await inspectProjectDefinitionExecutionFacts({ root: sourceAssociation.workspace.rootPath,
                     ...(selected.commandManifest ? { manifest: selected.commandManifest } : {}), detection: selected.detection,
@@ -456,7 +464,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         };
         const assertCopiedExecutionCurrent = async () => {
             if (!acceptedWorkerBasis) return;
-            const definition = await readProjectManifest({ root: association.workspace.rootPath });
+            const definition = await readEffective(association);
             await assertNotCancelled();
             const declaredEffect = selectedExecutionDeclaration(definition);
             const executionInputs = await readProjectExecutionInputs(association.workspace.rootPath, acceptedWorkerBasis.executionInputs.map(input => input.file));
@@ -471,7 +479,19 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         let secretEnvironment = runtime.secretEnvironment;
         let environmentBindings: ProjectSetupPreparationInput['environmentBindings'];
         let setupDecision: import('@/daemon/actionOperations/actionOperationTypes').ActionOperationSetupDecision | undefined;
+        const originalEnvironment = Object.freeze({ ...(runtime.hostEnvironment ?? process.env) });
+        const dotenvPreparations = new Map<string, ProjectDotenvPreparation>();
+        const runtimeEnvironments = new Map<string, Readonly<Record<string, string>>>();
+        const dotenvPreparation = () => {
+            const root = association.workspace.rootPath;
+            let selected = dotenvPreparations.get(root);
+            if (!selected) { selected = createProjectDotenvPreparation(root, originalEnvironment); dotenvPreparations.set(root, selected); }
+            return selected;
+        };
         const preparation = (): Parameters<typeof prepareProjectSetup>[0] => ({ workspace: association.workspace, projectAssociation: association,
+            dotenvPreparation: dotenvPreparation(),
+            originalEnvironment,
+            runtimeEnvironment: runtimeEnvironments.get(association.workspace.rootPath),
             requesterIdentity,
             approvalContext: args.context,
             requester: { ...projectRuntimeAccountRowsInput(runtime), serverHttpBaseUrl: runtime.serverHttpBaseUrl },
@@ -504,10 +524,10 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         // Primary admission can retain reviewed bytes without giving a selected
         // plugin an invocation/Exec context before the finite reservation.
         const readPrimaryAdmissionBasis = () => stage('project.primary.review', async (): Promise<string> => {
-            const snapshot = await readProjectManifest({ root: association.workspace.rootPath });
+            const snapshot = await readEffective(association);
             await assertNotCancelled();
             if (snapshot.document?.status === 'invalid') throw coded('invalid_manifest');
-            const manifest = snapshot.document?.manifest ?? null;
+            const manifest = snapshot.effectiveDefinition.effectiveManifest;
             const config = resolveProjectSetupConfigEnvironment(manifest, runtime.configEnvironment);
             if (config.kind === 'refused') throw coded(config.code);
             const files = new Map<string, string>();
@@ -596,11 +616,22 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             const definition = sourceReview?.sourceDefinition ?? initialSourceDefinition;
             ({ secretEnvironment, environmentBindings } = await (admittedSecretInputs ??= stage('project.secret_environment.resolve', () => resolveProjectRequesterSecretInputs(runtime, {
                 project: sourceAssociation.project,
-                requirements: definition.document?.status === 'valid' ? definition.document.manifest.environmentVariables ?? [] : [],
+                requirements: definition.effectiveDefinition?.effectiveManifest?.environmentVariables
+                    ?? (definition.document?.status === 'valid' ? definition.document.manifest.environmentVariables ?? [] : []),
                 ...(request.actionId === 'projects.compute.exec' && request.input.environmentBindings
                     ? { environmentBindings: request.input.environmentBindings } : {}),
             }, nativeExecutionSignal()))));
-            const prepared = await stage('project.setup.review', () => prepareProjectSetup(preparation()));
+            const targetDefinition = await readProjectEffectiveDefinition({ root: association.workspace.rootPath,
+                account: projectRuntimeAccountRowsInput(runtime), serverHttpBaseUrl: runtime.serverHttpBaseUrl,
+                project: association.project, signal: nativeExecutionSignal() });
+            if (!runtimeEnvironments.has(association.workspace.rootPath)) {
+                const binding = await prepareProjectWorktreeRuntime({ workspace: association.workspace,
+                    manifest: targetDefinition.effectiveDefinition.effectiveManifest, signal: nativeExecutionSignal() });
+                if (binding.kind !== 'ready') return { kind: 'failed', result: failure(binding.code, { reason: binding.reason }) };
+                runtimeEnvironments.set(association.workspace.rootPath, binding.runtimeEnvironment);
+            }
+            const prepared = await stage('project.setup.review', () => prepareProjectSetup({ ...preparation(),
+                acceptedSetup: targetDefinition.acceptedSetup }));
             await assertNotCancelled();
             if (prepared.kind === 'refused') return { kind: 'failed', result: failure(prepared.code) };
             if (prepared.kind === 'pendingApproval') return { kind: 'failed', result: withRequestedConsentScope(failure(prepared.code, {
@@ -775,7 +806,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                     installationId: requesterBaseline.installationId, workspaceRefId: association.workspace.id,
                     projectKey: projectWorkspaceRefV1(association.workspace).projectKey, rootPath: association.workspace.rootPath,
                 },
-                ...(runtime.platform ? { platform: runtime.platform } : {}), ...(runtime.hostEnvironment ? { hostEnvironment: runtime.hostEnvironment } : {}),
+                ...(runtime.platform ? { platform: runtime.platform } : {}), hostEnvironment: originalEnvironment,
                 ...(originRun ? { originRun } : {}),
             });
             const admitted = await runtime.workerAdmission.execute({ operationId, workspaceRefId: association.workspace.id, requesterAccountId: runtime.accountId,
@@ -938,10 +969,9 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                             authorizePreparedProjectCommand(input, invocation.plan, command, operationSignal));
                         else if (request.actionId === 'projects.compute.exec') {
                             await assertNotCancelled();
-                            const env: Record<string, string> = {};
-                            for (const [key, value] of Object.entries(runtime.hostEnvironment ?? process.env)) if (value !== undefined) env[key] = value;
-                            Object.assign(env, invocation.plan.configEnvironment);
-                            const projectLaunch = createProjectNativeLaunchAdmission(input, invocation.plan);
+                            const launchPlan = invocation.plan;
+                            const env = projectBaseEnvironment(input, launchPlan);
+                            const projectLaunch = createProjectNativeLaunchAdmission(input, launchPlan);
                             launch = await authorizeResolvedProjectExecLaunchForHost({ launch: { command: request.input.executable, args: request.input.argv,
                                 cwd: validatePath(invocationCwd().replaceAll('\\', '/'), association.workspace.rootPath).resolvedPath!, env },
                                 projectLaunch, signal: operationSignal, assertCurrent: assertSynchronousCurrent,

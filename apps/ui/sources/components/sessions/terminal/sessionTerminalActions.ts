@@ -7,7 +7,7 @@ import { DaemonTerminalEnsureResponseSchema } from '@happier-dev/protocol/daemon
 import { parseSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { resolveProjectTerminalScope } from '@/components/projects/detail/projectTerminalScope';
 import { dispatchSessionTerminalWorkspaceCommand, getSplitMeasurementsForScope, initializeSessionTerminalWorkspaceForScope, openSessionTerminalInDetailsForScope, readSessionTerminalWorkspaceForScope, resizeSessionTerminalSplitForScope } from './sessionTerminalWorkspaceRuntime';
-import { EMPTY_TERMINAL_WORKSPACE, reduceSessionTerminalWorkspace, type SessionTerminalWorkspaceCommand } from './sessionTerminalWorkspace';
+import { EMPTY_TERMINAL_WORKSPACE, findSessionTerminalViewMember, reduceSessionTerminalWorkspace, type SessionTerminalWorkspaceCommand } from './sessionTerminalWorkspace';
 import { closeOwnedSessionTerminals } from './closeOwnedSessionTerminals';
 import { createSessionTerminalLeafHandles } from './strip/sessionTerminalLeafHandles';
 import { resolveSessionTerminalRequest } from './sessionTerminalRequest';
@@ -119,7 +119,7 @@ export async function invokeSessionTerminalAction(request: Readonly<{
                         ...(target.launch === undefined ? {} : { launch: target.launch }) };
                 }
             }
-            terminalId = randomUUID();
+            terminalId = findSessionTerminalViewMember(workspace, target)?.id ?? randomUUID();
             let terminal: SessionTerminalMemberV1 = { id: terminalId, target, ...(terminalData.title ? { title: terminalData.title } : {}) };
             if (request.actionId === 'session.terminals.split') {
                 if (!tab) return sessionTerminalActionFailure('terminal_tab_not_found');

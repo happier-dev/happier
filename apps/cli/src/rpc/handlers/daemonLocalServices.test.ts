@@ -404,7 +404,7 @@ describe('daemon local services machine rpc handlers', () => {
                 const requesterHandle = await supervise('requester-native-service', 'foreign-account');
                 expect(requesterHandle.serviceId).not.toBe(handle.serviceId);
                 expect(requesterHandle.requester.accountId).toBe('foreign-account');
-                const runTargets = await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [workspace] });
+                const runTargets = (await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [workspace] })).targets;
                 const acceptedDeclaration = runTargets.find(target => 'declaration' in target
                     && target.declaration.selection.kind === 'manifest' && target.declaration.selection.name === 'private-web');
                 if (!acceptedDeclaration) throw new Error('The accepted private Project fixture did not produce its declaration');

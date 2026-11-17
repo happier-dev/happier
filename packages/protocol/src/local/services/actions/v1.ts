@@ -19,12 +19,17 @@ export const ProjectServiceDeclarationRefV1Schema = lazyZodSchema(() => z.strict
 export type ProjectServiceDeclarationRefV1 = z.infer<typeof ProjectServiceDeclarationRefV1Schema>;
 
 /** Incumbent launcher identity, qualified by the actual Home, Machine and declaration. */
+const projectServiceDeclarationTargetPrefix = 'project-service:';
+export function isProjectServiceDeclarationTargetIdV1(value: string): boolean {
+  return value.startsWith(projectServiceDeclarationTargetPrefix) && /^[a-f0-9]{64}$/.test(value.slice(projectServiceDeclarationTargetPrefix.length));
+}
+
 export function createProjectServiceDeclarationTargetIdV1(
   workspace: Pick<WorkspaceRefV1, 'id' | 'serverId' | 'machineId'>,
   selection: ProjectServiceDeclarationRefV1['selection'],
 ): string {
   const declaration = { workspaceRefId: workspace.id, selection };
-  return `project-service:${bytesToHex(sha256(new TextEncoder().encode(JSON.stringify([
+  return `${projectServiceDeclarationTargetPrefix}${bytesToHex(sha256(new TextEncoder().encode(JSON.stringify([
     workspace.serverId, workspace.machineId, declaration,
   ]))))}`;
 }

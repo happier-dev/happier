@@ -27,7 +27,7 @@ describe('Services inventory admission', () => {
         const probes: number[] = [];
         const runtime = createLocalServicesDaemonRuntime({
             machineId, accountId: 'owner', inventoryEnabled: () => true, startLoop: false, now: () => 2_000,
-            terminalRegistry, runTargets: () => [],
+            terminalRegistry, runTargets: () => ({ targets: [], worktreePortRoots: [] }),
             endpointEnricher: createLocalServiceEndpointEnricher({ now: () => 2_000,
                 probe: async ({ port }) => { probes.push(port); return false; } }),
             scan: async () => ({
