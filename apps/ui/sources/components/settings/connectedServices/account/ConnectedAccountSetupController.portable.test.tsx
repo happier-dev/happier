@@ -698,6 +698,29 @@ async function useNativeAccountHttpHost() {
     expect(await (await import('@/utils/system/runtimeFetch')).readRuntimeFetchHost('https://portable-controller.test')).toBe('native');
 }
 
+it('explains the typed Cloudflare web placement refusal after describing a fresh Account without a Machine', async () => {
+    Object.defineProperty(runtimePlatform, 'OS', { configurable: true, enumerable: true, get: () => 'web' });
+    expect(await (await import('@/utils/system/runtimeFetch')).readRuntimeFetchHost('https://portable-controller.test')).toBe('browser');
+    const fixture = await restorePortableFixture(cloudflare);
+    const screen = await renderScreen(<PortableSetup credentials={fixture.credentials} service={cloudflare} onCancel={() => {}} />);
+    try {
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-browser-machine-unavailable'), screen.getTextContent()).not.toBeNull());
+        expect(fixture.paths).toContain('/v4/connect/qualified/accounts');
+        expect(screen.getTextContent()).toContain(t('connectedServices.errors.browserSignInMachineUnavailable'));
+        const { runConnectedAccountAuthenticationAction } = await import('@/sync/ops/connectedAccounts/connectedAccountDaemon');
+        const refused = await runConnectedAccountAuthenticationAction({ serverId: fixture.serverId,
+            expectedAccountId: 'portable-controller', command: { operation: 'beginConnect', service: cloudflare, modeId: 'oauth' } });
+        expect(refused).toMatchObject({ status: 'unavailable', code: 'connected_account_browser_sign_in_machine_unavailable' });
+        expect(screen.findHostByTestId('connected-account-configuration:save')).toBeNull();
+        expect(screen.findHostByTestId('connected-account-oauth:open')).toBeNull();
+        expect(fixture.transactions.size).toBe(0);
+        expect(fixture.creates).toBe(0);
+        expect(fixture.machineReads).toBe(0);
+        expect(fixture.machineRpcs).toBe(0);
+        expect(fixture.vendorRequests).toEqual([]);
+    } finally { await screen.unmount(); }
+});
+
 it.each([false, true])('configures Cloudflare browser OAuth on a native HTTP host before continuing without a Machine (Home client: %s)', async homeClient => {
     // Cloudflare declares browserReachability: unreachable; native HTTP keeps this flow Account-local.
     await useNativeAccountHttpHost();
