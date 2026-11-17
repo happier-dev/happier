@@ -67,7 +67,7 @@ afterEach(async () => {
 });
 
 describe('Account trigger HTTP read failure and recovery', () => {
-    it('opens subject custom and Event starters in the ordinary sentence editor without enrolling a trigger', async () => {
+    it('opens subject starters in place and retains their draft in the full editor without enrolling a trigger', async () => {
         await loadSyncSingletonForTests();
         let writes = 0;
         const account = await restoreServerAccountForTest({
@@ -92,14 +92,24 @@ describe('Account trigger HTTP read failure and recovery', () => {
         for (const id of ['subject-triggers-add', 'subject-triggers-starter:healthFailed', 'subject-triggers-starter:nightly']) {
             const before = vi.mocked(router.push).mock.calls.length;
             await act(async () => screen.findByTestId(id)!.props.onPress());
+            expect(screen.findByTestId('workflow-builder'), screen.getTextContent()).toBeTruthy();
+            expect(vi.mocked(router.push).mock.calls).toHaveLength(before);
+            expect(writes).toBe(0);
+            await act(async () => screen.findByTestId('workflow-builder-open-editor')!.props.onPress());
             expect(vi.mocked(router.push).mock.calls).toHaveLength(before + 1);
             const entry = vi.mocked(router.push).mock.calls.at(-1)?.[0];
             if (typeof entry !== 'object' || entry === null || !('params' in entry)) throw new Error('Expected a sentence route');
             const seed = readWorkflowDefinitionDraftSeed(String(entry.params?.definitionDraftSeedId));
             expect(seed).toMatchObject({ name: 'Web', initialView: 'sentence', project: { machineId: 'machine-a', directory: '~' } });
             expect(seed?.definition).toBeUndefined();
-            if (id.endsWith('healthFailed')) expect(seed?.eventSeed?.setupInput).toMatchObject({ subject: { kind: 'machineService', machineId: 'machine-a', serviceId: 'web' } });
-            if (id.endsWith('nightly')) expect(seed?.trigger).toMatchObject({ kind: 'schedule', schedule: { scheduleExpr: '0 3 * * *' } });
+            if (id.endsWith('healthFailed')) expect(seed?.incompleteTriggers?.pending).toEqual([
+                expect.objectContaining({ eventSeed: expect.objectContaining({ setupInput: expect.objectContaining({
+                    subject: { kind: 'machineService', machineId: 'machine-a', serviceId: 'web' },
+                }) }) }),
+            ]);
+            if (id.endsWith('nightly')) expect(seed?.triggers?.rows).toEqual([
+                expect.objectContaining({ trigger: expect.objectContaining({ kind: 'schedule', schedule: expect.objectContaining({ scheduleExpr: '0 3 * * *' }) }) }),
+            ]);
         }
         expect(writes).toBe(0);
     });

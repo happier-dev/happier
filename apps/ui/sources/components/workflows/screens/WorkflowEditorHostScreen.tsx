@@ -9,7 +9,7 @@ import { createWorkflowDefinitionRoute, createWorkflowRunRoute } from '@/sync/do
 import { Platform, ScrollView, View } from 'react-native';
 import { useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useNavigation, useOpenAppSection, useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { randomUUID } from 'expo-crypto';
+import { randomUUID } from '@/platform/randomUUID';
 import { WorkflowEventValueContext } from '../editor/WorkflowEventValueContext';
 import { StyleSheet } from 'react-native-unistyles';
 

@@ -436,7 +436,7 @@ vi.mock('expo-router', async () => {
 // Ids must be genuinely distinct here: a constant would make a re-created draft
 // compare equal to its baseline and hide exactly the initialization defect these
 // cases exist to catch.
-vi.mock('expo-crypto', () => ({
+vi.mock('@/platform/randomUUID', () => ({
     randomUUID: () => {
         issuedIds.next += 1;
         return `00000000-0000-4000-8000-${String(100_000_000_000 + issuedIds.next)}`;
