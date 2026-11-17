@@ -3,6 +3,7 @@ import { EXTERNAL_ACTION_RESOLVED_TARGET_HEADER } from '@happier-dev/protocol/ac
 import { decodeExternalActionResolvedTargetV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
 import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { projectSessionSpawnNewActionResultV1, SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
@@ -174,6 +175,20 @@ function commitFixtureSession(id: string) {
   sessionRecords.set(id, record);
   return record;
 }
+async function spawnHttpBoundary(machineId: string) {
+  let boundary = spawnHttpBoundaries.get(machineId);
+  if (!boundary) {
+    boundary = await createExternalActionAccountHttpBoundary({
+      serverUrl: 'https://voice-conversation.example.test', serverIdentityId: connection.home.serverIdentityId ?? 'srv_voice_conversation',
+      accountId: 'account-1', machineId, installationId: 'test-installation', tokenEpoch: 0, actionId: 'session.spawn_new',
+      execute: async input => projectSessionSpawnNewActionResultV1(SessionSpawnNewResultV1Schema.parse(
+        await dispatchMachineRpc({ machineId, serverId: homeId, method: RPC_METHODS.SESSION_SPAWN_NEW,
+          payload: admitSessionSpawnNewActionInputV2(SessionSpawnNewActionInputV2Schema.parse(input)) }))),
+    });
+    spawnHttpBoundaries.set(machineId, boundary);
+  }
+  return boundary;
+}
 // Real Sync owns tuple parsing, retries and projection application; only Home HTTP is synthetic.
 async function respondToServerRequest(input: RequestInfo | URL, init?: RequestInit): Promise<Response | null> {
   const path = new URL(String(input)).pathname;
@@ -183,17 +198,7 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
     const signedTarget = new Headers(init?.headers).get(EXTERNAL_ACTION_RESOLVED_TARGET_HEADER);
     const target = signedTarget ? decodeExternalActionResolvedTargetV1(signedTarget) : body.target;
     const machineId = body.machineId ?? (target?.kind === 'machine' ? target.machineId : undefined);
-    let boundary = spawnHttpBoundaries.get(machineId);
-    if (!boundary) {
-      boundary = await createExternalActionAccountHttpBoundary({
-        serverUrl: 'https://voice-conversation.example.test', serverIdentityId: connection.home.serverIdentityId ?? 'srv_voice_conversation',
-        accountId: 'account-1', machineId, tokenEpoch: 0, actionId: 'session.spawn_new', requesterInvocation: 'none',
-        execute: async input => projectSessionSpawnNewActionResultV1(SessionSpawnNewResultV1Schema.parse(
-          await dispatchMachineRpc({ machineId, serverId: homeId, method: RPC_METHODS.SESSION_SPAWN_NEW,
-            payload: admitSessionSpawnNewActionInputV2(SessionSpawnNewActionInputV2Schema.parse(input)) }))),
-      });
-      spawnHttpBoundaries.set(machineId, boundary);
-    }
+    const boundary = await spawnHttpBoundary(machineId);
     return boundary.handle(new URL(String(input)), init);
   }
   const json = (body: unknown) => Response.json(body);
@@ -205,6 +210,9 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
   if (path === '/v2/changes') return json({ changes: [], nextCursor: 0 });
   if (path === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
   if (path === '/v1/account/profile') return json(AccountProfileSchema.parse({ id: 'account-1' }));
+  if (path === '/v1/home/governance/get' && init?.method === 'POST') {
+    return json(HomeSessionDefaultsProjectionV1Schema.parse({ homeDefaults: null }));
+  }
   if (path === '/v2/account/settings') return json({ content: { t: 'plain', v: state.settings }, version: 1 });
   if (path === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture());
   if (path === '/v1/account/entity-rows/connected-accounts/purposes') {
@@ -294,6 +302,7 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
   const machineDetail = /^\/v1\/machines\/([^/]+)$/.exec(path);
   if (path === '/v1/machines' || path === '/v1/machines/read-batch' || machineDetail) {
     const defaults = createMachineFixture().metadata!;
+    const boundaries = new Map(await Promise.all(Object.keys(state.machines).map(async id => [id, await spawnHttpBoundary(id)] as const)));
     const machines = Object.values(state.machines).map(machine => ({
     ...createPlainMachineRowFixture({ id: machine.id, accountId: 'account-1' }),
     ...machine, seq: machine.seq ?? 1, createdAt: 1, updatedAt: 1, activeAt: machine.activeAt ?? Date.now(),
@@ -305,6 +314,8 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
       homeDir: '', happyHomeDir: '', ...machine.metadata,
     }) : null,
     daemonState: null, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+    installationId: boundaries.get(machine.id)!.machine.installationId,
+    installationPublicKey: boundaries.get(machine.id)!.machine.installationPublicKey,
     }));
     if (path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body,
       id => machines.find(machine => machine.id === id) ?? null);
@@ -943,7 +954,8 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
         ...(selection.nativeDelivery ? { nativeDelivery: selection.nativeDelivery } : {}),
       }],
     }));
-    expect(spawnRequests.mock.calls.at(-1)?.[0].modelSelection).toBeUndefined();
+    const { kind: _kind, ...ref } = selection;
+    expect(spawnRequests.mock.calls.at(-1)?.[0].modelSelection).toMatchObject({ v: 2, ref: { source: 'team_resource', ...ref } });
   });
 
   it('carries the configured exact Team model only while its custom source is selected', async () => {
@@ -2635,7 +2647,7 @@ describe('ensureVoiceConversationSessionForSessionRoot', () => {
       } }) }),
       connectedServices,
     }));
-    if (teamCredentialModel) expect(spawnRequests.mock.calls.at(-1)?.[0].modelSelection).toBeUndefined();
+    if (teamCredentialModel) expect(spawnRequests.mock.calls.at(-1)?.[0].modelSelection).toMatchObject({ v: 2, ref: { source: 'team_resource', teamId: 'team-1', resourceId: 'team-resource', modelId: 'claude-haiku-4-5' } });
   });
 
   it('uses the Home default Agent when a Home carrier has persisted Session-source settings', async () => {
