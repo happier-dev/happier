@@ -1,7 +1,7 @@
 import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
-import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelRefSchema, projectSessionModelRefToExecutionModelSelection, type SessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
-import type { ProviderBoundModelRef, ProviderModelDescriptorV1 } from '@happier-dev/protocol';
+import type { ProviderModelDescriptorV1 } from '@happier-dev/protocol';
 import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
 import {
   getAgentModelConfig,
@@ -22,6 +22,7 @@ import { resolveProviderSpawnDefinitiveRejection } from './resolve';
 import { readProviderSettingsForCli } from '../settings/read';
 
 export type ProviderLaunchSelectionInput = Readonly<{
+  modelSelection?: SessionModelRef;
   modelId?: unknown;
   providerConnectionId?: unknown;
   acpSessionModeId?: unknown;
@@ -29,7 +30,7 @@ export type ProviderLaunchSelectionInput = Readonly<{
 }>;
 
 export type CurrentProviderSpawnDefinitiveRejectionResult =
-  | Readonly<{ ok: true; ref: ProviderBoundModelRef | null }>
+  | Readonly<{ ok: true; ref: SessionModelRef | null }>
   | Readonly<{ ok: false }>;
 
 type CurrentProviderSpawnDefinitiveRejectionDeps = Readonly<{
@@ -132,21 +133,25 @@ export async function resolveCurrentProviderSpawnDefinitiveRejection(input: Read
   selection: ProviderLaunchSelectionInput;
   deps?: Partial<CurrentProviderSpawnDefinitiveRejectionDeps>;
 }>): Promise<CurrentProviderSpawnDefinitiveRejectionResult> {
+  const authoredRef = input.selection.modelSelection;
+  const projected = authoredRef ? projectSessionModelRefToExecutionModelSelection(authoredRef) : undefined;
+  const selection = projected?.modelSelection ? { ...input.selection, ...projected.modelSelection } : input.selection;
   const native = resolveAgentNativeSpawnDefinitiveRejection({
-    agentId: input.agentId,
-    selection: input.selection,
+    agentId: projected?.teamCredentialModel ? null : input.agentId,
+    selection,
   });
   if (!native.ok) return { ok: false };
+  if (projected?.teamCredentialModel && authoredRef) return { ok: true, ref: authoredRef };
 
-  const modelId = input.selection.modelId;
-  const providerConnectionId = input.selection.providerConnectionId;
+  const modelId = selection.modelId;
+  const providerConnectionId = selection.providerConnectionId;
   if (modelId === undefined) {
     return providerConnectionId === undefined || providerConnectionId === null
       ? { ok: true, ref: null }
       : { ok: false };
   }
 
-  const parsed = ProviderBoundModelRefSchema.safeParse({
+  const parsed = SessionModelRefSchema.safeParse(authoredRef ?? {
     agentTargetKey: input.agentTargetKey,
     providerConnectionId: providerConnectionId ?? null,
     modelId,

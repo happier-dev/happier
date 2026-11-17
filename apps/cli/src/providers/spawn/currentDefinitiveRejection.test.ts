@@ -16,6 +16,14 @@ import { commitActiveConnectedAccountCatalog, getActiveAccountSettingsSnapshot, 
 import { resolveAgentNativeSpawnDefinitiveRejection, resolveCurrentProviderSpawnDefinitiveRejection } from './currentDefinitiveRejection';
 
 describe('resolveCurrentProviderSpawnDefinitiveRejection', () => {
+  it('retains the exact Team source in continuation preflight', async () => {
+    const ref = { source: 'team_resource' as const, agentTargetKey: 'agent:happier.agent.codex/codex',
+      modelId: 'meta/muse-spark-1.3-contributor', teamId: 'team', resourceId: 'resource',
+      expectedResourceRevision: 3, deliveryMode: 'brokered' as const };
+    expect(await resolveCurrentProviderSpawnDefinitiveRejection({ agentTargetKey: ref.agentTargetKey,
+      agentId: 'codex', selection: { modelSelection: ref } })).toEqual({ ok: true, ref });
+  });
+
   it('keeps a managed target available so its required model can be chosen', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'continuation-purpose-model-' }, async ({ homeDir }) => {
       const service = { pluginId: 'acme.shared-registry', localId: 'accounts' };

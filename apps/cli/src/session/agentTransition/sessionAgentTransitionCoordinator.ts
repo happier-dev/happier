@@ -19,8 +19,9 @@ import {
   applyAcpConfigOptionIntentSessionMetadata,
   applyAcpSessionModeIntentSessionMetadata,
   applyModelIntentSessionMetadata,
+  createModelIntentV2MetadataCasCandidate,
 } from '@happier-dev/agents/session/state/metadataWriters';
-import { type ProviderBoundModelRef } from '@happier-dev/protocol';
+import { sessionModelSelectionV2TeamBindingIntent, type SessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
 
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
@@ -44,6 +45,7 @@ import {
   ConnectedServicesDefaultUnavailableError,
   createCredentialsSpawnConnectedServicesTeamResourceCatalogResolver,
   resolveSessionSpawnConnectedServicesDefaultsPayload,
+  mergeSessionTeamCredentialBindingIntents,
 } from '@/session/services/spawnConnectedServicesDefaults';
 import { requestInactiveSessionResume } from '@/session/services/requestInactiveSessionResume';
 import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
@@ -255,7 +257,7 @@ function buildTargetCurrentViewProjection(params: Readonly<{
   targetAgentId: AgentId;
   configuredBackend: AcpConfiguredBackendV1 | null;
   selection: SessionAgentTransitionSelectionV1;
-  modelSelectionRef: ProviderBoundModelRef | null;
+  modelSelectionRef: SessionModelRef | null;
   nativeResumeIdentity: AgentNativeResumeIdentityV1 | null;
   activationSeed: ReplaySeedV1 | null;
   /**
@@ -285,7 +287,10 @@ function buildTargetCurrentViewProjection(params: Readonly<{
       agentScopedCurrentState: 'clear',
     }) as Record<string, unknown>;
 
-    next = applyModelIntentSessionMetadata(next, {
+    next = params.modelSelectionRef && 'source' in params.modelSelectionRef
+      ? createModelIntentV2MetadataCasCandidate({ selection: { v: 2, ref: params.modelSelectionRef,
+        updatedAt: params.updatedAtMs }, nowMs: () => params.updatedAtMs }).update(next)
+      : applyModelIntentSessionMetadata(next, {
       v: 1,
       // An omitted model means "the target's own default". The projector's
       // cleared state expresses that, but only by DELETING the key — and a
@@ -929,6 +934,11 @@ export async function runSessionAgentTransition(
     deps,
   });
   if (!targetConnectedServices.ok) return effects.rejected('target_unavailable');
+  const targetTeamCredentialBindings = modelSelectionRef && 'source' in modelSelectionRef
+    ? mergeSessionTeamCredentialBindingIntents({
+      explicit: [sessionModelSelectionV2TeamBindingIntent({ v: 2, ref: modelSelectionRef, updatedAt: 0 })],
+      admitted: targetConnectedServices.teamCredentialBindings ?? null })
+    : targetConnectedServices.teamCredentialBindings;
 
   // A scoped caller must be able to acquire the replay lineage before any
   // source effect. Use the replay reader itself, including its native-return
@@ -1208,8 +1218,8 @@ export async function runSessionAgentTransition(
       currentView: sealed.currentView,
       divider,
       ...(externalAction ? { externalAction } : {}),
-      ...(targetConnectedServices.teamCredentialBindings
-        ? { teamCredentialBindings: targetConnectedServices.teamCredentialBindings }
+      ...(targetTeamCredentialBindings
+        ? { teamCredentialBindings: targetTeamCredentialBindings }
         : {}),
     });
   };

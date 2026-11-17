@@ -7,6 +7,7 @@ import { PendingLocalIdSchema } from './pending/pendingLocalId.js';
 import { SessionUserMessageSendRequestSchema } from './userMessageRpc.js';
 import { AgentIdV1Schema } from '../agents/agentIdV1.js';
 import { SessionSpawnLaunchErrorV1Schema } from './creation/sessionSpawnLaunchErrorV1.js';
+import { SessionModelRefSchema } from '../providers/selection/v2.js';
 
 /**
  * Same-Session cross-Agent continuation — the frozen shared contract.
@@ -61,6 +62,8 @@ import { SessionSpawnLaunchErrorV1Schema } from './creation/sessionSpawnLaunchEr
 export const SessionAgentTransitionSelectionV1Schema = lazyZodSchema(() => z.strictObject({
     v: z.literal(1),
     agentId: AgentIdV1Schema,
+    /** Canonical model source; flat fields remain readable for retained V1 intents. */
+    modelSelection: z.optional(SessionModelRefSchema),
     modelId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
     /**
      * Model-provider connection. Accepted only where the receiving tree and the

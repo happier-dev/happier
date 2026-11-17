@@ -53,6 +53,18 @@ function expectAllReject(schema: z.ZodMiniType, group: Readonly<Record<string, u
 }
 
 describe('session agent transition — portable selection', () => {
+  it('retains a Team model through armed intent, inspection and transition admission', () => {
+    const modelSelection = { source: 'team_resource', agentTargetKey: 'agent:happier.agent.codex/codex',
+      modelId: 'meta/muse-spark-1.3-contributor', teamId: 'team', resourceId: 'resource',
+      expectedResourceRevision: 3, deliveryMode: 'brokered' };
+    const selection = { v: 1, agentId: 'codex', modelSelection };
+    const armed = ComposerAgentContinuationIntentV1Schema.parse({ v: 1, mode: 'same_session', sourceAgentId: 'claude', selection });
+    expect(armed.selection).toEqual(selection);
+    const inspection = SessionContinuationInspectionRequestV1Schema.parse({ v: 1, sourceSessionId: 'session', selection: armed.selection });
+    expect(inspection.selection).toEqual(selection);
+    const request = SessionAgentTransitionRequestV1Schema.parse({ v: 1, sessionId: 'session', expectedCurrentAgentId: 'claude', selection: inspection.selection });
+    expect(request.selection).toEqual(selection);
+  });
   it('accepts every valid selection vector and rejects every invalid one', () => {
     expectAllParse(SessionAgentTransitionSelectionV1Schema, V.selection.valid);
     expectAllReject(SessionAgentTransitionSelectionV1Schema, V.selection.invalid);

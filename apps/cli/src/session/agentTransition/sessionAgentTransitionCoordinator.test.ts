@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { buildCausalSessionInputAdmissionV1 } from '@/session/services/sessionInputAdmissionIdentity';
+import { resolveCurrentProviderSpawnDefinitiveRejection } from '@/providers/spawn/currentDefinitiveRejection';
 
 const mocks = vi.hoisted(() => ({
   fetchAccountMachineReplacements: vi.fn(),
@@ -40,6 +41,30 @@ function resolveAgentSwitchingDecision(serverSnapshot?: Parameters<typeof resolv
 beforeEach(() => {
   mocks.fetchAccountMachineReplacements.mockReset();
   mocks.fetchAccountMachineReplacements.mockResolvedValue([{ id: 'machine-1' }, { id: 'machine-2' }]);
+});
+
+describe('runSessionAgentTransition — canonical Team model', () => {
+  it('commits the canonical Team model intent with its provider binding witness', async () => {
+    const ref = { source: 'team_resource' as const, agentTargetKey: 'agent:happier.agent.codex/codex',
+      modelId: 'meta/muse-spark-1.3-contributor', teamId: 'team', resourceId: 'resource',
+      expectedResourceRevision: 3, deliveryMode: 'brokered' as const };
+    const harness = createTransitionDepsHarness();
+    harness.deps.resolveCurrentProviderSpawnDefinitiveRejection = resolveCurrentProviderSpawnDefinitiveRejection;
+    const result = await runSessionAgentTransition({ credentials: TEST_CREDENTIALS,
+      request: buildTransitionRequest({ selection: { v: 1, agentId: 'codex', modelSelection: ref } }),
+      actionRequestId: 'team-switch', deps: harness.deps });
+    expect(result).toEqual({ type: 'accepted', localId: TEST_LOCAL_ID });
+    const cutover = vi.mocked(harness.deps.applySessionAgentTransitionCutover).mock.calls[0]?.[0];
+    const view = cutover?.currentView;
+    if (view?.kind !== 'legacy_v0') throw new Error('Expected fixture metadata');
+    expect(JSON.parse(view.metadataCiphertext)).toMatchObject({ modelSelectionIntentV2: { v: 2, ref } });
+    expect(cutover?.teamCredentialBindings).toContainEqual(expect.objectContaining({
+      slot: { kind: 'provider_model' }, teamId: ref.teamId, resourceId: ref.resourceId,
+      expectedResourceRevision: ref.expectedResourceRevision, deliveryMode: ref.deliveryMode,
+      providerModelSelection: { agentTargetKey: ref.agentTargetKey, modelId: ref.modelId },
+    }));
+  });
+
 });
 
 /**
