@@ -15,13 +15,15 @@ export const PROVIDER_ENV_FLAG_BY_PRESET_ID = Object.freeze({
   droid: 'HAPPIER_E2E_PROVIDER_DROID',
   devin: 'HAPPIER_E2E_PROVIDER_DEVIN',
   antigravity: 'HAPPIER_E2E_PROVIDER_ANTIGRAVITY',
-  // Deterministic local ACP fixture: selectable directly, but intentionally
+  // Deterministic local ACP fixtures: selectable directly, but intentionally
   // excluded from the real-provider aggregate lane.
+  codex_acp_stub: 'HAPPIER_E2E_PROVIDER_CODEX_ACP_STUB',
   cursor_acp_stub: 'HAPPIER_E2E_PROVIDER_CURSOR_ACP_STUB',
 });
 
 export const PROVIDER_PRESET_IDS = Object.freeze(Object.keys(PROVIDER_ENV_FLAG_BY_PRESET_ID));
-const AGGREGATE_PROVIDER_PRESET_IDS = Object.freeze(PROVIDER_PRESET_IDS.filter((id) => id !== 'cursor_acp_stub'));
+export const STUB_PROVIDER_PRESET_IDS = Object.freeze(PROVIDER_PRESET_IDS.filter((id) => id.endsWith('_acp_stub')));
+const AGGREGATE_PROVIDER_PRESET_IDS = Object.freeze(PROVIDER_PRESET_IDS.filter((id) => !STUB_PROVIDER_PRESET_IDS.includes(id)));
 export const ACP_PROVIDER_PRESET_IDS = Object.freeze(PROVIDER_PRESET_IDS.filter((id) => id !== 'claude'));
 
 export function resolveProviderPresetIds(id) {

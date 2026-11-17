@@ -789,7 +789,7 @@ jobs:
   # suites run nightly through tests-dispatch.yml on v0.3 (scheduled from the
   # default branch). Informational: not part of the Gate verdict.
   journey-select:
-    name: Journeys — select ui-e2e specs reaching the change
+    name: Journeys — select tests reaching the change
     needs: [gate-prepare]
     if: ${{ needs.gate-prepare.outputs.packages != '[]' && needs.gate-prepare.outputs.metadata_only != 'true' }}
     runs-on: ubuntu-24.04
@@ -802,6 +802,8 @@ jobs:
       actions: read
     outputs:
       ui_matrix: ${{ steps.plan.outputs.ui_matrix }}
+      agent_files: ${{ steps.plan.outputs.agent_files }}
+      provider_matrix: ${{ steps.plan.outputs.provider_matrix }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -829,7 +831,84 @@ jobs:
             const plan = JSON.parse(process.argv[1]);
             const matrix = { include: plan.uiShards.map((specs, index) => ({ shard: index + 1, specs: specs.join(",") })) };
             (await import("node:fs")).appendFileSync(process.env.GITHUB_OUTPUT, `ui_matrix=${JSON.stringify(matrix)}\n`);
+            (await import("node:fs")).appendFileSync(process.env.GITHUB_OUTPUT,
+              `agent_files=${JSON.stringify(plan.agentFiles)}\nprovider_matrix=${JSON.stringify({include: plan.providerMatrix})}\n`);
           ' "$plan"
+
+  journey-agents:
+    name: Journeys — affected agent tests (stub backends)
+    needs: [gate-prepare, journey-select]
+    if: ${{ needs.journey-select.outputs.agent_files != '' && needs.journey-select.outputs.agent_files != '[]' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ needs.gate-prepare.outputs.node_version }}
+      - uses: ./.github/actions/install-pnpm-dependencies
+        with:
+          prepared-artifact: gate-prepared-workspace
+      - name: Apply local stub preset
+        env:
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1'
+        run: |
+          # Reuse the preset owner: enables only a local stub, never a vendor backend.
+          node --input-type=module -e '
+            import { resolveProviderRunPreset } from "./packages/tests/src/testkit/providers/presets/presets.mjs";
+            import { appendFileSync } from "node:fs";
+            for (const [key, value] of Object.entries(resolveProviderRunPreset("codex_acp_stub", "smoke").env)) appendFileSync(process.env.GITHUB_ENV, `${key}=${value}\n`);
+          '
+      - name: Run agents under the selected preset
+        env:
+          FILES: ${{ needs.journey-select.outputs.agent_files }}
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1'
+        run: |
+          mapfile -t files < <(node -e 'JSON.parse(process.env.FILES).forEach(f => console.log(f.replace(/^packages\/tests\//, "")))')
+          pnpm --dir packages/tests run test:agents "${files[@]}"
+
+  journey-providers:
+    name: Journeys — affected provider scenarios / ${{ matrix.preset }} / ${{ matrix.tier }}
+    needs: [gate-prepare, journey-select]
+    if: ${{ needs.journey-select.outputs.provider_matrix != '' && fromJSON(needs.journey-select.outputs.provider_matrix).include[0] != null }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.journey-select.outputs.provider_matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ needs.gate-prepare.outputs.node_version }}
+      - uses: ./.github/actions/install-pnpm-dependencies
+        with:
+          prepared-artifact: gate-prepared-workspace
+      - name: Apply provider preset and scenario selection
+        env:
+          PRESET: ${{ matrix.preset }}
+          TIER: ${{ matrix.tier }}
+          SCENARIOS: ${{ toJSON(matrix.scenarios) }}
+        run: |
+          node --input-type=module -e '
+            import { resolveProviderRunPreset } from "./packages/tests/src/testkit/providers/presets/presets.mjs";
+            import { appendFileSync } from "node:fs";
+            const preset = resolveProviderRunPreset(process.env.PRESET, process.env.TIER);
+            for (const [key, value] of Object.entries(preset.env)) appendFileSync(process.env.GITHUB_ENV, `${key}=${value}\n`);
+            appendFileSync(process.env.GITHUB_ENV, `HAPPIER_E2E_PROVIDER_SCENARIOS=${JSON.parse(process.env.SCENARIOS).join(",")}\n`);
+          '
+      - name: Run selected provider contract scenarios
+        env:
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1'
+        run: pnpm --dir packages/tests run test:agents suites/agents/provider.matrix.test.ts
 
   journey-ui:
     name: Journeys — ui-e2e reaching the change / shard ${{ matrix.shard }}

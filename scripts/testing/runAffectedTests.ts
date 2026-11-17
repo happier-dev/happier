@@ -1,7 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+import { STUB_PROVIDER_PRESET_IDS, resolveProviderRunPreset } from '../../packages/tests/src/testkit/providers/presets/presets.mjs';
 
 import { runCommandSuite, type CommandSuiteEntry } from './lib/runCommandSuite.ts';
 import { runPnpmCommand } from './lib/runPnpmCommand.ts';
@@ -12,18 +14,22 @@ import { resolveRootUnitCommandOwners, runRootTests } from './runRootTests.ts';
  * `pnpm test:affected`: the tests that reach a change, selected by Vitest's own related mode
  * (the import graph of every test file), run through each suite's existing runner.
  *
- * Journey tests (packages/tests: contracts, core-layer, core-e2e fast and slow, ui-e2e) and the
+ * Journey tests (packages/tests: contracts, core-layer, core-e2e fast and slow, ui-e2e, agents) and the
  * owner unit tests in the changed files' folders are selected. The import graph stops at a
  * process boundary: code a test reaches only through a spawned server, daemon or browser is not
- * selected here; the nightly full run covers it.
+ * selected here except for the documented stub subprocess bridges below; the nightly full run covers the rest.
  */
 
 const TESTS_DIR = 'packages/tests';
 const UI_E2E_PREFIX = `${TESTS_DIR}/suites/ui-e2e/`;
+const AGENT_PREFIX = `${TESTS_DIR}/suites/agents/`;
+const MATRIX_FILE = `${AGENT_PREFIX}provider.matrix.test.ts`;
+type ProviderMatrixEntry = { preset: string; tier: 'smoke' | 'extended'; scenarios: string[] };
+
 const SLOW_SUFFIX = '.slow.e2e.test.ts';
 const VITEST_CONFIG_NAMES = ['vitest.config.ts', 'vitest.config.mts', 'vitest.config.mjs', 'vitest.config.js'];
 
-type AffectedCommand = CommandSuiteEntry & { rootUnitFiles?: readonly string[] };
+type AffectedCommand = CommandSuiteEntry & { env?: Record<string, string>; rootUnitFiles?: readonly string[] };
 
 function toTestsRelative(file: string): string {
   return file.slice(TESTS_DIR.length + 1);
@@ -33,6 +39,8 @@ function toTestsRelative(file: string): string {
 export function planAffectedTestCommands(selection: Readonly<{
   journeyFiles: readonly string[];
   unitFiles: readonly string[];
+  agentFiles?: readonly string[];
+  providerMatrix?: readonly ProviderMatrixEntry[];
 }>): AffectedCommand[] {
   const journey = [...new Set(selection.journeyFiles)].sort();
   const ui = journey.filter(file => file.startsWith(UI_E2E_PREFIX));
@@ -44,6 +52,12 @@ export function planAffectedTestCommands(selection: Readonly<{
   if (slow.length) commands.push({ id: 'core-e2e slow', args: ['--dir', TESTS_DIR, 'exec', 'node',
     'scripts/run-vitest-with-heartbeat.mjs', '--config', 'vitest.core.slow.config.ts', ...slow.map(toTestsRelative)] });
   if (ui.length) commands.push({ id: 'ui-e2e', args: ['--dir', TESTS_DIR, 'run', 'test:ui:e2e', ...ui.map(toTestsRelative)] });
+  if (selection.agentFiles?.length) commands.push({ id: 'agents', args: ['--dir', TESTS_DIR, 'run', 'test:agents', ...selection.agentFiles.map(toTestsRelative)], env: resolveProviderRunPreset('codex_acp_stub', 'smoke')!.env });
+  for (const entry of selection.providerMatrix ?? []) commands.push({
+    id: `providers:${entry.preset}:${entry.tier}`,
+    args: ['--dir', TESTS_DIR, 'run', 'test:agents', toTestsRelative(MATRIX_FILE)],
+    env: { ...resolveProviderRunPreset(entry.preset, entry.tier)!.env, HAPPIER_E2E_PROVIDER_SCENARIOS: entry.scenarios.join(',') },
+  });
   if (selection.unitFiles.length) commands.push({ id: 'owner unit', rootUnitFiles: [...selection.unitFiles].sort(), args: [] });
   return commands;
 }
@@ -118,12 +132,46 @@ async function selectRelated(params: Readonly<{
 
 export async function selectAffectedTests(rootDir: string, changedFiles: readonly string[], options: Readonly<{ journeysOnly?: boolean }> = {}) {
   const related = changedFiles.map(file => resolve(rootDir, file)).filter(existsSync);
-  if (related.length === 0) return { journeyFiles: [], unitFiles: [] };
-  const journeyFiles = await selectRelated({ rootDir, workspaceDir: TESTS_DIR, config: 'vitest.core.config.ts', related, include: [
+  const allJourneys = related.length === 0 ? [] : await selectRelated({ rootDir, workspaceDir: TESTS_DIR, config: 'vitest.core.config.ts', related, include: [
     'suites/contracts/**/*.test.ts', 'suites/core-layer/**/*.test.ts', 'suites/core-e2e/**/*.test.ts',
-    'suites/runtime-unification/**/*.test.ts', 'src/testkit/**/*.{test,spec}.ts', 'suites/ui-e2e/**/*.spec.ts',
+    'suites/runtime-unification/**/*.test.ts', 'src/testkit/**/*.{test,spec}.ts', 'suites/ui-e2e/**/*.spec.ts', 'suites/agents/**/*.test.ts',
   ] });
-  if (options.journeysOnly) return { journeyFiles, unitFiles: [] };
+  const journeyFiles = allJourneys.filter(file => !file.startsWith(AGENT_PREFIX));
+  const agentRelated = allJourneys.filter(file => file.startsWith(AGENT_PREFIX));
+  const agentFiles = new Set(agentRelated.filter(file => file !== MATRIX_FILE));
+  const providerMatrix: ProviderMatrixEntry[] = [];
+  // These fixtures spawn the CLI, so Vitest cannot see the backend's imports. The fixture
+  // spec owns the subcommand/traceProvider and the registry owns its scenario IDs and tier.
+  // Restrict this bridge to the two existing no-credential ACP fixtures; vendor lanes stay opt-in.
+  // The matrix starts a server and CLI/daemon processes; these shared owners are
+  // loaded in those children, not imported by the test process.
+  const runtimeChanges = changedFiles.filter(file => !/\.(test|spec)\.[cm]?[jt]sx?$/u.test(file));
+  const sharedAcp = runtimeChanges.some(file => [
+    'apps/cli/src/agent/acp/', 'apps/cli/src/daemon/', 'apps/cli/src/session/',
+    'apps/server/sources/',
+  ].some(prefix => file.startsWith(prefix)));
+  for (const preset of STUB_PROVIDER_PRESET_IDS) {
+    const fixture = `${TESTS_DIR}/fixtures/cli-backends/${preset}/`;
+    const spec = JSON.parse(readFileSync(resolve(rootDir, fixture, 'e2e/providerSpec.json'), 'utf8')) as { traceProvider: string };
+    const plugin = `packages/plugins/${spec.traceProvider}/src/agent/`;
+    const boundaryReached = sharedAcp || (preset === 'codex_acp_stub' && changedFiles.some(file => file.startsWith(`${TESTS_DIR}/fixtures/acp-stub-provider/`))) || runtimeChanges.some(file => file.startsWith(plugin) || file.startsWith(fixture));
+    if (!boundaryReached && !agentRelated.includes(MATRIX_FILE)) continue;
+    const registry = JSON.parse(readFileSync(resolve(rootDir, fixture, 'e2e/providerScenarios.json'), 'utf8')) as { tiers: Record<'smoke' | 'extended', string[]> };
+    for (const tier of ['smoke', 'extended'] as const) {
+      if (registry.tiers[tier].length) providerMatrix.push({ preset, tier, scenarios: registry.tiers[tier] });
+    }
+    // These two composed tests launch the Codex stub's CLI rather than importing its backend.
+    if (boundaryReached && preset === 'codex_acp_stub') {
+      agentFiles.add(`${AGENT_PREFIX}harness.tokenTelemetry.acpStub.e2e.test.ts`);
+      agentFiles.add(`${AGENT_PREFIX}harness.inFlightSteer.acpStub.e2e.test.ts`);
+    }
+  }
+  // The SDK lifecycle test starts this executable by path, outside the import graph.
+  if (changedFiles.some(file => file.startsWith(`${TESTS_DIR}/fixtures/acp-stub-provider/`))) {
+    agentFiles.add(`${AGENT_PREFIX}acpStubProvider.lifecycle.test.ts`);
+  }
+  const providerSelection = { agentFiles: [...agentFiles].sort(), providerMatrix };
+  if (options.journeysOnly) return { journeyFiles, unitFiles: [], ...providerSelection };
   const manifests = await discoverWorkspaceManifests(rootDir);
   const unitOwners = new Set(resolveRootUnitCommandOwners(manifests).map(({ owner }) => owner).filter(Boolean));
   const owners = new Set(changedFiles
@@ -140,7 +188,7 @@ export async function selectAffectedTests(rootDir: string, changedFiles: readonl
       .map(file => `${dirname(resolve(rootDir, file))}${sep}`))];
     unitFiles.push(...await selectRelated({ rootDir, workspaceDir: owner, config, related, filters }));
   }
-  return { journeyFiles, unitFiles };
+  return { journeyFiles, unitFiles, ...providerSelection };
 }
 
 export async function runAffectedTests(args: readonly string[], rootDir = process.cwd()): Promise<void> {
@@ -155,6 +203,8 @@ export async function runAffectedTests(args: readonly string[], rootDir = proces
     const ui = selection.journeyFiles.filter(file => file.startsWith(UI_E2E_PREFIX));
     const core = selection.journeyFiles.filter(file => !ui.includes(file)).sort();
     process.stdout.write(`${JSON.stringify({
+      agentFiles: selection.agentFiles,
+      providerMatrix: selection.providerMatrix,
       coreFast: core.filter(file => !file.endsWith(SLOW_SUFFIX)),
       coreSlow: core.filter(file => file.endsWith(SLOW_SUFFIX)),
       uiShards: planSelectedUiE2eShards({ selected: ui, all: listUiE2eSpecs(rootDir) }),
@@ -183,7 +233,7 @@ export async function runAffectedTests(args: readonly string[], rootDir = proces
     suiteName: 'Affected tests',
     runCommand: command => command.rootUnitFiles
       ? runRootTests('unit', command.rootUnitFiles, rootDir)
-      : runPnpmCommand(command, rootDir, env),
+      : runPnpmCommand(command, rootDir, { ...env, ...command.env }),
   });
 }
 
