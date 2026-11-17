@@ -856,7 +856,7 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
             ) : (
             <SegmentedTrackGlass glass={props.glassTrack} contentSized={contentSized} compact={compact === true}>
             <View
-                dataSet={themeSurfaceDataSet('tab-bar', 'root', 'default')}
+                {...{ dataSet: themeSurfaceDataSet('tab-bar', 'root', 'default') }}
                 style={[
                     styles.inner,
                     compact ? styles.innerCompact : null,
@@ -957,7 +957,7 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
                             tabIndex={Platform.OS === 'web' ? (disabled || tabIndex !== focusableIndex ? -1 : 0) : undefined}
                         >
                             <View
-                                dataSet={themeSurfaceDataSet('tab-bar', 'tab', surfaceState)}
+                                {...{ dataSet: themeSurfaceDataSet('tab-bar', 'tab', surfaceState) }}
                                 style={[
                                     styles.tabSurface,
                                     compact ? styles.tabSurfaceCompact : null,
@@ -989,16 +989,16 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
                                 {plain ? (
                                     <PlainTabCaption surfaceState={surfaceStateFor(tab)} tab={tab} icon={showIcons} count={fit.counts || tab.countTone !== undefined} active={active} label={!glyphOnly} />
                                 ) : iconOnly ? (
-                                    <View dataSet={themeSurfaceDataSet('tab-bar', 'icon', surfaceState)}
+                                    <View {...{ dataSet: themeSurfaceDataSet('tab-bar', 'icon', surfaceState) }}
                                         style={[styles.tabIcon, iconGlyphStyles?.icon ?? null, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'icon', state: surfaceState } : undefined)]}>{tab.icon}</View>
                                 ) : (
                                     <View style={styles.tabCaption}>
                                     {/* A mark that identifies one option (a dashboard's owner) leads its label. */}
                                     {/* In a bar that fits itself, glyphs drop first when the names don't fit with them. */}
-                                    {tab.icon && (!overflow || fit.icons) ? <View dataSet={themeSurfaceDataSet('tab-bar', 'icon', surfaceState)}
+                                    {tab.icon && (!overflow || fit.icons) ? <View {...{ dataSet: themeSurfaceDataSet('tab-bar', 'icon', surfaceState) }}
                                         style={[styles.tabIcon, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'icon', state: surfaceState } : undefined)]}>{tab.icon}</View> : null}
                                     <Text
-                                        dataSet={themeSurfaceDataSet('tab-bar', 'label', surfaceState)}
+                                        {...{ dataSet: themeSurfaceDataSet('tab-bar', 'label', surfaceState) }}
                                         // Value choices keep their full names visible when the row
                                         // stacks into a narrow slot; view tabs remain single-line.
                                         numberOfLines={valueChoice ? undefined : 1}
@@ -1195,12 +1195,12 @@ function PlainTabCaption(props: Readonly<{
     const caption = (
         <View style={[styles.tabCaption, styles.plainCaption]}>
             {props.icon && props.tab.icon ? <View
-                dataSet={themeSurfaceDataSet('tab-bar', 'icon', surfaceState)}
+                {...{ dataSet: themeSurfaceDataSet('tab-bar', 'icon', surfaceState) }}
                 style={[styles.tabIcon, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'icon', state: surfaceState } : undefined)]}>{props.tab.icon}</View> : null}
             {props.more ? <Icon name="dots-three" size={ICON_SIZE.sm} color={theme.colors.text.secondary} /> : null}
             {/* The overflow trigger is the glyph alone everywhere; its word is the accessible name. */}
             {props.label === false || props.more ? null : (
-                <Text dataSet={themeSurfaceDataSet('tab-bar', 'label', surfaceState)}
+                <Text {...{ dataSet: themeSurfaceDataSet('tab-bar', 'label', surfaceState) }}
                     numberOfLines={1} style={[styles.tabLabel, props.segmented ? null : styles.plainLabel, props.compact ? styles.tabLabelCompact : null, props.active ? styles.tabLabelActive : null,
                         themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'label', state: surfaceState } : undefined)]}>
                     {props.tab.label}

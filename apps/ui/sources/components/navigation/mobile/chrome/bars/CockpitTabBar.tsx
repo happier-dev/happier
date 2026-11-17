@@ -230,7 +230,7 @@ export function CockpitTabBarView<TSurface extends string>(controlled: CockpitTa
                     : undefined}
             >
                 {active ? <View pointerEvents="none" style={[styles.activePill, { borderRadius: metrics.activePillRadius }]} /> : null}
-                <View dataSet={themeSurfaceDataSet('tab-bar', 'icon', surfaceState)}
+                <View {...{ dataSet: themeSurfaceDataSet('tab-bar', 'icon', surfaceState) }}
                     style={[styles.iconContainer, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'icon', state: surfaceState } : undefined)]}>
                     <View style={active ? null : restInk.style}>
                         {typeof tab.icon === 'string' ? (
@@ -243,7 +243,7 @@ export function CockpitTabBarView<TSurface extends string>(controlled: CockpitTa
                 </View>
                 {/* Every bar reads the one tab-labels setting (owner 11-15, superseding 11-06's named selected detail tab). */}
                 {metrics.showLabels ? (
-                    <Text dataSet={themeSurfaceDataSet('tab-bar', 'label', surfaceState)}
+                    <Text {...{ dataSet: themeSurfaceDataSet('tab-bar', 'label', surfaceState) }}
                         style={[styles.label, active ? styles.labelActive : styles.labelInactive, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'label', state: surfaceState } : undefined)]}>
                         {tab.label}
                     </Text>
@@ -256,7 +256,7 @@ export function CockpitTabBarView<TSurface extends string>(controlled: CockpitTa
     return (
         <FloatingTabBarSurface testID={props.barTestId} bottomInset={props.bottomInset} opaqueBand={props.opaqueBand ?? true}
             trailingAccessory={props.trailingAccessory}>
-            <Animated.View dataSet={themeSurfaceDataSet('tab-bar', 'root', 'default')}
+            <Animated.View {...{ dataSet: themeSurfaceDataSet('tab-bar', 'root', 'default') }}
                 style={[styles.innerContainer, { gap: metrics.rowGap }, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'root' } : undefined)]}>
                 {/* The tablist owns only the tabs; More and other trailing controls are buttons beside it (C77). */}
                 <View accessibilityRole="tablist" style={[styles.innerContainer, styles.tablist, { gap: metrics.rowGap }]}>
