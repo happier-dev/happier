@@ -131,6 +131,12 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
             resources.set(resourceKey, { targetKey, resource: value });
             return value;
         },
+        /** One statements/tables/indexes read per open or Refresh; the producer owns ranking and coverage. */
+        stats(targetKey: string, request: Exclude<DatabaseStatsReadV1, { group: 'activity' }>): WorkbenchResource<DatabaseStatsObservationV1> {
+            return resource(key(['stats', targetKey, request]), async () => success(await client.operation({
+                operation: 'stats.read', target: target(targetKey).target, request,
+            }, reads.signal), 'stats.read').observation, targetKey);
+        },
         lastLook(targetKey: string) {
             if (closed) throw new Error('Workbench instance is closed');
             if (!options.lastLook) throw new Error('Statements comparison requires the host device-local last-look owner');
