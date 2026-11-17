@@ -369,9 +369,9 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 captureProvenance: seed.captureProvenance,
             })
             : definitionDraftSeed !== null
-                ? definitionDraftSeed.definition === undefined
+                ? definitionDraftSeed.draft ?? (definitionDraftSeed.definition === undefined
                     ? createWorkflowEditorDraft({ draftId: randomUUID(), name: definitionDraftSeed.name, blocks: [] })
-                    : buildWorkflowEditorDraftFromDefinition({ draftId: randomUUID(), ...definitionDraftSeed, definition: definitionDraftSeed.definition })
+                    : buildWorkflowEditorDraftFromDefinition({ draftId: randomUUID(), ...definitionDraftSeed, definition: definitionDraftSeed.definition }))
             : newSessionSeed !== null
                 ? newSessionSeed.draft
                 : triggerSeed !== null
@@ -729,22 +729,29 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     const machineHomeDir = machines.find((candidate) => candidate.id === projectTarget?.machineId)?.metadata?.homeDir ?? null;
     // Trigger edits are part of the draft (04 §5.4): written after the definition on Save.
     const initialIncomplete = React.useMemo(() => {
+        if (definitionDraftSeed?.incompleteTriggers !== undefined) return definitionDraftSeed.incompleteTriggers;
         const eventSeed = definitionDraftSeed?.eventSeed;
         return eventSeed === undefined ? undefined : { pending: [{ clientId: randomUUID(),
             when: { kind: 'pluginEvent' as const, value: null, eventRef: eventSeed.eventRef }, eventSeed }], edits: {} };
-    }, [authoringSourceKey, definitionDraftSeed?.eventSeed]);
+    }, [authoringSourceKey, definitionDraftSeed?.eventSeed, definitionDraftSeed?.incompleteTriggers]);
     const triggers = useWorkflowTriggerEditing({ definitionId: saved?.definitionId ?? null, sourceKey: authoringSourceKey, projectTarget, accountLifetime, initialIncomplete });
     const eventValueContext = React.useMemo(() => ({ triggerEvents: triggers.triggerEvents }), [triggers.triggerEvents]);
     const triggerInputs = useWorkflowEditorSelector(draftStore, (value) => value?.inputs ?? NO_WORKFLOW_INPUTS);
     React.useEffect(() => {
+        if (privateSeedWithdrawn || saved !== null) return;
+        if (definitionDraftSeed?.triggers !== undefined) {
+            triggers.restoreSnapshot(definitionDraftSeed.triggers);
+            return;
+        }
         // A deep link to a schedule template arrives with its schedule too, like one opened from the library.
         const catalogSelection = catalogSeed !== undefined && 'triggerSeed' in catalogSeed && !workflowStarterRequiresSession(catalogSeed)
             ? materializeWorkflowStarterExample(catalogSeed, { timezone: readDeviceTimeZone() }) : null;
         const trigger = definitionDraftSeed?.trigger ?? (catalogSelection?.status === 'ready' ? catalogSelection.example.trigger : undefined);
-        if (trigger === undefined || privateSeedWithdrawn || saved !== null) return;
+        if (trigger === undefined) return;
         triggers.setDraft(editWorkflowTriggerDraft(EMPTY_WORKFLOW_TRIGGER_DRAFT, { kind: 'add', clientId: randomUUID(), trigger,
             ...(definitionDraftSeed?.payloadSchema === undefined ? {} : { payloadSchema: definitionDraftSeed.payloadSchema }) }));
-    }, [initializationKey, definitionDraftSeed?.trigger, definitionDraftSeed?.payloadSchema, catalogSeed, privateSeedWithdrawn, saved?.definitionId, triggers.setDraft]);
+    }, [initializationKey, definitionDraftSeed?.trigger, definitionDraftSeed?.payloadSchema, definitionDraftSeed?.triggers,
+        catalogSeed, privateSeedWithdrawn, saved?.definitionId, triggers.setDraft, triggers.restoreSnapshot]);
     {
         const current = draftStore.get();
         snapshotRef.current = current === null ? null : { draft: current, description, projectTarget, executionTarget, triggers: triggers.captureSnapshot() };

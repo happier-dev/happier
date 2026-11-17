@@ -171,6 +171,55 @@ afterEach(async () => {
     restoreWebGlobals?.();
 });
 
+it('expands a sentence with no verb into the editable empty draft', async () => {
+    const { useWorkflowSentenceDraft } = await import('../authoring/useWorkflowSentenceDraft');
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Expected the sentence Account');
+    const sentence = await renderHook(() => useWorkflowSentenceDraft({ name: 'An unfinished automation' }, lifetime));
+    const entry = sentence.getCurrent().openInEditor();
+    if (!entry) throw new Error('Expected the ordinary editor entry');
+    await sentence.unmount();
+    const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new',
+        definitionDraftSeedId: entry.params.definitionDraftSeedId }} />, { wrapper: EditorPaneWrapper });
+    expect(screen.findByType(WorkflowEditorBody).props.draftStore.get()).toMatchObject({ name: 'An unfinished automation', blocks: [] });
+    expect(screen.findByTestId('workflow-editor-sentence')).not.toBeNull();
+    expectNoWorkflowWrites();
+});
+
+it('expands a sentence keeping every complete trigger and an unfinished When', async () => {
+    const { useWorkflowSentenceDraft } = await import('../authoring/useWorkflowSentenceDraft');
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { editWorkflowTriggerDraft } = await import('../triggers/workflowTriggerDraft');
+    const { WorkflowTriggerSection } = await import('../triggers/WorkflowTriggerSection');
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Expected the sentence Account');
+    const first = { kind: 'schedule', enabled: true,
+        schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } } as const;
+    const second = { kind: 'action', phase: 'after', actionIds: ['scm.commit.create'], enabled: true } as const;
+    const sentence = await renderHook(() => useWorkflowSentenceDraft({ name: 'Several starts',
+        definition: savedDefinition().definition, trigger: first }, lifetime));
+    await act(async () => {
+        sentence.getCurrent().triggers.setDraft(editWorkflowTriggerDraft(sentence.getCurrent().triggers.draft,
+            { kind: 'add', clientId: 'second', trigger: second }));
+        sentence.getCurrent().triggers.updateIncomplete(current => ({ ...current, pending: [{ clientId: 'unfinished',
+            when: { kind: 'action', phase: 'before', actionIds: [], mode: 'wait' } }] }));
+    });
+    const pending = sentence.getCurrent().triggers.incomplete;
+    const entry = sentence.getCurrent().openInEditor();
+    if (!entry) throw new Error('Expected the ordinary editor entry');
+    await sentence.unmount();
+    const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new',
+        definitionDraftSeedId: entry.params.definitionDraftSeedId }} />, { wrapper: EditorPaneWrapper });
+    const section = screen.findAllByType(WorkflowTriggerSection).find(node => node.props.presentation === 'sentence');
+    if (!section) throw new Error('Expected the sentence When clause');
+    expect.soft(section.props.draft.adds.map((row: { trigger: unknown }) => row.trigger)).toEqual([first, second]);
+    expect.soft(section.props.incomplete.state).toEqual(pending);
+    expect(screen.findAllHostsByTestId('workflow-editor-sentence-trigger:new:unfinished')).toHaveLength(1);
+    expectNoWorkflowWrites();
+});
+
 async function answerCaptureDiscussion(runId?: string, extraAnswer = false) {
     const { DiscussionSummaryV1Schema } = await import('@happier-dev/protocol/discussions/models');
     const discussionId = 'capture-discussion';

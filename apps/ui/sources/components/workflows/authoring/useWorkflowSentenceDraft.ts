@@ -5,7 +5,7 @@ import type { WorkflowDraftMutationResultV1 } from '@happier-dev/protocol/action
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { buildWorkflowDefinitionCandidate, buildWorkflowEditorDraftFromDefinition, validateWorkflowEditorDraft } from '@/sync/domains/workflows/workflowAuthoring';
+import { buildWorkflowEditorDraftFromDefinition, validateWorkflowEditorDraft } from '@/sync/domains/workflows/workflowAuthoring';
 import { createWorkflowEditorDraft, type WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { t } from '@/text';
@@ -145,11 +145,9 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
         } }, history: history.controls, save, saving, failed, saved,
         openInEditor: () => {
             if (source.lifetime === null) return null;
-            const { step: _step, trigger: _trigger, eventSeed, payloadSchema: _payloadSchema, ...seed } = source.intent;
-            const row = triggers.captureSnapshot().rows[0];
+            const { step: _step, definition: _definition, trigger: _trigger, eventSeed: _eventSeed, payloadSchema: _payloadSchema, ...seed } = source.intent;
             return prepareWorkflowSentenceEditorEntry({ ...seed, ...(projectRef.current === null ? {} : { project: projectRef.current }),
-                ...(row?.trigger ? { trigger: row.trigger, ...(row.payloadSchema === undefined ? {} : { payloadSchema: row.payloadSchema }) }
-                    : eventSeed === undefined ? {} : { eventSeed }), name: source.store.get().name,
-                definition: WorkflowDefinitionV1Schema.parse(buildWorkflowDefinitionCandidate(source.store.get())) }, source.lifetime);
+                name: source.store.get().name }, source.lifetime, { draft: source.store.get(),
+                triggers: triggers.captureSnapshot(), incompleteTriggers: triggers.incomplete });
         } };
 }

@@ -9,10 +9,11 @@ export type WorkflowSentenceEditorIntent = Readonly<Pick<WorkflowDefinitionDraft
 }>;
 
 /** All verbs keep their ordinary Action and field bindings; the mounted editor owns Save and its retry identity. */
-export function prepareWorkflowSentenceEditorEntry(intent: WorkflowSentenceEditorIntent, accountLifetime: ServerAccountScopeLifetime) {
+export function prepareWorkflowSentenceEditorEntry(intent: WorkflowSentenceEditorIntent, accountLifetime: ServerAccountScopeLifetime,
+    mounted?: Pick<WorkflowDefinitionDraftSeed, 'draft' | 'triggers' | 'incompleteTriggers'>) {
     if (!accountLifetime.isCurrent()) return null;
     const { step, ...seed } = intent;
     const definition = step === undefined ? seed.definition : WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [step] });
-    const definitionDraftSeedId = storeWorkflowDefinitionDraftSeed({ ...seed, ...(definition === undefined ? {} : { definition }), initialView: 'sentence' }, accountLifetime);
+    const definitionDraftSeedId = storeWorkflowDefinitionDraftSeed({ ...seed, ...(definition === undefined ? {} : { definition }), ...mounted, initialView: 'sentence' }, accountLifetime);
     return { pathname: '/workflows/[id]' as const, params: { id: 'new', definitionDraftSeedId, serverId: accountLifetime.scope.serverId } };
 }

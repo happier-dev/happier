@@ -150,7 +150,7 @@ it('keeps history and current operands when opening the full editor, and refuses
     const entry = hook.getCurrent().openInEditor();
     if (!entry) throw new Error('Expected the ordinary editor entry');
     expect(readWorkflowDefinitionDraftSeed(entry.params.definitionDraftSeedId, home.lifetime.scope))
-        .toMatchObject({ definition: { blocks: [edited] }, trigger: later });
+        .toMatchObject({ draft: { blocks: [edited] }, triggers: { rows: [{ trigger: later }] } });
     await hook.rerender();
     expect(hook.getCurrent().draftStore.get().blocks).toEqual([edited]);
     await disposeHome?.(); disposeHome = undefined;
