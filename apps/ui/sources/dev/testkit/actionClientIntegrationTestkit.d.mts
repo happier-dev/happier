@@ -33,6 +33,14 @@ export function connectUiPersonActionClient(params: Readonly<{
     accountSecret: Uint8Array;
 }>): ReturnType<typeof connectUiActionClient>;
 
+export function connectFreshVercelThroughDeploymentUi(params: Readonly<{
+    serverUrl: string;
+    credentials: AuthCredentials;
+    teamId: string;
+    token: string;
+    providerFetch: typeof globalThis.fetch;
+}>): Promise<import('@happier-dev/protocol/connect/qualified-connected-account-persistence').QualifiedConnectedAccountRef>;
+
 export function createAccountOutputFixture(params: Readonly<{
     serverId: string; homeId: string; baseUrl: string; ownerToken: string; ownerAccountId: string;
     memberToken: string; memberAccountId: string; machineId: string; replacementMachineId?: string;

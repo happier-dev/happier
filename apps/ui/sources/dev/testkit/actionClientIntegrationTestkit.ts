@@ -184,3 +184,110 @@ export async function connectUiPersonActionClient(params: Readonly<{
         throw error;
     }
 }
+
+/** Press the deployment editor's fresh Connect against the journey's actual Home Account. */
+export async function connectFreshVercelThroughDeploymentUi(params: Readonly<{
+    serverUrl: string;
+    credentials: AuthCredentials;
+    teamId: string;
+    token: string;
+    providerFetch: typeof globalThis.fetch;
+}>) {
+    const [{ createElement }, { act }, { expect, vi }, { Asset }, { File },
+        { prepareAuthenticationInventory }, assets] = await Promise.all([
+        import('react'), import('react-test-renderer'), import('vitest'), import('expo-asset'), import('expo-file-system'),
+        import('./fixtures/connectedAccountAuthentication'), import('./mocks/bundledPluginUiAssets'),
+    ]);
+    const packaged = { artifacts: [] as unknown[], declarations: [] as unknown[], files: new Map<number, Uint8Array>(), reads: 0 };
+    const [{ PLUGIN_MANIFEST }, { plugin: deploymentPlugin }] = await Promise.all([
+        import('../../../../../packages/plugins/machine-vercel/src/manifest'),
+        import('../../../../../packages/plugins/deploy-vercel/src/manifest'),
+    ]);
+    const authentication = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors.find(descriptor => descriptor.id === 'vercel-account')?.authentication.account;
+    if (!authentication) throw new Error('Vercel portable Account authentication declaration missing');
+    await prepareAuthenticationInventory(packaged, { manifest: PLUGIN_MANIFEST,
+        target: authentication, projectPath: 'packages/plugins/machine-vercel',
+        entryPath: 'packages/plugins/machine-vercel/src/account.ts', packageName: '@happier-dev/plugins-machine-vercel' });
+    await prepareAuthenticationInventory(packaged, { manifest: deploymentPlugin.manifest,
+        target: { artifactId: 'account-runtime', exportName: 'activateAccount' }, projectPath: 'packages/plugins/deploy-vercel',
+        entryPath: 'packages/plugins/deploy-vercel/src/account.ts', packageName: '@happier-dev/plugins-deploy-vercel' });
+    // The compiler fixture's unknown arrays cross only this physical app-package boundary.
+    const restoreArtifacts = assets.installBundledPluginUiArtifactsForTests(packaged.artifacts as import('@/sync/domains/plugins/availability/bundledPluginUiArtifactInventory').BundledPluginUiAppArtifactInventory);
+    const restoreDeclarations = assets.installBundledPluginUiDeclarationsForTests(packaged.declarations as readonly import('@/sync/domains/plugins/availability/bundledPluginUiArtifactInventory').PluginHostBundledUiDeclaration[]);
+    const originalAsset = Asset.fromModule;
+    const localFiles = [...packaged.files].map(([id, bytes]) => {
+        const file = new File(`file:///deployment-connect-${id}.js`);
+        file.write(bytes);
+        return file;
+    });
+    const assetBoundary = vi.spyOn(Asset, 'fromModule').mockImplementation(asset => {
+        if (typeof asset !== 'number' || !packaged.files.has(asset)) return originalAsset(asset);
+        const uri = `file:///deployment-connect-${asset}.js`;
+        const result = Asset.fromURI(uri);
+        result.localUri = uri;
+        result.downloaded = true;
+        return result;
+    });
+    let closeClient: (() => Promise<void>) | undefined;
+    let disposeAccount: (() => void) | undefined;
+    let unmountScreen: (() => Promise<void>) | undefined;
+    try {
+        const client = await connectUiActionClient({ serverUrl: params.serverUrl, credentials: params.credentials });
+        closeClient = client.close;
+        const nativeFetch = globalThis.fetch.bind(globalThis);
+        setRuntimeFetch((input, init) => new URL(input instanceof Request ? input.url : String(input)).hostname === 'api.vercel.com'
+            ? params.providerFetch(input, init) : nativeFetch(input, init));
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(client.serverId);
+        disposeAccount = account.dispose;
+        const [{ renderScreen }, { InjectedAuthProvider }, { AppShellPluginUiProjectionProvider }, { ModalProvider, Modal },
+            { showDeploymentPlatformTargetSheet }, { createDeploymentActions }, { ConnectedAccountPurposeTargetChooser }, { waitForTestEvent }, { SurfaceStateCard }] = await Promise.all([
+            import('./render/renderScreen'), import('@/auth/context/AuthContext'),
+            import('@/components/appShell/plugins/AppShellPluginUiProjection'), import('@/modal'),
+            import('@/components/projects/deployments/DeploymentPlatformTargetSheet'),
+            import('@/components/projects/deployments/deploymentActions'),
+            import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser'),
+            import('./hooks/waitForTestEvent'),
+            import('@/components/ui/surfaces/SurfaceStateCard'),
+        ]);
+        const screen = await renderScreen(createElement(InjectedAuthProvider, { credentials: params.credentials,
+            children: createElement(AppShellPluginUiProjectionProvider, { children: createElement(ModalProvider) }) }));
+        unmountScreen = async () => { await act(async () => Modal.hideAll()); await screen.unmount(); };
+        await act(async () => showDeploymentPlatformTargetSheet({ name: 'First Vercel app',
+            environment: { id: 'fresh-environment', revision: 1, projectSourceId: '' }, ownerAccountId: account.accountId,
+            lifetime: account.accountLifetime, actions: createDeploymentActions(account.accountLifetime, ''),
+            onApproval: () => {}, initialTargetKey: 'happier.deploy.vercel/runtime' }));
+        await waitForTestEvent(screen.subscribe, () => expect(screen.findHostByTestId('project-deployments.platform.connect.add'), screen.getTextContent()).not.toBeNull());
+        await screen.pressByTestIdAsync('project-deployments.platform.connect.add');
+        await waitForTestEvent(screen.subscribe, () => expect(screen.findHostByTestId('connected-account-configuration:teamId'), screen.getTextContent()).not.toBeNull());
+        await act(async () => {
+            screen.changeTextByTestId('connected-account-configuration:teamId', params.teamId);
+            screen.changeTextByTestId('connected-account-manual:token', params.token);
+        });
+        await waitForTestEvent(screen.subscribe, () => expect(screen.findHostByTestId('connected-account-manual:submit')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('connected-account-manual:submit');
+        const { QualifiedConnectedAccountRefSchema } = await import('@happier-dev/protocol/connect/qualified-connected-account-persistence');
+        let connected: import('@happier-dev/protocol/connect/qualified-connected-account-persistence').QualifiedConnectedAccountRef | undefined;
+        await waitForTestEvent(screen.subscribe, () => {
+            const refusal = screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'connected-account:error');
+            if (refusal) throw new Error(`Fresh Vercel Connect refused: ${String(refusal.props.diagnosticCode)} (${String(refusal.props.diagnosticDetail ?? 'no requestId')})`);
+            const selected = screen.findAllByType(ConnectedAccountPurposeTargetChooser).map(node => node.props.value)
+                .find(value => value?.kind === 'account');
+            expect(selected, screen.getTextContent()).toBeDefined();
+            connected = QualifiedConnectedAccountRefSchema.parse(selected.account);
+        });
+        expect(screen.findHostByTestId('project-deployments.platform.connect')).toBeNull();
+        expect(screen.findHostByTestId('project-deployments.platform.check')).not.toBeNull();
+        if (!connected) throw new Error('Platform editor did not retain the connected credential');
+        return connected;
+    } finally {
+        await unmountScreen?.();
+        disposeAccount?.();
+        await closeClient?.();
+        resetRuntimeFetch();
+        assetBoundary.mockRestore();
+        restoreDeclarations();
+        restoreArtifacts();
+        for (const file of localFiles) file.delete();
+    }
+}
