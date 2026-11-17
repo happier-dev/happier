@@ -18,6 +18,7 @@ import { usePersonalTaskOrder } from './usePersonalTaskOrder.js';
 import { useTriageListSessionActivityV1 } from './useListSessionActivity.js';
 import { usePluginHostApi } from '@happier-dev/plugin-ui';
 import { createTriageListWindowStore } from '../../projection/listWindowStore.js';
+import { triageEntryRowKey } from '../../projection/listWindow.js';
 import { planTriageListItemsV1 } from './sections.js';
 import { useTriageListSessionActivitySourcesV1 } from './useListSessionActivitySources.js';
 
@@ -91,6 +92,11 @@ describe('the Task page admitted read', () => {
         } };
         let refresh: (() => Promise<void>) | undefined;
         let page: TriageListEntriesResultV1 | undefined;
+        let mounted: Readonly<{
+            taskProjection: TriageListEntriesResultV1['window']['taskProjection'];
+            sessionActivity: ReturnType<typeof useTriageListSessionActivityV1>;
+            agents: ReturnType<typeof planTriageListItemsV1>;
+        }> | undefined;
         const surface = defineUiSurface(function TaskPageProbe() {
             const host = usePluginHostApi();
             const store = React.useMemo(() => createTriageListWindowStore({
@@ -114,6 +120,7 @@ describe('the Task page admitted read', () => {
                 workflowSubjectOf: () => 'issue',
                 tasks: { audience: 'agents', isTask: ref => ref.kindId === 'task',
                     hasSessions: key => (links.linkedSessions.get(key)?.length ?? 0) > 0 } });
+            mounted = { taskProjection: current.taskProjection, sessionActivity: links, agents };
             return <><Text value={`${current.window?.rows.length ?? 0}:${order.available}:${links.linkedSessions.size}`} />
                 <Text value={`Agents ${agents.length}:${agents.some(item => item.row.entryRef.entryId === 'task-1')}`} />
                 <Text value={current.window?.rows[0]?.content?.outcome.snapshot.title ?? 'Loading Tasks'} />
@@ -143,6 +150,18 @@ describe('the Task page admitted read', () => {
             }); });
             await expect(ui!.getByText(`${MAX_TRIAGE_LIST_WINDOW_ROWS_V1}:true:${MAX_TRIAGE_LIST_WINDOW_ROWS_V1}`)).resolves.toBeDefined();
             await expect(ui!.getByText(`Agents ${MAX_TRIAGE_LIST_WINDOW_ROWS_V1 - 1}:false`)).resolves.toBeDefined();
+            const pairedRows = ['task-0', 'task-1'].map(id => page!.window.rows.find(row => row.entryRef.entryId === id)!);
+            expect(pairedRows.every(Boolean)).toBe(true);
+            expect(pairedRows.map(row => mounted!.taskProjection!.entries.find(entry =>
+                triageEntryRowKey(entry.entryRef) === triageEntryRowKey(row.entryRef))?.result)).toEqual([
+                expect.objectContaining({ kind: 'complete', links: [expect.objectContaining({ sessionId: 'stopped-session' })] }),
+                expect.objectContaining({ kind: 'complete', links: [] }),
+            ]);
+            expect(pairedRows.map(row => mounted!.sessionActivity.linkedSessions.get(triageEntryRowKey(row.entryRef))))
+                .toEqual([['stopped-session'], []]);
+            expect(mounted!.sessionActivity.linksStatus).toBe('ready');
+            expect(pairedRows.map(row => mounted!.agents.some(item => item.key === triageEntryRowKey(row.entryRef))))
+                .toEqual([true, false]);
             expect(page?.window.rows).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
             expect(isExternalActionResultWithinResponseEnvelopeLimitV1(page)).toBe(true);
             expect(counts).toEqual({ lists: 1, exact: 0, palettes: 1 });
