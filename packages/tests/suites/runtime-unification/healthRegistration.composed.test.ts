@@ -46,7 +46,7 @@ afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); reloadConfiguration(
 // Server identity belongs to this process even when each Account mode gets an isolated database.
 const serverId = `srv_${randomUUID().replaceAll('-', '')}`;
 
-it.skipIf(process.platform !== 'linux').each(['e2ee', 'plain'] as const)('%s: registers a prepared mounted Health source on its actual installation and observes it; rejects a plugin ID used as an installation', async encryptionMode => {
+it.skipIf(process.platform !== 'linux').each(['e2ee', 'plain'] as const)('%s: registers mounted Health on its installation and cold-adopts recovery into the same Notice; rejects a plugin ID as an installation', async encryptionMode => {
     await withTempDir('health-registration-', async happyHomeDir => {
         vi.stubEnv('HAPPIER_HOME_DIR', happyHomeDir);
         vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'never');
@@ -69,6 +69,7 @@ it.skipIf(process.platform !== 'linux').each(['e2ee', 'plain'] as const)('%s: re
         } });
         let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
         const lifetime = new AbortController();
+        let observerLifetime = new AbortController();
         let machineServices: ReturnType<typeof createMachineServicesRuntime> | undefined;
         try {
             // The already paired observer and installed declaration are preconditions.
@@ -83,13 +84,14 @@ it.skipIf(process.platform !== 'linux').each(['e2ee', 'plain'] as const)('%s: re
             const credentials = { token: home.token, encryption: home.encryption, credentialProvenance: 'stored_session' as const };
             const origin = { serverIdentityId: home.serverId, machineId: home.machineId };
             expect((await readCurrentMachineInstallation())?.machineId).toBe(home.machineId);
-            runtime = await runWithServerHttpBaseUrl(home.baseUrl, () => createAdmittedPluginRuntimeFixture({ happyHomeDir, controller: pluginReloadController, runtimeOptions: {
+            const startRuntime = () => runWithServerHttpBaseUrl(home.baseUrl, () => createAdmittedPluginRuntimeFixture({ happyHomeDir, controller: pluginReloadController, runtimeOptions: {
                 pluginIds: [plugin.manifest.id], resolveCurrentMachineId: () => home.machineId,
                 externalActionHomeBinding: { serverId: home.serverId, serverIdentityId: home.serverId },
                 resolveCurrentMachineExecutionOriginContext: async () => origin,
                 scopedActionRuntime: { credentials, actionsSettingsProvider: createActionSettingsProvider({
                     getAccountSettings: () => null, allowEnvironmentOverride: false }) },
             } }));
+            runtime = await startRuntime();
             const registry = runtime.registry;
             const materialization = registry.resolveCurrentPluginMaterializationRef?.(plugin.manifest.id);
             const occurrenceId = registry.readPluginOccurrenceId(plugin.manifest.id);
@@ -168,61 +170,7 @@ else process.exitCode=17;
             await triggers.add({ observationOnly: { kind: 'observationOnly' }, name: 'Recovered service',
                 trigger: { ...eventTrigger, eventRef: HEALTH_CHECK_EVENT_REFS_V1.recovered } });
 
-            const isCurrent = () => registry.isPluginOccurrenceCurrent(plugin.manifest.id, occurrenceId);
-            const revalidateCallerMaterialization = async (candidate: typeof materialization) => {
-                const current = registry.resolveCurrentPluginMaterializationRef?.(candidate.pluginId);
-                return current !== null && current !== undefined && arePluginMachineMaterializationRefsEqual(current, candidate);
-            };
-            const revalidateCallerOccurrence = async (candidate: Readonly<{ pluginId: string; occurrenceId: string }>) =>
-                registry.isPluginOccurrenceCurrent(candidate.pluginId, candidate.occurrenceId);
-            const definitionsTransport = createAutomationEventStoredDefinitionsHttpTransportV1({ credentials,
-                revalidateCaller: async caller => isCurrent()
-                    && await revalidateCallerMaterialization(caller.materialization)
-                    && await revalidateCallerOccurrence(caller) });
-            const adopted = createAutomationEventAdoptedDefinitionSetHostV1({ credentials, caller: materialization, occurrenceId,
-                sourceCustody, transport: { kind: 'checkpointedPull' }, occurrenceSignal: lifetime.signal,
-                readStoredDefinitions: async request => {
-                    try { return await definitionsTransport.read(request); }
-                    catch (error) {
-                        // Retain locations only: Axios objects can include bearer headers.
-                        adoptionHttpFailures.push({ phase: 'storedDefinitions',
-                            frames: error instanceof Error ? error.stack?.split('\n').filter(line => /^\s+at /u.test(line)) : [] });
-                        throw error;
-                    }
-                },
-                isOccurrenceCurrent: isCurrent, revalidateCallerMaterialization, revalidateCallerOccurrence });
-            const adoption = await runWithServerHttpBaseUrl(home.baseUrl, () => adopted.refresh());
-            expect(adoption, JSON.stringify({ adoption, adoptionHttpFailures })).toMatchObject({ kind: 'adopted' });
-            const projection = adopted.readPublicProjection();
-            expect(projection).toMatchObject({ kind: 'available', definitions: expect.arrayContaining([expect.objectContaining({
-                sourceInstanceId: source.sourceInstanceId, sourceConfig: source.sourceConfig,
-                observationOnly: { kind: 'observationOnly' },
-                observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: materialization },
-            })]) });
-            const resolveAdoptedDefinitionSet: ResolveAutomationEventAdoptedDefinitionSetV1 = (candidate, occurrence, transport) =>
-                transport.kind === 'checkpointedPull' && occurrence === occurrenceId
-                    && arePluginMachineMaterializationRefsEqual(candidate, materialization) ? adopted : null;
-            const seed: PluginInvocationServicesSeed = { plugin: { id: plugin.manifest.id, version: plugin.manifest.version },
-                contribution: { id: 'health-observer', qualifiedId: `${plugin.manifest.id}/backgroundServices/health-observer` },
-                occurrenceId, sourceCustody, surface: 'background', signal: lifetime.signal, isOccurrenceCurrent: isCurrent,
-                resolveCurrentPluginMaterializationRef: () => registry.resolveCurrentPluginMaterializationRef?.(plugin.manifest.id) ?? null };
-            const actionsSettings = setActionApprovalOverride({ settings: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }),
-                actionId: 'automation.event.admit', surface: 'plugin', approvalRequired: false });
-            // Native service discovery and the peer's HTTP reply are system boundaries.
             const noticeResults: unknown[] = [];
-            const consume = createConfiguredHealthCheckNotices({ credentials, serverId: home.serverId, serverHttpBaseUrl: home.baseUrl,
-                machineId: home.machineId, readService: async () => listed.services[0]!,
-                readEnvironment: async () => { throw new Error('Machine service has no Environment'); } });
-            const executor = createActionExecutor({ machineServiceAction: request => {
-                if (!machineServices) throw new Error('Native service runtime unavailable');
-                return machineServices.execute(request);
-            },
-                automationEventAction: createAutomationEventActionExecutor({ credentials, resolveAdoptedDefinitionSet,
-                    revalidateCallerMaterialization, revalidateCallerOccurrence,
-                    onCommittedObservation: async observation => { noticeResults.push(await consume(observation)); } }) });
-            const actions = createPluginInvocationActionsService({ seed, actionExecutor: { ...executor,
-                execute: (id, input, context) => executor.execute(id, input, { ...context, actionsSettings }) },
-                invokeContributedAction: async () => { throw new Error('Unexpected contributed health check'); } });
             let probes = 0;
             let now = Date.now();
             let httpStatus = 503;
@@ -230,12 +178,6 @@ else process.exitCode=17;
             const unavailable = createUnavailablePluginServices();
             const http: HttpService = { ...unavailable.http, async requestStream(request) { probes += 1; return { status: httpStatus, headers: {},
                 finalUrl: request.url, chunks: (async function* () {})(), dispose: async () => {} }; } };
-            const healthChecks = createSavedHealthChecksHost({ serverId: home.serverId, homeServerIdentityId: home.serverId,
-                now: () => now,
-                resolveAdoptedDefinitionSet, readObserver: () => ({ machineId: home.machineId, installationId: home.installationId }),
-                openDomainArtifact: async () => { throw new Error('Machine service has no Domain'); },
-                onServiceResult: result => { samples.push(result); } }).bind(seed, { actions, http });
-            if (!healthChecks) throw new Error('Expected bound saved-health service');
             const rows = new Map<string, AccountKvEntry>();
             // Account KV is the persistent-storage boundary; retain real SDK checkpoints and observation logic.
             const kv: AccountKvService = {
@@ -256,16 +198,84 @@ else process.exitCode=17;
                 async list() { return { items: [...rows].map(([key, entry]) => ({ key, ...entry })) }; },
                 async transaction(operation) { return operation(kv); },
             };
-            const context: BackgroundServiceContext = { plugin: seed.plugin, contribution: seed.contribution,
-                surface: 'background', signal: lifetime.signal, materialization, invokedAtMs: Date.now(), services: {
-                    ...unavailable, actions, healthChecks, http,
-                    events: { ...unavailable.events, host: createPluginInvocationHostEventsService({ seed, broker: createStablePluginEventsBroker() }) },
-                    storage: { ...unavailable.storage, account: { kv, collection() { throw new Error('Unexpected Collection'); } } },
-                } };
-            const adapter = createHealthCheckSourceAdapter(() => now);
-            const cycle = () => runWithServerHttpBaseUrl(home.baseUrl, () => runCheckpointedPluginEventObserverV1({
-                context, source: adapter, mode: 'once', now: () => now }));
-            await cycle();
+            function startObservation(current: NonNullable<typeof runtime>) {
+                const registry = current.registry;
+                const occurrenceId = registry.readPluginOccurrenceId(plugin.manifest.id);
+                const materialization = registry.resolveCurrentPluginMaterializationRef?.(plugin.manifest.id);
+                const sourceCustody = registry.readPluginSourceCustody?.(plugin.manifest.id);
+                if (!occurrenceId || !materialization || !sourceCustody) throw new Error('Expected current Health observer');
+                const isCurrent = () => registry.isPluginOccurrenceCurrent(plugin.manifest.id, occurrenceId);
+                const revalidateCallerMaterialization = async (candidate: typeof materialization) => {
+                    const current = registry.resolveCurrentPluginMaterializationRef?.(candidate.pluginId);
+                    return current !== null && current !== undefined && arePluginMachineMaterializationRefsEqual(current, candidate);
+                };
+                const revalidateCallerOccurrence = async (candidate: Readonly<{ pluginId: string; occurrenceId: string }>) =>
+                    registry.isPluginOccurrenceCurrent(candidate.pluginId, candidate.occurrenceId);
+                const definitionsTransport = createAutomationEventStoredDefinitionsHttpTransportV1({ credentials,
+                    revalidateCaller: async caller => isCurrent()
+                        && await revalidateCallerMaterialization(caller.materialization)
+                        && await revalidateCallerOccurrence(caller) });
+                const adopted = createAutomationEventAdoptedDefinitionSetHostV1({ credentials, caller: materialization, occurrenceId,
+                    sourceCustody, transport: { kind: 'checkpointedPull' }, occurrenceSignal: observerLifetime.signal,
+                    readStoredDefinitions: async request => {
+                        try { return await definitionsTransport.read(request); }
+                        catch (error) {
+                            // Retain locations only: Axios objects can include bearer headers.
+                            adoptionHttpFailures.push({ phase: 'storedDefinitions',
+                                frames: error instanceof Error ? error.stack?.split('\n').filter(line => /^\s+at /u.test(line)) : [] });
+                            throw error;
+                        }
+                    },
+                    isOccurrenceCurrent: isCurrent, revalidateCallerMaterialization, revalidateCallerOccurrence });
+                const resolveAdoptedDefinitionSet: ResolveAutomationEventAdoptedDefinitionSetV1 = (candidate, occurrence, transport) =>
+                    transport.kind === 'checkpointedPull' && occurrence === occurrenceId
+                        && arePluginMachineMaterializationRefsEqual(candidate, materialization) ? adopted : null;
+                const seed: PluginInvocationServicesSeed = { plugin: { id: plugin.manifest.id, version: plugin.manifest.version },
+                    contribution: { id: 'health-observer', qualifiedId: `${plugin.manifest.id}/backgroundServices/health-observer` },
+                    occurrenceId, sourceCustody, surface: 'background', signal: observerLifetime.signal, isOccurrenceCurrent: isCurrent,
+                    resolveCurrentPluginMaterializationRef: () => registry.resolveCurrentPluginMaterializationRef?.(plugin.manifest.id) ?? null };
+                const actionsSettings = setActionApprovalOverride({ settings: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }),
+                    actionId: 'automation.event.admit', surface: 'plugin', approvalRequired: false });
+                // Native service discovery and the peer's HTTP reply are system boundaries.
+                const consume = createConfiguredHealthCheckNotices({ credentials, serverId: home.serverId, serverHttpBaseUrl: home.baseUrl,
+                    machineId: home.machineId, readService: async () => listed.services[0]!,
+                    readEnvironment: async () => { throw new Error('Machine service has no Environment'); } });
+                const executor = createActionExecutor({ machineServiceAction: request => {
+                    if (!machineServices) throw new Error('Native service runtime unavailable');
+                    return machineServices.execute(request);
+                },
+                    automationEventAction: createAutomationEventActionExecutor({ credentials, resolveAdoptedDefinitionSet,
+                        revalidateCallerMaterialization, revalidateCallerOccurrence,
+                        onCommittedObservation: async observation => { noticeResults.push(await consume(observation)); } }) });
+                const actions = createPluginInvocationActionsService({ seed, actionExecutor: { ...executor,
+                    execute: (id, input, context) => executor.execute(id, input, { ...context, actionsSettings }) },
+                    invokeContributedAction: async () => { throw new Error('Unexpected contributed health check'); } });
+                const healthChecks = createSavedHealthChecksHost({ serverId: home.serverId, homeServerIdentityId: home.serverId,
+                    now: () => now,
+                    resolveAdoptedDefinitionSet, readObserver: () => ({ machineId: home.machineId, installationId: home.installationId }),
+                    openDomainArtifact: async () => { throw new Error('Machine service has no Domain'); },
+                    onServiceResult: result => { samples.push(result); } }).bind(seed, { actions, http });
+                if (!healthChecks) throw new Error('Expected bound saved-health service');
+                const context: BackgroundServiceContext = { plugin: seed.plugin, contribution: seed.contribution,
+                    surface: 'background', signal: observerLifetime.signal, materialization, invokedAtMs: Date.now(), services: {
+                        ...unavailable, actions, healthChecks, http,
+                        events: { ...unavailable.events, host: createPluginInvocationHostEventsService({ seed, broker: createStablePluginEventsBroker() }) },
+                        storage: { ...unavailable.storage, account: { kv, collection() { throw new Error('Unexpected Collection'); } } },
+                    } };
+                const adapter = createHealthCheckSourceAdapter(() => now);
+                const cycle = () => runWithServerHttpBaseUrl(home.baseUrl, () => runCheckpointedPluginEventObserverV1({
+                    context, source: adapter, mode: 'once', now: () => now }));
+                return { adopted, cycle };
+            }
+            let observer = startObservation(runtime);
+            expect(observer.adopted.readPublicProjection().kind).toBe('initializing');
+            await observer.cycle();
+            const projection = observer.adopted.readPublicProjection();
+            expect(projection, JSON.stringify(adoptionHttpFailures)).toMatchObject({ kind: 'available', definitions: expect.arrayContaining([expect.objectContaining({
+                sourceInstanceId: source.sourceInstanceId, sourceConfig: source.sourceConfig,
+                observationOnly: { kind: 'observationOnly' },
+                observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: materialization },
+            })]) });
             const observed = await runWithServerHttpBaseUrl(home.baseUrl, () => getAutomationDefinition({
                 token: home.token, automationId: written.set.automationId,
             }));
@@ -291,10 +301,33 @@ else process.exitCode=17;
             expect(await readInventoryHealth()).toMatchObject({ kind: 'available', checks: [
                 { checkId: 'http', result: { status: 'down' } },
             ] });
+            // A cold in-process daemon incarnation keeps only native metadata,
+            // Account KV and server records; no adopted definitions or adapter state.
+            observerLifetime.abort();
+            await runtime.dispose();
+            await machineServices.dispose();
+            machineServices = createMachineServicesRuntime({ target, readMetadata: () => metadata, captureMetadataPort: () => port });
+            observerLifetime = new AbortController();
+            runtime = await startRuntime();
+            expect(runtime.registry.readPluginOccurrenceId(plugin.manifest.id)).not.toBe(occurrenceId);
+            expect(runtime.registry.resolveCurrentPluginMaterializationRef?.(plugin.manifest.id)).toEqual(materialization);
+            observer = startObservation(runtime);
+            expect(observer.adopted.readPublicProjection().kind).toBe('initializing');
+            expect(await readInventoryHealth()).toMatchObject({ kind: 'available', checks: [
+                { checkId: 'http', result: { status: 'down' } },
+            ] });
+            now += 60_000;
+            await observer.cycle();
+            expect(observer.adopted.readPublicProjection(), JSON.stringify(adoptionHttpFailures)).toMatchObject({ kind: 'available', definitions: expect.arrayContaining([
+                expect.objectContaining({ sourceInstanceId: source.sourceInstanceId, sourceConfig: source.sourceConfig }),
+            ]) });
+            expect(probes).toBe(2);
+            expect(noticeResults).toEqual([expect.objectContaining({ kind: 'consumed', changed: true })]);
+            expect(await db.artifact.findMany()).toEqual(notices);
             now += 60_000;
             httpStatus = 200;
-            await cycle();
-            expect(probes).toBe(2);
+            await observer.cycle();
+            expect(probes).toBe(3);
             expect(noticeResults).toEqual([
                 expect.objectContaining({ kind: 'consumed', changed: true }),
                 expect.objectContaining({ kind: 'consumed', changed: true }),
@@ -306,6 +339,7 @@ else process.exitCode=17;
                 { checkId: 'http', result: { status: 'up' } },
             ] });
         } finally {
+            observerLifetime.abort();
             lifetime.abort();
             await machineServices?.dispose();
             await runtime?.dispose();
