@@ -335,7 +335,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
   ) => () => void;
 }>): Readonly<{
   submit: (
-    selection: ProviderBoundModelRef,
+    selection: SessionModelRef,
     context: Readonly<{
       source: Proposal['source'];
       /** Startup echo of the validated launch handoff; other metadata reauthorizes. */
