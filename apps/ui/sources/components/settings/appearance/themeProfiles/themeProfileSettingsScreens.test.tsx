@@ -48,6 +48,9 @@ const baseProfile = (id: string, overrides: ThemeProfileV1['overrides'] = { ligh
 });
 
 const shared = vi.hoisted(() => ({
+    // The device's color scheme: an OS boundary the platform reports and re-reports when it changes.
+    colorScheme: 'light' as 'light' | 'dark',
+    colorSchemeListeners: new Set<() => void>(),
     routerPush: vi.fn(),
     routerBack: vi.fn(),
     routerDismissTo: vi.fn(),
@@ -67,8 +70,12 @@ const shared = vi.hoisted(() => ({
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    const { useSyncExternalStore } = await import('react');
+    const subscribe = (listener: () => void) => { shared.colorSchemeListeners.add(listener); return () => { shared.colorSchemeListeners.delete(listener); }; };
     return createReactNativeWebMock({
-        Appearance: { getColorScheme: () => 'light' },
+        Appearance: { getColorScheme: () => shared.colorScheme,
+            addChangeListener: (listener: () => void) => ({ remove: subscribe(listener) }) },
+        useColorScheme: () => useSyncExternalStore(subscribe, () => shared.colorScheme),
         Share: { sharedAction: 'sharedAction', dismissedAction: 'dismissedAction',
             share: vi.fn(async () => ({ action: 'sharedAction' })) },
     });
@@ -327,6 +334,7 @@ afterEach(async () => {
     shared.modalConfirm.mockReset();
     shared.modalConfirm.mockResolvedValue(true);
     shared.params = {};
+    shared.colorScheme = 'light';
     storage.getState().applyLocalSettings({
         ...localSettingsDefaults,
         themePreference: 'light',
@@ -352,6 +360,22 @@ describe('Theme profile settings screen', () => {
         await screen.pressByTestIdAsync('settings-theme-slot-dark-devices');
         expect(screen.findByTestId('theme-device-picker')).not.toBeNull();
         expect(storage.getState().localSettings.themeProfileSelection).toBe(selection);
+    });
+
+    it('says which mode this device shows now, following the system when the appearance follows it', async () => {
+        storage.getState().applyLocalSettings({ themePreference: 'adaptive' });
+        const screen = await renderProfilesScreen();
+        const slotText = (mode: 'light' | 'dark') => screen.findByTestId(`settings-theme-slot-${mode}-footer`)!
+            .findAll((node) => typeof node.type === 'string').flatMap((node) => node.children.filter((child) => typeof child === 'string')).join(' ');
+        const showingNow = 'settingsAppearance.themeProfiles.showingNow';
+        expect(slotText('light')).toContain(showingNow);
+        expect(slotText('dark')).not.toContain(showingNow);
+        await act(async () => {
+            shared.colorScheme = 'dark';
+            shared.colorSchemeListeners.forEach((listener) => listener());
+        });
+        expect(slotText('dark')).toContain(showingNow);
+        expect(slotText('light')).not.toContain(showingNow);
     });
 
     it('offers each mode its themes as visual tiles, with your own themes in their mode', async () => {
@@ -391,7 +415,7 @@ describe('Theme profile settings screen', () => {
             'darkModern',
             'graphiteDark',
         ]);
-        expect(screen.findAllByProps({ testID: 'settings-theme-dark:dark' }).some(node => node.props.checked === true)).toBe(true);
+        expect(screen.findAllByProps({ testID: 'settings-theme-dark:dark' }).some(node => node.props.accessibilityState?.checked === true)).toBe(true);
         // Choosing a slot changes only which mode the grid shows: no selection or appearance write.
         expect(getThemeProfiles().activeProfileIds).toEqual({ light: null, dark: null });
         expect(storage.getState().localSettings.themePreference).toBe('light');
@@ -413,7 +437,7 @@ describe('Theme profile settings screen', () => {
         const screen = await renderProfilesScreen();
         await chooseModeSlot(screen, 'dark');
 
-        expect(screen.findAllByProps({ testID: 'settings-theme-dark:premiumDark' }).some(node => node.props.checked === true)).toBe(true);
+        expect(screen.findAllByProps({ testID: 'settings-theme-dark:premiumDark' }).some(node => node.props.accessibilityState?.checked === true)).toBe(true);
         await screen.pressByTestIdAsync('settings-theme-dark:dark');
 
         expect(getThemeProfiles().activeProfileIds).toEqual({ light: null, dark: null });

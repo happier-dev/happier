@@ -34,7 +34,7 @@ export function ThemeTryBarHost() {
         } finally { setBusy(null); }
     };
     return <ThemeTryBar visible={Boolean(preview && !inListing)} faceName={entry?.name ?? t('settingsAppearance.theme')}
-        miniature={entry?.miniature ?? null} here={t('themeDevices.thisDevice')} busy={busy}
+        miniature={entry?.miniature ?? null} here={t('themeDevices.here')} busy={busy}
         disabled={!ready} origin={preview?.origin.kind ?? 'editor'}
         onInstall={() => settle('install')} onRevert={() => settle('revert')} testID="theme.tryBar" />;
 }

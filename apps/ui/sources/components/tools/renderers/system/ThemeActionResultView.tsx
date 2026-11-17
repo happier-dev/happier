@@ -62,7 +62,7 @@ export const ThemeActionResultView = React.memo(function ThemeActionResultView(
             <View style={styles.comparisonArrow}>
               <Icon
                 name="arrow-right"
-                size={14}
+                size={ICON_SIZE.xs}
                 color={palette.colors.text.tertiary}
               />
             </View>
@@ -209,7 +209,7 @@ function StatusLine(
       : theme.colors.text.secondary;
   return (
     <View style={styles.statusRow} testID={props.testID}>
-      {props.glyph ? <Icon name={props.glyph} size={14} color={color} /> : null}
+      {props.glyph ? <Icon name={props.glyph} size={ICON_SIZE.xs} color={color} /> : null}
       <Text variant="body" style={[styles.statusText, { color }]}>
         {props.text}
       </Text>
@@ -230,7 +230,7 @@ function Facts(props: ThemeActionResultViewProps) {
         style={styles.factRow}
         testID={props.testID ? `${props.testID}:coverage` : undefined}
       >
-        <Icon name="code" size={14} color={theme.colors.text.tertiary} />
+        <Icon name="code" size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
         <Text variant="meta" style={styles.fact}>
           {[
             reshapes.length > 0
@@ -286,7 +286,7 @@ function Facts(props: ThemeActionResultViewProps) {
         style={styles.factRow}
         testID={props.testID ? `${props.testID}:hides` : undefined}
       >
-        <Icon name="eye-slash" size={14} color={theme.colors.state.attention.textForeground} />
+        <Icon name="eye-slash" size={ICON_SIZE.xs} color={theme.colors.state.attention.textForeground} />
         <Text variant="meta" style={[styles.fact, styles.attention]}>
           {t('themeCard.hides', { areas: joinList(hides), here: props.here })}
         </Text>
@@ -301,7 +301,7 @@ function Facts(props: ThemeActionResultViewProps) {
         style={styles.factRow}
         testID={props.testID ? `${props.testID}:distribution` : undefined}
       >
-        <Icon name="check" size={14} color={theme.colors.text.secondary} />
+        <Icon name="check" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
         <Text variant="meta" style={styles.fact}>
           {t('themeCard.appliedOn', {
             devices: joinList(distribution.applied),

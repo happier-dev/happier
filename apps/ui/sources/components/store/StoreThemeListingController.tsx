@@ -12,6 +12,7 @@ import { getThemeRegistryLifecycle, getThemeTryOnOwner } from '@/theme/profiles/
 import { projectThemeLibraryEntry } from '@/theme/profiles/themeProfilePresentation';
 import { resolveThemeRuntimeVisualTheme } from '@/theme/profiles/themeProfileRuntime';
 import { t } from '@/text';
+import { projectStoreThemeCoverageFacts } from './catalog/storeThemes';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { Modal } from '@/modal';
 import type { StoreThemeListingViewProps } from './storeThemeViewTypes';
@@ -66,6 +67,7 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
     const tryingSource = matching?.document?.profile.source;
     const tryingFaceId = tryingSource?.kind === 'store' ? tryingSource.contributionId : null;
     const coverage = opened?.coverage.find(row => row.faceId === (tryingFaceId ?? preferred?.id))?.coverage;
+    const coverageFacts = coverage ? projectStoreThemeCoverageFacts(coverage) : null;
     const installed = Boolean(faces?.length && faces.every(face => library.entries.some(entry => entry.source.kind === 'store'
         && entry.source.provenance.sourceId === sourceId && entry.source.provenance.itemId === itemId
         && entry.source.contributionId === face.id)));
@@ -102,11 +104,11 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
             opened.listing.pointer.version].filter(Boolean).join(' · ') : '',
         description: opened?.listing.summary.description ?? null,
         faces, facesState: opened ? 'ready' : failed ? 'error' : 'loading', facesError: failed, tryingFaceId,
-        preferredFaceId: preferred?.id ?? null, here: t('themeDevices.thisDevice'), installed,
+        preferredFaceId: preferred?.id ?? null, here: t('themeDevices.here'), installed,
         facts: [
             { key: 'includes', value: opened?.listing.metadata.includes.map(face => face.label).join(' · ') ?? t('common.unknown') },
-            { key: 'changes', value: coverage ? t('themeStore.changesSummary', { areas: coverage.affectedSurfaces.length, hidden: coverage.hides.length }) : t('common.unknown') },
-            { key: 'worksOn', value: coverage ? t('themeCard.coverage', { native: coverage.native, total: coverage.total }) : t('common.unknown') },
+            { key: 'changes', value: coverageFacts?.changes ?? t('common.unknown') },
+            { key: 'worksOn', ...(coverageFacts?.worksOn ?? { value: t('common.unknown') }) },
             { key: 'licence', value: opened?.listing.metadata.license ?? t('common.unknown') },
         ], busy, installFailures: failures,
         onTryFace: id => {

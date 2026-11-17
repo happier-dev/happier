@@ -41,7 +41,7 @@ it('windows the faces of a 200-theme Store package through the shared Collection
     expect(previews.length).toBeLessThan(200);
 });
 
-it('windows a 200-theme library through the shared Collection', async () => {
+it('windows a 200-theme library through the visual picker page window', async () => {
     const miniature = projectThemeLibraryEntry(document(firstId, 'Preview')).miniature;
     const preview = { kind: 'miniature' as const, miniature };
     const screen = await renderSettingsView(<ThemeLibraryView mode="light" selectedKey="theme-0"
@@ -59,7 +59,7 @@ it('windows a 200-theme library through the shared Collection', async () => {
     });
     await measureMountedCollections(screen, { width: 960, height: 600 });
     const tiles = screen.tree.root.findAll(node => typeof node.props.testID === 'string'
-        && /^settings-theme-light:theme-\d+:card$/.test(node.props.testID) && typeof node.type === 'string');
+        && /^settings-theme-light:theme-\d+$/.test(node.props.testID) && typeof node.type === 'string');
     expect(tiles.length).toBeGreaterThan(0);
     expect(tiles.length).toBeLessThan(200);
 });

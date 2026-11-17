@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
 import type { RegistryProvenanceV1 } from '@happier-dev/protocol/registries';
-import { projectStoreThemeCard, themeSummaryMatchesMode, groupInstalledStoreThemes, projectInstalledStoreThemeRows } from './storeThemes';
+import { projectStoreThemeCard, projectStoreThemeCoverageFacts, themeSummaryMatchesMode, groupInstalledStoreThemes, projectInstalledStoreThemeRows } from './storeThemes';
 import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { projectThemeLibraryEntry } from '@/theme/profiles/themeProfilePresentation';
 import { t } from '@/text';
@@ -55,5 +55,21 @@ describe('Store theme metadata projection', () => {
         expect(rows[0]).toMatchObject({ kind: 'theme', scope,
             native: { listing: { sourceId: 'catalog', itemId: 'paper' }, entries: [dark, light] } });
         expect(projectInstalledStoreThemeRows([dark], { ...scope, accountId: 'other' })[0]?.key).not.toBe(rows[0]?.key);
+    });
+});
+
+describe('Store theme listing coverage facts', () => {
+    it('says a colours-only theme works everywhere, without zero rule counts', () => {
+        const facts = projectStoreThemeCoverageFacts({ total: 0, native: 0, webOnly: 0, affectedSurfaces: [] });
+        expect(facts.changes).toBe(t('themeStore.colorsOnly'));
+        expect(facts.worksOn).toEqual({ value: t('themeStore.everywhere') });
+    });
+
+    it('names what CSS reshapes and counts phone rules only when some stay on web and desktop', () => {
+        const reshaping = projectStoreThemeCoverageFacts({ total: 14, native: 11, webOnly: 3, affectedSurfaces: [{ surface: 'sidebar' }] });
+        expect(reshaping.changes).toContain(t('themeCard.reshapes', { areas: 'sidebar' }));
+        expect(reshaping.worksOn).toEqual({ value: t('themeStore.everywhere'), note: t('themeCard.coverage', { native: 11, total: 14 }) });
+        const portable = projectStoreThemeCoverageFacts({ total: 2, native: 2, webOnly: 0, affectedSurfaces: [{ surface: 'composer' }] });
+        expect(portable.worksOn).toEqual({ value: t('themeStore.everywhere') });
     });
 });

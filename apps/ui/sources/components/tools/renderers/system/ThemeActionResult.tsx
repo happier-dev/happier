@@ -60,7 +60,7 @@ export function ThemeActionResult({ presentation, fallback }: Readonly<{ present
         appliedTheme: reference === null ? { name: t('settingsAppearance.themeProfiles.defaultTheme'), mode,
             miniature: projectThemeMiniature({ assetAppearance: mode, overrides: { light: {}, dark: {} } }) } : undefined,
         created,
-        here: t('themeDevices.thisDevice'), before: presentation.replayTry ? before.current : undefined,
+        here: t('themeDevices.here'), before: presentation.replayTry ? before.current : undefined,
         onEdit,
         onUseOtherDevices: setTarget }, execute);
     if (!facts) return fallback ?? null;

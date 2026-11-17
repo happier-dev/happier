@@ -1,11 +1,8 @@
 import * as React from 'react';
-import { Collection, type CollectionAnatomy, useHappierCollection } from '@happier-dev/plugin-ui';
-import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import {
-  THEME_MINIATURE_CARD_MIN_WIDTH,
   ThemeMiniaturePreview,
   ThemePalettePreview,
   type ThemeMiniatureForm,
@@ -44,18 +41,15 @@ import type {
   ThemeLibraryViewProps,
 } from './themeLibraryViewTypes';
 
-const themeTileKey = (tile: ThemeLibraryTile) => tile.key;
-const passThroughScroller = (children: React.ReactNode) => children;
-
 const THEME_MODES: readonly ThemeProfileMode[] = ['light', 'dark'];
 
-/** Miniatures follow the device form; Collection owns the responsive grid geometry. */
+/** Wide: four themes across the reading column; a phone: two. Proportions of a small window, or a phone screen. */
 const GRID = {
-  wide: { aspect: 1.6, form: 'window' },
-  phone: { aspect: 1.1, form: 'phone' },
+  wide: { columns: 4, aspect: 1.6, form: 'window' },
+  phone: { columns: 2, aspect: 1.1, form: 'phone' },
 } as const satisfies Record<
   string,
-  { aspect: number; form: ThemeMiniatureForm }
+  { columns: number; aspect: number; form: ThemeMiniatureForm }
 >;
 const PHONE_SLOT_PREVIEW_ASPECT = 1.25;
 
@@ -97,19 +91,22 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
     [phone, props.slots],
   );
 
-  const model = useHappierCollection<ThemeLibraryTile>({
-    items: props.tiles, keyOf: themeTileKey, openKey: null, onOpenChange: key => { if (key) onChooseTheme(key); },
-  });
-  const anatomy = React.useMemo<CollectionAnatomy<ThemeLibraryTile>>(() => ({
-    glyph: () => null,
-    title: tile => tile.name,
-    where: tile => tile.sourceLabel,
-    preview: tile => <View style={{ aspectRatio: grid.aspect }}><LibraryPreview preview={tile.preview} form={grid.form} /></View>,
-    action: tile => tile.menu.length > 0 ? <TileMenu tile={tile} /> : null,
-    accessibilityLabel: tile => tile.name,
-    testID: tile => `settings-theme-${mode}:${tile.key}`,
-    columnTitles: { title: modeTitle(mode) },
-  }), [grid, mode]);
+  // The library is a visual picker (finding 4): each theme its own miniature, the ring alone marks the one in use,
+  // the name and source centred under it. It scrolls with the page and draws only the lines near the window.
+  const tileOptions = React.useMemo(
+    (): Array<SelectionTile<string>> =>
+      props.tiles.map((tile) => ({
+        id: tile.key,
+        title: tile.name,
+        subtitle: tile.sourceLabel,
+        preview: <LibraryPreview preview={tile.preview} form={grid.form} />,
+      })),
+    [grid.form, props.tiles],
+  );
+  const tilesByKey = React.useMemo(
+    () => new Map(props.tiles.map((tile) => [tile.key, tile] as const)),
+    [props.tiles],
+  );
 
   const addMenu = <ThemeAddMenu items={props.addMenu} compact={phone} />;
   return (
@@ -169,23 +166,27 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
                 }}
               />
             )}
-            <CoreCollectionScope renderPageScroller={passThroughScroller}>
-              <Collection<ThemeLibraryTile>
-                testID={`settings-theme-${mode}-library`}
-                model={model}
-                anatomy={anatomy}
-                accessibilityLabel={modeTitle(mode)}
-                presentation="grid"
-                minCardWidth={THEME_MINIATURE_CARD_MIN_WIDTH}
-                detail="none"
-                // Collection's page grid windows against ItemList's physical page tracker.
-                scroll="page"
-                minListWidth={280}
-                minDetailWidth={280}
-                preferredListRatio={1}
-                selection={{ single: { value: props.selectedKey, onValueChange: next => { if (next) onChooseTheme(next); } } }}
-              />
-            </CoreCollectionScope>
+            <SelectionTiles
+              variant="visual"
+              tileSizing="fill"
+              scroll="page"
+              maximumColumns={grid.columns}
+              previewAspectRatio={grid.aspect}
+              labelLines={1}
+              accessibilityLabel={modeTitle(mode)}
+              testIdPrefix={`settings-theme-${mode}`}
+              value={props.selectedKey}
+              onChange={(next) => {
+                if (next) onChooseTheme(next);
+              }}
+              options={tileOptions}
+              renderOptionAccessory={({ option, revealed }) => {
+                const tile = tilesByKey.get(option.id);
+                return tile && revealed && (tile.menu.length > 0 || tile.onShare || tile.onDelete) ? (
+                  <TileMenu tile={tile} />
+                ) : null;
+              }}
+            />
           </View>
         </SettingAnchor>
       </ItemGroup>
@@ -231,7 +232,7 @@ function SlotFooter(
   const { slot } = props;
   if (!slot.showing && !slot.onUseOtherDevices) return null;
   return (
-    <View style={stylesheet.slotFooter}>
+    <View testID={`settings-theme-slot-${slot.mode}-footer`} style={stylesheet.slotFooter}>
       {slot.showing ? (
         <Text variant="meta" style={stylesheet.meta}>
           {t('settingsAppearance.themeProfiles.showingNow')}

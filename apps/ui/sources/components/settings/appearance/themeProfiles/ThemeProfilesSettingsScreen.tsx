@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
+import { Platform, useColorScheme } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
@@ -9,7 +9,7 @@ import { useLocalSetting } from '@/sync/domains/state/storage';
 import { useThemeLibraryInventory, useThemeProfileDocument, useThemeProfileReferenceSelection } from '@/sync/store/useThemeProfiles';
 import { presentActionTurnedOffNoticeIfOff } from '@/sync/ops/actions/actionTurnedOffNotice';
 import { t } from '@/text';
-import { readSystemTheme } from '@/theme/profiles/themeProfileRuntime';
+import { resolveThemeRuntimeVisualTheme } from '@/theme/profiles/themeProfileRuntime';
 import type { ThemeProfileMode, ThemeReference } from '@/theme/profiles/themeProfileTypes';
 import { buildThemePresetSourceOptions } from './themeProfilePresetOptions';
 import { ThemeLibraryView } from './ThemeLibraryView';
@@ -29,10 +29,6 @@ const profileExportRoute = (profileId: string) => ({
     params: { profileId },
 });
 
-const showingMode = (themePreference: string): ThemeProfileMode => (
-    themePreference === 'light' || themePreference === 'dark' ? themePreference : readSystemTheme()
-);
-
 function presentThemeSelectionFailure(error: unknown): void {
     presentActionTurnedOffNoticeIfOff({ errorCode: readActionErrorCodeV1(error) }, THEME_ACTION_IDS.apply);
 }
@@ -45,6 +41,8 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
     const presented = useLayoutPresentationActive();
     const router = useRouter();
     const themePreference = useLocalSetting('themePreference');
+    // The mode this device shows now, by the runtime's one resolver; the system scheme re-renders it when it changes.
+    const showing: ThemeProfileMode = resolveThemeRuntimeVisualTheme(themePreference, useColorScheme());
     const selection = useThemeProfileReferenceSelection(presented);
     const lightDocument = useThemeProfileDocument(selection.light, presented).document;
     const darkDocument = useThemeProfileDocument(selection.dark, presented).document;
@@ -78,7 +76,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
         labels,
         selection,
         selectedDocuments,
-        showing: showingMode(themePreference),
+        showing,
         native: Platform.OS !== 'web',
         failed: inventory.failed,
         retry: inventory.retry,

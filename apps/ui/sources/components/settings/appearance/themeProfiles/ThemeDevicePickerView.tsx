@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
@@ -164,7 +164,7 @@ function DeviceRow(
       subtitleStyle={
         failed ? { color: theme.colors.state.danger.textForeground } : undefined
       }
-      left={<Icon name={glyph} size={18} color={theme.colors.text.secondary} />}
+      left={<Icon name={glyph} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />}
       right={right}
       disabled={row.current || row.outcome === 'applied' || props.disabled}
       accessibilityRole="checkbox"
