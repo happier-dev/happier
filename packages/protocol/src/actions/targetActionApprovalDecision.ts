@@ -3,6 +3,7 @@ import { projectTargetActionApprovalInvocationV1, TargetActionApprovalRequestV1S
 import { admitApprovalRequesterDecisionV1 } from '../approvals/approvalRequestV1.js';
 import { isApiTokenGrantTargetMemberV1 } from '../auth/apiTokenGrant.js';
 import { withActionAutomationNoticesV1, type ActionExecuteResult } from './actionExecutionResult.js';
+import { withActionFailureCauseDiagnostic } from './executor/actionFailureDiagnostic.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './executor/types.js';
 import { resolveApprovalRequestApproveAdmission } from './actionApprovalPresentation.js';
 import { getSharedBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
@@ -90,7 +91,7 @@ export function createTargetActionApprovalDecision(deps: Readonly<{
     // Only the initial family probe may borrow the host's admitted body.
     // Consent readback below still acquires the persisted decision independently.
     try { existing = await deps.read(artifactId, initialRead); }
-    catch { return failure('approval_context_unavailable'); }
+    catch (error) { return withActionFailureCauseDiagnostic(failure('approval_context_unavailable'), error, 'target_action.approval.read'); }
     // Ordinary approval Artifacts remain with the generic Action owner.
     if (!existing) return null;
     const originalInvocation = projectTargetActionApprovalInvocationV1(existing);
@@ -224,7 +225,7 @@ export function createTargetActionApprovalDecision(deps: Readonly<{
       try { persisted = await deps.read(artifactId); }
       // Consent may already be committed. Keep the Artifact recoverable; a
       // later replay reuses this decision and claims execution before effects.
-      catch { return failure('approval_context_unavailable'); }
+      catch (error) { return withActionFailureCauseDiagnostic(failure('approval_context_unavailable'), error, 'target_action.approval.readback'); }
       if (!persisted) return persistenceFailure ?? failure('approval_not_found');
       // Account change delivery can resume the original invocation before the
       // decision write returns. Its claim confirms consent without replay.

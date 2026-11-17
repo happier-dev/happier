@@ -8,6 +8,7 @@ import { projectApprovalRequestForPublicRead } from './actionApprovalPresentatio
 import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema } from '../auth/apiTokenGrant';
 import { getSharedBlockingApprovalCoordinator } from './blockingApprovalCoordinator';
 import { executeApprovalObservationAction } from './executor/approvalObservation';
+import { readActionOutputDiagnostic } from './executor/actionFailureDiagnostic';
 
 function accountApproval() {
   return TargetActionApprovalRequestV1Schema.parse({ v: 1, kind: 'plugin_target_action', status: 'open',
@@ -268,6 +269,17 @@ describe('target Action approval decision custody', () => {
       expect(await decide({ artifactId: 'unclaimed', decision: 'cancel' })).toEqual(canceled);
       expect(await decide({ artifactId: 'unclaimed', decision: 'approve' })).toEqual(canceled);
     }
+  });
+
+  it('keeps the closed read cause of an unavailable approval context privately', async () => {
+    const decide = createTargetActionApprovalDecision({
+      read: async () => { throw Object.assign(new Error('read failed with private-approval-body'), { code: 'ECONNRESET' }); },
+      update: async () => ({ ok: true }) });
+    const result = await decide({ artifactId: 'unreadable', decision: 'approve' });
+    expect(JSON.parse(JSON.stringify(result))).toEqual({ ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' });
+    expect(readActionOutputDiagnostic(result)).toMatchObject({ phase: 'target_action.approval.read',
+      failureCause: { errorClass: 'Error', errorCode: 'ECONNRESET' } });
+    expect(JSON.stringify(readActionOutputDiagnostic(result))).not.toContain('private-approval-body');
   });
 
   it('settles a named no-effect refusal when the original live invocation is unreachable in another process', async () => {

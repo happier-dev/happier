@@ -1253,7 +1253,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   ): ActionExecuteFailure | null {
     let currentWorkspaceWrites: 'allow' | 'deny' | undefined;
     try { currentWorkspaceWrites = deps.getCurrentWorkspaceWrites?.(); }
-    catch { return { ok: false, errorCode: 'role_policy_unavailable', error: 'role_policy_unavailable' }; }
+    catch (error) {
+      return withActionFailureCauseDiagnostic({ ok: false as const, errorCode: 'role_policy_unavailable', error: 'role_policy_unavailable' },
+        error, 'action.role_policy.read');
+    }
     const admission = resolveWorkspaceWriteActionAdmissionV1({
       spec, actionInput: input, workspaceWrites: ctx.workspaceWrites, currentWorkspaceWrites,
       agentCaller: isAgentCaller(ctx),
@@ -2121,9 +2124,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         });
         const parsed = SecretFillSettlementV1Schema.safeParse(settlement);
         return { ok: true, result: parsed.success ? parsed.data : { status: 'unknown', code: 'delivery_unknown' } };
-      } catch {
-        // An issued confidential effect is never replayed and no adapter prose crosses custody.
-        return { ok: true, result: { status: 'unknown', code: 'delivery_unknown' } };
+      } catch (error) {
+        // An issued confidential effect is never replayed and no adapter prose crosses custody:
+        // only the closed cause class/code stays on the private diagnostic.
+        return withActionFailureCauseDiagnostic({ ok: true as const, result: { status: 'unknown', code: 'delivery_unknown' } },
+          error, 'action.secret_fill.delivery');
       }
     };
     let effectAttempted = false;
@@ -2411,9 +2416,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ctx = { ...ctx, approvalProfile: deps.readApprovalProfile
           ? await deps.readApprovalProfile(ctx.approvalProfileId, ctx)
           : { profile: null, resolution: { status: 'missing', requestedId: ctx.approvalProfileId } } };
-      } catch {
+      } catch (error) {
         const errorCode = ctx.signal?.aborted ? 'cancelled' : 'approval_context_unavailable';
-        return { ok: false, errorCode, error: errorCode };
+        return withActionFailureCauseDiagnostic({ ok: false as const, errorCode, error: errorCode }, error, 'action.approval_profile.read');
       }
     }
     const liveEnvironmentScope = existingAdmission?.approvalScope?.kind === 'environment' || spec.approvalScope === 'environment';
@@ -5646,9 +5651,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             return completeActionResult(await deps.browserProfileLoginsImport({
               input: parsed.data as import('../browser/profile/loginsV1.js').BrowserProfileLoginsImportV1, context: ctx,
             }));
-          } catch {
-            // Native/source exceptions may contain cookie or key material. Never publish them.
-            return completeActionResult({ status: 'unavailable', code: 'import_unknown' });
+          } catch (error) {
+            // Native/source exceptions may contain cookie or key material. Never publish them;
+            // only the closed cause class/code stays on the private diagnostic.
+            return withActionFailureCauseDiagnostic(completeActionResult({ status: 'unavailable', code: 'import_unknown' }),
+              error, 'browser.profile.logins.import');
           }
         }
         const result = await dispatchRuntimeAction({
