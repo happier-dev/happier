@@ -280,11 +280,14 @@ setting means off. An explicit sandbox choice wins. Enabling it requires both
 the Agent's declared native sandbox capability and the selected sandbox type's
 `sessionPlacement.supportsAgentNativeSandbox` declaration. An incapable type
 returns `unavailable` with `not_available_in_sandbox_type`, displayed before
-launch. Hosts without the isolation fact retain their native defaults. This changes
-neither permission intent nor approval policy; plugins translate the resolved
-selection to their native sandbox/profile, and the existing launch and Session
-permission presentation reports it. A retained native resume profile remains
-authoritative when no replacement configuration is selected.
+launch. Hosts without the isolation fact retain their native defaults. The resolved
+sandbox choice preserves permission intent; plugins translate it to their native
+sandbox/profile, and the existing launch and Session permission presentation
+reports it. Codex's canonical permission mapping pairs sandbox-off read-only turns
+with `untrusted` approvals, including causal ceilings imposed by a source Session,
+workflow or channel sender. Native command and write requests reach Happier's
+existing approval owner. Writable turns retain their mode. A retained native resume
+profile remains authoritative when no replacement configuration is selected.
 
 Muse's permission mapping is shared by Session and finite Run startup, resume,
 fork and runtime configuration. Default uses `:ask-me` with `promptUnmatched`;

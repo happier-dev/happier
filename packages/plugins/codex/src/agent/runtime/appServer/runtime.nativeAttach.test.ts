@@ -30,6 +30,7 @@ import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from '@/agent/runtime/permissions/queuedPrompt';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { resolveCausalPermissionMode } from '@/agent/permissions/causalPermissionMode';
 import { createRunnerDaemonPluginServicesPreparationError } from '@/daemon/agentRuntime/runnerDaemonPluginServicesHost';
 import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
@@ -1018,7 +1019,7 @@ describe('native Codex attachment preparation', () => {
     },
   );
 
-  it('dispatches permission changes through the prompt loop without reopening Codex', async () => {
+  it.each([undefined, 'off'] as const)('dispatches causal read-only ceilings without reopening Codex with native sandbox %s', async (nativeSandbox) => {
     await withFixture(async ({ openConfiguredSession, requests, directory }) => {
       const native = await openConfiguredSession();
       const session = createMutableApiSessionClientFixture({ sessionId: 'actual-happier-session' });
@@ -1029,13 +1030,21 @@ describe('native Codex attachment preparation', () => {
         initialConfiguration: {
           mode: { value: null, updatedAtMs: 0 }, model: { value: 'fixture-model', updatedAtMs: 0 },
           permissionIntent: { value: 'read-only', updatedAtMs: 0 }, options: {},
+          ...(nativeSandbox ? { nativeSandbox } : {}),
         },
       });
       // Only native JSON-RPC and host persistence are fixtures; the loop and adapter stay real.
       const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(JSON.stringify, {
         batcher: combinePermissionModeQueuedPrompts,
       });
-      for (const [index, permissionMode] of (['read-only', 'yolo', 'read-only'] as const).entries()) {
+      const constrained = resolveCausalPermissionMode({
+        currentPermissionMode: 'yolo',
+        context: { causalPermissionAuthority: {
+          kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only',
+        } },
+      });
+      if (!constrained.ok) throw new Error(`Causal read-only ceiling refused: ${constrained.reason}`);
+      for (const [index, permissionMode] of ([constrained.effectiveMode, 'yolo', constrained.effectiveMode] as const).entries()) {
         queue.push({ text: 'Reply OK.', localId: `policy-${index}` }, { permissionMode });
       }
       let completed = 0;
@@ -1051,12 +1060,15 @@ describe('native Codex attachment preparation', () => {
       });
       expect(requests.filter(request => request.method === 'thread/start')).toHaveLength(1);
       expect(requests.filter(request => request.method === 'thread/resume')).toHaveLength(0);
+      const readOnlyPolicy = nativeSandbox === 'off'
+        ? { approvalPolicy: 'untrusted', sandboxPolicy: { type: 'dangerFullAccess' } }
+        : { approvalPolicy: 'never', permissions: ':read-only' };
       expect(requests.filter(request => request.method === 'turn/start').map(request => request.params)).toMatchObject([
-        { approvalPolicy: 'never', permissions: ':read-only' },
+        readOnlyPolicy,
         { approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } },
-        { approvalPolicy: 'never', permissions: ':read-only' },
+        readOnlyPolicy,
       ]);
-    }, { onTurnStart: ({ socket, params, turnId }) => {
+    }, { ...(nativeSandbox ? { configuration: { nativeSandbox } } : {}), onTurnStart: ({ socket, params, turnId }) => {
       socket.send(JSON.stringify({ method: 'turn/completed', params: {
         threadId: params.threadId, turn: { id: turnId, status: 'completed' },
       } }));
@@ -1074,10 +1086,10 @@ describe('native Codex attachment preparation', () => {
           delivery: { kind: 'newTurn', turnId: 'unsandboxed-read-turn' },
         });
         expect(requests.find(request => request.method === 'thread/start')?.params).toMatchObject({
-          approvalPolicy: 'never', sandbox: 'danger-full-access',
+          approvalPolicy: 'untrusted', sandbox: 'danger-full-access',
         });
         const turn = requests.find(request => request.method === 'turn/start')?.params;
-        expect(turn).toMatchObject({ approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } });
+        expect(turn).toMatchObject({ approvalPolicy: 'untrusted', sandboxPolicy: { type: 'dangerFullAccess' } });
         expect(turn).not.toHaveProperty('permissions');
       }, { permissionMode: 'read-only', configuration: { nativeSandbox: 'off' } });
     },
