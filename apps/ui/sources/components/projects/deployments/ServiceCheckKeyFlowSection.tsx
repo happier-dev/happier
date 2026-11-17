@@ -90,6 +90,8 @@ export function ServiceCheckKeyFlowSection(props: Readonly<{
     return { latency, errors };
   }, [color, config, read]);
   const limitLabel = t(`${m}.keyFlowLimit`);
+  // Both trend heads carry one detail line, so the two plots start level beside each other.
+  const span = t(`${m}.keyFlowRoutesWindow`);
   const routes = read.kind === 'ready' ? read.read.routes : [];
   const twoUp = width !== null && width >= CHART_MIN_WIDTH_PX * 2;
   return (
@@ -104,7 +106,7 @@ export function ServiceCheckKeyFlowSection(props: Readonly<{
           <View style={[styles.charts, twoUp ? styles.chartsRow : null]} onLayout={(event) => setWidth(Math.round(event.nativeEvent.layout.width))}>
             <View style={styles.chart} testID="services.check.keyFlow.latency">
               <ChartHead title={charts.latency.label} latest={latestOf(charts.latency, routeFlow ? formatServiceCheckLatency : String)}
-                detail={errorsMeasured ? null : `${limitLabel} ${formatServiceCheckKeyFlowValue(config, threshold.value)}`} />
+                detail={errorsMeasured ? span : `${limitLabel} ${formatServiceCheckKeyFlowValue(config, threshold.value)} · ${span}`} />
               <StackedSeriesChart theme={pluginTheme} label={charts.latency.label} series={[charts.latency]} variant="line" size="full"
                 showLegend={false} showReadout={false} {...(routeFlow ? { valueFormatter: formatServiceCheckLatency } : {})} unknownLabel={t(`${m}.keyFlowNoRequests`)}
                 {...(!errorsMeasured ? { threshold: { value: threshold.value, label: limitLabel, tone: props.failing ? 'error' : 'warning' } } : {})} />
@@ -112,7 +114,7 @@ export function ServiceCheckKeyFlowSection(props: Readonly<{
             {routeFlow ? (
               <View style={styles.chart} testID="services.check.keyFlow.errors">
                 <ChartHead title={charts.errors.label} latest={latestOf(charts.errors, formatPercent)}
-                  detail={errorsMeasured ? `${limitLabel} ${formatServiceCheckKeyFlowValue(config, threshold.value)}` : null} />
+                  detail={errorsMeasured ? `${limitLabel} ${formatServiceCheckKeyFlowValue(config, threshold.value)} · ${span}` : span} />
                 <StackedSeriesChart theme={pluginTheme} label={charts.errors.label} series={[charts.errors]} variant="line" size="full"
                   showLegend={false} showReadout={false} valueFormatter={formatPercent} unknownLabel={t(`${m}.keyFlowNoRequests`)}
                   {...(errorsMeasured ? { threshold: { value: threshold.value, label: limitLabel, tone: props.failing ? 'error' : 'warning' } } : {})} />
