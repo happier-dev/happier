@@ -54,6 +54,8 @@ const PRODUCT_DEMAND_READY_REGISTRATION_FAMILIES = new Set([
     // Managed operations demand the selected descriptor; its existing Action
     // registrations supply all native roles without a provisioner runtime API.
     'machineProvisioners',
+    // Managed database attachment demands the exact linked data-role runtime.
+    'deploymentTargets',
 ]);
 
 /**

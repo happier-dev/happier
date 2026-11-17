@@ -351,6 +351,11 @@ function createAvailablePluginFileSystemService(
  * between independently maintained matrices.
  */
 export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
+    deploymentDatabases: {
+        id: 'deploymentDatabases', publicProperty: 'deploymentDatabases', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        createUnavailable(): PluginServices['deploymentDatabases'] { return undefined; },
+        createAvailable({ seed }): PluginServices['deploymentDatabases'] | null { return seed.deploymentDatabases ?? null; },
+    },
     machineConnectorSecrets: {
         id: 'machineConnectorSecrets', publicProperty: 'machineConnectorSecrets', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(): PluginServices['machineConnectorSecrets'] {

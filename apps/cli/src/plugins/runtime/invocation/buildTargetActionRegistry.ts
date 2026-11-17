@@ -31,6 +31,7 @@ import {
     type ResolvedTargetAction,
 } from './actionExecutor';
 import type {
+    ResolvePluginInvocationHostPolicy,
     ResolveTargetActionHostBinding,
     ResolveTargetActionHostPolicy,
 } from '../hostAccess/resolve';
@@ -55,11 +56,11 @@ import type {
 } from '@happier-dev/plugin-sdk';
 import type { ActionHandler, PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { PluginError, isPluginError } from '@happier-dev/plugin-sdk';
-import { PLUGIN_ACCOUNT_STORAGE_UNAVAILABLE_CODE } from '../context/storage';
-import { createPluginAccountActionSettingsService } from '@happier-dev/cli-common/plugins/registration/accountActionSettings';
+import { createAccountInvocationContext } from './createAccountInvocationContext';
 import { readPluginActionInputParser, readPluginActionReadObserver, readPluginActionResultParser } from '@happier-dev/cli-common/plugins/registration/actionInputParser';
 import { admitDeploymentTargetRoleForHost, type DeploymentTargetRoleAdmissionHost } from '@/deployments/targets/admitDeploymentTargetRoleForHost';
 import { createManagedDataRoleSecretReaderForHost } from '@/deployments/secrets/createManagedDataRoleSecretReaderForHost';
+import { createDeploymentDatabasesServiceForHost } from '@/deployments/targets/createDeploymentDatabasesServiceForHost';
 import { admitDeploymentTargetCredentialPrincipalForHost } from '@/deployments/targets/admitDeploymentTargetCredentialPrincipalForHost';
 import { DeploymentTargetCredentialPrincipalV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 import type { DeploymentTargetDataQueryInputV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
@@ -119,34 +120,6 @@ async function invokeCapturedActionHandler(
     return Reflect.apply(handler, undefined, [input, createAccountInvocationContext(context, await readAccountScope?.(context.signal))]);
 }
 
-function createAccountInvocationContext(context: PluginInvocationContext, accountScope?: PluginAccountActionContext['accountScope']): PluginAccountActionContext {
-    return Object.freeze({
-        plugin: context.plugin, contribution: context.contribution, surface: context.surface,
-        invokedAtMs: context.invokedAtMs, signal: context.signal,
-        ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
-        ...(context.caller ? { caller: context.caller } : {}),
-        ...(accountScope ? { accountScope } : {}),
-        ...(context.sessionTargetsV1 ? { sessionTargetsV1: context.sessionTargetsV1 } : {}),
-        services: Object.freeze({
-            http: context.services.http,
-            secrets: context.services.secrets,
-            machineProvisioners: context.services.machineProvisioners,
-            ...(context.services.machineConnectorSecrets ? { machineConnectorSecrets: context.services.machineConnectorSecrets } : {}),
-            connectedAccounts: context.services.connectedAccounts,
-            storage: Object.freeze({ get account() {
-                const accountStorage = context.services.storage.account;
-                if (!accountStorage) throw new PluginError({ code: PLUGIN_ACCOUNT_STORAGE_UNAVAILABLE_CODE, message: 'Account storage is unavailable' });
-                return accountStorage;
-            } }),
-            actions: Object.freeze({ execute: context.services.actions.execute, observe: context.services.actions.observe,
-                executeAdmittedTargetedOperation: context.services.actions.executeAdmittedTargetedOperation,
-                observeAdmittedTargetedOperation: context.services.actions.observeAdmittedTargetedOperation }),
-            targetedContributions: context.services.targetedContributions,
-            settings: createPluginAccountActionSettingsService(context.services.settings),
-        }),
-    }) satisfies PluginAccountActionContext;
-}
-
 export function buildTargetActionInvocationRegistry(params: Readonly<{
     contributes: ResolvedContributionRegistry;
     executionRealm?: 'account';
@@ -173,11 +146,12 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
     ) => PluginActionPresentUserGatePolicy | null;
     resolveHostBinding: ResolveTargetActionHostBinding;
     resolveHostPolicy: ResolveTargetActionHostPolicy;
+    resolveInvocationHostPolicy?: ResolvePluginInvocationHostPolicy;
     createServices: CreatePluginInvocationServices;
     readCurrentTargetedDeclarations?(pluginId: string, signal?: AbortSignal,
         resolveMachine?: PluginInvocationServicesSeed['resolveAccountSourceMachine']): Promise<import('@happier-dev/cli-common/plugins/registration').TargetedContributionManifestSnapshot>;
     createAccountSourceMachineResolver?(seed: PluginInvocationServicesSeed): PluginInvocationServicesSeed['resolveAccountSourceMachine'];
-    prepareInvocationServices?(input: Readonly<{ pluginId: string; localId: string }>): Promise<void>;
+    prepareInvocationServices?(input: Readonly<{ pluginId: string; localId: string; family?: 'actions' | 'deploymentTargets' }>): Promise<void>;
     beginDiagnosticScope?: BeginPluginInvocationDiagnosticScope;
     redactDiagnosticText?: (
         scope: Readonly<{ pluginId: string; occurrenceId: string; correlationId: string }>,
@@ -392,13 +366,24 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             : {}),
         resolveAuthorizationFacts: params.resolveAuthorizationFacts,
         resolveHostBinding: params.resolveHostBinding,
-        createServices: params.readCurrentTargetedDeclarations ? (seed, ...args) => {
+        createServices: (seed, ...args) => {
             const resolveAccountSourceMachine = params.createAccountSourceMachineResolver?.(seed);
+            const deploymentDatabases = seed.approvalContext && params.readDeploymentTargetRoleAdmissionHost && params.resolveInvocationHostPolicy
+                ? createDeploymentDatabasesServiceForHost({ seed, contributes: params.contributes,
+                    targetRegistrations: params.targetRegistrations, readHost: params.readDeploymentTargetRoleAdmissionHost,
+                    prepareTarget: async (pluginId, localId) => params.prepareInvocationServices?.({ pluginId, localId, family: 'deploymentTargets' }),
+                    readCurrentOccurrenceId: params.readCurrentPluginOccurrenceId,
+                    readCurrentSourceCustody: params.readCurrentPluginSourceCustody,
+                    createServices: params.createServices, resolveInvocationHostPolicy: params.resolveInvocationHostPolicy,
+                    beginDiagnosticScope: params.beginDiagnosticScope, completeDiagnosticScope: params.completeDiagnosticScope })
+                : undefined;
             return params.createServices({ ...seed,
                 ...(resolveAccountSourceMachine ? { resolveAccountSourceMachine } : {}),
-                readCurrentTargetedDeclarations: signal => params.readCurrentTargetedDeclarations!(seed.plugin.id, signal, resolveAccountSourceMachine),
+                ...(deploymentDatabases ? { deploymentDatabases } : {}),
+                ...(params.readCurrentTargetedDeclarations ? { readCurrentTargetedDeclarations: (signal?: AbortSignal) =>
+                    params.readCurrentTargetedDeclarations!(seed.plugin.id, signal, resolveAccountSourceMachine) } : {}),
             }, ...args);
-        } : params.createServices,
+        },
         ...(params.prepareInvocationServices ? { prepareInvocationServices: params.prepareInvocationServices } : {}),
         ...(params.beginDiagnosticScope
             ? { beginDiagnosticScope: params.beginDiagnosticScope }

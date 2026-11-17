@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decideDatabaseAccessV1, summarizeDatabaseAccessV1 } from './access';
+import * as access from './access';
 
 const editor = { mayWrite: true, editingOff: false };
 const reader = { mayWrite: false, editingOff: false };
@@ -30,5 +31,20 @@ describe('decideDatabaseAccessV1', () => {
             .toEqual({ canRead: false, canWrite: false, reason: 'database_agent_access_none' });
         expect(summarizeDatabaseAccessV1({ requester: 'person', person: editor, agentAccess: 'none' }))
             .toEqual({ canRead: true, canWrite: true });
+    });
+});
+
+
+describe('resolveDatabaseRequesterKindV1', () => {
+    it('distinguishes automation authority from a present person with the same non-agent caller fact', () => {
+        expect(access.resolveDatabaseRequesterKindV1({ agentCaller: false, authority: 'present_user' })).toBe('person');
+        expect(access.resolveDatabaseRequesterKindV1({ agentCaller: false, authority: 'account_automation' })).toBe('agent');
+        expect(access.resolveDatabaseRequesterKindV1({ agentCaller: true, authority: 'present_user' })).toBe('agent');
+    });
+
+    it('does not classify an older host with missing admitted facts as a person', () => {
+        expect(access.resolveDatabaseRequesterKindV1({})).toBeUndefined();
+        expect(access.resolveDatabaseRequesterKindV1({ agentCaller: false })).toBeUndefined();
+        expect(access.resolveDatabaseRequesterKindV1({ authority: 'present_user' })).toBeUndefined();
     });
 });

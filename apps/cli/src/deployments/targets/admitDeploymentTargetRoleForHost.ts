@@ -61,6 +61,41 @@ const refuse = (code: string, phase?: string): never => {
     throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code });
 };
 
+/** Shared current Environment custody for role Actions and in-process database attachments. */
+export async function readDeploymentTargetEnvironmentForHost(input: Readonly<{
+    serverId: string;
+    environmentId: string;
+    projectSourceId?: string;
+    targetLinkId?: string;
+    context: ActionExecutorContext;
+}>, host: Pick<DeploymentTargetRoleAdmissionHost, 'serverId' | 'readEnvironment'>): Promise<DeploymentEnvironmentDetailV1> {
+    if (!await isServerProfileHomeIdentity(input.serverId, host.serverId)) return refuse('server_scope_mismatch');
+    const detail = await host.readEnvironment({ environmentId: input.environmentId,
+        ...(input.targetLinkId ? { targetLinkId: input.targetLinkId } : {}), context: input.context });
+    const environment = detail.environment;
+    if (environment.id !== input.environmentId || !await isServerProfileHomeIdentity(environment.serverId, host.serverId)
+        || input.projectSourceId !== undefined && environment.projectSourceId !== input.projectSourceId
+        || environment.deletedAtMs !== undefined || !environment.capabilities.read) {
+        return refuse('deployment_access_denied', 'deployment.target.admission.environment_read');
+    }
+    return detail;
+}
+
+/** The current selected Link and its recorded author remain one host-owned custody decision. */
+export function readCurrentDeploymentTargetLinkForHost(detail: DeploymentEnvironmentDetailV1, targetLinkId: string,
+    host: Pick<DeploymentTargetRoleAdmissionHost, 'credentialOwnerAccountId'>, retained = false) {
+    const selected = detail.targetLinks.find(entry => entry.targetLink.id === targetLinkId);
+    const link = selected?.targetLink;
+    if (!selected || !link || !selected.content || link.environmentId !== detail.environment.id || link.deletedAtMs !== undefined
+        || link.detachedAtMs !== undefined || link.source.kind !== 'plugin') {
+        return refuse('target_mismatch', 'deployment.target.admission.link_identity');
+    }
+    if (!retained && link.createdByAccountId !== host.credentialOwnerAccountId) {
+        return refuse('deployment_access_denied', 'deployment.target.admission.link_author');
+    }
+    return { targetLink: { ...link, source: link.source }, content: selected.content };
+}
+
 /** Link and receipt custody compare the same captured provider operands. */
 function assertProviderProvenance(scope: 'link' | 'receipt', stored: Partial<DeploymentTargetLinkProviderContentV1>,
     input: Pick<AdmittedRoleInput, 'credentialPrincipal' | 'providerIdentity' | 'providerEnvironment' | 'repositoryAccess' | 'preparedNative'>): void {
@@ -197,8 +232,8 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
         || !authorization.serviceRefs.some(service => isDeepStrictEqual(service, input.credentialRef.service))) {
         return refuse('deployment_access_denied', 'deployment.target.admission.purpose_authorization');
     }
-    if (!await isServerProfileHomeIdentity(input.serverId, host.serverId)) return refuse('server_scope_mismatch');
     if (!input.environmentId) {
+        if (!await isServerProfileHomeIdentity(input.serverId, host.serverId)) return refuse('server_scope_mismatch');
         // A draft Check inspects the caller's own provider resource before any Environment exists
         // (DeploymentTargetPreparationBaseV1). Its own credential principal and the Action's declared
         // purpose, admitted above, are the whole authority; every other role needs its Environment.
@@ -207,23 +242,14 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
         }
         return refuse('deployment_access_denied', 'deployment.target.admission.environment_read');
     }
-    const detail = await host.readEnvironment({ environmentId: input.environmentId,
-        ...(input.targetLinkId ? { targetLinkId: input.targetLinkId } : {}), context: request.context });
+    const detail = await readDeploymentTargetEnvironmentForHost({ serverId: input.serverId, environmentId: input.environmentId,
+        ...(input.targetLinkId ? { targetLinkId: input.targetLinkId } : {}), context: request.context }, host);
     const environment = detail.environment;
-    if (environment.id !== input.environmentId || !await isServerProfileHomeIdentity(environment.serverId, host.serverId) || environment.deletedAtMs !== undefined
-        || !environment.capabilities.read) return refuse('deployment_access_denied', 'deployment.target.admission.environment_read');
     if ((mutating || queryReadOnly) && environment.revision !== input.expectedRevision) return refuse('deployment_conflict');
     let candidates = matched;
     let executionEnvironment: Readonly<{ phase: 'runtime'; machineId: string; installationId: string }> | undefined;
     if (input.targetLinkId) {
-        const selected = detail.targetLinks.find(entry => entry.targetLink.id === input.targetLinkId);
-        const link = selected?.targetLink;
-        const content = selected?.content;
-        if (!link || !content || link.environmentId !== environment.id
-            || link.deletedAtMs !== undefined || link.detachedAtMs !== undefined || link.source.kind !== 'plugin')
-            return refuse('target_mismatch', 'deployment.target.admission.link_identity');
-        if (!retained && link.createdByAccountId !== host.credentialOwnerAccountId)
-            return refuse('deployment_access_denied', 'deployment.target.admission.link_author');
+        const { targetLink: link, content } = readCurrentDeploymentTargetLinkForHost(detail, input.targetLinkId, host, Boolean(retained));
         candidates = candidates.filter(({ binding }) => link.role === (isDeploymentTargetRuntimeRoleV1(binding.role) ? 'runtime' : 'data')
             && link.source.kind === 'plugin'
             && link.source.contribution.pluginId === request.pluginId && link.source.contribution.localId === binding.targetLocalId

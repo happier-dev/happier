@@ -33,7 +33,7 @@ export function createManagedDataRoleSecretReaderForHost(input: Readonly<{
     host: Pick<DeploymentTargetRoleAdmissionHost,
         'credentials' | 'serverId' | 'serverHttpBaseUrl' | 'machineId' | 'installationId'>;
     environment: DeploymentEnvironmentDetailV1;
-    query: DeploymentTargetDataQueryInputV1;
+    query: Pick<DeploymentTargetDataQueryInputV1, 'targetLinkId' | 'expectedRevision'>;
     context: ActionExecutorContext;
 }>): NonNullable<SecretsService['readDataRole']> {
     return async (options) => {

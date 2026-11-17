@@ -4492,9 +4492,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
         resolvePresentUserGatePolicy: resolveActionPresentUserGatePolicy,
         resolveHostBinding: invocationServiceOwners.resolveHostBinding,
         resolveHostPolicy: invocationServiceOwners.resolveHostPolicy,
+        resolveInvocationHostPolicy: invocationServiceOwners.resolveInvocationHostPolicy,
         createServices: invocationServiceOwners.createServices,
-        async prepareInvocationServices({ pluginId, localId }) {
-            await activateContributionsOnDemand([{ pluginId, family: 'actions', localId }]);
+        async prepareInvocationServices({ pluginId, localId, family }) {
+            await activateContributionsOnDemand([{ pluginId, family: family ?? 'actions', localId }]);
         },
         beginDiagnosticScope: invocationServiceOwners.beginDiagnosticScope,
         redactDiagnosticText: invocationServiceOwners.redactDiagnosticText,

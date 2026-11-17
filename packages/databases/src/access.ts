@@ -1,5 +1,15 @@
+import type { ActionRequiredAuthority } from '@happier-dev/protocol/actions/metadata';
 import type { DatabaseAccessDecisionV1, DatabaseAccessSummaryV1, DatabaseAgentAccessV1, DatabaseOperationClassV1,
     DatabaseRequesterKindV1 } from '@happier-dev/database-protocol';
+
+/** Fold host-admitted caller facts once for database access; older hosts remain unavailable. */
+export function resolveDatabaseRequesterKindV1(input: Readonly<{
+    agentCaller?: boolean;
+    authority?: ActionRequiredAuthority;
+}>): DatabaseRequesterKindV1 | undefined {
+    if (input.agentCaller === undefined || input.authority === undefined) return undefined;
+    return input.agentCaller || input.authority === 'account_automation' ? 'agent' : 'person';
+}
 
 export type DatabaseAccessInputV1 = Readonly<{
     /** Write facts from the target owner (Environment editors, worktree or Saved Secret admission). The person is
