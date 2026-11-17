@@ -12,7 +12,7 @@ import { buildUniversalPluginUiArtifacts } from './buildUniversalUiArtifacts.js'
 import { discoverExecutablePluginUiArtifacts } from './manifestArtifactDiscovery.js';
 import { compileUniversalPluginUiCommonJs } from './universalCommonJsCompiler.js';
 
-const pluginNames = ['channels', 'deploy-cloudflare', 'deploy-vercel', 'deployment-neon', 'deployment-supabase', 'inspector', 'posthog', 'scm-azure-devops', 'scm-bitbucket', 'scm-github', 'scm-gitlab', 'sentry', 'triage'];
+const pluginNames = ['channels', 'deploy-cloudflare', 'deploy-vercel', 'deployment-neon', 'deployment-supabase', 'inspector', 'machine-freestyle', 'posthog', 'scm-azure-devops', 'scm-bitbucket', 'scm-github', 'scm-gitlab', 'sentry', 'triage'];
 
 describe('portable Connected Account authentication entry graphs', () => {
     describe.each(['codex', 'claude', 'antigravity', 'deploy-cloudflare', 'gemini', 'machine-vercel'])('%s', (plugin) => {

@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { decodeBase64, defineProtocolLiteral, defineProtocolUnion, defineProtocolObject, defineProtocolString, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import { createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas,
   assertMachineProvisionerGuestCommandSucceeded, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
@@ -24,10 +23,12 @@ const snapshotSchema = defineProtocolObject({ id: text, slug: text, sourceVmId: 
   public: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]).optional() }, { policy: 'additive-open/drop' });
 const captureSchema = defineProtocolObject({ snapshotId: text, snapshot: snapshotSchema }, { policy: 'additive-open/drop' });
 
-function operationFor(operationId: string): Operation {
+async function operationFor(operationId: string): Promise<Operation> {
   // Native slugs allow 63 [a-z0-9-] characters. Preserve deterministic recovery
   // for arbitrary host operation IDs without stealing/reassigning an existing slug.
-  const managedId = 'prepared-' + createHash('sha256').update(text.parse(operationId)).digest('hex').slice(0, 46);
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text.parse(operationId)));
+  const hash = [...new Uint8Array(bytes)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+  const managedId = 'prepared-' + hash.slice(0, 46);
   return { managedId, name: 'happier-' + managedId };
 }
 
@@ -91,7 +92,7 @@ export function createFreestylePreparationClient(request: typeof fetch, signal?:
   }
   async function build(input: { operationId: string; input: BuildInput }): Promise<BuildResult> {
     const definition = FreestylePreparationInputSchema.parse(input.input);
-    let operation = operationFor(input.operationId);
+    let operation = await operationFor(input.operationId);
     try {
       const builder = await guest.createResource(definition.launch.choices, operation.managedId);
       operation = { ...operation, vmId: builder.vmId };
@@ -137,7 +138,7 @@ export function createFreestylePreparationClient(request: typeof fetch, signal?:
     // The original host operation was persisted before dispatch. After a lost
     // host result its bare ID cannot distinguish create from capture dispatch.
     let operation: Operation = 'nativeOperation' in input ? FreestylePreparationOperationSchema.parse(input.nativeOperation)
-      : { ...operationFor(input.operationId), captureRequested: true };
+      : { ...await operationFor(input.operationId), captureRequested: true };
     try {
       const builder = await readBuilder(operation);
       if (builder) operation = { ...operation, vmId: builder.vmId };
