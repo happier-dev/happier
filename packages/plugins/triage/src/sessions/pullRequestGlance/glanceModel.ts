@@ -124,7 +124,8 @@ function projectChecks(checks: Status['checks']): PullRequestGlanceChecksV1 {
       cancelled,
     };
   }
-  if (checks.passed === null && checks.rows.length === 0)
+  if (checks.state === 'incomplete' || checks.incomplete ||
+      (checks.passed === null && checks.rows.length === 0))
     return { kind: 'unknown' };
   return { kind: 'passed', count: checks.passed, cancelled };
 }

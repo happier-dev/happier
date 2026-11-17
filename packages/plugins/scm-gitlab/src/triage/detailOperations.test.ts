@@ -88,6 +88,31 @@ function pathOf(request: RecordedGitlabRequest): string {
 }
 
 describe('GitLab shared pull request status', () => {
+  it('retains first-page jobs without a passing verdict when the next page fails', async () => {
+    const stub = createStubGitlabTransport({ respond: request => {
+      const path = pathOf(request);
+      if (path.endsWith('/merge_requests/7')) return ok(mergeRequest);
+      if (path.endsWith('/user')) return ok({ id: 41, username: 'viewer' });
+      if (path.endsWith('/approvals')) return { status: 403 };
+      if (path.endsWith('/merge_requests/7/pipelines')) return ok([{ id: 91, status: 'success' }]);
+      if (path.endsWith('/pipelines/91/jobs')) {
+        if (new URL(request.url).searchParams.get('page') === '2') return { status: 503 };
+        const next = new URL(request.url);
+        next.searchParams.set('page', '2');
+        return ok([{ id: 1, name: 'unit', status: 'success' }], gitlabNextLinkHeader(next.toString()));
+      }
+      return undefined;
+    } });
+    const result = TriagePullRequestStatusResultV1Schema.parse(await readGitlabPullRequestStatus({
+      v: 1, instance: gitlabTestConfiguredInstance(), localRef: MERGE_REQUEST_REF,
+      lastKnownLocator: { v: 1, routingToken: ROUTING_TOKEN },
+    }, stub.context));
+    expect(result).toMatchObject({ kind: 'status', checks: {
+      state: 'incomplete', passed: null, failed: null, pending: null, total: null,
+      incomplete: true, rows: [{ id: '1', name: 'unit', state: 'passed' }],
+    } });
+  });
+
   it.each([
     { label: 'permission refusal', response: { status: 403, body: { message: '403' } },
       failure: { class: 'permission', code: 'forbidden' }, expected: { state: 'unknown', rows: [] } },

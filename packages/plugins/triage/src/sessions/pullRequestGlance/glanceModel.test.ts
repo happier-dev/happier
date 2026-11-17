@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { TriagePullRequestStatusV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { TriageSessionPullRequestBindingV1 } from '../sessionPullRequestStatus.js';
-import { projectPullRequestGlanceV1 } from './glanceModel.js';
+import { projectPullRequestGlanceV1, projectPullRequestStatusFactsV1 } from './glanceModel.js';
 import { operationOffers } from '../testkit/sessionPullRequestOperations.test-support.js';
 
 const status = (
@@ -45,6 +45,29 @@ const binding = (
 });
 
 describe('PR glance projection', () => {
+  it.each([
+    { state: 'passed' as const, expected: 'unknown' },
+    { state: 'failed' as const, expected: 'failing' },
+    { state: 'pending' as const, expected: 'running' },
+  ])('keeps a partial $state job read distinct from a complete pass', ({ state, expected }) => {
+    // GitLab retains the observed first page with null rollups when the next jobs page fails.
+    const value = status({ checks: {
+      state: 'incomplete', passed: null, failed: null, pending: null,
+      total: null, incomplete: true, rows: [check('unit', state)],
+    } });
+    expect(projectPullRequestStatusFactsV1(value).checks.kind).toBe(expected);
+    expect(projectPullRequestGlanceV1(binding({
+      nativeStatus: { kind: 'current', checkedAtMs: 200, value },
+    })).checks.kind).toBe(expected);
+  });
+
+  it('retains a confirmed complete passing rollup', () => {
+    expect(projectPullRequestStatusFactsV1(status({ checks: {
+      state: 'complete', passed: 1, failed: 0, pending: 0,
+      total: 1, incomplete: false, rows: [check('unit', 'passed')],
+    } })).checks).toEqual({ kind: 'passed', count: 1, cancelled: 0 });
+  });
+
   it('keeps coarse mergeability unknown without a source verdict and follows that verdict when supplied', () => {
     const value = status({ merge: { state: 'mergeable', blocker: null }, projectionTruncated: true });
     const project = (value: TriagePullRequestStatusV1) => projectPullRequestGlanceV1(binding({

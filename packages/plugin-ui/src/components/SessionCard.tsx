@@ -78,10 +78,12 @@ export function SessionCard(props: SessionCardProps): ReactElement {
         translate('happier.plugin-ui.sessionCard.untitled', 'Untitled session')
       : read.status === 'loading'
         ? translate('happier.plugin-ui.sessionCard.reading', 'Loading…')
-        : translate(
-            'happier.plugin-ui.sessionCard.unavailable',
-            'Session not found',
-          );
+        : read.status === 'missing'
+          ? translate('happier.plugin-ui.sessionCard.missing', 'Session not found')
+          : translate(
+              'happier.plugin-ui.sessionCard.unavailable',
+              'Session unavailable',
+            );
   const where = readSessionWhere(read);
   const status: SessionCardStatus | null =
     props.status !== undefined
