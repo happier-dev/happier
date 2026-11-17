@@ -39,3 +39,6 @@ export {
     PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
     PLUGIN_COLLECTION_REVISION_MAX,
 } from '../collections.js';
+
+export { createInMemoryAccountCollection } from './inMemoryAccountCollection.js';
+export type { InMemoryAccountCollectionOptions, InMemoryAccountCollection } from './inMemoryAccountCollection.js';

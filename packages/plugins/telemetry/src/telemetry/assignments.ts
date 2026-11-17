@@ -4,7 +4,8 @@ import type { OtlpAdmission } from '../otlp/types.js';
 import type { DeploymentTelemetryAssignmentV1 } from '@happier-dev/plugin-sdk';
 
 export type TelemetryAssignment = DeploymentTelemetryAssignmentV1;
-export type TelemetryContext = Readonly<{ partition: string; environmentId: string }>;
+export type TelemetryContext = Readonly<{ partition: string; environmentId: string;
+    capabilities?: DeploymentTelemetryAssignmentV1['capabilities'] }>;
 export const TELEMETRY_PARTITION_PREFIX = 'environment:';
 export const telemetryPartition = (environmentId: string): string => `${TELEMETRY_PARTITION_PREFIX}${environmentId}`;
 
@@ -17,7 +18,8 @@ export function createTelemetryAssignments() {
                 if (assignment.tokenHash === null) continue;
                 byHash.set(assignment.tokenHash, {
                     digest: Buffer.from(assignment.tokenHash, 'hex'),
-                    context: { partition: telemetryPartition(assignment.environmentId), environmentId: assignment.environmentId },
+                    context: { partition: telemetryPartition(assignment.environmentId), environmentId: assignment.environmentId,
+                        ...(assignment.capabilities === undefined ? {} : { capabilities: assignment.capabilities }) },
                 });
             }
         },

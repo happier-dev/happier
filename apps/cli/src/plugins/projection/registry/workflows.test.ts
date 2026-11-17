@@ -10,6 +10,10 @@ import { createResolvedContributionRegistry, createMergedContributionRegistry } 
 import { buildPluginProjectionV2 } from './projection/v2';
 import { readPluginWorkflowSources } from './workflows';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { DATABASE_CAPTURE_PLUGIN } from '@happier-dev/plugins-telemetry/manifest';
+import { resolve } from 'node:path';
+import { readBundledPluginManifest } from './builtIn/manifestFile';
+import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from './sources/generatedBundledPluginManifests';
 
 const definition = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [{ kind: 'wait', id: 'review',
     document: { text: 'Review the result.', references: [], attachments: [] }, result: { kind: 'text' },
@@ -28,6 +32,23 @@ function loaded(pluginId: string, contributes: Record<string, unknown> = { workf
 }
 
 describe('plugin workflows through the canonical projection', () => {
+    it('publishes the telemetry regression Workflow with its comparison available to nested diagnosis', () => {
+        const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(entry => entry.pluginId === 'happier.telemetry')!;
+        const published = normalizePluginManifestV2(readBundledPluginManifest(locator, resolve(import.meta.dirname, '../../../..')));
+        for (const manifest of [DATABASE_CAPTURE_PLUGIN.manifest, published]) {
+            const inputs = projectLoadedPluginContributes({ loadResult: {
+                loadedPlugins: [loaded('happier.telemetry', { workflows: manifest.contributes?.workflows })],
+                diagnosticsByPluginId: {},
+            }, provenance: 'first_party' });
+            const registry = createResolvedContributionRegistry({ ...inputs,
+                occurrenceIdsByPluginId: { 'happier.telemetry': createPluginRuntimeOccurrenceId('happier.telemetry') },
+            });
+            expect(readPluginWorkflowSources(registry)).toContainEqual(expect.objectContaining({
+                workflow: 'plugin:happier.telemetry/regression-check',
+            }));
+        }
+    });
+
     it('materializes a plugin-local Action through the projected executing-machine catalog', async () => {
         const pluginId = 'com.acme.post';
         const inputSchema = { type: 'object', properties: { message: { type: 'string' } }, required: ['message'], additionalProperties: false };

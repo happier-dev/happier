@@ -1,13 +1,30 @@
 import { maskPostgresqlObservationError } from '@happier-dev/databases/postgresql';
+import type { DeploymentTelemetryAssignmentV1 } from '@happier-dev/plugin-sdk';
+import { metricPointId } from './store/metrics.js';
 import { randomUUID } from 'node:crypto';
 import type { DaemonDatabase } from '@happier-dev/plugin-sdk/storage';
-import { createCaptureStore, type CaptureEvent } from './store/capture.js';
+import { createCaptureStore, type CaptureEvent, type CaptureExceptionEvent } from './store/capture.js';
+import { exceptionFingerprint, exceptionTopFrame } from './exceptions/grouping.js';
 import { createCaptureIngest } from './store/ingest.js';
-import type { NormalizeDatabaseStatement, NormalizedTelemetryBatch, OtlpAdmission, OtlpSignal } from './otlp/types.js';
+import type { NormalizeDatabaseStatement, NormalizedException, NormalizedResourceIdentity, NormalizedTelemetryBatch, OtlpAdmission, OtlpSignal } from './otlp/types.js';
 import type { IncomingMessage } from 'node:http';
 import type { WireObservation } from './wire/tracker.js';
 
-export type CapturePartition = Readonly<{ partition: string }>;
+/** `capabilities` are the Environment's opt-ins, admitted once with the exporter token. */
+export type CapturePartition = Readonly<{ partition: string; capabilities?: DeploymentTelemetryAssignmentV1['capabilities'] }>;
+
+function exceptionEvent(input: Readonly<{ id: string; context: CapturePartition; origin: 'span' | 'log';
+ resource: NormalizedResourceIdentity; exception: NormalizedException; traceId?: string; spanId?: string }>): CaptureExceptionEvent {
+ const { exception, resource } = input;
+ const topFrame = exceptionTopFrame(exception.stacktrace);
+ return { kind: 'exception', id: input.id, worktree: input.context.partition, origin: input.origin,
+  at: Number(BigInt(exception.timeUnixNano) / 1_000_000n),
+  fingerprint: exceptionFingerprint({ partition: input.context.partition, serviceName: resource.serviceName, exception }),
+  serviceName: resource.serviceName, serviceVersion: resource.serviceVersion, type: exception.type, message: exception.message,
+  topFrame, traceId: input.traceId, spanId: input.spanId, ...(exception.escaped === undefined ? {} : { escaped: exception.escaped }),
+  detail: { exception, ...(resource.serviceName === undefined ? {} : { serviceName: resource.serviceName }),
+   ...(resource.serviceVersion === undefined ? {} : { serviceVersion: resource.serviceVersion }) } };
+}
 
 /** One runner-owned store/writer, shared by local capture and the production collector. */
 export function createCaptureRuntime(input: {
@@ -18,6 +35,8 @@ export function createCaptureRuntime(input: {
  const store = createCaptureStore(input.database, input.publish);
  const ingest = createCaptureIngest(store.write, (_coverage, partitions) => input.publish(partitions));
  const normalizeBatch = (batch: NormalizedTelemetryBatch, context: CapturePartition): CaptureEvent[] => [
+  ...(batch.metrics ?? []).map(metric => ({ id: metricPointId(metric), worktree: context.partition,
+   kind: 'metric' as const, source: 'otlp' as const, at: Number(BigInt(metric.timeUnixNano) / 1_000_000n), metric })),
   ...batch.spans.map(span => ({
    id: `span:${span.traceId}:${span.spanId}`, worktree: context.partition, kind: span.database ? 'query' as const : 'span' as const, source: 'otlp' as const,
    at: Number(BigInt(span.startTimeUnixNano) / 1_000_000n), traceId: span.traceId, spanId: span.spanId,
@@ -26,15 +45,38 @@ export function createCaptureRuntime(input: {
    endpointMethod: span.endpoint?.method, endpointRoute: span.endpoint?.route, httpStatusCode: span.httpStatusCode,
    statementKind: span.database?.statementKind, parameterIdentity: span.database?.parameterIdentity,
    callsite: span.database?.callsite,
-   detail: { span },
+   // Stacks are stored once, as exception occurrences, and only when selected.
+   detail: { span: (({ exceptions: _exceptions, genAi: _genAi, ...rest }) => rest)(span) },
   })),
+  ...(context.capabilities?.exceptions === true ? batch.spans.flatMap(span => (span.exceptions ?? []).map(({ eventIndex, ...exception }) => exceptionEvent({
+   id: `exception:${span.traceId}:${span.spanId}:${eventIndex}`, context, origin: 'span', resource: span, exception,
+   traceId: span.traceId, spanId: span.spanId }))) : []),
+  ...(context.capabilities?.exceptions === true ? batch.logs.flatMap(log => log.exception ? [exceptionEvent({
+   id: `exception:log:${log.recordUid ?? randomUUID()}`, context, origin: 'log', resource: log, exception: log.exception,
+   traceId: log.traceId, spanId: log.spanId })] : []) : []),
   ...batch.logs.map(log => ({ id: randomUUID(), worktree: context.partition, kind: 'log' as const, source: 'otlp' as const,
    at: Number(BigInt(log.timeUnixNano !== '0' ? log.timeUnixNano : log.observedTimeUnixNano) / 1_000_000n), traceId: log.traceId, spanId: log.spanId,
-   serviceName: log.serviceName, severityNumber: log.severityNumber, detail: { log },
+   serviceName: log.serviceName, severityNumber: log.severityNumber,
+   detail: { log: log.exception ? (({ exception: _exception, ...rest }) => rest)(log) : log },
   })),
  ];
  return {
   store, ingest,
+  rememberWorktree(partition: string, physicalRoot: string) {
+   return ingest.exclusive(() => store.rememberWorktree(partition, physicalRoot));
+  },
+  async removeWorktree(physicalRoot: string) {
+   // Removal already settled; this identity must never be resolved against the filesystem again.
+   await ingest.exclusive(async () => {
+    const partitions = await store.worktreePartitions(physicalRoot);
+    for (const partition of partitions) {
+     await store.clear(partition);
+     ingest.clearCoverage(partition, ingest.coverage(partition).lostObservations);
+     await store.forgetWorktree(partition);
+    }
+    if (partitions.length) ingest.retry();
+   });
+  },
   recordCoverage(partition: string, reason: string) { ingest.recordLoss(partition, reason); },
   observeWire(observation: WireObservation, partition: string) {
    if (observation.kind === 'transaction') {
@@ -56,16 +98,29 @@ export function createCaptureRuntime(input: {
   },
   /** P6 uses the same receiver/parser and supplies its token-hash admission. */
   async acquireReceiver(options: { port: number; host?: '127.0.0.1' | '0.0.0.0'; context: CapturePartition;
-   admit?: (request: IncomingMessage, signal: OtlpSignal) => OtlpAdmission<CapturePartition> | Promise<OtlpAdmission<CapturePartition>> }) {
+   admit?: (request: IncomingMessage, signal: OtlpSignal) => OtlpAdmission<CapturePartition> | Promise<OtlpAdmission<CapturePartition>>;
+   /** Affected exception groups after their occurrences committed; the issue writer runs after the response. */
+   onExceptionsCommitted?: (context: CapturePartition, fingerprints: readonly string[]) => void }) {
    const { startOtlpReceiver } = await import('./otlp/receiver.js');
    const receiver = await startOtlpReceiver({ ...options, normalizeStatement: input.normalizeStatement,
+    async admit(request, signal): Promise<OtlpAdmission<CapturePartition>> {
+     const admission = options.admit ? await options.admit(request, signal) : { accepted: true as const, context: options.context };
+     if (admission.accepted && signal === 'metrics' && admission.context.capabilities?.metrics !== true) {
+      return { accepted: false, status: 403, message: 'Metric capture is disabled' };
+     }
+     return admission;
+    },
     withWriter: options.admit ? operation => ingest.exclusive(operation) : undefined,
     async onBatch(batch, context) {
      if (batch.rejectedRecords) ingest.recordLoss(context.partition, 'invalid_telemetry', batch.rejectedRecords);
      const events = normalizeBatch(batch, context);
      if (options.admit) {
       const result = await ingest.write(events);
-      if (result.accepted) return { accepted: true as const };
+      if (result.accepted) {
+       const fingerprints = [...new Set(events.flatMap(event => event.kind === 'exception' ? [event.fingerprint] : []))];
+       if (fingerprints.length) options.onExceptionsCommitted?.(context, fingerprints);
+       return { accepted: true as const };
+      }
       const full = result.code === 'daemon_database_quota_exceeded';
       return { accepted: false as const, retryable: !full, ...(full ? { status: 507 as const } : {}),
        message: full ? 'collector storage full' : 'OTLP store write failed' };

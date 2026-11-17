@@ -4,6 +4,6 @@ import { createWorkspacePackageSourcesPlugin } from '../../../scripts/testing/vi
 import { resolveVitestWorkers } from '../../../scripts/testing/vitestWorkers';
 export default defineConfig({
  root: import.meta.dirname,
- plugins: [createWorkspacePackageSourcesPlugin(['plugin-sdk','protocol','database-protocol','databases'].map(name => ({ packageName: `@happier-dev/${name}`, packageSourceRoot: resolve(import.meta.dirname, '../..', name, 'src') })))],
+ plugins: [createWorkspacePackageSourcesPlugin(['plugin-sdk','protocol','database-protocol','databases','triage-protocol','triage-sources'].map(name => ({ packageName: `@happier-dev/${name}`, packageSourceRoot: resolve(import.meta.dirname, '../..', name, 'src') })))],
  test: { ...resolveVitestWorkers(), environment: 'node', include: ['src/**/*.test.ts'] },
 });

@@ -6,6 +6,10 @@ import type { OtlpSignal } from './types.js';
 const root = protobuf.Root.fromJSON(otlpSchema);
 const statusType = root.lookupType('google.rpc.Status');
 const types = {
+    metrics: {
+        request: root.lookupType('opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest'),
+        response: root.lookupType('opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceResponse'),
+    },
     traces: {
         request: root.lookupType('opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest'),
         response: root.lookupType('opentelemetry.proto.collector.trace.v1.ExportTraceServiceResponse'),
@@ -30,7 +34,7 @@ export function decodeOtlpRequest(signal: OtlpSignal, body: Uint8Array, json: bo
 export function encodeOtlpResponse(signal: OtlpSignal, rejected: number, message: string | undefined, json: boolean): Uint8Array {
     const value = rejected > 0 || message ? {
         partialSuccess: {
-            [signal === 'traces' ? 'rejectedSpans' : 'rejectedLogRecords']: String(rejected),
+            [signal === 'traces' ? 'rejectedSpans' : signal === 'metrics' ? 'rejectedDataPoints' : 'rejectedLogRecords']: String(rejected),
             ...(message ? { errorMessage: message } : {}),
         },
     } : {};

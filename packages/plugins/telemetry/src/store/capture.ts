@@ -1,6 +1,11 @@
 import type { DaemonDatabase, DaemonDatabaseMigration, DaemonDatabaseRow, DaemonDatabaseValue } from '@happier-dev/plugin-sdk/storage';
 import type { DatabaseCaptureQueryGetResultV1 } from '@happier-dev/database-protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 as limits } from '@happier-dev/plugin-sdk/storage';
+import { createMetricStore, metricMigration, metricRetention, writeMetricPoint } from './metrics.js';
+import { costMigration, createCostStore } from './costs.js';
+import { worktreeMigration, createCaptureWorktrees } from './worktrees.js';
+import type { DatabaseCaptureCostMetadataV1 } from '@happier-dev/database-protocol';
+import type { NormalizedMetricPoint } from '../otlp/types.js';
 import { REQUEST_DATABASE_TIME_SQL_CTES } from '../analysis/requests.js';
 
 export const captureMigrations: readonly DaemonDatabaseMigration[] = [{ version: 1, id: 'capture', async up(tx) {
@@ -11,13 +16,24 @@ export const captureMigrations: readonly DaemonDatabaseMigration[] = [{ version:
  await tx.execute('CREATE TABLE captureDetails (id TEXT NOT NULL, worktree TEXT NOT NULL, at INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY(worktree,id))');
 } }, { version: 2, id: 'log-severity', async up(tx) {
  await tx.execute('ALTER TABLE captureSummaries ADD COLUMN severityNumber INTEGER');
-} }];
+} }, { version: 3, id: 'exceptions', async up(tx) {
+ // Raw occurrences stay on this collector; the Account issue record holds no stack.
+ await tx.execute('CREATE TABLE captureExceptions (id TEXT NOT NULL, worktree TEXT NOT NULL, at INTEGER NOT NULL, fingerprint TEXT NOT NULL, origin TEXT NOT NULL, serviceName TEXT, serviceVersion TEXT, type TEXT, message TEXT, topFrame TEXT, traceId TEXT, spanId TEXT, escaped INTEGER, PRIMARY KEY(worktree,id))');
+ await tx.execute('CREATE INDEX captureExceptionGroup ON captureExceptions(worktree,fingerprint,at)');
+} }, metricMigration, costMigration, worktreeMigration];
 const summaryFields = ['id','worktree','kind','source','at','shape','traceId','spanId','durationMs','outcome','parentSpanId','spanKind','serviceName','endpointMethod','endpointRoute','httpStatusCode','statementKind','parameterIdentity','executionIdentity','callsite','transactionId','retryOf','connectionId','severityNumber'] as const;
-const changingFields = summaryFields.filter(field => field !== 'id' && field !== 'worktree');
-const summarySql = `INSERT INTO captureSummaries(${summaryFields.join(',')}) VALUES(${summaryFields.map(() => '?').join(',')}) ON CONFLICT(worktree,id) DO UPDATE SET ${changingFields.map(field => `${field}=excluded.${field}`).join(',')} WHERE ${changingFields.map(field => `${field} IS NOT excluded.${field}`).join(' OR ')}`;
+const summaryWriteFields = [...summaryFields, 'serviceVersion', 'genAi'] as const;
+const changingFields = summaryWriteFields.filter(field => field !== 'id' && field !== 'worktree');
+// Disabling future numeric capture does not erase an already retained call on an exporter retry.
+const summaryUpdateValue = (field: typeof changingFields[number]) => field === 'genAi'
+ ? 'COALESCE(excluded.genAi,captureSummaries.genAi)' : `excluded.${field}`;
+const summarySql = `INSERT INTO captureSummaries(${summaryWriteFields.join(',')}) VALUES(${summaryWriteFields.map(() => '?').join(',')}) ON CONFLICT(worktree,id) DO UPDATE SET ${changingFields.map(field => `${field}=${summaryUpdateValue(field)}`).join(',')} WHERE ${changingFields.map(field => `${field} IS NOT ${summaryUpdateValue(field)}`).join(' OR ')}`;
 const detailSql = 'INSERT INTO captureDetails(id,worktree,at,body) VALUES(?,?,?,?) ON CONFLICT(worktree,id) DO UPDATE SET at=excluded.at,body=excluded.body WHERE body IS NOT excluded.body';
+const exceptionFields = ['id','worktree','at','fingerprint','origin','serviceName','serviceVersion','type','message','topFrame','traceId','spanId','escaped'] as const;
+/** An exporter retry repeats the same occurrence identity and changes nothing. */
+const exceptionSql = `INSERT INTO captureExceptions(${exceptionFields.join(',')}) VALUES(${exceptionFields.map(() => '?').join(',')}) ON CONFLICT(worktree,id) DO NOTHING`;
 /** A detail is truncated visibly against the host's statement-input bound, never an invented telemetry cap. */
-function detailBody(event: CaptureEvent): string {
+function detailBody(event: Pick<CaptureSummaryEvent, 'id' | 'worktree' | 'detail'>): string {
  const budget = limits.maximumInputBytes - Buffer.byteLength(detailSql) - Buffer.byteLength(event.id) - Buffer.byteLength(event.worktree) - 8;
  const original = JSON.stringify(event.detail);
  const fits = (body: string) => Buffer.byteLength(body) <= budget
@@ -34,6 +50,7 @@ function detailBody(event: CaptureEvent): string {
  return result;
 }
 export function createCaptureStore(db: DaemonDatabase, publish: (keys: readonly string[]) => void) {
+ const metricStore = createMetricStore(queryPage);
  async function queryPage<T extends DaemonDatabaseRow>(statement: string, params: readonly DaemonDatabaseValue[], requested: number) {
   let pageSize = requested;
   while (true) {
@@ -46,15 +63,18 @@ export function createCaptureStore(db: DaemonDatabase, publish: (keys: readonly 
   }
  }
  return {
+  ...metricStore,
+  ...createCaptureWorktrees(db, queryPage),
+  ...createCostStore(queryPage),
   async listPartitions(): Promise<readonly string[]> {
    const partitions: string[] = [];
    let after = '';
    while (true) {
     // Retention can remove summaries before the matching detail chunk. Include
-    // both owned tables so an offline assignment withdrawal clears all history.
-    const page = await db.query('SELECT worktree FROM (SELECT worktree FROM captureSummaries UNION SELECT worktree FROM captureDetails) WHERE worktree > ? ORDER BY worktree LIMIT ?', [after, limits.maximumResultRows]);
+    // every owned table so an offline assignment withdrawal clears all history.
+    const { rows: page, pageSize } = await queryPage('SELECT worktree FROM (SELECT worktree FROM captureSummaries UNION SELECT worktree FROM captureDetails UNION SELECT worktree FROM captureExceptions UNION SELECT worktree FROM metricPoints UNION SELECT worktree FROM metricBuckets) WHERE worktree > ? ORDER BY worktree LIMIT ?', [after], limits.maximumResultRows);
     for (const row of page) partitions.push(String(row.worktree));
-    if (page.length < limits.maximumResultRows) return partitions;
+    if (page.length < pageSize) return partitions;
     after = partitions[partitions.length - 1]!;
    }
   },
@@ -63,7 +83,19 @@ export function createCaptureStore(db: DaemonDatabase, publish: (keys: readonly 
    const changed = new Set<string>();
    await db.transaction(async tx => {
     for (const event of events) {
-     const result = await tx.execute(summarySql, summaryFields.map(field => event[field] ?? null));
+     if (event.kind === 'metric') {
+      if (await writeMetricPoint(tx, event.worktree, event.metric)) changed.add(event.worktree);
+      continue;
+     }
+     if (event.kind === 'exception') {
+      const inserted = await tx.execute(exceptionSql, exceptionFields.map(field => field === 'escaped'
+       ? (event.escaped === undefined ? null : Number(event.escaped)) : event[field] ?? null));
+      // The stack lives once, in the same detail table and retention as every other capture detail.
+      if (inserted.changes) { await tx.execute(detailSql, [event.id, event.worktree, event.at, detailBody(event)]); changed.add(event.worktree); }
+      continue;
+     }
+     const result = await tx.execute(summarySql, summaryWriteFields.map(field => field === 'genAi'
+      ? event.genAi ? JSON.stringify(event.genAi) : null : event[field] ?? null));
      let detailsChanged = false;
      if (event.detail) {
       const detail = await tx.execute(detailSql, [event.id, event.worktree, event.at, detailBody(event)]);
@@ -145,6 +177,45 @@ LEFT JOIN endpointDatabaseTimes timing USING(serviceName,method,route) ORDER BY 
    }
    return result;
   },
+  /** Affected groups only: a caller names the fingerprints it needs, or reads the newest page. */
+  async exceptionGroups(input: CaptureExceptionGroupsInput): Promise<readonly CaptureExceptionGroup[]> {
+   const scoped = input.fingerprints === undefined ? '' : ` AND fingerprint IN (${input.fingerprints.map(() => '?').join(',')})`;
+   if (input.fingerprints?.length === 0) return [];
+   const params: DaemonDatabaseValue[] = [input.worktree, ...(input.fingerprints ?? [])];
+   const after = input.after ? 'WHERE groups.lastAt < ? OR (groups.lastAt = ? AND groups.fingerprint > ?) ' : '';
+   if (input.after) params.push(input.after.lastAt, input.after.lastAt, input.after.fingerprint);
+   const statement = `WITH scoped AS (SELECT * FROM captureExceptions WHERE worktree = ?${scoped}),
+groups AS (SELECT fingerprint,COUNT(*) AS count,MIN(at) AS firstAt,MAX(at) AS lastAt FROM scoped GROUP BY fingerprint),
+latest AS (SELECT fingerprint,id AS lastId,serviceName,serviceVersion AS lastServiceVersion,type,message,topFrame,ROW_NUMBER() OVER (PARTITION BY fingerprint ORDER BY at DESC,id DESC) AS position FROM scoped)
+SELECT groups.fingerprint,groups.count,groups.firstAt,groups.lastAt,latest.lastId,latest.serviceName,latest.lastServiceVersion,latest.type,latest.message,latest.topFrame
+FROM groups JOIN latest ON latest.fingerprint = groups.fingerprint AND latest.position = 1 ${after}ORDER BY groups.lastAt DESC,groups.fingerprint LIMIT ?`;
+   const { rows } = await queryPage(statement, params, Math.min(input.limit, limits.maximumResultRows));
+   return rows as unknown as readonly CaptureExceptionGroup[];
+  },
+  /** Distinct emitted releases for one group, for the writer's recurrence decision. */
+  async exceptionVersions(worktree: string, fingerprint: string): Promise<readonly (string | null)[]> {
+   const rows = await db.query('SELECT DISTINCT serviceVersion FROM captureExceptions WHERE worktree = ? AND fingerprint = ? LIMIT ?', [worktree, fingerprint, limits.maximumResultRows]);
+   return rows.map(row => typeof row.serviceVersion === 'string' ? row.serviceVersion : null);
+  },
+  /** The first occurrence after a resolution from a release not seen before it (unknown release counts). */
+  async exceptionRecurrence(worktree: string, fingerprint: string, afterAt: number, priorVersions: readonly string[]): Promise<Readonly<{ at: number; serviceVersion: string | null }> | null> {
+   const excluded = priorVersions.length ? ` AND (serviceVersion IS NULL OR serviceVersion NOT IN (${priorVersions.map(() => '?').join(',')}))` : '';
+   const rows = await db.query('SELECT at,serviceVersion FROM captureExceptions WHERE worktree = ? AND fingerprint = ? AND at > ?' + excluded + ' ORDER BY at,id LIMIT 1',
+    [worktree, fingerprint, afterAt, ...priorVersions]);
+   const row = rows[0];
+   return row ? { at: Number(row.at), serviceVersion: typeof row.serviceVersion === 'string' ? row.serviceVersion : null } : null;
+  },
+  async exceptionOccurrences(input: CaptureExceptionOccurrencesInput): Promise<readonly CaptureExceptionOccurrence[]> {
+   const predicates = ['worktree = ?', 'fingerprint = ?'];
+   const params: DaemonDatabaseValue[] = [input.worktree, input.fingerprint];
+   if (input.before) { predicates.push('(at < ? OR (at = ? AND id < ?))'); params.push(input.before.at, input.before.at, input.before.id); }
+   const { rows } = await queryPage(`SELECT ${exceptionFields.join(',')} FROM captureExceptions WHERE ${predicates.join(' AND ')} ORDER BY at DESC,id DESC LIMIT ?`, params, Math.min(input.limit, limits.maximumResultRows));
+   // SQLite scalar decoding is the genuine boundary; escaped is stored as 0/1/NULL.
+   return rows.map(row => {
+    const { escaped, ...rest } = row as unknown as Omit<CaptureExceptionOccurrence, 'escaped'> & { escaped: number | null };
+    return { ...rest, ...(escaped === null ? {} : { escaped: escaped === 1 }) } as CaptureExceptionOccurrence;
+   });
+  },
   async detail(worktree: string, id: string): Promise<Extract<DatabaseCaptureQueryGetResultV1, { ok: true }>['detail']> {
    const rows = await db.query('SELECT body FROM captureDetails WHERE worktree = ? AND id = ?', [worktree, id]);
    return typeof rows[0]?.body === 'string' ? JSON.parse(rows[0].body) : null;
@@ -152,7 +223,7 @@ LEFT JOIN endpointDatabaseTimes timing USING(serviceName,method,route) ORDER BY 
   async clear(worktree: string) {
    let changed = 0;
    await db.transaction(async tx => {
-    for (const table of ['captureDetails', 'captureSummaries']) {
+    for (const table of [...metricRetention.map(({ table }) => table), 'captureDetails', 'captureSummaries', 'captureExceptions']) {
      let count: number;
      do { const result = await tx.execute(`DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE worktree = ? LIMIT ?)`, [worktree, limits.maximumAffectedRows]); count = result.changes; changed += count; } while (count === limits.maximumAffectedRows);
     }
@@ -168,7 +239,24 @@ export type CaptureSummary = Readonly<{
  statementKind?: 'select' | 'control' | 'other' | 'unknown' | null; parameterIdentity?: string | null; executionIdentity?: string | null; callsite?: string | null; transactionId?: string | null; retryOf?: string | null; connectionId?: string | null;
 }>;
 /** Values here have already passed the canonical dialect's masking boundary. */
-export type CaptureEvent = CaptureSummary & Readonly<{ detail?: Readonly<Record<string, unknown>> }>;
+export type CaptureSummaryEvent = CaptureSummary & Readonly<{ detail?: Readonly<Record<string, unknown>>;
+ serviceVersion?: string; genAi?: DatabaseCaptureCostMetadataV1 }>;
+/** One redacted exception occurrence; identity is span/event position or the emitter's log uid. */
+export type CaptureExceptionOccurrence = Readonly<{
+ id: string; worktree: string; at: number; fingerprint: string; origin: 'span' | 'log';
+ serviceName?: string | null; serviceVersion?: string | null; type?: string | null; message?: string | null; topFrame?: string | null;
+ traceId?: string | null; spanId?: string | null; escaped?: boolean;
+}>;
+export type CaptureExceptionEvent = CaptureExceptionOccurrence & Readonly<{ kind: 'exception'; detail: Readonly<Record<string, unknown>> }>;
+export type CaptureMetricEvent = Readonly<{id:string;worktree:string;kind:'metric';source:'otlp';at:number;metric:NormalizedMetricPoint}>;
+export type CaptureEvent = CaptureSummaryEvent | CaptureExceptionEvent | CaptureMetricEvent;
+export type CaptureExceptionGroup = Readonly<{
+ fingerprint: string; count: number; firstAt: number; lastAt: number; lastId: string;
+ serviceName: string | null; lastServiceVersion: string | null; type: string | null; message: string | null; topFrame: string | null;
+}>;
+export type CaptureExceptionGroupsInput = Readonly<{ worktree: string; limit: number; fingerprints?: readonly string[];
+ after?: Readonly<{ lastAt: number; fingerprint: string }> }>;
+export type CaptureExceptionOccurrencesInput = Readonly<{ worktree: string; fingerprint: string; limit: number; before?: Readonly<{ at: number; id: string }> }>;
 export type CaptureListInput = Readonly<{worktree: string; kind?: CaptureSummary['kind']; traceId?: string; spanKind?: number; serviceName?: string; severityNumber?: number; since?: number; until?: number; limit: number; before?: Readonly<{at:number; id:string}>}>;
 export type CaptureEndpointCursor = Readonly<{ serviceName: string; method: string; route: string }>;
 export type CaptureEndpointSummary = CaptureEndpointCursor & Readonly<{ requestCount: number; errorCount: number; totalDurationMs: number; databaseTimeMs: number }>;
@@ -179,6 +267,9 @@ export const captureDatabaseDefinition = {
  incumbentQueryFixture: { id: 'capture-readable', async run(tx: import('@happier-dev/plugin-sdk/storage').DaemonDatabaseMigrationReadTransaction) {
   await tx.query('SELECT id,worktree,at FROM captureSummaries LIMIT 1');
   await tx.query('SELECT id,worktree,at FROM captureDetails LIMIT 1');
+  await tx.query('SELECT id,worktree,at FROM metricPoints LIMIT 1');
+  await tx.query('SELECT pointId,worktree,at FROM metricBuckets LIMIT 1');
  } },
- retention: [{ table: 'captureSummaries', timeColumn: 'at', changeKeyColumn: 'worktree' }, { table: 'captureDetails', timeColumn: 'at', changeKeyColumn: 'worktree' }],
+ retention: [...metricRetention, { table: 'captureSummaries', timeColumn: 'at', changeKeyColumn: 'worktree' }, { table: 'captureDetails', timeColumn: 'at', changeKeyColumn: 'worktree' },
+  { table: 'captureExceptions', timeColumn: 'at', changeKeyColumn: 'worktree' }],
 } as const;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createCaptureReader } from './read.js';
+import { createCaptureReader, observedEndpointErrorRate } from './read.js';
 import { captureMigrations, createCaptureStore, type CaptureEvent } from './store/capture.js';
 import { createCaptureSqliteFixture } from './testing/sqlite.js';
 import { attributeDatabaseExecutions, type DatabaseExecutionEvidence, type RequestSpanEvidence } from './analysis/requests.js';
@@ -16,6 +16,40 @@ function query(id: string, parameterIdentity: string): CaptureEvent {
 }
 
 describe('selected capture reads through SQLite', () => {
+    it('keeps a zero-request observed error rate unknown', () => {
+        expect(observedEndpointErrorRate({ requestCount: 0, errorCount: 0 })).toBeNull();
+    });
+
+    it('projects slow children and log correlation from only the selected trace summaries', async () => {
+        const f = createCaptureSqliteFixture();
+        try {
+            for (const migration of captureMigrations) await migration.up(f.db);
+            const store = createCaptureStore(f.db, () => {});
+            await store.write([
+                root('request-a', 'trace-a', 10),
+                { ...root('vendor', 'trace-a', 11), spanKind: 3, parentSpanId: 'request-a', durationMs: 15 },
+                { ...root('orphan', 'trace-a', 12), spanKind: 1, parentSpanId: 'missing', durationMs: 12 },
+                query('query-a', 'a'),
+                { ...query('wire-a', 'a'), source: 'wire', spanId: 'query-a', spanKind: null, durationMs: 100 },
+                { id: 'linked-log', worktree, kind: 'log', source: 'otlp', at: 13, traceId: 'trace-a', spanId: 'query-a', detail: { log: { body: 'demanded log' } } },
+                { id: 'trace-log', worktree, kind: 'log', source: 'otlp', at: 14, traceId: 'trace-a' },
+                { id: 'missing-span-log', worktree, kind: 'log', source: 'otlp', at: 15, traceId: 'trace-a', spanId: 'absent' },
+                { ...root('foreign', 'trace-a', 16), worktree: 'other', parentSpanId: 'request-a', durationMs: 1000 },
+                { ...root('other-trace', 'trace-b', 16), parentSpanId: 'request-a', durationMs: 1000 },
+            ]);
+            f.statements.length = 0;
+            const trace = await createCaptureReader(store).trace({ worktree, traceId: 'trace-a', pageSize: 2 });
+            expect(trace.slowChildSpans.map(span => span.id)).toEqual(['vendor', 'orphan', 'query-a']);
+            expect(trace.logCorrelations).toEqual([
+                { logId: 'missing-span-log', traceId: 'trace-a', spanId: 'absent', spanObservationId: null },
+                { logId: 'trace-log', traceId: 'trace-a', spanId: null, spanObservationId: null },
+                { logId: 'linked-log', traceId: 'trace-a', spanId: 'query-a', spanObservationId: 'query-a' },
+            ]);
+            expect(f.statements.some(statement => statement.includes('captureDetails'))).toBe(false);
+            expect(JSON.stringify(trace)).not.toContain('demanded log');
+        } finally { f.close(); }
+    });
+
     it('pages only server requests and reads a selected trace for cautious repeated-query evidence without loading bodies', async () => {
         const f = createCaptureSqliteFixture();
         try {
@@ -67,9 +101,9 @@ describe('selected capture reads through SQLite', () => {
             const read = createCaptureReader(store);
             const first = await read.endpoints({ worktree, limit: 1, pageSize: 2 });
             expect(first).toEqual([expect.objectContaining({ serviceName: 'api', method: 'GET', route: '/users/:id',
-                requestCount: 2, errorCount: 1, totalDurationMs: 60, databaseTimeMs: 9 })]);
+                requestCount: 2, errorCount: 1, errorRate: 0.5, totalDurationMs: 60, databaseTimeMs: 9 })]);
             const next = await read.endpoints({ worktree, limit: 1, pageSize: 2, before: { serviceName: 'api', method: 'GET', route: '/users/:id' } });
-            expect(next).toEqual([expect.objectContaining({ route: '/widgets/:id', requestCount: 1 })]);
+            expect(next).toEqual([expect.objectContaining({ route: '/widgets/:id', requestCount: 1, errorRate: 0 })]);
             expect(f.statements.some(statement => statement.includes('captureDetails'))).toBe(false);
         } finally { f.close(); }
     });

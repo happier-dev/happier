@@ -15,6 +15,7 @@ export const SessionInputForgeEvidenceV1Schema = defineProtocolObject({
         defineProtocolLiteral('pullRequest'), defineProtocolLiteral('hostedCi'),
         defineProtocolLiteral('releaseNotes'), defineProtocolLiteral('alert'),
         defineProtocolLiteral('localTerminal'), defineProtocolLiteral('entry'),
+        defineProtocolLiteral('databaseFinding'),
       ]),
       label: defineProtocolString(),
       url: defineProtocolString().optional(),

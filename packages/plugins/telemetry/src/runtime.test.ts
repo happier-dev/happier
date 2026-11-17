@@ -9,7 +9,11 @@ const traceId = '1234567890abcdef1234567890abcdef';
 const spanId = '1234567890abcdef';
 const sql = "SELECT name FROM users WHERE password = 'private-password'";
 function traceRequest(id = spanId) {
-    return { resourceSpans: [{ scopeSpans: [{ spans: [{ traceId, spanId: id, name: sql, kind: 3,
+    return { resourceSpans: [{ resource: { attributes: [
+        { key: 'service.version', value: { stringValue: 'build-123' } },
+        { key: 'deployment.environment.name', value: { stringValue: 'staging' } },
+        { key: 'deployment.environment', value: { stringValue: 'legacy-staging' } },
+    ] }, scopeSpans: [{ spans: [{ traceId, spanId: id, name: sql, kind: 3,
         startTimeUnixNano: '1700000000000000000', endTimeUnixNano: '1700000000001000000',
         attributes: [{ key: 'db.statement', value: { stringValue: sql } },
             { key: 'db.query.parameter.password', value: { stringValue: 'private-password' } }],
@@ -47,7 +51,7 @@ describe('capture runtime through real HTTP and SQLite', () => {
             expect(JSON.stringify(rows)).not.toMatch(/private-password|parameters|maskedSql/);
             const id = rows[0]?.id;
             if (!id) throw new Error('Missing captured query');
-            expect(await f.runtime.store.detail(partition, id)).toMatchObject({ span: { database: { statementKind: 'select', maskedSql: expect.any(String) } } });
+            expect(await f.runtime.store.detail(partition, id)).toMatchObject({ span: { serviceVersion: 'build-123', deploymentEnvironmentName: 'staging', deploymentEnvironment: 'legacy-staging', database: { statementKind: 'select', maskedSql: expect.any(String) } } });
             expect(await f.runtime.store.detail('another-account/machine/project/worktree', id)).toBeNull();
             expect(JSON.stringify(await f.runtime.store.detail(partition, id))).not.toContain('private-password');
 
@@ -56,7 +60,9 @@ describe('capture runtime through real HTTP and SQLite', () => {
             await f.runtime.ingest.settled();
             expect(f.publications).toEqual([[partition]]);
 
-            const logs = await post(receiver.endpoint, 'logs', { resourceLogs: [{ resource: { attributes: [{ key: 'service.name', value: { stringValue: 'api' } }] }, scopeLogs: [{ logRecords: [{
+            const logs = await post(receiver.endpoint, 'logs', { resourceLogs: [{ resource: { attributes: [{ key: 'service.name', value: { stringValue: 'api' } },
+                { key: 'service.version', value: { stringValue: 'build-log' } },
+                { key: 'deployment.environment', value: { stringValue: 'production' } }] }, scopeLogs: [{ logRecords: [{
                 traceId, spanId, severityNumber: 13, timeUnixNano: '1700000000001000000', body: { stringValue: 'request completed' },
             }] }] }] });
             expect(logs.status).toBe(200);
@@ -65,6 +71,9 @@ describe('capture runtime through real HTTP and SQLite', () => {
             expect(logRows).toHaveLength(1);
             expect(logRows[0]).toMatchObject({ traceId, spanId, serviceName: 'api', severityNumber: 13 });
             expect(JSON.stringify(logRows)).not.toContain('request completed');
+            expect(await f.runtime.store.detail(partition, logRows[0]!.id)).toMatchObject({ log: {
+                serviceVersion: 'build-log', deploymentEnvironmentName: 'production', deploymentEnvironment: 'production',
+            } });
             expect(f.publications).toEqual([[partition], [partition]]);
         } finally {
             await receiver.release();

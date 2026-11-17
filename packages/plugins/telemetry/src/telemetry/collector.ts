@@ -9,6 +9,8 @@ export interface TelemetryCollectorOptions {
     /** The existing Machine-change transport invokes this once per addressed change. */
     subscribeAssignmentsChanged: (refresh: () => Promise<void>) => () => void;
     onEndpointChanged?: (endpoint: string | null) => void;
+    /** Affected exception groups after their occurrences committed, for the native issue writer. */
+    onExceptionsCommitted?: (environment: Readonly<{ partition: string; environmentId: string }>, fingerprints: readonly string[]) => void;
 }
 
 export interface TelemetryCollector {
@@ -42,6 +44,8 @@ export async function startTelemetryCollector(options: TelemetryCollectorOptions
                 // the authenticated Environment context before any body is read.
                 context: { partition: '' },
                 admit: request => admission.admit(request),
+                onExceptionsCommitted: (context, fingerprints) => options.onExceptionsCommitted?.({ partition: context.partition,
+                    environmentId: context.partition.slice(TELEMETRY_PARTITION_PREFIX.length) }, fingerprints),
             });
             options.onEndpointChanged?.(receiver.endpoint);
         } else if (assigned.size === 0 && receiver) {

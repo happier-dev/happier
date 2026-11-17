@@ -12,6 +12,13 @@ Existing explicit OTLP endpoints are preserved. P6's standalone telemetry
 collector helpers use the same runtime with assignment-token admission; their
 host activation is separate from the local role and remains integration work.
 
+Local capture retains the launch owner's physical-root identity alongside its
+worktree partition. After settled removal, the background owner clears all
+matching retained partitions, including unassociated worktrees, using that
+identity without reading the deleted filesystem. The association survives
+service release and background-runtime recreation; sibling roots remain intact.
+Partitions without a captured association remain available for scoped Clear.
+
 `otlp/receiver.ts` accepts HTTP JSON or protobuf traces and logs, with optional
 gzip, on `/v1/traces` and `/v1/logs`. Generated OpenTelemetry protobuf definitions
 own the wire schema. The receiver bounds both compressed and decompressed request

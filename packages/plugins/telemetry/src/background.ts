@@ -1,5 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { BackgroundServiceRunner } from '@happier-dev/plugin-sdk/background-services';
+import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, type HostEvents } from '@happier-dev/plugin-sdk/events';
 import type { DaemonDatabase, DaemonDatabaseService, DaemonDatabaseRetentionChange, PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
 import { createPostgresqlObservationNormalizer } from '@happier-dev/databases/postgresql';
 import { bindLocalCapture } from './launch.js';
@@ -7,7 +8,7 @@ import { createCaptureRuntime, type CaptureRuntime } from './runtime.js';
 import { captureDatabaseDefinition } from './store/capture.js';
 import { readCapturePreference, type CaptureProjectScope } from './configuration.js';
 
-type LocalCaptureInput = Omit<Parameters<typeof bindLocalCapture>[0], 'runtime'> & Readonly<{ projectScope?: CaptureProjectScope }>;
+export type LocalCaptureInput = Omit<Parameters<typeof bindLocalCapture>[0], 'runtime'> & Readonly<{ projectScope: CaptureProjectScope; physicalRootIdentity: string }>;
 type LocalCaptureLease = Awaited<ReturnType<typeof bindLocalCapture>>;
 type PartitionListener = (partitions: readonly string[]) => void;
 type CaptureRuntimeContext = { signal: AbortSignal; services: { storage: { daemon: DaemonDatabaseService; account?: PluginAccountStorageScope } } };
@@ -15,7 +16,7 @@ type RunningCapture = {
  runtime: CaptureRuntime;
  signal: AbortSignal;
  accountStorage: PluginAccountStorageScope | undefined;
- leases: Map<LocalCaptureLease, CaptureProjectScope | undefined>;
+ leases: Map<LocalCaptureLease, CaptureProjectScope>;
  pending: Set<Promise<LocalCaptureLease>>;
 };
 
@@ -58,7 +59,7 @@ export function createCaptureBackgroundOwner() {
    return released;
   } };
  }
- const run = async (context: CaptureRuntimeContext): Promise<void> => {
+ const run = async (context: CaptureRuntimeContext & { services: { events: { host: HostEvents } } }): Promise<void> => {
   const runtimeLease = await acquireRuntime(context);
   if (context.signal.aborted) { await runtimeLease.release(); return; }
   const state: RunningCapture = {
@@ -66,12 +67,16 @@ export function createCaptureBackgroundOwner() {
    signal: context.signal, accountStorage: context.services.storage.account, leases: new Map(), pending: new Set(),
   };
   running = state;
+  const removal = context.services.events.host.subscribe({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' } }, async ({ payload }) => {
+   if (payload.kind === 'worktreeRemoved') await state.runtime.removeWorktree(payload.removal.worktreePath);
+  });
   try {
    await new Promise<void>(resolve => {
     if (context.signal.aborted) resolve();
     else context.signal.addEventListener('abort', () => resolve(), { once: true });
    });
   } finally {
+   removal.dispose();
    running = null;
    await Promise.allSettled([...state.pending]);
    const releases = await Promise.allSettled([...state.leases.keys()].map(lease => lease.stopRecording()));
@@ -89,7 +94,7 @@ export function createCaptureBackgroundOwner() {
    const state = running;
    if (!state) return;
    await Promise.allSettled([...state.pending]);
-   await Promise.all([...state.leases].filter(([, selected]) => selected?.serverId === scope.serverId
+   await Promise.all([...state.leases].filter(([, selected]) => selected.serverId === scope.serverId
     && selected.machineId === scope.machineId && selected.projectId === scope.projectId).map(([lease]) => lease.stopRecording()));
   },
   run: run satisfies BackgroundServiceRunner,
@@ -103,7 +108,10 @@ export function createCaptureBackgroundOwner() {
   async acquireLocalCapture(input: LocalCaptureInput): Promise<LocalCaptureLease> {
    const state = running;
    if (!state || state.signal.aborted) throw new PluginError({ code: 'plugin_service_unavailable', message: 'Local database capture is not running' });
-   const acquisition = bindLocalCapture({ ...input, runtime: state.runtime }).then(bound => {
+   const acquisition = (async () => {
+    await state.runtime.rememberWorktree(input.partition, input.physicalRootIdentity);
+    return await bindLocalCapture({ ...input, runtime: state.runtime });
+   })().then(bound => {
     const lease: LocalCaptureLease = { ...bound, async release() {
      try { await bound.release(); } finally { state.leases.delete(lease); }
     } };

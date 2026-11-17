@@ -2,6 +2,7 @@ import type { PluginServiceLaunchEnvironmentRuntimeV1 } from '@happier-dev/plugi
 import { postgresqlCaptureUrl } from '@happier-dev/databases/postgresql';
 import type { bindLocalCapture, CaptureUrlOffer } from './launch.js';
 import type { CaptureProjectScope } from './configuration.js';
+import type { LocalCaptureInput } from './background.js';
 import { captureSourcePartition } from './partition.js';
 import { LOCAL_CAPTURE_OTLP_PROTOCOL_ENVIRONMENT_NAMES } from '@happier-dev/database-protocol';
 
@@ -10,7 +11,7 @@ export type LocalCaptureScope = CaptureProjectScope;
 export type LocalCaptureContributionOptions = Readonly<{
  environmentNames: readonly string[];
  readEnabled(scope: LocalCaptureScope): boolean | Promise<boolean>;
- acquireLocalCapture(input: Omit<Parameters<typeof bindLocalCapture>[0], 'runtime'> & Readonly<{ projectScope?: CaptureProjectScope }>): ReturnType<typeof bindLocalCapture>;
+ acquireLocalCapture(input: LocalCaptureInput): ReturnType<typeof bindLocalCapture>;
  signal?: AbortSignal;
 }>;
 
@@ -52,7 +53,7 @@ export function createLocalCaptureContribution(options: LocalCaptureContribution
   let lease: Awaited<ReturnType<typeof bindLocalCapture>>;
   try {
    lease = await options.acquireLocalCapture({ enabled: true,
-    projectScope: scope,
+    projectScope: scope, physicalRootIdentity: input.physicalRootIdentity,
     partition: captureSourcePartition({ kind: 'worktree', ...scope, workspaceId: input.workspace.id }),
     urls: selected.map(({ slot, offer }) => ({ ...offer, assignedPort: ports[slot]! })),
     ...(localOtlp ? { otlpPort: ports.otlp! } : {}), signal: options.signal ?? controller.signal });

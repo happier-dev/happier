@@ -34,7 +34,7 @@ describe('canonical capture transport', () => {
 
     it('preserves endpoint and request evidence and keeps configuration scoped to a project', () => {
         const endpoints = { ok: true, source, items: [{ serviceName: 'api', method: 'GET', route: '/users/:id', requestCount: 2,
-            errorCount: 1, totalDurationMs: 10, databaseTimeMs: 3 }] };
+            errorCount: 1, errorRate: 0.5, totalDurationMs: 10, databaseTimeMs: 3 }] };
         expect(capture.DatabaseCaptureEndpointsListResultV1ProtocolSchema.parse(endpoints)).toEqual(endpoints);
         expect(capture.DatabaseCaptureConfigureInputV1Schema.parse({ project: { serverId: 'home', machineId: 'machine', projectId: 'project' }, enabled: false }))
             .toEqual({ project: { serverId: 'home', machineId: 'machine', projectId: 'project' }, enabled: false });

@@ -1,7 +1,8 @@
 import type { IncomingMessage } from 'node:http';
+import type { DatabaseCaptureCostMetadataV1 } from '@happier-dev/database-protocol';
 
 export type TelemetryValue = null | boolean | number | string | TelemetryValue[] | { [key: string]: TelemetryValue };
-export type OtlpSignal = 'traces' | 'logs';
+export type OtlpSignal = 'traces' | 'logs' | 'metrics';
 
 /** SQL language policy and redaction belong to the shared dialect, supplied by the runner. */
 export interface NormalizedDatabaseStatement {
@@ -19,12 +20,34 @@ export type NormalizeDatabaseStatement = (
     parameters: Readonly<Record<string, TelemetryValue>>,
 ) => NormalizedDatabaseStatement;
 
-export interface NormalizedSpan {
+export interface NormalizedResourceIdentity {
+    serviceName?: string;
+    serviceVersion?: string;
+    /** Current semantic convention, falling back to the legacy attribute when absent. */
+    deploymentEnvironmentName?: string;
+    deploymentEnvironment?: string;
+}
+
+/**
+ * One OTel exception record (span event `exception` or log `exception.*`
+ * attributes). Text fields have already passed the shared secret redactor.
+ */
+export interface NormalizedException {
+    timeUnixNano: string;
+    type?: string;
+    message?: string;
+    stacktrace?: string;
+    /** `exception.escaped`, only when the emitter supplied it. */
+    escaped?: boolean;
+    /** Instrumentation-supplied grouping key; it wins over derived grouping. */
+    fingerprint?: string;
+}
+
+export interface NormalizedSpan extends NormalizedResourceIdentity {
     type: 'span';
     traceId: string;
     spanId: string;
     parentSpanId?: string;
-    serviceName?: string;
     name: string;
     kind: number;
     startTimeUnixNano: string;
@@ -34,9 +57,13 @@ export interface NormalizedSpan {
     endpoint?: { method: string; route: string };
     httpStatusCode?: number;
     database?: NormalizedDatabaseStatement & { callsite?: string };
+    /** Exception events keyed by their position in the span's event list. */
+    exceptions?: readonly (NormalizedException & { eventIndex: number })[];
+    /** Selected numeric usage only; never prompt, completion or tool-call content. */
+    genAi?: DatabaseCaptureCostMetadataV1;
 }
 
-export interface NormalizedLog {
+export interface NormalizedLog extends NormalizedResourceIdentity {
     type: 'log';
     timeUnixNano: string;
     observedTimeUnixNano: string;
@@ -45,14 +72,47 @@ export interface NormalizedLog {
     body: TelemetryValue;
     traceId?: string;
     spanId?: string;
-    serviceName?: string;
+    /** `log.record.uid` when the emitter supplied one; the exporter-retry identity. */
+    recordUid?: string;
+    exception?: NormalizedException;
 }
+
+export type MetricTemporality = 'unspecified' | 'delta' | 'cumulative';
+export type MetricDimensions = Readonly<Record<string, string | number | boolean>>;
+interface MetricPointIdentity extends NormalizedResourceIdentity {
+    name: string;
+    unit: string;
+    scopeName?: string;
+    scopeVersion?: string;
+    resourceSchemaUrl?: string;
+    scopeSchemaUrl?: string;
+    serviceName?: string;
+    serviceVersion?: string;
+    serviceInstanceId?: string;
+    /** Opaque emitter identity; unselected attribute names and values are never retained. */
+    streamIdentity?: string;
+    startTimeUnixNano: string;
+    timeUnixNano: string;
+    dimensions: MetricDimensions;
+    temporality: MetricTemporality;
+    /** OTLP NO_RECORDED_VALUE is preserved; it must never become a measured zero. */
+    noRecordedValue?: true;
+    /** Store-read fact: the retained rows do not supply a complete bucket distribution. */
+    incompleteBuckets?: true;
+}
+export type NormalizedMetricPoint = MetricPointIdentity & (
+    | Readonly<{ metricType: 'gauge'; value: number | string }>
+    | Readonly<{ metricType: 'sum'; value: number | string; isMonotonic: boolean }>
+    | Readonly<{ metricType: 'histogram'; count: string; bucketCounts: readonly string[]; explicitBounds: readonly number[]; sum?: number; min?: number; max?: number }>
+);
 
 export interface NormalizedTelemetryBatch {
     signal: OtlpSignal;
     spans: readonly NormalizedSpan[];
     logs: readonly NormalizedLog[];
+    metrics?: readonly NormalizedMetricPoint[];
     rejectedRecords: number;
+    rejectionMessage?: string;
 }
 
 export type OtlpAdmission<Context> =

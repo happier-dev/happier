@@ -2,6 +2,8 @@ import { z } from 'zod/mini';
 import { projectZodProtocolSchema } from '@happier-dev/protocol/plugins/actions/internalProtocolZodAdapter';
 import { DATABASE_CAPTURE_STATUS_ACTION_ID_V1 } from './actionIdsDatabaseV1.js';
 import { DatabaseFailureV1Schema } from './databaseOperations.js';
+import { DatabaseCaptureProjectV1Schema, DatabaseCaptureSourceV1Schema, DatabaseCaptureCoverageV1Schema } from './databaseCaptureSource.js';
+export { DatabaseCaptureProjectV1Schema, DatabaseCaptureSourceV1Schema, DatabaseCaptureCoverageV1Schema } from './databaseCaptureSource.js';
 
 /** The local capture launch producer and setup guidance share these names. */
 export const LOCAL_CAPTURE_DATABASE_ENVIRONMENT_NAMES = ['DATABASE_URL'] as const;
@@ -20,18 +22,11 @@ const time = z.number().check(z.int(), z.nonnegative());
 const optionalText = z.optional(z.nullable(z.string()));
 const optionalNumber = z.optional(z.nullable(z.number()));
 
-/** Operands identify a source; only its existing target owner can admit it and select a partition. */
-export const DatabaseCaptureProjectV1Schema = z.strictObject({ serverId: id, machineId: id, projectId: id });
-export const DatabaseCaptureSourceV1Schema = z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('worktree'), ...DatabaseCaptureProjectV1Schema.shape, workspaceId: id }),
-    z.strictObject({ kind: z.literal('environment'), serverId: id, environmentId: id }),
-]);
 export const DatabaseCaptureCursorV1Schema = z.strictObject({ at: time, id });
 export const DatabaseCapturePageV1Schema = z.strictObject({
     limit: z.number().check(z.int(), z.positive()),
     before: z.optional(DatabaseCaptureCursorV1Schema),
 });
-export const DatabaseCaptureCoverageV1Schema = z.strictObject({ lostObservations: count, reason: z.nullable(z.string()) });
 
 /** Lists cannot carry demanded SQL, parameter, error or log bodies. */
 export const DatabaseCaptureSummaryV1Schema = z.strictObject({
@@ -52,7 +47,10 @@ export const DatabaseCaptureRepeatedQueryV1Schema = z.strictObject({
 });
 export const DatabaseCaptureEndpointCursorV1Schema = z.strictObject({ serviceName: z.string(), method: id, route: id });
 export const DatabaseCaptureEndpointV1Schema = z.extend(DatabaseCaptureEndpointCursorV1Schema, {
-    requestCount: count, errorCount: count, totalDurationMs: z.number(), databaseTimeMs: z.number(),
+    requestCount: count, errorCount: count, errorRate: z.nullable(z.number()), totalDurationMs: z.number(), databaseTimeMs: z.number(),
+});
+export const DatabaseCaptureLogCorrelationV1Schema = z.strictObject({
+    logId: id, traceId: id, spanId: z.nullable(id), spanObservationId: z.nullable(id),
 });
 const sourceInput = { source: DatabaseCaptureSourceV1Schema };
 const selectedPage = {
@@ -77,6 +75,8 @@ export const DatabaseCaptureTraceGetInputV1Schema = z.strictObject({ ...sourceIn
 export const DatabaseCaptureTraceGetResultV1Schema = z.union([DatabaseFailureV1Schema, z.strictObject({
     ok: z.literal(true), ...sourceInput, traceId: id, summaries: z.array(DatabaseCaptureSummaryV1Schema),
     repeatedQueries: z.array(DatabaseCaptureRepeatedQueryV1Schema),
+    slowChildSpans: z.array(DatabaseCaptureSummaryV1Schema),
+    logCorrelations: z.array(DatabaseCaptureLogCorrelationV1Schema),
 })]);
 export const DatabaseCaptureLogsListInputV1Schema = z.strictObject({
     ...selectedPage, serviceName: z.optional(z.string()), severityNumber: z.optional(count),
@@ -149,6 +149,9 @@ export const DatabaseCaptureEndpointCursorV1ProtocolSchema = projectZodProtocolS
 
 export type DatabaseCaptureEndpointV1 = z.infer<typeof DatabaseCaptureEndpointV1Schema>;
 export const DatabaseCaptureEndpointV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureEndpointV1Schema);
+
+export type DatabaseCaptureLogCorrelationV1 = z.infer<typeof DatabaseCaptureLogCorrelationV1Schema>;
+export const DatabaseCaptureLogCorrelationV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureLogCorrelationV1Schema);
 
 export type DatabaseCaptureResourceSnapshotV1 = z.infer<typeof DatabaseCaptureResourceSnapshotV1Schema>;
 export const DatabaseCaptureResourceSnapshotV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureResourceSnapshotV1Schema);

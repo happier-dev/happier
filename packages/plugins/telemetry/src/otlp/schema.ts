@@ -119,6 +119,50 @@ export const otlpSchema: INamespace = {
                       }
                     }
                   }
+                },
+                "metrics": {
+                  "nested": {
+                    "v1": {
+                      "options": {
+                        "csharp_namespace": "OpenTelemetry.Proto.Collector.Metrics.V1",
+                        "java_multiple_files": true,
+                        "java_package": "io.opentelemetry.proto.collector.metrics.v1",
+                        "java_outer_classname": "MetricsServiceProto",
+                        "go_package": "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+                      },
+                      "nested": {
+                        "ExportMetricsServiceRequest": {
+                          "fields": {
+                            "resourceMetrics": {
+                              "rule": "repeated",
+                              "type": "opentelemetry.proto.metrics.v1.ResourceMetrics",
+                              "id": 1
+                            }
+                          }
+                        },
+                        "ExportMetricsServiceResponse": {
+                          "fields": {
+                            "partialSuccess": {
+                              "type": "ExportMetricsPartialSuccess",
+                              "id": 1
+                            }
+                          }
+                        },
+                        "ExportMetricsPartialSuccess": {
+                          "fields": {
+                            "rejectedDataPoints": {
+                              "type": "int64",
+                              "id": 1
+                            },
+                            "errorMessage": {
+                              "type": "string",
+                              "id": 2
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
               }
             },
@@ -667,6 +711,542 @@ export const otlpSchema: INamespace = {
                         [
                           4,
                           4
+                        ]
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "metrics": {
+              "nested": {
+                "v1": {
+                  "options": {
+                    "csharp_namespace": "OpenTelemetry.Proto.Metrics.V1",
+                    "java_multiple_files": true,
+                    "java_package": "io.opentelemetry.proto.metrics.v1",
+                    "java_outer_classname": "MetricsProto",
+                    "go_package": "go.opentelemetry.io/proto/otlp/metrics/v1"
+                  },
+                  "nested": {
+                    "MetricsData": {
+                      "fields": {
+                        "resourceMetrics": {
+                          "rule": "repeated",
+                          "type": "ResourceMetrics",
+                          "id": 1
+                        }
+                      }
+                    },
+                    "ResourceMetrics": {
+                      "fields": {
+                        "resource": {
+                          "type": "opentelemetry.proto.resource.v1.Resource",
+                          "id": 1
+                        },
+                        "scopeMetrics": {
+                          "rule": "repeated",
+                          "type": "ScopeMetrics",
+                          "id": 2
+                        },
+                        "schemaUrl": {
+                          "type": "string",
+                          "id": 3
+                        }
+                      },
+                      "reserved": [
+                        [
+                          1000,
+                          1000
+                        ]
+                      ]
+                    },
+                    "ScopeMetrics": {
+                      "fields": {
+                        "scope": {
+                          "type": "opentelemetry.proto.common.v1.InstrumentationScope",
+                          "id": 1
+                        },
+                        "metrics": {
+                          "rule": "repeated",
+                          "type": "Metric",
+                          "id": 2
+                        },
+                        "schemaUrl": {
+                          "type": "string",
+                          "id": 3
+                        }
+                      }
+                    },
+                    "Metric": {
+                      "oneofs": {
+                        "data": {
+                          "oneof": [
+                            "gauge",
+                            "sum",
+                            "histogram",
+                            "exponentialHistogram",
+                            "summary"
+                          ]
+                        }
+                      },
+                      "fields": {
+                        "name": {
+                          "type": "string",
+                          "id": 1
+                        },
+                        "description": {
+                          "type": "string",
+                          "id": 2
+                        },
+                        "unit": {
+                          "type": "string",
+                          "id": 3
+                        },
+                        "gauge": {
+                          "type": "Gauge",
+                          "id": 5
+                        },
+                        "sum": {
+                          "type": "Sum",
+                          "id": 7
+                        },
+                        "histogram": {
+                          "type": "Histogram",
+                          "id": 9
+                        },
+                        "exponentialHistogram": {
+                          "type": "ExponentialHistogram",
+                          "id": 10
+                        },
+                        "summary": {
+                          "type": "Summary",
+                          "id": 11
+                        },
+                        "metadata": {
+                          "rule": "repeated",
+                          "type": "opentelemetry.proto.common.v1.KeyValue",
+                          "id": 12
+                        }
+                      },
+                      "reserved": [
+                        [
+                          4,
+                          4
+                        ],
+                        [
+                          6,
+                          6
+                        ],
+                        [
+                          8,
+                          8
+                        ]
+                      ]
+                    },
+                    "Gauge": {
+                      "fields": {
+                        "dataPoints": {
+                          "rule": "repeated",
+                          "type": "NumberDataPoint",
+                          "id": 1
+                        }
+                      }
+                    },
+                    "Sum": {
+                      "fields": {
+                        "dataPoints": {
+                          "rule": "repeated",
+                          "type": "NumberDataPoint",
+                          "id": 1
+                        },
+                        "aggregationTemporality": {
+                          "type": "AggregationTemporality",
+                          "id": 2
+                        },
+                        "isMonotonic": {
+                          "type": "bool",
+                          "id": 3
+                        }
+                      }
+                    },
+                    "Histogram": {
+                      "fields": {
+                        "dataPoints": {
+                          "rule": "repeated",
+                          "type": "HistogramDataPoint",
+                          "id": 1
+                        },
+                        "aggregationTemporality": {
+                          "type": "AggregationTemporality",
+                          "id": 2
+                        }
+                      }
+                    },
+                    "ExponentialHistogram": {
+                      "fields": {
+                        "dataPoints": {
+                          "rule": "repeated",
+                          "type": "ExponentialHistogramDataPoint",
+                          "id": 1
+                        },
+                        "aggregationTemporality": {
+                          "type": "AggregationTemporality",
+                          "id": 2
+                        }
+                      }
+                    },
+                    "Summary": {
+                      "fields": {
+                        "dataPoints": {
+                          "rule": "repeated",
+                          "type": "SummaryDataPoint",
+                          "id": 1
+                        }
+                      }
+                    },
+                    "AggregationTemporality": {
+                      "values": {
+                        "AGGREGATION_TEMPORALITY_UNSPECIFIED": 0,
+                        "AGGREGATION_TEMPORALITY_DELTA": 1,
+                        "AGGREGATION_TEMPORALITY_CUMULATIVE": 2
+                      }
+                    },
+                    "DataPointFlags": {
+                      "values": {
+                        "DATA_POINT_FLAGS_DO_NOT_USE": 0,
+                        "DATA_POINT_FLAGS_NO_RECORDED_VALUE_MASK": 1
+                      }
+                    },
+                    "NumberDataPoint": {
+                      "oneofs": {
+                        "value": {
+                          "oneof": [
+                            "asDouble",
+                            "asInt"
+                          ]
+                        }
+                      },
+                      "fields": {
+                        "attributes": {
+                          "rule": "repeated",
+                          "type": "opentelemetry.proto.common.v1.KeyValue",
+                          "id": 7
+                        },
+                        "startTimeUnixNano": {
+                          "type": "fixed64",
+                          "id": 2
+                        },
+                        "timeUnixNano": {
+                          "type": "fixed64",
+                          "id": 3
+                        },
+                        "asDouble": {
+                          "type": "double",
+                          "id": 4
+                        },
+                        "asInt": {
+                          "type": "sfixed64",
+                          "id": 6
+                        },
+                        "exemplars": {
+                          "rule": "repeated",
+                          "type": "Exemplar",
+                          "id": 5
+                        },
+                        "flags": {
+                          "type": "uint32",
+                          "id": 8
+                        }
+                      },
+                      "reserved": [
+                        [
+                          1,
+                          1
+                        ]
+                      ]
+                    },
+                    "HistogramDataPoint": {
+                      "oneofs": {
+                        "_sum": {
+                          "oneof": [
+                            "sum"
+                          ]
+                        },
+                        "_min": {
+                          "oneof": [
+                            "min"
+                          ]
+                        },
+                        "_max": {
+                          "oneof": [
+                            "max"
+                          ]
+                        }
+                      },
+                      "fields": {
+                        "attributes": {
+                          "rule": "repeated",
+                          "type": "opentelemetry.proto.common.v1.KeyValue",
+                          "id": 9
+                        },
+                        "startTimeUnixNano": {
+                          "type": "fixed64",
+                          "id": 2
+                        },
+                        "timeUnixNano": {
+                          "type": "fixed64",
+                          "id": 3
+                        },
+                        "count": {
+                          "type": "fixed64",
+                          "id": 4
+                        },
+                        "sum": {
+                          "type": "double",
+                          "id": 5,
+                          "options": {
+                            "proto3_optional": true
+                          }
+                        },
+                        "bucketCounts": {
+                          "rule": "repeated",
+                          "type": "fixed64",
+                          "id": 6
+                        },
+                        "explicitBounds": {
+                          "rule": "repeated",
+                          "type": "double",
+                          "id": 7
+                        },
+                        "exemplars": {
+                          "rule": "repeated",
+                          "type": "Exemplar",
+                          "id": 8
+                        },
+                        "flags": {
+                          "type": "uint32",
+                          "id": 10
+                        },
+                        "min": {
+                          "type": "double",
+                          "id": 11,
+                          "options": {
+                            "proto3_optional": true
+                          }
+                        },
+                        "max": {
+                          "type": "double",
+                          "id": 12,
+                          "options": {
+                            "proto3_optional": true
+                          }
+                        }
+                      },
+                      "reserved": [
+                        [
+                          1,
+                          1
+                        ]
+                      ]
+                    },
+                    "ExponentialHistogramDataPoint": {
+                      "oneofs": {
+                        "_sum": {
+                          "oneof": [
+                            "sum"
+                          ]
+                        },
+                        "_min": {
+                          "oneof": [
+                            "min"
+                          ]
+                        },
+                        "_max": {
+                          "oneof": [
+                            "max"
+                          ]
+                        }
+                      },
+                      "fields": {
+                        "attributes": {
+                          "rule": "repeated",
+                          "type": "opentelemetry.proto.common.v1.KeyValue",
+                          "id": 1
+                        },
+                        "startTimeUnixNano": {
+                          "type": "fixed64",
+                          "id": 2
+                        },
+                        "timeUnixNano": {
+                          "type": "fixed64",
+                          "id": 3
+                        },
+                        "count": {
+                          "type": "fixed64",
+                          "id": 4
+                        },
+                        "sum": {
+                          "type": "double",
+                          "id": 5,
+                          "options": {
+                            "proto3_optional": true
+                          }
+                        },
+                        "scale": {
+                          "type": "sint32",
+                          "id": 6
+                        },
+                        "zeroCount": {
+                          "type": "fixed64",
+                          "id": 7
+                        },
+                        "positive": {
+                          "type": "Buckets",
+                          "id": 8
+                        },
+                        "negative": {
+                          "type": "Buckets",
+                          "id": 9
+                        },
+                        "flags": {
+                          "type": "uint32",
+                          "id": 10
+                        },
+                        "exemplars": {
+                          "rule": "repeated",
+                          "type": "Exemplar",
+                          "id": 11
+                        },
+                        "min": {
+                          "type": "double",
+                          "id": 12,
+                          "options": {
+                            "proto3_optional": true
+                          }
+                        },
+                        "max": {
+                          "type": "double",
+                          "id": 13,
+                          "options": {
+                            "proto3_optional": true
+                          }
+                        },
+                        "zeroThreshold": {
+                          "type": "double",
+                          "id": 14
+                        }
+                      },
+                      "nested": {
+                        "Buckets": {
+                          "fields": {
+                            "offset": {
+                              "type": "sint32",
+                              "id": 1
+                            },
+                            "bucketCounts": {
+                              "rule": "repeated",
+                              "type": "uint64",
+                              "id": 2
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "SummaryDataPoint": {
+                      "fields": {
+                        "attributes": {
+                          "rule": "repeated",
+                          "type": "opentelemetry.proto.common.v1.KeyValue",
+                          "id": 7
+                        },
+                        "startTimeUnixNano": {
+                          "type": "fixed64",
+                          "id": 2
+                        },
+                        "timeUnixNano": {
+                          "type": "fixed64",
+                          "id": 3
+                        },
+                        "count": {
+                          "type": "fixed64",
+                          "id": 4
+                        },
+                        "sum": {
+                          "type": "double",
+                          "id": 5
+                        },
+                        "quantileValues": {
+                          "rule": "repeated",
+                          "type": "ValueAtQuantile",
+                          "id": 6
+                        },
+                        "flags": {
+                          "type": "uint32",
+                          "id": 8
+                        }
+                      },
+                      "reserved": [
+                        [
+                          1,
+                          1
+                        ]
+                      ],
+                      "nested": {
+                        "ValueAtQuantile": {
+                          "fields": {
+                            "quantile": {
+                              "type": "double",
+                              "id": 1
+                            },
+                            "value": {
+                              "type": "double",
+                              "id": 2
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "Exemplar": {
+                      "oneofs": {
+                        "value": {
+                          "oneof": [
+                            "asDouble",
+                            "asInt"
+                          ]
+                        }
+                      },
+                      "fields": {
+                        "filteredAttributes": {
+                          "rule": "repeated",
+                          "type": "opentelemetry.proto.common.v1.KeyValue",
+                          "id": 7
+                        },
+                        "timeUnixNano": {
+                          "type": "fixed64",
+                          "id": 2
+                        },
+                        "asDouble": {
+                          "type": "double",
+                          "id": 3
+                        },
+                        "asInt": {
+                          "type": "sfixed64",
+                          "id": 6
+                        },
+                        "spanId": {
+                          "type": "bytes",
+                          "id": 4
+                        },
+                        "traceId": {
+                          "type": "bytes",
+                          "id": 5
+                        }
+                      },
+                      "reserved": [
+                        [
+                          1,
+                          1
                         ]
                       ]
                     }

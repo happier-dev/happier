@@ -1167,6 +1167,7 @@ export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES: readonly string[] = Objec
   "@happier-dev/plugins-copilot",
   "@happier-dev/plugins-cursor",
   "@happier-dev/plugins-custom-acp",
+  "@happier-dev/plugins-telemetry",
   "@happier-dev/plugins-deepseek",
   "@happier-dev/plugins-deploy-cloudflare",
   "@happier-dev/plugins-deploy-vercel",
@@ -1566,6 +1567,10 @@ export const BUNDLED_FIRST_PARTY_PLUGIN_PRESENTATION: Readonly<Record<string, Re
   "happier.sentry": Object.freeze({
   "description": "Brings Sentry error issues into PRs & Issues with their own detail body.",
   "displayName": "Sentry"
+}),
+  "happier.telemetry": Object.freeze({
+  "description": "Machine-local database observations and application telemetry.",
+  "displayName": "Telemetry"
 }),
   "happier.triage": Object.freeze({
   "description": "Aggregates pull requests, issues and error groups from configured sources into one reviewable surface.",

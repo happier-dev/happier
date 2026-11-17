@@ -39,7 +39,7 @@ describe('collector token assignments', () => {
             response.end();
         });
         assignments.replace([
-            { environmentId: 'A', tokenHash: digest(tokenA) },
+            { environmentId: 'A', tokenHash: digest(tokenA), capabilities: { metrics: true, exceptions: false } },
             { environmentId: 'B', tokenHash: digest(tokenB) },
             { environmentId: 'pending', tokenHash: null },
         ]);
@@ -47,7 +47,7 @@ describe('collector token assignments', () => {
         expect((await send(tokenA)).status).toBe(200);
         expect((await send(tokenB)).status).toBe(200);
         expect(admitted).toEqual([
-            { environmentId: 'A', partition: 'environment:A' },
+            { environmentId: 'A', partition: 'environment:A', capabilities: { metrics: true, exceptions: false } },
             { environmentId: 'B', partition: 'environment:B' },
         ]);
         // Deploy settle replaces A's hash; a setup-time rotation has not touched this snapshot.

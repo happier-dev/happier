@@ -10,7 +10,7 @@ import { createCaptureSqliteFixture } from './testing/sqlite.js';
 
 function input(environment: Record<string, string>): PluginServiceLaunchEnvironmentInputV1 {
  return { workspace: { id: 'worktree', serverId: 'server', machineId: 'machine', rootPath: '/project' }, project: { serverId: 'server', projectId: 'project' },
-  serviceId: 'api', executionPlacement: { mode: 'native', machineId: 'machine' }, assignedPorts: {},
+  serviceId: 'api', physicalRootIdentity: '/physical/project', executionPlacement: { mode: 'native', machineId: 'machine' }, assignedPorts: {},
   async readEnvironment() { return { projectedEnvironment: environment, provenance: {} }; } };
 }
 async function listener() {

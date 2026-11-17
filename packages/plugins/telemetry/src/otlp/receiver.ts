@@ -63,7 +63,7 @@ export function createOtlpRequestHandler<Context>(options: OtlpReceiverOptions<C
     return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
         const contentType = request.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase();
         const json = contentType !== 'application/x-protobuf';
-        const signal = request.url === '/v1/traces' ? 'traces' : request.url === '/v1/logs' ? 'logs' : undefined;
+        const signal = request.url === '/v1/traces' ? 'traces' : request.url === '/v1/logs' ? 'logs' : request.url === '/v1/metrics' ? 'metrics' : undefined;
         if (!signal) { failure(response, 404, 'Unknown OTLP signal', json); return; }
         if (request.method !== 'POST') { response.setHeader('allow', 'POST'); failure(response, 405, 'OTLP requires POST', json); return; }
         if (contentType !== 'application/json' && contentType !== 'application/x-protobuf') { failure(response, 415, 'Unsupported OTLP content type', json); return; }
@@ -80,7 +80,7 @@ export function createOtlpRequestHandler<Context>(options: OtlpReceiverOptions<C
                 const rejected = batch.rejectedRecords + (result.rejectedRecords ?? 0);
                 response.statusCode = 200;
                 response.setHeader('content-type', json ? 'application/json' : 'application/x-protobuf');
-                response.end(encodeOtlpResponse(signal, rejected, result.message ?? (rejected > 0 ? 'Invalid telemetry records were rejected' : undefined), json));
+                response.end(encodeOtlpResponse(signal, rejected, result.message ?? batch.rejectionMessage ?? (rejected > 0 ? 'Invalid telemetry records were rejected' : undefined), json));
             };
             if (options.withWriter) await options.withWriter(consume);
             else await consume();
