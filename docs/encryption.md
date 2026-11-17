@@ -5709,6 +5709,18 @@ selected data link and its controller. Existing custody owners select the stored
 content and grants. This projection adds no independent database permission or
 Environment revision requirement.
 
+The database connection Resource carries its semantic describe input in the
+existing protected `resourceContinuation`. Its signed `database.connection`
+reference binds the current plugin occurrence, Resource and mounted surface;
+the surface launch input must equal that original describe input. The receiver
+unwraps the reference into the ordinary Resource owner, which captures one
+producer under its existing Account, occurrence and cancellation lifetime.
+The deployment database service uses that captured Action context; saved secret
+access keeps the Resource's admitted Account custody. The current demand
+custody guard supports the daemon's own Account only and
+does not borrow its credentials for another Account. Closing the Resource
+releases its producer and connection through the same watch owner.
+
 The 0.3 development Publish and Prepare Actions use a separate closed
 `deploymentPreparationAdmission` on that same envelope and binding. It projects
 only the reviewed Source revision, optional existing Environment reference

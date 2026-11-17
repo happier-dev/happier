@@ -1,3 +1,4 @@
+import { projectDatabaseConnectionResourceReadV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
 import { PluginUiArtifactDigestV1Schema, type PluginUiResourceSubscriptionEventV1, type PluginUiHostApiErrorPayloadV1 } from '@happier-dev/protocol/plugins/ui';
 import { mapMachinePluginUiResourceTransportFailure, machinePluginUiResourceWatchClose, machinePluginUiResourceWatchNext, machinePluginUiResourceWatchOpen } from '@/sync/ops/machineContributionRegistryProjection';
 import { readPluginResourceStoreSnapshot, type PluginContextualResourceBinding } from './pluginSurfaceResourceRead';
@@ -152,6 +153,20 @@ export function createContextualResourceWatchOwner(input: Readonly<{
         return { callerPluginId: input.pluginId, expectedCallerOccurrenceId: daemon.expectedCallerOccurrenceId };
     };
 
+    const hostReferenceFor = (resourceId: string) => 'hostResource' in input.resource
+        ? input.resource.hostResource
+        : projectDatabaseConnectionResourceReadV1({ ...pluginBinding(),
+            resource: { pluginId: pluginBinding().callerPluginId, localId: resourceId },
+            ...(input.resource.context === undefined ? {} : { context: input.resource.context }) });
+    const watchTarget = (resourceId: string) => {
+        const hostReference = hostReferenceFor(resourceId);
+        return hostReference ? { resource: hostReference } : pluginBinding();
+    };
+    const closeTarget = (resourceId: string) => {
+        const hostReference = hostReferenceFor(resourceId);
+        return hostReference ? { resource: hostReference } : { callerPluginId: pluginBinding().callerPluginId };
+    };
+
     async function openAtDaemon(
         subscriptionId: string,
         resourceId: string,
@@ -159,14 +174,15 @@ export function createContextualResourceWatchOwner(input: Readonly<{
         readAuthority?: PluginUiReadAuthorityReferenceV1['readAuthority'],
         actionRead?: ActionReadWatch,
     ): Promise<WatchOpenResult> {
+        const hostReference = !readAuthority && !actionRead ? hostReferenceFor(resourceId) : null;
         const outcome = await open(requireMachineId(), {
             serverId: daemon.serverId,
             ...accountTarget,
             subscriptionId,
-            ...('hostResource' in input.resource ? { resource: input.resource.hostResource }
+            ...(hostReference ? { resource: hostReference }
                 : { ...pluginBinding(), resource: actionRead ? { actionRead: actionRead.request }
                     : readAuthority ? { readAuthority } : { pluginId: pluginBinding().callerPluginId, localId: resourceId } }),
-            ...(input.resource.context === undefined ? {} : { context: input.resource.context }),
+            ...(hostReference || input.resource.context === undefined ? {} : { context: input.resource.context }),
             ...(input.resource.timeoutMs === undefined ? {} : { timeoutMs: input.resource.timeoutMs }),
             ...(signal === undefined ? {} : { signal }),
         });
@@ -269,7 +285,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
                     outcome = await next(requireMachineId(), {
                         serverId: daemon.serverId,
                         ...accountTarget,
-                        ...('hostResource' in input.resource ? { resource: input.resource.hostResource } : pluginBinding()),
+                        ...(watch.readAuthority || watch.actionRead ? pluginBinding() : watchTarget(watch.resourceId)),
                         subscriptionId: watch.subscriptionId,
                         signal: poll.signal,
                     });
@@ -369,8 +385,8 @@ export function createContextualResourceWatchOwner(input: Readonly<{
         void close(requireMachineId(), {
             serverId: daemon.serverId,
             ...accountTarget,
-            ...('hostResource' in input.resource ? { resource: input.resource.hostResource }
-                : { callerPluginId: pluginBinding().callerPluginId }),
+            ...(watch.readAuthority || watch.actionRead ? { callerPluginId: pluginBinding().callerPluginId }
+                : closeTarget(watch.resourceId)),
             subscriptionId,
             ...(input.resource.timeoutMs === undefined ? {} : { timeoutMs: input.resource.timeoutMs }),
         });
@@ -460,7 +476,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
                     void close(requireMachineId(), {
                         serverId: daemon.serverId,
                         ...accountTarget,
-                        ...('hostResource' in input.resource ? { resource: input.resource.hostResource } : pluginBinding()),
+                        ...(params.readAuthority || params.actionRead ? { callerPluginId: pluginBinding().callerPluginId } : closeTarget(params.resourceId)),
                         subscriptionId: params.subscriptionId,
                     });
                 }
@@ -471,7 +487,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
                 void close(requireMachineId(), {
                     serverId: daemon.serverId,
                     ...accountTarget,
-                    ...('hostResource' in input.resource ? { resource: input.resource.hostResource } : pluginBinding()),
+                    ...(params.readAuthority || params.actionRead ? { callerPluginId: pluginBinding().callerPluginId } : closeTarget(params.resourceId)),
                     subscriptionId: params.subscriptionId,
                 });
                 return { ok: false, terminal: true, reason: 'plugin_surface_retired' };

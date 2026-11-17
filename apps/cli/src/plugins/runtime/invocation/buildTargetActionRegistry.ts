@@ -31,7 +31,6 @@ import {
     type ResolvedTargetAction,
 } from './actionExecutor';
 import type {
-    ResolvePluginInvocationHostPolicy,
     ResolveTargetActionHostBinding,
     ResolveTargetActionHostPolicy,
 } from '../hostAccess/resolve';
@@ -60,7 +59,6 @@ import { createAccountInvocationContext } from './createAccountInvocationContext
 import { readPluginActionInputParser, readPluginActionReadObserver, readPluginActionResultParser } from '@happier-dev/cli-common/plugins/registration/actionInputParser';
 import { admitDeploymentTargetRoleForHost, type DeploymentTargetRoleAdmissionHost } from '@/deployments/targets/admitDeploymentTargetRoleForHost';
 import { createManagedDataRoleSecretReaderForHost } from '@/deployments/secrets/createManagedDataRoleSecretReaderForHost';
-import { createDeploymentDatabasesServiceForHost } from '@/deployments/targets/createDeploymentDatabasesServiceForHost';
 import { admitDeploymentTargetCredentialPrincipalForHost } from '@/deployments/targets/admitDeploymentTargetCredentialPrincipalForHost';
 import { DeploymentTargetCredentialPrincipalV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 import type { DeploymentTargetDataQueryInputV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
@@ -146,7 +144,6 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
     ) => PluginActionPresentUserGatePolicy | null;
     resolveHostBinding: ResolveTargetActionHostBinding;
     resolveHostPolicy: ResolveTargetActionHostPolicy;
-    resolveInvocationHostPolicy?: ResolvePluginInvocationHostPolicy;
     createServices: CreatePluginInvocationServices;
     readCurrentTargetedDeclarations?(pluginId: string, signal?: AbortSignal,
         resolveMachine?: PluginInvocationServicesSeed['resolveAccountSourceMachine']): Promise<import('@happier-dev/cli-common/plugins/registration').TargetedContributionManifestSnapshot>;
@@ -368,18 +365,8 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
         resolveHostBinding: params.resolveHostBinding,
         createServices: (seed, ...args) => {
             const resolveAccountSourceMachine = params.createAccountSourceMachineResolver?.(seed);
-            const deploymentDatabases = seed.approvalContext && params.readDeploymentTargetRoleAdmissionHost && params.resolveInvocationHostPolicy
-                ? createDeploymentDatabasesServiceForHost({ seed, contributes: params.contributes,
-                    targetRegistrations: params.targetRegistrations, readHost: params.readDeploymentTargetRoleAdmissionHost,
-                    prepareTarget: async (pluginId, localId) => params.prepareInvocationServices?.({ pluginId, localId, family: 'deploymentTargets' }),
-                    readCurrentOccurrenceId: params.readCurrentPluginOccurrenceId,
-                    readCurrentSourceCustody: params.readCurrentPluginSourceCustody,
-                    createServices: params.createServices, resolveInvocationHostPolicy: params.resolveInvocationHostPolicy,
-                    beginDiagnosticScope: params.beginDiagnosticScope, completeDiagnosticScope: params.completeDiagnosticScope })
-                : undefined;
             return params.createServices({ ...seed,
                 ...(resolveAccountSourceMachine ? { resolveAccountSourceMachine } : {}),
-                ...(deploymentDatabases ? { deploymentDatabases } : {}),
                 ...(params.readCurrentTargetedDeclarations ? { readCurrentTargetedDeclarations: (signal?: AbortSignal) =>
                     params.readCurrentTargetedDeclarations!(seed.plugin.id, signal, resolveAccountSourceMachine) } : {}),
             }, ...args);

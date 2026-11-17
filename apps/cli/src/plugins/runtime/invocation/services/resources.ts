@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { projectActionFailureRecoveryV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { lstat, open, realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
@@ -53,7 +54,10 @@ type ResourceGeneration = Readonly<{
     brandMonochrome?: boolean;
 }>;
 
-export type PluginResourceRequesterContext = Pick<PluginDynamicResourceInvocationOptionsV1, 'agentCaller' | 'authority'>;
+export type PluginResourceRequesterContext = Pick<PluginDynamicResourceInvocationOptionsV1, 'agentCaller' | 'authority'> & Readonly<{
+    /** Host-private context of the same signed Resource continuation. */
+    approvalContext?: ActionExecutorContext;
+}>;
 
 type BindPluginResources = Readonly<{
     pluginId: string;
@@ -280,6 +284,7 @@ export type BindDynamicResourceActions = (input: Readonly<{
     occurrenceId: string;
     context: PluginResourceContextV1;
     signal: AbortSignal;
+    approvalContext?: ActionExecutorContext;
     isOccurrenceCurrent(): boolean | Promise<boolean>;
     /** Retire this exact callback authority; live observation also reattaches its existing demand. */
     retireObservation?(): void;
@@ -353,7 +358,7 @@ export type PluginResourceDemandInvocation = Readonly<{
 type ResourceDemandHost = Readonly<{
     readDemandAccountId?(): string | null;
     bindDynamicResourceCustody?(binding: Parameters<BindDynamicResourceActions>[0]):
-        Pick<PluginDynamicResourceInvocationOptionsV1, 'secrets' | 'chosenMachine' | 'daemonStorage'> | undefined;
+        Pick<PluginDynamicResourceInvocationOptionsV1, 'secrets' | 'chosenMachine' | 'daemonStorage' | 'deploymentDatabases'> | undefined;
     invokeDemand?(input: PluginResourceDemandInvocation): Promise<JsonValue>;
 }>;
 
@@ -1522,6 +1527,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
                 if (!isCurrent()) return fail('plugin_resource_context_unavailable', 'Resource context is unavailable');
                 const binding = { pluginId: resource.pluginId, resourceId: resource.id,
                     occurrenceId: resource.occurrenceId, context: context.context, signal: controller.signal,
+                    ...(context.requesterContext?.approvalContext ? { approvalContext: context.requesterContext.approvalContext } : {}),
                     isOccurrenceCurrent: composeAccountStorageCurrentness(resource, isCurrent), retireObservation: retireAuthority };
                 const accountId = context.requesterAccountId;
                 const custody = accountId && params.readDemandAccountId?.() === accountId
@@ -1530,7 +1536,9 @@ async function createStablePluginResourcesOwnerFromNormalized(
                 const producer = await createProducer.call(resource.runtime, {
                     signal: controller.signal, context: context.context,
                     ...(params.bindDynamicResourceActions?.(binding) ?? unavailableResourceActions),
-                    ...(custody?.secrets && accountId ? { ...custody, ...context.requesterContext,
+                    ...(custody?.secrets && accountId ? { ...custody,
+                        ...(context.requesterContext?.agentCaller === undefined ? {} : { agentCaller: context.requesterContext.agentCaller }),
+                        ...(context.requesterContext?.authority ? { authority: context.requesterContext.authority } : {}),
                         requesterAccount: Object.freeze({ accountId }) } : {}),
                 });
                 if (!producer || typeof producer.read !== 'function' || typeof producer.observe !== 'function'

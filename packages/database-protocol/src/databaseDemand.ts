@@ -17,3 +17,4 @@ export const DatabaseDemandSnapshotV1Schema = z.strictObject({
     relationRevisions: z.array(z.strictObject({ relation: DatabaseRelationV1Schema, revision })),
 });
 export type DatabaseDemandSnapshotV1 = z.infer<typeof DatabaseDemandSnapshotV1Schema>;
+export { DATABASE_CONNECTION_RESOURCE_ID_V1 } from '@happier-dev/protocol/databases/databaseResourceIdentityV1';

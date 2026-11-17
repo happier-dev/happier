@@ -2699,6 +2699,183 @@ describe('managed catalog original Account transport', () => {
     }
   });
 
+  it.each(['plain', 'e2ee'] as const)('captures the selected database Resource through real UI, Home issuance and daemon custody (%s)', async mode => {
+    const { definePlugin } = await import('@happier-dev/plugin-sdk');
+    const { DATABASE_PLUGIN_ID_V1 } = await import('@happier-dev/protocol/actions/actionIdsDatabaseV1');
+    const { DATABASE_CONNECTION_RESOURCE_ID_V1 } = await import('@happier-dev/protocol/databases/databaseResourceIdentityV1');
+    const { accountSettingsParse } = await import('@happier-dev/protocol/account/settings/accountSettings');
+    const { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } = await import('@/settings/accountSettings/activeAccountSettingsSnapshot');
+    const { resolveAccountSettingsScopeKeyForToken } = await import('@/settings/accountSettings/accountSettingsScopeKey');
+    const persistence = await import('@/persistence');
+    const secret = new Uint8Array(32).fill(mode === 'plain' ? 81 : 82);
+    const machineKey = deriveAccountMachineKeyFromRecoverySecret(secret);
+    const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+    const signing = tweetnacl.sign.keyPair.fromSeed(secret);
+    const account = await db.account.create({ data: { encryptionMode: mode,
+      ...(mode === 'e2ee' ? { publicKey: Buffer.from(signing.publicKey).toString('hex'), contentPublicKey: publicKey,
+        contentPublicKeySig: signAccountContentKeyBindingV1({ accountSigningSecretKey: signing.secretKey, contentPublicKey: publicKey }) } : {}) } });
+    const homeId = await getOrCreateServerIdentityId();
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(83));
+    const installationId = `database-resource-${mode}-installation`;
+    const target = { serverId: configuration.activeServerId, machineId: `database-resource-${mode}` };
+    await db.machine.create({ data: { id: target.machineId, accountId: account.id, installationId,
+      installationPublicKey: installation.publicKey, metadata: mode === 'plain' ? encodePlainMachineStoredContent({}) : 'opaque',
+      dataEncryptionKey: mode === 'plain' ? Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') : null,
+      metadataVersion: 1, active: true, lastActiveAt: new Date(),
+      operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1 } });
+    const token = await createAccountTokenForTests(account.id, { kind: 'account', authority: 'present_user' });
+    const installedCredentials: StoredCredentials = { token: await createAccountTokenForTests(account.id,
+      { kind: 'terminal', authority: 'account_automation' }), encryption: mode === 'plain' ? null : { type: 'dataKey', machineKey, publicKey } };
+    const serverUrl = 'https://database-resource-home.example';
+    const uiServerId = await home.addHome({ name: 'Database Resource', serverUrl, serverIdentityId: homeId,
+      accountId: account.id, accountEncryptionMode: mode, currentAccount: true });
+    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue(mode === 'plain' ? { token }
+      : { token, secret: encodeBase64(secret, 'base64url') });
+    // Publish the installed sign-in through the same isolated OS file the
+    // daemon registry reads at startup; keep its Account custody rule real.
+    const previousCredentialFile = await readFile(configuration.privateKeyFile).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    await persistence.writeStoredCredentialsForServerId(target.serverId, installedCredentials);
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), settingsVersion: 1,
+      loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken(installedCredentials.token) });
+    await updateSettings(settings => ({ ...settings, servers: { ...settings.servers, [target.serverId]: {
+      id: target.serverId, name: 'Database Resource', serverUrl, webappUrl: serverUrl, createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+      homeConnectionDescriptorAuthority: 'exact', homeConnectionDescriptor: { v: 1, homeServerIdentityId: homeId,
+        canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] },
+    } } }));
+    let acquisitions = 0;
+    let disposals = 0;
+    let producerSignal: AbortSignal | undefined;
+    let refusedContinuation: string | undefined;
+    const databasePlugin = definePlugin({ id: DATABASE_PLUGIN_ID_V1, version: '0.0.0', entrypoints: { daemon: './daemon.mjs' }, resources: {
+      [DATABASE_CONNECTION_RESOURCE_ID_V1]: { source: 'dynamic', kind: 'config', contentType: 'application/json', scope: 'surface',
+        execution: { target: 'daemon' }, runtime: {
+          read() { throw new Error('Connection must use its captured producer'); },
+          observe() { throw new Error('Connection must use its captured producer'); },
+          createProducer(context) {
+            const requesterAccountId = context.requesterAccount?.accountId;
+            if (requesterAccountId !== account.id || !context.secrets || !context.deploymentDatabases) {
+              throw new Error('Missing original requester database custody');
+            }
+            acquisitions++; producerSignal = context.signal;
+            return { read: () => JSON.stringify({ accountId: requesterAccountId,
+              selected: context.context.kind === 'surface' ? context.context.launchInput : null }),
+              observe: () => ({ dispose() {} }), dispose() { disposals++; } };
+          },
+        } },
+    } });
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+      plugins: [{ manifest: databasePlugin.manifest, files: { 'daemon.mjs': 'export function activate() {}' },
+        instantiateCommittedModule: () => ({ activate: databasePlugin.activate }) }],
+      async resolveContributes(happyHomeDir) { return createResolvedContributionRegistry(projectLoadedPluginContributes({
+        loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external' })); },
+      runtimeOptions: { resolveCurrentMachineId: () => target.machineId,
+        resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: target.machineId }) } });
+    const executor = createCliActionExecutorHarness({ credentials: installedCredentials, token: installedCredentials.token,
+      mode: mode === 'plain' ? 'plain' : 'dataKey', ctx: mode === 'plain' ? null : machineKey,
+      sessionId: 'cli-global', serverId: target.serverId, serverHttpBaseUrl: serverUrl,
+      actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1(undefined) },
+    }).executor;
+    const handlers = new Map<string, RpcHandler<unknown, unknown>>();
+    // No registry override: the protected continuation consumes the daemon's
+    // currently published registry through the normal authoritative lease.
+    registerDaemonContributionRegistryProjectionHandler({ registerHandler(method, handler) {
+      handlers.set(method, handler as RpcHandler<unknown, unknown>);
+    } }, { readHostResourceAccountId: () => account.id });
+    const app = Fastify().withTypeProvider<ZodTypeProvider>();
+    const io = new Server(createServer());
+    let restoreHttp = () => {};
+    try {
+      app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+      enableErrorHandlers(app); enableAuthentication(app);
+      registerAccountEncryptionRoutes(app); registerAccountSettingsRoutes(app); registerAccountProfileRoute(app); machinesRoutes(app);
+      app.get('/v1/features', async () => FeaturesResponseSchema.parse({ features: {},
+        capabilities: { serverIdentity: { serverIdentityId: homeId } } }));
+      registerExternalActionRoutes(app, { dispatch: createExternalActionDaemonDispatcher({ io, forwardRpc: async request => {
+        const { ExternalActionDaemonDispatchRequestSchema } = await import('@happier-dev/protocol/actions');
+        const admitted = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
+        expect(admitted.executionAuthorization.binding).toMatchObject({ accountId: account.id, custodianAccountId: account.id,
+          machineId: target.machineId, accountEncryptionMode: mode });
+        const result = await executeExternalAction({ actionId: admitted.actionId, envelope: admitted.envelope, principal: admitted.principal,
+          executionAuthorization: admitted.executionAuthorization, currentMachineId: target.machineId,
+          currentInstallationId: installationId, currentServerId: target.serverId, currentServerHttpBaseUrl: serverUrl,
+          currentAccountId: account.id, surface: 'ui', signal: new AbortController().signal,
+          externalActionMachineRequestPrivateKey: installation.secretKey,
+          verifyExecutionAuthorization: input => verifyExternalActionExecutionAuthorizationCurrent({ ...input, installationId,
+            privateKey: installation.secretKey, serverHttpBaseUrl: serverUrl }),
+          resolveTarget: createDaemonExternalActionTargetResolver({ credentials: installedCredentials }), executor,
+          prepareRequesterAccountContext: preparation => prepareRequesterAccountActionContext({ authorization: preparation.authorization,
+            purpose: { kind: 'external_action' }, machineId: target.machineId, installationId,
+            installationPrivateKey: installation.secretKey, serverId: target.serverId, serverIdentityId: homeId,
+            serverHttpBaseUrl: serverUrl, ownCredentials: installedCredentials, isCurrent: async () => true,
+            isCustodyCurrent: async () => true, createExecutor: () => executor }),
+          invokeResource: async (method, params, context) => {
+            const handler = handlers.get(method);
+            if (!handler) throw new Error(`Missing registered Resource handler: ${method}`);
+            return handler(params, context);
+          },
+        });
+        if (result.kind !== 'response') refusedContinuation = result.kind;
+        return { ok: true, result: result.kind === 'response' ? createExternalActionDaemonDispatchResponse(result.prepared) : result };
+      } }) });
+      restoreHttp = installAxiosFastifyAdapter({ app, origin: serverUrl });
+      const written = await app.inject({ method: 'POST', url: '/v2/account/settings',
+        headers: { authorization: `Bearer ${token}`, ...buildCurrentAccountStoredContentCompatibilityHttpHeaders() },
+        payload: { expectedVersion: 0, content: prepareAccountSettingsV2Content({ credentials: installedCredentials,
+          raw: {}, envelopeKind: mode === 'plain' ? 'plain' : 'encrypted' }) } });
+      expect(written.statusCode, written.body).toBe(200);
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        if (url.pathname !== '/v1/features') return home.request(input, init);
+        const response = await app.inject({ method: 'GET', url: url.pathname });
+        return new Response(response.payload, { status: response.statusCode, headers: { 'content-type': 'application/json' } });
+      });
+      for (const path of ['/v1/machines/read-batch', '/v1/actions/action.invoke', '/v1/actions/action.invoke/execution-authorization']) {
+        home.answer(uiServerId, `POST ${path}`, { select: async (value, request) => {
+          const response = await app.inject({ method: 'POST', url: path,
+            headers: Object.fromEntries(new Headers(request.init?.headers).entries()), payload: value });
+          return { status: response.statusCode, body: response.json() };
+        } });
+      }
+      const occurrence = fixture.registry.readPluginOccurrenceId?.(DATABASE_PLUGIN_ID_V1);
+      if (!occurrence) throw new Error('Missing admitted database occurrence');
+      const selected = { operation: 'describe', target: { kind: 'manual', accountId: account.id,
+        workspace: { serverId: homeId, workspaceId: 'workspace', machineId: target.machineId, rootPath: '/workspace' },
+        installationId, projectKey: 'project', savedSecretId: 'selected-secret' } };
+      const binding = { callerPluginId: DATABASE_PLUGIN_ID_V1,
+        expectedCallerOccurrenceId: occurrence, resource: { pluginId: DATABASE_PLUGIN_ID_V1, localId: DATABASE_CONNECTION_RESOURCE_ID_V1 },
+        context: { kind: 'surface' as const, mountInstanceKey: 'database-surface', launchInput: selected } };
+      const options = { serverId: uiServerId, accountId: account.id, ...binding, subscriptionId: 'selected-database' };
+      const opened = await machinePluginUiResourceWatchOpen(target.machineId, options);
+      expect(opened, JSON.stringify(opened)).toMatchObject({ supported: true,
+        result: { ok: true, subscriptionId: options.subscriptionId } });
+      const read = await machinePluginUiResourceRead(target.machineId, { serverId: uiServerId, accountId: account.id, ...binding });
+      expect(read).toMatchObject({ supported: true, result: { ok: true } });
+      if (!read.supported || !read.result.ok) throw new Error('Expected captured connection bytes');
+      expect(JSON.parse(Buffer.from(read.result.bytesBase64, 'base64').toString('utf8'))).toEqual({ accountId: account.id, selected });
+      expect(acquisitions).toBe(1);
+      const { projectDatabaseConnectionResourceReadV1 } = await import('@happier-dev/protocol/daemon/machineServiceLogsResource');
+      const reference = projectDatabaseConnectionResourceReadV1(binding);
+      if (!reference) throw new Error('Missing canonical connection reference');
+      const mismatched = await machinePluginUiResourceRead(target.machineId, { serverId: uiServerId, accountId: account.id,
+        resource: { ...reference, binding: { ...reference.binding, context: { ...binding.context,
+          launchInput: { ...selected, target: { ...selected.target, savedSecretId: 'neighbor-secret' } } } } } });
+      expect(mismatched).not.toMatchObject({ supported: true, result: { ok: true } });
+      expect(refusedContinuation).toBe('invalid_request');
+      expect(acquisitions).toBe(1);
+      await machinePluginUiResourceWatchClose(target.machineId, { serverId: uiServerId, accountId: account.id,
+        subscriptionId: options.subscriptionId, resource: reference });
+      expect(producerSignal?.aborted).toBe(true);
+      expect(disposals).toBe(1);
+    } finally {
+      restoreHttp(); await app.close(); await io.close(); await fixture.dispose(); resetActiveAccountSettingsSnapshotForTests();
+      if (previousCredentialFile) await writeFile(configuration.privateKeyFile, previousCredentialFile);
+      else await rm(configuration.privateKeyFile, { force: true });
+    }
+  });
+
   it.each(['plain', 'e2ee'] as const)('reads shared service inventory through the real UI Resource and Home codec without requester credentials (%s)', async mode => {
     const secret = new Uint8Array(32).fill(mode === 'plain' ? 71 : 74);
     const machineKey = deriveAccountMachineKeyFromRecoverySecret(secret);

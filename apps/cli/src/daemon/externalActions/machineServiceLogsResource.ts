@@ -4,12 +4,29 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { DaemonPluginUiResourceReadResponseSchema, DaemonPluginUiResourceWatchOpenResponseSchema,
   DaemonPluginUiResourceWatchNextResponseSchema, DaemonPluginUiResourceWatchCloseResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_PLUGIN_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { DATABASE_CONNECTION_RESOURCE_ID_V1 } from '@happier-dev/protocol/databases/databaseResourceIdentityV1';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { ActionInvokeInputSchema } from '@happier-dev/protocol/actions/actionInvokeInput';
 
 type Operands = Pick<ExternalActionRequestEnvelopeV1, 'resourceContinuation' | 'machineServiceLogsGeneration'>;
 
 /** Protected transport operands constrain the same canonical logs Action input. */
 export function sameMachineServiceLogsResourceInput(input: unknown, operands: Operands, machineId: string,
   actionId: string = 'machines.services.logs.read'): boolean {
+  if (actionId === ACTION_INVOKE_ACTION_ID_V1) {
+    const continuation = operands.resourceContinuation;
+    const resource = continuation?.params.resource;
+    if (!continuation || resource?.hostRead !== 'database.connection' || continuation.params.machineId !== machineId
+      || operands.machineServiceLogsGeneration !== undefined) return false;
+    const parsed = ActionInvokeInputSchema.safeParse(input);
+    const binding = resource.binding;
+    return parsed.success && formatQualifiedPluginActionId(parsed.data.action) === DATABASE_DESCRIBE_ACTION_ID_V1
+      && sameStrictJsonValue(parsed.data, resource.input) && binding.callerPluginId === DATABASE_PLUGIN_ID_V1
+      && binding.resource.pluginId === binding.callerPluginId && binding.resource.localId === DATABASE_CONNECTION_RESOURCE_ID_V1
+      && binding.context?.kind === 'surface' && sameStrictJsonValue(binding.context.launchInput, parsed.data.input);
+  }
   if (actionId !== 'machines.services.logs.read' && actionId !== 'machines.services.list'
     && actionId !== 'deployments.logs.read' && actionId !== 'deployments.health.current') return false;
   const parsed = getActionSpec(actionId).inputSchema.safeParse(input);
@@ -35,7 +52,11 @@ export function sameMachineServiceLogsResourceInput(input: unknown, operands: Op
 }
 
 /** Resource phases keep their existing closed responses; finite Action output stays unchanged. */
-export function parseMachineServiceLogsResourceResponse(method: NonNullable<Operands['resourceContinuation']>['method'], value: unknown) {
+export function parseMachineServiceLogsResourceResponse(method: NonNullable<Operands['resourceContinuation']>['method'], value: unknown):
+  ReturnType<typeof DaemonPluginUiResourceReadResponseSchema.safeParse>
+  | ReturnType<typeof DaemonPluginUiResourceWatchOpenResponseSchema.safeParse>
+  | ReturnType<typeof DaemonPluginUiResourceWatchNextResponseSchema.safeParse>
+  | ReturnType<typeof DaemonPluginUiResourceWatchCloseResponseSchema.safeParse> {
   switch (method) {
     case RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ: return DaemonPluginUiResourceReadResponseSchema.safeParse(value);
     case RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN: return DaemonPluginUiResourceWatchOpenResponseSchema.safeParse(value);

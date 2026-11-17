@@ -23,6 +23,7 @@ import type { PluginInvocationContext } from '../invocation.js';
 import type { ActionExecuteResult } from '../actions/service.js';
 import type { TriageEntryRefV1 } from '../protocol/triageEntryRef.js';
 import type { SecretsService } from '../secrets.js';
+import type { DeploymentDatabasesServiceV1 } from './deployments.js';
 
 export type { PluginResourceKind } from '@happier-dev/protocol';
 /** @realm any */
@@ -76,6 +77,8 @@ export type PluginDynamicResourceInvocationOptionsV1 = Readonly<{
     authority?: PluginInvocationContext['authority'];
     /** Existing plugin-scoped daemon KV, captured with own-Account custody. */
     daemonStorage?: Pick<StorageScopeService, 'get' | 'set' | 'delete' | 'list'>;
+    /** Existing deployment-role attachment captured for this admitted own-Account demand. */
+    deploymentDatabases?: DeploymentDatabasesServiceV1;
     /** Explicit read operands only, through the canonical Action executor as this Resource's plugin. */
     readAction(ref: PluginContributionRef, input: JsonValue, options?: PluginCancellationOptions): Promise<ActionExecuteResult>;
     /** Installs the target Action's own qualified dependencies without executing its read handler. */
@@ -112,7 +115,7 @@ export type PluginDynamicResourceRuntime = Readonly<{
      */
     createProducer?(options: Pick<PluginDynamicResourceInvocationOptionsV1,
         'signal' | 'context' | 'readAction' | 'observeAction' | 'requesterAccount' | 'secrets'
-        | 'chosenMachine' | 'agentCaller' | 'authority' | 'daemonStorage'>): PluginDynamicResourceProducer | Promise<PluginDynamicResourceProducer>;
+        | 'chosenMachine' | 'agentCaller' | 'authority' | 'daemonStorage' | 'deploymentDatabases'>): PluginDynamicResourceProducer | Promise<PluginDynamicResourceProducer>;
 }>;
 
 export type PluginMcpContributionRef = PluginContributionRef;

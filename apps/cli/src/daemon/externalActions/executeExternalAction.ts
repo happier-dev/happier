@@ -579,8 +579,9 @@ async function executeExternalActionRequest(input: Readonly<{
         || envelope.data.v === 2 && !sameStrictJsonValue(readAdmission, envelope.data.deploymentReadAdmission)))
       throw new TypeError('Deployment read admission mismatch');
     if (expectedRead && executionAuthorization?.success) {
-      const home = decodedInput && typeof decodedInput === 'object' && 'serverId' in decodedInput
-        && typeof decodedInput.serverId === 'string' ? decodedInput.serverId : null;
+      const home = 'databaseTarget' in expectedRead ? expectedRead.databaseTarget.environment.serverId
+        : decodedInput && typeof decodedInput === 'object' && 'serverId' in decodedInput
+          && typeof decodedInput.serverId === 'string' ? decodedInput.serverId : null;
       if (!home || !await isServerProfileHomeIdentity(home, executionAuthorization.data.binding.serverIdentityId))
         throw new TypeError('Deployment read Home mismatch');
     }

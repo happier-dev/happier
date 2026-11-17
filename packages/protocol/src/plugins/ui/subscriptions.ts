@@ -11,6 +11,7 @@ import { PluginUiMachineServiceReadReferenceV1Schema } from '../../daemon/machin
 import { ManagedListInputV1Schema } from '../../machines/managed/actionsV1.js';
 import { DeploymentEnvironmentListInputV1Schema } from '../../deployments/deploymentActionsV1.js';
 import type { ActionId } from '../../actions/actionIds.js';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '../../actions/actionIds.js';
 export { PluginUiMachineServiceLogsReadReferenceV1Schema } from '../../daemon/machineServiceLogsResource.js';
 
 /** Closed, invocation-qualified authority observation; it never returns credential material. */
@@ -39,6 +40,7 @@ export type PluginUiHostReadReferenceV1 = z.infer<typeof PluginUiHostReadReferen
 /** Host Resource aliases borrow the original Action's admission in every host. */
 export function resolvePluginUiHostReadActionIdV1(hostRead: PluginUiHostReadReferenceV1['hostRead']): ActionId {
   switch (hostRead) {
+    case 'database.connection': return ACTION_INVOKE_ACTION_ID_V1;
     case 'machines.services.logs': return 'machines.services.logs.read';
     case 'deployments.logs': return 'deployments.logs.read';
     case 'deployments.health.edge': return 'deployments.health.current';

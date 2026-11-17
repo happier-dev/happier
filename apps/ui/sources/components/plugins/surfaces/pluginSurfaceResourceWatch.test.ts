@@ -26,6 +26,8 @@ import {
     type PluginSurfaceResourceWatchTransport,
 } from './pluginSurfaceResourceWatch';
 import { createBoundPluginSurfaceController } from './boundPluginSurfaceController';
+import { DATABASE_PLUGIN_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { DATABASE_CONNECTION_RESOURCE_ID_V1 } from '@happier-dev/protocol/databases/databaseResourceIdentityV1';
 
 // The real watch owner remains beneath this genuine daemon RPC boundary.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
@@ -66,6 +68,35 @@ const TARGETED_RESOURCE_CONTEXT: PluginResourceContextV1 = Object.freeze({
     kind: 'surface',
     mountInstanceKey: 'targeted-surface:v1:review:mount-a',
     launchInput: { reviewId: 'review-a' },
+});
+
+it('keeps the exact semantic connection selection through open, parked next and disposal', async () => {
+    const seen: unknown[] = [];
+    const launchInput = { operation: 'describe', target: { kind: 'managed_deployment',
+        environment: { serverId: 'home', projectSourceId: 'source', environmentId: 'environment' },
+        targetLinkId: 'selected-link', contribution: { pluginId: 'happier.neon', contributionId: 'database' },
+        platformProjectId: 'project', branchId: 'branch', database: 'selected' } };
+    const transport: PluginSurfaceResourceWatchTransport = {
+        async open(_machine, request) { seen.push(request); return { supported: true,
+            result: { ok: true, subscriptionId: request.subscriptionId, digest: DIGEST_A } }; },
+        async next(_machine, request) { seen.push(request); return new Promise(resolve => {
+            request.signal?.addEventListener('abort', () => resolve({ supported: false, reason: 'aborted' }), { once: true });
+        }); },
+        async close(_machine, request) { seen.push(request); },
+    };
+    const client = createPluginContextualResourceWatchClient({ pluginId: DATABASE_PLUGIN_ID_V1,
+        resource: { machineId: 'machine', serverId: 'home', expectedCallerOccurrenceId: 'occurrence',
+            context: { kind: 'surface', mountInstanceKey: 'selected-surface', launchInput } },
+        subscriptionIdPrefix: 'connection', transport });
+    const subscription = await client.watchResource(DATABASE_CONNECTION_RESOURCE_ID_V1, () => {});
+    try {
+        await vi.waitFor(() => expect(seen).toHaveLength(2));
+        subscription.dispose();
+        await vi.waitFor(() => expect(seen).toHaveLength(3));
+        for (const request of seen) expect(request).toMatchObject({ resource: { hostRead: 'database.connection',
+            input: { input: launchInput }, binding: { callerPluginId: DATABASE_PLUGIN_ID_V1,
+                expectedCallerOccurrenceId: 'occurrence', context: { kind: 'surface', mountInstanceKey: 'selected-surface', launchInput } } } });
+    } finally { subscription.dispose(); }
 });
 
 type FakeDaemon = Readonly<{

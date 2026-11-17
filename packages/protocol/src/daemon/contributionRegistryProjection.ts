@@ -5,6 +5,7 @@ export { buildPluginBrowserProjectionEntryId, normalizePluginBrowserProjection, 
   type PluginBrowserActionProjection, type PluginBrowserProjectionModel } from './browserProjection.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { PluginUiResourceContentV1Schema } from '../plugins/ui/resourceContent.js';
+import { PluginUiDeclaredResourceBindingV1Schema } from '../plugins/ui/resourceBinding.js';
 import { readCanonicalPaddedBase64DecodedLength } from '../crypto/base64.js';
 import { PluginActionFailureResponseV1Schema } from '../plugins/actions/failureResponse.js';
 import { PluginUiResourceLinkV1Schema } from '../plugins/contributions/ui/resourceLinks.js';
@@ -1027,14 +1028,7 @@ export type DaemonPluginUiArtifactBytesReadResponse = z.infer<
  */
 export const DaemonPluginUiDeclaredResourceReadRequestSchema = lazyZodSchema(() => z.strictObject({
   machineId: z.string().check(z.trim(), z.minLength(1)),
-  expectedCallerOccurrenceId: PluginUiRuntimeOccurrenceIdV1Schema,
-  callerPluginId: z.string().check(z.trim(), z.minLength(1)),
-  resource: z.strictObject({
-    pluginId: z.string().check(z.trim(), z.minLength(1)),
-    localId: z.string().check(z.trim(), z.minLength(1)),
-  }),
-  /** Omission reaches the Resource owner, which rejects a required context typed. */
-  context: zMini.optional(PluginResourceContextV1Schema),
+  ...PluginUiDeclaredResourceBindingV1Schema.shape,
 }));
 export const DaemonPluginUiResourceReadRequestSchema = lazyZodSchema(() => z.union([
   DaemonPluginUiDeclaredResourceReadRequestSchema,
@@ -1092,18 +1086,12 @@ export type DaemonPluginUiResourceReadResponse = z.infer<
  */
 export const DaemonPluginUiDeclaredResourceWatchOpenRequestSchema = lazyZodSchema(() => z.strictObject({
   machineId: z.string().check(z.trim(), z.minLength(1)),
-  expectedCallerOccurrenceId: PluginUiRuntimeOccurrenceIdV1Schema,
-  callerPluginId: z.string().check(z.trim(), z.minLength(1)),
+  ...PluginUiDeclaredResourceBindingV1Schema.shape,
   subscriptionId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
-  resource: z.union([z.strictObject({
-    pluginId: z.string().check(z.trim(), z.minLength(1)),
-    localId: z.string().check(z.trim(), z.minLength(1)),
-  }), PluginUiReadAuthorityReferenceV1Schema, z.strictObject({
+  resource: z.union([PluginUiDeclaredResourceBindingV1Schema.shape.resource, PluginUiReadAuthorityReferenceV1Schema, z.strictObject({
     /** Private observation of the same admitted Action ingress; never a second read. */
     actionRead: DaemonPluginStructuredMessageActionExecuteRequestSchema,
   })]),
-  /** The watch owns this exact contextual binding until it is closed or retired. */
-  context: zMini.optional(PluginResourceContextV1Schema),
 }));
 export const DaemonPluginUiResourceWatchOpenRequestSchema = lazyZodSchema(() => z.union([
   DaemonPluginUiDeclaredResourceWatchOpenRequestSchema,

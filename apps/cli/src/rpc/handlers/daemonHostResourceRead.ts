@@ -18,7 +18,7 @@ import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsola
 import { isManagedControllerCodecRootV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 
-type LogsReference = Extract<PluginUiHostReadReferenceV1, { hostRead: 'machines.services.logs' | 'machines.services.list' | 'deployments.logs' | 'deployments.health.edge' }>;
+type LogsReference = Extract<PluginUiHostReadReferenceV1, { hostRead: 'machines.services.logs' | 'machines.services.list' | 'deployments.logs' | 'deployments.health.edge' | 'database.connection' }>;
 type ReadObservation = NonNullable<NonNullable<ActionExecutorContext['machineServiceLogsResource']>['observation']>
     & Readonly<{ invalidate(digest: string): void }>;
 
@@ -100,6 +100,8 @@ export function createDaemonHostResourceRead(input: Readonly<{
     };
     const read = async (reference: LogsReference, machineId: string, context?: RpcHandlerContext,
         observation?: ReadObservation, onDisclosureLost = observation?.retire) => {
+        // Connection references are unwrapped into the declared Resource owner at RPC ingress.
+        if (reference.hostRead === 'database.connection') throw new PluginError({ code: 'plugin_resource_service_unavailable' });
         const actionId = resolvePluginUiHostReadActionIdV1(reference?.hostRead ?? 'machines.services.logs');
         await accountId(context, reference, onDisclosureLost);
         const request = reference.input;
@@ -142,6 +144,7 @@ export function createDaemonHostResourceRead(input: Readonly<{
         read,
         async observe(reference: LogsReference, machineId: string, context: RpcHandlerContext | undefined,
             signal: AbortSignal, emit: HostResourceWatchEmit, end: (error?: HostResourceWatchError) => void): Promise<Disposable & Readonly<{ digest: string }>> {
+            if (reference.hostRead === 'database.connection') throw new PluginError({ code: 'plugin_resource_service_unavailable' });
             if (reference.hostRead === 'deployments.health.edge') {
                 const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
                 const projection = lease?.registry.currentDomainEdgeObservation;

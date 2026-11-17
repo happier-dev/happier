@@ -358,6 +358,8 @@ export function projectResourceRequesterContext(context?: RpcHandlerContext) {
     const executorContext = buildActionExecutorContextForRpc({ ...context, actionId: 'action.invoke' });
     return Object.freeze({ agentCaller: isAgentCaller(executorContext),
         ...(executorContext.authority ? { authority: executorContext.authority } : {}),
+        ...(context.originalActionEnvelope && context.callerInputAuthorization && context.localActionContext
+            ? { approvalContext: context.localActionContext } : {}),
     });
 }
 
@@ -2546,7 +2548,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
         }
     });
     rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ, async (raw: unknown, context) => {
-        const request = DaemonPluginUiResourceReadRequestSchema.safeParse(raw);
+        let request = DaemonPluginUiResourceReadRequestSchema.safeParse(raw);
         if (!request.success) {
             return DaemonPluginUiResourceReadResponseSchema.parse({
                 ok: false,
@@ -2554,6 +2556,14 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 reason: 'invalid_payload',
             });
         }
+        const databaseReference = !('callerPluginId' in request.data) && request.data.resource.hostRead === 'database.connection'
+            ? request.data.resource : null;
+        const requesterAccountId = databaseReference
+            ? await hostResources.accountId(context, databaseReference)
+            : context?.machineAdmission?.actorAccountId;
+        if (databaseReference) request = { success: true, data: {
+            machineId: request.data.machineId, ...databaseReference.binding,
+        } };
         if (!('callerPluginId' in request.data)) {
             try {
                 const value = await hostResources.read(request.data.resource, request.data.machineId, context);
@@ -2609,7 +2619,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 }, lease.registry.generation);
             }
             const value = await lease.registry.readUiResource({
-                ...(context?.machineAdmission?.actorAccountId ? { requesterAccountId: context.machineAdmission.actorAccountId } : {}),
+                ...(requesterAccountId ? { requesterAccountId } : {}),
                 ...(context ? { requesterContext: projectResourceRequesterContext(context) } : {}),
                 expectedCallerOccurrenceId: request.data.expectedCallerOccurrenceId,
                 callerPluginId: request.data.callerPluginId,
@@ -2749,7 +2759,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
         }
     });
     rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN, async (raw: unknown, context) => {
-        const request = DaemonPluginUiResourceWatchOpenRequestSchema.safeParse(raw);
+        let request = DaemonPluginUiResourceWatchOpenRequestSchema.safeParse(raw);
         if (!request.success) {
             return DaemonPluginUiResourceWatchOpenResponseSchema.parse({
                 ok: false,
@@ -2757,6 +2767,14 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 reason: 'invalid_payload',
             });
         }
+        const databaseReference = !('callerPluginId' in request.data) && request.data.resource.hostRead === 'database.connection'
+            ? request.data.resource : null;
+        const requesterAccountId = databaseReference
+            ? await hostResources.accountId(context, databaseReference)
+            : context?.machineAdmission?.actorAccountId;
+        if (databaseReference) request = { success: true, data: {
+            machineId: request.data.machineId, ...databaseReference.binding, subscriptionId: request.data.subscriptionId,
+        } };
         const lease = await acquireProjectionRuntimeRegistryLease(opts);
         try {
             if (!('callerPluginId' in request.data)) {
@@ -2802,11 +2820,11 @@ export function registerDaemonContributionRegistryProjectionHandler(
             }
             const opened = 'actionRead' in request.data.resource ? await openDaemonActionReadWatch({
                 registry: lease.registry, ...request.data, actionRead: request.data.resource.actionRead,
-                ...(context?.machineAdmission?.actorAccountId ? { requesterAccountId: context.machineAdmission.actorAccountId } : {}),
+                ...(requesterAccountId ? { requesterAccountId } : {}),
                 signal: context?.signal,
                 execute: (actionRead, signal, observation) => executeStructuredMessageAction(actionRead, { ...context, signal }, observation),
             }) : await lease.registry.openUiResourceWatch({
-                ...(context?.machineAdmission?.actorAccountId ? { requesterAccountId: context.machineAdmission.actorAccountId } : {}),
+                ...(requesterAccountId ? { requesterAccountId } : {}),
                 ...(context ? { requesterContext: projectResourceRequesterContext(context) } : {}),
                 expectedCallerOccurrenceId: request.data.expectedCallerOccurrenceId,
                 callerPluginId: request.data.callerPluginId,
@@ -2838,7 +2856,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
         }
     });
     rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT, async (raw: unknown, context) => {
-        const request = DaemonPluginUiResourceWatchNextRequestSchema.safeParse(raw);
+        let request = DaemonPluginUiResourceWatchNextRequestSchema.safeParse(raw);
         if (!request.success) {
             return DaemonPluginUiResourceWatchNextResponseSchema.parse({
                 ok: false,
@@ -2846,6 +2864,16 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 reason: 'invalid_payload',
             });
         }
+        const databaseReference = !('callerPluginId' in request.data) && request.data.resource.hostRead === 'database.connection'
+            ? request.data.resource : null;
+        const requesterAccountId = databaseReference
+            ? await hostResources.accountId(context, databaseReference)
+            : context?.machineAdmission?.actorAccountId;
+        if (databaseReference) request = { success: true, data: {
+            machineId: request.data.machineId, callerPluginId: databaseReference.binding.callerPluginId,
+            expectedCallerOccurrenceId: databaseReference.binding.expectedCallerOccurrenceId, subscriptionId: request.data.subscriptionId,
+            ...(request.data.waitMs === undefined ? {} : { waitMs: request.data.waitMs }),
+        } };
         const lease = await acquireProjectionRuntimeRegistryLease(opts);
         try {
             if ('resource' in request.data) {
@@ -2885,7 +2913,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 });
             }
             const polled = await lease.registry.pollUiResourceWatch({
-                ...(context?.machineAdmission?.actorAccountId ? { requesterAccountId: context.machineAdmission.actorAccountId } : {}),
+                ...(requesterAccountId ? { requesterAccountId } : {}),
                 expectedCallerOccurrenceId: request.data.expectedCallerOccurrenceId,
                 callerPluginId: request.data.callerPluginId,
                 subscriptionId: request.data.subscriptionId,
@@ -2917,10 +2945,18 @@ export function registerDaemonContributionRegistryProjectionHandler(
         }
     });
     rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE, async (raw: unknown, context) => {
-        const request = DaemonPluginUiResourceWatchCloseRequestSchema.safeParse(raw);
+        let request = DaemonPluginUiResourceWatchCloseRequestSchema.safeParse(raw);
         if (!request.success) {
             return DaemonPluginUiResourceWatchCloseResponseSchema.parse({ ok: true, closed: false });
         }
+        const databaseReference = !('callerPluginId' in request.data) && request.data.resource.hostRead === 'database.connection'
+            ? request.data.resource : null;
+        const requesterAccountId = databaseReference
+            ? hostResources.releaseAccountId(context)
+            : context?.machineAdmission?.actorAccountId;
+        if (databaseReference) request = { success: true, data: {
+            machineId: request.data.machineId, callerPluginId: databaseReference.binding.callerPluginId, subscriptionId: request.data.subscriptionId,
+        } };
         const lease = await acquireProjectionRuntimeRegistryLease(opts);
         try {
             if ('resource' in request.data) {
@@ -2931,7 +2967,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 return DaemonPluginUiResourceWatchCloseResponseSchema.parse({ ok: true, closed });
             }
             const closed = lease.registry.closeUiResourceWatch?.({
-                ...(context?.machineAdmission?.actorAccountId ? { requesterAccountId: context.machineAdmission.actorAccountId } : {}),
+                ...(requesterAccountId ? { requesterAccountId } : {}),
                 callerPluginId: request.data.callerPluginId,
                 subscriptionId: request.data.subscriptionId,
             }) === true;

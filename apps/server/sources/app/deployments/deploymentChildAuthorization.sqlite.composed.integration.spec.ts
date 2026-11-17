@@ -97,6 +97,9 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { DirectRouteGrantRequestV2Schema } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { DATABASE_DESCRIBE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { DEPLOYMENT_ACTION_SPECS_V1 } from '@happier-dev/protocol/actions/specs/deployments';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -2096,14 +2099,20 @@ describe('deployment children retain their controller Action authority', () => {
             'no authority re-evaluation on either admitted hop').toEqual([]);
     });
 
-    it.each([DEPLOYMENT_DATA_QUERY_ACTION_ID_V1, DEPLOYMENT_DRIFT_READ_ACTION_ID_V1,
+    it.each([ACTION_INVOKE_ACTION_ID_V1, DEPLOYMENT_DATA_QUERY_ACTION_ID_V1, DEPLOYMENT_DRIFT_READ_ACTION_ID_V1,
         DEPLOYMENT_HEALTH_READ_ACTION_ID_V1])('K2 retains finite %s metadata and content after withdrawal, refusing new work', async actionId => {
         const f = await fixture('team', 'account', { separateMemberCustodian: true });
         await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded' } });
         await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { activeDeploymentId: f.receipt.id } });
         const references = { serverId, environmentId: f.environment.id, targetLinkId: f.link.id,
             deploymentId: f.receipt.id, machineId: f.member.id, installationId: f.member.installationId };
-        const input = getActionSpec(actionId).inputSchema.parse(actionId === DEPLOYMENT_DATA_QUERY_ACTION_ID_V1
+        const action = parseQualifiedPluginActionId(DATABASE_DESCRIBE_ACTION_ID_V1);
+        if (!action) throw new Error('The canonical database Action has a qualified identity');
+        const input = getActionSpec(actionId).inputSchema.parse(actionId === ACTION_INVOKE_ACTION_ID_V1
+            ? { action, input: { operation: 'describe', target: { kind: 'deployment_service',
+                environment: { serverId, projectSourceId: f.environment.projectSourceId, environmentId: f.environment.id },
+                targetLinkId: f.link.id, deploymentId: f.receipt.id, serviceId: 'database', database: 'database' } } }
+            : actionId === DEPLOYMENT_DATA_QUERY_ACTION_ID_V1
             ? { ...references, expectedRevision: f.environmentRevision, service: 'database', sql: 'select 1', params: {} }
             : { ...references, ...(actionId === DEPLOYMENT_DRIFT_READ_ACTION_ID_V1
                 ? { expectedRevision: f.environmentRevision } : {}),

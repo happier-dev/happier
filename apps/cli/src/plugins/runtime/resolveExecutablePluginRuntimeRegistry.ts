@@ -34,6 +34,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { SharedManagedProviderGatewayBinding } from './invocation/services/managedServicesAdapter';
 import type { ManagedServicesInvocationOwner } from './invocation/services/managedServicesAdapter';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import {
     createPluginRuntimeOccurrenceId,
     type PluginRuntimeOccurrenceId,
@@ -190,6 +191,7 @@ import {
 } from './lifecycle/contributions/externalSessionSourceRefusals';
 import { buildTargetActionInvocationRegistry } from './invocation/buildTargetActionRegistry';
 import { createDeploymentTargetRoleAdmissionHost } from '@/deployments/targets/createDeploymentTargetRoleAdmissionHost';
+import { createDeploymentDatabasesInvocationServicesForHost } from '@/deployments/targets/createDeploymentDatabasesInvocationServicesForHost';
 import { createDynamicResourceActionBinding } from './invocation/services/resourceActions';
 import { executeContributedAction, type ClientContributedActionExecutor } from './invocation/actions/executeContributedAction';
 import { createHostContributedActionInvoker } from './invocation/actions/hostContributedActionInvoker';
@@ -1383,13 +1385,15 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 && getActiveAccountSettingsSnapshot()?.scopeKey === resolveAccountSettingsScopeKey(sessionCredentials)
                 ? readAccountIdFromToken(sessionCredentials.token) : null,
             bindDynamicResourceCustody: binding => {
-                const services = createProjectionPluginServices({ pluginId: binding.pluginId, signal: binding.signal });
+                const services = createProjectionPluginServices({ pluginId: binding.pluginId, signal: binding.signal,
+                    ...(binding.approvalContext ? { approvalContext: binding.approvalContext } : {}) });
                 if (services?.availability('secrets').status !== 'available') return undefined;
                 const machineId = params?.resolveCurrentMachineId?.();
                 const identity = readInstallationIdentityIfExistsSync();
                 return Object.freeze({ secrets: Object.freeze({ readSavedSecret: services.secrets.readSavedSecret }),
                     ...(machineId && identity ? { chosenMachine: Object.freeze({ machineId, installationId: identity.installationId }) } : {}),
                     ...(services.availability('storage').status === 'available' ? { daemonStorage: services.storage.daemon } : {}),
+                    ...(services.availability('deploymentDatabases').status === 'available' ? { deploymentDatabases: services.deploymentDatabases } : {}),
                 });
             },
             invokeDemand: input => uiResourceWatches.invokeDemand(input),
@@ -4477,6 +4481,19 @@ export async function resolveExecutablePluginRuntimeRegistry(
             connectedAccountRuntimeRegistry: params?.connectedAccountRuntimeRegistry ?? runtimeRegistryController,
         });
     };
+    const createCapturedPluginInvocationServices = createDeploymentDatabasesInvocationServicesForHost({
+        contributes: authoritativeContributes, targetRegistrations: activatedRegistry.targetRegistrations,
+        readHost: readDeploymentTargetRoleAdmissionHost,
+        prepareTarget: async (pluginId, localId) => {
+            await activateContributionsOnDemand([{ pluginId, family: 'deploymentTargets', localId }]);
+        },
+        readCurrentOccurrenceId: readCurrentPluginOccurrenceId,
+        readCurrentSourceCustody: readCurrentPluginSourceCustody,
+        createServices: invocationServiceOwners.createServices,
+        resolveInvocationHostPolicy: invocationServiceOwners.resolveInvocationHostPolicy,
+        beginDiagnosticScope: invocationServiceOwners.beginDiagnosticScope,
+        completeDiagnosticScope: invocationServiceOwners.completeDiagnosticScope,
+    });
     targetActionInvocations = buildTargetActionInvocationRegistry({
         ...(params?.ensureEnvironmentServices ? { ensureEnvironmentServices: params.ensureEnvironmentServices } : {}),
         readDeploymentTargetRoleAdmissionHost,
@@ -4509,8 +4526,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         resolvePresentUserGatePolicy: resolveActionPresentUserGatePolicy,
         resolveHostBinding: invocationServiceOwners.resolveHostBinding,
         resolveHostPolicy: invocationServiceOwners.resolveHostPolicy,
-        resolveInvocationHostPolicy: invocationServiceOwners.resolveInvocationHostPolicy,
-        createServices: invocationServiceOwners.createServices,
+        createServices: createCapturedPluginInvocationServices,
         async prepareInvocationServices({ pluginId, localId, family }) {
             await activateContributionsOnDemand([{ pluginId, family: family ?? 'actions', localId }]);
         },
@@ -6345,6 +6361,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const createProjectionPluginInvocationSeed = (input: Readonly<{
         pluginId: string;
         signal?: AbortSignal;
+        approvalContext?: ActionExecutorContext;
     }>): PluginInvocationServicesSeed | null => {
         // Descriptor-only plugins have admitted declarations and occurrences but
         // no executable activation target. Settings consume that same authority.
@@ -6367,6 +6384,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             occurrenceId,
             correlationId: randomUUID(),
             surface: 'ui' as const,
+            ...(input.approvalContext ? { approvalContext: input.approvalContext } : {}),
             signal,
             isOccurrenceCurrent: () => (
                 !signal.aborted && isPluginConsumerCurrent(input.pluginId)
@@ -6382,6 +6400,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const createProjectionPluginServices = (input: Readonly<{
         pluginId: string;
         signal?: AbortSignal;
+        approvalContext?: ActionExecutorContext;
     }>) => {
         const seed = createProjectionPluginInvocationSeed(input);
         if (!seed) return null;
@@ -6389,7 +6408,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             seed.occurrenceId,
             `${seed.contribution.qualifiedId}:${seed.correlationId}:binding`,
         );
-        return invocationServiceOwners.createServices(seed, binding);
+        return createCapturedPluginInvocationServices(seed, binding);
     };
 
     resolveAgentPluginSettings = async ({ pluginId, localAgentId, includeDefaults = true, signal }) => {
