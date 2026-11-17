@@ -2070,8 +2070,9 @@ describe('createStablePluginExecService', () => {
                 expect(Number.isSafeInteger(childPid)).toBe(true);
                 expect(process.kill(childPid, 0)).toBe(true);
             }
-            if (preExitOpportunity) expect(release).not.toHaveBeenCalled();
-            else await vi.waitFor(() => expect(release).toHaveBeenCalledTimes(1));
+            // Completed output is separate from descendant-custody settlement.
+            // Explicit disposal settles both observed and unobserved remainders.
+            expect(release).not.toHaveBeenCalled();
             const wrongGeneration = await terminateProcessTree({ targets: [{ pid: peerPid, start: {
                 startTimeMs: peerIdentity.start.startTimeMs + 1,
                 ...(peerIdentity.start.native ? { native: `${peerIdentity.start.native}:different-generation` } : {}),

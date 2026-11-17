@@ -18,6 +18,7 @@ it.skipIf(process.platform === 'win32')('keeps a native supervisor outside daemo
             setInterval(() => {}, 1000);
         `;
         const execModule = pathToFileURL(join(process.cwd(), 'src/plugins/runtime/invocation/services/exec.ts')).href;
+        const sourceRuntime = pathToFileURL(join(process.cwd(), '../../packages/cli-common/registerSourceRuntime.mjs')).href;
         const parentSource = `
             import { createStablePluginExecService } from ${JSON.stringify(execModule)};
             const service = createStablePluginExecService({ signal: new AbortController().signal,
@@ -28,7 +29,7 @@ it.skipIf(process.platform === 'win32')('keeps a native supervisor outside daemo
                 { descendantDisposition: 'preserve-on-success' });
         `;
         const parent = spawnDetachedTestProcess(process.execPath,
-            ['--import', 'tsx/esm', '--input-type=module', '-e', parentSource], {
+            ['--conditions=happier-source', '--import', sourceRuntime, '--input-type=module', '-e', parentSource], {
                 env: { ...process.env, HAPPIER_STACK_STACK: 'native-lifetime-fixture',
                     HAPPIER_STACK_ENV_FILE: join(directory, 'env'), HAPPIER_STACK_PROCESS_KIND: 'daemon' },
                 stdio: ['ignore', 'ignore', 'pipe'],

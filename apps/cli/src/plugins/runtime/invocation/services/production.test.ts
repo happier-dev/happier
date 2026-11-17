@@ -920,6 +920,15 @@ describe('production invocation service owners', () => {
         recordSubscription.dispose();
         await protocol.dispose();
 
+        // Protocol stdout is read directly by its client rather than buffered
+        // by the process owner. Exercise that owner's finite output separately.
+        const captured = await services.exec.run({
+            executable,
+            args: ['-e', "process.stdout.write('measured-stdout');process.stderr.write('measured-stderr')"],
+        });
+        expect(Buffer.from(captured.stdout).toString('utf8')).toBe('measured-stdout');
+        expect(Buffer.from(captured.stderr).toString('utf8')).toBe('measured-stderr');
+
         expect(new Set(samples.map((sample) => sample.family))).toEqual(new Set([
             'plugin-event-broker',
             'plugin-protocol-callbacks',
