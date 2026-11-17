@@ -191,6 +191,99 @@ beforeEach(async () => {
 afterEach(async () => { restoreHttpReplyDecoder?.(); restoreHttpReplyDecoder = undefined; await homes.reset(); });
 
 describe('Project finite delivery through the default UI Action host', () => {
+    it('composes Team setup through real Actions and opens an editable first task only on request', async () => {
+        const [{ prepareTeamSetupPlan, runTeamSetupPlan, openTeamSetupFirstTask },
+            { createFrontDoorActionExecute }, { OpenProjectResultV1Schema },
+            { SessionAuthoringOpenResultV1Schema }, { readNewSessionDraftFromRepository }, { router }] = await Promise.all([
+            import('@/components/teams/setup/teamSetupPlan'), import('./frontDoorRuntimeActionExecutor'),
+            import('@happier-dev/protocol/projects/openProjectV1'), import('@happier-dev/protocol/plugins/ui'),
+            import('@/components/sessions/composer/newSessionDraftRepositoryAdapter'), import('expo-router'),
+        ]);
+        await import('@/components/teams/setup/useTeamSetupPlan');
+        const restoreActions = await installRealActionExecutorModuleLoader();
+        try {
+            const scope = { serverId, accountId: 'requester' };
+            // This Team Machine belongs to another custodian. Preserve the real
+            // private Account delivery path and replace only its Home HTTP replies.
+            const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3));
+            const machine = { ...createPlainMachineRowFixture({ id: 'source', accountId: 'custodian' }),
+                installationPublicKey: encodeBase64(installation.publicKey) };
+            homes.answer(requesterHomeId, 'GET /v1/machines/source', { body: { machine } });
+            homes.answer(requesterHomeId, '/v1/actions/projects.open/execution-authorization', { select: body => {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'team-open-root', binding: {
+                    accountId: scope.accountId, authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: serverId,
+                    machineId: machine.id, installationId: machine.installationId, custodianAccountId: 'custodian',
+                    accountEncryptionMode: 'plain', actionId: 'projects.open', requestId: request.envelope.requestId,
+                    target: request.envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+                } }) };
+            } });
+            homes.answer(requesterHomeId, '/v1/actions/projects.open', { select: body => {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'projects.open',
+                    requestId: request.envelope.requestId, execution: { ok: true, result: response } }) };
+            } });
+            const { createPlainProjectAccountRowListFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
+            const { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } = await import('@happier-dev/protocol/projects/projectAccountRowsV1');
+            homes.answer(requesterHomeId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { body: createPlainProjectAccountRowListFixture({
+                workspaceRefs: [{ id: 'team-project', serverId, machineId: 'source', rootPath: '/team/repo', createdAtMs: 1 }],
+            }) });
+            vi.mocked(router.push).mockClear();
+            const opened = OpenProjectResultV1Schema.parse({ kind: 'opened',
+                workspace: { serverId, workspaceId: 'team-project', machineId: 'source', rootPath: '/team/repo' },
+                directory: '/team/repo', setup: 'notRequired' });
+            response = opened;
+            const executeAction = createFrontDoorActionExecute(createDefaultActionExecutor());
+            const context = { serverId, expectedAccountId: scope.accountId,
+                surface: 'ui' as const, authority: 'present_user' as const };
+            const prepared = await prepareTeamSetupPlan({ executeAction, context,
+                target: { serverId, homeId: 'srv_finite_requester', machineId: 'source' },
+                repositories: ['first', 'second', 'third'].map(id => ({ id, input: {
+                    source: { kind: 'folder' as const, path: '/team/repo' }, materialization: { kind: 'attach' as const },
+                } })), isCurrent: () => true });
+            expect(prepared).toMatchObject({ ok: true });
+            expect(calls).toEqual([]);
+            expect(homes.requestsFor('/v1/actions/projects.open')).toHaveLength(0);
+            if (!prepared?.ok) throw new Error('Team review did not prepare');
+            const setup = await runTeamSetupPlan({ executeAction, context, plan: prepared.plan,
+                onRepositoryOpened: id => { response = id === 'first' ? OpenProjectResultV1Schema.parse({
+                    kind: 'refused', code: 'project_setup_review_unavailable' }) : opened; } });
+            expect(setup).toMatchObject({ machine: null, machineSettlement: null, repositories: [
+                { id: 'first', result: { ok: true, result: opened } },
+                { id: 'second', result: { ok: true, result: { kind: 'refused', code: 'project_setup_review_unavailable' } } },
+                { id: 'third', result: { ok: true, result: opened } },
+            ] });
+            expect(homes.requestsFor('/v1/actions/projects.open')).toHaveLength(3);
+            expect(vi.mocked(router.push)).not.toHaveBeenCalled();
+            if (opened.kind !== 'opened') throw new Error('Transport fixture did not open');
+            // The ordinary composer writes into its loaded Account repository.
+            const [{ storage }, { publishAppliedActiveServerSnapshot }, { setActiveServerId }] = await Promise.all([
+                import('@/sync/domains/state/storage'), import('@/sync/runtime/orchestration/appliedActiveServerRuntime'),
+                import('@/sync/domains/server/serverProfiles'),
+            ]);
+            await setActiveServerId(requesterHomeId, { scope: 'device' });
+            publishAppliedActiveServerSnapshot({ serverId, serverUrl, generation: 1 });
+            storage.getState().activateProfileScope(scope);
+            const { prepareLocalSessionDraftScope } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+            await prepareLocalSessionDraftScope(scope);
+            const firstTask = await openTeamSetupFirstTask({ executeAction, context, project: opened,
+                machineId: 'source', prompt: 'Explore this Team project' });
+            expect(firstTask, JSON.stringify(firstTask)).toMatchObject({ ok: true, result: { kind: 'opened' } });
+            if (!firstTask.ok) throw new Error(firstTask.errorCode);
+            const draft = SessionAuthoringOpenResultV1Schema.parse(firstTask.result);
+            if (draft.kind !== 'opened') throw new Error('Editable composer did not open');
+            expect(readNewSessionDraftFromRepository({ scope, draftId: draft.draftId }))
+                .toMatchObject({ input: 'Explore this Team project', selectedMachineId: 'source', selectedPath: '/team/repo' });
+        } finally {
+            restoreActions();
+            const [{ publishAppliedActiveServerRuntimeAvailability }, { resetSessionDraftRepositoryForTests }] = await Promise.all([
+                import('@/sync/runtime/orchestration/appliedActiveServerRuntime'), import('@/sync/ops/sessionDrafts/sessionDraftRepository'),
+            ]);
+            resetSessionDraftRepositoryForTests();
+            publishAppliedActiveServerRuntimeAvailability(false);
+        }
+    });
+
     it.each([
         { outcome: 'approve', surface: 'agent' }, { outcome: 'approve', surface: 'cli' }, { outcome: 'reject', surface: 'mcp' },
         { outcome: 'cancel', surface: 'cli' }, { outcome: 'changed', surface: 'agent' },
