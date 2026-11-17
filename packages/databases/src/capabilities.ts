@@ -11,7 +11,7 @@ const builtinExecutionCapabilities: readonly DatabaseCapabilityV1[] = [
     { operation: 'statement.run', available: true },
     { operation: 'statement.explain', available: true },
     { operation: 'edits.apply', available: true },
-    { operation: 'stats.read', available: false, code: 'database_operation_unavailable', reason: 'Statistics belong to the target statistics adapter' },
+    { operation: 'stats.read', available: true },
 ];
 
 export const postgresqlCapabilities = builtinExecutionCapabilities;

@@ -121,15 +121,22 @@ export async function openMysqlConnection(connectionString: string, signal?: Abo
         finally { cancellation.removeEventListener('abort', onAbort); }
     };
     let lexical: MysqlExecutionOptions;
+    let stats: Readonly<{ database: string; currentUser: string; databaseIdentity: string }> | undefined;
     try {
         await race(new Promise<void>((resolve, reject) => core.connect(error => error ? reject(error) : resolve())), openingSignal);
-        const [native, fields] = await race(client.execute('SELECT VERSION(),@@SESSION.sql_mode'), openingSignal);
+        const [native, fields] = await race(client.execute('SELECT VERSION(),@@SESSION.sql_mode,DATABASE(),CURRENT_USER(),@@hostname,@@port'), openingSignal);
         const frame = mysqlNativeResult(native, fields);
         const version = frame.rows[0]?.[0]; const mode = frame.rows[0]?.[1];
         if (typeof version !== 'string' || typeof mode !== 'string') throw new Error('MySQL omitted session metadata');
         if (/mariadb/iu.test(version)) throw new MysqlOperationError({ ok: false, status: 'unavailable', code: 'database_engine_unavailable', reason: 'MariaDB is not supported by the MySQL workbench dialect' });
         const modes = new Set(mode.split(','));
         lexical = { noBackslashEscapes: modes.has('NO_BACKSLASH_ESCAPES'), ansiQuotes: modes.has('ANSI_QUOTES') };
+        const database = frame.rows[0]?.[2]; const currentUser = frame.rows[0]?.[3];
+        const serverHostname = frame.rows[0]?.[4]; const serverPort = frame.rows[0]?.[5];
+        if (typeof database === 'string' && typeof currentUser === 'string' && typeof serverHostname === 'string'
+            && (typeof serverPort === 'string' || typeof serverPort === 'number')) {
+            stats = { database, currentUser, databaseIdentity: JSON.stringify({ database, serverHostname, serverPort: String(serverPort) }) };
+        }
         signal?.throwIfAborted();
     } catch (error) { await close(); throw error; }
     finally { signal?.removeEventListener('abort', onConnectAbort); }
@@ -157,7 +164,12 @@ export async function openMysqlConnection(connectionString: string, signal?: Abo
             await control(`SET SESSION transaction_read_only=${write ? '0' : '1'}`);
             await control(write ? 'START TRANSACTION' : 'START TRANSACTION READ ONLY');
             transaction = true;
-            const result = fitDatabaseOperationResult(input, await executeMysqlOperation(input, query, lexical));
+            const executionOptions: MysqlExecutionOptions = input.operation === 'stats.read' && stats ? { ...lexical, stats: {
+                database: stats.database, intervalBasis: { databaseIdentity: stats.databaseIdentity,
+                    bindingKey: JSON.stringify({ target: input.target, databaseIdentity: stats.databaseIdentity, currentUser: stats.currentUser }),
+                    selectionKey: JSON.stringify(input.request) },
+            } } : lexical;
+            const result = fitDatabaseOperationResult(input, await executeMysqlOperation(input, query, executionOptions));
             cancellation.throwIfAborted();
             if (result.ok && !(input.operation === 'statement.explain' && input.accessMode === 'write')) {
                 committing = true; await control('COMMIT');

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Duplex } from 'node:stream';
 import { promisify } from 'node:util';
 import { expect, it, vi } from 'vitest';
+import { DatabaseOperationResultV1Schema } from '@happier-dev/database-protocol';
 import { openMysqlConnection } from './mysql.js';
 
 const run = promisify(execFile);
@@ -42,6 +43,13 @@ it.skipIf(!image)('uses container-local MySQL authority with lossless native fra
                 parameters: [{ type: 'integer', value: '1' }],
             } })).toMatchObject({ ok: true, results: [{ columns: [{ name: 'duplicate' }, { name: 'duplicate' }, { name: 'exact' }],
                 rows: [{ cells: [{ type: 'null' }, { type: 'text', value: '' }, { type: 'integer', value: '9223372036854775807' }] }] }] });
+            const size = await connection.execute({ operation: 'stats.read', target,
+                request: { kind: 'stats.read', group: 'size', selection: {} } });
+            expect(size).toMatchObject({ ok: true, operation: 'stats.read', observation: {
+                status: 'available', engineId: 'mysql', scope: { database: 'native_fixture' },
+                data: { bytes: expect.stringMatching(/^\d+$/u), measurement: 'table_bytes_estimate' },
+            } });
+            expect(DatabaseOperationResultV1Schema.safeParse(size).success).toBe(true);
             expect(await connection.execute({ operation: 'statement.run', target, mode: 'write', statement: {
                 sql: "UPDATE items SET note='forbidden'", parameters: [],
             } })).toMatchObject({ ok: false });
