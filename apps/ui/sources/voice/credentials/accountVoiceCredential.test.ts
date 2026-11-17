@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
 
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { resolveSavedSecretReference } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import {
   applyAccountVoiceCredentialSourceSelection as applyAccountVoiceCredentialSourceSelectionAtOwner,
   mutateAccountVoiceCredentialSource,
@@ -682,6 +683,28 @@ describe('account Voice credential ownership', () => {
       status: 'missing',
       reference: null,
     });
+  });
+
+  it('preserves the catalog owner identity for a legacy personal secret in the shared namespace', () => {
+    const ref = 'happier:shared-secret:v1:legacy-personal';
+    const settings = settingsParse({
+      secrets: [{ id: ref, name: 'Legacy voice', kind: 'apiKey',
+        encryptedValue: { _isSecretValue: true, value: 'legacy-value' }, createdAt: 1, updatedAt: 1 }],
+      voiceSettingsV1: { credentialBindings: [{
+        contribution: PACKED_VOICE_CONTRIBUTION,
+        credentialSlotId: 'api_key',
+        credentialSource: { kind: 'savedSecret' },
+        credentialBindings: { account: { api_key: ref }, byMachineId: {} },
+      }] },
+    });
+    const resolveSavedSecret = (value: string) => resolveSavedSecretReference(null, settings.secrets, value);
+    expect(resolveSavedSecret(ref)).toMatchObject({ kind: 'personal', status: 'ready' });
+    expect(resolveAccountVoiceCredentialStatus({ settings, contribution: PACKED_VOICE_CONTRIBUTION,
+      credentialSlotId: 'api_key', resolveSavedSecret,
+    })).toMatchObject({ status: 'ready', reference: { secretId: ref } });
+    expect(resolveAccountVoiceCredentialStatus({ settings, contribution: PACKED_VOICE_CONTRIBUTION,
+      credentialSlotId: 'api_key',
+    })).toMatchObject({ status: 'ready', reference: { secretId: ref } });
   });
 
   it('consumes current shared catalog material without asking for recipient approval after rotation', () => {

@@ -8,7 +8,7 @@ import type { ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/co
 import type { SavedSecretReferenceCatalogsV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 
 import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
-import type { SavedSecretReferenceResolution } from '@/sync/store/settings/savedSecretCatalogSnapshot';
+import { resolveSavedSecretReference, type SavedSecretReferenceResolution } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { withConnectedAccountCatalogAccount, readConnectedAccountCatalogForMutationInContext, writeConnectedAccountCatalogRecordAndPublishInContext, ConnectedAccountCatalogOperationError } from '@/sync/api/account/apiConnectedAccountCatalog';
@@ -495,22 +495,23 @@ export function resolveAccountVoiceCredentialStatus(params: Readonly<{
     return Object.freeze({ status: 'unknown', reference: null });
   }
   if (!reference) return Object.freeze({ status: 'missing', reference: null });
-  const savedSecret = params.resolveSavedSecret?.(reference.secretId);
-  if (reference.secretId.startsWith('happier:shared-secret:v1:')) {
-    if (!savedSecret || savedSecret.kind !== 'shared_resource' || savedSecret.status !== 'ready') {
+  const savedSecret = params.resolveSavedSecret?.(reference.secretId)
+    ?? resolveSavedSecretReference(null, params.settings.secrets, reference.secretId, { includeMaterial: false });
+  if (savedSecret.kind === 'shared_resource') {
+    if (savedSecret.status !== 'ready') {
       return Object.freeze({
-        status: savedSecret?.status === 'access_removed' || savedSecret?.status === 'deleted'
+        status: savedSecret.status === 'access_removed' || savedSecret.status === 'deleted'
           ? 'missing'
           : 'unknown',
         reference,
-        ...(savedSecret ? { savedSecret } : {}),
+        savedSecret,
       });
     }
   }
   return Object.freeze({
     status: 'ready',
     reference,
-    ...(savedSecret?.kind === 'shared_resource' ? { savedSecret } : {}),
+    ...(savedSecret.kind === 'shared_resource' ? { savedSecret } : {}),
   });
 }
 
