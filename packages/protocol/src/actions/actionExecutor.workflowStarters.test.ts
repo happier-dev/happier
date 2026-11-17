@@ -187,10 +187,11 @@ describe('workflow authoring starters through Actions', () => {
     const example = getWorkflowStarterExamplesV1().find(entry => entry.key === 'ask-once');
     expect(await executor.execute(resolveActionId, { key: 'ask-once' }, context))
       .toEqual({ ok: true, result: { status: 'ready', example: WorkflowStarterExampleV1Schema.parse(example) } });
-    const session = { sessionId: 'selected', machineId: 'machine' };
+    const session = { sessionId: 'selected', machineId: 'machine', serverId: 'selected-home' };
     expect(await executor.execute(resolveActionId, { key: 'notify-when-agent-waits', session }, context))
       .toMatchObject({ ok: true, result: { status: 'ready', example: {
-        sessionTarget: session, trigger: { kind: 'sessionLifecycle', sourceSessionId: 'selected', events: ['userActionRequired'] },
+        sessionTarget: session, trigger: { kind: 'sessionLifecycle',
+          subject: { kind: 'session', serverId: 'selected-home', sessionId: 'selected' }, events: ['userActionRequired'] },
       } } });
     expect(await executor.execute(resolveActionId, { key: 'daily-summary-in-session', session, timezone: null }, context))
       .toMatchObject({ ok: true, result: { status: 'ready', example: { trigger: { schedule: { timezone: null } } } } });

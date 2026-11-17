@@ -1,5 +1,6 @@
+import type { z } from '../../zodRuntimePolicy.js';
 import type { WorkflowDefinitionV1 } from '../workflowV1.js';
-import type { AutomationScheduleTriggerInput, AutomationSessionLifecycleTriggerInput } from '../../automations/automationTriggerDefinition.js';
+import type { AutomationScheduleTriggerInput, AutomationSessionLifecycleAuthoredTriggerInputSchema } from '../../automations/automationTriggerDefinition.js';
 import { agent, input, literal, result } from './definitionParts.js';
 import { setWorkflowDefaultField, setWorkflowStepExecutionField, walkWorkflowBlocks } from '../workflowDefinitionEditV1.js';
 import type { AutomationTriggerDefinitionInput } from '../../automations/automationTriggerDefinition.js';
@@ -20,7 +21,7 @@ export type WorkflowStarterExampleV1 = Readonly<{
   descriptionKey: string;
   definition: WorkflowDefinitionV1;
   /** Authoring source seed; {@link workflowStarterRequiresSession} says whether it needs a concrete Session first. */
-  triggerSeed?: AutomationScheduleTriggerInput | Omit<AutomationSessionLifecycleTriggerInput, 'sourceSessionId'>;
+  triggerSeed?: AutomationScheduleTriggerInput | Omit<z.infer<typeof AutomationSessionLifecycleAuthoredTriggerInputSchema>, 'subject'>;
 }>;
 
 const askOnce: WorkflowDefinitionV1 = {
@@ -252,7 +253,7 @@ export function getWorkflowStarterExamplesV1() {
   return WORKFLOW_STARTER_EXAMPLES_V1;
 }
 
-export type WorkflowStarterSessionTarget = Readonly<{ sessionId: string; machineId: string }>;
+export type WorkflowStarterSessionTarget = Readonly<{ sessionId: string; machineId: string; serverId?: string }>;
 export type WorkflowStarterExampleSelection = WorkflowStarterExampleV1 & Readonly<{
   trigger?: AutomationTriggerDefinitionInput;
   sessionTarget?: WorkflowStarterSessionTarget;
@@ -275,17 +276,19 @@ export function materializeWorkflowStarterExample(example: WorkflowStarterExampl
   const scheduleTrigger = seed?.kind === 'schedule' ? { ...seed,
     schedule: seed.schedule.kind === 'once' ? seed.schedule
       : { ...seed.schedule, timezone: context?.timezone ?? seed.schedule.timezone } } : undefined;
+  if (seed?.kind === 'sessionLifecycle' && !session?.serverId) return { status: 'requires_session' };
   if (session === undefined) {
     if (workflowStarterRequiresSession(example)) return { status: 'requires_session' };
     const { triggerSeed: _seed, ...unseeded } = example;
     return { status: 'ready', example: scheduleTrigger === undefined ? example : { ...unseeded, trigger: scheduleTrigger } };
   }
-  const sessionTarget = { sessionId: session.sessionId, machineId: session.machineId };
+  const sessionTarget = { sessionId: session.sessionId, machineId: session.machineId,
+    ...(session.serverId ? { serverId: session.serverId } : {}) };
   const trigger: AutomationTriggerDefinitionInput | undefined = seed === undefined ? undefined : seed.kind === 'sessionLifecycle'
-    ? { ...seed, sourceSessionId: session.sessionId }
+    ? { ...seed, subject: { kind: 'session', serverId: session.serverId!, sessionId: session.sessionId } }
     : scheduleTrigger;
   let draft = { name: '', ...example.definition };
-  const conversation = { kind: 'existing_session' as const, ...sessionTarget };
+  const conversation = { kind: 'existing_session' as const, sessionId: session.sessionId, machineId: session.machineId };
   if (draft.defaults.conversation === undefined || draft.defaults.conversation.kind === 'origin_session') {
     draft = setWorkflowDefaultField(draft, 'conversation', conversation);
   }

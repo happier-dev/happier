@@ -169,6 +169,26 @@ describe('built-in workflow catalog', () => {
   });
 });
 
+describe('workflow starter lifecycle subjects', () => {
+  const lifecycle = WORKFLOW_STARTER_EXAMPLES_V1.find(entry => entry.key === 'notify-when-agent-waits')!;
+  it('binds the selected Session using its portable Home identity', () => {
+    const selection = materializeWorkflowStarterExample(lifecycle, {
+      session: { sessionId: 'session-one', machineId: 'machine-one', serverId: 'home-one' },
+    });
+    expect(selection.status).toBe('ready');
+    if (selection.status !== 'ready') throw new Error('Expected a bound lifecycle starter');
+    expect(AutomationTriggerDefinitionInputSchema.parse(selection.example.trigger)).toMatchObject({
+      kind: 'sessionLifecycle', subject: { kind: 'session', serverId: 'home-one', sessionId: 'session-one' },
+    });
+    expect(selection.example.trigger).not.toHaveProperty('sourceSessionId');
+  });
+  it('requires the Session Home before binding a lifecycle source', () => {
+    expect(materializeWorkflowStarterExample(lifecycle, {
+      session: { sessionId: 'session-one', machineId: 'machine-one' },
+    })).toEqual({ status: 'requires_session' });
+  });
+});
+
 describe('workflow starter schedules without a Session', () => {
   const byKey = (key: string) => WORKFLOW_STARTER_EXAMPLES_V1.find((entry) => entry.key === key)!;
   it.each([undefined, { sessionId: 'session-once', machineId: 'machine-once' }])(
