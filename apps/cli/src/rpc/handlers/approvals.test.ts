@@ -15,6 +15,7 @@ import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/appro
 import { buildApprovalExecutionOriginV1, createActionExecutor, type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createTargetActionApprovalDecision } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
+import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 
 const fixtureSource = new URL('../../../../../packages/tests/src/testkit/actionExecutorBoundary.ts', import.meta.url).href;
 const { createActionExecutorBoundaryFixture }: {
@@ -66,6 +67,9 @@ describe('approval RPC handlers', () => {
   it.each(['built_in', 'target'] as const)('retains authenticated requester Voice modality through real %s decision ingress and settlement', async family => {
     for (const decision of ['approve', 'reject'] as const) for (const source of [undefined, 'voice'] as const) {
       let stored = requesterApproval(family);
+      const liveDecision = family === 'target' ? getSharedBlockingApprovalCoordinator().waitForDecision({
+        artifactId: 'requester-preview', request: stored,
+      }) : undefined;
       const originalOrigin = stored.executionOriginV1;
       const originalRequester = stored.requesterConfirmation;
       const rpc = new RpcHandlerManager({ scopePrefix: 'bot-machine', encryptionMode: 'plain', logger: () => {},
@@ -109,6 +113,9 @@ describe('approval RPC handlers', () => {
       if (!source) expect(stored.decision).not.toHaveProperty('decidedVia');
       expect(stored.executionOriginV1).toEqual(originalOrigin);
       expect(stored.requesterConfirmation).toEqual(originalRequester);
+      if (liveDecision) expect(await liveDecision).toMatchObject({ decision,
+        request: { decision: expect.objectContaining({ kind: decision,
+          ...(source ? { decidedVia: 'voice' } : {}) }) } });
     }
   });
   it('keeps a verified requester decision on the original executor even when requester Account custody is attached', async () => {

@@ -143,20 +143,21 @@ describe('authenticated requester approval transport from the app to its origina
     const caller = { kind: 'session' as const, sessionId: 's1', starterDepth: 0, turnDepth: 0 };
     const target = { kind: 'session' as const, sessionId: 'destination' };
     const causalPermissionAuthority = { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'yolo' as const };
+    const actionRequestAttributionV1 = { requestRef: 'request-from-bob', requester: { serverId: homeId, accountId: 'account-a' },
+      persona: { serverId: homeId, sessionId: 'original-manager-on-other-machine' }, origin: null };
     const sourceContext: ActionExecutorContext = {
       surface: 'agent', authority: 'account_automation', serverId: homeId,
       serverIdentityId: 'srv_approval_home', runtimeAccountId: 'bot-owner', actionRequestId: 'bot-request',
       actionCaller: caller, defaultSessionId: 's1', callerPermissionMode: 'yolo', causalPermissionAuthority,
       sessionInputSource: { sourceSessionId: 's1', sourceTurnId: 'turn-1', via: 'action' },
-      actionRequestAttributionV1: { requestRef: 'request-from-bob', requester: { serverId: homeId, accountId: 'account-a' },
-        persona: { serverId: homeId, sessionId: 'original-manager-on-other-machine' }, origin: null },
+      actionRequestAttributionV1,
       externalActionTarget: target,
       externalActionExecutionAuthorization: { v: 1, token: 'original-bot-source', binding: {
         serverIdentityId: 'srv_approval_home', accountId: 'bot-owner', custodianAccountId: 'bot-owner',
         machineId: 'original-machine', installationId: 'installation-1', actionId, requestId: 'bot-request', target,
         authentication: { kind: 'account', tokenEpoch: 0 },
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId: 'bot-request', target, input: actionArgs }),
-        sessionActionOrigin: { v: 1, caller, sourceTurnId: 'turn-1', callerPermissionMode: 'yolo', causalPermissionAuthority, requestId: 'bot-request' },
+        sessionActionOrigin: { v: 1, caller, sourceTurnId: 'turn-1', callerPermissionMode: 'yolo', causalPermissionAuthority, requestId: 'bot-request', actionRequestAttributionV1 },
         sessionActionSource: { machineId: 'original-machine', installationId: 'installation-1' },
       } },
       signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({ authorizationToken: args.authorization.token,
