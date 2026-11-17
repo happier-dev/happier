@@ -1121,7 +1121,7 @@ const SAMPLED_FUNCTION_TRANSLATIONS: Readonly<Record<string, readonly unknown[]>
     'connectedServicesSettings.emptyNoServiceOnMachine': [{ machine: 'MACHINE' }],
     'connectedServicesSettings.usedBy': [{ names: 'Claude Code' }],
     'connectedServicesSettings.inviteTitle': [{ names: 'Gemini' }],
-    'connectedServicesSettings.setupServicePurpose': [{ agents: 'Codex', service: 'ChatGPT' }],
+    'connectedServicesSettings.setupServicePurpose': [{ agents: 'Codex' }],
     'connectedServicesSettings.detailSignedOutTitle': [{ service: 'ChatGPT' }],
     'connectedServicesSettings.nearLimitBodyWithReset': [{ time: '13:05' }],
     'settingsProviders.models.invalidModelIds': [{ ids: 'bad-id' }],

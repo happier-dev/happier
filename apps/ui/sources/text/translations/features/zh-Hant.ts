@@ -4586,7 +4586,7 @@ const zhHant: ConnectedServicesSettingsCopy = {
     setupCatalogPurposeNoMachine: "儲存到你的帳號，因此可在你所有的機器上使用。",
     setupServiceTitle: ({ service }) => `連接 ${service}`,
     setupReconnectTitle: ({ service }) => `重新登入 ${service}`,
-    setupServicePurpose: ({ agents, service }) => `${agents} 將在每台機器上使用你的 ${service} 帳號。`,
+    setupServicePurpose: ({ agents }) => `${agents} 將在每台機器上使用它。`,
     setupServicePurposeNoAgents: '該帳號可在每台機器上使用。',
     keyPermissionsTitle: '所需權限',
     keySave: '儲存金鑰',

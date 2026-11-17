@@ -4641,7 +4641,7 @@ const ja: ConnectedServicesSettingsCopy = {
     setupCatalogPurposeNoMachine: "アカウントに保存されるので、すべてのマシンで使えます。",
     setupServiceTitle: ({ service }) => `${service} を接続`,
     setupReconnectTitle: ({ service }) => `${service} に再サインイン`,
-    setupServicePurpose: ({ agents, service }) => `${agents} がすべてのマシンで ${service} アカウントを使います。`,
+    setupServicePurpose: ({ agents }) => `${agents} がすべてのマシンでこれを使います。`,
     setupServicePurposeNoAgents: 'アカウントはすべてのマシンで使えます。',
     keyPermissionsTitle: '必要な権限',
     keySave: 'キーを保存',

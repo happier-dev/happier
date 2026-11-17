@@ -4674,7 +4674,7 @@ const pt: ConnectedServicesSettingsCopy = {
     setupCatalogPurposeNoMachine: "Salvo na sua conta, então funciona em todas as suas máquinas.",
     setupServiceTitle: ({ service }) => `Conectar ${service}`,
     setupReconnectTitle: ({ service }) => `Entrar de novo no ${service}`,
-    setupServicePurpose: ({ agents, service }) => `${agents} usarão sua conta do ${service} em todas as máquinas.`,
+    setupServicePurpose: ({ agents }) => `${agents} vão usá-lo em todas as máquinas.`,
     setupServicePurposeNoAgents: 'A conta funciona em todas as máquinas.',
     keyPermissionsTitle: 'Permissões necessárias',
     keySave: 'Guardar chave',

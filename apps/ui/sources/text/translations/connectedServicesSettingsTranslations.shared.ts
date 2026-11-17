@@ -137,7 +137,8 @@ export const en = {
     setupCatalogPurposeNoMachine: "Saved to your account, so it works on all your machines.",
     setupServiceTitle: ({ service }: { service: string }) => `Connect ${service}`,
     setupReconnectTitle: ({ service }: { service: string }) => `Sign in to ${service} again`,
-    setupServicePurpose: ({ agents, service }: { agents: string; service: string }) => `${agents} will use your ${service} account, on every machine.`,
+    // The title above names the service ("Connect GitHub account"); naming it again doubled a label that already says "account".
+    setupServicePurpose: ({ agents }: { agents: string }) => `${agents} will use it on every machine.`,
     setupServicePurposeNoAgents: 'The account works on every machine.',
     setupForYourAgents: 'For your agents',
     setupOwnLoginTitle: 'Signed in on a machine?',

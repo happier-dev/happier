@@ -4680,7 +4680,7 @@ const ca: ConnectedServicesSettingsCopy = {
     setupCatalogPurposeNoMachine: "Es desa al teu compte, així que funciona a totes les teves màquines.",
     setupServiceTitle: ({ service }) => `Connecta ${service}`,
     setupReconnectTitle: ({ service }) => `Torna a iniciar la sessió a ${service}`,
-    setupServicePurpose: ({ agents, service }) => `${agents} faran servir el teu compte de ${service} a totes les màquines.`,
+    setupServicePurpose: ({ agents }) => `${agents} el faran servir a totes les màquines.`,
     setupServicePurposeNoAgents: 'El compte funciona a totes les màquines.',
     keyPermissionsTitle: 'Permisos que necessita',
     keySave: 'Desa la clau',

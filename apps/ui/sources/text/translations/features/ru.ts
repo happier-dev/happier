@@ -4707,7 +4707,7 @@ const ru: ConnectedServicesSettingsCopy = {
     setupCatalogPurposeNoMachine: "Сохраняется в вашем аккаунте, поэтому работает на всех ваших машинах.",
     setupServiceTitle: ({ service }) => `Подключить ${service}`,
     setupReconnectTitle: ({ service }) => `Снова войти в ${service}`,
-    setupServicePurpose: ({ agents, service }) => `${agents} будут использовать ваш аккаунт ${service} на каждой машине.`,
+    setupServicePurpose: ({ agents }) => `${agents} будут использовать его на каждой машине.`,
     setupServicePurposeNoAgents: 'Аккаунт работает на каждой машине.',
     keyPermissionsTitle: 'Необходимые разрешения',
     keySave: 'Сохранить ключ',

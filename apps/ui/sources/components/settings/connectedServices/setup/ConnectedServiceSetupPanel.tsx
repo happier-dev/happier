@@ -126,10 +126,7 @@ export function presentConnectedServiceSetupHeading(input: Readonly<{
             // A key is not "your account": who can use it, as its Connect card says.
             ? t('connectedServicesSetup.serviceCanUse', { agents: formatAgentNames(selected.usedBy) })
         : selected.usedBy.length > 0
-            ? t('connectedServicesSettings.setupServicePurpose', {
-                agents: formatAgentNames(selected.usedBy),
-                service: selected.label,
-            })
+            ? t('connectedServicesSettings.setupServicePurpose', { agents: formatAgentNames(selected.usedBy) })
             // A service no agent signs in with says what it is for in its declaration's words.
             : resolveProjectedLocalizedText(selected.entry?.projectedDescription)
                 || t('connectedServicesSettings.setupServicePurposeNoAgents');
