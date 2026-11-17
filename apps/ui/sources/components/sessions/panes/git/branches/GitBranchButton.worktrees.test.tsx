@@ -40,7 +40,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
         calls.push({ method, input, targetId });
         if (method === RPC_METHODS.SCM_BRANCH_LIST) return { success: true, branches };
         if (method === RPC_METHODS.SCM_WORKTREE_CREATE) return {
-            success: true, worktreePath: '/repo/.dev/worktree/feature-auth', branchName: 'feature-auth',
+            success: true, reused: false, worktreePath: '/repo/.dev/worktree/feature-auth', branchName: 'feature-auth',
             ...(sourceRootPath ? { sourceRootPath } : {}),
         };
         if (method === RPC_METHODS.SCM_WORKTREE_PRUNE || method === RPC_METHODS.SCM_WORKTREE_REMOVE) return { success: true };

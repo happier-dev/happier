@@ -28,6 +28,7 @@ export type ScmWorktreeCreateRequest = z.infer<typeof ScmWorktreeCreateRequestSc
 
 export const ScmWorktreeCreateResponseSchema = lazyZodSchema(() => z.discriminatedUnion('success', [z.object({
   success: z.literal(true),
+  reused: z.boolean(),
   outcome: z.optional(ScmOperationOutcomeSchema),
   worktreePath: z.string(),
   branchName: z.string(),

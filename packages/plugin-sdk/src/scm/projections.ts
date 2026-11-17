@@ -905,6 +905,7 @@ export type ScmWorktreeCreateRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'b
 
 export type ScmWorktreeCreateResponse = {
     success: true;
+    reused: boolean;
     outcome?: ScmOperationOutcome;
     worktreePath: string;
     branchName: string;

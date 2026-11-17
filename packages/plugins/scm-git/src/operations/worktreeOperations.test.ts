@@ -86,6 +86,7 @@ describe('git worktree operations', () => {
 
         expect(response).toEqual({
             success: true,
+            reused: false,
             worktreePath: '/repo/.dev/worktree/feature-auth-2',
             branchName: 'feature-auth-2',
             sourceRootPath: '/repo-linked',
@@ -133,6 +134,7 @@ describe('git worktree operations', () => {
 
         expect(response).toEqual({
             success: true,
+            reused: false,
             worktreePath: '/repo/.dev/worktree/feature/auth',
             branchName: 'feature/auth',
             sourceRootPath: '/repo',
@@ -181,6 +183,7 @@ describe('git worktree operations', () => {
 
         expect(response).toEqual({
             success: true,
+            reused: true,
             worktreePath: existingWorktreePath,
             branchName: 'feature/auth',
             sourceRootPath: '/repo',

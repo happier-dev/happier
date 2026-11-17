@@ -146,6 +146,7 @@ export async function gitWorktreeCreate(input: {
         });
         return {
             success: true,
+            reused: materialized.reused,
             worktreePath: materialized.targetPath,
             branchName: materialized.branchName,
             sourceRootPath: resolvedPaths.sourceRootPath,

@@ -208,6 +208,7 @@ describe('repoScmWorktreeService', () => {
     ])('delegates worktree creation to the canonical machine SCM worktree RPC: %s', async (_title, input, expectedRequest, expectedOptions) => {
         machineScmWorktreeCreateMock.mockResolvedValue({
             success: true,
+            reused: false,
             worktreePath: '/repo/.dev/worktree/feature-auth',
             branchName: 'feature-auth',
             repositoryRootPath: '/repo',
@@ -242,6 +243,7 @@ describe('repoScmWorktreeService', () => {
         } as any);
         machineScmWorktreeCreateMock.mockResolvedValue({
             success: true,
+            reused: false,
             worktreePath: '/Users/tester/repo/.dev/worktree/feature-auth',
             branchName: 'feature-auth',
             repositoryRootPath: '/Users/tester/repo',
