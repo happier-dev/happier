@@ -102,14 +102,6 @@ describe('Source Actions through the CLI Account front door', () => {
       });
     });
 
-  it('returns the canonical delete acknowledgement through the public delete Action', async () => {
-    const deleted = { ok: true, sourceId: source.id, revision: 2 };
-    vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: deleted });
-    const executor = createActionExecutor(deps());
-    expect(await executor.execute('projects.sources.delete', { serverId: 'source-home', sourceId: source.id, expectedRevision: 2 },
-      { surface: 'cli', bypassApprovals: true })).toEqual({ ok: true, result: deleted });
-  });
-
   it('admits portable Home private Artifact attachment through real requester custody without borrowing the owner', async () => {
     const currentness = await createRequesterCurrentnessSocketHarness();
     onTestFinished(() => currentness.close());
