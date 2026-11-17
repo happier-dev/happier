@@ -107,11 +107,14 @@ const operation: Operation = {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); processIdentityBoundary.mockReset();
   resetActiveAccountSettingsSnapshotForTests(); });
 
-const harnessCredentials = { token: 'alice-daemon-token', encryption: null } as const;
+/** The admitted credential and Account mode that open the caller Session's plain owner metadata at admission. */
+function plainSessionAdmission(token: string) {
+  return { credentials: { token, encryption: null } as const, readAccountEncryptionMode: async () => 'plain' as const };
+}
 
 /** Bob's plain Session as Home returns it; its owner metadata carries the approval profile. */
 function ownedSessionRecord(owner: Readonly<{ approvalProfileId?: string }> = {}) {
-  const fields = buildSessionMetadataEnvelopeCreateFields({ credentials: harnessCredentials, accountEncryptionMode: 'plain',
+  const fields = buildSessionMetadataEnvelopeCreateFields({ credentials: plainSessionAdmission('alice-daemon-token').credentials, accountEncryptionMode: 'plain',
     storedContentMode: 'plain', metadata: { ...createTestMetadata({ machineId: 'alice-machine' }), ...owner }, agentState: null });
   return { ...createSessionRecordFixture({ id: 'bob-session', share: null }), encryptionMode: 'plain',
     metadataLayoutVersion: fields.metadataLayoutVersion, metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata };
@@ -122,7 +125,7 @@ function createHarness(prepareExternalActionAuthorization?: Parameters<typeof cr
   let current: (() => Promise<boolean>) | undefined;
   const params = {
     serverId: 'alice-home', serverHttpBaseUrl: 'https://alice-home.test', token: 'alice-daemon-token',
-    credentials: harnessCredentials, readAccountEncryptionMode: async () => 'plain' as const,
+    ...plainSessionAdmission('alice-daemon-token'),
     ...(prepareExternalActionAuthorization ? { prepareExternalActionAuthorization } : {}),
     createExecutor: (_depth: (turnId?: string) => number | undefined, isCallerCurrent: () => Promise<boolean>) => {
       current = isCallerCurrent;
@@ -179,7 +182,8 @@ describe('daemon Session Account authority', () => {
     expect(harness.delivered).toEqual([expect.objectContaining({ context: expect.objectContaining({ nativeRealtimeInput: true }) })]);
     expect(await harness.execute({ ...nativeOperation, actionId: 'approval.request.decide',
       input: { artifactId: 'ordinary-approval', decision: 'approve' } }, { sessionId: 'bob-session', isCurrent: async () => live }))
-      .toEqual({ ok: false, errorCode: 'present_user_required', error: 'present_user_required' });
+      // ActionExecuteFailure carries the admitted Action's requestId (actionExecutionResult.ts schema).
+      .toEqual({ ok: false, errorCode: 'present_user_required', error: 'present_user_required', requestId: 'request-1' });
     live = false;
     expect(await harness.isCallerCurrent()).toBe(false);
     expect(await harness.execute(nativeOperation, { sessionId: 'bob-session', isCurrent: async () => live }))
@@ -324,7 +328,7 @@ describe('daemon Session Account authority', () => {
     const publications: DiscussionAgentPublisherRequestV1[] = [];
     const denied: unknown[] = [];
     let stored: ApprovalRequest | undefined;
-    const execute = createDaemonSessionAccountActionExecutor({ serverId, serverHttpBaseUrl, token: 'token',
+    const execute = createDaemonSessionAccountActionExecutor({ ...plainSessionAdmission('token'), serverId, serverHttpBaseUrl, token: 'token',
       credentials,
       resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
         features: { sessions: { enabled: true, conversations: { enabled: true } }, sharing: { enabled: true, session: { enabled: true } } },
@@ -428,7 +432,7 @@ describe('daemon Session Account authority', () => {
       }
       throw new Error(`Unexpected comment read ${path}`);
     });
-    const execute = createDaemonSessionAccountActionExecutor({ serverId: 'comment-home', serverHttpBaseUrl: 'https://comment-home.test', token,
+    const execute = createDaemonSessionAccountActionExecutor({ ...plainSessionAdmission(token), serverId: 'comment-home', serverHttpBaseUrl: 'https://comment-home.test', token,
       createExecutor: () => createActionExecutor(createCliActionDeps({ token, credentials, sessionId: '', mode: 'plain', ctx: null })) });
     const request = { ...operation, actionId: 'reviews.comments.get' as const, input: { commentId: comment.id }, reviewCommentPrincipal: principal };
     await expect(runWithServerHttpBaseUrl('https://comment-home.test', () => execute(request,
@@ -440,7 +444,7 @@ describe('daemon Session Account authority', () => {
   });
   it.each(['installed-machine', undefined])('binds start refusal diagnostics to the installed Machine (%s)', async machineId => {
     const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
-    const execute = createDaemonSessionAccountActionExecutor({
+    const execute = createDaemonSessionAccountActionExecutor({ ...plainSessionAdmission('diagnostic-token'),
       serverId: 'diagnostic-home', serverHttpBaseUrl: 'https://diagnostic-home.test', token: 'diagnostic-token',
       ...(machineId ? { machineId } : {}),
       initialStartDiagnostic: { phase: 'requester_runtime', refusalReason: 'requester_runtime_unavailable' },
@@ -476,7 +480,7 @@ describe('daemon Session Account authority', () => {
       ? { ...creation, initialInput: { text: 'Reply READY, then idle.' } }
       : { source: { kind: 'artifact', serverId: 'inherited-home', artifactId: '84a6bc9c-0418-44f6-a593-8a751bde13e0' },
         expectedVersion: '1.0.0', creation };
-    const execute = createDaemonSessionAccountActionExecutor({ serverId: 'inherited-home',
+    const execute = createDaemonSessionAccountActionExecutor({ ...plainSessionAdmission(token), serverId: 'inherited-home',
       serverHttpBaseUrl, token, machineId: 'machine',
       prepareExternalActionAuthorization: async ({ operation: action, sessionActionOrigin }) => {
         const selected = resolveActionExecutionPlacementForInput(getActionSpec(action.actionId), action.input, sessionActionOrigin.caller, action.surface ?? 'agent') === 'machine'
@@ -509,7 +513,7 @@ describe('daemon Session Account authority', () => {
   ])('reports malformed Session spawn input before attempting external authorization: $label', async ({ input: invalidInput }) => {
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
       data: { session: ownedSessionRecord() } });
-    const execute = createDaemonSessionAccountActionExecutor({ serverId: 'alice-home',
+    const execute = createDaemonSessionAccountActionExecutor({ ...plainSessionAdmission('alice-daemon-token'), serverId: 'alice-home',
       serverHttpBaseUrl: 'https://alice-home.test', token: 'alice-daemon-token', machineId: 'machine',
       prepareExternalActionAuthorization: async ({ operation: action }) => {
         const selected = resolveExternalActionMachineTarget({ actionId: action.actionId,
@@ -599,7 +603,7 @@ describe('daemon Session Account authority', () => {
     });
     let daemonExecutor!: ReturnType<typeof createCliActionExecutorFromCredentials>;
     const prepareExternalActionAuthorization = vi.fn(async () => null);
-    const execute = createDaemonSessionAccountActionExecutor({ serverId: configuration.activeServerId,
+    const execute = createDaemonSessionAccountActionExecutor({ ...plainSessionAdmission(credentials.token), serverId: configuration.activeServerId,
       serverHttpBaseUrl, token: credentials.token, credentials, machineId: source.machineId,
       prepareExternalActionAuthorization,
       createExecutor: (getCurrentTurnWorkDepth, isCallerCurrent) => {
@@ -747,7 +751,7 @@ describe('daemon Session Account authority', () => {
   it('requires original Home creator proof before a Session visual can use Account execution', async () => {
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
       data: { session: ownedSessionRecord() } });
-    const execute = createDaemonSessionAccountActionExecutor({ serverId: 'alice-home',
+    const execute = createDaemonSessionAccountActionExecutor({ ...plainSessionAdmission('alice-daemon-token'), serverId: 'alice-home',
       serverHttpBaseUrl: 'https://alice-home.test', token: 'alice-daemon-token',
       createExecutor: () => createActionExecutor(createCliActionDeps({ token: 'alice-daemon-token', sessionId: '', mode: 'plain', ctx: null })),
     });
@@ -777,7 +781,7 @@ describe('daemon Session Account authority', () => {
       } } };
     });
     const target = { kind: 'machine' as const, machineId: 'machine' };
-    const execute = createDaemonSessionAccountActionExecutor({ serverId: 'visual-profile', serverHttpBaseUrl, token,
+    const execute = createDaemonSessionAccountActionExecutor({ ...plainSessionAdmission(token), serverId: 'visual-profile', serverHttpBaseUrl, token,
       prepareExternalActionAuthorization: async ({ operation: action, sessionActionOrigin }) => {
         const authorization = await prepareExternalActionRequesterAccountAuthorization({ actionId: action.actionId, input: action.input,
           requestId: action.requestId, target, machineId: 'machine', sourceMachineId: 'machine', accountId: 'owner',
@@ -1036,7 +1040,7 @@ describe('daemon Session Account authority', () => {
         clientActionExecute: reverse, pluginActionExecutionOwner: 'current_process' });
       return executor;
     };
-    const execute = createDaemonSessionAccountActionExecutor({ serverId: configuration.activeServerId, serverHttpBaseUrl,
+    const execute = createDaemonSessionAccountActionExecutor({ ...plainSessionAdmission(credentials.token), serverId: configuration.activeServerId, serverHttpBaseUrl,
       token: credentials.token, machineId: source.machineId,
       prepareExternalActionAuthorization: async admission => {
         invocationRequestId = admission.operation.requestId;
@@ -1352,7 +1356,7 @@ describe('daemon Session Account authority', () => {
       data: { session: ownedSessionRecord() } });
     let persisted: ApprovalRequest | undefined;
     let delivered = 0;
-    const execute = createDaemonSessionAccountActionExecutor({ serverId: 'alice-home', serverHttpBaseUrl: 'https://alice-home.test',
+    const execute = createDaemonSessionAccountActionExecutor({ ...plainSessionAdmission('alice-daemon-token'), serverId: 'alice-home', serverHttpBaseUrl: 'https://alice-home.test',
       machineId: 'alice-machine', token: 'alice-daemon-token',
       createExecutor: () => createActionExecutor({
         ...createCliActionDeps({ token: 'alice-daemon-token', sessionId: '', mode: 'plain', ctx: null }),
@@ -1530,7 +1534,7 @@ describe('daemon Session Account authority', () => {
     const executor = createCliActionExecutorFromCredentials({ credentials: receiverCredentials, serverId: configuration.activeServerId,
       serverApiUrl: serverHttpBaseUrl, serverIdentityId: homeId, externalActionMachineRequestPrivateKey: keys.secretKey,
       externalActionMachineInstallationId: controller.installationId, managedMachineAction, pluginActionExecutionOwner: 'current_process' });
-    const execute = createDaemonSessionAccountActionExecutor({ serverId: configuration.activeServerId, serverHttpBaseUrl, token: credentials.token,
+    const execute = createDaemonSessionAccountActionExecutor({ ...plainSessionAdmission(credentials.token), serverId: configuration.activeServerId, serverHttpBaseUrl, token: credentials.token,
       prepareExternalActionAuthorization: async admission => {
         const authorization = await prepareExternalActionRequesterAccountAuthorization({ actionId, input, requestId: operation.requestId,
           target, machineId: controller.machineId, sourceMachineId: source.machineId, accountId: 'source-account',
@@ -1619,7 +1623,7 @@ describe('daemon Session Account authority', () => {
           sourceInstallationId: 'source-installation', targetInstallationId: 'target-installation' },
       } } };
     });
-    const execute = createDaemonSessionAccountActionExecutor({ serverId: 'bob-profile',
+    const execute = createDaemonSessionAccountActionExecutor({ ...plainSessionAdmission('bob-session-token'), serverId: 'bob-profile',
       serverHttpBaseUrl: 'https://bob-home.test', token: 'bob-session-token',
       prepareExternalActionAuthorization: async ({ sessionActionOrigin }) => {
         const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: handoff.requestId,
@@ -1662,7 +1666,7 @@ describe('daemon Session Account authority', () => {
       retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
     } } };
     const target = { kind: 'machine' as const, machineId: 'source-machine' };
-    const execute = createDaemonSessionAccountActionExecutor({ serverId: 'source-profile', serverHttpBaseUrl, token,
+    const execute = createDaemonSessionAccountActionExecutor({ ...plainSessionAdmission(token), serverId: 'source-profile', serverHttpBaseUrl, token,
       prepareExternalActionAuthorization: async () => {
         const minted = await mintExternalActionExecutionAuthorization({ actionId: acquire.actionId, machineId: target.machineId,
           envelope: ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: acquire.requestId, target, input: acquire.input }),
@@ -1697,7 +1701,7 @@ describe('daemon Session Account authority', () => {
       } } };
     });
     let delivered = 0;
-    const execute = createDaemonSessionAccountActionExecutor({
+    const execute = createDaemonSessionAccountActionExecutor({ ...plainSessionAdmission('bob-session-token'),
       serverId: 'bob-profile', serverHttpBaseUrl: 'https://bob-home.test', token: 'bob-session-token',
       ...{ prepareExternalActionAuthorization: async () => {
         const minted = await mintExternalActionExecutionAuthorization({ actionId: operation.actionId, envelope,
@@ -1744,7 +1748,7 @@ describe('daemon Session Account authority', () => {
     // File logging and authenticated Home reads are genuine system boundaries.
     const logged = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
     const network = vi.spyOn(axios, 'post').mockResolvedValue({ status: 403, data: {} });
-    const execute = createDaemonSessionAccountActionExecutor({ serverId: 'alice-home',
+    const execute = createDaemonSessionAccountActionExecutor({ ...plainSessionAdmission('private-daemon-token'), serverId: 'alice-home',
       serverHttpBaseUrl: 'https://alice-home.test', token: 'private-daemon-token',
       prepareExternalActionAuthorization: async ({ operation: action, sessionActionOrigin }) => {
         const target = { kind: 'machine' as const, machineId: 'source-machine' };
