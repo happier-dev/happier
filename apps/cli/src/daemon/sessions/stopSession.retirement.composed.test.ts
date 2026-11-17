@@ -212,6 +212,8 @@ describe.skipIf(process.platform !== 'linux')('plain runner Stop retirement thro
             } else if (wiring === 'replacement-runner') {
                 expect(callback).toHaveBeenCalledWith({ ok: true, result: {
                     status: 'incomplete', reason: 'terminal_control_serviceability_retirement_failed',
+                    effectAttempted: true,
+                    failureCause: expect.objectContaining({ phase: 'stop.plain_control_serviceability_retirement' }),
                 } });
                 expect(owner?.hostPid).toBe(pid + 1);
             }
