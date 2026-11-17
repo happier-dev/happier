@@ -334,6 +334,10 @@ export async function executeBoundedBackendRun(args: Readonly<{
         inputIds: [params.localInputId],
         state: 'active',
       };
+      const permissionBinding = backendCtrl.currentInputPermissionRequestStore;
+      if (permissionBinding) {
+        backendCtrl.currentInputPermissionRequestStore = { ...permissionBinding, turnId: exactTurnId };
+      }
       const run = args.runs?.get(runId);
       if (run) {
         args.runs!.set(runId, {

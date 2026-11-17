@@ -202,7 +202,9 @@ ${MUSE_MSP_PLAYBACK_SCRIPT}
 
 it.each([
   { lifetime: 'retained', answer: 'allow_once', scenario: 'approval-allow-once' },
+  { lifetime: 'finite', answer: 'allow_once', scenario: 'approval-allow-once' },
   { lifetime: 'retained', answer: 'question', scenario: 'question-single-choice' },
+  { lifetime: 'finite', answer: 'question', scenario: 'question-single-choice' },
 ] as const)('settles the offered $lifetime detached native $answer through the Machine owner', async ({ lifetime, answer, scenario }) => {
   const scratch = await mkdtemp(join(tmpdir(), 'happier-detached-approval-'));
   onTestFinished(() => rm(scratch, { recursive: true, force: true }));
@@ -261,12 +263,6 @@ ${MUSE_MSP_PLAYBACK_SCRIPT}
   const { runId } = ExecutionRunStartResponseSchema.parse(started);
   const read = async () => ExecutionRunGetResponseSchema.parse(await rpc.invokeLocal(
     SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId }, { rpcContext: context }));
-  onTestFailed(async () => {
-    const observed = await read().catch(() => null);
-    console.error('Detached native approval boundary', { status: observed?.run.status, error: observed?.run.error,
-      inputTurns: observed?.run.inputTurns, requestIds: Object.keys(state.requests ?? {}),
-      audit: await readMuseMspProcessAudit(auditPath).catch(() => null) });
-  });
   try {
     const observation = new AbortController();
     try {
@@ -297,6 +293,13 @@ ${MUSE_MSP_PLAYBACK_SCRIPT}
     expect(state.requests?.[requestId]).toBeUndefined();
     expect(await readMuseMspProcessAudit(auditPath)).toMatchObject({ decisionCount: 1, released: true });
     expect((await read()).run.attention).toBeUndefined();
+  } catch (error) {
+    const observed = await read();
+    const audit = await readMuseMspProcessAudit(auditPath);
+    console.error('Native settlement before cleanup', { status: observed.run.status,
+      inputTurns: observed.run.inputTurns, requestIds: Object.keys(state.requests ?? {}),
+      decisionCount: audit.decisionCount, released: audit.released });
+    throw error;
   } finally {
     await rpc.invokeLocal(SESSION_RPC_METHODS.EXECUTION_RUN_STOP, { runId }, { rpcContext: context });
   }
