@@ -200,6 +200,28 @@ describe('SegmentedTabBar', () => {
     expect(customize).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps a page that needs the person visible on More when it moves there', async () => {
+    const { SegmentedTabBar } = await import('./SegmentedTabBar');
+    const screen = await renderScreen(<SegmentedTabBar tabs={TABS} activeTabId="alpha" onSelectTab={() => {}} testIDPrefix="pages"
+      overflow={{ label: 'More', items: [{ id: 'security' as 'alpha', label: 'Security', count: '3', countTone: 'warning' }] }} />);
+    const more = screen.root.find((node) => node.props.testID === 'pages:more' && node.props.accessibilityRole === 'button');
+    expect(more.props.accessibilityLabel).toContain('Security 3');
+    const { TabBadge } = await import('@/components/ui/navigation/tabBadge/TabBadge');
+    expect(more.findAllByType(TabBadge)).toHaveLength(1);
+    await screen.unmount();
+  });
+
+  it('keeps More quiet when nothing behind it needs the person', async () => {
+    const { SegmentedTabBar } = await import('./SegmentedTabBar');
+    const screen = await renderScreen(<SegmentedTabBar tabs={TABS} activeTabId="alpha" onSelectTab={() => {}} testIDPrefix="pages"
+      overflow={{ label: 'More', items: [{ id: 'logs' as 'alpha', label: 'Logs', count: '12' }] }} />);
+    const more = screen.root.find((node) => node.props.testID === 'pages:more' && node.props.accessibilityRole === 'button');
+    expect(more.props.accessibilityLabel).toBe('More');
+    const { TabBadge } = await import('@/components/ui/navigation/tabBadge/TabBadge');
+    expect(more.findAllByType(TabBadge)).toHaveLength(0);
+    await screen.unmount();
+  });
+
   it('keeps More beside the tablist, never inside it: a tablist owns only tabs (axe aria-required-children)', async () => {
     const { SegmentedTabBar } = await import('./SegmentedTabBar');
     const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');

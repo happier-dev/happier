@@ -45,6 +45,7 @@ import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dro
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { Icon } from '@/components/ui/icons/Icon';
 import { KeyCombinationHint } from '@/components/ui/keyboard/KeyHint';
+import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 
 import { resolveSegmentedTabFit, type SegmentedTabFit } from './segmentedTabFit';
 import { t } from '@/text';
@@ -962,7 +963,9 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
                                     iconOnly ? (compact ? styles.tabSurfaceIconCompact : styles.tabSurfaceIcon) : null,
                                     iconOnly ? iconGlyphStyles?.surface ?? null : null,
                                     contentSized ? (iconOnly ? styles.tabSurfaceIconContent : styles.tabSurfaceContent) : null,
-                                    labelSized ? styles.tabSurfaceTight : null,
+                                    // A segment that shares the row (equal or label-sized) keeps the tight padding the shared
+                                    // segmented choice draws when it stretches, so a cut-short name never meets its neighbour.
+                                    labelSized || (!contentSized && !iconOnly) ? styles.tabSurfaceTight : null,
                                     showOwnActiveSurface && !pills && !plain ? (inherited ? styles.thumbOutlined : styles.tabActive) : null,
                                     plain ? styles.plainSurface : null,
                                     plain && showOwnActiveSurface ? styles.plainActive : null,
@@ -1183,6 +1186,8 @@ function PlainTabCaption(props: Readonly<{
     /** Measure at the tight padding: a track that spreads its segments never needs the roomy one. */
     tight?: boolean;
     more?: boolean;
+    /** More holds a tab that needs the person (a toned count). */
+    moreNeedsYou?: boolean;
 }>) {
     const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
     const surfaceState = props.surfaceState ?? 'default';
@@ -1193,7 +1198,13 @@ function PlainTabCaption(props: Readonly<{
             {props.icon && props.tab.icon ? <View
                 {...{ dataSet: themeSurfaceDataSet('tab-bar', 'icon', surfaceState) }}
                 style={[styles.tabIcon, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'icon', state: surfaceState } : undefined)]}>{props.tab.icon}</View> : null}
-            {props.more ? <Icon name="dots-three" size={ICON_SIZE.sm} color={theme.colors.text.secondary} /> : null}
+            {/* More's glyph carries the tab dot (`TabBadge`, the one attention amber) while a tab behind it needs the person. */}
+            {props.more ? (
+                <View>
+                    <Icon name="dots-three" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
+                    {props.moreNeedsYou ? <TabBadge variant="dot" tone="attention" /> : null}
+                </View>
+            ) : null}
             {/* The overflow trigger is the glyph alone everywhere; its word is the accessible name. */}
             {props.label === false || props.more ? null : (
                 <Text {...{ dataSet: themeSurfaceDataSet('tab-bar', 'label', surfaceState) }}
@@ -1239,6 +1250,9 @@ function SegmentedTabOverflowMore<T extends string>(props: Readonly<{
     const { theme } = useUnistyles();
     const [open, setOpen] = React.useState(false);
     const [focusVisible, setFocusVisible] = React.useState(false);
+    // A tab that needs the person keeps speaking from More: its dot on the trigger, its name and count in More's name.
+    const needsYou = props.tabs.filter((tab) => tab.countTone !== undefined);
+    const accessibilityLabel = [props.label, ...needsYou.map((tab) => [tab.label, tab.count].filter(Boolean).join(' '))].join(', ');
     const items = React.useMemo((): DropdownMenuItem[] => [
         ...props.tabs.map((tab) => ({
             id: tab.id as string,
@@ -1288,12 +1302,12 @@ function SegmentedTabOverflowMore<T extends string>(props: Readonly<{
                         onBlur={() => setFocusVisible(false)}
                         style={[styles.tabFrameContent, HAPPIER_FOCUS_RING_DELEGATED_STYLE]}
                         accessibilityRole="button"
-                        accessibilityLabel={props.label}
+                        accessibilityLabel={accessibilityLabel}
                         accessibilityState={{ expanded: open, disabled: props.disabled }}
                         {...(Platform.OS === 'web' ? ({ 'aria-haspopup': 'menu', 'aria-expanded': open } as Record<string, unknown>) : {})}
                     >
                         <View style={[styles.tabSurface, styles.plainSurface, happierFocusRingStyle({ visible: focusVisible, color: theme.colors.border.focus })]}>
-                            <PlainTabCaption tab={{ id: OVERFLOW_KEY, label: props.label }} icon={false} active={false} more />
+                            <PlainTabCaption tab={{ id: OVERFLOW_KEY, label: props.label }} icon={false} active={false} more moreNeedsYou={needsYou.length > 0} />
                         </View>
                     </Pressable>
                 )}

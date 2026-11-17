@@ -7,6 +7,7 @@ import { MMKV } from 'react-native-mmkv';
 import { expect, it, vi } from 'vitest';
 
 import { installWebLayoutBridge, measureWebLayout } from '@/dev/testkit/render/measureWebLayout';
+import { HAPPIER_SEGMENTED_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { SegmentedTabBar } from './SegmentedTabBar';
 
 vi.mock('react-native', async () => vi.importActual('react-native-web'));
@@ -210,5 +211,30 @@ it('reserves measured room for explicit More and keeps its pages reachable at wi
         host.remove();
         requests.mockRestore();
         persistedWrites.mockRestore();
+    }
+});
+
+it('keeps an equal segment\'s cut-short name inside its own padding, as the shared segmented choice does', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+        await act(async () => root.render(
+            <View style={{ width: 240 }}>
+                <SegmentedTabBar tabs={[{ id: 'all', label: 'All' }, { id: 'needs', label: 'Needs you', count: '2', countTone: 'warning' },
+                    { id: 'mentions', label: 'Mentions' }]} activeTabId="all" onSelectTab={() => {}} testIDPrefix="inbox" />
+            </View>,
+        ));
+        const segment = host.querySelector<HTMLElement>('[data-testid="inbox:needs"] [data-surface="tab-bar"][data-part="tab"]')!;
+        const label = host.querySelector<HTMLElement>('[data-testid="inbox:needs"] [data-surface="tab-bar"][data-part="label"]')!;
+        segment.dataset.testid = 'needs-segment';
+        label.dataset.testid = 'needs-label';
+        const layout = await measureWebLayout(host, { viewport: { width: 400, height: 200 }, settle: replay => act(replay) });
+        const inset = HAPPIER_SEGMENTED_METRICS.segmentPaddingTightPx;
+        expect(layout.rect('needs-label').left - layout.rect('needs-segment').left).toBeGreaterThanOrEqual(inset);
+        expect(layout.rect('needs-segment').right - layout.rect('needs-label').right).toBeGreaterThanOrEqual(inset);
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
     }
 });

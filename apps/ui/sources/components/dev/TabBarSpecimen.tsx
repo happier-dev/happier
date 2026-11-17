@@ -102,7 +102,7 @@ export function TabBarSpecimen() {
     render: (width: number | null) => React.ReactNode,
   ) => (
     <View style={styles.section} key={title}>
-      <Text variant="heading">{title}</Text>
+      <Text variant="heading" style={styles.title}>{title}</Text>
       {[null, ...NARROW_WIDTHS].map((width) => (
         <View key={width ?? 'full'} style={styles.sample}>
           <Text variant="meta" style={styles.caption}>
@@ -214,5 +214,6 @@ const styles = StyleSheet.create((theme) => ({
   section: { gap: theme.space.s12 },
   sample: { gap: theme.space.s6 },
   full: { alignSelf: 'stretch' },
+  title: { color: theme.colors.text.primary },
   caption: { color: theme.colors.text.tertiary },
 }));
