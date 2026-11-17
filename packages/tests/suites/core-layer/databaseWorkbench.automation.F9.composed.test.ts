@@ -69,13 +69,13 @@ it('P4-F9-known-good-observation-run', async () => {
       observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: materialization },
       maximumObservationAgeMs: null };
     const matchingFilter = { v: 1, all: [{ op: 'gte', field: '/observation/summary/records', value: 1 }] };
-    const armed = await fixture.owner.execute('workflow.trigger.add', {
+    const armed = await fixture.owner.executeReviewed('workflow.trigger.add', {
       target: { kind: 'inline', definition: { version: 1, blocks: [
         { kind: 'action', id: 'read-starters', actionId: 'workflow.starters.list', input: {} },
       ] } },
       project: { machineId: fixture.machine.target.machineId, directory: fixture.machine.workspaceDir },
       trigger: { ...eventSource, enabled: true, filter: matchingFilter },
-    }, { presentUserConfirmation: { actionId: 'workflow.trigger.add' } });
+    });
     expect(armed.ok, JSON.stringify(armed)).toBe(true);
     if (!armed.ok) throw new Error(`Database trigger refused (${armed.errorCode})`);
     const saved = WorkflowActionOutputSchemasV1['workflow.trigger.add'].parse(armed.result);
@@ -122,22 +122,22 @@ it('P4-F9-known-good-observation-run', async () => {
       expect(runs.length).toBeLessThanOrEqual(2);
       return runs.length === 2 && runs.every(row => row.state === 'succeeded');
     }, { failFast: true, context: 'A distinct completed observation keeps its own occurrence identity' });
-    const threshold = await fixture.owner.execute('workflow.trigger.update', {
+    const threshold = await fixture.owner.executeReviewed('workflow.trigger.update', {
       automationId: saved.set.automationId, triggerId: saved.triggerId, expectedRevision: saved.set.revision,
       patch: { trigger: { ...eventSource,
         filter: { v: 1, all: [{ op: 'lt', field: '/observation/summary/records', value: 1 }] } } },
-    }, { presentUserConfirmation: { actionId: 'workflow.trigger.update' } });
+    });
     expect(threshold.ok, JSON.stringify(threshold)).toBe(true);
     if (!threshold.ok) throw new Error(`Threshold update refused (${threshold.errorCode})`);
     const thresholdSet = WorkflowActionOutputSchemasV1['workflow.trigger.update'].parse(threshold.result);
     await observe();
     expect(await readRuns(), 'A completed nonmatching observation must not launch a Run').toHaveLength(2);
-    const disabled = await fixture.owner.execute('workflow.trigger.update', {
+    const disabled = await fixture.owner.executeReviewed('workflow.trigger.update', {
       automationId: saved.set.automationId, triggerId: saved.triggerId, expectedRevision: thresholdSet.set.revision,
       // Restore the matching condition while disarming, so a broken enabled
       // decision would launch a third Run and cannot hide behind the threshold.
       patch: { enabled: false, trigger: { ...eventSource, filter: matchingFilter } },
-    }, { presentUserConfirmation: { actionId: 'workflow.trigger.update' } });
+    });
     expect(disabled.ok, JSON.stringify(disabled)).toBe(true);
     await observe();
     expect(await readRuns()).toHaveLength(2);
