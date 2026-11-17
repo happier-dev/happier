@@ -1,5 +1,6 @@
 import { WorkspaceSyncRelationshipCreateResultV1Schema, WorkspaceSyncRelationshipCreateRpcRequestV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
-import type { WorkspaceSyncRelationshipCreateResultV1, WorkspaceSyncRelationshipCreateRpcRequestV1 } from '@happier-dev/protocol';
+import type { WorkspaceRefV1, WorkspaceSyncRelationshipCreateResultV1, WorkspaceSyncRelationshipCreateRpcRequestV1 } from '@happier-dev/protocol';
+import { isManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import type { WorkspaceSyncRelationshipOwner } from './workspaceSyncRelationshipOwner';
 
@@ -21,11 +22,7 @@ export type WorkspaceSyncRelationshipCreateDependencies = Readonly<{
   localServerId: string;
   localMachineId: string;
   /** Current Account settings WorkspaceRef lookup; never a caller-supplied root. */
-  resolveWorkspaceRef(workspaceRefId: string): Readonly<{
-    serverId: string;
-    machineId: string;
-    rootPath: string;
-  }> | null;
+  resolveWorkspaceRef(workspaceRefId: string): WorkspaceRefV1 | null;
   relationshipOwner: Pick<WorkspaceSyncRelationshipOwner, 'prepareCreate'>;
   /** Native checkout admission may already have reserved the exact target ref. */
   targetWorkspaceRefId?: string;
@@ -48,6 +45,9 @@ export async function createWorkspaceSyncRelationshipForProject(
   const source = dependencies.resolveWorkspaceRef(input.sourceWorkspaceRefId);
   if (!source) {
     throw createError('workspace_ref_not_ready', 'The selected workspace is not available in current settings');
+  }
+  if (isManagedWorkspaceRefV2(source)) {
+    throw createError('workspace_ref_not_ready', 'Managed workspaces are not supported as relationship sources');
   }
   if (source.serverId.trim() !== dependencies.localServerId.trim()) {
     throw createError('workspace_ref_not_ready', 'The selected workspace belongs to another Account Home');

@@ -2440,12 +2440,11 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     localServerId: semanticServerId,
     localMachineId: input.localMachineId,
     resolveWorkspaceRef: (workspaceRefId) => {
-      const ref = resolveWorkspaceRefById(
+      return resolveWorkspaceRefById(
         factories.getProjectSnapshot()?.workspaceRefs ?? [],
         workspaceRefId,
         semanticServerId,
       );
-      return ref && !isManagedWorkspaceRefV2(ref) ? { serverId: ref.serverId, machineId: ref.machineId, rootPath: ref.rootPath } : null;
     },
     relationshipOwner: committedRelationshipOwner,
   };

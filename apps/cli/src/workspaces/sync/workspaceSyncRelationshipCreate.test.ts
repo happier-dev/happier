@@ -57,10 +57,14 @@ function createHarness(options: Readonly<{
   existingRelationships?: readonly WorkspaceSyncRelationshipV1[];
   freshTarget?: boolean;
   targetCopy?: 'present' | 'absent' | 'unavailable';
+  managedSource?: boolean;
 }> = {}) {
   let snapshot = parseProjectAccountSnapshotV1({
     workspaceRefs: [
-      { id: 'source_ref', serverId: 'server_a', machineId: 'machine_source', rootPath: '/source', createdAtMs: 1 },
+      options.managedSource
+        ? { v: 2, kind: 'managed', id: 'source_ref', serverId: 'server_a', managedId: 'managed_source',
+          controller: { machineId: 'machine_source', installationId: 'installation_source' }, rootPath: '/source', createdAtMs: 1 }
+        : { id: 'source_ref', serverId: 'server_a', machineId: 'machine_source', rootPath: '/source', createdAtMs: 1 },
       ...(options.freshTarget ? [] : [{ id: 'target_ref', serverId: 'server_a', machineId: 'machine_target', rootPath: '/target', createdAtMs: 1 }]),
     ],
     relationships: options.existingRelationships ?? [],
@@ -388,6 +392,21 @@ describe('createWorkspaceSyncRelationshipForProject', () => {
     )).rejects.toMatchObject({ code: 'workspace_sync_controller_mismatch' });
     expect(harness.ensureRelationship).not.toHaveBeenCalled();
     expect(harness.readRelationships()).toEqual([]);
+  });
+
+  it('refuses a managed source on its own controller without aliasing its guest root to the host', async () => {
+    const harness = createHarness({ managedSource: true });
+    const refs = harness.readRefs();
+
+    await expect(createWorkspaceSyncRelationshipForProject(
+      harness.dependencies,
+      request(),
+    )).rejects.toMatchObject({ code: 'workspace_ref_not_ready' });
+
+    expect(harness.readRelationships()).toEqual([]);
+    expect(harness.readRefs()).toEqual(refs);
+    expect(harness.ensureRelationship).not.toHaveBeenCalled();
+    expect(harness.commitRelationshipTarget).not.toHaveBeenCalled();
   });
 
   it('refuses a selection that is not present in current settings', async () => {
