@@ -46,7 +46,7 @@ export function withSimulatorLogs(resource: SimulatorDeviceResourceV1, adapter: 
             // JSON can expand each UTF-8 byte into six bytes (escaped controls).
             // Reserve the envelope, using the admitted frame ceiling as the only budget.
             const ceiling = input.getFramePayloadByteLimit?.({ v: 1, streamId: input.streamId, sequence, timestampMs: empty.emittedAtMs,
-                payloadKind: 'metadata', payloadEncoding: 'binary_base64', payloadBase64: '', payloadSizeBytes: 0 }) ?? input.caps.maxFrameBytes;
+                payloadKind: 'metadata', payloadEncoding: 'binary_base64', payloadBase64: '', payloadSizeBytes: 0 }) ?? input.caps.maxFrameBytes ?? Infinity;
             const maxLineBytes = Math.floor((ceiling - Buffer.byteLength(JSON.stringify(empty))) / 6);
             if (maxLineBytes <= 0) { reportFailure('max_frame_bytes'); return; }
             logs = startSimulatorLogs({ platform: resource.platform, deviceId: resource.deviceId,
