@@ -1,10 +1,26 @@
 import { completeActionResult, settleActionOutput } from '@happier-dev/protocol/actions/actionExecutor';
-import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionIdSchema, isSessionSpawnNewActionIdV1, isWorkspaceSyncRelationshipWriteActionId, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { getActionSpec, hasDeclaredActionDaemonIngress } from '@happier-dev/protocol/actions/actionSpecs';
+import { isDeploymentAccountMachineTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+
+export const readUiAdmittedActionId = (actionId: string, input: unknown) =>
+    actionId === 'approval.request.create' && input !== null && typeof input === 'object'
+        && 'actionId' in input && typeof input.actionId === 'string' ? input.actionId : actionId;
+
+/** The originating UI delegates these declarations to the receiving Machine. */
+export function isUiMachineOwnedAdmissionAction(actionId: string, input: unknown): boolean {
+    if (isWorkspaceSyncRelationshipWriteActionId(actionId)) return true;
+    const parsed = ActionIdSchema.safeParse(readUiAdmittedActionId(actionId, input));
+    if (!parsed.success) return false;
+    if (isSessionSpawnNewActionIdV1(parsed.data)) return true;
+    if (isDeploymentAccountMachineTransportActionIdV1(parsed.data)) return true;
+    const spec = getActionSpec(parsed.data);
+    return spec.executionPlacement === 'machine' && hasDeclaredActionDaemonIngress(spec, 'ui');
+}
 
 /** Runs the Machine-owned Action; a review digest means the person confirmed the review the Machine carried back. */
 type ExecuteAction = (input: unknown, reviewDigest?: string) => Promise<unknown>;

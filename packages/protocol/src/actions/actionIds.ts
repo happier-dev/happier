@@ -54,6 +54,7 @@ export function isPluginRetainedInputActionIdV1(actionId: string): boolean {
 }
 
 export const MACHINE_ADD_LOCAL_CANCEL_ACTION_ID_V1 = 'machines.add.local.cancel' as const;
+export const MACHINE_LIST_ACTION_ID_V1 = 'machines.list' as const;
 export const SESSION_SPAWN_NEW_ACTION_ID_V1 = 'session.spawn_new' as const;
 /** A verified new-Session invocation is accepted input before the Session exists. */
 export function isSessionSpawnNewActionIdV1(actionId: string): actionId is typeof SESSION_SPAWN_NEW_ACTION_ID_V1 {
@@ -465,7 +466,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'projects.services.pin',
     'prompts.invocations.list',
     'prompts.invocation.resolve',
-    'machines.list',
+    MACHINE_LIST_ACTION_ID_V1,
   'machines.presence.read',
     'servers.list',
     'review.engines.list',

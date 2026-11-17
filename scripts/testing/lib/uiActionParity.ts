@@ -5,124 +5,6 @@ import { join, relative, posix, resolve as resolvePath } from 'node:path';
 
 export type UiParitySource = Readonly<{ filePath: string; content: string }>;
 
-/** Composition closure: a factory's published executor ports must reach its consumer.
- * This checks forwarding, not input admission or the handler's effects. */
-export function collectActionDependencyForwardingParity(files: readonly UiParitySource[]) {
-  const modules = new Map(files.map(file => [file.filePath,
-    ts.createSourceFile(file.filePath, file.content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)]));
-  const findings: { filePath: string; operation: string; factory: string }[] = [];
-  for (const [filePath, source] of modules) {
-    const imports = new Map<string, { path: string; name: string }>();
-    for (const node of source.statements) {
-      if (!ts.isImportDeclaration(node) || !ts.isStringLiteral(node.moduleSpecifier)) continue;
-      const bindings = node.importClause?.namedBindings;
-      if (!bindings || !ts.isNamedImports(bindings)) continue;
-      const path = posix.normalize(posix.join(posix.dirname(filePath), node.moduleSpecifier.text));
-      const target = [path, `${path}.ts`, path.replace(/\.js$/, '.ts')].find(path => modules.has(path));
-      if (target) for (const binding of bindings.elements) imports.set(binding.name.text,
-        { path: target, name: binding.propertyName?.text ?? binding.name.text });
-    }
-    function visit(node: ts.Node): void {
-      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer
-        && ts.isCallExpression(node.initializer) && ts.isIdentifier(node.initializer.expression)) {
-        const imported = imports.get(node.initializer.expression.text);
-        const producer = imported && modules.get(imported.path);
-        const declaration = producer?.statements.find(statement => ts.isFunctionDeclaration(statement)
-          && statement.name?.text === imported?.name);
-        if (producer && declaration && ts.isFunctionDeclaration(declaration) && declaration.type) {
-          const keys = new Set<string>();
-          function ports(type: ts.TypeNode): void {
-            if (ts.isTypeReferenceNode(type) && ts.isIdentifier(type.typeName)) {
-              if (type.typeName.text === 'Pick' && type.typeArguments?.[0]?.getText(producer) === 'ActionExecutorDeps') {
-                const keyType = type.typeArguments[1];
-                for (const key of keyType && ts.isUnionTypeNode(keyType) ? keyType.types : keyType ? [keyType] : []) {
-                  if (ts.isLiteralTypeNode(key) && ts.isStringLiteral(key.literal)) keys.add(key.literal.text);
-                }
-              } else {
-                const alias = producer?.statements.find(statement => ts.isTypeAliasDeclaration(statement)
-                  && statement.name.text === type.typeName.getText(producer));
-                if (alias && ts.isTypeAliasDeclaration(alias)) ports(alias.type);
-              }
-            }
-          }
-          ports(declaration.type);
-          const receiver = node.name.text;
-          function executorType(type: ts.TypeNode | undefined, seen = new Set<string>()): boolean {
-            if (!type) return false;
-            if (ts.isIntersectionTypeNode(type)) return type.types.some(member => executorType(member, seen));
-            if (!ts.isTypeReferenceNode(type) || !ts.isIdentifier(type.typeName)) return false;
-            const name = type.typeName.text;
-            if (name === 'ActionExecutorDeps') return true;
-            if (['Readonly', 'Partial', 'Required', 'Pick', 'Omit'].includes(name)) return executorType(type.typeArguments?.[0], seen);
-            if (seen.has(name)) return false;
-            seen.add(name);
-            const alias = source.statements.find(statement => ts.isTypeAliasDeclaration(statement) && statement.name.text === name);
-            return !!alias && ts.isTypeAliasDeclaration(alias) && executorType(alias.type, seen);
-          }
-          function executorObject(candidate: ts.ObjectLiteralExpression): boolean {
-            let expression: ts.Expression = candidate;
-            while (ts.isAsExpression(expression.parent) || ts.isSatisfiesExpression(expression.parent)
-              || ts.isParenthesizedExpression(expression.parent)) {
-              const parent = expression.parent;
-              if (!ts.isParenthesizedExpression(parent) && executorType(parent.type)) return true;
-              expression = parent;
-            }
-            const parent = expression.parent;
-            if (ts.isVariableDeclaration(parent)) return executorType(parent.type);
-            if (ts.isCallExpression(parent) && parent.arguments[0] === expression
-              && ts.isIdentifier(parent.expression) && parent.expression.text === 'createActionExecutor') return true;
-            if (ts.isReturnStatement(parent)) {
-              let owner: ts.Node = parent;
-              while (owner.parent && !ts.isFunctionLike(owner)) owner = owner.parent;
-              return ts.isFunctionLike(owner) && executorType(owner.type);
-            }
-            return false;
-          }
-          function consume(candidate: ts.Node): void {
-            if (ts.isObjectLiteralExpression(candidate) && executorObject(candidate)) {
-              for (const field of candidate.properties) {
-                if (ts.isSpreadAssignment(field) && ts.isIdentifier(unwrap(field.expression))
-                  && unwrap(field.expression).getText(source) === receiver) keys.clear();
-                if (!ts.isPropertyAssignment(field) || !ts.isIdentifier(field.name) && !ts.isStringLiteral(field.name)) continue;
-                const key = field.name.text;
-                function forwards(value: ts.Node, seen = new Set<ts.Node>()): boolean {
-                  if (seen.has(value)) return false;
-                  seen.add(value);
-                  if (ts.isIdentifier(value) && value.text !== receiver) {
-                    const initializer = values.get(value.text);
-                    if (initializer && forwards(initializer, seen)) return true;
-                  }
-                  return ts.isPropertyAccessExpression(value) && ts.isIdentifier(value.expression)
-                    && value.expression.text === receiver && value.name.text === key
-                    || ts.forEachChild(value, child => forwards(child, seen)) === true;
-                }
-                if (forwards(field.initializer)) keys.delete(key);
-              }
-            }
-            ts.forEachChild(candidate, consume);
-          }
-          // Only the enclosing function owns this binding; unrelated functions cannot forward it.
-          let scope: ts.Node = node;
-          while (scope.parent && !ts.isFunctionLike(scope)) scope = scope.parent;
-          const values = new Map<string, ts.Expression>();
-          function bindings(candidate: ts.Node): void {
-            if (candidate !== scope && ts.isFunctionLike(candidate)) return;
-            if (ts.isVariableDeclaration(candidate) && ts.isIdentifier(candidate.name) && candidate.initializer) {
-              values.set(candidate.name.text, candidate.initializer);
-            }
-            ts.forEachChild(candidate, bindings);
-          }
-          bindings(scope);
-          consume(scope);
-          for (const key of keys) findings.push({ filePath, operation: key, factory: imported!.name });
-        }
-      }
-      ts.forEachChild(node, visit);
-    }
-    visit(source);
-  }
-  return findings;
-}
 type Surfaces = Readonly<{ ui?: boolean; agent?: boolean; mcp?: boolean; cli?: boolean }>;
 type Spec = Readonly<{ id: string; surfaces: Surfaces; cli?: Readonly<{ commands?: readonly unknown[] }> }>;
 type Setting = Readonly<{ anchor: string; surfaces?: Surfaces; storage?: Readonly<{
@@ -165,23 +47,11 @@ export function readUiActionParitySources(root: string): UiParitySource[] {
   return output;
 }
 
-/** Source inventory, not a second catalog. Unknown/dynamic operations remain findings. */
-export function collectUiActionParity(files: readonly UiParitySource[], specs: readonly Spec[],
-  declarations: readonly Setting[], discovery: Discovery = {}) {
-  const catalog = new Map(specs.map(spec => [spec.id, spec]));
-  const actions: (Site & { actionId: string })[] = [];
-  const settings: (Site & { key: string; scope: string })[] = [];
-  const findings: UiParityFinding[] = [];
-  const exclusions: (Site & { reason: string })[] = [];
-  function exclude(operation: string, site: Site): boolean {
-    const exclusion = SOURCE_PARITY_EXCLUSIONS.find(entry => entry.filePath === site.filePath && entry.operation === operation);
-    if (!exclusion) return false;
-    exclusions.push({ ...site, reason: exclusion.reason });
-    return true;
-  }
+/** Shared finite first-party source index; no app/framework TypeChecker graph. */
+export function createParitySourceIndex(files: readonly UiParitySource[], sourceRoot?: string) {
   const contents = new Map(files.map(file => [file.filePath, file.content]));
   // Resolve first-party source operands without loading the framework type graph.
-  const root = discovery.sourceRoot ?? resolvePath('/__ui_action_parity__');
+  const root = sourceRoot ?? resolvePath('/__ui_action_parity__');
   const relativePath = (path: string) => relative(root, resolvePath(root, path)).replaceAll('\\', '/');
   const options: ts.CompilerOptions = { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext,
     moduleResolution: ts.ModuleResolutionKind.Bundler, jsx: ts.JsxEmit.Preserve,
@@ -191,8 +61,8 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
   const host = ts.createCompilerHost(options, true);
   const readExternal = host.readFile;
   const externalExists = host.fileExists;
-  const mayReadExternal = (path: string) => !!discovery.sourceRoot
-    && (relativePath(path).startsWith('packages/') || relativePath(path).startsWith('apps/ui/sources/'));
+  const mayReadExternal = (path: string) => !!sourceRoot
+    && (relativePath(path).startsWith('packages/') || relativePath(path).startsWith('apps/ui/sources/') || relativePath(path).startsWith('apps/cli/src/'));
   host.getCurrentDirectory = () => root;
   host.fileExists = path => contents.has(relativePath(path)) || mayReadExternal(path) && externalExists(path);
   host.readFile = path => contents.get(relativePath(path)) ?? (mayReadExternal(path) ? readExternal(path) : undefined);
@@ -204,12 +74,15 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
   const directoryExists = new Map<string, boolean>();
   host.directoryExists = path => {
     if (!directoryExists.has(path)) directoryExists.set(path, directories.has(relativePath(path))
-      || !!discovery.sourceRoot && ts.sys.directoryExists(path));
+      || !!sourceRoot && ts.sys.directoryExists(path));
     return directoryExists.get(path)!;
   };
-  const resolutionCache = ts.createModuleResolutionCache(root, path => path, options);
+  const cliOptions = { ...options, paths: { ...options.paths, '@/*': ['apps/cli/src/*'] } };
+  const resolutionCaches = [options, cliOptions].map(configuration =>
+    ts.createModuleResolutionCache(root, path => path, configuration));
   const modules = new Map<string, { source: ts.SourceFile; values: Map<string, ts.Expression>;
-    types: Map<string, ts.TypeNode>; imports: Map<string, { path: string; name: string }>; exports: string[];
+    types: Map<string, ts.TypeNode>; imports: Map<string, { path: string; name: string; typeOnly?: boolean }>; exports: string[];
+    declarations: Map<string, ts.Declaration>;
     actionArguments: Map<string, number> }>();
   function module(path: string) {
     path = relativePath(path);
@@ -217,12 +90,14 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
     if (cached) return cached;
     const content = host.readFile(resolvePath(root, path));
     if (content === undefined) return undefined;
-    const source = ts.createSourceFile(path, content, ts.ScriptTarget.Latest, true);
+    const source = ts.createSourceFile(resolvePath(root, path), content, ts.ScriptTarget.Latest, true);
     const result = { source, values: new Map<string, ts.Expression>(),
-      types: new Map<string, ts.TypeNode>(), imports: new Map<string, { path: string; name: string }>(), exports: [] as string[],
+      types: new Map<string, ts.TypeNode>(), imports: new Map<string, { path: string; name: string; typeOnly?: boolean }>(), exports: [] as string[],
+      declarations: new Map<string, ts.Declaration>(),
       actionArguments: new Map<string, number>() };
     modules.set(path, result);
     for (const statement of source.statements) {
+      if (ts.isFunctionDeclaration(statement) && statement.name) result.declarations.set(statement.name.text, statement);
       if (ts.isFunctionDeclaration(statement) && statement.name && /^(execute|invoke|dispatch|call.*Action)/.test(statement.name.text)) {
         // Resource adapters put the Action after their scope/input. Follow the
         // authored family type, including a generic constrained to that family.
@@ -233,7 +108,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
           return !!type && ts.isTypeLiteralNode(type)
             && type.members.some(member => ts.isPropertySignature(member) && member.name.getText() === 'actionId' && actionType(member.type)
               && member.type && ts.isTypeReferenceNode(member.type)
-              && symbol(path, member.type.typeName.getText(), 'types')?.getSourceFile().fileName.startsWith('packages/protocol/src/actions/'))
+              && symbol(path, member.type.typeName.getText(), 'types')?.getSourceFile().fileName.replaceAll('\\', '/').includes('/packages/protocol/src/actions/'))
             && type.members.some(member => ts.isPropertySignature(member) && member.name.getText() === 'input');
         };
         const index = statement.parameters.findIndex(parameter => {
@@ -244,22 +119,23 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
         if (index >= 0) result.actionArguments.set(statement.name.text, index);
       }
       if (ts.isVariableStatement(statement)) for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name)) result.declarations.set(declaration.name.text, declaration);
         if (ts.isIdentifier(declaration.name) && declaration.initializer) result.values.set(declaration.name.text, declaration.initializer);
         if (ts.isIdentifier(declaration.name) && declaration.type) result.types.set(declaration.name.text, declaration.type);
       }
       if (ts.isTypeAliasDeclaration(statement)) result.types.set(statement.name.text, statement.type);
       if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
         const specifier = statement.moduleSpecifier.text;
-        const targetPath = ts.resolveModuleName(specifier, resolvePath(root, path), options, host, resolutionCache).resolvedModule?.resolvedFileName;
-        const target = targetPath && relativePath(targetPath);
+        const target = modulePath(specifier, path);
         const bindings = statement.importClause?.namedBindings;
+        if (target && bindings && ts.isNamespaceImport(bindings)) result.imports.set(bindings.name.text, { path: target, name: '*', typeOnly: statement.importClause?.isTypeOnly });
         if (target && bindings && ts.isNamedImports(bindings)) for (const binding of bindings.elements) {
-          result.imports.set(binding.name.text, { path: target, name: binding.propertyName?.text ?? binding.name.text });
+          result.imports.set(binding.name.text, { path: target, name: binding.propertyName?.text ?? binding.name.text,
+            typeOnly: statement.importClause?.isTypeOnly || binding.isTypeOnly });
         }
       }
       if (ts.isExportDeclaration(statement) && statement.moduleSpecifier && ts.isStringLiteral(statement.moduleSpecifier)) {
-        const targetPath = ts.resolveModuleName(statement.moduleSpecifier.text, resolvePath(root, path), options, host, resolutionCache).resolvedModule?.resolvedFileName;
-        const target = targetPath && relativePath(targetPath);
+        const target = modulePath(statement.moduleSpecifier.text, path);
         if (target && !statement.exportClause) result.exports.push(target);
         if (target && statement.exportClause && ts.isNamedExports(statement.exportClause)) for (const binding of statement.exportClause.elements) {
           result.imports.set(binding.name.text, { path: target, name: binding.propertyName?.text ?? binding.name.text });
@@ -298,6 +174,45 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
     }
     return undefined;
   }
+  function declaration(path: string, name: string, seen = new Set<string>()): ts.Declaration | undefined {
+    const key = `${path}:${name}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const owner = module(path);
+    const local = owner?.declarations.get(name);
+    if (local) return local;
+    const imported = owner?.imports.get(name);
+    if (imported && !imported.typeOnly) return declaration(imported.path, imported.name, seen);
+    for (const path of owner?.exports ?? []) {
+      const found = declaration(path, name, seen);
+      if (found) return found;
+    }
+  }
+  function modulePath(specifier: string, path: string): string | undefined {
+    path = relativePath(path);
+    const cli = path.startsWith('apps/cli/');
+    const target = ts.resolveModuleName(specifier, resolvePath(root, path), cli ? cliOptions : options, host,
+      resolutionCaches[cli ? 1 : 0]).resolvedModule?.resolvedFileName;
+    return target && relativePath(target);
+  }
+  return { module, modules, symbol, actionArgument, relativePath, declaration, modulePath };
+}
+
+/** Source inventory, not a second catalog. Unknown/dynamic operations remain findings. */
+export function collectUiActionParity(files: readonly UiParitySource[], specs: readonly Spec[],
+  declarations: readonly Setting[], discovery: Discovery = {}) {
+  const catalog = new Map(specs.map(spec => [spec.id, spec]));
+  const actions: (Site & { actionId: string })[] = [];
+  const settings: (Site & { key: string; scope: string })[] = [];
+  const findings: UiParityFinding[] = [];
+  const exclusions: (Site & { reason: string })[] = [];
+  function exclude(operation: string, site: Site): boolean {
+    const exclusion = SOURCE_PARITY_EXCLUSIONS.find(entry => entry.filePath === site.filePath && entry.operation === operation);
+    if (!exclusion) return false;
+    exclusions.push({ ...site, reason: exclusion.reason });
+    return true;
+  }
+  const { module, modules, symbol, actionArgument, relativePath } = createParitySourceIndex(files, discovery.sourceRoot);
   function property(node: ts.Expression, key: string): ts.Expression | undefined {
     node = resolve(node);
     if (!ts.isObjectLiteralExpression(node)) return undefined;
@@ -783,7 +698,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       if (local?.parameter) return false;
       const value = symbol(node.getSourceFile().fileName, node.text, 'values');
       const declaration = value?.parent;
-      return !!value && value.getSourceFile().fileName.startsWith('packages/protocol/src/rpc/')
+      return !!value && relativePath(value.getSourceFile().fileName).startsWith('packages/protocol/src/rpc/')
         && !!declaration && ts.isVariableDeclaration(declaration) && ts.isIdentifier(declaration.name)
         && /^(RPC_METHODS|SESSION_RPC_METHODS)$/.test(declaration.name.text);
     }
@@ -1110,7 +1025,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       const definition = annotation && typeDefinition(annotation);
       // A whole-catalog transport parameter does not assert a concrete UI
       // capability. Its literal/family callers are still walked independently.
-      if (binding?.parameter && definition?.getSourceFile().fileName === 'packages/protocol/src/actions/actionIds.ts'
+      if (binding?.parameter && definition && relativePath(definition.getSourceFile().fileName) === 'packages/protocol/src/actions/actionIds.ts'
         && ts.isIndexedAccessTypeNode(definition) && ts.isTypeQueryNode(definition.objectType)
         && definition.objectType.exprName.getText() === 'ACTION_IDS' && definition.indexType.kind === ts.SyntaxKind.NumberKeyword) {
         exclusions.push({ ...location(node), reason: 'canonical ActionId forwarding parameter; concrete callers remain walked' });

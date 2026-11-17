@@ -17,7 +17,8 @@ import { LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION } from '@happier-dev/proto
 import { resolveSessionApprovalProfileReferenceV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import { createUiActionAutomationPortV1 } from './actionAutomations';
 import { resolveApprovalReplayRoute } from './approvalReplayRoute';
-import { confirmOwnUiRefusal, executeMachineActionAtDaemon } from './executeMachineActionAtDaemon';
+import { confirmOwnUiRefusal, executeMachineActionAtDaemon, isUiMachineOwnedAdmissionAction as isMachineOwnedAdmissionAction,
+  readUiAdmittedActionId as readAdmittedActionId } from './executeMachineActionAtDaemon';
 import { createUiPreparedSessionBirthV1 } from './preparedSessionBirth';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED, isAccountModeDowngradeUnverifiedError, readRpcRequestDisposition } from '@happier-dev/sync-client';
@@ -993,9 +994,6 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       authority: args.context.authority, signal: args.context.signal });
     return result.ok ? result.result : result;
   });
-  const readAdmittedActionId = (actionId: string, input: unknown) =>
-    actionId === 'approval.request.create' && input !== null && typeof input === 'object'
-      && 'actionId' in input && typeof input.actionId === 'string' ? input.actionId : actionId;
   // Public selections are forwarded unchanged to the sole receiving admission owner.
   // Prepared private birth continuations keep their existing host-owned path.
   const forwardSessionSpawnNew = async (input: SessionSpawnNewActionInputV2, context: ActionExecutorContext) => {
@@ -1103,15 +1101,6 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         ? 'launchError' in result ? result.launchError?.code ?? result.code : result.code : undefined,
     });
     return result;
-  };
-  const isMachineOwnedAdmissionAction = (actionId: string, input: unknown) => {
-    if (isWorkspaceSyncRelationshipWriteActionId(actionId)) return true;
-    const parsed = ActionIdSchema.safeParse(readAdmittedActionId(actionId, input));
-    if (!parsed.success) return false;
-    if (isSessionSpawnNewActionIdV1(parsed.data)) return true;
-    if (isDeploymentAccountMachineTransportActionIdV1(parsed.data)) return true;
-    const spec = getActionSpec(parsed.data);
-    return spec.executionPlacement === 'machine' && spec.originalExecution?.daemonIngressSurfaces?.includes('ui') === true;
   };
   const executeMachineOwnedAction = async (args: Readonly<{
     actionId: string; input: unknown; context: ActionExecutorContext; confirmInFlow?: boolean; reviewDigest?: string;

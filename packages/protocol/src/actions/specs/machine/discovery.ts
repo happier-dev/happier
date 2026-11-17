@@ -4,6 +4,7 @@ import { z } from '../../../zodRuntimePolicy.js';
 import { StrictJsonValueSchema } from '../../../json/strictJsonValue.js';
 import type { PreNormalizedActionSpec } from '../definition.js';
 import { MachinePresenceReadInputV1Schema, MachinePresenceReadResultV1Schema } from '../../../machines/machineAccessV1.js';
+import { MACHINE_LIST_ACTION_ID_V1 } from '../../actionIds.js';
 
 
 export const MachinesListInputSchema = lazyZodSchema(() => z.strictObject({
@@ -27,7 +28,7 @@ function createMachineDiscoveryActionSpecs() {
       { path: 'machineId', title: 'Machine ID', widget: 'text', required: true }] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'machines.list', executionPlacement: 'account', approval: {result: 'required'},
+    id: MACHINE_LIST_ACTION_ID_V1, executionPlacement: 'account', approval: {result: 'required'},
     title: 'List machines',
     sideEffectClass: 'read',
     description: 'List accessible machines on the qualified Home, including shared role, resource mode and current readiness. Offline and pending machines remain visible.',

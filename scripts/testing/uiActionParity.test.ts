@@ -1,18 +1,68 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readCurrentUiActionParity } from './validateUiActionParity.ts';
+import { readCurrentActionDispatchParity, readCurrentUiActionParity } from './validateUiActionParity.ts';
 import { listActionSpecsForCatalogSurface } from '../../packages/protocol/src/actions/actionCatalog.ts';
+import { ACTION_ID_FAMILIES_V1, MACHINE_LIST_ACTION_ID_V1, isWorkflowRunActionIdV1 } from '../../packages/protocol/src/actions/actionIds.ts';
+import { listActionSpecs } from '../../packages/protocol/src/actions/actionSpecs.ts';
+import { PROJECT_SOURCE_ACTION_SPECS_V1 } from '../../packages/protocol/src/actions/specs/projectSources.ts';
+import { PROJECT_CONTEXT_ACTION_SPECS } from '../../packages/protocol/src/actions/specs/projects.ts';
+import { PROJECT_READINESS_ACTION_SPECS_V1 } from '../../packages/protocol/src/actions/specs/projectReadiness.ts';
+import { MACHINE_PRESET_HTTP_ACTION_IDS_V1 } from '../../packages/protocol/src/machines/managed/machinePresetActionIdsV1.ts';
+import { SCM_WORKTREE_REMOVE_ACTION_ID_V1 } from '../../packages/protocol/src/actions/scmActionIdsV1.ts';
+import { MACHINE_SERVICE_LOGS_READ_ACTION_ID } from '../../packages/protocol/src/local/services/actionIdsV1.ts';
 import { MachineGuardActivityWayBackV1Schema } from '../../packages/protocol/src/machines/guard/activityV1.ts';
 import { buildGuardStopWarningPushDataV1, readGuardStopWarningPushActionV1 } from '../../packages/protocol/src/activity/webhookPayload.ts';
 
-const report = readCurrentUiActionParity();
+let uiReport: ReturnType<typeof readCurrentUiActionParity> | undefined;
+const report = () => uiReport ??= readCurrentUiActionParity();
+
+test('Team and Project Setup producers reach dispatch on every declared surface', context => {
+  // Select the program's producers, rather than copying the historical audit's
+  // reused Action inventory. In particular, project_sources also contains the
+  // separately owned Starter producer, so consume the Source producer itself.
+  const ids = new Set<string>([
+    ...PROJECT_SOURCE_ACTION_SPECS_V1.map(spec => spec.id),
+    ...PROJECT_CONTEXT_ACTION_SPECS.map(spec => spec.id),
+    ...PROJECT_READINESS_ACTION_SPECS_V1.map(spec => spec.id),
+    ...MACHINE_PRESET_HTTP_ACTION_IDS_V1,
+    MACHINE_LIST_ACTION_ID_V1,
+    SCM_WORKTREE_REMOVE_ACTION_ID_V1,
+    MACHINE_SERVICE_LOGS_READ_ACTION_ID,
+    ...ACTION_ID_FAMILIES_V1.project_execution,
+    ...ACTION_ID_FAMILIES_V1.project_definitions,
+    ...ACTION_ID_FAMILIES_V1.project_workers,
+    ...ACTION_ID_FAMILIES_V1.operation_output,
+    ...ACTION_ID_FAMILIES_V1.teams,
+    ...ACTION_ID_FAMILIES_V1.managed_machines,
+    ...ACTION_ID_FAMILIES_V1.machine_agent_sign_in,
+    ...ACTION_ID_FAMILIES_V1.machine_agent_install,
+    ...ACTION_ID_FAMILIES_V1.machine_admin_access,
+    ...ACTION_ID_FAMILIES_V1.machine_connection,
+    ...ACTION_ID_FAMILIES_V1.scm_repository,
+    ...ACTION_ID_FAMILIES_V1.workflows.filter(isWorkflowRunActionIdV1),
+    ...ACTION_ID_FAMILIES_V1.plugin_collection_sharing,
+    ...ACTION_ID_FAMILIES_V1.local_services_inventory,
+    ...ACTION_ID_FAMILIES_V1.local_services_launcher,
+    ...ACTION_ID_FAMILIES_V1.local_services_preview,
+    ...ACTION_ID_FAMILIES_V1.local_services_public_preview,
+    ...ACTION_ID_FAMILIES_V1.local_services_actions,
+  ]);
+  const declared = listActionSpecs().filter(spec => ids.has(spec.id));
+  assert.equal(declared.length, ids.size, 'each producer must publish its specs');
+  // Build one complete graph. Other producers remain visible as advisory
+  // findings rather than becoming exceptions in the dispatch algorithm.
+  const dispatch = readCurrentActionDispatchParity();
+  context.diagnostic(`Action dispatch: ${dispatch.canonicalSpecs} canonical specs, ${dispatch.mappedSpecs} mapped, `
+    + `${ids.size} selected; ${dispatch.unmappedActionIds.length} unknown mappings remain in the full-catalog advisory`);
+  assert.deepEqual(dispatch.findings.filter(finding => ids.has(finding.actionId)), []);
+});
 
 test('Check and Automation enabled switches use the shared trigger Action owner', () => {
   const paths = new Set([
     'apps/ui/sources/components/projects/deployments/ServiceCheckDetail.tsx',
     'apps/ui/sources/components/automations/list/AutomationListGroup.tsx',
   ]);
-  assert.deepEqual(report.findings.filter(site => paths.has(site.filePath)), []);
+  assert.deepEqual(report().findings.filter(site => paths.has(site.filePath)), []);
 });
 
 test('project, machine and workflow explicit links use Action admission', () => {
@@ -25,12 +75,12 @@ test('project, machine and workflow explicit links use Action admission', () => 
     'apps/ui/sources/components/machines/managed/RequesterDisclosure.tsx',
     'apps/ui/sources/components/workflows/run/OperationsOutcomeGroup.tsx',
   ]);
-  assert.deepEqual(report.findings.filter(site => paths.has(site.filePath)), []);
+  assert.deepEqual(report().findings.filter(site => paths.has(site.filePath)), []);
 });
 
 test('deployment receipt links use agent-visible Action admission', () => {
   const receipt = 'apps/ui/sources/components/projects/deployments/DeploymentReceiptDetail.tsx';
-  assert.deepEqual(report.findings.filter(site => site.filePath === receipt), []);
+  assert.deepEqual(report().findings.filter(site => site.filePath === receipt), []);
   for (const surface of ['agent', 'mcp', 'cli'] as const) {
     assert.ok(listActionSpecsForCatalogSurface({ surface }).some(spec => spec.id === 'links.openExternal'));
   }
@@ -40,9 +90,9 @@ test('Bot template entry doors use the shared agent-visible Action opener', () =
   const owns = (path: string) => path.startsWith('apps/ui/sources/components/sessions/bots/templates/')
     || path === 'apps/ui/sources/components/sessions/access/sessionShareSheetAdapter.tsx'
     || path === 'apps/ui/sources/components/sessions/access/SessionAccessEditor.tsx';
-  assert.deepEqual(report.findings.filter(site => owns(site.filePath)), []);
+  assert.deepEqual(report().findings.filter(site => owns(site.filePath)), []);
   for (const actionId of ['prompt_doc.get', 'template.draft', 'template.open']) {
-    assert.ok(report.actions.some(site => site.filePath.endsWith('/openBotTemplate.ts') && site.actionId === actionId), actionId);
+    assert.ok(report().actions.some(site => site.filePath.endsWith('/openBotTemplate.ts') && site.actionId === actionId), actionId);
     for (const surface of ['agent', 'mcp'] as const) {
       assert.ok(listActionSpecsForCatalogSurface({ surface }).some(spec => spec.id === actionId));
     }
@@ -53,8 +103,8 @@ test('Store controls and shared Add effects use agent-visible Action admission',
   const owns = (path: string) => /^apps\/ui\/sources\/components\/(store\/|capabilities\/add\/|settings\/(mcpServers\/add\/|skills\/add\/|agents\/add\/))/.test(path)
     || path === 'apps/ui/sources/components/settings/plugins/PluginSettingsHomeScreen.tsx'
     || path === 'apps/ui/sources/components/settings/plugins/PluginUpdateReviewSettingsEntry.tsx';
-  assert.deepEqual(report.findings.filter(site => owns(site.filePath)), []);
-  const sites = report.actions.filter(site => owns(site.filePath));
+  assert.deepEqual(report().findings.filter(site => owns(site.filePath)), []);
+  const sites = report().actions.filter(site => owns(site.filePath));
   for (const actionId of ['mcp.servers.create', 'mcp.servers.import', 'skills.install', 'skills.create',
     'skills.rules.set', 'agents.acp.backends.installFromRegistry', 'machines.setup.apply', 'settings.set']) {
     assert.ok(sites.some(site => site.actionId === actionId), actionId);
@@ -63,15 +113,15 @@ test('Store controls and shared Add effects use agent-visible Action admission',
 
 // Filesystem/source analysis belongs to the Node tooling harness, not a loaded UI worker.
 test('maps current UI Action invocations, registrations and settings mutations to agent-visible canonical specs', () => {
-  assert.ok(report.actions.length > 0);
-  assert.ok(report.settings.length > 0);
-  assert.deepEqual(report.findings.map(finding => `${finding.filePath}:${finding.line} ${finding.code}: ${finding.operation}`), []);
+  assert.ok(report().actions.length > 0);
+  assert.ok(report().settings.length > 0);
+  assert.deepEqual(report().findings.map(finding => `${finding.filePath}:${finding.line} ${finding.code}: ${finding.operation}`), []);
 });
 
 test('Artifact browser view controls use the declared settings Action ingress', () => {
   const path = 'apps/ui/sources/components/artifacts/ArtifactsBrowserScreen.tsx';
-  assert.deepEqual(report.findings.filter(site => site.filePath === path), []);
-  assert.ok(report.settings.some(site => site.filePath === path && site.key === 'artifactsBrowserViewV1'));
+  assert.deepEqual(report().findings.filter(site => site.filePath === path), []);
+  assert.ok(report().settings.some(site => site.filePath === path && site.key === 'artifactsBrowserViewV1'));
 });
 
 test('machine resources UI intents map to canonical agent and MCP specs (AGW-1)', () => {
@@ -86,8 +136,8 @@ test('machine resources UI intents map to canonical agent and MCP specs (AGW-1)'
       'apps/ui/sources/components/navigation/shell/sidebarFooter/MachinesPopoverAttention.tsx',
       'apps/ui/sources/activity/notifications/guardStopWarningLifecycle.ts',
     ].includes(path);
-  const actions = report.actions.filter(site => owns(site.filePath));
-  const findings = report.findings.filter(site => owns(site.filePath));
+  const actions = report().actions.filter(site => owns(site.filePath));
+  const findings = report().findings.filter(site => owns(site.filePath));
   assert.deepEqual(findings, []);
   for (const surface of ['agent', 'mcp'] as const) {
     const catalog = new Set<string>(listActionSpecsForCatalogSurface({ surface }).map(spec => spec.id));

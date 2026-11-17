@@ -114,10 +114,16 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
     accountPluginActions?: true;
   }>;
 
-export function createCliActionExecutor(
-  params: CliActionExecutorParams,
-): ReturnType<typeof createCliActionExecutorHarness>['executor']
-  & Pick<ReturnType<typeof createCliActionExecutorHarness>, 'observeRecordedApprovalExecution'> {
+type CliActionExecutor = ReturnType<typeof createCliActionExecutorHarness>['executor']
+  & Pick<ReturnType<typeof createCliActionExecutorHarness>, 'observeRecordedApprovalExecution'>;
+
+export function createCliActionExecutor(params: CliActionExecutorParams): CliActionExecutor {
+  return createCliActionHost(params).executor;
+}
+
+/** The final credentialed host reuses the core harness and its native ports. */
+export function createCliActionHost(params: CliActionExecutorParams):
+  Omit<ReturnType<typeof createCliActionExecutorHarness>, 'executor'> & Readonly<{ executor: CliActionExecutor }> {
   const { projectWorkerAction: projectWorkerAccountAction, ...accountServerActionPorts } = params.accountServerActionDeps ?? {};
   const nativeManagedMachineAction = params.managedMachineAction;
   const accountManagedMachineAction = accountServerActionPorts.managedMachineAction;
@@ -569,7 +575,7 @@ export function createCliActionExecutor(
       ?? actionSettingsProvider.getAccountSettings?.()?.sessionAgentSpawnPolicyV1,
     });
   };
-  return {
+  return { ...harness, executor: {
     observeRecordedApprovalExecution: harness.observeRecordedApprovalExecution,
     prepare: async (actionId, input, context) => {
       const denied = filesystemRequesterAuthorityFailure(actionId, context)
@@ -613,5 +619,5 @@ export function createCliActionExecutor(
         actionsSettings: actionSettingsProvider.getActionsSettings(),
       } : undefined,
     }, machineIngress),
-  };
+  } };
 }

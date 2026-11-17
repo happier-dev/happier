@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BUILT_IN_SETTINGS_METADATA_V1 } from '../../../packages/protocol/src/actions/settings/builtInSettingsMetadata.ts';
 import { SCREEN_CAPTURE_DELIVERY_ACTION_SPECS } from '../../../packages/protocol/src/actions/specs/screenCapture.ts';
 import { listActionSpecs } from '../../../packages/protocol/src/actions/actionSpecs.ts';
-import { collectActionDependencyForwardingParity, collectUiActionParity, readUiActionParitySources } from './uiActionParity.ts';
+import { collectActionDispatchParity, readActionDispatchGraph } from './actionDispatchParity.ts';
+import { collectUiActionParity, readUiActionParitySources } from './uiActionParity.ts';
 import './uiActionParity.settings.test.ts';
 
 const specs = [
@@ -14,23 +15,402 @@ const specs = [
   { id: 'settings.set', surfaces: { ui: true, agent: true, mcp: true, cli: true }, cli: { commands: [{ path: ['settings', 'set'] }] } },
 ];
 
-test('Action dependency composition retains every port published by its factory', () => {
-  const owner = 'apps/cli/src/session/actions/createCliActionDeps.ts';
-  const directory = 'apps/cli/src/session/actions/cliActionDeps';
-  const files = [owner, ...readdirSync(directory).filter(name => name.endsWith('.ts') && !name.includes('.test.'))
-    .map(name => `${directory}/${name}`)].map(filePath => ({ filePath, content: readFileSync(filePath, 'utf8') }));
-  assert.deepEqual(collectActionDependencyForwardingParity(files), []);
-  // F4: the handler existed but its port never reached the composed executor.
-  const missing = files.map(file => file.filePath === owner ? { ...file,
-    content: file.content.replace(/projectsSetupSet:\s*projectDeps\.projectsSetupSet,/, ''),
-  } : file);
-  assert.deepEqual(collectActionDependencyForwardingParity(missing).map(row => row.operation), ['projectsSetupSet']);
-  // Preparation reading a port does not make it callable by the executor.
-  const preparationOnly = missing.map(file => file.filePath === owner ? { ...file,
-    content: file.content.replace('const actionDeps: CliActionDeps = {',
-      'void projectDeps.projectsSetupSet; const actionDeps: CliActionDeps = {'),
-  } : file);
-  assert.deepEqual(collectActionDependencyForwardingParity(preparationOnly).map(row => row.operation), ['projectsSetupSet']);
+test('declared surfaces require actual callable composition and receiver registration', () => {
+  const root = mkdtempSync(join(tmpdir(), 'action-dispatch-parity-'));
+  try {
+    const files = [
+      { filePath: 'packages/protocol/src/actions/actionIds.ts', content: `export type ActionId = 'demo.edit' | 'demo.move' | 'demo.unrelated' | 'demo.organization' | 'demo.compose' | 'demo.unmapped' | 'demo.runtime' | 'demo.read';` },
+      { filePath: 'packages/protocol/src/actions/executor/types.ts', content: `export type RuntimeExecute = () => unknown;
+      export type ActionExecutorDeps = {
+        edit?: () => unknown; other?: () => unknown; move?: { run: () => unknown }; clientActionExecute?: () => unknown;
+        runtimeActionExecute?: RuntimeExecute;
+      };` },
+      { filePath: 'packages/protocol/src/actions/executor/dispatch.ts', content: `
+        import type { RuntimeExecute } from './types';
+        export function dispatchRuntime(args: Readonly<{ actionId: 'demo.runtime'; runtimeActionExecute?: RuntimeExecute }>) {
+          const actionId = args.actionId;
+          if (!args.runtimeActionExecute) return { errorCode: 'unsupported_action', error: actionId };
+          return args.runtimeActionExecute();
+        }` },
+      { filePath: 'packages/protocol/src/actions/actionExecutor.ts', content: `
+        import type { ActionExecutorDeps } from './executor/types';
+        import type { ActionId } from './actionIds';
+        import { dispatchRuntime } from './executor/dispatch';
+        function isMove(id: ActionId): id is 'demo.move' { return id === 'demo.move'; }
+        function isOrganization(id: ActionId): id is 'demo.organization' { return id === 'demo.organization'; }
+        type Invocation = { actionId: ActionId; deps: ActionExecutorDeps; executeHostChild: (id: ActionId) => unknown };
+        function childWork(execute: (id: ActionId) => unknown) { return execute('demo.edit'); }
+        function dispatchOrganization(inv: Pick<Invocation, 'actionId' | 'deps'>) {
+          if (!isOrganization(inv.actionId)) return null;
+          if (!inv.deps.edit) return { errorCode: 'unsupported_action', error: inv.actionId };
+          return inv.deps.edit();
+        }
+        function dispatch(inv: Invocation) {
+            const { actionId, deps, executeHostChild } = inv;
+            if (actionId === 'demo.runtime') return dispatchRuntime({ actionId, runtimeActionExecute: deps.runtimeActionExecute });
+            if (actionId === 'demo.read') {
+              const result = deps.edit ? deps.edit() : { coverage: 'partial' };
+              return { ok: true, result };
+            }
+            if (actionId === 'demo.compose') return childWork(childId => executeHostChild(childId));
+            const organization = dispatchOrganization(inv);
+            if (organization) return organization;
+            const moveActionId = isMove(actionId) ? actionId : null;
+            if (moveActionId !== null) {
+              if (!deps.move) return { errorCode: 'unsupported_action', error: actionId };
+              return deps.move.run();
+            }
+            if (actionId === 'demo.edit' || actionId === 'demo.unrelated') {
+              const operation = actionId === 'demo.edit' ? deps.edit : deps.other;
+              if (!operation) return { errorCode: 'unsupported_action', error: actionId };
+              return operation();
+            }
+        }
+        export function createActionExecutor(deps: ActionExecutorDeps) {
+          function executeHostChild(actionId: ActionId) { return dispatch({ actionId, deps, executeHostChild }); }
+          return { execute: executeHostChild };
+        }` },
+      { filePath: 'apps/cli/src/session/actions/createCliActionDeps.ts', content: `
+        import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+        function createPorts() {
+          const native = Object.assign(() => null, { run: () => null });
+          return { move: { run: native.run } };
+        }
+        function wrap(ports: ReturnType<typeof createPorts>) { return { move: ports.move }; }
+        export function createCliActionDeps() {
+          const actionDeps: ActionExecutorDeps = { ...wrap(createPorts()), clientActionExecute: () => null };
+          return actionDeps;
+        }` },
+      { filePath: 'apps/ui/sources/sync/ops/actions/defaultActionExecutor.ts', content: `
+        import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+        import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+        const deps: ActionExecutorDeps = { edit: () => null };
+        export const executor = createActionExecutor({ ...deps });` },
+      { filePath: 'apps/cli/src/session/actions/createCliActionExecutorHarness.ts', content: `
+        import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+        import { createCliActionDeps } from './createCliActionDeps';
+        export function createCliActionExecutorHarness(params, overrides) {
+          const deps = { ...createCliActionDeps(), ...overrides };
+          return createActionExecutor(deps);
+        }` },
+      { filePath: 'apps/cli/src/session/actions/createCliActionExecutor.ts', content: `
+        import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
+        export function createCliActionExecutor(params) {
+          const { omitted, ...accountPorts } = params.accountServerActionDeps;
+          return createCliActionExecutorHarness(params, { ...accountPorts,
+            ...(params.edit ? { edit: params.edit } : {}) });
+        }` },
+      { filePath: 'apps/cli/src/session/actions/createCliActionExecutorFromCredentials.ts', content: `
+        import { createCliActionExecutor } from './createCliActionExecutor';
+        function createAccountPorts() { return { edit: Object.assign(() => null, { prepare: () => null }), omitted: () => null }; }
+        const accountServerActionDeps = createAccountPorts();
+        export function createCliActionExecutorFromCredentials() { return createCliActionExecutor({ accountServerActionDeps }); }` },
+    ];
+    const { requirements, children, hostPorts, uiPorts } = readActionDispatchGraph(root, files);
+    // Exercise the collector's composition contract independently of ingress;
+    // the complete installed roots are exercised below with the same sources.
+    const graph = { requirements, children, hostPorts, uiPorts, daemonPorts: hostPorts };
+    assert.deepEqual(graph.requirements, { 'demo.runtime': ['runtimeActionExecute'], 'demo.read': [], 'demo.organization': ['edit'], 'demo.compose': [],
+      'demo.move': ['move'], 'demo.edit': ['edit'], 'demo.unrelated': ['other'] });
+    assert.deepEqual(graph.children, { 'demo.compose': ['demo.edit'] });
+    const disconnected = readActionDispatchGraph(root, files.map(file => file.filePath.endsWith('/actionExecutor.ts')
+      ? { ...file, content: file.content.replace('const organization = dispatchOrganization(inv);', 'const organization = null;') } : file));
+    assert.equal(disconnected.requirements['demo.organization'], undefined);
+    const guardedOnly = readActionDispatchGraph(root, files.map(file => file.filePath.endsWith('/actionExecutor.ts')
+      ? { ...file, content: file.content.replace('return inv.deps.edit();', "return { errorCode: 'unsupported_action' };") } : file));
+    assert.equal(guardedOnly.requirements['demo.organization'], undefined);
+    assert.deepEqual(graph.hostPorts, ['clientActionExecute', 'edit', 'move']);
+    assert.deepEqual(graph.uiPorts, ['edit']);
+    const omitted = readActionDispatchGraph(root, files.map(file => file.filePath.endsWith('FromCredentials.ts')
+      ? { ...file, content: file.content.replace('edit: Object.assign(() => null, { prepare: () => null }), ', '') } : file));
+    assert.ok(!omitted.hostPorts.includes('edit'));
+    const preparationOnly = readActionDispatchGraph(root, files.map(file => file.filePath.endsWith('/createCliActionExecutor.ts')
+      ? { ...file, content: file.content.replace('const { omitted, ...accountPorts } = params.accountServerActionDeps;',
+        'const { edit, omitted, ...accountPorts } = params.accountServerActionDeps; void edit;') } : file));
+    assert.ok(!preparationOnly.hostPorts.includes('edit'));
+    const catalog = [
+      { id: 'demo.edit', executionPlacement: 'account', surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: true },
+        bindings: { rpcMethod: 'demo.edit', rpcMethodAliases: ['demo.edit.old'] } },
+      { id: 'demo.move', executionPlacement: 'client', surfaces: { ui: true, cli: true, agent: false, mcp: true } },
+    ];
+    const visible = new Set(catalog.map(row => row.id));
+    const discovery = { ui: visible, cli: visible, agent: visible, mcp: visible, voice: visible };
+    const methods = new Set(['demo.edit', 'demo.edit.old']);
+    for (const broken of [omitted, preparationOnly]) {
+      assert.ok(collectActionDispatchParity(broken, catalog, discovery, methods).some(row =>
+        row.actionId === 'demo.edit' && row.surface === 'cli' && row.reason === 'callable_port_missing' && row.operation === 'edit'));
+    }
+    assert.deepEqual(collectActionDispatchParity(graph, catalog, discovery, methods), [
+      ...(['ui', 'mcp', 'cli'] as const).map(surface => ({ actionId: 'demo.move', surface,
+        executor: 'ui', reason: 'callable_port_missing', operation: 'move' })),
+    ]);
+    const complete = { ...graph, uiPorts: [...graph.uiPorts, 'move'] };
+    assert.deepEqual(collectActionDispatchParity(complete, catalog, discovery, methods), []);
+    const roleFiles = [...files.map(file => file.filePath.endsWith('/defaultActionExecutor.ts') ? { ...file, content: file.content + `
+      import { isUiMachineOwnedAdmissionAction, executeMachineActionAtDaemon } from './executeMachineActionAtDaemon';
+      import { executeOriginalAccountMachineAction } from '../../api/externalActionAccountTransport';
+      const executeMachineOwnedAction = () => executeOriginalAccountMachineAction();
+      const executeMachineAction = () => executeMachineActionAtDaemon(executeMachineOwnedAction());
+      const executeAction = (id, input) => isUiMachineOwnedAdmissionAction(id, input) ? executeMachineAction() : executor.execute(id, input);
+      export function createDefaultActionExecutor() { return { execute: executeAction }; }
+    ` } : file.filePath.endsWith('/createCliActionExecutorFromCredentials.ts') ? { ...file,
+      content: file.content.replace('return createCliActionExecutor({ accountServerActionDeps });', `
+        const executionPlacement = resolveActionExecutionPlacementForInput({}, {});
+        if (executionPlacement === 'client') return requestDaemonSignedRootActionExecution();
+        if (hasDeclaredActionDaemonIngress({}, 'cli')) return requestDaemonSignedRootActionExecution();
+        return createCliActionExecutor({ accountServerActionDeps });`) + `
+        import { hasDeclaredActionDaemonIngress } from '@happier-dev/protocol/actions/originalExecution';
+        import { resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
+        import { requestDaemonSignedRootActionExecution } from '@/daemon/controlClient';
+      ` } : file),
+      { filePath: 'packages/protocol/src/actions/originalExecution.ts', content: `
+        export function hasDeclaredActionDaemonIngress(spec, host) { return true; }` },
+      { filePath: 'apps/cli/src/daemon/controlClient.ts', content: `
+        export function requestDaemonSignedRootActionExecution() { return null; }` },
+      { filePath: 'apps/cli/src/mcp/createExternalMcpServer.ts', content: `
+        import { hasDeclaredActionDaemonIngress } from '@happier-dev/protocol/actions/originalExecution';
+        import { resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
+        import { requestDaemonSignedRootActionExecution } from '@/daemon/controlClient';
+        import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
+        import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
+        export function createExternalMcpServer() {
+          const executor = { execute: () => null };
+          const actionToolBridge = createActionToolExecutorBridge({ executor });
+          registerHappierMcpBuiltInTools({}, { deps: { executeActionByToolName: actionToolBridge.executeActionByToolName } });
+          const executionPlacement = resolveActionExecutionPlacementForInput({}, {});
+          if (executionPlacement !== 'client') return requestDaemonSignedRootActionExecution();
+          return () => hasDeclaredActionDaemonIngress({}, 'cli') ? requestDaemonSignedRootActionExecution() : null;
+        }` },
+      { filePath: 'apps/cli/src/mcp/createHappierMcpServer.ts', content: `
+        import { createSessionAccountActionExecutor } from './runtime/createSessionAccountActionExecutor';
+        import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
+        import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
+        export function createHappierMcpServer() {
+          const executor = createSessionAccountActionExecutor();
+          const actionToolBridge = createActionToolExecutorBridge({ executor });
+          const toolDeps = { executeActionByToolName: actionToolBridge.executeActionByToolName };
+          registerHappierMcpBuiltInTools({}, { deps: toolDeps });
+          return executor;
+        }` },
+      { filePath: 'apps/cli/src/agent/tools/happierTools/createActionToolExecutorBridge.ts', content: `
+        export function createActionToolExecutorBridge(params) {
+          return { executeActionByToolName: id => params.executor.execute(id) };
+        }` },
+      { filePath: 'apps/cli/src/agent/tools/happierTools/dispatchBuiltInHappierTool.ts', content: `
+        export function dispatchBuiltInHappierTool(params) { return params.deps.executeActionByToolName(params.toolName); }` },
+      { filePath: 'apps/cli/src/mcp/server/registerHappierMcpBuiltInTools.ts', content: `
+        import { dispatchBuiltInHappierTool } from '@/agent/tools/happierTools/dispatchBuiltInHappierTool';
+        import { createHappierToolInventory } from '@/agent/tools/happierTools/listBuiltInHappierTools';
+        export function registerHappierMcpBuiltInTools(server, params) {
+          const inventory = createHappierToolInventory();
+          for (const { tool } of inventory.registrations) {
+            server.registerTool(tool.name, {}, args => dispatchBuiltInHappierTool({ toolName: args.name, deps: params.deps }));
+          }
+        }` },
+      { filePath: 'apps/cli/src/agent/tools/happierTools/listBuiltInHappierTools.ts', content: `
+        export function createHappierToolInventory() { return { registrations: [] }; }` },
+      { filePath: 'apps/cli/src/cli/commands/actions.ts', content: `
+        import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+        const DEFAULT_DEPS = { createExecutorFn: params => createCliActionExecutorFromCredentials(params) };
+        async function execute(invocation, deps) {
+          const executor = deps.createExecutorFn({});
+          const executeAction = executor.execute;
+          return executeAction(invocation.actionId, {});
+        }
+        export function handleActionsCommand(args) { return execute(args, DEFAULT_DEPS); }` },
+      { filePath: 'apps/cli/src/cli/actions/executeCommand.ts', content: `
+        import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+        const DEFAULT_DEPS = { createExecutorFn: params => createCliActionExecutorFromCredentials(params) };
+        export function runCompiledActionCliCommand(command) {
+          const deps = { ...DEFAULT_DEPS };
+          const executor = deps.createExecutorFn({});
+          return executor.execute(command.actionId, {});
+        }` },
+      { filePath: 'apps/cli/src/mcp/runtime/createSessionAccountActionExecutor.ts', content: `
+        export function createSessionAccountActionExecutor() { return {}; }` },
+      { filePath: 'apps/ui/sources/sync/ops/actions/executeMachineActionAtDaemon.ts', content: `
+        export function isUiMachineOwnedAdmissionAction(id, input) { return true; }
+        export function executeMachineActionAtDaemon(result) { return result; }` },
+      { filePath: 'apps/ui/sources/sync/api/externalActionAccountTransport.ts', content: `
+        export function executeOriginalAccountMachineAction() { return null; }` },
+      { filePath: 'apps/cli/src/daemon/externalActions/execution.ts', content: `
+        import { createCliActionExecutorFromCredentials } from '../../session/actions/createCliActionExecutorFromCredentials';
+        import { createClientActionReverseDispatcher } from '../../session/actions/clientActionReverseDispatch';
+        export function createDaemonExternalActionExecution() {
+          return createCliActionExecutorFromCredentials({ clientActionExecute: createClientActionReverseDispatcher(() => ({})) });
+        }` },
+      { filePath: 'apps/cli/src/session/actions/clientActionReverseDispatch.ts', content: `
+        import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+        import { buildUiActionDispatchRequestV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
+        export function createClientActionReverseDispatcher(getMachineClient) {
+          return async input => {
+            const client = getMachineClient();
+            const method = RPC_METHODS.UI_ACTION_EXECUTE;
+            const request = buildUiActionDispatchRequestV1(input);
+            return client.callConnectedClientRpc(method, request);
+          };
+        }` },
+      { filePath: 'packages/protocol/src/rpc/methods.ts', content: `
+        export const RPC_METHODS = { UI_ACTION_EXECUTE: 'ui.action.execute' };` },
+      { filePath: 'packages/protocol/src/actions/clientDispatchV1.ts', content: `
+        export function buildUiActionDispatchRequestV1(input) { return input; }` },
+      { filePath: 'apps/ui/sources/sync/ops/actions/clientActionReverseDispatch.ts', content: `
+        import { createDefaultActionExecutor } from './defaultActionExecutor';
+        export function createUiClientActionReverseHandler() {
+          const executor = createDefaultActionExecutor();
+          return (id, input) => executor.execute(id, input);
+        }` },
+      { filePath: 'apps/ui/sources/components/appShell/runtime/ClientActionReverseRuntime.tsx', content: `
+        import { createUiClientActionReverseHandler } from '../../../sync/ops/actions/clientActionReverseDispatch';
+        const RPC_METHODS = { UI_ACTION_EXECUTE: 'ui.action.execute' };
+        const apiSocket = { registerMachineScopedRpcHandler(machineId, method, handler) {} };
+        function useMachineClientActionBindings({ methods }) {
+          const next = new Set([...methods]);
+          for (const method of next) {
+            const handler = createUiClientActionReverseHandler();
+            apiSocket.registerMachineScopedRpcHandler('machine', method, handler);
+          }
+        }
+        export function ClientActionReverseRuntime() {
+          const methods = [RPC_METHODS.UI_ACTION_EXECUTE];
+          useMachineClientActionBindings({ methods });
+          return null;
+        }` },
+      { filePath: 'apps/ui/sources/components/appShell/runtime/AuthenticatedAppRuntimeMounts.tsx', content: `
+        import { ClientActionReverseRuntime } from './ClientActionReverseRuntime';
+        export function AuthenticatedAppRuntimeMounts() { return <ClientActionReverseRuntime />; }` },
+      { filePath: 'packages/protocol/src/actions/actionSpecs.ts', content: `
+        export function listVoiceToolActionSpecs() { return []; }
+        export function resolveActionExecutionPlacementForInput() { return 'client'; }` },
+      { filePath: 'apps/ui/sources/voice/tools/voiceActionExecution.ts', content: `
+        export const VOICE_ACTION_EXECUTE_TOOL_NAME = 'action_execute';
+        export function resolveVoiceActionExecution(input) { return input; }` },
+      { filePath: 'apps/ui/sources/voice/tools/executeSpokenAction.ts', content: `
+        export function executeSpokenAction(execute, id, input) { return execute(id, input); }` },
+      { filePath: 'apps/ui/sources/sync/ops/actions/frontDoorRuntimeActionExecutor.ts', content: `
+        export async function createFrontDoorActionExecute() {
+          const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+          return createDefaultActionExecutor().execute;
+        }` },
+      { filePath: 'apps/ui/sources/voice/tools/handlers.ts', content: `
+        import { listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+        import { VOICE_ACTION_EXECUTE_TOOL_NAME, resolveVoiceActionExecution } from './voiceActionExecution';
+        import { executeSpokenAction } from './executeSpokenAction';
+        import { createFrontDoorActionExecute } from '../../sync/ops/actions/frontDoorRuntimeActionExecutor';
+        const VOICE_TOOL_ACTION_ID_BY_TOOL_NAME = new Map(listVoiceToolActionSpecs().map(spec => [spec.id, spec.id]));
+        export function createVoiceToolHandlers() {
+          const handlers = {};
+          const actionExecute = createFrontDoorActionExecute();
+          const execute = (id, input) => executeSpokenAction(actionExecute, id, input);
+          for (const [name, id] of Object.entries(VOICE_TOOL_ACTION_ID_BY_TOOL_NAME)) {
+            handlers[name] = input => execute(id, input);
+          }
+          handlers[VOICE_ACTION_EXECUTE_TOOL_NAME] = input => execute(resolveVoiceActionExecution(input));
+          return Object.freeze(handlers);
+        }` },
+    ];
+    const routed = readActionDispatchGraph(root, roleFiles);
+    assert.equal(routed.uiMachineDispatch, true);
+    assert.equal(routed.hostMachineDispatch, true);
+    assert.equal(routed.clientReverseDispatch, true);
+    assert.equal(routed.voiceDispatch, true);
+    assert.equal(routed.cliDispatch, true);
+    assert.equal(routed.sessionToolDispatch, true);
+    assert.equal(routed.standaloneToolDispatch, true);
+    assert.equal(routed.hostClientDispatch, true);
+    const absentVoice = readActionDispatchGraph(root, roleFiles.filter(file => !file.filePath.endsWith('/voice/tools/handlers.ts')));
+    assert.equal(absentVoice.voiceDispatch, false);
+    assert.ok(collectActionDispatchParity({ ...complete, voiceDispatch: absentVoice.voiceDispatch },
+      catalog, discovery, methods).some(row => row.reason === 'voice_forwarding_unverified'));
+    const unavailableClient = readActionDispatchGraph(root, roleFiles.map(file => file.filePath.endsWith('/daemon/externalActions/execution.ts')
+      ? { ...file, content: file.content.replace('clientActionExecute: createClientActionReverseDispatcher(() => ({}))',
+        'clientActionExecute: () => ({ errorCode: "client_action_unavailable" })') } : file));
+    assert.equal(unavailableClient.hostClientDispatch, false);
+    const disconnectedCli = readActionDispatchGraph(root, roleFiles.map(file => file.filePath.endsWith('/cli/actions/executeCommand.ts')
+      ? { ...file, content: file.content.replace('return executor.execute(command.actionId, {});', 'return null;') } : file));
+    assert.equal(disconnectedCli.cliDispatch, false);
+    const disconnectedTools = readActionDispatchGraph(root, roleFiles.map(file => file.filePath.endsWith('/mcp/createHappierMcpServer.ts')
+      ? { ...file, content: file.content.replace('registerHappierMcpBuiltInTools({}, { deps: toolDeps });', 'void actionToolBridge;') } : file));
+    assert.equal(disconnectedTools.sessionToolDispatch, false);
+    assert.equal(disconnectedTools.standaloneToolDispatch, true);
+    const disconnectedStandalone = readActionDispatchGraph(root, roleFiles.map(file => file.filePath.endsWith('/mcp/createExternalMcpServer.ts')
+      ? { ...file, content: file.content.replace('registerHappierMcpBuiltInTools({}, { deps: { executeActionByToolName: actionToolBridge.executeActionByToolName } });', 'void actionToolBridge;') } : file));
+    assert.equal(disconnectedStandalone.standaloneToolDispatch, false);
+    assert.equal(disconnectedStandalone.sessionToolDispatch, true);
+    assert.ok(collectActionDispatchParity({ ...complete, cliDispatch: disconnectedCli.cliDispatch,
+      sessionToolDispatch: disconnectedTools.sessionToolDispatch, standaloneToolDispatch: disconnectedStandalone.standaloneToolDispatch },
+      catalog, discovery, methods).some(row => row.reason === 'cli_forwarding_unverified'));
+    const disconnectedBridge = readActionDispatchGraph(root, roleFiles.map(file => file.filePath.endsWith('/createActionToolExecutorBridge.ts')
+      ? { ...file, content: file.content.replace('params.executor.execute(id)', 'null') } : file));
+    assert.equal(disconnectedBridge.sessionToolDispatch, false);
+    assert.equal(disconnectedBridge.standaloneToolDispatch, false);
+    const disconnectedVoice = readActionDispatchGraph(root, roleFiles.map(file => file.filePath.endsWith('/voice/tools/handlers.ts')
+      ? { ...file, content: file.content.replace('handlers[name] = input => execute(id, input);', 'void id;') } : file));
+    assert.equal(disconnectedVoice.voiceDispatch, false);
+    const disconnectedVoiceExecutor = readActionDispatchGraph(root, roleFiles.map(file => file.filePath.endsWith('/voice/tools/handlers.ts')
+      ? { ...file, content: file.content.replace('executeSpokenAction(actionExecute, id, input)', 'executeSpokenAction(() => null, id, input)') } : file));
+    assert.equal(disconnectedVoiceExecutor.voiceDispatch, false);
+    const disconnectedSpoken = readActionDispatchGraph(root, roleFiles.map(file => file.filePath.endsWith('/executeSpokenAction.ts')
+      ? { ...file, content: file.content.replace('return execute(id, input);', 'return null;') } : file));
+    assert.equal(disconnectedSpoken.voiceDispatch, false);
+    assert.ok(collectActionDispatchParity({ ...complete, voiceDispatch: disconnectedVoice.voiceDispatch },
+      catalog, discovery, methods).some(row => row.reason === 'voice_forwarding_unverified'));
+    assert.ok(routed.daemonPorts?.includes('edit'));
+    const missingDaemonPort = readActionDispatchGraph(root, roleFiles.map(file => file.filePath.endsWith('FromCredentials.ts')
+      ? { ...file, content: file.content.replace('edit: Object.assign(() => null, { prepare: () => null }), ', '') } : file));
+    assert.ok(collectActionDispatchParity({ ...complete, daemonPorts: missingDaemonPort.daemonPorts },
+      catalog, discovery, methods).some(row => row.surface === 'rpc' && row.reason === 'callable_port_missing' && row.operation === 'edit'));
+    const disconnectedHost = readActionDispatchGraph(root, roleFiles.map(file => file.filePath.endsWith('/createExternalMcpServer.ts')
+      ? { ...file, content: file.content.replaceAll('requestDaemonSignedRootActionExecution()', 'null') } : file));
+    assert.equal(disconnectedHost.hostMachineDispatch, false);
+    const machineActionIds = new Set(['demo.edit']);
+    assert.deepEqual(collectActionDispatchParity({ ...complete, uiPorts: [], daemonPorts: routed.daemonPorts,
+      uiMachineDispatch: routed.uiMachineDispatch }, [catalog[0]], discovery, methods, undefined, machineActionIds), []);
+    assert.ok(collectActionDispatchParity({ ...complete, daemonPorts: routed.daemonPorts,
+      hostMachineDispatch: disconnectedHost.hostMachineDispatch }, [catalog[0]], discovery, methods, undefined,
+      new Set(), machineActionIds).some(row => row.reason === 'machine_forwarding_unverified'));
+    const disconnectedRole = readActionDispatchGraph(root, roleFiles.map(file => file.filePath.endsWith('/defaultActionExecutor.ts')
+      ? { ...file, content: file.content.replace('? executeMachineAction() :', '? executor.execute(id, input) :') } : file));
+    assert.equal(disconnectedRole.uiMachineDispatch, false);
+    assert.ok(collectActionDispatchParity({ ...complete, uiPorts: [], daemonPorts: routed.daemonPorts,
+      uiMachineDispatch: disconnectedRole.uiMachineDispatch }, [catalog[0]], discovery, methods, undefined, machineActionIds)
+      .some(row => row.reason === 'machine_forwarding_unverified'));
+    const unmounted = readActionDispatchGraph(root, roleFiles.map(file => file.filePath.endsWith('/AuthenticatedAppRuntimeMounts.tsx')
+      ? { ...file, content: file.content.replace('<ClientActionReverseRuntime />', 'null') } : file));
+    assert.equal(unmounted.clientReverseDispatch, false);
+    assert.ok(collectActionDispatchParity({ ...complete, clientReverseDispatch: unmounted.clientReverseDispatch },
+      catalog, discovery, methods).some(row => row.reason === 'client_reverse_forwarding_unverified'));
+    const composite = { id: 'demo.compose', executionPlacement: 'account', surfaces: { cli: true, rpc: true },
+      bindings: { rpcMethod: 'demo.compose' } };
+    methods.add('demo.compose');
+    assert.deepEqual(collectActionDispatchParity(complete, [...catalog, composite], {
+      ...discovery, cli: new Set([...visible, composite.id]),
+    }, methods), []);
+    assert.ok(collectActionDispatchParity({ ...complete, requirements: { ...complete.requirements, 'demo.edit': ['absent'] } },
+      [...catalog, composite], { ...discovery, cli: new Set([...visible, composite.id]) }, methods)
+      .some(row => row.actionId === composite.id && row.operation === 'absent'));
+    const missingDaemonChild = collectActionDispatchParity({ ...complete, daemonPorts: missingDaemonPort.daemonPorts,
+      hostMachineDispatch: true }, [...catalog, composite], { ...discovery, cli: new Set([...visible, composite.id]) },
+      methods, undefined, new Set(), new Set([composite.id]));
+    for (const surface of ['cli', 'rpc']) assert.ok(missingDaemonChild.some(row => row.actionId === composite.id
+      && row.surface === surface && row.reason === 'callable_port_missing' && row.operation === 'edit'));
+    const generic = [{ ...catalog[0], bindings: undefined }];
+    methods.add('external.execute');
+    assert.deepEqual(collectActionDispatchParity(complete, generic, discovery, methods), [
+      { actionId: 'demo.edit', surface: 'rpc', reason: 'rpc_binding_missing' },
+    ]);
+    const voiceGap = collectActionDispatchParity({ ...complete, hostPorts: [] }, [catalog[0]], discovery, methods);
+    assert.ok(voiceGap.some(row => row.surface === 'voice' && row.executor === 'host'));
+    assert.deepEqual(collectActionDispatchParity({ ...complete, mcpPorts: [] }, [catalog[0]], discovery, methods), [
+      { actionId: 'demo.edit', surface: 'mcp', executor: 'host', reason: 'callable_port_missing', operation: 'edit' },
+    ]);
+    methods.delete('demo.edit.old');
+    assert.deepEqual(collectActionDispatchParity(complete, catalog, discovery, methods), [
+      { actionId: 'demo.edit', surface: 'rpc', reason: 'rpc_method_missing', operation: 'demo.edit.old' },
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('source discovery excludes test harnesses and composed fixtures while retaining product controls', () => {
