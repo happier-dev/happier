@@ -65,7 +65,8 @@ export function resolvePluginUiFrameworkTranslations(): Readonly<Record<string, 
         // The public `SessionCard`: a Session's name as Happier says it, before and after it is read.
         'happier.plugin-ui.sessionCard.untitled': t('session.untitled'),
         'happier.plugin-ui.sessionCard.reading': t('common.loading'),
-        'happier.plugin-ui.sessionCard.unavailable': t('errors.sessionNotFound'),
+        'happier.plugin-ui.sessionCard.missing': t('errors.sessionNotFound'),
+        'happier.plugin-ui.sessionCard.unavailable': t('common.unavailable'),
         'happier.plugin-ui.modalHeader.close': t('common.close'),
         // A segmented choice whose value follows a default announces it ("Ask, default").
         'happier.plugin-ui.segmented.inherited': t('capabilities.detail.inheritedValue'),
