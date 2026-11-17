@@ -7,7 +7,7 @@ import { glassPresetMaterials } from './glassMaterial';
 import { applyThemeRuntimeSelection, type ThemeRuntimeUnistylesAdapter } from '@/theme/profiles/themeProfileRuntime';
 import { darkTheme, lightTheme } from '@/theme';
 import { resolveGlassSurfaceColor } from './useGlassSurfaceColor';
-import { glassSurfaceTintColor } from './glassSurfacePaint';
+import { glassSurfaceTintColor, glassContentFillPaint } from './glassSurfacePaint';
 
 // Only the web platform boundary is mocked; document resolution and glass paint stay real.
 vi.mock('react-native', async () => {
@@ -16,6 +16,14 @@ vi.mock('react-native', async () => {
 });
 
 describe('live document material boundary', () => {
+    it('derives an inner coat from both real inputs, retaining authored translucent and nested provenance', () => {
+        const base = { color: '#112233', source: { kind: 'token' as const, ref: 'message.user.background' } };
+        const selected = { color: 'rgba(235, 230, 225, 0.1)', source: { kind: 'token' as const, ref: 'surface.selected' } };
+        expect(glassContentFillPaint(base, selected).source).toEqual({ kind: 'derived', from: ['message.user.background', 'surface.selected'] });
+        expect(glassContentFillPaint({ ...base, color: 'rgba(1, 2, 3, 0.1)' }, selected).source).toEqual(base.source);
+        expect(glassContentFillPaint(base, selected, { nested: true }).source)
+            .toEqual({ kind: 'derived', from: ['message.user.background'] });
+    });
     it('resolves live page and surface variables into the same fixed-point coat as concrete colors', () => {
         const pageVariable = '--fix-glass-page';
         const fillVariable = '--fix-glass-fill';

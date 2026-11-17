@@ -71,10 +71,21 @@ export function happierMaterialGradient(gradient: HappierSurfaceGradient | null 
 
 /** An inner control chooses ink over glass, while the same solid surface keeps its exact authored fill. */
 export function happierMaterialInnerBackgroundColor(baseColor: string, translucentColor: string, role: HappierMaterialRole, web: boolean, authoredTranslucent?: boolean): string {
+  return happierMaterialInnerBackgroundPaint(baseColor, translucentColor, role, web, color => color,
+    (inputs, calculate) => calculate(...inputs), authoredTranslucent);
+}
+
+/** Preserve the selected input alongside its paint, including the authored-alpha branch. */
+export function happierMaterialInnerBackgroundPaint<T>(base: T, translucent: T, role: HappierMaterialRole, web: boolean,
+  readColor: (paint: T) => string,
+  derive: (inputs: readonly [T, T], calculate: (base: string, translucent: string) => string) => T,
+  authoredTranslucent?: boolean): T {
+  const baseColor = readColor(base);
   // A host that resolved a theme token can supply its actual alpha instead of the syntax hint.
-  if (!web || baseColor === 'transparent' || (authoredTranslucent ?? /^(?:rgba\(|hsla\(|#[\da-f]{8}$)/iu.test(baseColor))) return baseColor;
+  if (!web || baseColor === 'transparent' || (authoredTranslucent ?? /^(?:rgba\(|hsla\(|#[\da-f]{8}$)/iu.test(baseColor))) return base;
   const prefix = `--happier-glass-${role}-nested-`;
-  return `var(${prefix}inner-background-color, color-mix(in srgb, ${baseColor} var(${prefix}opacity, 100%), ${translucentColor}))`;
+  return derive([base, translucent], (baseColor, translucentColor) =>
+    `var(${prefix}inner-background-color, color-mix(in srgb, ${baseColor} var(${prefix}opacity, 100%), ${translucentColor}))`);
 }
 
 /**
@@ -88,10 +99,18 @@ export function happierMaterialBackgroundColor(
   web: boolean,
   nested = false,
 ): string {
-  if (!web) return baseColor;
+  return happierMaterialBackgroundPaint(baseColor, role, web, nested,
+    (inputs, calculate) => calculate(...inputs));
+}
+
+export function happierMaterialBackgroundPaint<T>(base: T, role: HappierMaterialRole, web: boolean, nested: boolean,
+  derive: (inputs: readonly [T], calculate: (base: string) => string) => T): T {
+  if (!web) return base;
   const prefix = `--happier-glass-${role}-${nested ? 'nested-' : ''}`;
-  const color = `color-mix(in srgb, ${baseColor} var(${prefix}opacity, 100%), transparent)`;
   // RNW admits CSS variable colors but drops bare color-mix(). The unset
   // background variable lets its CSS fallback carry the real opacity paint.
-  return `var(${prefix}background-color, ${color})`;
+  return derive([base], baseColor => {
+    const color = `color-mix(in srgb, ${baseColor} var(${prefix}opacity, 100%), transparent)`;
+    return `var(${prefix}background-color, ${color})`;
+  });
 }

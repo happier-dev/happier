@@ -4,28 +4,15 @@ import { useUnistyles } from 'react-native-unistyles';
 import { parseThemeColor } from '@/theme/parseThemeColor';
 import { happierMaterialBackgroundColor, happierMaterialInnerBackgroundColor } from '@happier-dev/plugin-ui/presentation';
 
-import { resolveGlassBackdropMap, resolveGlassBackdropTone, resolveGlassSurfaceMaterial, type GlassMaterialEnvironment, type GlassMaterialSettings, type GlassSurfaceGroup } from './glassMaterial';
+import { resolveGlassBackdropMap, resolveGlassBackdropTone, resolveGlassSurfaceMaterial, type GlassSurfaceGroup } from './glassMaterial';
 import { useGlassMaterialSettings } from './useGlassMaterialSettings';
 import { useGlassRuntimeEnvironment } from './glassRuntimeEnvironment';
 import { glassSurfaceTintColor, resolveGlassSurfacePlaneMaterial } from './glassSurfacePaint';
 import { resolveGlassCapability } from './resolveGlassCapability';
 import { drawsTintWithoutBlur, getBlurViewComponent, isNativeBlurAvailable } from './blurMaterial';
 import { getGlassViewComponent, useLiquidGlassAvailable } from './liquidGlass';
-
-/** Renderer SDKs need concrete colors rather than CSS material variables. */
-export function resolveGlassSurfaceColor(color: string, group: GlassSurfaceGroup, settings: GlassMaterialSettings, environment: GlassMaterialEnvironment, tintAvailable: boolean, nested = true, translucentColor?: string, plane = nested, coatOpacity?: number): string {
-    if (plane && resolveGlassSurfacePlaneMaterial(settings, group, environment).opacity === 0) return 'transparent';
-    if (!tintAvailable) return color;
-    const { material } = resolveGlassSurfaceMaterial(settings, group, environment);
-    const opacity = material.opacity === 1 ? 1 : nested ? 0 : coatOpacity ?? material.opacity;
-    if (opacity === 1) return color;
-    const parsed = parseThemeColor(color);
-    if (parsed === null) return color;
-    if (translucentColor !== undefined && material.opacity < 1) {
-        return parsed.alpha() < 1 ? color : translucentColor;
-    }
-    return parsed.alpha(parsed.alpha() * opacity).hexa().toLowerCase();
-}
+import { resolveGlassSurfaceColor } from './glassSurfaceColor';
+export { resolveGlassSurfaceColor, resolveGlassSurfacePaint } from './glassSurfaceColor';
 
 export function useGlassSurfaceColor(color: string, group: GlassSurfaceGroup, nested = true, tintAvailable?: boolean, plane = nested): string {
     const { theme } = useUnistyles();

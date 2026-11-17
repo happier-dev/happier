@@ -4,12 +4,8 @@ import { Platform } from 'react-native';
 import { parseThemeColor } from '@/theme/parseThemeColor';
 import { picturePrefersPageInk } from '@happier-dev/brand/atmosphere-haze';
 import { retainIfEqual } from '@/sync/domains/state/structuralSharing';
-
-/**
- * Faint ink (secondary and tertiary alike) on backed glass is primary ink at this share; the web
- * stylesheet tokens use the same mix. Over a picture a quieter meta step falls below 2:1.
- */
-export const GLASS_BACKED_FAINT_INK_SHARE = 0.7;
+import { GLASS_BACKED_FAINT_INK_SHARE } from './glassMaterial';
+export { GLASS_BACKED_FAINT_INK_SHARE } from './glassMaterial';
 
 export type GlassBackedInk = Readonly<{
   themeSecondary: string;

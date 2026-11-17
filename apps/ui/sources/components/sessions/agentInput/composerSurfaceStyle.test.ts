@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { isGlassComposerSurface } from './composerSurfaceStyle';
+import { isGlassComposerSurface, resolveComposerSurfacePaint } from './composerSurfaceStyle';
+import { lightTheme } from '@/theme';
 
 describe('isGlassComposerSurface', () => {
+    it('uses the editable input path while embedded and custom composer paint remain instance-owned', () => {
+        expect(resolveComposerSurfacePaint({ theme: lightTheme, glass: false, embedded: false }))
+            .toEqual({ color: lightTheme.colors.input.background, source: { kind: 'token', ref: 'control.input.background' } });
+        expect(resolveComposerSurfacePaint({ theme: lightTheme, glass: false, embedded: true }).source).toEqual({ kind: 'fixed' });
+        expect(resolveComposerSurfacePaint({ theme: lightTheme, glass: false, embedded: false, customBackground: '#123456' }).source)
+            .toEqual({ kind: 'fixed' });
+        const glassPaint = { color: lightTheme.colors.glass.composerSurface,
+            source: { kind: 'derived' as const, from: ['surface.base'] as const } };
+        expect(resolveComposerSurfacePaint({ theme: lightTheme, glass: true, embedded: false, glassPaint })).toEqual(glassPaint);
+    });
     it('enables the glass surface when glass is selected', () => {
         expect(isGlassComposerSurface({ setting: 'glass' })).toBe(true);
     });

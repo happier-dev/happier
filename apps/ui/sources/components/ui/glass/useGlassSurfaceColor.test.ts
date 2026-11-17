@@ -2,12 +2,25 @@ import { describe, expect, it } from 'vitest';
 import Color from 'color';
 
 import { glassPresetMaterials, resolveGlassBackdropMap } from './glassMaterial';
-import { resolveGlassSurfaceColor } from './useGlassSurfaceColor';
+import { resolveGlassSurfaceColor, resolveGlassSurfacePaint } from './useGlassSurfaceColor';
 
 const liveDesktop = { desktopWindow: true, nativeWindowMaterialLive: true };
 const settings = { glassSurfaceMaterials: glassPresetMaterials('everywhere') };
 
 describe('glass renderer paint', () => {
+    it('keeps solid source, derives alpha from its input and attributes an alternate inner coat to that coat', () => {
+        const fill = { color: '#112233', source: { kind: 'token' as const, ref: 'control.input.background' } };
+        const inner = { color: 'rgba(235, 230, 225, 0.1)', source: { kind: 'token' as const, ref: 'surface.selected' } };
+        const solid = { glassSurfaceMaterials: glassPresetMaterials('solid') };
+        expect(resolveGlassSurfacePaint(fill, 'content', solid, liveDesktop, true)).toEqual(fill);
+        const alpha = resolveGlassSurfacePaint(fill, 'content', settings, liveDesktop, true, false);
+        expect(alpha.color).toBe(resolveGlassSurfaceColor(fill.color, 'content', settings, liveDesktop, true, false));
+        expect(alpha.source).toEqual({ kind: 'derived', from: ['control.input.background'] });
+        expect(resolveGlassSurfacePaint(fill, 'content', settings, liveDesktop, true, true, inner)).toEqual(inner);
+        expect(resolveGlassSurfacePaint(fill, 'content', settings,
+            { ...liveDesktop, atmosphereBehind: 'wallpaper' }, true, false, undefined, true))
+            .toEqual({ color: 'transparent', source: { kind: 'fixed' } });
+    });
     it('carries a feasible saturated coat into independent paint while nested and solid paint keep their decisions', () => {
         const settings = { glassSurfaceMaterials: glassPresetMaterials('auto'), glassTintIntensity: 50 };
         const map = resolveGlassBackdropMap(settings, 'floating', true, {}, { page: 'rgb(20,10,10)', solid: 'rgb(100,20,20)' });

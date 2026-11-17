@@ -1,9 +1,10 @@
 import type { Theme } from '@/theme';
 import Color from 'color';
 import { HAPPIER_SKELETON_INK_ALPHA } from '@happier-dev/plugin-ui/environment';
-import { buildRaisedEdgeColors, deriveRaisedEdgeInk, deriveSurfaceFinishInk } from '../raisedEdge';
+import { buildRaisedEdgeColorsWithPaint, deriveRaisedEdgeInk, resolveSurfaceFinishPaint, type RaisedSurfacePaints } from '../raisedEdge';
 import { createVerticalGradient } from '../verticalGradient';
 import { deriveHoverInk, deriveSelectionFocusInk } from '../selectionInk';
+import { deriveThemePaint, fixedThemePaint, tokenThemePaint, type ThemePaint } from './themePaint';
 
 type ThemeControlGradient = Theme['colors']['button']['primary']['gradient'];
 
@@ -56,18 +57,18 @@ const deriveFeedCardBackground = (theme: Theme, baseTheme: Theme): string => {
     return theme.colors.surface.elevated;
 };
 
-const deriveGlassComposerSurface = (theme: Theme, baseTheme: Theme): string => {
+export const resolveGlassComposerPaint = (theme: Theme, baseTheme: Theme): ThemePaint => {
     const surface = theme.dark ? 'elevated' : 'base';
     return theme.colors.surface[surface] === baseTheme.colors.surface[surface]
-        ? theme.colors.glass.composerSurface
-        : theme.colors.surface[surface];
+        ? fixedThemePaint(theme.colors.glass.composerSurface)
+        : deriveThemePaint([tokenThemePaint(theme, theme.dark ? 'surface.elevated' : 'surface.base')], color => color);
 };
 
 // An edge ink the profile set explicitly is kept as set; otherwise it follows the profile's own text ink.
-const deriveRaisedEdgeInkForProfile = (theme: Theme, baseTheme: Theme): string => (
+export const resolveRaisedEdgeInkPaint = (theme: Theme, baseTheme: Theme): ThemePaint => (
     theme.colors.effect.surfaceHighlight !== baseTheme.colors.effect.surfaceHighlight
-        ? theme.colors.effect.surfaceHighlight
-        : deriveRaisedEdgeInk(theme.colors.text.primary, theme.dark)
+        ? tokenThemePaint(theme, 'effect.surfaceHighlight')
+        : deriveThemePaint([tokenThemePaint(theme, 'text.primary')], ink => deriveRaisedEdgeInk(ink, theme.dark))
 );
 
 // Loading placeholders take the profile's own text ink at the shared strength (`@happier-dev/plugin-ui/environment`
@@ -79,11 +80,31 @@ const deriveSkeletonInk = (theme: Theme, explicitOverrides: ReadonlySet<string>)
         : Color(theme.colors.text.primary).alpha(HAPPIER_SKELETON_INK_ALPHA).rgb().string()
 );
 
-export const deriveThemeColors = (theme: Theme, baseTheme: Theme, explicitOverrides: ReadonlySet<string> = new Set()): Theme => {
-    const raisedEdgeInk = deriveRaisedEdgeInkForProfile(theme, baseTheme);
+export type ResolvedThemePaints = RaisedSurfacePaints & Readonly<{
+    glassComposer: ThemePaint;
+    selectedFocused: ThemePaint;
+    selectedUnfocused: ThemePaint;
+    hover: ThemePaint;
+    edgeHighlight: ThemePaint;
+    edgeFinish: ThemePaint;
+}>;
+
+export const deriveThemeColors = (theme: Theme, baseTheme: Theme, explicitOverrides: ReadonlySet<string> = new Set()): Theme => (
+    deriveThemeColorsWithPaint(theme, baseTheme, explicitOverrides).theme
+);
+
+export function deriveThemeColorsWithPaint(theme: Theme, baseTheme: Theme,
+    explicitOverrides: ReadonlySet<string> = new Set()): Readonly<{ theme: Theme; paint: ResolvedThemePaints }> {
+    const raisedEdgeInk = resolveRaisedEdgeInkPaint(theme, baseTheme);
     const finishInk = explicitOverrides.has('effect.surfaceFinish')
-        ? theme.colors.effect.surfaceFinish
-        : deriveSurfaceFinishInk(theme.colors, theme.dark);
+        ? tokenThemePaint(theme, 'effect.surfaceFinish')
+        : resolveSurfaceFinishPaint(theme.colors, theme.dark);
+    const glassComposer = resolveGlassComposerPaint(theme, baseTheme);
+    const text = tokenThemePaint(theme, 'text.primary');
+    const selectedFocused = deriveThemePaint([text], ink => deriveSelectionFocusInk(ink, theme.dark).focused);
+    const selectedUnfocused = deriveThemePaint([text], ink => deriveSelectionFocusInk(ink, theme.dark).unfocused);
+    const hover = deriveThemePaint([text], ink => deriveHoverInk(ink, theme.dark));
+    const edge = buildRaisedEdgeColorsWithPaint(theme.colors, raisedEdgeInk.color, theme.dark, finishInk.color);
     // Existing profiles authored the shared foreground. Keep that choice exact unless they
     // explicitly set the new text role, even when its value equals the default.
     const statusText = (variant: 'success' | 'warning' | 'attention' | 'danger' | 'info' | 'neutral') => (
@@ -93,13 +114,14 @@ export const deriveThemeColors = (theme: Theme, baseTheme: Theme, explicitOverri
                 ? theme.colors.state[variant].foreground
                 : deriveStatusColor(theme.colors.state[variant].foreground, baseTheme.colors.state[variant].foreground, theme.colors.state[variant].textForeground)
     );
-    return {
+    return { paint: { ...edge.paint, glassComposer, selectedFocused, selectedUnfocused, hover,
+        edgeHighlight: raisedEdgeInk, edgeFinish: finishInk }, theme: {
         ...theme,
         colors: {
             ...theme.colors,
             glass: {
                 ...theme.colors.glass,
-                composerSurface: deriveGlassComposerSurface(theme, baseTheme),
+                composerSurface: glassComposer.color,
             },
             state: {
                 ...theme.colors.state,
@@ -116,18 +138,18 @@ export const deriveThemeColors = (theme: Theme, baseTheme: Theme, explicitOverri
                 ...theme.colors.surface,
                 skeleton: deriveSkeletonInk(theme, explicitOverrides),
                 // The open tab's fills always follow the profile's own text ink.
-                selectedFocused: deriveSelectionFocusInk(theme.colors.text.primary, theme.dark).focused,
-                selectedUnfocused: deriveSelectionFocusInk(theme.colors.text.primary, theme.dark).unfocused,
+                selectedFocused: selectedFocused.color,
+                selectedUnfocused: selectedUnfocused.color,
                 // Hover follows the profile's own text ink too, always a lighter touch than its selection.
-                hover: deriveHoverInk(theme.colors.text.primary, theme.dark),
+                hover: hover.color,
             },
             effect: {
                 ...theme.colors.effect,
-                surfaceHighlight: raisedEdgeInk,
-                surfaceFinish: finishInk,
+                surfaceHighlight: raisedEdgeInk.color,
+                surfaceFinish: finishInk.color,
             },
             // Always re-derived: every border role's raised colour follows the profile's borders and ink.
-            edge: buildRaisedEdgeColors(theme.colors, raisedEdgeInk, theme.dark, finishInk),
+            edge: edge.colors,
             button: {
                 ...theme.colors.button,
                 primary: {
@@ -189,5 +211,5 @@ export const deriveThemeColors = (theme: Theme, baseTheme: Theme, explicitOverri
                 ),
             },
         },
-    };
-};
+    } };
+}

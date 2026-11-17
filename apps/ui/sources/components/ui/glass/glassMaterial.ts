@@ -1,11 +1,13 @@
 import Color from 'color';
 import { parseThemeColor } from '@/theme/parseThemeColor';
-import { GLASS_BACKED_FAINT_INK_SHARE } from './glassBackedInk';
 export { readThemeDocumentColor as readGlassDocumentColor } from '@/theme/parseThemeColor';
 import { DEFAULT_GLASS_TINT_INTENSITY, readGlassMaterials, readGlassPreset, readGlassTintedMaterials, readGlassTintIntensity, resolveGlassTintValues } from '@happier-dev/protocol/actions/settings/glassPreferenceMutations';
 import type { GlassMaterialSettings, GlassSurfaceGroup, GlassSurfaceMaterial } from '@happier-dev/protocol/actions/settings/glassPreferenceMutations';
 export { GLASS_PRESETS, GLASS_SURFACE_GROUPS, GLASS_BLUR_STEPS, GLASS_BLUR_INTENSITY, GLASS_BLUR_RADIUS_PX, glassPresetMaterials, readGlassMaterials, readGlassPreset, readGlassTintedMaterials, readGlassTintIntensity, resolveGlassPresetSettingsDelta, resolveGlassSurfaceSettingsDelta, resolveGlassIntensitySettingsDelta, resolveGlassTintSettingsDelta } from '@happier-dev/protocol/actions/settings/glassPreferenceMutations';
 export type { GlassBlurStep, GlassSurfaceGroup, GlassSurfaceMaterial, GlassSurfaceMaterials, GlassPreset, GlassMaterialChoice, GlassMaterialSettings } from '@happier-dev/protocol/actions/settings/glassPreferenceMutations';
+
+/** Quiet ink strength shared by the material's contrast policy and its painted ink scope. */
+export const GLASS_BACKED_FAINT_INK_SHARE = 0.7;
 
 export type GlassMaterialEnvironment = Readonly<{
     desktopWindow?: boolean;

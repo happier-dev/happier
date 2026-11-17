@@ -211,7 +211,9 @@ export {
 export type { HappierFieldStepperBounds } from './form/fieldValueDraft.js';
 export {
   happierMaterialBackgroundColor,
+  happierMaterialBackgroundPaint,
   happierMaterialInnerBackgroundColor,
+  happierMaterialInnerBackgroundPaint,
   happierMaterialGradient,
   happierSurfaceGradientWebStyle,
   happierSurfaceFinishLift,

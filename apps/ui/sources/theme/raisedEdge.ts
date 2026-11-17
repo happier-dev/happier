@@ -1,4 +1,5 @@
 import Color, { type ColorInstance } from 'color';
+import { deriveThemePaint, fixedThemePaint, tokenThemePaint, type ThemePaint } from './profiles/themePaint';
 
 /**
  * The colours of the raised edge (`@happier-dev/plugin-ui/presentation` → `raisedEdge.ts` owns which
@@ -162,8 +163,9 @@ export function deriveRaisedEdgeInk(textPrimary: string, dark: boolean): string 
     }
 }
 
-function liftSurface(colors: RaisedEdgeThemeColors, alpha: number): string {
-    return compositeRaisedEdgeColor(colors.surface.base, withAlpha(colors.text.primary, alpha));
+function liftSurfacePaint(colors: RaisedEdgeThemeColors, alpha: number): ThemePaint {
+    return deriveThemePaint([tokenThemePaint({ colors }, 'surface.base'), tokenThemePaint({ colors }, 'text.primary')],
+        (base, ink) => compositeRaisedEdgeColor(base, withAlpha(ink, alpha)));
 }
 
 /** How far a dark floating surface stands above a card: one quiet step of lightness in the card's own hue. */
@@ -173,38 +175,44 @@ const FLOATING_STEP_LIGHTNESS_DARK = 2.5;
  * A dark theme's card: its authored raised surface when that is a step of light above the page (0.2's
  * page #191717 → raised #221C1C keeps the theme's warmth); otherwise the page lifted by the theme's ink.
  */
-function darkCardFill(colors: RaisedEdgeThemeColors): string {
+export function resolveDarkCardPaint(colors: RaisedEdgeThemeColors): ThemePaint {
     const elevated = colors.surface.elevated;
     try {
         if (elevated && Color(elevated).alpha() === 1 && Color(elevated).lightness() > Color(colors.surface.base).lightness()) {
-            return Color(elevated).rgb().string();
+            return deriveThemePaint([tokenThemePaint({ colors }, 'surface.elevated')], color => Color(color).rgb().string());
         }
     } catch {
         // An unreadable authored surface falls back to the derived lift.
     }
-    return liftSurface(colors, SURFACE_LAYER_LIFT_ALPHA_DARK.card);
+    return liftSurfacePaint(colors, SURFACE_LAYER_LIFT_ALPHA_DARK.card);
 }
 
 /** A dark floating surface: the card one quiet step lighter, keeping its hue and saturation. */
-function darkFloatingFill(colors: RaisedEdgeThemeColors): string {
+export function resolveDarkFloatingPaint(colors: RaisedEdgeThemeColors): ThemePaint {
     try {
-        const card = Color(darkCardFill(colors));
-        return card.lightness(card.lightness() + FLOATING_STEP_LIGHTNESS_DARK).rgb().round().string();
+        return deriveThemePaint([resolveDarkCardPaint(colors)], color => {
+            const card = Color(color);
+            return card.lightness(card.lightness() + FLOATING_STEP_LIGHTNESS_DARK).rgb().round().string();
+        });
     } catch {
-        return liftSurface(colors, SURFACE_LAYER_LIFT_ALPHA_DARK.floating);
+        return liftSurfacePaint(colors, SURFACE_LAYER_LIFT_ALPHA_DARK.floating);
     }
 }
 
 export function deriveSurfaceFinishInk(colors: RaisedEdgeThemeColors, dark: boolean): string {
+    return resolveSurfaceFinishPaint(colors, dark).color;
+}
+
+export function resolveSurfaceFinishPaint(colors: RaisedEdgeThemeColors, dark: boolean): ThemePaint {
     try {
         // Lift the card's own hue, not neutral text: 80% lightness keeps the default top within
         // about four sRGB levels of Flat. Profiles share this derivation unless they author the ink.
         const ink = dark
-            ? Color(darkCardFill(colors)).hsl().lightness(80).rgb().string()
-            : colors.text.primary;
-        return withAlpha(ink, SOFT_SURFACE_ALPHA[dark ? 'dark' : 'light']);
+            ? deriveThemePaint([resolveDarkCardPaint(colors)], color => Color(color).hsl().lightness(80).rgb().string())
+            : tokenThemePaint({ colors }, 'text.primary');
+        return deriveThemePaint([ink], color => withAlpha(color, SOFT_SURFACE_ALPHA[dark ? 'dark' : 'light']));
     } catch {
-        return 'transparent';
+        return fixedThemePaint('transparent');
     }
 }
 
@@ -257,11 +265,18 @@ function buildSurfaceFinishGradients(colors: RaisedEdgeThemeColors, ink: string,
  * theme's lightest ink (the text on dark, the page on light) at gloss strength.
  */
 export function buildRaisedEdgeColors(colors: RaisedEdgeThemeColors, ink: string, dark: boolean, finishInk = deriveSurfaceFinishInk(colors, dark)): RaisedEdgeColors {
+    return buildRaisedEdgeColorsWithPaint(colors, ink, dark, finishInk).colors;
+}
+
+export type RaisedSurfacePaints = Readonly<{ controlFill: ThemePaint; cardFill: ThemePaint; floatingFill: ThemePaint }>;
+
+export function buildRaisedEdgeColorsWithPaint(colors: RaisedEdgeThemeColors, ink: string, dark: boolean,
+    finishInk = deriveSurfaceFinishInk(colors, dark)): Readonly<{ colors: RaisedEdgeColors; paint: RaisedSurfacePaints }> {
     const raise = (border: string) => compositeRaisedEdgeColor(border, ink);
     let gloss: string;
-    let fill: string;
-    let cardFill: string;
-    let floatingFill: string;
+    let fill: ThemePaint;
+    let cardFill: ThemePaint;
+    let floatingFill: ThemePaint;
     let rimHi = 'transparent';
     let rimMid = 'transparent';
     let sheen = 'transparent';
@@ -271,17 +286,16 @@ export function buildRaisedEdgeColors(colors: RaisedEdgeThemeColors, ink: string
         rimMid = withAlpha(colors.text.primary, rim.mid);
         sheen = withAlpha(colors.text.primary, rim.sheen);
         gloss = withAlpha(dark ? colors.text.primary : colors.surface.base, RAISED_EDGE_GLOSS_ALPHA);
-        const lift = (alpha: number) => liftSurface(colors, alpha);
-        fill = dark ? lift(RAISED_CONTROL_FILL_ALPHA_DARK) : colors.surface.base;
-        cardFill = dark ? darkCardFill(colors) : lift(CARD_FILL_INK_ALPHA_LIGHT);
-        floatingFill = dark ? darkFloatingFill(colors) : colors.surface.base;
+        fill = dark ? liftSurfacePaint(colors, RAISED_CONTROL_FILL_ALPHA_DARK) : tokenThemePaint({ colors }, 'surface.base');
+        cardFill = dark ? resolveDarkCardPaint(colors) : liftSurfacePaint(colors, CARD_FILL_INK_ALPHA_LIGHT);
+        floatingFill = dark ? resolveDarkFloatingPaint(colors) : tokenThemePaint({ colors }, 'surface.base');
     } catch {
         gloss = 'transparent';
-        fill = colors.surface.base;
-        cardFill = colors.surface.base;
-        floatingFill = colors.surface.base;
+        fill = tokenThemePaint({ colors }, 'surface.base');
+        cardFill = tokenThemePaint({ colors }, 'surface.base');
+        floatingFill = tokenThemePaint({ colors }, 'surface.base');
     }
-    return {
+    return { paint: { controlFill: fill, cardFill, floatingFill }, colors: {
         default: raise(colors.border.default),
         surface: compositeRaisedEdgeColor(colors.border.surface, scaleAlpha(ink, CARD_EDGE_SHARE[dark ? 'dark' : 'light'])),
         strong: raise(colors.border.strong),
@@ -289,14 +303,14 @@ export function buildRaisedEdgeColors(colors: RaisedEdgeThemeColors, ink: string
         modal: raise(colors.border.modal),
         danger: raise(colors.state.danger.border),
         gloss,
-        fill,
-        cardFill,
-        floatingFill,
+        fill: fill.color,
+        cardFill: cardFill.color,
+        floatingFill: floatingFill.color,
         rimHi,
         rimMid,
         sheen,
         ...buildSurfaceFinishGradients(colors, finishInk, dark),
-    };
+    } };
 }
 
 /**

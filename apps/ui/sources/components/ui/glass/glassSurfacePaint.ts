@@ -1,23 +1,12 @@
 import { Platform } from 'react-native';
 import Color from 'color';
 import { parseThemeColor } from '@/theme/parseThemeColor';
-import { happierMaterialBackgroundColor, happierMaterialInnerBackgroundColor } from '@happier-dev/plugin-ui/presentation';
+import { happierMaterialBackgroundColor, happierMaterialBackgroundPaint, happierMaterialInnerBackgroundPaint } from '@happier-dev/plugin-ui/presentation';
+import { deriveThemePaint, fixedThemePaint, type ThemePaint } from '@/theme/profiles/themePaint';
 import { createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
-import { GLASS_BLUR_RADIUS_PX, readGlassPreset, resolveGlassBackdropMap, resolveGlassReadingCoatOpacity, resolveGlassBackdropTone, resolveGlassSurfaceMaterial, type GlassFloatingCoat, type GlassMaterialSettings, type GlassMaterialEnvironment, type GlassSurfaceGroup, type GlassSurfaceMaterial } from './glassMaterial';
-
-/** Clear only the page coat. Functional surfaces still resolve their own material and accessibility overrides. */
-export type AtmosphereContentCoat = 'opaque' | 'reading';
-
-export function resolveGlassSurfacePlaneMaterial(settings: GlassMaterialSettings, group: GlassSurfaceGroup, environment: GlassMaterialEnvironment = {}, coat?: AtmosphereContentCoat, dark = false): GlassSurfaceMaterial {
-    if (group === 'content' && coat) {
-        if (coat === 'opaque') return { blur: 'off', opacity: 1 };
-        return { ...resolveGlassSurfaceMaterial(settings, group, environment).material, opacity: resolveGlassReadingCoatOpacity(settings, environment, dark) };
-    }
-    if (group === 'content' && (environment.atmosphereBehind === 'band' || environment.atmosphereBehind === 'wallpaper')) {
-        return { blur: 'off', opacity: 0 };
-    }
-    return resolveGlassSurfaceMaterial(settings, group, environment).material;
-}
+import { GLASS_BLUR_RADIUS_PX, readGlassPreset, resolveGlassBackdropMap, resolveGlassBackdropTone, resolveGlassSurfaceMaterial, type GlassFloatingCoat, type GlassMaterialSettings, type GlassMaterialEnvironment, type GlassSurfaceGroup } from './glassMaterial';
+import { resolveGlassSurfacePlaneMaterial, type AtmosphereContentCoat } from './glassSurfaceColor';
+export { resolveGlassSurfacePlaneMaterial, type AtmosphereContentCoat } from './glassSurfaceColor';
 
 /** Shell filters are inert siblings of the content, never properties of its ancestors. */
 export function glassSurfacePlaneBackdropStyle(settings: GlassMaterialSettings, group: GlassSurfaceGroup, dark: boolean, environment: GlassMaterialEnvironment, coat?: AtmosphereContentCoat) {
@@ -92,9 +81,13 @@ export function glassSurfaceBackgroundColor(color: string, group: GlassSurfaceGr
  * such a card: it clears over glass, so tints never stack, and keeps its own fill when solid.
  */
 export function glassContentFill(color: string, colors: Readonly<{ surface: Readonly<{ selected: string }> }>, options?: Readonly<{ nested?: boolean }>): string {
+    return glassContentFillPaint(fixedThemePaint(color), fixedThemePaint(colors.surface.selected), options).color;
+}
+
+export function glassContentFillPaint(color: ThemePaint, selected: ThemePaint, options?: Readonly<{ nested?: boolean }>): ThemePaint {
     return options?.nested
-        ? glassSurfaceBackgroundColor(color, 'content', true, false)
-        : happierMaterialInnerBackgroundColor(color, colors.surface.selected, 'content', Platform.OS === 'web');
+        ? happierMaterialBackgroundPaint(color, 'content', Platform.OS === 'web', true, deriveThemePaint)
+        : happierMaterialInnerBackgroundPaint(color, selected, 'content', Platform.OS === 'web', paint => paint.color, deriveThemePaint);
 }
 
 /**

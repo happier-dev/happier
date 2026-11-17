@@ -220,7 +220,7 @@ import { Text, TextSelectabilityScope } from '@/components/ui/text/Text';
 import { buildGlassCastShadowStyle } from '@/shadowElevation';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import type { GlassSurfaceGroup } from '@/components/ui/glass/glassMaterial';
-import { isGlassComposerSurface } from './composerSurfaceStyle';
+import { isGlassComposerSurface, resolveComposerSurfacePaint } from './composerSurfaceStyle';
 import { resolveComposerSelectionRestore } from './composerSelectionRestore';
 import {
     AGENT_INPUT_ACTION_CHIP_ICON_ONLY_STYLE,
@@ -1355,7 +1355,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const composerSurfaceStyleSetting = useSetting('composerSurfaceStyle');
     const isGlassComposer = !documentPanel && isGlassComposerSurface({ setting: composerSurfaceStyleSetting });
     const surfaceGroup = props.surfaceGroup ?? 'card';
-    const composerSurfaceColor = isGlassComposer ? theme.colors.glass.composerSurface : theme.colors.input.background;
+    const composerSurfaceColor = resolveComposerSurfacePaint({ theme, glass: isGlassComposer,
+        embedded: embeddedPanel, customBackground: props.panelStyle?.backgroundColor }).color;
     const panelMaterialProps = { surfaceGroup, nested: surfaceGroup === 'card', solidColor: composerSurfaceColor, finishRole: 'composer' as const,
         ...(embeddedPanel ? { noCoat: true } : {}) };
     const keyboardShortcutsV2Enabled = useSetting('keyboardShortcutsV2Enabled') === true;
