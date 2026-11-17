@@ -1,6 +1,6 @@
 import { isPluginError, PluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
-import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecuteResult, ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE,
     PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE,
@@ -21,7 +21,7 @@ import {
 } from './createPluginSurfaceHostApi';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 
-export type PluginSurfaceActionDispatchOutcome =
+export type PluginSurfaceActionDispatchOutcome = Pick<ActionExecuteResult, 'automationNotices'> & (
     | Readonly<{ ok: true; result: PluginUiJsonValueV1 }>
     | Readonly<{
         ok: false;
@@ -38,7 +38,7 @@ export type PluginSurfaceActionDispatchOutcome =
         effectAttempted?: boolean;
         failureCause?: ActionFailureCauseV1;
         actionHandlerInvocation?: 'notStarted';
-    }>;
+    }>);
 
 type Failure = Extract<PluginSurfaceActionDispatchOutcome, Readonly<{ ok: false }>>;
 type FailureMetadata = Omit<Failure, 'ok' | 'code' | 'reason'>;
@@ -58,6 +58,7 @@ export function createPluginSurfaceActionFailure(code: string, reason: string, a
         ...(author?.details === undefined ? {} : { details: author.details }),
         ...(author?.failureCause === undefined ? {} : { failureCause: author.failureCause }),
         ...(author?.actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation: author.actionHandlerInvocation }),
+        ...(author?.automationNotices === undefined ? {} : { automationNotices: author.automationNotices }),
     };
 }
 
@@ -123,14 +124,14 @@ export function actionDeclinedFailure(code: string, author?: FailureMetadata): F
 /** Unknown mutations retain indeterminate effects; declared reads allow manual retry. */
 export function actionOutcomeUnknownFailure(
     code: string,
-    declaration: ActionEffectDeclaration,
+    declaration: ActionEffectDeclaration | boolean,
     input: unknown,
     author?: FailureMetadata,
 ): Failure | null {
     return code === PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE
         ? createPluginSurfaceActionFailure('timeout', 'plugin_ui_action_outcome_unknown',
-            { ...author, layer: 'transport', phase: 'settlement', retryable: pluginActionDeclarationIsReadOnlyForInput(
-                declaration.accountActionDeclaration ?? declaration, input) }) : null;
+            { ...author, layer: 'transport', phase: 'settlement', retryable: typeof declaration === 'boolean' ? declaration
+                : pluginActionDeclarationIsReadOnlyForInput(declaration.accountActionDeclaration ?? declaration, input) }) : null;
 }
 
 export function clientActionFailure(code: string, author?: FailureMetadata): Failure {
@@ -170,7 +171,7 @@ export function clientActionPreparationFailure(error: unknown): Failure {
 /** The invocation owner has already admitted the author's structured failure. */
 export function projectClientActionInvocationFailure(
     result: Exclude<PluginActionInvocationResult, Readonly<{ status: 'executed' }>>,
-    declaration: ActionEffectDeclaration,
+    declaration: ActionEffectDeclaration | boolean,
     input: unknown,
 ): Failure {
     if (result.status === 'invalid') return clientActionFailure(result.code);

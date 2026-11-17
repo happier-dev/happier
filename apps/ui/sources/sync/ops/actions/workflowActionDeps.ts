@@ -9,7 +9,9 @@ import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automation
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { WorkflowActionOutputSchemasV1, WorkflowInvocationGetResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import type { ActionExecutorDeps, WorkflowActionExecute, WorkflowActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
-import { isWorkflowTriggerAgentCallerV1, type WorkflowTriggerActionsDependencies } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
+import { createWorkflowActorConsentPortV1, isWorkflowTriggerAgentCallerV1, type WorkflowTriggerActionsDependencies } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
+import { readActionAutomationExecutionMachineV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
+import type { ActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import type { AutomationTemplateRetainedSessionV1 } from '@happier-dev/protocol/automations/automationTemplateStoredV1';
 import { WorkflowStepExecutionSelectionSchema } from '@happier-dev/protocol/workflows/workflowV1';
 import { ManagedGetOutputV1Schema, managedMachineActionEndpointPathV1, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -144,11 +146,15 @@ export function createUiTriggerSessionResolver(account: LazyActionAccountContext
 }
 
 /** Compose Account content owners and the existing exact-Machine effect relay. */
+export type UiWorkflowAction = WorkflowActionExecute & Readonly<{
+    actionAutomationChecks: ReturnType<typeof createWorkflowActorConsentPortV1> & Pick<ActionAutomationPortV1, 'wait' | 'cancel'>;
+}>;
+
 export function createUiWorkflowAction(params: Readonly<{
     account: LazyActionAccountContext;
     transport?: WorkflowActionTransport;
     listContributedActionDefinitions?: ActionExecutorDeps['listContributedActionDefinitions'];
-}>): WorkflowActionExecute {
+}>): UiWorkflowAction {
     const account = params.account;
     const executeRelay = createUiAccountAction(params);
     // Account authoring stays local. Only shared targets need the existing
@@ -546,7 +552,31 @@ export function createUiWorkflowAction(params: Readonly<{
         }
         return result as Awaited<ReturnType<WorkflowActionExecute>>;
     };
-    return Object.assign(execute, {
+    const actionAutomationChecks: UiWorkflowAction['actionAutomationChecks'] = {
+        ...createWorkflowActorConsentPortV1({ actions: triggers, accountId: account.accountId,
+            resolveProject: async context => {
+                const machineId = readActionAutomationExecutionMachineV1(context);
+                const target = context.externalActionTarget;
+                let project = target?.kind === 'machine' ? target.project : undefined;
+                if (!project) {
+                    const sessionId = target?.kind === 'session' ? target.sessionId
+                        : context.actionCaller?.kind === 'session' ? context.actionCaller.sessionId : context.defaultSessionId;
+                    if (sessionId) project = (await resolveSession(sessionId, context)).project;
+                }
+                if (!machineId || !project || project.machineId !== machineId) targetUnavailable();
+                return project;
+            },
+        }),
+        wait: async args => {
+            if (!executeAccount.waitAutomaticCheck) targetUnavailable();
+            return executeAccount.waitAutomaticCheck(args);
+        },
+        cancel: async args => {
+            if (!executeAccount.cancelAutomaticCheck) targetUnavailable();
+            await executeAccount.cancelAutomaticCheck(args);
+        },
+    };
+    return Object.assign(execute, { actionAutomationChecks,
         prepareTriggerMutation: async (rawArgs: Parameters<NonNullable<WorkflowActionExecute['prepareTriggerMutation']>>[0]) => {
             try { account.assertCurrent(); } catch { return unavailable; }
             if (!areServerProfileIdentifiersEquivalent(rawArgs.context.serverId, account.serverId)

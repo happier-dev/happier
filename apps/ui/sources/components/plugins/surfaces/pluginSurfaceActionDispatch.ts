@@ -10,8 +10,10 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/s
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { evaluateContributionAvailability, resolveInvocationContributionPolicyFacts } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { pluginSourceCustodyV1Equal, type PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
-import { projectActionFailureCauseV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, withActionAutomationNoticesV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionPrepareResult } from '@happier-dev/protocol/actions/executor/types';
+import { createActionAutomationInvocationV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
+import { projectPluginActionApprovalScopeV1 } from '@happier-dev/protocol/plugins/actions/approvalScope';
 import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, readHostAdmittedReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { projectedActionToDefinition } from '@/components/appShell/currentUiContext/contributedActionDefinition';
 import { resolveAccountMessageActionReference } from '@/sync/api/session/sessionMessageActionReference';
@@ -115,6 +117,7 @@ import { getStorage } from '@/sync/domains/state/storageStore';
 import { randomUUID } from '@/platform/randomUUID';
 import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { createUiActionAutomationPortV1 } from '@/sync/ops/actions/actionAutomations';
 import { createUiSessionStatusGet } from '@/sync/ops/actions/sessionStatusAction';
 
 import {
@@ -680,13 +683,16 @@ function nestedClientHostAction(
     expectedAccountId?: string,
 ): DispatchPluginSurfaceActionInput['hostAction'] {
     if (!binding) return undefined;
-    return { ...binding, context: { ...binding.context,
+    const { actionAutomationAdmission: _parentAutomation, prepareAdmittedExecutionOrigin: _parentExecutionOrigin,
+        ...context } = binding.context ?? {};
+    return { ...binding, context: { ...context,
+        actionRequestId: randomUUID(),
         sessionTargetsV1: undefined,
         expectedSessionAddress: undefined,
         // Only host Action children consume the host's review. Contributed
         // calls keep their own Plugin caller and ordinary approval path.
-        hostReviewedChild: hostActionChild ? binding.context?.hostReviewedChild : undefined,
-        ...(expectedAccountId !== undefined && binding.context?.expectedAccountId === undefined
+        hostReviewedChild: hostActionChild ? context.hostReviewedChild : undefined,
+        ...(expectedAccountId !== undefined && context.expectedAccountId === undefined
             ? { expectedAccountId } : {}),
         requestContributedActionCurrentIntent: undefined,
         contributedActionInvocation: undefined,
@@ -736,7 +742,7 @@ function clientActionExecuteAction(
                 typeof action === 'string' && PluginInvocableActionIdSchema.safeParse(action).success,
                 sourceLifetime?.scope.accountId);
             const outcome = await dispatchPluginSurfaceAction({
-                actionRequestId: input.actionRequestId,
+                actionRequestId: hostAction?.context?.actionRequestId ?? randomUUID(),
                 onDaemonActionOperationAdmitted: input.onDaemonActionOperationAdmitted,
                 callerPluginId: selection.action.pluginId,
                 ...(options?.sessionAddress !== undefined && input.hostAction?.context?.sessionTargetsV1
@@ -1309,7 +1315,7 @@ async function prepareClientContributedAction(
         return clientActionFailure('plugin_action_read_observation_unavailable');
     }
     if ((input.requiredReadOnly || input.readObservation)
-        && (!accountDeclaration || !pluginActionDeclarationIsReadOnlyForInput(accountDeclaration, normalizedInput))) {
+        && !preparedInput.isReadOnly) {
         return clientActionFailure('plugin_action_read_only_required');
     }
     if (input.resourceCaller && declaredSessionTarget && isPluginActionInputRecord(normalizedInput)) {
@@ -1408,10 +1414,10 @@ async function prepareContributedActionInvocation(
                 if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
                 const outcome = await dispatchPluginSurfaceAction({ ...input, input: parsed.data, hostAction,
                     expectedContributorOccurrenceId: projectedAction.occurrenceId });
-                if (outcome.ok) return { ok: true, result: outcome.result };
+                if (outcome.ok) return withActionAutomationNoticesV1({ ok: true, result: outcome.result }, outcome.automationNotices);
                 const errorCode = outcome.reason === 'plugin_ui_action_outcome_unknown'
                     ? PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE : outcome.reason;
-                return { ok: false, errorCode, error: errorCode };
+                return withActionAutomationNoticesV1({ ok: false, errorCode, error: errorCode }, outcome.automationNotices);
             },
             signal: input.signal, isCurrent: input.isCurrent, caller: {
             callerPluginId: input.callerPluginId, callerContributionLocalId: input.callerContributionLocalId,
@@ -1437,8 +1443,10 @@ async function prepareContributedActionInvocation(
     const stopped = preflightFailure(input);
     if (stopped) return stopped;
     const result = prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
-    return result.ok ? { ok: true, result: result.result as PluginUiJsonValueV1 }
-        : actionOutcomeUnknownFailure(result.errorCode, projectedAction, normalizedInput) ?? clientActionFailure(result.errorCode);
+    const outcome: PluginSurfaceActionDispatchOutcome = result.ok ? { ok: true, result: result.result as PluginUiJsonValueV1 }
+        : actionOutcomeUnknownFailure(result.errorCode, projectedAction, normalizedInput)
+            ?? projectPluginActionFailure({ ...result, code: result.errorCode, message: result.error });
+    return result.automationNotices ? { ...outcome, automationNotices: result.automationNotices } : outcome;
 }
 
 type PreparedClientContributedAction = Extract<Awaited<ReturnType<typeof prepareClientContributedAction>>, { kind: 'prepared' }>;
@@ -1517,6 +1525,52 @@ async function executeClientContributedAction(
     const invocationSurface = input.invocationSurface ?? 'ui';
     const originSurface = readActionOriginSurface(input);
     if (!originSurface) return clientActionFailure('plugin_action_origin_unavailable');
+    const automationContext: ActionExecutorContext = { ...input.hostAction?.context,
+        surface: invocationSurface, authority: invocationAuthority, serverId: authority.serverId,
+        actionRequestId: input.actionRequestId ?? input.hostAction?.context?.actionRequestId ?? randomUUID() };
+    let automationInvocation = automationContext.actionAutomationAdmission?.actionId === invocation.qualifiedId
+        ? automationContext.actionAutomationAdmission : undefined;
+    input = { ...input, actionRequestId: automationContext.actionRequestId ?? undefined,
+        ...(input.hostAction ? { hostAction: { ...input.hostAction, context: automationContext } } : {}) };
+    try {
+        if (!preparedInput.isReadOnly && !input.readObservation && !automationInvocation) {
+            let port = automationContext.actionAutomationPort;
+            if (!port) {
+                const account = await captureLazyActionAccountContext(authority.serverId, input.signal);
+                try {
+                    port = createUiActionAutomationPortV1(account);
+                    automationContext.serverIdentityId = account.serverIdentityId;
+                    automationContext.runtimeAccountId = account.accountId;
+                } finally { account.dispose(); }
+                automationContext.actionAutomationPort = port;
+            }
+            const projectedSubjects = projectPluginActionApprovalScopeV1({
+                declaration: projectedAction.approvalScope, pluginId: identity.pluginId,
+                subjectKinds: Object.values(input.pluginUiProjection?.subjectKindsById ?? {}),
+                input: preparedInput.input,
+                serverId: automationContext.serverIdentityId ?? automationContext.serverId,
+            });
+            if (!projectedSubjects.ok) return clientActionFailure(projectedSubjects.code === 'invalid_subject_identity'
+                ? 'plugin_action_input_schema_invalid' : 'plugin_action_generation_retired', { effectAttempted: false });
+            const selection = await port.select({ actionId: invocation.qualifiedId,
+                input: preparedInput.input, context: automationContext,
+                ...(environmentAdmission?.scope ? { approvalScope: environmentAdmission.scope } : {}),
+                subjects: projectedSubjects.subjects,
+                signal: input.signal });
+            automationInvocation = createActionAutomationInvocationV1({ actionId: invocation.qualifiedId,
+                context: automationContext, selection, port });
+            automationContext.actionAutomationAdmission = automationInvocation;
+        }
+    } catch (error) {
+        return clientActionPreparationFailure(error);
+    }
+    if (automationInvocation && !automationContext.approvedActionReplay) {
+        const selection = automationInvocation.selection;
+        if (selection.before.length || [...selection.before, ...selection.after]
+            .some(row => row.consent && row.consent.status !== 'current')) {
+            return prepareContributedActionInvocation(input, identity, projectedAction, preparedInput.input, invocationAuthority);
+        }
+    }
     let normalizedInput: unknown = preparedInput.input;
     let confirmedInvocation: Readonly<{ input: unknown; inputDigest: string }> | undefined;
     const requestCurrentIntent: PluginSurfaceActionCurrentIntentPresenter = async request => {
@@ -1692,7 +1746,7 @@ async function executeClientContributedAction(
                         const hostAction = nestedClientHostAction(nestedHostAction, hostActionChild,
                             options.sessionAddress === undefined ? undefined : accountLifetime.scope.accountId);
                         let nestedInput: DispatchPluginSurfaceActionInput = {
-                            actionRequestId: input.actionRequestId,
+                            actionRequestId: hostAction?.context?.actionRequestId ?? randomUUID(),
                             actionAccountLifetime: accountLifetime,
                             callerPluginId: current.action.pluginId, callerSourceCustody: accountOrigin.sourceCustody,
                             ...(options.sessionAddress !== undefined && nestedHostAction?.context?.sessionTargetsV1
@@ -2034,10 +2088,13 @@ async function executeClientContributedAction(
     admittedAccountLifetimeRetirement?.dispose();
     admittedAccountInvocationLifetime?.dispose();
     const result = redactAccountResult ? projectTargetActionFailure(invocationResult, redactAccountResult) : invocationResult;
-    if (result.status === 'executed') {
-        return { ok: true, result: result.value as PluginUiJsonValueV1 };
-    }
-    return projectClientActionInvocationFailure(result, projectedAction, preparedInput.input);
+    const outcome: PluginSurfaceActionDispatchOutcome = result.status === 'executed'
+        ? { ok: true, result: result.value as PluginUiJsonValueV1 }
+        : projectClientActionInvocationFailure(result, preparedInput.isReadOnly, preparedInput.input);
+    if (!automationInvocation || preparedInput.isReadOnly || input.readObservation) return outcome;
+    const settled = await automationInvocation.settle(outcome.ok ? { ok: true, result: outcome.result }
+        : { ok: false, errorCode: outcome.reason, error: outcome.message ?? outcome.reason }, automationContext);
+    return settled.automationNotices ? { ...outcome, automationNotices: settled.automationNotices } : outcome;
 }
 
 type SubmittedSelectedActionInput = Extract<
@@ -2252,10 +2309,12 @@ async function executeHostAction(
                 }
             }
         }
-        return { ok: true, result: projectNativeJsonValueForTransport(result.result) };
+        return { ok: true, result: projectNativeJsonValueForTransport(result.result),
+            ...(result.automationNotices ? { automationNotices: result.automationNotices } : {}) };
     }
-    return projectPluginActionFailure({ ...result, code: result.errorCode, message: result.error,
+    const outcome = projectPluginActionFailure({ ...result, code: result.errorCode, message: result.error,
         details: result.details as PluginUiJsonValueV1 | undefined, requestId: result.requestId ?? input.actionRequestId });
+    return result.automationNotices ? { ...outcome, automationNotices: result.automationNotices } : outcome;
 }
 
 /** Execution and Resource admission stamp exactly the same mounted caller. */

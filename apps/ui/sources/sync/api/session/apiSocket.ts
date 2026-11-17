@@ -5,6 +5,8 @@ import { clearMachineRpcDirectRouteGrants } from '@/sync/domains/machines/peer/m
 import { attachManagedSessionHumanPresenceSocket } from '@/sync/domains/session/humanPresence/attachManagedSessionHumanPresenceSocket';
 import { attachManagedSessionConsumptionSocket } from '@/sync/runtime/attachManagedSessionConsumptionSocket';
 import { notifyExecutionRunActivityReconnect } from '@/sync/runtime/executionRuns/executionRunActivityBus';
+import { applyUiActionAutomationUpdateV1, reconnectUiActionAutomationsV1 } from '@/sync/ops/actions/actionAutomations';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import type { Socket } from 'socket.io-client';
 import {
     callSocketRpc,
@@ -1862,6 +1864,8 @@ class ApiSocket {
                 }
                 statusDemandTransport?.resend();
                 if (this.hasConnectedOnce && this.pendingReconnectNotification) {
+                    if (accountScoped) reconnectUiActionAutomationsV1({ serverId: consumptionServerId,
+                        accountId: parseToken(transportConfig.token) });
                     this.reconnectedListeners.forEach((listener) => this.observeSubscriberResult(listener()));
                 }
                 this.hasConnectedOnce = true;
@@ -2036,7 +2040,16 @@ class ApiSocket {
         }
         socket.onAny((event, data) => {
             if (this.socket !== socket || this.config !== installedConfig || installedConfig?.isCurrent?.() === false) return;
-            if (event === 'update') this.accountEncryptionObservation?.update(data);
+            if (event === 'update') {
+                this.accountEncryptionObservation?.update(data);
+                if (socketRole.clientType === 'user-scoped' && installedConfig) {
+                    let accountId: string | undefined;
+                    try { accountId = parseToken(installedConfig.token); } catch { /* No Account binding. */ }
+                    if (accountId && messageContext.serverId) applyUiActionAutomationUpdateV1({
+                        serverId: messageContext.serverId, accountId, body: readRecord(data).body,
+                    });
+                }
+            }
             if (event === MACHINE_LIVE_STREAM_SOCKET_EVENT) {
                 liveStreamTransport.receive(data);
                 return;

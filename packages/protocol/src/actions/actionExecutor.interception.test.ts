@@ -1,13 +1,13 @@
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createActionExecutor, buildActionExecuteResultFromRecordedApprovalExecution, type ActionExecutorDeps } from './actionExecutor.js';
+import { createActionExecutor, buildActionExecuteResultFromRecordedApprovalExecution, type ActionExecutorDeps, type ActionExecutorContext } from './actionExecutor.js';
 import { getActionSpec } from './actionSpecs.js';
 import * as authority from './decisionAuthority.js';
 import * as credentials from '../auth/apiTokenGrant.js';
 import * as callerContext from './executor/callerContext.js';
 import { createActionAutomationPortV1 } from './executor/actionAutomationAdmission.js';
-import type { ActionSettlementV1 } from './executor/actionSettlement.js';
+import { createActionAutomationInvocationV1, type ActionSettlementV1 } from './executor/actionSettlement.js';
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
   return createActionExecutor({
@@ -47,6 +47,62 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor execution interception', () => {
+  it.each([
+    ['builtin', 'wait'], ['contributed', 'wait'], ['builtin', 'notify'], ['contributed', 'notify'],
+  ] as const)('publishes one settlement after a prepared %s before-%s check resumes', async (kind, mode) => {
+    const actionId = kind === 'builtin' ? 'account.name.set' : 'example.fixture/actions/write';
+    const events: ActionSettlementV1[] = [];
+    let stored: Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0]['request'] | null = null;
+    let effects = 0;
+    const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows: [
+      { automationId: 'review', triggerId: 'before', triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1,
+        ownerAccountId: 'actor', actionIds: [actionId], phase: 'before', mode, ...(mode === 'wait' ? { onFailure: 'refuse' } : {}) },
+      { automationId: 'review', triggerId: 'after', triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1,
+        ownerAccountId: 'actor', actionIds: [actionId], phase: 'after' },
+    ] }), start: async ({ selected }) => ({ runs: selected.map(row => ({ automationId: row.automationId,
+      triggerId: row.triggerId, runId: 'before-run' })), notices: mode === 'notify'
+      ? [{ code: 'action_automation_skipped', reason: 'causeSuppressed', automationId: 'review', triggerId: 'before', workflowId: 'workflow' }]
+      : [] }),
+    settle: async ({ event }) => { events.push(event); } });
+    const actionAutomations = { ...port, wait: async () => ({ state: 'succeeded' as const }) };
+    // Approval storage and the contributed/Home effect hosts are external boundaries.
+    const executor = createActionExecutor({ actionAutomations,
+      approvalsCreate: async ({ request }) => { stored = request; return { artifactId: 'approval' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => { stored = request; return { ok: true }; },
+      isApprovalExecutionOriginCurrent: async () => true,
+      homeDomainAction: async () => { effects++; return { name: 'Accepted', firstName: null, lastName: null, timestamp: 1 }; },
+      invokeContributedAction: async ({ context }) => {
+        effects++;
+        const result = { ok: true as const, result: { applied: true } };
+        return context.actionAutomationAdmission?.settle(result, context) ?? result;
+      },
+    });
+    let context: ActionExecutorContext = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'actor', actionRequestId: 'prepared-request',
+      defaultSessionMachineId: 'machine', bypassApprovals: true };
+    try {
+      if (kind === 'contributed') {
+        // The contributed invocation owner admits the qualified selection before entering action.invoke.
+        const selection = await port.select({ actionId, input: {}, context });
+        context = { ...context, actionAutomationAdmission: createActionAutomationInvocationV1({ actionId,
+          context, selection, port: actionAutomations }) };
+      }
+      const prepared = kind === 'builtin'
+        ? await executor.prepare('account.name.set', { name: 'Accepted' }, context)
+        : await executor.prepare('action.invoke', { action: { pluginId: 'example.fixture', localId: 'write' }, input: {} }, context);
+      expect(prepared.kind, JSON.stringify(prepared)).toBe('ready');
+      if (prepared.kind !== 'ready') throw new Error('Expected a prepared invocation');
+      const result = await prepared.invocation.run();
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+      expect(effects).toBe(1);
+      expect(events).toMatchObject([{ actionId, requestId: 'prepared-request', status: 'succeeded' }]);
+      expect(events).toHaveLength(1);
+      if (mode === 'notify') expect(result.automationNotices).toEqual([{ code: 'action_automation_skipped', reason: 'causeSuppressed',
+        automationId: 'review', triggerId: 'before', workflowId: 'workflow' }]);
+    } finally { port.dispose(); }
+  });
+
   it.each(['after-only', 'known-empty', 'unavailable'] as const)('retains the admitted %s snapshot through an ordinary human approval', async mode => {
     let storedRequest: Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0]['request'] | null = null;
     const events: ActionSettlementV1[] = [];

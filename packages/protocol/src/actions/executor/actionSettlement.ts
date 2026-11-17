@@ -26,7 +26,16 @@ export type ActionSettlementV1 = Readonly<{
 export type ActionAutomationInvocationV1 = Readonly<{
   actionId: string;
   selection: ActionAutomationSelectionV1;
+  /** Updated approval selection, retaining this invocation's publication owner. */
+  continue(args: ActionAutomationContinuationV1): ActionAutomationInvocationV1 | undefined;
   settle(result: ActionExecuteResult, context?: ActionExecutorContext): Promise<ActionExecuteResult>;
+}>;
+
+type ActionAutomationContinuationV1 = Readonly<{
+  actionId: string;
+  context: ActionExecutorContext;
+  selection: ActionAutomationSelectionV1;
+  notices?: readonly ActionAutomationNoticeV1[];
 }>;
 
 /** Execution placement comes from the admitted host, never a subject's resource identity. */
@@ -37,35 +46,43 @@ export function readActionAutomationExecutionMachineV1(context: ActionExecutorCo
     ?? context.defaultSessionMachineId ?? undefined;
 }
 
-export function createActionAutomationInvocationV1(args: Readonly<{
-  actionId: string;
-  context: ActionExecutorContext;
-  selection: ActionAutomationSelectionV1;
+export function createActionAutomationInvocationV1(args: ActionAutomationContinuationV1 & Readonly<{
   port: ActionAutomationPortV1;
-  notices?: readonly ActionAutomationNoticeV1[];
 }>): ActionAutomationInvocationV1 {
   let publication: Promise<readonly ActionAutomationNoticeV1[] | void> | undefined;
-  return Object.freeze({ actionId: args.actionId, selection: args.selection,
-    async settle(result: ActionExecuteResult, context = args.context) {
+  let current: ActionAutomationContinuationV1 = args;
+  const invocation: ActionAutomationInvocationV1 = Object.freeze({
+    actionId: args.actionId,
+    get selection() { return current.selection; },
+    continue(next: ActionAutomationContinuationV1) {
+      if (next.actionId !== args.actionId || next.context.actionRequestId !== args.context.actionRequestId) return undefined;
+      current = next;
+      return invocation;
+    },
+    async settle(result: ActionExecuteResult, context = current.context) {
       const annotated = withActionAutomationNoticesV1(result,
-        [...(args.selection.notices ?? []), ...(args.notices ?? [])]);
-      if (isDeferredApprovalResult(result) || args.selection.after.length === 0) return annotated;
+        [...(current.selection.notices ?? []), ...(current.notices ?? [])]);
+      if (isDeferredApprovalResult(result)) return annotated;
       publication ??= (async () => {
+        // A terminal Skip of every after row also completes this invocation;
+        // an outer prepared reference must never publish its older selection.
+        if (current.selection.after.length === 0) return;
         const requestId = context.actionRequestId;
         if (!requestId) return;
         const originRunId = readActionWorkflowOriginRunIdV1(context);
         const machineId = readActionAutomationExecutionMachineV1(context);
         const event: ActionSettlementV1 = {
-          v: 1, kind: 'action', actionId: args.actionId, requestId, phase: 'after', occurredAt: Date.now(),
+          v: 1, kind: 'action', actionId: current.actionId, requestId, phase: 'after', occurredAt: Date.now(),
           status: result.ok ? 'succeeded' : 'failed', outcome: result.ok ? 'succeeded' : 'failed', ...(!result.ok ? { errorCode: result.errorCode } : {}),
-          subjects: args.selection.subjects,
+          subjects: current.selection.subjects,
           ...(originRunId ? { originRunId } : {}),
           ...(machineId ? { machineId } : {}),
         };
-        try { return await args.port.settle({ selection: args.selection, event, context }); }
+        try { return await args.port.settle({ selection: current.selection, event, context }); }
         catch { /* The effect and its authoritative result survive an observation failure. */ }
       })();
       return withActionAutomationNoticesV1(annotated, await publication);
     },
   });
+  return invocation;
 }

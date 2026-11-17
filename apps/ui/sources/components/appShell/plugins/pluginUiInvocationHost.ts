@@ -13,12 +13,14 @@ import {
     dispatchPluginSurfaceAction,
     type PluginSurfaceContributedActionDescriptorResolver,
     type PluginSurfaceContributedActionTransport,
+    type PluginSurfaceHostActionBinding,
 } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
 import {
 } from '@/components/plugins/surfaces/pluginSurfaceFeedback';
 import type { PluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import type { machinePluginStructuredMessageActionExecute } from '@/sync/ops/machineContributionRegistryProjection';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 export type AppShellPluginUiActionExecute = (
     machineId: string,
@@ -80,6 +82,7 @@ export function createAppShellPluginUiInvocationHost(input: Readonly<{
     serverId?: string | null;
     /** Current raw V2 Action lookup supplied by the projection owner. */
     resolveContributedAction?: PluginSurfaceContributedActionDescriptorResolver;
+    hostAction?: PluginSurfaceHostActionBinding;
     /** Reads the AppShell's incumbent destination binding at Action invocation time. */
     readNavigationBinding?: () => PluginSurfaceDestinationNavigationBinding | null | undefined;
     signal: AbortSignal;
@@ -102,6 +105,11 @@ export function createAppShellPluginUiInvocationHost(input: Readonly<{
                 : { ok: false, code: 'unavailable', reason: 'plugin_surface_open_unavailable' };
         }
         : undefined;
+    const hostAction: PluginSurfaceHostActionBinding = input.hostAction ?? {
+        execute: createFrontDoorActionExecute(),
+        context: { serverId: input.serverId ?? undefined,
+            externalActionTarget: { kind: 'machine', machineId: input.machineId } },
+    };
     const clientAction = Object.freeze({
         ...(clientActionOpenSurface ? { openSurface: clientActionOpenSurface } : {}),
     });
@@ -134,6 +142,7 @@ export function createAppShellPluginUiInvocationHost(input: Readonly<{
                     ? { resolveContributedAction: input.resolveContributedAction }
                     : {}),
                 clientAction,
+                hostAction,
                 invocationSurface: 'voice',
                 contributedAction: {
                     machineId: input.machineId,

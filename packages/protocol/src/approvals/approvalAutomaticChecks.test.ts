@@ -6,6 +6,9 @@ import { projectApprovalRequestForPublicRead } from '../actions/actionApprovalPr
 import { ApprovalRequestPublicReadSchema } from './approvalRequestPublicRead.js';
 import { ApprovalRequestDecideInputSchema } from '../actions/specs/approvals.js';
 import { ActionAutomationConsentV1Schema } from './approvalAutomaticChecks.js';
+import { createActionAutomationInvocationV1 } from '../actions/executor/actionSettlement.js';
+import type { ActionAutomationPortV1, ActionAutomationSelectionV1 } from '../actions/executor/actionAutomationAdmission.js';
+import { answerApprovalAutomaticConsentV1, createApprovalAutomaticChecksV1, restoreApprovalAutomaticContextV1 } from '../actions/executor/automaticApprovalContinuation.js';
 
 const selected = [{ automationId: 'automation', triggerId: 'check', triggerRevision: 3, ownerAccountId: 'actor',
   workflowId: 'workflow', workflowRevision: 7, actionIds: ['session.title.set'], phase: 'before', mode: 'wait', onFailure: 'ask' }];
@@ -22,6 +25,51 @@ const checking = { phase: 'checking', humanApprovalRequired: true, humanDecision
   selected, consents: [], runs: [{ automationId: 'automation', triggerId: 'check', runId: 'run' }], results: [] };
 
 describe('automatic check approval invariants (PROGRAM D2/C3/D14)', () => {
+  it.each(['some', 'all'] as const)('retains one settlement owner when Skip removes %s after checks', async removed => {
+    const after = { automationId: 'shared', triggerId: 'after', triggerRevision: 1, ownerAccountId: 'other',
+      workflowId: 'shared-workflow', workflowRevision: 1, actionIds: ['session.title.set'], phase: 'after' as const };
+    const selection: ActionAutomationSelectionV1 = { status: 'ready', subjects: [], before: [],
+      after: [{ ...after, consent: { status: 'missing' } }, ...(removed === 'some'
+        ? [{ ...after, automationId: 'own', ownerAccountId: 'actor' }] : [])] };
+    const published: string[][] = [];
+    const port: ActionAutomationPortV1 = {
+      select: async () => { throw new Error('An admitted continuation cannot select again'); },
+      settle: async ({ selection: settled }) => { published.push(settled.after.map(row => row.automationId)); },
+    };
+    const context = { surface: 'agent' as const, actionRequestId: 'request' };
+    const original = createActionAutomationInvocationV1({ actionId: 'session.title.set', context, selection, port });
+    const checks = await answerApprovalAutomaticConsentV1({ artifactId: 'approval',
+      checks: createApprovalAutomaticChecksV1(selection, false), answer: { automationId: 'shared', triggerId: 'after', decision: 'skip' },
+      context, executionContext: context });
+    if ('ok' in checks) throw new Error('Expected the selected consent to accept Skip');
+    const restored = restoreApprovalAutomaticContextV1({ automaticChecks: checks,
+      executionOriginV1: ApprovalRequestV2Schema.parse(request).executionOriginV1 }, 'session.title.set',
+    { ...context, actionAutomationAdmission: original }, port);
+    const result = await restored.actionAutomationAdmission!.settle({ ok: true, result: { renamed: true } }, restored);
+    const completed = await original.settle(result, context);
+    expect(published).toEqual(removed === 'some' ? [['own']] : []);
+    expect(completed.automationNotices).toEqual([{ code: 'action_automation_skipped', reason: 'consentSkipped',
+      automationId: 'shared', triggerId: 'after', workflowId: 'shared-workflow' }]);
+  });
+
+  it('keeps a different admitted request isolated from the carried settlement owner', async () => {
+    const selection: ActionAutomationSelectionV1 = { status: 'ready', subjects: [], before: [],
+      after: [{ ...selected[0]!, phase: 'after', mode: undefined, onFailure: undefined }] };
+    const published: string[] = [];
+    const port: ActionAutomationPortV1 = {
+      select: async () => { throw new Error('An admitted continuation cannot select again'); },
+      settle: async ({ event }) => { published.push(event.requestId); },
+    };
+    const context = { surface: 'agent' as const, actionRequestId: 'different-request' };
+    const original = createActionAutomationInvocationV1({ actionId: 'session.title.set', context, selection, port });
+    const restored = restoreApprovalAutomaticContextV1({ automaticChecks: createApprovalAutomaticChecksV1(selection, false),
+      executionOriginV1: ApprovalRequestV2Schema.parse(request).executionOriginV1 }, 'session.title.set',
+    { ...context, actionAutomationAdmission: original }, port);
+    await restored.actionAutomationAdmission!.settle({ ok: true, result: {} }, restored);
+    await original.settle({ ok: true, result: {} }, context);
+    expect(published).toEqual(['request', 'different-request']);
+  });
+
   it('accepts per-trigger Allow and Skip only as explicit approval decisions without narrowed operands', () => {
     const base = { artifactId: 'approval', decision: 'approve' };
     const trigger = { automationId: 'automation', triggerId: 'check' };

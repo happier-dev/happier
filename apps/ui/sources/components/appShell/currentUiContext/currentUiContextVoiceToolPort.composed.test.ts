@@ -12,6 +12,8 @@ import { getStorage } from '@/sync/domains/state/storage';
 import { setRuntimeFetch, resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { parseToken } from '@/utils/auth/parseToken';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
+import { AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1, AutomationActionAdmitRequestV1Schema } from '../../../../../../packages/protocol/src/automations/automationActionOccurrenceV1';
 
 // Exercise the native host's direct Account execution; browser placement has
 // its own composed dispatcher/relay contract coverage.
@@ -1834,6 +1836,46 @@ describe('current UI context Voice tool port', () => {
                 expect(outcome).toEqual({ ok: true, result: { surface } });
             }
             expect(visibleModalCount).toBe(0);
+        } finally { unregister(); await fixture.composition.unload(); }
+    });
+
+    it('retains automation notices through the actual reverse UI host and reuses its Account index', async () => {
+        const fixture = createCurrentUiClientActionFixture({ surfaces: ['cli'], handler: async () => ({ applied: true }) });
+        const actionId = formatQualifiedPluginActionId(CLIENT_ACTION_ID);
+        const notice = { code: 'action_automation_skipped', reason: 'machine_required', automationId: 'automation',
+            triggerId: 'after', workflowId: 'workflow' } as const;
+        homes.answer(clientHomeId, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, { body: { v: 1, rows: [{
+            automationId: notice.automationId, triggerId: notice.triggerId, triggerRevision: 1,
+            workflowId: notice.workflowId, workflowRevision: 1, ownerAccountId: 'current-ui-account',
+            actionIds: [actionId], phase: 'after',
+        }] } });
+        homes.answer(clientHomeId, AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1, { body: { results: [{
+            automationId: notice.automationId, triggerId: notice.triggerId, kind: 'skipped', reason: notice.reason,
+        }] } });
+        await fixture.composition.unload();
+        const unregister = registerCurrentUiContextActionPort((invocationSurface, hostAction) => createCurrentUiContextVoiceToolPort({
+            invocationSurface, hostAction,
+            reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+            readProjection: () => fixture.projection, readNavigationBinding: () => null,
+        }));
+        try {
+            await fixture.composition.reconcile([fixture.activation]);
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            const receive = createCurrentUiContributedActionRpcHandler({
+                machineId: CLIENT_ACTION_HOST_ORIGIN.machineId, serverId: clientHomeId,
+                readProjection: () => fixture.projection, isCurrent: () => true,
+                execute: createDefaultActionExecutor().execute,
+            });
+            for (let invocation = 0; invocation < 2; invocation += 1) {
+                expect(await receive({ v: 1, action: CLIENT_ACTION_ID, input: null, surface: 'cli',
+                    actionRequestId: `reverse-original-${invocation}`,
+                    expectedContributorOccurrenceId: fixture.action.occurrenceId }))
+                    .toMatchObject({ ok: true, result: { applied: true }, automationNotices: [notice] });
+            }
+            expect(homes.requests.filter(request => request.path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1)).toHaveLength(1);
+            const occurrences = homes.requests.filter(request => request.path === AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1)
+                .map(request => AutomationActionAdmitRequestV1Schema.parse(request.input));
+            expect(occurrences.map(value => value.evidence.requestId)).toEqual(['reverse-original-0', 'reverse-original-1']);
         } finally { unregister(); await fixture.composition.unload(); }
     });
 

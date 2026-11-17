@@ -14,6 +14,7 @@ import { isComputerRuntimeActionId } from '@happier-dev/protocol/actions/executo
 import { readLocalServiceControlActionRequest, resolveLocalServiceDomainActionRpcBinding } from '@happier-dev/protocol/actions/specs/localServices';
 import { LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION } from '@happier-dev/protocol/local/services/actionIdsV1';
 import { resolveSessionApprovalProfileReferenceV1 } from '@happier-dev/protocol/actions/approvalProfiles';
+import { createUiActionAutomationPortV1 } from './actionAutomations';
 import { resolveApprovalReplayRoute } from './approvalReplayRoute';
 import { confirmOwnUiRefusal, executeMachineActionAtDaemon } from './executeMachineActionAtDaemon';
 import { createUiPreparedSessionBirthV1 } from './preparedSessionBirth';
@@ -5227,6 +5228,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   const widgetHostDeps = { ...widgetDefinitionDeps, ...createWidgetCatalogActionDepsV1(accountContext, widgetDefinitionDeps) };
   const widgetInputDeps = { ...widgetHostDeps, ...createWidgetInputActionDepsV1(accountContext, widgetHostDeps) };
   const executor = createActionExecutor({ ...widgetInputDeps, ...createWidgetRefreshActionDepsV1(accountContext, widgetInputDeps),
+    ...(accountContext ? { actionAutomations: createUiActionAutomationPortV1(accountContext, ownedWorkflowAction?.actionAutomationChecks) } : {}),
     resolveServerProfileScopeId: resolveServerProfileScopeIdForIdentifier,
     ...(opts?.projectWorkerAction ? { projectWorkerAction: opts.projectWorkerAction }
       : accountContext ? { projectWorkerAction: createUiProjectWorkerActionV1(accountContext) } : {}),

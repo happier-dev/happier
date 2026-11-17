@@ -24,6 +24,7 @@ import {
     subscribeHomeCredentialChange,
 } from '@/sync/runtime/orchestration/homeAccountChange';
 import { refreshWorkflowRunsByIds } from '@/sync/engine/workflows/refreshWorkflowRun';
+import { refreshUiActionAutomationsFromChangesV1 } from '@/sync/ops/actions/actionAutomations';
 import { invalidateMachinePoolProjection } from '@/sync/engine/machines/machinePoolProjection';
 import { invalidateSavedSecretCatalogProjection } from '@/sync/engine/settings/savedSecretCatalogEngine';
 import { readSessionMetadataLayoutVersion } from './engine/sessions/parsePlainSessionPayload';
@@ -13563,6 +13564,11 @@ class Sync {
                         return applied;
                     }
                     const plannedServerId = transportTarget.serverId || sessionRecordChangeScope?.serverId || '';
+                    if (plannedServerId && sessionRecordChangeScope) {
+                        await refreshUiActionAutomationsFromChangesV1({ serverId: plannedServerId,
+                            accountId: sessionRecordChangeScope.accountId, changes: planned.changes });
+                        if (!shouldContinue()) throw new StaleServerGenerationError();
+                    }
                     if (planned.changes.some(change => change.kind === 'account'
                         && change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)) {
                         this.teamLabelEnvelopeSync.invalidateCoalesced({ rerunIfStarted: true });

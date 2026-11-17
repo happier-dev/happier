@@ -2044,7 +2044,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         : {}),
     };
     if (request.v === 2 && request.automaticChecks) executionContext = { ...executionContext,
-      actionAutomationAdmission: automaticContinuationContext(request, executionContext).actionAutomationAdmission };
+      actionAutomationAdmission: automaticContinuationContext(request, { ...executionContext,
+        actionAutomationAdmission: args.ctx.actionAutomationAdmission }).actionAutomationAdmission };
     if (retainsHostOperation && retainedReadinessParent && originalAuthorization) {
       // This exact live child keeps its original requester's private carrier;
       // the approval Artifact cannot recreate the issuer's operand proof.
@@ -3569,9 +3570,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             const started = await deps.actionAutomations?.start?.({ selected: checks.selected.filter(row => row.phase === 'before'),
               actionId, input: admittedInput, context: ctx });
             if (started?.notices.length && ctx.actionAutomationAdmission && deps.actionAutomations) {
-              ctx = { ...ctx, actionAutomationAdmission: createActionAutomationInvocationV1({ actionId,
+              const continuation = { actionId: ctx.actionAutomationAdmission.actionId,
                 context: ctx, selection: ctx.actionAutomationAdmission.selection,
-                port: deps.actionAutomations, notices: started.notices }) };
+                notices: started.notices };
+              ctx = { ...ctx, actionAutomationAdmission: ctx.actionAutomationAdmission.continue(continuation)
+                ?? createActionAutomationInvocationV1({ ...continuation, port: deps.actionAutomations }) };
             }
           } else {
             const prepared = await prepareCurrentApproval();

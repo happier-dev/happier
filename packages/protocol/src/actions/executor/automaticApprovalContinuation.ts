@@ -75,8 +75,10 @@ export function restoreApprovalAutomaticContextV1(request: Readonly<{
     ...(origin.sessionId ? { defaultSessionId: origin.sessionId } : {}),
     ...(origin.machineId ? { defaultSessionMachineId: origin.machineId } : {}),
     ...(origin.target ? { externalActionTarget: origin.target } : {}) } : context;
-  return port ? { ...retained, actionAutomationAdmission: createActionAutomationInvocationV1({
-    actionId, context: retained, selection, port, notices: request.automaticChecks?.notices,
+  const continuation = { actionId, context: retained, selection, notices: request.automaticChecks?.notices };
+  return port ? { ...retained, actionAutomationAdmission: context.actionAutomationAdmission?.continue(continuation)
+    ?? createActionAutomationInvocationV1({
+    ...continuation, port,
   }) } : retained;
 }
 

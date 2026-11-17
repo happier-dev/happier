@@ -7,6 +7,8 @@ import type { AppShellPluginUiProjectionValue, AppShellClientExecutableActivatio
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
+import type { ActionSettlementV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
 
 import { createPluginUiHostApiClient } from '@happier-dev/plugin-sdk/ui/client';
 import { PluginError, isPluginError, definePlugin } from '@happier-dev/plugin-sdk';
@@ -466,6 +468,7 @@ function createClientTargetAction(input: Readonly<{
     confirmationWhen?: PluginProjectedActionV2['confirmationWhen'];
     surfaces?: PluginProjectedActionV2['surfaces'];
     accountPlacement?: boolean;
+    invokingUi?: true;
     sessionTarget?: ActionSessionTargetDeclarationV1;
 }>): PluginProjectedActionV2 {
     const dangerLevel = input.dangerLevel ?? 'safe';
@@ -479,7 +482,7 @@ function createClientTargetAction(input: Readonly<{
         ...(input.approvalScope ? { approvalScope: input.approvalScope } : {}),
         surfaces: input.surfaces ?? ['ui'],
         placementBindings: ['detailsPanel'],
-        execution: input.accountPlacement ? { target: 'account', account: {
+        execution: input.accountPlacement ? { target: 'account', ...(input.invokingUi ? { invokingUi: true } : {}), account: {
             artifactId: CLIENT_ACTION_TARGET.artifactId, exportName: CLIENT_ACTION_TARGET.exportName,
         } } : {
             target: 'client',
@@ -527,6 +530,7 @@ function createClientActionActivation(input: Readonly<{
     occurrenceId?: string;
     artifactGraph?: PluginUiArtifactsManifestEntryV2;
     accountPlacement?: boolean;
+    invokingUi?: true;
     accountActionDeclaration?: import('@happier-dev/protocol/plugins/actions/v2').PluginActionContributionV2;
     omitProjectedAccountDeclaration?: boolean;
     accountSourceCustody?: Extract<PluginSourceCustodyV1, { kind: 'account_release' | 'bundled_first_party' }>;
@@ -550,6 +554,7 @@ function createClientActionActivation(input: Readonly<{
         dangerLevel: input.dangerLevel,
         surfaces: input.surfaces,
         accountPlacement: input.accountPlacement,
+        invokingUi: input.invokingUi,
         sessionTarget: input.sessionTarget,
         confirmationWhen: input.confirmationWhen,
     });
@@ -1858,6 +1863,138 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
             await activation.composition.unload();
             lifetime.retire();
         }
+    });
+
+    it.each([
+        { name: 'conditional', readOnly: { op: 'eq', path: 'mode', value: 'preview' } as const, modes: ['preview', 'save'], expected: 1 },
+        { name: 'read', readOnly: true as const, modes: ['save'], expected: 0 },
+        { name: 'effect', readOnly: false as const, modes: ['save'], expected: 1 },
+        { name: 'recursive', readOnly: false as const, modes: ['outer'], expected: 2 },
+    ])('settles actual UI-hosted $name plugin effects from the admitted prepared input', async ({ name, readOnly, modes, expected }) => {
+        const home = rpcHomes.get('server-client-action')!;
+        const lifetime = clientAccountLifetime(resolveServerProfileScopeIdForIdentifier(home.id));
+        const events: ActionSettlementV1[] = [];
+        let effects = 0;
+        const activation = createClientActionActivation({ pluginId: `acme.ui-effect-${name}`, localId: 'effect',
+            accountPlacement: true, invokingUi: true, accountLifetime: lifetime, readOnly, surfaces: ['ui', 'plugin'],
+            inputSchema: { type: 'object', properties: { mode: { type: 'string' } }, additionalProperties: false },
+            accountHandler: async (input, context) => {
+                effects += 1;
+                if (name === 'recursive' && input && typeof input === 'object' && !Array.isArray(input) && input.mode === 'outer') {
+                    await context.services.actions.execute({ pluginId: `acme.ui-effect-${name}`, localId: 'effect' }, { mode: 'inner' });
+                }
+                return input;
+            } });
+        const identity = { pluginId: activation.action.pluginId, localId: activation.action.id };
+        const actionId = formatQualifiedPluginActionId(identity);
+        const notice = { code: 'action_automation_skipped', reason: 'machine_required', automationId: 'automation',
+            triggerId: 'after', workflowId: 'workflow' } as const;
+        const port = createActionAutomationPortV1({ accountId: lifetime.scope.accountId,
+            seed: async () => ({ v: 1, rows: [{ automationId: 'automation', triggerId: 'after', triggerRevision: 1,
+                workflowId: 'workflow', workflowRevision: 1, ownerAccountId: lifetime.scope.accountId,
+                actionIds: [actionId], phase: 'after' }] }),
+            settle: async request => { events.push(request.event); return [notice]; } });
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({}));
+        try {
+            expect((await activation.composition.reconcile([activation.activation])).map(attempt => attempt.result)).toEqual([{ ok: true }]);
+            for (const mode of modes) {
+                const result = await dispatchPluginSurfaceAction({ action: identity, input: { mode }, clientAction: {},
+                    pluginUiProjection: activation.projection, resolveContributedAction: resolveExactClientAction(activation.action),
+                    actionAccountLifetime: lifetime, hostAction: { execute: executor.execute, context: {
+                        surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId,
+                        serverIdentityId: home.serverIdentityId, runtimeAccountId: lifetime.scope.accountId,
+                        actionRequestId: `${name}-${mode}`, actionAutomationPort: port,
+                    } } });
+                expect(result).toMatchObject({ ok: true, result: { mode } });
+                if (name !== 'read' && mode !== 'preview') expect(result).toMatchObject({ automationNotices: [notice] });
+            }
+            expect(effects).toBe(name === 'recursive' ? 2 : modes.length);
+            expect(events).toHaveLength(expected);
+            expect(events.every(event => event.actionId === actionId && event.status === 'succeeded')).toBe(true);
+            if (name === 'recursive') expect(new Set(events.map(event => event.requestId)).size).toBe(2);
+        } finally { port.dispose(); await activation.composition.unload(); lifetime.retire(); }
+    });
+
+    it.each([
+        { state: 'failed', entry: 'UI' }, { state: 'succeeded', entry: 'UI' },
+        { state: 'failed', entry: 'Voice' }, { state: 'succeeded', entry: 'Voice' },
+    ] as const)('honors a $state admitted before-wait for a $entry-hosted contributed effect', async ({ state, entry }) => {
+        const home = rpcHomes.get('server-client-action')!;
+        const lifetime = clientAccountLifetime(resolveServerProfileScopeIdForIdentifier(home.id));
+        let effects = 0;
+        const events: ActionSettlementV1[] = [];
+        let stored: ApprovalRequest | null = null;
+        const activation = createClientActionActivation({ pluginId: `acme.ui-before-${entry.toLowerCase()}-${state}`, localId: 'effect',
+            accountPlacement: true, invokingUi: true, accountLifetime: lifetime, readOnly: false, surfaces: ['ui', 'voice'],
+            inputSchema: { type: 'object', additionalProperties: false },
+            accountHandler: async () => { effects++; return { applied: true }; } });
+        const identity = { pluginId: activation.action.pluginId, localId: activation.action.id };
+        const actionId = formatQualifiedPluginActionId(identity);
+        const rows = [{ automationId: 'automation', triggerId: 'before', triggerRevision: 1,
+                workflowId: 'workflow', workflowRevision: 1, ownerAccountId: lifetime.scope.accountId,
+                actionIds: [actionId], phase: 'before', mode: 'wait', onFailure: 'refuse' },
+                { automationId: 'automation', triggerId: 'after', triggerRevision: 1, workflowId: 'workflow',
+                    workflowRevision: 1, ownerAccountId: lifetime.scope.accountId, actionIds: [actionId], phase: 'after' }] as const;
+        const { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } = await import('@happier-dev/protocol/actions/executor/actionAutomationAdmission');
+        network.setHttpResponder(async (url, init) => new URL(String(url)).pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1
+            ? Response.json({ v: 1, rows })
+            : createEmptyAccountBootstrapHttpResponse(new URL(String(url)).pathname, init));
+        const port = createActionAutomationPortV1({ accountId: lifetime.scope.accountId,
+            seed: async () => ({ v: 1, rows }),
+            start: async ({ selected }) => ({ runs: selected.map(row => ({ automationId: row.automationId,
+                triggerId: row.triggerId, runId: `${state}-run` })), notices: [] }),
+            settle: async ({ event }) => { events.push(event); } });
+        const actionAutomations = { ...port, wait: async () => ({ state, ...(state === 'failed' ? { errorCode: 'step_failed' } : {}) }) };
+        const unregister = registerCurrentUiContextActionPort((invocationSurface, hostAction) => createCurrentUiContextVoiceToolPort({
+            invocationSurface, hostAction, readProjection: () => activation.projection, readNavigationBinding: () => null,
+            reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+        }));
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ actionAutomations,
+            listContributedActionDefinitions: () => [projectedActionToDefinition(activation.action, activation.projection)],
+            invokeContributedAction: request => executeCurrentUiContextContributedAction(request, {
+                execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: request.context,
+            }),
+            approvalsCreate: async ({ request }) => { stored = request; return { artifactId: 'before-ui-approval' }; },
+            approvalsGet: async () => stored,
+            approvalsUpdate: async ({ request }) => { stored = request; return { ok: true }; },
+            isApprovalExecutionOriginCurrent: async () => true,
+        }));
+        try {
+            expect((await activation.composition.reconcile([activation.activation])).map(attempt => attempt.result)).toEqual([{ ok: true }]);
+            const hostAction = { execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: {
+                surface: entry === 'UI' ? 'ui' as const : 'voice' as const,
+                authority: entry === 'UI' ? 'present_user' as const : 'account_automation' as const,
+                ...(entry === 'Voice' ? { externalActionTarget: { kind: 'machine' as const, machineId: 'machine-client-action' } } : {}),
+                serverId: lifetime.scope.serverId, serverIdentityId: home.serverIdentityId,
+                runtimeAccountId: lifetime.scope.accountId, actionRequestId: 'ui-before-original', actionAutomationPort: actionAutomations,
+            } };
+            const { createAppShellPluginUiInvocationHost } = await import('@/components/appShell/plugins/pluginUiInvocationHost');
+            const operation = entry === 'UI'
+                ? dispatchPluginSurfaceAction({ action: identity, input: {}, clientAction: {},
+                    pluginUiProjection: activation.projection, resolveContributedAction: resolveExactClientAction(activation.action),
+                    actionAccountLifetime: lifetime, hostAction })
+                : createAppShellPluginUiInvocationHost({ pluginId: identity.pluginId, contributionId: 'conversation',
+                    occurrenceId: activation.action.occurrenceId, machineId: 'machine-client-action', serverId: lifetime.scope.serverId,
+                    signal: new AbortController().signal, isCurrent: () => true, pluginUiProjection: activation.projection,
+                    resolveContributedAction: resolveExactClientAction(activation.action), hostAction,
+                }).executeAction(identity, {});
+            if (entry === 'Voice' && state === 'failed') {
+                await expect(operation).rejects.toMatchObject({ code: 'action_interception_rejected' });
+                expect(effects).toBe(0);
+                expect(events).toMatchObject([{ actionId, status: 'failed', errorCode: 'action_interception_rejected' }]);
+                return;
+            }
+            const result = await operation;
+            if (state === 'failed') {
+                expect(effects, 'A failed before check must refuse the UI handler before its native effect').toBe(0);
+                expect(result, JSON.stringify(result)).toMatchObject({ ok: false, reason: 'action_interception_rejected', effectAttempted: false });
+                expect(events).toMatchObject([{ actionId, status: 'failed', errorCode: 'action_interception_rejected' }]);
+            } else {
+                expect(result, JSON.stringify(result)).toMatchObject(entry === 'UI' ? { ok: true, result: { applied: true } } : { applied: true });
+                expect(effects, 'A successful before check must resume the admitted UI handler once').toBe(1);
+                expect(events).toMatchObject([{ actionId, status: 'succeeded' }]);
+            }
+        } finally { unregister(); port.dispose(); await activation.composition.unload(); lifetime.retire(); }
     });
 
     it('dispatches ordinary daemon and client Actions from the real caller-scoped producer', async () => {
