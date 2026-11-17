@@ -4,8 +4,9 @@ import { AutomationOccurredAtV1Schema } from '@happier-dev/protocol/automations/
 import { AutomationEventSourceOrOccurrenceIdV1Schema } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { asProtocolZod, projectZodProtocolSchema } from '@happier-dev/protocol/plugins/actions/internalProtocolZodAdapter';
-import { DatabaseEngineIdV1Schema, DatabaseTargetV1Schema } from './databaseTargets.js';
+import { DatabaseEngineIdV1Schema, DatabaseTargetV1Schema, DatabaseWorktreeTargetV1Schema } from './databaseTargets.js';
 import { DatabaseFailureV1Schema, DatabaseStatsOperationInputV1Schema } from './databaseOperations.js';
+import { ProjectRepositoryObservationV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { SessionInputForgeEvidenceV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputForgeEvidenceV1';
 import { PluginJsonSchemaV2Schema } from '@happier-dev/protocol/plugins/contributions/publicTypes';
 import { DatabaseStatsCoverageV1Schema, DatabaseStatsGroupV1Schema, DatabaseStatsIntervalBasisV1Schema,
@@ -87,12 +88,27 @@ export type DatabaseFindingBriefBuildInputV1 = z.infer<typeof DatabaseFindingBri
 
 /** Guided setup/connection/migration is task evidence, never an invented finding.
  * No URL, credential, SQL or unattended setup command belongs in this input. */
-export const DatabaseTaskEvidenceV1Schema = z.strictObject({
+const databaseGuidedTask = z.strictObject({
     kind: z.enum(['setup', 'connection', 'migration']),
     target: DatabaseTargetV1Schema, sourceScope: MachineTargetV1Schema,
     engineId: z.optional(DatabaseEngineIdV1Schema),
     stats: z.optional(z.strictObject({ request: DatabaseStatsReadV1Schema, reason: DatabaseStatsReasonV1Schema })),
 });
+export const DatabaseTaskEvidenceV1Schema = z.union([
+    databaseGuidedTask,
+    z.strictObject({
+        kind: z.literal('add_telemetry'),
+        scope: z.omit(DatabaseWorktreeTargetV1Schema, { source: true }),
+        sourceScope: MachineTargetV1Schema,
+        repositoryObservation: z.optional(asProtocolZod(projectZodProtocolSchema(ProjectRepositoryObservationV1Schema))),
+    }),
+    z.strictObject({
+        kind: z.literal('enable_pg_stat_statements'),
+        target: DatabaseTargetV1Schema, sourceScope: MachineTargetV1Schema,
+        engineId: z.literal('postgresql'),
+        stats: z.strictObject({ request: DatabaseStatsReadV1Schema, reason: DatabaseStatsReasonV1Schema }),
+    }),
+]);
 export type DatabaseTaskEvidenceV1 = z.infer<typeof DatabaseTaskEvidenceV1Schema>;
 export const DatabaseTaskBriefBuildInputV1Schema = z.strictObject({ task: DatabaseTaskEvidenceV1Schema });
 export type DatabaseTaskBriefBuildInputV1 = z.infer<typeof DatabaseTaskBriefBuildInputV1Schema>;

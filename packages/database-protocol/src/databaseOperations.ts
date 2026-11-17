@@ -1,9 +1,8 @@
 import { z } from 'zod/mini';
-import { WorkspaceAddressV2Schema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { DeploymentEnvironmentRefV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import { AutomationDatabaseSubjectReadV1Schema } from '@happier-dev/protocol/automations/automationSubjectV1';
 export { readAutomationDatabaseSubjectV1, type AutomationDatabaseSubjectReadV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
-import { DatabaseEngineIdV1Schema, DatabaseTargetV1Schema } from './databaseTargets.js';
+import { DatabaseEngineIdV1Schema, DatabaseTargetV1Schema, DatabaseWorktreeTargetV1Schema } from './databaseTargets.js';
 import { DatabaseAccessSummaryV1Schema, DatabaseOperationClassV1Schema } from './databaseAccess.js';
 import { DatabaseStatsObservationV1Schema } from './databaseStats.js';
 import {
@@ -148,7 +147,7 @@ export const DatabaseDescriptorV1Schema = z.strictObject({
 export type DatabaseDescriptorV1 = z.infer<typeof DatabaseDescriptorV1Schema>;
 /** Connect selects a concrete worktree or Environment; Project listing spans worktrees. */
 const databaseTargetsConnectScopes = [
-        z.strictObject({ kind: z.literal('worktree'), accountId: name, installationId: name, projectKey: name, workspace: WorkspaceAddressV2Schema }),
+        z.omit(DatabaseWorktreeTargetV1Schema, { source: true }),
         z.strictObject({ kind: z.literal('environment'), environment: DeploymentEnvironmentRefV1Schema }),
 ] as const;
 export const DatabaseTargetsConnectScopeV1Schema = z.discriminatedUnion('kind', databaseTargetsConnectScopes);
