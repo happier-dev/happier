@@ -512,7 +512,18 @@ export type ThemesActionResultById = {
             label: string;
             paintRoles: {
                 facet: 'background' | 'border' | 'foreground';
-                tokenRef: string;
+                source: {
+                    kind: 'derived';
+                    from: [
+                        string,
+                        ...string[]
+                    ];
+                } | {
+                    kind: 'fixed';
+                } | {
+                    kind: 'token';
+                    ref: string;
+                };
             }[];
         }[];
     };
