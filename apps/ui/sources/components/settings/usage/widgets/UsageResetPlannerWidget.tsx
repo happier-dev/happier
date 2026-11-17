@@ -29,7 +29,6 @@ import {
 } from './plans/useUsagePlans';
 import {
   formatPlanCountdown,
-  formatPlanMoment,
   formatPlanPercent,
   UsagePlanIdentity,
   UsagePlanAccountStates,
@@ -37,6 +36,7 @@ import {
   UsagePlansNothingRead,
   usePlanText,
 } from './plans/UsagePlanParts';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 
 function eventText(event: UsagePlanEvent): string {
   switch (event.kind) {
@@ -161,8 +161,8 @@ export function UsageResetPlannerWidget(props: UsageBodyProps) {
                         : 'usage.board.plans.walletOutlasts',
                       {
                         window: advice.window.label,
-                        expires: formatPlanMoment(advice.expiresAtMs, nowMs),
-                        reset: formatPlanMoment(advice.resetAtMs, nowMs),
+                        expires: formatMoment(advice.expiresAtMs, nowMs),
+                        reset: formatMoment(advice.resetAtMs, nowMs),
                       },
                     )}
                   </Text>
@@ -269,14 +269,14 @@ function ResetTimeline(
     startLabel={t('common.start')}
     valuesLabel={`${t('usage.widgets.usage_resets')}: ${t('usage.board.charts.showValues')}`}
     valuesCollapseLabel={t('usage.board.charts.hideValues')}
-    formatValue={value => formatPlanMoment(value, props.nowMs)}
+    formatValue={value => formatMoment(value, props.nowMs)}
     intervals={props.events.map(event => {
       const account = byKey.get(event.accountKey);
       const name = account ? props.nameOf(account) : null;
       const datum = resetEventDatum(event, name?.title ?? '');
       return { id: event.key, kind: 'point' as const,
         label: [name?.primaryLabel ?? name?.title, name?.qualifier, eventText(event)].filter(Boolean).join(' · '),
-        datum: datum ?? { keyboard: false, label: name?.title ?? '', value: formatPlanMoment(event.atMs, props.nowMs) },
+        datum: datum ?? { keyboard: false, label: name?.title ?? '', value: formatMoment(event.atMs, props.nowMs) },
         annotation: datum?.value,
         start: event.atMs, end: event.atMs };
     })}
@@ -301,7 +301,7 @@ function ResetList(
       {props.events.map((event, index) => {
         const account = byKey.get(event.accountKey);
         const name = account ? props.nameOf(account) : null;
-        const when = formatPlanMoment(event.atMs, props.nowMs);
+        const when = formatMoment(event.atMs, props.nowMs);
         const countdown = formatPlanCountdown(event.atMs, props.nowMs);
         const left = event.kind === 'reset' && event.window?.remainingFraction != null
           ? t('usage.board.plans.listLeftNow', { percent: formatPlanPercent(event.window.remainingFraction) })

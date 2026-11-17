@@ -15,7 +15,7 @@ import { presentSessionAgentAuthRequired } from './sessionAgentAuthRequiredPrese
 import { t, type TranslationKey } from '@/text';
 import { teamCredentialReconnectPresentation } from '@/components/settings/teams/credentials/sourceHealthPresentation';
 import { resourceStateLabel } from '@/components/settings/teams/credentials/readinessPresentation';
-import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 import { ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 import type { PendingActivationFailureDetailsV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
@@ -285,9 +285,8 @@ export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null |
         message: message && requestId ? `${message}\n${t('session.startFailure.requestId', { id: requestId })}` : message,
         recovery: issue?.usageLimit?.connectedService ? t('session.usageLimitRecovery.actions.switchAccountNow') : null,
         reset: resetDate !== null && Number.isFinite(resetDate.getTime())
-            ? t('usage.board.plans.capacityResets', { time: formatWithCachedDateTimeFormatter(resetDate, undefined, {
-                dateStyle: 'medium', timeStyle: 'short',
-            }) })
+            // Said the way the usage page says a reset: a time today, a weekday this week, else a date.
+            ? t('usage.board.plans.capacityResets', { time: formatMoment(resetDate.getTime(), Date.now()) })
             : null,
     };
 }

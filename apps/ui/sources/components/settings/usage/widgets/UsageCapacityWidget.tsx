@@ -35,7 +35,6 @@ import {
 import {
   formatPlanCountdown,
   formatPlanResetPhrase,
-  formatPlanMoment,
   formatPlanPercent,
   planExclusionText,
   UsagePlanRank,
@@ -49,6 +48,7 @@ import {
   UsagePlanDisclosure,
 } from './plans/UsagePlanParts';
 import { UsagePoolQueue, UsagePoolSteps } from './plans/UsagePoolOrder';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 
 /**
  * Below this width per account the per-account cells cannot hold a figure and a name side by side, so they become
@@ -356,13 +356,13 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
             {[
               tightest.window.resetAtMs !== null
                 ? t('usage.board.plans.capacityResets', {
-                    time: formatPlanMoment(tightest.window.resetAtMs, nowMs),
+                    time: formatMoment(tightest.window.resetAtMs, nowMs),
                   })
                 : null,
               provisionalReading
                 ? t('usage.board.plans.capacityReading', { count: pendingAccounts })
                 : tightest.provisional || lone || compact ? null : t('usage.board.plans.capacityAccounts', { count: projection.readAccountCount }),
-              oldestReadMs !== null ? t('usage.board.plans.cellStale', { time: formatPlanMoment(oldestReadMs, nowMs) }) : null,
+              oldestReadMs !== null ? t('usage.board.plans.cellStale', { time: formatMoment(oldestReadMs, nowMs) }) : null,
             ]
               .filter(Boolean)
               .join(' · ')}
@@ -580,7 +580,7 @@ function CapacityCell(
   const staleDetail =
     cell.excluded === null && cell.account.stale && cell.account.observedAtMs !== null && !props.staleSaidOnce
       ? t('usage.board.plans.cellStale', {
-          time: formatPlanMoment(cell.account.observedAtMs, nowMs),
+          time: formatMoment(cell.account.observedAtMs, nowMs),
         })
       : null;
   // Red belongs to "used up" alone: a stale read of a used-up plan stays the quiet "last read" note.

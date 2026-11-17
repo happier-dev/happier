@@ -25,7 +25,6 @@ import {
   type UsagePlanAccountName,
 } from './plans/useUsagePlans';
 import {
-  formatPlanMoment,
   formatPlanPercent,
   planPaceReasonText,
   UsagePlanIdentity,
@@ -38,6 +37,7 @@ import {
   usePlanText,
   UsagePlanDisclosure,
 } from './plans/UsagePlanParts';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 
 /**
  * What each plan costs and how it ends, from the connected-account producer's own facts: paid versus
@@ -235,15 +235,15 @@ function PlanRow(
       : subscription.renewal === 'off'
         ? unused !== null && unused > 0
           ? t('usage.board.plans.planEndsUnused', {
-              time: formatPlanMoment(end, nowMs),
+              time: formatMoment(end, nowMs),
               percent: formatPlanPercent(unused),
             })
           : t('usage.board.plans.planEnds', {
-              time: formatPlanMoment(end, nowMs),
+              time: formatMoment(end, nowMs),
             })
         : subscription.renewal === 'on'
           ? t('usage.board.plans.planRenews', {
-              time: formatPlanMoment(end, nowMs),
+              time: formatMoment(end, nowMs),
             })
           : t('usage.board.plans.planRenewalUnknown');
   const ending = subscription?.renewal === 'off';

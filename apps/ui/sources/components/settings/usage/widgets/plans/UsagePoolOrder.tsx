@@ -35,7 +35,6 @@ import {
   type UsagePoolSelectionState,
 } from './useUsagePlans';
 import {
-  formatPlanMoment,
   formatPlanPercent,
   planExclusionText,
   UsagePlanIdentity,
@@ -43,6 +42,7 @@ import {
   UsagePlanSectionHead,
   usePlanText,
 } from './UsagePlanParts';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 
 type Selection = ConnectedServicePoolSelectionV1;
 type Trace = Selection['decisionTrace'];
@@ -154,7 +154,7 @@ function memberReason(
           ),
     deadline !== null && deadline > nowMs
       ? t('usage.board.plans.queueDeadline', {
-          time: formatPlanMoment(deadline, nowMs),
+          time: formatMoment(deadline, nowMs),
         })
       : null,
   ]
@@ -700,7 +700,7 @@ function PoolWhyPopover(
               <Text style={[styles.quiet, text.detail]}>
                 {[
                   t('usage.board.plans.whyDecided', {
-                    time: formatPlanMoment(props.observedAtMs, props.nowMs),
+                    time: formatMoment(props.observedAtMs, props.nowMs),
                   }),
                   props.label,
                 ].join(' · ')}
@@ -780,7 +780,7 @@ function PoolComparison(props: WhyProps) {
     { key: 'moment:now', title: t('usage.board.plans.stepNow'), invoke: () => {
       setAtMs(null); setAsked(true); setMomentOpen(false);
     } },
-    ...moments.map(time => ({ key: `moment:${time}`, title: formatPlanMoment(time, props.nowMs),
+    ...moments.map(time => ({ key: `moment:${time}`, title: formatMoment(time, props.nowMs),
       invoke: () => { setAtMs(time); setAsked(true); setMomentOpen(false); } })),
     ...(asked && snapshot.error ? [{ key: 'retry', title: t('common.retry'), invoke: async () => { await entry?.refresh(); } }] : []),
   ]);
@@ -792,7 +792,7 @@ function PoolComparison(props: WhyProps) {
       onSelect={value => { void controls.invoke(`strategy:${value}`); }} />
     <DropdownMenu testID={`${id}.moment`} open={momentOpen} onOpenChange={value => { void controls.invoke('momentMenu', value); }}
       selectedId={atMs === null ? 'now' : String(atMs)}
-      items={[{ id: 'now', title: t('usage.board.plans.stepNow') }, ...moments.map(time => ({ id: String(time), title: formatPlanMoment(time, props.nowMs) }))]}
+      items={[{ id: 'now', title: t('usage.board.plans.stepNow') }, ...moments.map(time => ({ id: String(time), title: formatMoment(time, props.nowMs) }))]}
       itemTrigger={{ title: t('usage.board.plans.comparisonMoment') }}
       onSelect={value => { void controls.invoke(`moment:${value}`); }} />
     <Text style={[styles.quiet, text.detail]}>{t('usage.board.plans.comparisonNote')}</Text>
@@ -843,12 +843,12 @@ function WhyRow(
           : null,
     quota?.capturedAtMs !== undefined
       ? t('usage.board.plans.whyChecked', {
-          time: formatPlanMoment(quota.capturedAtMs, props.nowMs),
+          time: formatMoment(quota.capturedAtMs, props.nowMs),
         })
       : null,
     deadline !== null
       ? t('usage.board.plans.queueDeadline', {
-          time: formatPlanMoment(deadline, props.nowMs),
+          time: formatMoment(deadline, props.nowMs),
         })
       : null,
   ]

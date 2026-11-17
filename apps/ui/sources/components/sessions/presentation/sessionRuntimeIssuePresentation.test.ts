@@ -348,6 +348,15 @@ describe('a usage-limit failure, said once', () => {
         expect(presented.summary).toBe(t('session.usageLimitRecovery.banner.title'));
         expect(presented.details).toContain('Try another connected account');
     });
+
+    it('says a reset later today as a time, the way the usage page does, never with its year', async () => {
+        await useLanguage('en');
+        const resetAtMs = Date.now() + 2 * 60 * 60 * 1000;
+        const presented = presentSessionRuntimeIssue(issue({ code: 'usage_limit', source: 'usage_limit',
+            usageLimit: { v: 1, resetAtMs, retryAfterMs: null, quotaScope: 'account', recoverability: 'wait' } }));
+        expect(presented.reset).not.toBeNull();
+        expect(presented.reset).not.toContain(String(new Date(resetAtMs).getFullYear()));
+    });
 });
 
 describe('a Session whose Agent account refused queued input: one message and one next action', () => {

@@ -8,8 +8,8 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useUsageWidgetModel } from '@/components/settings/usage/widgets/usageWidgetBatch';
 import { useUsagePlans } from '@/components/settings/usage/widgets/plans/useUsagePlans';
 import { resolveUsageResetStartBinding } from '@/components/settings/usage/widgets/plans/usagePlansModel';
-import { formatPlanMoment } from '@/components/settings/usage/widgets/plans/UsagePlanParts';
 import { t } from '@/text';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 
 type Props = Readonly<{
     sessionId: string;
@@ -44,7 +44,7 @@ function ResetStartOptions(props: Props & Readonly<{
         return [{ id: window.key, testID: `agent-input-reset-start-option.${window.key}`,
             label: `${name.primaryLabel ?? name.title} · ${window.label}`,
             subtitle: [name.qualifier, t('usage.board.plans.capacityResets', {
-                time: formatPlanMoment(window.resetAtMs, plans.nowMs),
+                time: formatMoment(window.resetAtMs, plans.nowMs),
             })].filter(Boolean).join(' · '),
             onPress: () => {
                 // Selection can outlive its displayed reading; only the shared admission owner decides.

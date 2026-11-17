@@ -22,9 +22,8 @@ import { Typography } from '@/constants/Typography';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { formatResetCountdown, formatResetCountdownPhrase } from '@/sync/domains/connectedServices/formatResetCountdown';
-import { getPreferredLanguage, t } from '@/text';
+import { t } from '@/text';
 import { connectedServicePoolExclusionText } from '@/components/sessions/connectedServices/diagnostics/poolExclusionPresentation';
-import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import {
   UsageBodyInsufficient,
@@ -41,9 +40,7 @@ import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentU
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { UsagePlanAccount, UsagePlanWindow } from './usagePlansModel';
 import type { UsagePlanAccountName } from './useUsagePlans';
-
-const HOUR_MS = 60 * 60 * 1000;
-const DAY_MS = 24 * HOUR_MS;
+import { formatMoment } from '@/utils/datetime/formatMoment';
 
 type PlanAccountReadKind = 'failed' | 'pending' | 'partial';
 
@@ -169,28 +166,6 @@ export function formatPlanPercent(fraction: number): string {
   return `${Math.round(Math.max(0, fraction) * 100)}%`;
 }
 
-/** A plan moment: today's clock time, a nearby weekday and time, else its calendar date. */
-export function formatPlanMoment(atMs: number, nowMs: number): string {
-  const when = new Date(atMs);
-  const now = new Date(nowMs);
-  const locale = getPreferredLanguage();
-  const time = formatWithCachedDateTimeFormatter(when, locale, {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-  if (when.getFullYear() === now.getFullYear()
-    && when.getMonth() === now.getMonth()
-    && when.getDate() === now.getDate())
-    return time;
-  if (Math.abs(atMs - nowMs) < 6 * DAY_MS)
-    return `${formatWithCachedDateTimeFormatter(when, locale, { weekday: 'short' })} ${time}`;
-  return formatWithCachedDateTimeFormatter(when, locale, {
-    day: 'numeric',
-    month: 'short',
-    ...(when.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}),
-  });
-}
-
 /** "in 2h 15m" through the one countdown owner. */
 export function formatPlanCountdown(
   atMs: number | null,
@@ -237,7 +212,7 @@ export function planWindowStatement(
     return {
       kind: 'used_up',
       text: [t('usage.board.plans.cellUsedUp'), window.resetAtMs === null ? null
-        : t('usage.board.plans.excludedBack', { time: formatPlanMoment(window.resetAtMs, nowMs) })].filter(Boolean).join(' · '),
+        : t('usage.board.plans.excludedBack', { time: formatMoment(window.resetAtMs, nowMs) })].filter(Boolean).join(' · '),
       tone: 'warning',
     };
   }
@@ -246,7 +221,7 @@ export function planWindowStatement(
       return {
         kind: 'depletes',
         text: t('usage.board.plans.projectionRunsOut', {
-          time: formatPlanMoment(window.pace.depletesAtMs, nowMs),
+          time: formatMoment(window.pace.depletesAtMs, nowMs),
         }),
         tone: 'warning',
       };
@@ -274,7 +249,7 @@ export function planExclusionText(
 ): string {
   const base = connectedServicePoolExclusionText(reason);
   return retryAtMs !== null && retryAtMs > nowMs
-    ? `${base} · ${t('usage.board.plans.excludedBack', { time: formatPlanMoment(retryAtMs, nowMs) })}`
+    ? `${base} · ${t('usage.board.plans.excludedBack', { time: formatMoment(retryAtMs, nowMs) })}`
     : base;
 }
 

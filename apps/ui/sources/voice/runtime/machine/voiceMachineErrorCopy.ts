@@ -1,6 +1,6 @@
 import type { VoiceMachineError, VoiceMachineErrorKind } from './voiceConversationRuntimeTypes';
 import { t } from '@/text';
-import { formatSessionUsageLimitRecoveryTime } from '@/components/sessions/usageLimitRecovery/sessionUsageLimitRecoveryPresentation';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
 
@@ -10,8 +10,8 @@ export function presentVoiceUsageLimitMessage(usageLimit: VoiceMachineError['usa
     const retryAtMs = usageLimit?.usageLimitRecovery?.nextCheckAtMs;
     const resetAtMs = usageLimit?.usageLimitResetAtMs ?? usageLimit?.usageLimitRecovery?.resetAtMs;
     const notice = retryAtMs != null
-        ? t('session.usageLimitRecovery.banner.retryAt', { time: formatSessionUsageLimitRecoveryTime(retryAtMs) })
-        : resetAtMs != null ? t('message.agentQuotaWait', { time: formatSessionUsageLimitRecoveryTime(resetAtMs) }) : null;
+        ? t('session.usageLimitRecovery.banner.retryAt', { time: formatMoment(retryAtMs, Date.now()) })
+        : resetAtMs != null ? t('message.agentQuotaWait', { time: formatMoment(resetAtMs, Date.now()) }) : null;
     return notice ? `${title} ${notice}` : title;
 }
 

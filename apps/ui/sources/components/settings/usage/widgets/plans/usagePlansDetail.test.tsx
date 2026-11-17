@@ -41,10 +41,10 @@ import {
 import type { UsageWidgetBodyModel } from '../../useUsageWidgetResource';
 import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
 import { getPoolStrategyPresentation } from '@/sync/domains/connectedServices/connectedServicePoolPolicy';
-import { formatPlanMoment } from './UsagePlanParts';
 import { formatUsageCalendarDate } from '@/sync/domains/usage/usageCalendarPresentation';
 import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
 import { recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 
 // Machine RPC, native confirmation and the served Home's HTTP transport are external boundaries.
 vi.mock('@/modal', async () =>
@@ -375,9 +375,9 @@ it('presents an already exhausted window as used up in chart and list projection
     const screen = await renderScreen(wrap(<UsageProjectionsWidget {...bodyProps([read])} id="usage_projections"
       presentation={{ style }} testID="spent" />));
     expect(screen.getTextContent()).not.toContain(t('usage.board.plans.projectionRunsOutLabel'));
-    expect(screen.getTextContent()).not.toContain(t('usage.board.plans.projectionRunsOut', { time: formatPlanMoment(now, now) }));
+    expect(screen.getTextContent()).not.toContain(t('usage.board.plans.projectionRunsOut', { time: formatMoment(now, now) }));
     expect(screen.getTextContent()).toContain(t('usage.board.plans.cellUsedUp'));
-    expect(screen.getTextContent()).toContain(formatPlanMoment(now + DAY, now));
+    expect(screen.getTextContent()).toContain(formatMoment(now + DAY, now));
     expect(screen.findByTestId('spent.headline.beforeReset')).toBeNull();
     await screen.unmount();
   }
@@ -1063,7 +1063,7 @@ it("lists a pool in the selector's own order and builds the why detail from its 
   await expect.poll(() => screen.findHostByTestId(`${comparison}.candidate.work`) !== null).toBe(true);
   const momentControl = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${comparison}.moment`)!;
   await act(async () => momentControl.props.onOpenChange(true));
-  await invokePlanCommand(formatPlanMoment(now + 3 * HOUR, now));
+  await invokePlanCommand(formatMoment(now + 3 * HOUR, now));
   await expect.poll(() => selectionTransport.mock.calls.some(([request]) => request.payload.hypothetical.atMs === now + 3 * HOUR)).toBe(true);
   const comparisonOrder = screen.findAll(node => typeof node.type === 'string' && typeof node.props.testID === 'string'
     && new RegExp(`^${comparison.replaceAll('.', '\\.')}.candidate.(work|personal|side)$`).test(node.props.testID))

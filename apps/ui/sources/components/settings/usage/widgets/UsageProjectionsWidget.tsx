@@ -51,7 +51,6 @@ import {
   type UsagePlanAccountName,
 } from './plans/useUsagePlans';
 import {
-  formatPlanMoment,
   formatPlanPercent,
   planPaceReasonText,
   planWindowStatement,
@@ -64,6 +63,7 @@ import {
 } from './plans/UsagePlanParts';
 import { readUsagePersonalPaceTarget, selectUsageWindowsAboveTarget } from './plans/usagePacingTarget';
 import { UsageDailyQuotaHistory } from './plans/UsageDailyQuotaHistory';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 
 /** Below this width a meter stacks its name over the bar and the projection beneath it. */
 const STACKED_BELOW_PX = 460;
@@ -90,7 +90,7 @@ function buildBurnUp(
   earlier?: Readonly<{ curves: EarlierCurves; color: string }>,
 ): HappierSeries[] {
   const pace = focus.window.pace!;
-  const point = (x: number, y: number) => ({ id: `t${x}`, x, y, label: formatPlanMoment(x, nowMs) });
+  const point = (x: number, y: number) => ({ id: `t${x}`, x, y, label: formatMoment(x, nowMs) });
   const observedPoints = pace.observedCurve.map((sample) => point(sample.observedAtMs, sample.usedFraction * 100));
   const last = observedPoints.at(-1);
   const series: HappierSeries[] = [
@@ -117,7 +117,7 @@ function buildBurnUp(
   }
   // Earlier comparable windows, laid on this window's own span by their elapsed share (lab `p2burn` B6).
   for (const curve of earlier?.curves ?? []) {
-    const ended = formatPlanMoment(curve.window.resetAtMs, nowMs);
+    const ended = formatMoment(curve.window.resetAtMs, nowMs);
     series.push({
       id: `earlier:${curve.window.resetAtMs}`,
       // One look, one key: the legend shows "Earlier windows" once; each point still names its window.
@@ -126,7 +126,7 @@ function buildBurnUp(
       points: curve.points.map((sample, index) => {
         const x = Math.round(pace.windowStartAtMs + sample.elapsedFraction * curve.window.windowDurationMs);
         return { id: `earlier:${curve.window.resetAtMs}:${index}`, x, y: sample.usedFraction * 100,
-          label: `${formatPlanMoment(x, nowMs)} · ${t('usage.board.plans.earlierCurve', { time: ended })}` };
+          label: `${formatMoment(x, nowMs)} · ${t('usage.board.plans.earlierCurve', { time: ended })}` };
       }),
     });
   }
@@ -206,7 +206,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
   const axisTicks = React.useMemo(() => {
     if (!series.some((entry) => entry.id.startsWith('earlier:'))) return null;
     const xs = series.flatMap((entry) => entry.points.map((point) => Number(point.x)));
-    return [formatPlanMoment(Math.min(...xs), nowMs), formatPlanMoment(Math.max(...xs), nowMs)];
+    return [formatMoment(Math.min(...xs), nowMs), formatMoment(Math.max(...xs), nowMs)];
   }, [series, nowMs]);
   const pickerItems = React.useMemo(
     () =>
@@ -523,20 +523,20 @@ function ProjectionHeadline(props: Readonly<{ window: UsagePlanWindow; nowMs: nu
     return <HappierDataMetric testID={props.testID} theme={chartTheme} size="stat"
       label={t('usage.board.plans.cellUsedUp')} showLabel
       value={props.window.resetAtMs === null ? t('usage.board.plans.cellUsedUp')
-        : t('usage.board.plans.excludedBack', { time: formatPlanMoment(props.window.resetAtMs, props.nowMs) })} />;
+        : t('usage.board.plans.excludedBack', { time: formatMoment(props.window.resetAtMs, props.nowMs) })} />;
   }
   const pace = props.window.pace!;
   const basis = [
     t('usage.board.plans.estimatedFrom', { count: pace.sampleCount }),
     pace.qualification === 'estimated' ? t('usage.board.plans.projectionProviderEstimate') : null,
     props.window.resetAtMs !== null
-      ? t('usage.board.plans.capacityResets', { time: formatPlanMoment(props.window.resetAtMs, props.nowMs) })
+      ? t('usage.board.plans.capacityResets', { time: formatMoment(props.window.resetAtMs, props.nowMs) })
       : null,
   ].filter(Boolean).join(' · ');
   const runsOut = pace.depletesAtMs !== null;
   const figure = <HappierDataMetric testID={props.testID} theme={chartTheme} size="stat"
     label={runsOut ? t('usage.board.plans.projectionRunsOutLabel') : t('usage.board.plans.projectionUsedAtReset')}
-    value={runsOut ? formatPlanMoment(pace.depletesAtMs!, props.nowMs) : Math.round(pace.projectedUsedFraction * 100)}
+    value={runsOut ? formatMoment(pace.depletesAtMs!, props.nowMs) : Math.round(pace.projectedUsedFraction * 100)}
     {...(runsOut ? {} : { valueFormatter: (value: number) => `~${value}%` })} showLabel caption={basis} />;
   const exact = runsOut ? new Intl.DateTimeFormat(getPreferredLanguage(), { dateStyle: 'full', timeStyle: 'long' }).format(pace.depletesAtMs!)
     : formatHappierDataExactShare(pace.projectedUsedFraction, getPreferredLanguage());
@@ -741,10 +741,10 @@ function ProjectionRow(
       value: t('usage.board.plans.cellLeft', { percent: exact }),
       subtitle: [window.pace ? t('usage.board.plans.estimatedFrom', { count: window.pace.sampleCount }) : null,
         window.pace ? `${t('usage.board.plans.projectionUsedAtReset')} · ${formatHappierDataExactShare(window.pace.projectedUsedFraction, getPreferredLanguage())}` : null,
-        window.resetAtMs === null ? null : formatPlanMoment(window.resetAtMs, props.nowMs)].filter(Boolean).join(' · ') }}>
+        window.resetAtMs === null ? null : formatMoment(window.resetAtMs, props.nowMs)].filter(Boolean).join(' · ') }}>
       <View accessible accessibilityLabel={[`${props.name.title} · ${window.label}`, t('usage.board.charts.showValues'),
         t('usage.board.plans.cellLeft', { percent: exact }), window.pace ? `${t('usage.board.plans.projectionUsedAtReset')} · ${formatHappierDataExactShare(window.pace.projectedUsedFraction, getPreferredLanguage())}` : null,
-        window.resetAtMs === null ? null : formatPlanMoment(window.resetAtMs, props.nowMs)].filter(Boolean).join(' · ')}>{visual}</View>
+        window.resetAtMs === null ? null : formatMoment(window.resetAtMs, props.nowMs)].filter(Boolean).join(' · ')}>{visual}</View>
     </ChartDatum>;
 }
 

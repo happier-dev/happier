@@ -20,7 +20,8 @@ import {
 } from './usagePlansModel';
 import type { UsagePlanAccountName } from './useUsagePlans';
 import { useUsagePlanAction } from './UsagePlanActions';
-import { formatPlanMoment, UsagePlanSectionHead, usePlanText } from './UsagePlanParts';
+import { UsagePlanSectionHead, usePlanText } from './UsagePlanParts';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 
 type ResetOption = Readonly<{
   id: string;
@@ -59,7 +60,7 @@ function useResetOptions({ accounts, nameOf, nowMs }: ResetStartSectionProps) {
         options.push({
           id: window.key,
           title: `${nameOf(account).title} · ${window.label}`,
-          subtitle: t('usage.board.plans.capacityResets', { time: formatPlanMoment(window.resetAtMs, nowMs) }),
+          subtitle: t('usage.board.plans.capacityResets', { time: formatMoment(window.resetAtMs, nowMs) }),
           reset: binding.reset,
         });
       }
