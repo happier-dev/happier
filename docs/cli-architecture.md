@@ -3995,6 +3995,15 @@ owned by the corridor integration boundary, not evidence of released availabilit
 
 ### Privileged Machine effects (0.3 development)
 
+Administrator-access sudoers files are scoped to the daemon's native username
+by cli-common's `managedSudoers` owner. The standard `happier` user retains
+`/etc/sudoers.d/90-happier-daemon`; other users receive that prefix followed by
+their hex-encoded username, so sudo does not skip a filename containing a dot.
+Setup, policy changes, removal and native observation use the same path owner.
+Each user's effect retains exact-content, root:root, mode 0440 and symlink
+checks; a grant belonging to another daemon user is neither replaced nor removed.
+This is an unreleased 0.3 correction, with no change to the native frame grammar.
+
 The fixed `machine effect-internal` entry consumes one closed CHECK or APPLY
 request on stdin and delegates to cli-common's Machine setup interpreter and
 digest owner. Already admitted administrator transitions and reboot send their

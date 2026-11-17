@@ -1,4 +1,4 @@
-/** Redirect only the native owner's fixed sudoers file and same-parent staging.
+/** Redirect only the native owner's sudoers files and same-parent staging.
  * Real filesystem operations and the native backend remain beneath this boundary. */
 export function redirectSudoersFileSystem(
   actual: typeof import('node:fs/promises'),
@@ -9,7 +9,7 @@ export function redirectSudoersFileSystem(
     const directory = readDirectory();
     if (!directory) throw Object.assign(new Error('Sudoers filesystem fixture is not active'), { code: 'ENOENT' });
     const suffix = value.slice('/etc/sudoers.d'.length);
-    if (suffix && suffix !== '/90-happier-daemon' && !suffix.startsWith('/.happier-setup-')) {
+    if (suffix && !/^\/90-happier-daemon(?:-[0-9a-f]+)?$/.test(suffix) && !suffix.startsWith('/.happier-setup-')) {
       throw new Error('Unexpected path outside the native sudoers fixture');
     }
     // The OS adapter changes only string paths; preserve other native overloads.

@@ -7,7 +7,7 @@ import { createMachineSetupNativeBackend, type MachineSetupNativeCommand } from 
 import { readSystemdUnitStatus } from '@happier-dev/cli-common/service/discovery';
 import type { MachineAdminAccessObservationV1 } from '@happier-dev/protocol';
 import { readUnifiedProcessCgroupRelativePath } from '@/daemon/platform/linux/readUnifiedProcessCgroupRelativePath';
-import { MANAGED_SUDOERS_PATH, recognizeManagedSudoersDropIn } from './managedSudoers';
+import { resolveManagedSudoersPath, recognizeManagedSudoersDropIn } from './managedSudoers';
 
 export type MachineAdminAccessNativeDependencies = Readonly<{
   platform?: NodeJS.Platform;
@@ -79,12 +79,13 @@ async function observeManagedDropIn(dependencies: MachineAdminAccessNativeDepend
 }>> {
   const fileSystem = dependencies.fileSystem ?? { lstat, readFile };
   try {
-    const stat = await fileSystem.lstat(MANAGED_SUDOERS_PATH);
+    if (!daemonUsername) return { state: 'unknown', reasonCode: 'observationFailed' };
+    const path = resolveManagedSudoersPath(daemonUsername);
+    const stat = await fileSystem.lstat(path);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== 0 || stat.gid !== 0 || (stat.mode & 0o7777) !== 0o440) {
       return { state: 'invalid', reasonCode: 'dropInInvalid' };
     }
-    const content = await fileSystem.readFile(MANAGED_SUDOERS_PATH, 'utf8');
-    if (!daemonUsername) return { state: 'unknown', reasonCode: 'observationFailed' };
+    const content = await fileSystem.readFile(path, 'utf8');
     // The effect builder owns exact byte recognition; observation never invents sudoers grammar.
     const state = recognizeManagedSudoersDropIn(content, daemonUsername);
     return { state, ...(state === 'invalid' ? { reasonCode: 'dropInInvalid' as const } : {}) };

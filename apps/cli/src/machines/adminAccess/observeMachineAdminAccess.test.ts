@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { execFileWithDeadline } from '@happier-dev/cli-common/process';
 import { createDeferred } from '@/testkit/async/deferred';
 import { createMachineAdminAccessObserver, observeMachineAdminAccess, type MachineAdminAccessNativeDependencies } from './observeMachineAdminAccess';
-import { buildManagedSudoersSteps, MANAGED_SUDOERS_PATH } from './managedSudoers';
+import { buildManagedSudoersSteps } from './managedSudoers';
 import { MachineAdminAccessObservationV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import { parseMachinePublishedDaemonStateV1, StoredMachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 
@@ -323,15 +323,18 @@ describe('Machine administrator access native observation', () => {
   });
 
   it('recognizes exact files from the canonical sudoers builder and refuses modified bytes', async () => {
-    for (const policy of [{ version: 1, mode: 'preauthorized' },
+    for (const daemonUsername of ['happier', 'qa-native-1116']) for (const policy of [{ version: 1, mode: 'preauthorized' },
       { version: 1, mode: 'ask', administratorUsername: 'ops.admin' }] as const) {
-      const [step] = buildManagedSudoersSteps({ daemonUsername: 'happier', previousPolicy: { version: 1, mode: 'none' }, policy });
+      const [step] = buildManagedSudoersSteps({ daemonUsername, previousPolicy: { version: 1, mode: 'none' }, policy });
       if (step?.content?.kind !== 'literal') throw new Error('Expected the canonical owned file bytes');
       let bytes = step.content.value;
       const boundary = nativeBoundary();
-      const dependencies: MachineAdminAccessNativeDependencies = { ...boundary.dependencies, fileSystem: {
+      const execute = boundary.dependencies.execFile!;
+      const dependencies: MachineAdminAccessNativeDependencies = { ...boundary.dependencies,
+        execFile: async (file, args) => file === 'id' && args[0] === '-un' ? { stdout: daemonUsername } : execute(file, args),
+        fileSystem: {
         lstat: async path => {
-          expect(path).toBe(MANAGED_SUDOERS_PATH);
+          expect(path).toBe(step.path);
           return { uid: 0, gid: 0, mode: 0o440, isFile: () => true, isSymbolicLink: () => false };
         },
         readFile: async () => bytes,

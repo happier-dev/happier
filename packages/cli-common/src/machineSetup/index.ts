@@ -22,7 +22,7 @@ export { createDockerEngineSetupSteps } from './dockerEngine.js';
 export { parseNativeDockerEngineInfo, type NativeDockerEngineFacts } from './nativeDockerEngine.js';
 export { observeNativeUpdates, createNativeUpdatesSteps, type NativeUpdatesObservation, type NativeUpdatesCandidates } from './nativeUpdates.js';
 export * from './effectInternalProtocol.js';
-export { MANAGED_SUDOERS_PATH, buildManagedSudoersSteps, recognizeManagedSudoersDropIn } from './managedSudoers.js';
+export { MANAGED_SUDOERS_PATH, resolveManagedSudoersPath, buildManagedSudoersSteps, recognizeManagedSudoersDropIn } from './managedSudoers.js';
 export { assertAgentIsolationLaunchPrincipal, buildAgentIsolationBootstrapSteps, buildAgentIsolationToolsRootStep } from './agentIsolationBootstrap.js';
 export { buildUserManagerGroupRefreshStep } from './userManagerGroups.js';
 export { machineStateRootStep } from './stateRoot.js';

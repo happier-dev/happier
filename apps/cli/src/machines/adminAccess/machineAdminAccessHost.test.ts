@@ -8,7 +8,7 @@ import { createSystemTasksRunner } from '@happier-dev/cli-common/systemTasks/int
 import type { MachineAdminAccessObservationV1, MachineAdminAccessV1 } from '@happier-dev/protocol';
 import { createMachineAdminAccessHost } from './machineAdminAccessHost';
 import type { MachineElevationDependencies, MachineElevationSpawn } from './runElevatedEffect';
-import { buildManagedSudoersSteps, MANAGED_SUDOERS_PATH } from './managedSudoers';
+import { buildManagedSudoersSteps, MANAGED_SUDOERS_PATH, resolveManagedSudoersPath } from './managedSudoers';
 import { runMachineSetupEffectInternal } from '../setup/effectInternal';
 import { observeMachineAdminAccess } from './observeMachineAdminAccess';
 
@@ -39,8 +39,8 @@ async function fixture(previousPolicy: MachineAdminAccessV1, policy: MachineAdmi
     const [previous] = previousPolicy.mode === 'none' ? []
         : buildManagedSudoersSteps({ daemonUsername: daemonUsername!, previousPolicy: none, policy: previousPolicy });
     if (previous?.content?.kind === 'literal') {
-        await writeFile(MANAGED_SUDOERS_PATH, previous.content.value, { mode: 0o600 });
-        await chmod(MANAGED_SUDOERS_PATH, 0o440);
+        await writeFile(previous.path, previous.content.value, { mode: 0o600 });
+        await chmod(previous.path, 0o440);
     }
     const launches: Parameters<MachineElevationSpawn>[0][] = [], passwords: string[] = [], requests: unknown[] = [];
     const nativeFailures: unknown[] = [], records: unknown[] = [];
@@ -146,6 +146,8 @@ function observeOwnedGrant(unreadable = false) {
 describe.runIf(process.platform !== 'win32')('administrator policy host reconciliation', () => {
     it.each([preauthorized, ask])('grants $mode to the observed existing-user daemon through the root interpreter', async policy => {
         const f = await fixture(none, policy, 'alice');
+        const existingGrant = 'happier ALL=(ALL:ALL) NOPASSWD: ALL\n';
+        await writeFile(MANAGED_SUDOERS_PATH, existingGrant, { mode: 0o440 });
         f.allowRoot();
         let authorityReads = 0;
         expect(await createMachineAdminAccessHost(f.dependencies).reconcile({ ...f.input,
@@ -153,9 +155,10 @@ describe.runIf(process.platform !== 'win32')('administrator policy host reconcil
         })).toMatchObject({ outcome: 'applied' });
         expect(f.nativeFailures).toEqual([]);
         expect(authorityReads).toBe(3);
-        expect(await readFile(MANAGED_SUDOERS_PATH, 'utf8')).toBe(policy.mode === 'preauthorized'
+        expect(await readFile(resolveManagedSudoersPath('alice'), 'utf8')).toBe(policy.mode === 'preauthorized'
             ? 'alice ALL=(ALL:ALL) NOPASSWD: ALL\n'
             : 'Defaults:alice targetpw, timestamp_timeout=0\nalice ALL=(ops.admin) PASSWD: ALL\n');
+        expect(await readFile(MANAGED_SUDOERS_PATH, 'utf8')).toBe(existingGrant);
     });
 
     it('refuses an Ask transition to the daemon account before spawning or writing a grant', async () => {

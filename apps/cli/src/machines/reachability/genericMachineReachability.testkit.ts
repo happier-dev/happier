@@ -34,7 +34,7 @@ import { MachineEffectInternalRequestSchema, MachineEffectInternalRecordSchema }
 import type { MachineElevationSpawn } from '@/machines/adminAccess/runElevatedEffect';
 import { resolveMachineEffectCli } from '@/machines/adminAccess/machineEffectCli';
 import { observeMachineAdminAccess, type MachineAdminAccessNativeDependencies } from '@/machines/adminAccess/observeMachineAdminAccess';
-import { buildManagedSudoersSteps, MANAGED_SUDOERS_PATH } from '@/machines/adminAccess/managedSudoers';
+import { buildManagedSudoersSteps } from '@/machines/adminAccess/managedSudoers';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import type { MachineSetupNativeEffectsInput } from '@/machines/setup/machineSetupNativeEffects';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
@@ -1305,7 +1305,7 @@ export async function installGenericNativeIdentityBoundary() {
   const step = buildManagedSudoersSteps({ daemonUsername: daemon.username, previousPolicy: { version: 1, mode: 'none' },
     policy: { version: 1, mode: 'preauthorized' } })[0];
   if (step?.content?.kind !== 'literal') throw new Error('Expected the actual admitted sudoers producer');
-  await writeFile(MANAGED_SUDOERS_PATH, step.content.value, { mode: 0o440 });
+  await writeFile(step.path, step.content.value, { mode: 0o440 });
   const nativeDependencies = {
     platform: 'linux',
     async execFile(command, args) {

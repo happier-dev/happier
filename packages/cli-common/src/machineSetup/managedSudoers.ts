@@ -6,6 +6,14 @@ import { MachineRecipeStepV1Schema } from '@happier-dev/protocol/machines/setup/
 
 export const MANAGED_SUDOERS_PATH = '/etc/sudoers.d/90-happier-daemon';
 
+/** Preserve the standard daemon's installed grant; other native users own separate files. */
+export function resolveManagedSudoersPath(daemonUsername: string): string {
+    // Sudo ignores drop-ins with dots or tildes. Hex keeps admitted usernames
+    // distinct without putting either character in the sudoers filename.
+    return daemonUsername === 'happier' ? MANAGED_SUDOERS_PATH
+        : `${MANAGED_SUDOERS_PATH}-${Buffer.from(daemonUsername, 'utf8').toString('hex')}`;
+}
+
 function render(daemonUsername: string, policy: Exclude<MachineAdminAccessV1, { mode: 'none' }>): string {
     return policy.mode === 'preauthorized' ? `${daemonUsername} ALL=(ALL:ALL) NOPASSWD: ALL\n`
         // targetpw is supported by classic sudo and sudo-rs. Authenticate the
@@ -22,6 +30,7 @@ export function buildManagedSudoersSteps(input: Readonly<{
     if (previous.mode === 'none' && policy.mode === 'none') return [];
     // Sudoers identities use the same admitted native-user grammar as setup.
     MachineRecipeStepV1Schema.parse({ id: 'daemon-principal', kind: 'user', username: input.daemonUsername });
+    const path = resolveManagedSudoersPath(input.daemonUsername);
     if (policy.mode === 'ask' && policy.administratorUsername === input.daemonUsername) {
         throw new MachineSetupEffectError('required_fact_unavailable', { kind: 'native_check_unavailable',
             reason: 'required_fact_unavailable', requiredFact: 'distinctAdministrator',
@@ -30,7 +39,7 @@ export function buildManagedSudoersSteps(input: Readonly<{
     const expectedContentDigest = previous.mode === 'none' ? undefined
         : computeSha256HexDigest(render(input.daemonUsername, previous));
     const file = { id: 'machine-admin-access-sudoers', kind: 'file' as const,
-        path: MANAGED_SUDOERS_PATH, owner: 'root', group: 'root', mode: 0o440,
+        path, owner: 'root', group: 'root', mode: 0o440,
         ...(expectedContentDigest ? { expectedContentDigest } : {}) };
     return [policy.mode === 'none' ? { ...file, state: 'absent' }
         : { ...file, state: 'present', content: { kind: 'literal', value: render(input.daemonUsername, policy) }, validate: 'sudoers' }];

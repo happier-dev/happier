@@ -38,22 +38,39 @@ async function fixture(daemonUsername = 'happier') {
     } });
     const steps = (previousPolicy: MachineAdminAccessV1, policy: MachineAdminAccessV1) =>
         buildManagedSudoersSteps({ daemonUsername, previousPolicy, policy }).map(step => {
-            expect(step).toMatchObject({ kind: 'file', path: '/etc/sudoers.d/90-happier-daemon', owner: 'root', group: 'root', mode: 0o440 });
+            expect(step).toMatchObject({ kind: 'file', owner: 'root', group: 'root', mode: 0o440 });
+            expect(basename(step.path)).not.toMatch(/[.~]/);
             return { ...step, path: join(root, basename(step.path)) };
         });
     const apply = async (steps: MachineRecipeStepV1[]) => {
         const plan = await machineSetup.checkMachineSetupEffectPlan({ basis, steps, backend });
         return machineSetup.applyMachineSetupEffectPlan({ plan, backend });
     };
-    return { root, steps, apply, validations: () => validations, path: join(root, '90-happier-daemon') };
+    return { root, steps, apply, validations: () => validations, path: steps(none, preauthorized)[0]!.path };
 }
 
 describe('managed daemon sudoers effect producer', () => {
+    it('installs and retires a second daemon user without changing the existing host daemon grant', async () => {
+        const f = await fixture('qa-native-1116');
+        const existing = join(f.root, '90-happier-daemon');
+        await writeFile(existing, preauthorizedBytes, { mode: 0o440 });
+        const original = await lstat(existing);
+        expect(await f.apply(f.steps(none, preauthorized))).toMatchObject({ status: 'applied' });
+        expect(await readFile(f.path, 'utf8')).toBe('qa-native-1116 ALL=(ALL:ALL) NOPASSWD: ALL\n');
+        expect(await f.apply(f.steps(preauthorized, ask))).toMatchObject({ status: 'applied' });
+        expect(await f.apply(f.steps(ask, none))).toMatchObject({ status: 'applied' });
+        await expect(lstat(f.path)).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(await readFile(existing, 'utf8')).toBe(preauthorizedBytes);
+        const retained = await lstat(existing);
+        expect(retained.ino).toBe(original.ino);
+        expect(retained.mode).toBe(original.mode);
+    });
+
     it.each([
         { daemonUsername: 'happier', policy: preauthorized, content: preauthorizedBytes, next: ask, nextContent: askBytes },
         { daemonUsername: 'happier', policy: ask, content: askBytes, next: preauthorized, nextContent: preauthorizedBytes },
-        { daemonUsername: 'alice', policy: preauthorized, content: preauthorizedBytes.replaceAll('happier', 'alice'),
-            next: ask, nextContent: askBytes.replaceAll('happier', 'alice') },
+        { daemonUsername: 'alice.name', policy: preauthorized, content: preauthorizedBytes.replaceAll('happier', 'alice.name'),
+            next: ask, nextContent: askBytes.replaceAll('happier', 'alice.name') },
     ])('installs, no-ops, changes and exactly removes $daemonUsername $policy.mode through the shared interpreter', async ({ daemonUsername, policy, content, next, nextContent }) => {
         const f = await fixture(daemonUsername);
         const sibling = join(f.root, '91-happier-agent');
@@ -82,7 +99,7 @@ describe('managed daemon sudoers effect producer', () => {
     });
 
     it('preserves protected foreign content and symlink targets for both install and exact removal', async () => {
-        const f = await fixture();
+        const f = await fixture('qa-native-1116');
         const programs = [f.steps(none, preauthorized), f.steps(preauthorized, none)];
         await writeFile(f.path, 'foreign policy\n', { mode: 0o440 });
         for (const steps of programs) {
@@ -91,11 +108,12 @@ describe('managed daemon sudoers effect producer', () => {
         }
         await rm(f.path);
         const target = join(f.root, 'foreign-target');
-        await writeFile(target, preauthorizedBytes);
+        const targetBytes = preauthorizedBytes.replaceAll('happier', 'qa-native-1116');
+        await writeFile(target, targetBytes);
         await symlink(target, f.path);
         for (const steps of programs) expect(await f.apply(steps)).toMatchObject({ status: 'unavailable', reason: 'foreign_effect_conflict' });
         expect((await lstat(f.path)).isSymbolicLink()).toBe(true);
-        expect(await readFile(target, 'utf8')).toBe(preauthorizedBytes);
+        expect(await readFile(target, 'utf8')).toBe(targetBytes);
         expect(f.validations()).toBe(0);
     });
 
