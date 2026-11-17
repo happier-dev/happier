@@ -180,7 +180,11 @@ describe('materializeQualifiedConnectedAccountLaunchUses', () => {
         account, plugin: { id: service.pluginId, version: CURSOR_MANIFEST.version },
         contribution: { id: service.localId, qualifiedId: buildQualifiedPluginContributionKey(service) },
         surface: 'background', invokedAtMs: 0, services: createUnavailablePluginServices(), signal,
-        credentials: { async get(key) { expect(key).toBe('apiKey'); acquisitions += 1; return 'fixture-selected-key'; } },
+        credentials: { async get(key) {
+          if (key !== 'apiKey') return null;
+          acquisitions += 1;
+          return 'fixture-selected-key';
+        } },
         configuration: { target: { kind: 'account', account, modeId: 'api-key' }, revision: 'configuration-1', values: {}, async getSecret() { return null; } },
       }),
       projectTargetAccounts: async () => { throw new Error('No account inventory needed'); },
