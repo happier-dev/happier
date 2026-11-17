@@ -522,6 +522,30 @@ the already-opened notice does not start another Session. This provides no
 durable outcome-delivery guarantee or automatic recovery carrier. Manual
 Investigate retains the configured handoff's existing create/send recovery.
 
+### Native Happier exceptions (0.3 development source)
+
+`happier.telemetry` defines the built-in Happier exceptions source (P7
+D30/D34). Its Triage contribution is registered together with the source's
+detail renderer, which the UI owner supplies. Its issue records live in the plugin's `exception-issues` Account
+Collection. The collector daemon's telemetry plugin is their only writer. It
+creates a record for a new group and regresses a resolved record when a release
+that wasn't seen before the resolution recurs. It also applies Resolve, Reopen
+and Ignore, which arrive as Environment-admitted telemetry Actions. Count-only
+arrivals write nothing.
+
+After each committed lifecycle write, the writer admits one `issue-transition`
+observation and calls the same `publishTriageIssueTransitionV1` that the vendor
+observers' checkpoint save uses. Its event config is the commit-published arm
+(no `checkPeriodMs`), and no native poller exists. A Team-owned Environment's
+records are shared with that Team through Collection sharing (`view`) when the
+writer creates them. Grants are not re-armed when a Project changes Teams, and
+lifecycle Actions are admitted by Environment telemetry read access, not by the
+grant (see [Native exception issues](encryption.md#native-exception-issues-03-development)). The
+source's scan and get read the reader's own records first, then records shared
+with them, with owner-relative refs. Occurrences and stacks stay on the
+collector and are read on demand through
+`happier.telemetry/actions/capture/exceptions/occurrences/read`.
+
 ### Operations failure investigation (0.3 development source)
 
 `TriageFailureSubjectV1` extends the same configured Investigate handoff with

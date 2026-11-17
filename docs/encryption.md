@@ -1202,6 +1202,39 @@ no audience and cannot re-expose new content to former recipients. Physical
 forget retains its existing cascade. This is unreleased integration work pending
 Coordination's encryption review and loaded-runtime replay.
 
+### Native exception issues (0.3 development)
+
+Raw telemetry stays on the Environment's collector Machine. That includes each
+exception occurrence and its stack, in the collector's daemon database (P5
+retention). The shared secret redactor runs once at OTLP ingest, before storage,
+grouping or any read. The Account-native issue record (D30) is one row in the
+`happier.telemetry` `exception-issues` Account Collection. It holds the title,
+fingerprint, status, counts, first/last seen, last release and resolution. On an
+E2EE Account its logical fields are private Collection content. Only
+`environmentId` (already server-known) and the row id are server-readable. The
+row id is the Collection's Account-mode identity tag over Environment and
+fingerprint, so app error text never becomes plaintext metadata.
+
+Exactly one writer exists: the collector daemon's telemetry plugin, under its
+signed-in Account. Exporter identity never selects the Account or supplies keys.
+Without Account storage, raw occurrences are retained and the writer reports a
+typed unavailable state. An explicit refresh then replays the retained groups;
+there is no plaintext fallback. For Team-owned Environments (D34), the same
+writer arms a Team `view` grant through the existing Collection sharing owner
+(per-row key, recipient envelopes) as it creates each record. Grants are armed
+only then. When a Project moves to another Team, or to a person, the previous
+Team keeps `view` on the records that already exist. Those records keep updating
+until the owner revokes the grants with the existing sharing Actions; this is an
+accepted, visible glitch. New records follow the current owner.
+
+Lifecycle authority is separate from the grant (D34). Resolve, Reopen, Ignore
+and Refresh are Actions admitted per request by the Environment's R16 telemetry
+read admission, and the single writer executes them. Anyone who can read the
+Environment's telemetry can therefore change an issue's lifecycle, and the
+Action results show its status, count and last-seen, but not its title.
+Revoking a record's grant withdraws reading the record, not lifecycle edits.
+Grantees never write the row, and a readable issue grants no collector access.
+
 ### Usage accounting (0.3 development)
 
 Usage numbers, models, Agents and times remain server-queryable for both plain
