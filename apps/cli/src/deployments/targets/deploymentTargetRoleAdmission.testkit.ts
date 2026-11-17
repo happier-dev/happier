@@ -57,13 +57,13 @@ export function createDeploymentTargetRoleAdmissionFixture(role: DeploymentTarge
         purposeAuthorization: { action: { pluginId: 'acme.alpha', localId: actionLocalId },
             purpose: { consumer: { pluginId: 'acme.alpha', localId: actionLocalId }, purpose: 'action-account' }, serviceRefs: [account.service] },
     };
-    const host: DeploymentTargetRoleAdmissionHost = { serverId: 'home', machineId: 'controller', installationId: 'installation-controller',
+    const host = { serverId: 'home', machineId: 'controller', installationId: 'installation-controller',
         resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
         credentials: { token: 'fixture-account-token', encryption: null }, serverHttpBaseUrl: 'https://home.test',
         credentialOwnerAccountId: 'custody-account',
-        readEnvironment: async () => { state.reads++; return state.environment; },
-        readReceipt: async () => { state.reads++; return state.receipt; },
+        readEnvironment: async (_request: Parameters<DeploymentTargetRoleAdmissionHost['readEnvironment']>[0]) => { state.reads++; return state.environment; },
+        readReceipt: async (_request: Parameters<DeploymentTargetRoleAdmissionHost['readReceipt']>[0]) => { state.reads++; return state.receipt; },
         assertCurrent: async context => { context.signal?.throwIfAborted(); },
-    };
+    } satisfies DeploymentTargetRoleAdmissionHost;
     return { request, host, state, input };
 }

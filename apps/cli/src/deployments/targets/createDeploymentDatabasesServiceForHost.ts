@@ -174,7 +174,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
         return { target, admission, selected, summary: access(admission, operation) };
     };
 
-    return Object.freeze({
+    return Object.freeze<DeploymentDatabasesServiceV1>({
         async admitTelemetryRead(request) {
             const admission = await readEnvironment({ kind: 'environment', environment: request }, undefined, { nativeMember: true });
             const environment = admission.detail.environment;
