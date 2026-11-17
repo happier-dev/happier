@@ -1,3 +1,4 @@
+import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import type { PluginContributionLocalId } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ThemeProfileV1 } from './themeProfileTypes';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
@@ -12,21 +13,29 @@ export type PluginThemeListItem = Readonly<{
     theme: ThemeProfileV1;
 }>;
 
+let previousList: readonly PluginThemeListItem[] | undefined;
+const familyLists = new WeakMap<PluginUiProjectionModel['themesById'], readonly PluginThemeListItem[]>();
 const EMPTY: readonly PluginThemeListItem[] = Object.freeze([]);
 
 /** Admitted declaration data only. MODEL owns library identity, mutability and selection. */
 export function resolvePluginThemeList(projection: Pick<PluginUiProjectionModel, 'themesById'> | null): readonly PluginThemeListItem[] {
     if (!projection) return EMPTY;
-    const entries = Object.values(projection.themesById ?? {});
+    const family = projection.themesById;
+    const cached = familyLists.get(family);
+    if (cached) return cached;
+    const entries = Object.values(family);
     if (entries.length === 0) return EMPTY;
-    return Object.freeze(entries.map(entry => Object.freeze({
+    const result = retainKeyedRows(previousList, entries.map(entry => ({
         id: entry.id,
         pluginId: entry.pluginId,
         pluginVersion: entry.pluginVersion,
         pluginName: entry.pluginName ?? entry.pluginId,
         contributionId: entry.definition.id,
         theme: entry.definition.theme,
-    })));
+    })), entry => entry.id);
+    previousList = result;
+    familyLists.set(family, result);
+    return result;
 }
 
 /** Borrows the committed app-shell projection; listing performs no transport or Artifact writes. */

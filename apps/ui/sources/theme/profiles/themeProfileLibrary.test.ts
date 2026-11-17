@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseThemeProfileDocument, type ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { createThemeProfileLibrary, createThemeProfileSourceAdapter, type ThemeProfileArtifactAdapter } from './themeProfileLibrary';
-import { projectThemeLibraryEntry } from './themeProfilePresentation';
+import { projectPluginThemeLibraryEntries, projectThemeLibraryEntries, projectThemeLibraryEntry } from './themeProfilePresentation';
 
 const ids = { first: '11111111-1111-4111-8111-111111111111', second: '22222222-2222-4222-8222-222222222222', kept: '33333333-3333-4333-8333-333333333333' };
 function document(id: string, extra: Record<string, unknown> = {}) {
@@ -14,11 +14,11 @@ const ref = (id: string): ThemeReference => ({ kind: 'artifact', id });
 
 function setup(acknowledgeCreation = true) {
     const records = new Map<string, { document: ReturnType<typeof document>; revision: number; headerVersion: number }>();
-    let reads = 0, writes = 0, deletes = 0, generated = 0;
+    let reads = 0, writes = 0, deletes = 0, generated = 0, headerVisits = 0;
     const selection = { light: null as ThemeReference | null, dark: null as ThemeReference | null };
     const artifacts: ThemeProfileArtifactAdapter = {
         load: async () => {},
-        list: () => [...records.values()].map(row => ({ entry: projectThemeLibraryEntry(row.document), revision: row.revision, headerVersion: row.headerVersion })),
+        list: () => [...records.values()].map(row => { headerVisits++; return ({ entry: projectThemeLibraryEntry(row.document), revision: row.revision, headerVersion: row.headerVersion }); }),
         get: async id => { reads++; return records.get(id) ?? null; },
         getSummary: async id => {
             const row = records.get(id);
@@ -40,10 +40,41 @@ function setup(acknowledgeCreation = true) {
     };
     const context = { artifacts, readSelection: () => selection, writeSelection: (mode: 'light' | 'dark', reference: ThemeReference | null) => { selection[mode] = reference; },
         createId: () => `aaaaaaaa-aaaa-4aaa-8aaa-${String(++generated).padStart(12, '0')}`, now: () => Date.parse('2026-11-16T12:00Z') };
-    return { library: createThemeProfileLibrary(context), source: createThemeProfileSourceAdapter(context), records, selection, counts: () => ({ reads, writes, deletes }) };
+    return { library: createThemeProfileLibrary(context), source: createThemeProfileSourceAdapter(context), records, selection, counts: () => ({ reads, writes, deletes, headerVisits }) };
 }
 
 describe('theme profile library', () => {
+    it('retains plugin miniatures across own-header changes and unchanged declarations', () => {
+        const first = { pluginId: 'acme.themes', contributionId: 'first', theme: document('first').profile };
+        const second = { pluginId: 'acme.themes', contributionId: 'second', theme: document('second').profile };
+        const plugins = [first, second];
+        const before = projectPluginThemeLibraryEntries(plugins);
+        const own = projectThemeLibraryEntry(document('own'));
+        const joined = projectThemeLibraryEntries([own], before, []);
+        const changed = projectThemeLibraryEntry(document('own', { name: 'Renamed' }));
+        const after = projectThemeLibraryEntries([changed], projectPluginThemeLibraryEntries(plugins), []);
+        expect(after[0]).not.toBe(joined[0]);
+        expect(after[1]).toBe(joined[1]);
+        expect(after[2]).toBe(joined[2]);
+        const pluginChange = projectPluginThemeLibraryEntries([{ ...first, theme: document('first', { name: 'Changed' }).profile }, second]);
+        expect(pluginChange[0]).not.toBe(before[0]);
+        expect(pluginChange[1]).toBe(before[1]);
+        expect(pluginChange[1]?.miniature).toBe(before[1]?.miniature);
+    });
+
+    it('indexes Store faces once per operation and updates successful writes for retries', async () => {
+        const state = setup();
+        for (let i = 0; i < 200; i++) state.records.set(`theme-${i}`, { document: document(`theme-${i}`), revision: 1, headerVersion: 1 });
+        const face = (id: string) => document(id, { source: { kind: 'store', provenance: provenance(), contributionId: id } });
+        const first = await state.source.save(face('dark-face'));
+        await state.source.save(face('light-face'));
+        await state.source.save(face('dark-face'));
+        expect(state.records.size).toBe(202);
+        expect(state.counts().writes).toBe(2);
+        expect(state.counts().headerVisits).toBeLessThanOrEqual(203);
+        expect(first.entry?.source.kind).toBe('store');
+    });
+
     it('lists forty CSS-heavy records without opening bodies and skips a no-op save', async () => {
         const state = setup();
         for (let i = 0; i < 40; i++) state.records.set(`theme-${i}`, { document: document(`theme-${i}`, { css: '.surface { color: red; }'.repeat(1000) }), revision: 1, headerVersion: 1 });

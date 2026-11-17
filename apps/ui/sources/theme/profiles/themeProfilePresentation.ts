@@ -64,8 +64,17 @@ export function projectThemeLibraryEntries(saved: readonly ThemeLibraryEntry[], 
     return [...saved.filter(entry => entry.source.kind === 'yours'), ...saved.filter(entry => entry.source.kind !== 'yours'), ...plugins, ...builtIns];
 }
 
+type PluginLibraryInput = Pick<Extract<ThemeProfileSource, { kind: 'plugin' }>, 'pluginId' | 'contributionId'> & Readonly<{ theme: ThemeProfileV1 }>;
+const pluginEntries = new WeakMap<PluginLibraryInput, ThemeLibraryEntry>();
+
 /** Admitted plugin declarations join as references, never persisted Artifact copies. */
-export function projectPluginThemeLibraryEntries(items: readonly (Pick<Extract<ThemeProfileSource, { kind: 'plugin' }>, 'pluginId' | 'contributionId'> & Readonly<{ theme: ThemeProfileV1 }>)[]): readonly ThemeLibraryEntry[] {
-    return items.map(item => projectThemeLibraryEntry(projectPluginThemeProfileDocument(item.theme,
-        { kind: 'plugin', pluginId: item.pluginId, contributionId: item.contributionId })));
+export function projectPluginThemeLibraryEntries(items: readonly PluginLibraryInput[]): readonly ThemeLibraryEntry[] {
+    return items.map(item => {
+        const previous = pluginEntries.get(item);
+        if (previous) return previous;
+        const entry = projectThemeLibraryEntry(projectPluginThemeProfileDocument(item.theme,
+            { kind: 'plugin', pluginId: item.pluginId, contributionId: item.contributionId }));
+        pluginEntries.set(item, entry);
+        return entry;
+    });
 }

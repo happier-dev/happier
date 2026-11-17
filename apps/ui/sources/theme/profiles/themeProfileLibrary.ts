@@ -159,6 +159,13 @@ export interface ThemeProfileSourceAdapter {
 
 /** Store's admitted provenance uses these records without granting user save source authority. */
 export function createThemeProfileSourceAdapter(context: ThemeProfileLibraryContext): ThemeProfileSourceAdapter {
+    const keyOf = (source: Extract<ThemeProfileSource, { kind: 'store' }>) =>
+        JSON.stringify([source.provenance.sourceId, source.provenance.itemId, source.contributionId]);
+    // The captured source adapter lives for one admitted operation (including its faces).
+    // Successful writes update this index so retries in that operation see acknowledged records.
+    let sourceIndex: Map<string, ThemeProfileArtifactSummary> | undefined;
+    const index = () => sourceIndex ??= new Map(context.artifacts.list().flatMap(summary =>
+        summary.entry.source.kind === 'store' ? [[keyOf(summary.entry.source), summary] as const] : []));
     return {
         list: async () => {
             await context.artifacts.load();
@@ -168,8 +175,7 @@ export function createThemeProfileSourceAdapter(context: ThemeProfileLibraryCont
             const source = document.profile.source;
             if (source?.kind !== 'store') throw new Error('Expected admitted Store theme');
             await context.artifacts.load();
-            const currentSummary = context.artifacts.list().find(({ entry }) => entry.source.kind === 'store'
-                && entry.source.provenance.sourceId === source.provenance.sourceId && entry.source.provenance.itemId === source.provenance.itemId && entry.source.contributionId === source.contributionId);
+            const currentSummary = index().get(keyOf(source));
             const current = currentSummary ? await context.artifacts.get(currentSummary.entry.id) : null;
             if (currentSummary && !current) throw new HappyError('Theme not found', false, { code: 'theme_not_found' });
             let next = mergeThemeProfileDocumentEdit(document, { id: current?.document.profile.id ?? context.createId(),
@@ -185,6 +191,7 @@ export function createThemeProfileSourceAdapter(context: ThemeProfileLibraryCont
             const result = await context.artifacts.save(next, current?.revision);
             if (!current) assertAcknowledgedContent(next, result.document);
             const entry = projectThemeLibraryEntry(result.document);
+            index().set(keyOf(source), { entry, revision: result.revision, headerVersion: result.headerVersion });
             return !current && result.created === false ? unchanged(entry)
                 : { entry, change: { changedIds: [result.id], removedIds: [], selectionChangedModes: [] } };
         },
@@ -194,6 +201,7 @@ export function createThemeProfileSourceAdapter(context: ThemeProfileLibraryCont
             if (!summary) return unchanged();
             if (summary.entry.source.kind !== 'store') throw new Error('Expected installed Store theme');
             await context.artifacts.delete(id, summary.revision);
+            sourceIndex?.delete(keyOf(summary.entry.source));
             return { entry: null, change: { changedIds: [], removedIds: [id], selectionChangedModes: [] } };
         },
     };
