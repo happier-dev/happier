@@ -2475,13 +2475,12 @@
     postcss-selector-parser "^7.1.1"
     tailwind-merge "^3.4.0"
 
-"@homebridge/node-pty-prebuilt-multiarch@^0.13.1":
-  version "0.13.1"
-  resolved "https://registry.npmjs.org/@homebridge/node-pty-prebuilt-multiarch/-/node-pty-prebuilt-multiarch-0.13.1.tgz"
-  integrity sha512-ccQ60nMcbEGrQh0U9E6x0ajW9qJNeazpcM/9CH6J8leyNtJgb+gu24WTBAfBUVeO486ZhscnaxLEITI2HXwhow==
+"@homebridge/node-pty-prebuilt-multiarch@^0.15.0":
+  version "0.15.0"
+  resolved "https://registry.npmjs.org/@homebridge/node-pty-prebuilt-multiarch/-/node-pty-prebuilt-multiarch-0.15.0.tgz#2c91bff62e9d2550c43287b644e95582536153d6"
+  integrity sha512-kzcNCO8Ak4ozf3CV5Hynu3hnDdgRTYCZUYINs6uODH//a3AwSW9uMc/TVuGtpz+39sh9gPKIQdnKNX+t20fRtg==
   dependencies:
-    node-addon-api "^7.1.0"
-    prebuild-install "^7.1.2"
+    node-addon-api "^8.9.0"
 
 "@hono/node-server@^1.19.9":
   version "1.19.9"
@@ -14055,6 +14054,11 @@ node-addon-api@^7.1.0:
   version "7.1.1"
   resolved "https://registry.npmjs.org/node-addon-api/-/node-addon-api-7.1.1.tgz"
   integrity sha512-5m3bsyrjFWE1xf7nz7YXdN4udnVtXK6/Yfgn5qnahL6bCkf2yKt4k3nuTKAtT4r3IG8JNR2ncsIMdZuAzJjHQQ==
+
+node-addon-api@^8.9.0:
+  version "8.9.2"
+  resolved "https://registry.npmjs.org/node-addon-api/-/node-addon-api-8.9.2.tgz#db7ac94a13ffd9b55e6cb04584bd5ef8e1d74b18"
+  integrity sha512-VijLXbi3UACN69I0JVXJsX4tjACjNoQDgv2gTF6sx2wWEi8tkSg2eX8p5gSIFi8z2+DL3oHmY6OyKce38SDolg==
 
 node-fetch-native@^1.6.6:
   version "1.6.7"
