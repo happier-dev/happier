@@ -5,9 +5,9 @@ import * as entry from './index.js';
 
 it('declares browser verification unreachable for the existing authentication placement owner', () => {
   const descriptor = entry.manifest.contributes.connectedAccountDescriptors?.find(value => value.id === 'neon');
-  const mode = descriptor?.authentication.modes.find(value => value.id === 'token');
-  expect(mode).toBeDefined();
-  expect(mode?.browserReachability).toBe('unreachable');
+  expect(descriptor).toMatchObject({ authentication: { modes: expect.arrayContaining([
+    expect.objectContaining({ id: 'token', browserReachability: 'unreachable' }),
+  ]) } });
 });
 
 it.each(['daemon', 'account'] as const)('verifies the exact organization and materializes only management authorization through %s activation', async target => {

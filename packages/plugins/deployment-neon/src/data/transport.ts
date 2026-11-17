@@ -10,7 +10,7 @@ function records(value: unknown) { return Array.isArray(value) ? value.map(recor
 /** Selected provider transport only; SQL compilation and result semantics belong to the shared dialect. */
 export async function openNeonReadOnlyTransport(input: DeploymentTargetPreparationBaseV1 & Readonly<{ database: string }>,
   context: PluginAccountActionContext): Promise<Readonly<{ ok: true;
-    execute(statement: Readonly<{ sql: string; parameters: readonly JsonValue[] }>):
+    execute(statement: Readonly<{ sql: string; parameters: readonly JsonValue[] }>, signal?: AbortSignal):
       Promise<Readonly<{ ok: true; native: Record<string, unknown> }> | DeploymentDataQueryUnavailableV1>;
   }> | DeploymentDataQueryUnavailableV1> {
   const http = context.services.http;
@@ -48,7 +48,9 @@ export async function openNeonReadOnlyTransport(input: DeploymentTargetPreparati
   connection.password = password;
   connection.pathname = `/${encodeURIComponent(input.database)}`;
   connection.searchParams.set('sslmode', 'require');
-  return { ok: true, execute: async statement => {
+  return { ok: true, execute: async (statement, signal) => {
+    const operationSignal = signal ?? context.signal;
+    operationSignal.throwIfAborted();
     const body = new TextEncoder().encode(JSON.stringify({ queries: [
       { query: postgresqlReadOnlyRoleGuardSql, params: [] }, { query: statement.sql, params: statement.parameters },
     ] }));
@@ -56,14 +58,14 @@ export async function openNeonReadOnlyTransport(input: DeploymentTargetPreparati
     try {
       response = await http.request({ url: destination.href, method: 'POST', redirect: 'error',
         headers: { 'Content-Type': 'application/json', 'Neon-Connection-String': connection.href,
-          'Neon-Raw-Text-Output': 'true', 'Neon-Array-Mode': 'true', 'Neon-Batch-Read-Only': 'true' }, body }, { signal: context.signal });
+          'Neon-Raw-Text-Output': 'true', 'Neon-Array-Mode': 'true', 'Neon-Batch-Read-Only': 'true' }, body }, { signal: operationSignal });
     } catch (error) {
-      context.signal.throwIfAborted();
+      operationSignal.throwIfAborted();
       if (isPluginError(error) && error.code === 'plugin_fetch_response_too_large') throw error;
       // Network/provider errors can include the private connection header.
       throw new PluginError({ code: 'query_failed' });
     }
-    context.signal.throwIfAborted();
+    operationSignal.throwIfAborted();
     if (response.finalUrl !== destination.href) throw new PluginError({ code: 'query_failed' });
     if (response.status < 200 || response.status >= 300) {
       let refusal: unknown;
@@ -72,6 +74,11 @@ export async function openNeonReadOnlyTransport(input: DeploymentTargetPreparati
         && (refusal.code === '28P01' || refusal.code === '28000'
           || refusal.code === '42501' && 'message' in refusal && refusal.message === 'happier_read_role_unavailable')) {
         return withActionFailureDiagnostic<DeploymentDataQueryUnavailableV1>({ ok: false, error: 'deployment_unavailable', diagnostic: { code: 'read_role_unavailable' } }, { phase: 'deployment.neon.query', causeKind: 'access_denied' });
+      }
+      if (refusal && typeof refusal === 'object' && 'code' in refusal && typeof refusal.code === 'string'
+        && /^[0-9A-Z]{5}$/.test(refusal.code)) {
+        // Native SQLSTATE is public; provider messages may contain private SQL or credentials.
+        throw Object.assign(new Error('The selected Neon database rejected the statement'), { code: refusal.code });
       }
       throw new PluginError({ code: 'query_failed' });
     }

@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { DeploymentTargetPreparationBaseV1ProtocolSchema, PluginError } from '@happier-dev/plugin-sdk';
+import { definePlugin, DeploymentTargetPreparationBaseV1ProtocolSchema, PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
+import { DatabaseReadStatementInputV1Schema, DatabaseOperationResultV1ProtocolSchema, type DatabaseOperationInputV1 } from '@happier-dev/database-protocol';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/plugin-sdk/actions';
 import * as entry from './index.js';
+import { accountExecution } from './data/actions.js';
 
 const credentialRef = { service: { pluginId: 'happier.deploy.neon', localId: 'neon' }, accountId: 'connected' };
 const input = { ...DeploymentTargetPreparationBaseV1ProtocolSchema.parse({ v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1,
@@ -19,7 +22,8 @@ const endpoint = { id: 'ep-main', project_id: 'project', branch_id: 'br-main', t
   host: 'ep-main.eu-central-1.aws.neon.tech', disabled: false };
 const result = { command: 'SELECT', fields: [{ name: 'value', dataTypeID: 25 }], rowCount: 1, rows: [['hello']], rowAsArray: true };
 
-async function host(options: { status?: number; body?: unknown; endpoint?: typeof endpoint; missingRole?: boolean } = {}) {
+async function host(options: { status?: number; body?: unknown; endpoint?: typeof endpoint; missingRole?: boolean;
+  mayAcquireRole?: () => boolean } = {}) {
   const requests: HttpRequest[] = [];
   const http = createPluginHttpFixture({ async request(request) {
     requests.push(request);
@@ -31,7 +35,10 @@ async function host(options: { status?: number; body?: unknown; endpoint?: typeo
       body: new TextEncoder().encode(JSON.stringify(body)), headers: {} };
   } });
   const secrets = {
-    async readDataRole() { if (options.missingRole) throw new PluginError({ code: 'secret_missing' }); return 'fixture-role-password'; },
+    async readDataRole() {
+      if (options.missingRole || options.mayAcquireRole?.() === false) throw new PluginError({ code: 'secret_missing' });
+      return 'fixture-role-password';
+    },
     async readSavedSecret() { throw new Error('No account-custody bypass'); },
     async saveShared() { throw new Error('No query-time secret writer'); },
     async get() { throw new Error('No account-secret fallback'); },
@@ -40,10 +47,102 @@ async function host(options: { status?: number; body?: unknown; endpoint?: typeo
     async status() { return { state: 'missing' as const, revision: '0' }; },
   };
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http, secrets } });
-  return { kit, requests };
+  return { kit, requests, services: { http, secrets } };
+}
+
+
+// Real SDK activation/context underneath the HTTP and custody boundary fixtures.
+async function invokeManaged(h: Awaited<ReturnType<typeof host>>, operand: DatabaseOperationInputV1,
+  options: Readonly<{ access?: 'read' | 'write'; afterOpen?: () => void }> = {}) {
+  const runtime = h.kit.registration('deploymentTargets', 'database');
+  if (!runtime) throw new Error('Managed database runtime is missing');
+  if (operand.target.kind !== 'managed_deployment') throw new Error('Expected managed target fixture');
+  const target = operand.target;
+  const probe = definePlugin({ id: 'test.neon-dialect', version: '0.0.0', actions: { probe: {
+        title: 'Probe', execution: accountExecution, scopes: ['global'], surfaces: ['cli'], dangerLevel: 'safe', readOnly: true,
+        resultSchema: DatabaseOperationResultV1ProtocolSchema,
+        async run(_input: JsonValue, context: PluginAccountActionContext) {
+          const resolved = await runtime.open({ preparation: input, target, access: options.access ?? 'read',
+            placement: { serverId: 'home', accountId: 'owner', machineId: 'machine', installationId: 'installation' } }, context);
+          options.afterOpen?.();
+          try { return await resolved.connection.execute(operand, context.signal); }
+          finally { await resolved.connection.close(); }
+        },
+      } } });
+  const runner = await createPluginTestkit({ manifest: probe.manifest, module: probe, services: h.services });
+  try { return await runner.invokeAction('probe', {}); }
+  finally { await runner.dispose(); }
 }
 
 describe('Neon qualified read-only SQL', () => {
+  it('runs the registered selected transport through the shared dialect without losing native field types', async () => {
+    const h = await host({ body: { results: [{ command: 'DO' }, { command: 'SELECT', rowCount: 1,
+      fields: [{ name: 'duplicate', dataTypeID: 20 }, { name: 'duplicate', dataTypeID: 25 }, { name: 'absent', dataTypeID: 25 }],
+      rows: [['9007199254740993', '', null]] }] } });
+    try {
+      const runtime = h.kit.registration('deploymentTargets', 'database');
+      expect(runtime, 'The existing data target must bind its private database runtime').toBeDefined();
+      if (!runtime) throw new Error('Managed database runtime is missing');
+      const target = { kind: 'managed_deployment' as const, environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' },
+        targetLinkId: 'data-link', contribution: { pluginId: credentialRef.service.pluginId, contributionId: 'database' },
+        platformProjectId: 'project', branchId: 'br-main', database: 'neondb' };
+      const operand = DatabaseReadStatementInputV1Schema.parse({ operation: 'statement.run', mode: 'read', target,
+        statement: { sql: 'SELECT $1::bigint AS duplicate, $2::text AS duplicate, NULL::text AS absent', parameters: [
+          { type: 'integer', value: '9007199254740993' }, { type: 'text', value: '' }] } });
+      expect(await invokeManaged(h, operand)).toMatchObject({ ok: true, operation: 'statement.run', results: [{
+        columns: [{ name: 'duplicate', semanticType: 'integer' }, { name: 'duplicate', semanticType: 'text' }, { name: 'absent' }],
+        rows: [{ cells: [{ type: 'integer', value: '9007199254740993' }, { type: 'text', value: '' }, { type: 'null' }] }],
+        completeness: { complete: true },
+      }] });
+      const body = JSON.parse(new TextDecoder().decode(h.requests.find(request => new URL(request.url).pathname === '/sql')!.body));
+      expect(body.queries[1].params).toEqual(['9007199254740993', '']);
+      const requestsBeforeWrite = h.requests.length;
+      expect(await invokeManaged(h, { operation: 'statement.run', mode: 'write', target,
+        executionMode: 'transaction', statements: [{ sql: 'UPDATE items SET value = 1', parameters: [] }] }, { access: 'write' }))
+        .toMatchObject({ ok: false, status: 'unavailable', code: 'database_operation_unavailable' });
+      expect(h.requests.length).toBe(requestsBeforeWrite);
+    } finally { await h.kit.dispose(); }
+  });
+  it('captures the selected read login before the finite open admission ends', async () => {
+    let mayAcquireRole = true;
+    const h = await host({ mayAcquireRole: () => mayAcquireRole });
+    try {
+      const target = { kind: 'managed_deployment' as const, environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' },
+        targetLinkId: 'data-link', contribution: { pluginId: credentialRef.service.pluginId, contributionId: 'database' },
+        platformProjectId: 'project', branchId: 'br-main', database: 'neondb' };
+      expect(await invokeManaged(h, DatabaseReadStatementInputV1Schema.parse({ operation: 'statement.run', mode: 'read', target,
+        statement: { sql: 'SELECT $1::text AS value', parameters: [{ type: 'text', value: 'hello' }] } }),
+      { afterOpen: () => { mayAcquireRole = false; } })).toMatchObject({ ok: true,
+        results: [{ rows: [{ cells: [{ type: 'text', value: 'hello' }] }] }] });
+    } finally { await h.kit.dispose(); }
+  });
+  it('preserves a native SQLSTATE at the semantic Action boundary without exposing provider text', async () => {
+    const h = await host({ status: 400, body: { code: '42601', message: 'private SQL and fixture-role-password' } });
+    try {
+      const target = { kind: 'managed_deployment' as const, environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' },
+        targetLinkId: 'data-link', contribution: { pluginId: credentialRef.service.pluginId, contributionId: 'database' },
+        platformProjectId: 'project', branchId: 'br-main', database: 'neondb' };
+      const result = await invokeManaged(h, DatabaseReadStatementInputV1Schema.parse({ operation: 'statement.run', mode: 'read', target,
+        statement: { sql: 'SELECT invalid syntax', parameters: [] } }));
+      expect(result).toMatchObject({ ok: false, code: 'database_engine_error', cause: { source: 'engine', code: '42601', statementIndex: 0 } });
+      expect(JSON.stringify(result)).not.toContain('fixture-role-password');
+      expect(JSON.stringify(result)).not.toContain('private SQL');
+    } finally { await h.kit.dispose(); }
+  });
+
+  it('keeps a missing read-role binding unavailable at the semantic Action boundary', async () => {
+    const h = await host({ missingRole: true });
+    try {
+      const target = { kind: 'managed_deployment' as const, environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' },
+        targetLinkId: 'data-link', contribution: { pluginId: credentialRef.service.pluginId, contributionId: 'database' },
+        platformProjectId: 'project', branchId: 'br-main', database: 'neondb' };
+      const result = await invokeManaged(h, DatabaseReadStatementInputV1Schema.parse({ operation: 'statement.run', mode: 'read', target,
+        statement: { sql: 'SELECT 1', parameters: [] } }));
+      expect(result).toMatchObject({ ok: false, status: 'unavailable', code: 'database_transport_unavailable', reason: 'secret_missing' });
+      expect(h.requests).toHaveLength(0);
+    } finally { await h.kit.dispose(); }
+  });
+
   it('executes for the exact branch/database using only the bound read-role login', async () => {
     const h = await host();
     try {

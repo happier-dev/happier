@@ -1,4 +1,4 @@
-import { computeSha256HexDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+import { computeSha256HexDigest } from '@happier-dev/plugin-sdk';
 import { scanSqlStatements, type DatabaseLexicalToken, type NormalizedDatabaseStatement } from './lexer.js';
 export * from './lexer.js';
 
