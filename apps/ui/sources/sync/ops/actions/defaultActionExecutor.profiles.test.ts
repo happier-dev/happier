@@ -37,16 +37,8 @@ import type { Artifact, ArtifactCreateRequest } from '@/sync/domains/artifacts/a
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { captureLazyActionAccountContext } from './actionAccountContext';
 import { readProfileCatalogInContext } from '@/sync/api/account/apiProfileCatalog';
-import { createApiAuthoringMemoryTransport } from '@/sync/api/account/apiAuthoringMemory';
-import { createAuthoringMemorySync } from '@/sync/engine/authoringMemory/authoringMemorySync';
-import { createAuthoringMemoryCipher } from '@/sync/encryption/authoringMemoryEncryption';
-import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
-import { retireLegacyAuthoringMemoryKey } from '@/sync/engine/settings/syncSettings';
-import { getRandomBytes } from '@/platform/cryptoRandom';
 import { AuthoringMemoryMutationRequestV1Schema, buildProjectLastOpenedMemoryKeyV1,
     type AuthoringMemoryRowV1 } from '@happier-dev/protocol/account/authoringMemory';
-import { importLegacyAuthoringMemorySetting } from '@happier-dev/protocol/account/authoringMemoryImport';
-import { LegacyLastUsedProfileSchema } from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
 import { useApplyProfileSave, useDeleteAiLaunchProfile, useProfileFavoriteIdsMutable } from '@/sync/store/settingsWriters';
 import { useProfilesCollection } from '@/components/settings/profiles/useProfilesCollection';
 import { useSaveLaunchProfile } from '@/components/profiles/edit/useSaveLaunchProfile';
@@ -336,40 +328,13 @@ async function fixture() {
         neighboringMemory: () => neighboringMemory,
         memory: () => memory,
         setMemoryEnvelope: (content: unknown) => { memory = content; },
-        seedLegacyRememberedProfile(id: string, destination: 'absent' | 'present' = 'absent') {
-            settings = { ...settings, lastUsedProfile: id, favoriteProfiles: [id, 'neighbor'],
+        seedRememberedProfile(id: string, destination: 'absent' | 'present' = 'absent') {
+            settings = { ...settings, favoriteProfiles: [id, 'neighbor'],
                 futureSecretCarrier: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'opaque-sibling-ciphertext' } } };
             memoryRevision = destination === 'absent' ? 'absent' : 2;
             memory = destination === 'absent' ? undefined : { t: 'plain', v: id };
         },
         failMemoryWrites: () => { failMemoryWrites = true; },
-        async importLegacyRememberedProfile() {
-            const account = await captureLazyActionAccountContext(home.id);
-            try {
-                const { accountMode, encryption } = await account.resolveAccountEncryption();
-                if (accountMode !== 'plain') throw new Error('Fixture Account is Plain');
-                let observed: string | null | undefined;
-                const owner = createAuthoringMemorySync({
-                    transport: createApiAuthoringMemoryTransport({ request: account.request }),
-                    cipher: createAuthoringMemoryCipher({ mode: accountMode, material: null, randomBytes: getRandomBytes }),
-                    isCurrent: account.accountLifetime.isCurrent,
-                    apply: delta => { if (delta.lastUsedProfile !== undefined) observed = delta.lastUsedProfile; },
-                });
-                await importLegacyAuthoringMemorySetting({
-                    key: 'lastUsedProfile', assertCurrent: account.assertCurrent,
-                    read: () => readAccountSettingsBaseline({ credentials: account.credentials, encryption, accountMode, request: account.request }),
-                    transfer: async value => { await owner.importAbsent('lastUsedProfile', LegacyLastUsedProfileSchema.parse(value)); },
-                    remove: async (key, expectedSettingsVersion) => {
-                        const result = await retireLegacyAuthoringMemoryKey({ credentials: account.credentials, encryption, accountMode,
-                            settingsScope: account.accountLifetime.scope, requestContext: { scope: account.accountLifetime.scope,
-                                endpointUrl: account.endpointUrl, request: account.request }, key, expectedSettingsVersion });
-                        return result.status;
-                    },
-                });
-                await owner.bootstrap();
-                return observed;
-            } finally { account.dispose(); }
-        },
         settings: () => settings,
         disableUiAction(actionId: string) {
             settings = { ...settings, actionsSettingsV1: { v: 1, actions: { [actionId]: { disabledSurfaces: ['ui'] } } } };
@@ -879,20 +844,17 @@ describe('UI Profile Action front door', () => {
         },
     );
 
-    it('does not resurrect a deleted remembered Profile when its raw Settings source is imported later', async () => {
+    it('clears the current remembered Profile after durable deletion without touching neighboring memory', async () => {
         const f = await fixture();
         f.setProfile(undefined, 'private');
-        f.seedLegacyRememberedProfile('private');
+        f.seedRememberedProfile('private', 'present');
         const neighbor = f.neighboringMemory();
         const deleted = await f.executor.execute('launch_profiles.delete', { id: 'private', expectedRevision: 4 }, {
             ...f.context, presentUserConfirmation: { actionId: 'launch_profiles.delete' },
         });
-        expect(deleted).toEqual({ ok: true, result: { status: 'updated', id: 'private', revision: 5 } });
+        expect(deleted).toMatchObject({ ok: true, result: { status: 'updated', id: 'private', revision: 5 } });
         expect(f.profileRows()).toEqual([{ id: 'private', revision: 5, content: null }]);
-        // This is the real destination-first importer, invoked after the actual Action ACK.
-        await expect(f.importLegacyRememberedProfile()).resolves.toBe(null);
         expect(f.memory()).not.toEqual({ t: 'plain', v: 'private' });
-        expect(f.settings()).not.toHaveProperty('lastUsedProfile');
         expect(f.settings()).toMatchObject({ favoriteProfiles: ['neighbor'], futurePreference: { version: 'initial' },
             futureSecretCarrier: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'opaque-sibling-ciphertext' } } });
         expect(f.neighboringMemory()).toEqual(neighbor);
@@ -900,12 +862,12 @@ describe('UI Profile Action front door', () => {
     it('keeps the acknowledged Profile tombstone when secondary remembered-selection cleanup fails', async () => {
         const f = await fixture();
         f.setProfile(undefined, 'private');
-        f.seedLegacyRememberedProfile('private', 'present');
+        f.seedRememberedProfile('private', 'present');
         f.failMemoryWrites();
         const result = await f.executor.execute('launch_profiles.delete', { id: 'private', expectedRevision: 4 }, {
             ...f.context, presentUserConfirmation: { actionId: 'launch_profiles.delete' },
         });
-        expect(result).toEqual({ ok: true, result: { status: 'updated', id: 'private', revision: 5,
+        expect(result).toMatchObject({ ok: true, result: { status: 'updated', id: 'private', revision: 5,
             authoringMemoryCleanup: { status: 'unavailable', reason: 'authoring_memory_cleanup_failed' } } });
         expect(f.profileRows()).toEqual([{ id: 'private', revision: 5, content: null }]);
         expect(f.requests).toContain('POST /v1/account/authoring-memory/lastUsedProfile');

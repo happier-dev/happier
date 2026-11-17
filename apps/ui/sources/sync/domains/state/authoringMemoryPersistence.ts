@@ -1,8 +1,8 @@
 import {
-    LegacyLastUsedProfileSchema,
-    LegacyRecentMachinePathSchema,
-    LegacyRememberedEngineSelectionsByScopeV1Schema,
-} from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
+    LastUsedProfileSchema,
+    RecentMachinePathSchema,
+    RememberedEngineSelectionsByScopeV1Schema as RetainedRememberedEngineSelectionsByScopeV1Schema,
+} from '@happier-dev/protocol/account/authoringMemory';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { z } from 'zod/mini';
 
@@ -15,16 +15,15 @@ import { getPersistenceStorage } from './persistenceStorage';
 import { WorkflowProjectTargetsByDefinitionIdV1Schema } from '@happier-dev/protocol/account/authoringMemory';
 
 const AuthoringMemoryProjectionSchema: z.ZodMiniObject<{
-    recentMachinePaths: z.ZodMiniArray<typeof LegacyRecentMachinePathSchema>;
-    lastUsedProfile: typeof LegacyLastUsedProfileSchema;
-    lastEngineSelectionsByScopeV1: typeof LegacyRememberedEngineSelectionsByScopeV1Schema;
+    recentMachinePaths: z.ZodMiniArray<typeof RecentMachinePathSchema>;
+    lastUsedProfile: typeof LastUsedProfileSchema;
+    lastEngineSelectionsByScopeV1: typeof RetainedRememberedEngineSelectionsByScopeV1Schema;
     workflowProjectTargetsByDefinitionId: z.ZodMiniOptional<typeof WorkflowProjectTargetsByDefinitionIdV1Schema>;
 }, z.core.$strict> = z.strictObject({
-    // A persisted projection is admitted as a whole, unlike legacy import's
-    // malformed-sibling recovery.
-    recentMachinePaths: z.array(LegacyRecentMachinePathSchema),
-    lastUsedProfile: LegacyLastUsedProfileSchema,
-    lastEngineSelectionsByScopeV1: LegacyRememberedEngineSelectionsByScopeV1Schema,
+    // A persisted projection is admitted as a whole.
+    recentMachinePaths: z.array(RecentMachinePathSchema),
+    lastUsedProfile: LastUsedProfileSchema,
+    lastEngineSelectionsByScopeV1: RetainedRememberedEngineSelectionsByScopeV1Schema,
     workflowProjectTargetsByDefinitionId: z.optional(WorkflowProjectTargetsByDefinitionIdV1Schema),
 });
 const StoredAuthoringMemoryProjectionSchema = createStoredReadSchema(AuthoringMemoryProjectionSchema);

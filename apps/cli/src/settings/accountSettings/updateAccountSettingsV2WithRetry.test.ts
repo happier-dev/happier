@@ -253,32 +253,6 @@ describe('updateAccountSettingsV2WithRetry', () => {
       deriveSettingsSecretsReadKeysForCredentials(credentials))).toBe('private-fixture');
     expect(() => prepare({ credentials: createTokenOnlyCredentialsStub(), raw, envelopeKind: 'encrypted' })).toThrow();
   });
-  it('retires only a committed legacy authoring key at the observed exact version', async () => {
-    const raw = { lastUsedProfile: 'legacy', recentMachinePaths: [], futureSetting: { keep: true } };
-    const writes: Array<{ expectedVersion: number; content: AccountSettingsStoredContentEnvelope | null }> = [];
-    const deps = {
-      fetchSettings: async () => ({ content: { t: 'plain' as const, v: raw }, version: 4 }),
-      resolveAccountEncryptionMode: resolvePlainAccountEncryptionMode,
-      updateSettings: async (request: { expectedVersion: number; content: AccountSettingsStoredContentEnvelope | null }) => {
-        writes.push(request);
-        return { success: true as const, version: 5 };
-      },
-    };
-    const result = await updateAccountSettingsV2Once({
-      credentials: createTokenOnlyCredentialsStub(), expectedVersion: 4,
-      retireLegacyAuthoringMemoryKey: 'lastUsedProfile', mutate: (settings) => settings, deps,
-    });
-    expect(result.status).toBe('applied');
-    expect(writes[0]?.content).toEqual({ t: 'plain', v: { recentMachinePaths: [], futureSetting: { keep: true } } });
-    writes.length = 0;
-    const stale = await updateAccountSettingsV2Once({
-      credentials: createTokenOnlyCredentialsStub(), expectedVersion: 3,
-      retireLegacyAuthoringMemoryKey: 'lastUsedProfile', mutate: (settings) => settings, deps,
-    });
-    expect(stale.status).toBe('conflict');
-    expect(writes).toEqual([]);
-  });
-
   it('settles the submitted sparse mutation without replaying preparation after a lost response', async () => {
     let content: AccountSettingsStoredContentEnvelope = { t: 'plain', v: {} };
     let version = 1;

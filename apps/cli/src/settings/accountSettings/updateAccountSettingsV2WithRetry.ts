@@ -18,7 +18,7 @@ import { AccountSettingsV2GetResponseSchema, AccountSettingsV2UpdateRequestSchem
 import { AccountSettingsPersistedObjectSchema } from '@happier-dev/protocol/account/settings/accountSettingsPersistedObject';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { resealSecretsDeepV1, unsealSecretsDeepWithKeysV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
-import type { AccountSettings, AccountSettingMutationV1, AccountSettingsMutationResult, AccountSettingsPersistedObject, AccountSettingsStoredContentEnvelope, AccountSettingsV2UpdateResponse, LegacyAuthoringMemorySettingsKey } from '@happier-dev/protocol';
+import type { AccountSettings, AccountSettingMutationV1, AccountSettingsMutationResult, AccountSettingsPersistedObject, AccountSettingsStoredContentEnvelope, AccountSettingsV2UpdateResponse } from '@happier-dev/protocol';
 
 import {
   resolveAccountSettingsCachePath,
@@ -317,8 +317,6 @@ export type UpdateAccountSettingsV2OnceParams = UpdateAccountSettingsV2OnceAgain
    * document after this version has gone stale.
    */
   expectedVersion: number;
-  /** Destination-first 0.2 import only; never a general unknown-key mutation. */
-  retireLegacyAuthoringMemoryKey?: LegacyAuthoringMemorySettingsKey;
 }>;
 
 export type UpdateAccountSettingsV2OnceResult = AccountSettingsMutationResult;
@@ -515,12 +513,6 @@ export async function readAccountSettingsV2Raw(params: Readonly<{
   return { raw: parsed.raw, version: fetched.version, envelopeKind: parsed.envelopeKind };
 }
 
-/** Existing destination-first predecessor importer consumes the same raw owner. */
-export async function readAccountSettingsV2RawForLegacyAuthoringMemoryImport(params: Parameters<typeof readAccountSettingsV2Raw>[0]): Promise<Readonly<{ raw: AccountSettingsPersistedObject; version: number }>> {
-  const { raw, version } = await readAccountSettingsV2Raw(params);
-  return { raw, version };
-}
-
 /** Bounded owner cutovers replace only their reviewed raw baseline under exact source CAS. */
 export async function replaceAccountSettingsV2RawForOwnerCutover(params: Readonly<{
   credentials: StoredCredentials;
@@ -551,7 +543,6 @@ async function prepareAccountSettingsV2Mutation(params: Readonly<{
     | Readonly<{ kind: 'callback'; mutate: AccountSettingsMutationCallback }>;
   deps: ResolvedAccountSettingsV2UpdateDeps;
   signal?: AbortSignal;
-  retireLegacyAuthoringMemoryKey?: LegacyAuthoringMemorySettingsKey;
 }>): Promise<Readonly<{
   didChange: boolean;
   content: AccountSettingsStoredContentEnvelope | null;
@@ -565,11 +556,7 @@ async function prepareAccountSettingsV2Mutation(params: Readonly<{
   let baselineSettings = parsed.settings;
   let mergedRaw: AccountSettingsPersistedObject;
   let mutation: AccountSettingMutationV1 | null = null;
-  if (params.retireLegacyAuthoringMemoryKey) {
-    // Retirement is an exact deletion, never a general Settings normalization.
-    mergedRaw = { ...parsed.raw };
-    delete mergedRaw[params.retireLegacyAuthoringMemoryKey];
-  } else if (params.application.kind === 'immutable' || params.application.kind === 'prepared_immutable') {
+  if (params.application.kind === 'immutable' || params.application.kind === 'prepared_immutable') {
     mutation = params.application.kind === 'immutable' ? params.application.mutation : await params.application.prepareMutation(parsed.raw);
     const applied = applyAccountSettingMutationV1(parsed.raw, mutation);
     if (applied.status === 'invalid') {
@@ -587,7 +574,7 @@ async function prepareAccountSettingsV2Mutation(params: Readonly<{
     });
   }
   params.signal?.throwIfAborted();
-  const nextRaw = params.retireLegacyAuthoringMemoryKey ? mergedRaw : normalizeSettingsSecretsForEnvelope({
+  const nextRaw = normalizeSettingsSecretsForEnvelope({
     raw: mergedRaw,
     envelopeKind: parsed.envelopeKind,
     credentials: params.credentials,
@@ -839,7 +826,7 @@ export async function updateAccountSettingsV2WithRetry(
  */
 async function updateAccountSettingsV2OnceInternal(
   params: UpdateAccountSettingsV2OnceAgainstLatestParams & Readonly<{
-    expectedVersion?: number; retireLegacyAuthoringMemoryKey?: LegacyAuthoringMemorySettingsKey;
+    expectedVersion?: number;
   }>,
 ): Promise<UpdateAccountSettingsV2OnceResult> {
   if (!maySubmitAccountSettingsMutation(params)) return cancelledBeforeSubmission();
@@ -866,7 +853,6 @@ async function updateAccountSettingsV2OnceInternal(
         : { kind: 'callback', mutate: params.mutate },
       deps,
       ...(params.signal ? { signal: params.signal } : {}),
-      ...(params.retireLegacyAuthoringMemoryKey ? { retireLegacyAuthoringMemoryKey: params.retireLegacyAuthoringMemoryKey } : {}),
     });
   } catch (error) {
     if (!maySubmitAccountSettingsMutation(params)) return cancelledBeforeSubmission();

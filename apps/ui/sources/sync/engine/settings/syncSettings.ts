@@ -57,7 +57,6 @@ import { readAccountSettingsWriteMaterial } from './accountSettingsWriteMaterial
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { applyAccountSettingMutationV1, type AccountSettingMutationV1 } from '@happier-dev/protocol/account/settings/accountSettingMutationV1';
 import { AccountSettingsV2UpdateResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
-import { LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS } from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
 import {
@@ -246,99 +245,6 @@ export type SyncSettingsParams<TOneShotMutationValue = never> = {
         }>) => Promise<OneShotAccountSettingsPreparedCommitResult>;
     }>;
 };
-
-/** Destination-first authoring-memory import may retire only its exact source key. */
-export async function retireLegacyAuthoringMemoryKey(params: Readonly<{
-    credentials: AuthCredentials;
-    encryption: Encryption | null;
-    accountMode: 'plain' | 'e2ee';
-    settingsScope: AccountSettingsScope;
-    requestContext: NonNullable<SyncSettingsParams['requestContext']>;
-    key: typeof LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS[number];
-    expectedSettingsVersion: number;
-}>): Promise<Exclude<OneShotAccountSettingsMutationResult<void>, Readonly<{ status: 'invalid' }>>> {
-    if (!LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS.includes(params.key)) {
-        throw new Error('Invalid authoring-memory retirement key');
-    }
-    if (!areAccountSettingsScopesEqual(params.settingsScope, params.requestContext.scope)) {
-        throw new Error('Account settings request scope does not match the settings scope');
-    }
-    if (!Number.isInteger(params.expectedSettingsVersion) || params.expectedSettingsVersion < 0) {
-        throw new Error('Authoring-memory retirement requires a valid expected version');
-    }
-    const request = (path: string, init?: RequestInit) => params.requestContext.request(path, init, { includeAuth: false });
-    const readBaseline = async () => {
-        const baseline = await readAccountSettingsBaseline({
-            request, credentials: params.credentials, encryption: params.encryption, accountMode: params.accountMode,
-        });
-        // A conflict is authoritative evidence that the socket-observed head
-        // was stale. The import's next read must use this admitted document.
-        retainAccountSettingsRawSnapshot(params.settingsScope, baseline.version, baseline.raw ?? {});
-        return baseline;
-    };
-    const baseline = await readBaseline();
-    if (baseline.version !== params.expectedSettingsVersion) {
-        return { status: 'conflict', currentSettingsVersion: baseline.version };
-    }
-    if (!Object.prototype.hasOwnProperty.call(baseline.raw ?? {}, params.key)) {
-        return { status: 'applied', settingsVersion: baseline.version, value: undefined };
-    }
-    // No generic Settings normalization is allowed here: opaque siblings,
-    // including SecretString carriers, are outside this retirement's authority.
-    const raw = { ...baseline.raw };
-    delete raw[params.key];
-    if (baseline.api !== 'v2') throw new Error('Authoring-memory retirement requires Account Settings v2');
-    const writeMaterial = await readAccountSettingsWriteMaterial({ credentials: params.credentials,
-        encryption: params.encryption, request, expectedMode: params.accountMode });
-    writeMaterial.assertCurrent();
-    let content: AccountSettingsStoredContentEnvelope;
-    if (params.accountMode === 'plain') {
-        content = { t: 'plain', v: raw };
-    } else {
-        if (!writeMaterial.material) throw new AccountSettingsStoredContentUnavailableError(
-            'account_settings_encryption_material_unavailable', 'Account settings encryption material is unavailable');
-        content = { t: 'encrypted', c: sealAccountScopedBlobCiphertext({
-            kind: 'account_settings',
-            material: writeMaterial.material,
-            payload: raw,
-            randomBytes: getRandomBytes,
-        }) };
-    }
-    const recoverUnknownOutcome = async (): Promise<Exclude<OneShotAccountSettingsMutationResult<void>, Readonly<{ status: 'invalid' }>>> => {
-        try {
-            const readback = await readBaseline();
-            return { status: 'outcomeUnknown', lastKnownSettingsVersion: readback.version, safeSnapshotVersion: readback.version };
-        } catch {
-            return { status: 'outcomeUnknown', lastKnownSettingsVersion: baseline.version };
-        }
-    };
-    let response: Response;
-    let acknowledgement: unknown;
-    try {
-        response = await request('/v2/account/settings', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${params.credentials.token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content, expectedVersion: baseline.version }),
-        });
-        acknowledgement = await response.json();
-    } catch {
-        return recoverUnknownOutcome();
-    }
-    const parsed = AccountSettingsV2UpdateResponseSchema.safeParse(acknowledgement);
-    if (!parsed.success) return recoverUnknownOutcome();
-    if (parsed.data.success) {
-        if (!response.ok) return recoverUnknownOutcome();
-        retainAccountSettingsRawSnapshot(params.settingsScope, parsed.data.version, raw);
-        return { status: 'applied', settingsVersion: parsed.data.version, value: undefined };
-    }
-    if (parsed.data.error === 'version-mismatch') {
-        const opened = openAccountSettingsStoredContent({ content: parsed.data.currentContent,
-            encryption: params.encryption, expectedMode: params.accountMode });
-        retainAccountSettingsRawSnapshot(params.settingsScope, parsed.data.currentVersion, opened.raw ?? {});
-        return { status: 'conflict', currentSettingsVersion: parsed.data.currentVersion };
-    }
-    throw new Error(`Authoring-memory retirement rejected: ${parsed.data.error}`);
-}
 
 export function syncSettings<TOneShotMutationValue>(
     params: SyncSettingsParams<TOneShotMutationValue> & Required<Pick<SyncSettingsParams<TOneShotMutationValue>, 'oneShotServerSettingsMutation'>>,

@@ -1,6 +1,6 @@
 import type { AccountSettingsDefaults } from '@happier-dev/protocol/account/settings/accountSettings';
 import { mergeCurrentFavoriteModelSelectionsIntoRaw } from '@happier-dev/protocol/providers/modelFavoritesV1';
-import { LegacyRememberedEngineSelectionsByScopeV1Schema, type RetainedRememberedEngineSelectionsByScopeV1 } from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
+import { RememberedEngineSelectionsByScopeV1Schema as RetainedRememberedEngineSelectionsByScopeV1Schema, type RememberedEngineSelectionsByScopeV1 as RetainedRememberedEngineSelectionsByScopeV1 } from '@happier-dev/protocol/account/authoringMemory';
 
 import {
     StoredFavoriteModelSelectionV1Schema,
@@ -16,7 +16,7 @@ import {
 export type RetainedFavoriteModelSelectionsV1 = AccountSettingsDefaults['favoriteModelSelectionsV1'];
 
 /** Protocol-owned retained engine carrier, now materialized from reserved authoring rows. */
-export type { RetainedRememberedEngineSelectionsByScopeV1 } from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
+export type { RememberedEngineSelectionsByScopeV1 as RetainedRememberedEngineSelectionsByScopeV1 } from '@happier-dev/protocol/account/authoringMemory';
 
 type SettingsWithRetainedSessionAuthoringSelections = Readonly<{
     favoriteModelSelectionsV1?: RetainedFavoriteModelSelectionsV1;
@@ -124,7 +124,7 @@ function retainRememberedEngineSelection(
     scopeKey: string,
     selection: RememberedEngineSelectionsByScopeV1[string],
 ): RetainedRememberedEngineSelectionsByScopeV1[string] | null {
-    const parsed = LegacyRememberedEngineSelectionsByScopeV1Schema.safeParse({
+    const parsed = RetainedRememberedEngineSelectionsByScopeV1Schema.safeParse({
         [scopeKey]: selection,
     });
     if (!parsed.success) return null;

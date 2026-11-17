@@ -44,7 +44,6 @@ export {
 } from './sessionAgentSpawnPolicyV1.js';
 
 import { AccountSettingsPersistedObjectSchema } from './accountSettingsPersistedObject.js';
-import { LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS } from './legacyAuthoringMemorySettingsV1.js';
 import { DEFAULT_SESSION_AGENT_START_ALLOW_LISTS_V1, SessionAgentStartAllowListsV1Schema, SessionAgentStartAllowListsV1StrictSchema } from './sessionAgentStartAllowListsV1.js';
 export { DEFAULT_SESSION_AGENT_START_ALLOW_LISTS_V1, SessionAgentStartAllowListsV1Schema, type SessionAgentStartAllowListsV1 } from './sessionAgentStartAllowListsV1.js';
 import { SessionReminderPresetsV1Schema } from './sessionReminderPresetsV1.js';
@@ -1061,8 +1060,7 @@ export function isAccountSettingsReadOnlySourceKeyV1(key: string): boolean {
         || RETIRED_SESSION_LIST_SETTING_KEYS.has(key)
         || PRIVATE_CATALOG_SETTINGS_SOURCE_KEYS.has(key)
         || key === 'themeProfiles'
-        || key === 'inferenceOpenAIKey'
-        || LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS.some(sourceKey => sourceKey === key);
+        || key === 'inferenceOpenAIKey';
 }
 
 /** Read-only provenance admission; undefined means this is not a retained entity source. */

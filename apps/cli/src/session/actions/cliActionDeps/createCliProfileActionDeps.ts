@@ -1,3 +1,4 @@
+import { LastUsedProfileSchema } from '@happier-dev/protocol/account/authoringMemory';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import type { z } from 'zod/mini';
 import { AccountSettingMutationV1Schema } from '@happier-dev/protocol/account/settings/accountSettingMutationV1';
@@ -29,9 +30,7 @@ import type { requireAccountSettingsMutationSuccess, updateAccountSettingsV2Once
 import type { refreshActiveProfileCatalog } from '@/settings/profiles/hydrateProfileCatalog';
 import type { createCliProfileStore, createCliProfileStoreForOperation, CliProfileStore } from '@/settings/profiles/profileStore';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
-import type { clearAuthoringMemoryLastUsedProfileIfEqual, readAuthoringMemoryLastUsedProfile } from '@/settings/profiles/readAuthoringMemoryLastUsedProfile';
 import type { readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';
-import type { createAuthoringMemoryClient } from '@/settings/authoringMemory/createAuthoringMemoryClient';
 
 function mutationResult(id: string, result: ProfileRowMutationResponseV1): ProfileOperationResult {
   if (result.status === 'updated' || result.status === 'conflict') return { status: result.status, id, revision: result.revision };
@@ -153,9 +152,7 @@ export function createCliProfileActionExecuteV1(params: Readonly<{
         },
         clearRememberedProfile: async ({ id }) => {
           assertCurrent();
-          const { readAuthoringMemoryLastUsedProfile, clearAuthoringMemoryLastUsedProfileIfEqual } = await import("@/settings/profiles/readAuthoringMemoryLastUsedProfile");
-          await readAuthoringMemoryLastUsedProfile(params.credentials, context.signal);
-          assertCurrent();
+          const { clearAuthoringMemoryLastUsedProfileIfEqual } = await import("@/settings/profiles/readAuthoringMemoryLastUsedProfile");
           await clearAuthoringMemoryLastUsedProfileIfEqual(params.credentials, id, context.signal);
         },
         setBuiltinEnabled: async input => {
@@ -224,12 +221,10 @@ export function createCliProfileActionExecuteV1(params: Readonly<{
           const admitted = (await resolveOperations()).validateSelection({ id });
           if (admitted.status !== 'selected') return admitted;
         }
-        const [{ readAuthoringMemoryLastUsedProfile }, { createAuthoringMemoryClient }] = await Promise.all([import("@/settings/profiles/readAuthoringMemoryLastUsedProfile"), import("@/settings/authoringMemory/createAuthoringMemoryClient")]);
-        await readAuthoringMemoryLastUsedProfile(params.credentials, context.signal);
-        assertCurrent();
+        const { createAuthoringMemoryClient } = await import("@/settings/authoringMemory/createAuthoringMemoryClient");
         const memory = await createAuthoringMemoryClient({ credentials: params.credentials, signal: context.signal });
         const row = await memory.read('lastUsedProfile');
-        if (row.status === 'present') memory.open('lastUsedProfile', row.content);
+        if (row.status === 'present') LastUsedProfileSchema.parse(memory.open('lastUsedProfile', row.content));
         assertCurrent();
         const result = await memory.mutate('lastUsedProfile', row.status === 'absent' ? 'absent' : row.revision,
           memory.seal('lastUsedProfile', id));

@@ -7,6 +7,7 @@ import {
   type ProjectAccountRowKeyV1,
   type ProjectAccountRowPayloadV1,
 } from '../../packages/protocol/src/projects/projectAccountRowsV1.js';
+import { buildProjectLastOpenedMemoryKeyV1, ProjectLastOpenedMemoryValueV1Schema } from '../../packages/protocol/src/account/authoringMemory.js';
 import { parseProjectAccountSnapshotV1 } from '../../packages/protocol/src/projects/projectAccountSnapshotV1.js';
 
 type OpenedRow = Readonly<{ key: ProjectAccountRowKeyV1; revision: number; payload: ProjectAccountRowPayloadV1 | null }>;
@@ -177,8 +178,23 @@ async function main(): Promise<void> {
       throw new Error(`Project destination refused cutover: ${response.status}`);
     },
     async retainRecency(entries) {
-      const { retainProjectLastOpenedMemory } = await import('../../apps/cli/src/workspaces/projectLastOpenedMemory.js');
-      for (const entry of entries) await retainProjectLastOpenedMemory({ credentials, ...entry });
+      const { createAuthoringMemoryClient } = await import('../../apps/cli/src/settings/authoringMemory/createAuthoringMemoryClient.js');
+      for (const entry of entries) {
+        const key = buildProjectLastOpenedMemoryKeyV1(entry);
+        const value = ProjectLastOpenedMemoryValueV1Schema.parse(entry.lastOpenedAtMs);
+        const client = await createAuthoringMemoryClient({ credentials });
+        while (true) {
+          const row = await client.read(key);
+          if (row.status !== 'absent') break;
+          const result = await client.mutate(key, 'absent', client.seal(key, value));
+          if (result.status === 'updated') break;
+        }
+        // Preserve the cutover's lossless retirement check against the committed destination.
+        const destination = await client.read(key);
+        if (destination.status !== 'present' || ProjectLastOpenedMemoryValueV1Schema.parse(client.open(key, destination.content)) < value) {
+          throw Object.assign(new Error('Retained Project recency is not present in Account memory'), { code: 'project_last_opened_memory_not_retained' });
+        }
+      }
     },
     async retireSource(source) {
       if (!envelopeKind) throw new Error('Project cutover has no opened source envelope');

@@ -1,9 +1,9 @@
 import {
-    LegacyLastUsedProfileSchema,
-    LegacyRecentMachinePathsSchema,
-    LegacyRememberedEngineSelectionsByScopeV1Schema,
-    type RetainedRememberedEngineSelectionsByScopeV1,
-} from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
+    LastUsedProfileSchema,
+    RecentMachinePathsSchema,
+    RememberedEngineSelectionsByScopeV1Schema as RetainedRememberedEngineSelectionsByScopeV1Schema,
+    type RememberedEngineSelectionsByScopeV1 as RetainedRememberedEngineSelectionsByScopeV1,
+} from '@happier-dev/protocol/account/authoringMemory';
 import {
     RememberedEngineSelectionsByScopeV1Schema,
     type RememberedEngineSelectionsByScopeV1,
@@ -47,11 +47,11 @@ export function createAuthoringMemoryDomain<S extends AuthoringMemoryDomain>(dep
         applyAuthoringMemory: (delta) => deps.set((state) => {
             const previous = state.authoringMemory;
             const recentMachinePaths = delta.recentMachinePaths === undefined
-                ? previous.recentMachinePaths : LegacyRecentMachinePathsSchema.parse(delta.recentMachinePaths);
+                ? previous.recentMachinePaths : RecentMachinePathsSchema.parse(delta.recentMachinePaths);
             const lastUsedProfile = delta.lastUsedProfile === undefined
-                ? previous.lastUsedProfile : LegacyLastUsedProfileSchema.parse(delta.lastUsedProfile);
+                ? previous.lastUsedProfile : LastUsedProfileSchema.parse(delta.lastUsedProfile);
             const lastEngineSelectionsByScopeV1 = delta.lastEngineSelectionsByScopeV1 === undefined
-                ? previous.lastEngineSelectionsByScopeV1 : LegacyRememberedEngineSelectionsByScopeV1Schema.parse(delta.lastEngineSelectionsByScopeV1);
+                ? previous.lastEngineSelectionsByScopeV1 : RetainedRememberedEngineSelectionsByScopeV1Schema.parse(delta.lastEngineSelectionsByScopeV1);
             const pathsUnchanged = areAccountSettingsJsonValuesEqual(previous.recentMachinePaths, recentMachinePaths);
             const selectionsUnchanged = areAccountSettingsJsonValuesEqual(previous.lastEngineSelectionsByScopeV1, lastEngineSelectionsByScopeV1);
             const workflowProjects = delta.workflowProjectTargetsByDefinitionId === undefined ? previous.workflowProjectTargetsByDefinitionId

@@ -16,9 +16,7 @@ import { DEFAULT_PROFILES } from '@/sync/domains/profiles/profileCatalog';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import { clearRemovedProfileAuthoringMemory, createAuthoringMemorySync } from '@/sync/engine/authoringMemory/authoringMemorySync';
-import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
-import { retireLegacyAuthoringMemoryKey } from '@/sync/engine/settings/syncSettings';
+import { createAuthoringMemorySync } from '@/sync/engine/authoringMemory/authoringMemorySync';
 import { resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
 import { createAuthoringMemoryCipher } from '@/sync/encryption/authoringMemoryEncryption';
 import { createUiProfileOperationsInContext } from '@/sync/ops/profiles/createUiProfileOperations';
@@ -78,27 +76,8 @@ export function createUiProfileActionExecuteV1(account: LazyActionAccountContext
                 clearRememberedProfile: async ({ id }) => {
                     assertCurrent();
                     const memory = await resolveMemory();
-                    const { accountMode, encryption } = await account.resolveAccountEncryption();
-                    const requestInContext: typeof account.request = (path, init, options) => account.request(path,
-                        { ...init, signal: context.signal }, { ...options, retry: 'none' });
                     // The row owner invokes this only after its durable deletion ACK.
-                    await clearRemovedProfileAuthoringMemory({
-                        owner: memory, id,
-                        settings: {
-                            read: () => readAccountSettingsBaseline({ request: requestInContext,
-                                credentials: account.credentials, encryption, accountMode }),
-                            remove: async (_key, expectedSettingsVersion) => {
-                                const result = await retireLegacyAuthoringMemoryKey({
-                                    credentials: account.credentials, encryption, accountMode,
-                                    settingsScope: account.accountLifetime.scope,
-                                    requestContext: { scope: account.accountLifetime.scope,
-                                        endpointUrl: account.endpointUrl, request: requestInContext },
-                                    key: 'lastUsedProfile', expectedSettingsVersion,
-                                });
-                                return result.status;
-                            },
-                        },
-                    });
+                    await memory.applyDelta({ lastUsedProfileReplacement: { base: id, proposed: null } });
                 },
             });
         };

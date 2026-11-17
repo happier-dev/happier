@@ -1,6 +1,5 @@
 import { assertAuthoringMemoryValueForKeyV1, buildProjectLastOpenedMemoryKeyV1, parseProjectLastOpenedMemoryKeyV1, ProjectLastOpenedMemoryValueV1Schema, AuthoringMemoryEngineSelectionsV1Schema, StoredAuthoringMemoryEngineSelectionsV1Schema, type ProjectLastOpenedMemoryAnchorV1, type AuthoringMemoryContentV1, type AuthoringMemoryValueV1 } from '@happier-dev/protocol/account/authoringMemory';
-import { LegacyRecentMachinePathsSchema, LegacyLastUsedProfileSchema, LegacyRememberedEngineSelectionsByScopeV1Schema } from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
-import { importAuthoringMemoryRowAbsent, importLegacyAuthoringMemorySetting } from '@happier-dev/protocol/account/authoringMemoryImport';
+import { RecentMachinePathsSchema, LastUsedProfileSchema } from '@happier-dev/protocol/account/authoringMemory';
 import type { AuthoringMemoryCipher } from '@/sync/encryption/authoringMemoryEncryption';
 import {
     normalizeRememberedEngineSelectionScopeKey,
@@ -41,8 +40,6 @@ export function createAuthoringMemorySync(options: Readonly<{
     cipher: AuthoringMemoryCipher;
     isCurrent(): boolean;
     apply(delta: MemoryDelta): void;
-    /** The same captured source used by bootstrap; replacement intents may arrive after it. */
-    legacySettings?: LegacyAuthoringMemorySettingsPort;
     onProjectLastOpenedChanged?(anchor: ProjectLastOpenedMemoryAnchorV1, timestamp: number | undefined): void;
 }>) {
     const values = new Map<string, AuthoringMemoryValueV1>();
@@ -77,8 +74,8 @@ export function createAuthoringMemorySync(options: Readonly<{
     }
     function applyKey(key: string, value: AuthoringMemoryValueV1 | undefined) {
         assertCurrent();
-        if (key === 'recentMachinePaths') options.apply({ recentMachinePaths: LegacyRecentMachinePathsSchema.parse(value ?? []) });
-        else if (key === 'lastUsedProfile') options.apply({ lastUsedProfile: LegacyLastUsedProfileSchema.parse(value ?? null) });
+        if (key === 'recentMachinePaths') options.apply({ recentMachinePaths: RecentMachinePathsSchema.parse(value ?? []) });
+        else if (key === 'lastUsedProfile') options.apply({ lastUsedProfile: LastUsedProfileSchema.parse(value ?? null) });
         else if (key.startsWith('engineSelection:')) {
             options.apply({ lastEngineSelectionsByScopeV1: engineProjection() });
         } else if (parseWorkflowProjectMemoryKeyV1(key) !== null) {
@@ -130,8 +127,8 @@ export function createAuthoringMemorySync(options: Readonly<{
                 if (value === undefined) values.delete(row.key); else values.set(row.key, value);
             }
             options.apply({
-                recentMachinePaths: LegacyRecentMachinePathsSchema.parse(values.get('recentMachinePaths') ?? []),
-                lastUsedProfile: LegacyLastUsedProfileSchema.parse(values.get('lastUsedProfile') ?? null),
+                recentMachinePaths: RecentMachinePathsSchema.parse(values.get('recentMachinePaths') ?? []),
+                lastUsedProfile: LastUsedProfileSchema.parse(values.get('lastUsedProfile') ?? null),
                 lastEngineSelectionsByScopeV1: engineProjection(),
                 workflowProjectTargetsByDefinitionId: workflowProjectProjection(),
             });
@@ -141,15 +138,6 @@ export function createAuthoringMemorySync(options: Readonly<{
             bootstrapped = true;
         })();
         try { await bootstrapInFlight; } finally { bootstrapInFlight = null; }
-    }
-    async function importAbsent(key: string, value: unknown) {
-        const row = await importAuthoringMemoryRowAbsent({
-            key, value: assertAuthoringMemoryValueForKeyV1(key, value), assertCurrent,
-            read: options.transport.read, mutate: options.transport.mutate, seal: options.cipher.seal,
-        });
-        if (row.status === 'present') observe({ key, revision: row.revision, content: row.content });
-        else if (row.status === 'deleted') observe({ key, revision: row.revision, content: null });
-        return row;
     }
     async function write(key: string, select: (winner: AuthoringMemoryValueV1 | undefined) => AuthoringMemoryValueV1 | undefined) {
         while (true) {
@@ -177,15 +165,6 @@ export function createAuthoringMemorySync(options: Readonly<{
             }
             if (delta.lastUsedProfileReplacement) {
                 const intent = delta.lastUsedProfileReplacement;
-                if (options.legacySettings) {
-                    // A bootstrap that observed absence cannot retire a source
-                    // written later. Transfer that source through the existing
-                    // absence-only owner before comparing the current winner.
-                    await importLegacyAuthoringMemorySetting({ key: 'lastUsedProfile', assertCurrent,
-                        read: options.legacySettings.read, remove: options.legacySettings.remove,
-                        transfer: async value => { await importAbsent('lastUsedProfile', LegacyLastUsedProfileSchema.parse(value)); },
-                    });
-                }
                 await write('lastUsedProfile', (winner) => (winner ?? null) === intent.base ? intent.proposed : winner);
             }
             const intent = delta.rememberedEngineSelectionReplacement;
@@ -224,71 +203,5 @@ export function createAuthoringMemorySync(options: Readonly<{
         writes = task.catch(() => {});
         await task;
     }
-    return { bootstrap, refresh, importAbsent, applyDelta, readProjectLastOpened, writeProjectLastOpened, assertCurrent };
-}
-
-export type LegacyAuthoringMemorySettingsPort = Readonly<{
-    read(): Promise<Readonly<{ raw: Record<string, unknown> | null; version: number }>>;
-    remove(key: string, expectedVersion: number): Promise<'applied' | 'conflict' | 'outcomeUnknown'>;
-}>;
-
-/** Destination-first transfer. Tombstones count as existing rows and never revive legacy memory. */
-export async function importLegacyAuthoringMemory(options: Readonly<{
-    owner: ReturnType<typeof createAuthoringMemorySync>;
-    settings: LegacyAuthoringMemorySettingsPort;
-}>): Promise<void> {
-    let baseline: Awaited<ReturnType<LegacyAuthoringMemorySettingsPort['read']>> | undefined;
-    for (const key of ['recentMachinePaths', 'lastUsedProfile', 'lastEngineSelectionsByScopeV1'] as const) {
-        await importLegacyAuthoringMemorySetting({
-            key, assertCurrent: options.owner.assertCurrent,
-            read: async () => {
-                baseline ??= await options.settings.read();
-                return baseline;
-            },
-            remove: async (key, expectedVersion) => {
-                // Absent aliases share this import's census. Retirement changes
-                // its version; the next alias and any CAS retry read afresh.
-                baseline = undefined;
-                return await options.settings.remove(key, expectedVersion);
-            },
-            transfer: async (legacyValue) => {
-                if (key === 'lastEngineSelectionsByScopeV1') {
-                    const raw = LegacyRememberedEngineSelectionsByScopeV1Schema.parse(legacyValue);
-                    const grouped = new Map<string, Record<string, AuthoringMemoryValueV1>>();
-                    for (const [rawScope, value] of Object.entries(raw)) {
-                        // Unknown future scopes remain opaque at their original identity;
-                        // recognized scopes pass through the incumbent canonicalizer.
-                        const scope = normalizeRememberedEngineSelectionScopeKey(rawScope.trim()) ?? rawScope;
-                        const entries = grouped.get(scope) ?? {};
-                        entries[rawScope] = value;
-                        grouped.set(scope, entries);
-                    }
-                    for (const [scope, selectionsByScope] of grouped) {
-                        await options.owner.importAbsent(`engineSelection:${scope}`, { v: 1, selectionsByScope });
-                    }
-                } else {
-                    const value = key === 'recentMachinePaths'
-                        ? LegacyRecentMachinePathsSchema.parse(legacyValue)
-                        : LegacyLastUsedProfileSchema.parse(legacyValue);
-                    await options.owner.importAbsent(key, value);
-                }
-            },
-        });
-    }
-}
-
-/** Called after a durable Profile removal ACK; retire its legacy selection before conditional clearing. */
-export async function clearRemovedProfileAuthoringMemory(options: Readonly<{
-    owner: ReturnType<typeof createAuthoringMemorySync>;
-    settings: LegacyAuthoringMemorySettingsPort;
-    id: string;
-}>): Promise<void> {
-    await importLegacyAuthoringMemorySetting({
-        key: 'lastUsedProfile', assertCurrent: options.owner.assertCurrent,
-        read: options.settings.read, remove: options.settings.remove,
-        transfer: async value => {
-            await options.owner.importAbsent('lastUsedProfile', LegacyLastUsedProfileSchema.parse(value));
-        },
-    });
-    await options.owner.applyDelta({ lastUsedProfileReplacement: { base: options.id, proposed: null } });
+    return { bootstrap, refresh, applyDelta, readProjectLastOpened, writeProjectLastOpened, assertCurrent };
 }

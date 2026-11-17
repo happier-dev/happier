@@ -2418,15 +2418,6 @@ export {
   type IdleCompactionPreference,
 } from './account/settings/accountSettings.js';
 export {
-  LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS,
-  LegacyRecentMachinePathSchema,
-  LegacyRecentMachinePathsSchema,
-  LegacyLastUsedProfileSchema,
-  LegacyRememberedEngineSelectionsByScopeV1Schema,
-  type LegacyAuthoringMemorySettingsKey,
-  type RetainedRememberedEngineSelectionsByScopeV1,
-} from './account/settings/legacyAuthoringMemorySettingsV1.js';
-export {
   ConnectedServicesDefaultAuthByAgentIdV1Schema,
   ConnectedServicesDefaultAuthBindingsV2Schema,
   ConnectedServicesDefaultAuthTeamResourceBindingV2Schema,
@@ -9888,7 +9879,6 @@ export { SessionTerminalLayoutV1Schema } from './terminal/workspace.js';
 export type { SessionTerminalTargetV1, SessionTerminalLayoutV1, SessionTerminalMemberV1, SessionTerminalTabV1, SessionTerminalWorkspaceV1 } from './terminal/workspace.js';
 export * from './account/authoringMemory.js';
 export * from './workspaces/workspaceExecutionConfigRowV1.js';
-export * from './account/authoringMemoryImport.js';
 export * from './workspaces/projectSetup/projectTrustRowV1.js';
 export * from './daemon/pluginCaptureSources.js';
 export * from './voice/recognitionLanguage.js';

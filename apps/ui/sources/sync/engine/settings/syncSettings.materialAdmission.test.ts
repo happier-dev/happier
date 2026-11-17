@@ -12,7 +12,6 @@ import { resolveScopedAccountEncryption } from '@/sync/encryption/scopedAccountE
 import { createSocketAccountEncryptionObservation } from '@/sync/api/account/apiAccountEncryptionMode';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { AccountSettingsStoredContentEnvelopeSchema } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
-import { LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS } from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
 import { decryptSecretStringV1, deriveSettingsSecretsKeyV1, encryptSecretStringV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
 
 const randomBytes = vi.hoisted(() => vi.fn((length: number) => new Uint8Array(length).fill(4)));
@@ -22,7 +21,7 @@ const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { settingsParse } = await import('@/sync/domains/settings/settings');
-const { syncSettings, retireLegacyAuthoringMemoryKey } = await import('./syncSettings');
+const { syncSettings } = await import('./syncSettings');
 beforeEach(async () => { await homes.reset(); installHomeGovernanceBoundaries(homes); randomBytes.mockClear(); });
 afterAll(async () => { await homes.reset(); });
 
@@ -201,55 +200,3 @@ it.each(['e2ee', 'plain'] as const)('keeps matching %s Settings writable through
     expect(posts).toBe(1);
     expect(writable).toBe(true);
 });
-
-it.each(['matching-e2ee', 'mismatched-e2ee', 'plain'] as const)(
-    'uses the same material admission for exact legacy Settings retirement (%s)', async scenario => {
-        const mode = scenario === 'plain' ? 'plain' : 'e2ee';
-        const secret = new Uint8Array(32).fill(48);
-        const credentials = mode === 'e2ee'
-            ? { token: createAccountTokenForTests('retirement-account'), secret: encodeBase64(secret, 'base64url') }
-            : { token: createAccountTokenForTests('retirement-account') };
-        const serverUrl = 'https://settings-retirement.example.test';
-        const serverId = await homes.addHome({ name: 'Settings retirement', serverUrl, accountId: 'retirement-account', credentials });
-        const currentness = mode === 'plain' ? createPlainAccountEncryptionCurrentnessFixture()
-            : createLegacyAccountEncryptionCurrentnessFixture({ secret: scenario === 'mismatched-e2ee' ? new Uint8Array(32).fill(49) : secret });
-        const key = LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS[0];
-        const raw = { [key]: ['legacy'], futureSibling: { retained: true } };
-        const content = mode === 'plain' ? { t: 'plain' as const, v: raw }
-            : { t: 'encrypted' as const, c: sealAccountScopedBlobCiphertext({ kind: 'account_settings',
-                material: { type: 'legacy', secret }, payload: raw, randomBytes: length => new Uint8Array(length).fill(8) }) };
-        let posts = 0;
-        let retainedSibling = false;
-        const fetchBoundary = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-            const path = new URL(String(input)).pathname;
-            if (path === '/v1/account/encryption/currentness') return Response.json(currentness);
-            if (path === '/v2/account/settings' && init?.method !== 'POST') return Response.json({ content, version: 0 });
-            if (path === '/v2/account/settings' && init?.method === 'POST') {
-                const next = AccountSettingsStoredContentEnvelopeSchema.parse(JSON.parse(String(init.body)).content);
-                const opened = next.t === 'plain' ? next.v
-                    : openAccountScopedBlobCiphertext({ kind: 'account_settings', material: { type: 'legacy', secret }, ciphertext: next.c })?.value;
-                retainedSibling = Boolean(opened && typeof opened === 'object'
-                    && !Object.hasOwn(opened, key) && 'futureSibling' in opened);
-                posts += 1;
-                return Response.json({ success: true, version: 1 });
-            }
-            throw new Error('Unexpected test route: ' + path);
-        };
-        setRuntimeFetch(fetchBoundary);
-        const encryption = mode === 'e2ee' ? await Encryption.create(secret) : null;
-        const settingsScope = { serverId, accountId: 'retirement-account' };
-        randomBytes.mockClear();
-        const retiring = retireLegacyAuthoringMemoryKey({ credentials, encryption, accountMode: mode, settingsScope,
-            requestContext: { scope: settingsScope, endpointUrl: serverUrl, request: async (path, init) => fetchBoundary(serverUrl + path, init) },
-            key, expectedSettingsVersion: 0 });
-        if (scenario === 'mismatched-e2ee') {
-            await expect(retiring).rejects.toMatchObject({ code: 'account_settings_encryption_material_unavailable' });
-            expect(posts).toBe(0);
-            expect(randomBytes.mock.calls.length).toBe(0);
-        } else {
-            expect(await retiring).toMatchObject({ status: 'applied', settingsVersion: 1 });
-            expect(posts).toBe(1);
-            expect(retainedSibling).toBe(true);
-        }
-    },
-);

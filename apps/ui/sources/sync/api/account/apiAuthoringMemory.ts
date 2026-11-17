@@ -7,12 +7,9 @@ import {
 } from '@happier-dev/protocol/account/authoringMemory';
 import type { AuthoringMemoryTransport } from '@/sync/engine/authoringMemory/authoringMemorySync';
 import { RetryableServerResponseError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
-import { LegacyLastUsedProfileSchema } from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
-import { importAuthoringMemoryRowAbsent, importLegacyAuthoringMemorySetting } from '@happier-dev/protocol/account/authoringMemoryImport';
+import { LastUsedProfileSchema } from '@happier-dev/protocol/account/authoringMemory';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
-import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
-import { requireOneShotAccountSettingsMutationApplied, retireLegacyAuthoringMemoryKey } from '@/sync/engine/settings/syncSettings';
 import { resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
 import { createAuthoringMemoryCipher } from '@/sync/encryption/authoringMemoryEncryption';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -73,29 +70,7 @@ export async function readAuthoringMemoryLastUsedProfileInContext(
         material: storage.mode === 'plain' ? null : resolveAccountScopedCryptoMaterialFromCredentials(account.credentials),
         randomBytes: getRandomBytes });
     const transport = createApiAuthoringMemoryTransport({ request });
-    let row = await transport.read('lastUsedProfile');
-    const open = () => {
-        assertCurrent();
-        return row.status === 'present' ? LegacyLastUsedProfileSchema.parse(cipher.open('lastUsedProfile', row.content)) : null;
-    };
-    open();
-    // The shared importer preserves destination winners and tombstones before retiring the shipped alias.
-    await importLegacyAuthoringMemorySetting({ key: 'lastUsedProfile', assertCurrent,
-        read: () => readAccountSettingsBaseline({ request, credentials: account.credentials, encryption, accountMode: storage.mode }),
-        transfer: async value => {
-            row = await importAuthoringMemoryRowAbsent({ key: 'lastUsedProfile', value: LegacyLastUsedProfileSchema.parse(value),
-                assertCurrent, read: transport.read, mutate: transport.mutate, seal: cipher.seal });
-            open();
-        },
-        remove: async (key, expectedSettingsVersion) => {
-            const result = await retireLegacyAuthoringMemoryKey({ credentials: account.credentials, encryption,
-                accountMode: storage.mode, settingsScope: account.accountLifetime.scope,
-                requestContext: { scope: account.accountLifetime.scope, endpointUrl: account.endpointUrl, request },
-                key, expectedSettingsVersion });
-            if (result.status === 'conflict' || result.status === 'outcomeUnknown') return result.status;
-            requireOneShotAccountSettingsMutationApplied(result);
-            return 'applied';
-        },
-    });
-    return open();
+    const row = await transport.read('lastUsedProfile');
+    assertCurrent();
+    return row.status === 'present' ? LastUsedProfileSchema.parse(cipher.open('lastUsedProfile', row.content)) : null;
 }

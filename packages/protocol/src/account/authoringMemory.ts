@@ -7,6 +7,30 @@ import { isAccountScopedBlobCiphertextForKind } from '../crypto/accountScopedCip
 import { WorkflowDefinitionIdV1Schema } from '../workflows/workflowIdsV1.js';
 import { WorkflowProjectTargetV1Schema } from '../workflows/workflowWorkspaceV1.js';
 
+export const RecentMachinePathSchema = lazyZodSchema(() => z.object({
+  machineId: z.string().check(z.minLength(1)),
+  path: z.string().check(z.minLength(1)),
+}));
+
+export const RecentMachinePathsSchema = lazyZodSchema(() => (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((value) => {
+  if (!Array.isArray(value)) return [];
+  const paths: Array<z.output<typeof RecentMachinePathSchema>> = [];
+  for (const candidate of value) {
+    const parsed = RecentMachinePathSchema.safeParse(candidate);
+    if (!parsed.success) continue;
+    paths.push(parsed.data);
+  }
+  return paths;
+}), z.array(RecentMachinePathSchema)));
+
+export const LastUsedProfileSchema = lazyZodSchema(() => z.nullable(z.string()));
+export const RememberedEngineSelectionsByScopeV1Schema = lazyZodSchema(() => z.record(
+  // Engine carriers now belong to reserved rows, not the whole Settings
+  // document. Its generic collection/depth budgets do not govern this domain.
+  z.string(), StrictJsonValueSchema,
+));
+export type RememberedEngineSelectionsByScopeV1 = z.infer<typeof RememberedEngineSelectionsByScopeV1Schema>;
+
 export const AUTHORING_MEMORY_ACCOUNT_SCOPED_BLOB_KIND_V1 = 'authoring_memory' as const;
 export const AUTHORING_MEMORY_ROUTE_V1 = '/v1/account/authoring-memory' as const;
 const PROJECT_LAST_OPENED_PREFIX = 'projectLastOpened:';

@@ -112,6 +112,12 @@ it('saves a retained 0.2-shaped Profile and deletes it through the real Action b
     const key = buildProfilePhysicalKey(record.id);
     await db.userKVStore.create({ data: { accountId: account.id, key, version: 1,
       value: new TextEncoder().encode(JSON.stringify(sealProfileRecordContentV1({ mode: 'plain', material: null, record }))) } });
+    const memoryRequests: string[] = [];
+    const settingsRequests: string[] = [];
+    server.addHook('onRequest', async request => {
+      if (request.url.includes('/authoring-memory/lastUsedProfile')) memoryRequests.push(request.method);
+      if (request.url.includes('/account/settings')) settingsRequests.push(request.method);
+    });
     accountRoutes(server);
     artifactsRoutes(server);
     const origin = await server.listen({ port: 0, host: '127.0.0.1' });
@@ -135,9 +141,35 @@ it('saves a retained 0.2-shaped Profile and deletes it through the real Action b
       expect(await store.readProfileCatalog({ migrateSkills: true })).toMatchObject({ status: 'ready', records: [{ revision: 2,
         record: { skillSeeds: record.skillSeeds, promptStack: record.promptStack, secretBindings: record.secretBindings,
           definition: { kind: 'legacy', profile: { name: 'Frontend review saved' } } } }] });
+      const { createAuthoringMemoryClient } = await import('@/settings/authoringMemory/createAuthoringMemoryClient');
+      const memory = await createAuthoringMemoryClient({ credentials });
+      expect(await memory.mutate('lastUsedProfile', 'absent', memory.seal('lastUsedProfile', 42)))
+        .toMatchObject({ status: 'updated' });
+      memoryRequests.length = 0;
+      settingsRequests.length = 0;
+      expect(await executor.execute('launch_profiles.select', { id: null }, context))
+        .toMatchObject({ ok: false, errorCode: 'action_failed' });
+      expect(memoryRequests).toEqual(['GET']);
+      expect(settingsRequests).toEqual([]);
+      const invalidRow = await memory.read('lastUsedProfile');
+      if (invalidRow.status !== 'present') throw new Error('Expected the invalid current row to remain unchanged');
+      expect(memory.open('lastUsedProfile', invalidRow.content)).toBe(42);
+      await memory.mutate('lastUsedProfile', invalidRow.revision, memory.seal('lastUsedProfile', null));
+      memoryRequests.length = 0;
+      settingsRequests.length = 0;
+      // R-NO-INTERMEDIATE: selection uses current memory directly, without a Settings import.
+      expect(await executor.execute('launch_profiles.select', { id: null }, context))
+        .toMatchObject({ ok: true, result: { status: 'selected', id: null } });
+      expect(memoryRequests).toEqual(['GET', 'POST']);
+      expect(settingsRequests).toEqual([]);
+      memoryRequests.length = 0;
+      settingsRequests.length = 0;
       const removed = await executor.execute('launch_profiles.delete', { id: record.id, expectedRevision: 2 }, {
         ...context, presentUserConfirmation: { actionId: 'launch_profiles.delete' },
       });
+      expect(memoryRequests).toEqual(['GET']);
+      // Catalog preference reads are distinct; deleting a Profile never retires Settings memory.
+      expect(settingsRequests).not.toContain('POST');
       expect(removed).toMatchObject({ ok: true, result: { status: 'updated', id: record.id, revision: 3 } });
       expect(getActionSpec('launch_profiles.delete').outputSchema.safeParse(removed.ok ? removed.result : undefined).success).toBe(true);
       for (let pass = 0; pass < 2; pass++) expect(await store.readProfileCatalog({ migrateSkills: true })).toMatchObject({

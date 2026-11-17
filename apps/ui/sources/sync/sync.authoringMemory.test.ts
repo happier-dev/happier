@@ -11,7 +11,7 @@ import {
     type AuthoringMemoryContentV1,
 } from '@happier-dev/protocol/account/authoringMemory';
 import {
-    LegacyLastUsedProfileSchema} from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
+    LastUsedProfileSchema} from '@happier-dev/protocol/account/authoringMemory';
 import {
     openAccountScopedBlobCiphertext,
     sealAccountScopedBlobCiphertext} from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -354,7 +354,7 @@ describe('Sync authoring-memory runtime', () => {
         await vi.waitFor(() => expect(storage.getState().authoringMemory.lastUsedProfile).toBe('current-profile'));
     });
 
-    it('imports legacy authoring memory from the document the Settings refresh just admitted', async () => {
+    it('bootstraps current authoring memory without a second Settings document read', async () => {
         owner.credentials = { token: 'settings-single-read-account' };
         owner.encryption = null;
         owner.settingsSecretsKey = null;
@@ -427,7 +427,7 @@ describe('Sync authoring-memory runtime', () => {
         await vi.waitFor(() => expect(storage.getState().authoringMemory.lastUsedProfile).toBe('recovered-profile'));
     });
 
-    it('retires only the transferred legacy key and preserves an unrelated raw SecretString sibling exactly under E2EE', async () => {
+    it('writes current memory without importing or mutating old Settings aliases under E2EE', async () => {
         const machineKey = new Uint8Array(32).fill(7);
         const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
         const material = { type: 'dataKey', machineKey } as const;
@@ -474,7 +474,8 @@ describe('Sync authoring-memory runtime', () => {
 
         await sync.applyAuthoringMemoryDelta({ lastUsedProfile: 'legacy-profile' });
 
-        expect(raw).toEqual({ unrelatedSecretBag });
+        expect(raw).toEqual({ lastUsedProfile: 'legacy-profile', unrelatedSecretBag });
+        expect(settingsVersion).toBe(6);
         expect(row).toMatchObject({ t: 'encrypted' });
         expect(storage.getState().authoringMemory.lastUsedProfile).toBe('legacy-profile');
     });
@@ -516,7 +517,7 @@ describe('Sync authoring-memory runtime', () => {
                     : { status: 'present', revision: 0, content: { t: 'plain', v: profile } });
                 const body = AuthoringMemoryMutationRequestV1Schema.parse(JSON.parse(String(init.body)));
                 if (body.content?.t !== 'plain') throw new Error('Plain Account must commit a plain envelope');
-                profile = LegacyLastUsedProfileSchema.parse(body.content.v);
+                profile = LastUsedProfileSchema.parse(body.content.v);
                 return Response.json({ status: 'updated', revision: 0, cursor: 1 });
             }
             throw new Error(`Unexpected Home request: ${path}`);

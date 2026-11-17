@@ -439,7 +439,6 @@ import type { PermissionMode } from './domains/permissions/permissionTypes';
 import { ACCOUNT_SETTINGS_QUIET_FLUSH_DELAY_MS, scheduleDebouncedPendingSettingsFlush } from './engine/pending/pendingSettings';
 import {
     applySettingsLocalDelta,
-    retireLegacyAuthoringMemoryKey,
     requireOneShotAccountSettingsMutationApplied,
     syncSettings as syncSettingsEngine,
     type OneShotAccountSettingsPreparedCommitResult,
@@ -636,9 +635,8 @@ import { createApiProjectAccountRowsTransport } from '@/sync/api/account/apiProj
 import { createProjectAccountRowsSync } from '@/sync/engine/projects/projectAccountRowsSync';
 import type { WorkspaceRefAccountMutation } from '@/sync/domains/workspaces/workspaceRefs';
 import { createApiAuthoringMemoryTransport } from '@/sync/api/account/apiAuthoringMemory';
-import { createAuthoringMemorySync, importLegacyAuthoringMemory, type AuthoringMemoryDelta } from '@/sync/engine/authoringMemory/authoringMemorySync';
-import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
-import { markAccountSettingsHeadUnverified, readCurrentAccountSettingsRawSnapshot } from '@/sync/engine/settings/accountSettingsRawSnapshot';
+import { createAuthoringMemorySync, type AuthoringMemoryDelta } from '@/sync/engine/authoringMemory/authoringMemorySync';
+import { markAccountSettingsHeadUnverified } from '@/sync/engine/settings/accountSettingsRawSnapshot';
 import { loadAuthoringMemoryProjection, saveAuthoringMemoryProjection } from '@/sync/domains/state/authoringMemoryPersistence';
 import {
     configureSessionDraftRepository,
@@ -10178,26 +10176,6 @@ class Sync {
             if (!isCurrent()) throw new Error('Authoring memory Account/Home retired');
             const mode = await fetchAccountEncryptionMode(credentials, { request, usage: 'identity' });
             if (!isCurrent()) throw new Error('Authoring memory Account/Home retired');
-            const legacySettings = {
-                // Passive import census: Sync has normally just admitted this document. Retirement stays CAS-bound.
-                read: () => readCurrentAccountSettingsRawSnapshot(scope, { credentials, request, readBaseline: async () => {
-                    const baseline = await readAccountSettingsBaseline({ request, credentials, encryption, accountMode: mode.mode });
-                    return { raw: baseline.raw ?? {}, version: baseline.version };
-                } }),
-                remove: async (key: string, expectedVersion: number) => {
-                    if (!isCurrent()) throw new Error('Authoring memory Account/Home retired');
-                    if (key !== 'recentMachinePaths' && key !== 'lastUsedProfile' && key !== 'lastEngineSelectionsByScopeV1') {
-                        throw new Error('Invalid authoring-memory retirement key');
-                    }
-                    const result = await retireLegacyAuthoringMemoryKey({
-                        credentials, encryption, accountMode: mode.mode, settingsScope: scope,
-                        requestContext: { ...requestContext, request },
-                        key, expectedSettingsVersion: expectedVersion,
-                    });
-                    if (!isCurrent()) throw new Error('Authoring memory Account/Home retired');
-                    return result.status;
-                },
-            };
             const owner = createAuthoringMemorySync({
                 transport: createApiAuthoringMemoryTransport({ request }),
                 cipher: createAuthoringMemoryCipher({ mode: mode.mode,
@@ -10205,7 +10183,6 @@ class Sync {
                         ? resolveAccountScopedCryptoMaterialFromCredentials(credentials) : null,
                     randomBytes: getRandomBytes }),
                 isCurrent,
-                legacySettings,
                 onProjectLastOpenedChanged: () => {
                     const runtime = this.projectAccountRowsRuntime;
                     if (runtime) fireAndForget(runtime.then(rows => {
@@ -10222,7 +10199,6 @@ class Sync {
                 },
             });
             await owner.bootstrap();
-            await importLegacyAuthoringMemory({ owner, settings: legacySettings });
             const rowsRuntime = this.projectAccountRowsRuntime;
             if (rowsRuntime) fireAndForget(rowsRuntime.then(rows => {
                 if (isCurrent() && this.projectAccountRowsRuntime === rowsRuntime) rows.refreshRecency(

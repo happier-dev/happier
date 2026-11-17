@@ -5,7 +5,6 @@ import * as m0 from '../../abortSignal.js';
 import * as m1 from '../../account/accountDisplayProfileV1.js';
 import * as m2 from '../../account/accountJsonKv.js';
 import * as m3 from '../../account/authoringMemory.js';
-import * as m4 from '../../account/authoringMemoryImport.js';
 import * as m5 from '../../account/encryptionKeyFingerprintV1.js';
 import * as m6 from '../../account/encryptionMigrate.js';
 import * as m7 from '../../account/encryptionMode.js';
@@ -51,7 +50,6 @@ import * as m46 from '../../account/settings/glassTint.js';
 import * as m47 from '../../account/settings/homeAtmosphere.js';
 import * as m48 from '../../account/settings/idleCompactionPreferences.js';
 import * as m49 from '../../account/settings/index.js';
-import * as m50 from '../../account/settings/legacyAuthoringMemorySettingsV1.js';
 import * as m51 from '../../account/settings/legacyNotifications.js';
 import * as m52 from '../../account/settings/machineAdministrationSelectionsV1.js';
 import * as m53 from '../../account/settings/machineOfflineAlertsV1.js';
@@ -3006,7 +3004,6 @@ export const PLUGIN_UI_HOST_PROVIDED_PROTOCOL_MODULES: Readonly<Record<string, u
     '@happier-dev/protocol/account/accountDisplayProfileV1': m1,
     '@happier-dev/protocol/account/accountJsonKv': m2,
     '@happier-dev/protocol/account/authoringMemory': m3,
-    '@happier-dev/protocol/account/authoringMemoryImport': m4,
     '@happier-dev/protocol/account/encryptionKeyFingerprintV1': m5,
     '@happier-dev/protocol/account/encryptionMigrate': m6,
     '@happier-dev/protocol/account/encryptionMode': m7,
@@ -3053,7 +3050,6 @@ export const PLUGIN_UI_HOST_PROVIDED_PROTOCOL_MODULES: Readonly<Record<string, u
     '@happier-dev/protocol/account/settings/homeAtmosphere': m47,
     '@happier-dev/protocol/account/settings/idleCompactionPreferences': m48,
     '@happier-dev/protocol/account/settings/index': m49,
-    '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1': m50,
     '@happier-dev/protocol/account/settings/legacyNotifications': m51,
     '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1': m52,
     '@happier-dev/protocol/account/settings/machineOfflineAlertsV1': m53,

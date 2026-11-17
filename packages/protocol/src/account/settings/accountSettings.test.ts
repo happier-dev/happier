@@ -1,4 +1,4 @@
-import { LegacyRecentMachinePathsSchema } from './legacyAuthoringMemorySettingsV1.js';
+import { RecentMachinePathsSchema } from '../authoringMemory.js';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
@@ -642,12 +642,12 @@ describe('accountSettings', () => {
       'legacy-path-without-machine',
     ];
 
-    expect(LegacyRecentMachinePathsSchema.parse(recentMachinePaths)).toEqual([
+    expect(RecentMachinePathsSchema.parse(recentMachinePaths)).toEqual([
       { machineId: 'machine-1', path: '/workspace/project' },
       { machineId: 'machine-2', path: '/workspace/secondary' },
       { machineId: 'machine-4', path: longRetainedPath },
     ]);
-    expect(LegacyRecentMachinePathsSchema.parse('not-an-array')).toEqual([]);
+    expect(RecentMachinePathsSchema.parse('not-an-array')).toEqual([]);
   });
 
   it('retires authoring-memory keys from the active settings catalog and effective projection', () => {

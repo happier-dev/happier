@@ -9,13 +9,13 @@ import {
     mergeCurrentRememberedEngineSelectionsIntoRaw,
 } from './sessionAuthoringSelectionPersistence';
 import { authoringMemoryDefaults, projectAuthoringMemory } from '@/sync/store/domains/authoringMemory';
-import { LegacyRememberedEngineSelectionsByScopeV1Schema } from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
+import { RememberedEngineSelectionsByScopeV1Schema as RetainedRememberedEngineSelectionsByScopeV1Schema } from '@happier-dev/protocol/account/authoringMemory';
 
 function attachCurrentSessionAuthoringSelectionsRuntimeProjection<T extends object>(value: T) {
     const raw = value as Record<string, unknown>;
     const favorites = attachFavoriteProjection(value);
     const authoring = projectAuthoringMemory({ ...authoringMemoryDefaults,
-        lastEngineSelectionsByScopeV1: LegacyRememberedEngineSelectionsByScopeV1Schema.parse(raw.lastEngineSelectionsByScopeV1 ?? {}),
+        lastEngineSelectionsByScopeV1: RetainedRememberedEngineSelectionsByScopeV1Schema.parse(raw.lastEngineSelectionsByScopeV1 ?? {}),
     });
     return { ...value, currentFavoriteModelSelectionsV1: favorites.currentFavoriteModelSelectionsV1,
         currentRememberedEngineSelectionsByScopeV1: authoring.currentRememberedEngineSelectionsByScopeV1 };
@@ -27,7 +27,7 @@ function replayRememberedEngineSelectionReplacementIntent(params: {
     proposed: import('@/sync/domains/session/authoring/rememberedEngineSelections').RememberedEngineSelectionsByScopeV1;
 }) {
     return { ...params.raw, lastEngineSelectionsByScopeV1: mergeCurrentRememberedEngineSelectionsIntoRaw({
-        rawSelections: LegacyRememberedEngineSelectionsByScopeV1Schema.parse(params.raw.lastEngineSelectionsByScopeV1 ?? {}),
+        rawSelections: RetainedRememberedEngineSelectionsByScopeV1Schema.parse(params.raw.lastEngineSelectionsByScopeV1 ?? {}),
         currentSelections: params.base, nextSelections: params.proposed,
     }) };
 }
