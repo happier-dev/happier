@@ -1040,10 +1040,15 @@ function automationTriggerMatchesCreateInput(params: Parameters<typeof automatio
     return params.existing.revision === 0 && automationTriggerInputMatches(params);
 }
 
+type AutomationTriggerMutationPatch = Pick<
+    Extract<AutomationDefinitionReconcileRequest["triggers"][number], { kind: "existing" }>,
+    "enabled" | "trigger" | "triggerDefinitionEnvelope"
+>;
+
 function automationTriggerPatchMatches(
     automation: Parameters<typeof automationTriggerInputMatches>[0]["automation"],
     existing: AutomationTriggerItem,
-    patch: Pick<AutomationTriggerPatchRequest, "enabled" | "trigger" | "triggerDefinitionEnvelope">,
+    patch: AutomationTriggerMutationPatch,
 ): boolean {
     const enabled = patch.enabled ?? existing.enabled;
     if (patch.trigger) return automationTriggerInputMatches({ automation, existing,
@@ -1052,7 +1057,7 @@ function automationTriggerPatchMatches(
 }
 
 function automationTriggerPatchOnlyDisables(
-    patch: Pick<AutomationTriggerPatchRequest, "enabled" | "trigger" | "triggerDefinitionEnvelope">,
+    patch: AutomationTriggerMutationPatch,
 ): boolean {
     return patch.enabled === false && patch.trigger === undefined && patch.triggerDefinitionEnvelope === undefined;
 }
