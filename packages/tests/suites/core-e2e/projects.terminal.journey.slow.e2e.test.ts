@@ -59,10 +59,17 @@ it.skipIf(process.platform !== 'linux')('L12 row94: a bound Project terminal rec
     const saved = PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.create'].parse(await action('secrets.create', {
       name: 'Project terminal requirement', kind: 'token', value: secretValue,
     }));
+    // Select the saved catalog entry as the person would. Shared references
+    // carry the catalog revision; creation's acknowledgement contains only IDs.
+    const catalog = PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.list'].parse(
+      await action('secrets.list', { secretId: saved.secretId }));
+    const selectedSecret = catalog.secrets.find(secret => secret.secretId === saved.secretId);
+    if (!selectedSecret) throw new Error('Created terminal Secret is absent from its catalog');
+    expect(selectedSecret.secretRef).toBe(saved.secretRef);
     // Fresh Account; Open accepts the workspace row, leaving organization absent.
     const bound = ProjectOrganizationUpdateOutputV1Schema.parse(await action('projects.organization.update', {
       projectRef: { serverId: fixture.serverId, projectKey: opened.facts.projectKey }, expectedRevision: 'absent',
-      environmentBinding: { name: 'L12_TERMINAL_SECRET', reference: { ref: saved.secretRef } },
+      environmentBinding: { name: 'L12_TERMINAL_SECRET', reference: { ref: saved.secretRef, revision: selectedSecret.updatedAt } },
     }));
     expect(bound.ok).toBe(true);
     if (!bound.ok) throw new Error(`Project binding refused (${bound.errorCode})`);

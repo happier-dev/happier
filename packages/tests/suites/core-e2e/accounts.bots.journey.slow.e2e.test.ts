@@ -197,7 +197,7 @@ describe('Account and Bot uninterrupted journeys through signed-in UI Actions', 
     async function invoke(actionId: ActionId, input: unknown) {
       const result = await ui.executeConfirmed(actionId, input, { surface: 'ui', authority: 'present_user',
         actionCaller: { kind: 'host' }, serverId: ui.serverId });
-      if (!result.ok) throw new Error(`${actionId}: ${result.errorCode}`);
+      if (!result.ok) throw new Error(`${actionId}: ${JSON.stringify(result)}`);
       return result.result;
     }
     async function snapshot() {
