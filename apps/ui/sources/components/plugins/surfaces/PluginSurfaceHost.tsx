@@ -48,6 +48,7 @@ import { useWidgetFrameHeaderBinding } from '@/components/widgets/frame/widgetFr
 import {
     PluginSurfaceSourceCauseContext,
     PluginSurfaceMachineRecoveryContext,
+    isPluginSurfaceMachineConnectionPending,
     isPluginSurfaceSelectionOffline,
     resolvePluginSurfaceSourceCause,
 } from '@/components/plugins/shared/pluginSurfaceInteractionAvailability';
@@ -2329,10 +2330,13 @@ function PluginSurfaceHostMount(props: Readonly<(
     const mountedTargetReady = mountedTargetedContributions !== null
         && currentMountedTargetRead?.phase === 'ready';
     // Publish each positive loading prerequisite used by the controller's
-    // existing Machine gate. A failed read is an outage, not pending; Account
-    // reads and surface activity remain independent of these Machine facts.
-    const machinePrerequisitesPending = (needsMachineExecution && pluginExecution.loading)
-        || (mountedTargetSnapshotRequired && !mountedTargetReady && mountedTargetRead.phase === 'loading');
+    // existing Machine gate. Account reads and surface activity remain
+    // independent of these Machine facts.
+    const machinePrerequisitesPending = isPluginSurfaceMachineConnectionPending({
+        needsMachineExecution, executionLoading: pluginExecution.loading,
+        targetReadRequired: mountedTargetSnapshotRequired, targetReadReady: mountedTargetReady,
+        targetReadLoading: mountedTargetRead.phase === 'loading', machineId,
+    });
     const mountedTargetFallback = mountedTargetRead.phase === 'failed'
         ? resolveMountedTargetProjectionFallback(mountedTargetRead) : null;
     const daemonConnectionFailure = mountedTargetFallback?.state === 'unavailable'

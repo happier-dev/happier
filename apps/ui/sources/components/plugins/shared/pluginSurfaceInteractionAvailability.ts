@@ -69,6 +69,24 @@ export function isPluginSurfaceSelectionOffline(selection: Readonly<{
     return !selection.loading && selection.state.kind === 'unavailable' && selection.state.reasons.includes('offline');
 }
 
+/**
+ * Whether this surface still waits on a Machine: its execution-origin selection is resolving, or the Machine it
+ * selected has not answered the mounted target read yet. An Account-origin read with no Machine involved is the
+ * plugin's own loading, not a Machine connection, so a Machine-less Account settles to its no-Machine state.
+ * A failed read is an outage, not pending.
+ */
+export function isPluginSurfaceMachineConnectionPending(input: Readonly<{
+    needsMachineExecution: boolean;
+    executionLoading: boolean;
+    targetReadRequired: boolean;
+    targetReadReady: boolean;
+    targetReadLoading: boolean;
+    machineId: string | null | undefined;
+}>): boolean {
+    return (input.needsMachineExecution && input.executionLoading)
+        || (input.targetReadRequired && Boolean(input.machineId) && !input.targetReadReady && input.targetReadLoading);
+}
+
 /** Provided by the mount that owns the execution-origin selection; read by the cold state below. */
 export const PluginSurfaceSourceCauseContext = React.createContext<PluginSurfaceSourceCause | null>(null);
 

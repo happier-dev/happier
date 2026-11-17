@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { PluginMachineExecutionOriginStateV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
-import { isPluginSurfaceSelectionOffline } from './pluginSurfaceInteractionAvailability';
+import { isPluginSurfaceMachineConnectionPending, isPluginSurfaceSelectionOffline } from './pluginSurfaceInteractionAvailability';
 
 type Unavailable = Extract<PluginMachineExecutionOriginStateV1, { kind: 'unavailable' }>;
 const unavailable = (reasons: Unavailable['reasons']): Unavailable => ({ kind: 'unavailable', storedOrigin: null, candidates: [], reasons });
@@ -31,5 +31,23 @@ describe('plugin surface Machine offline fact', () => {
         state: unavailable(['unknown']),
       }),
     ).toBe(false);
+  });
+});
+
+describe('plugin surface Machine connection pending fact', () => {
+  const settled = { needsMachineExecution: true, executionLoading: false, targetReadRequired: true, targetReadReady: false,
+    targetReadLoading: true };
+
+  // DESIGN-ACCEPT-1116-X (C71 X2): a fresh Account with no Machine. Its widget's Account target read was still
+  // fetching plugin declarations, and the surface said "Connecting to this machine" for 20+ minutes.
+  it('is not pending on a Machine while only the Account target read loads and no Machine is involved', () => {
+    expect(isPluginSurfaceMachineConnectionPending({ ...settled, machineId: null })).toBe(false);
+  });
+
+  it('is pending while the selection loads or the selected Machine still answers its target read', () => {
+    expect(isPluginSurfaceMachineConnectionPending({ ...settled, machineId: 'machine_1' })).toBe(true);
+    expect(isPluginSurfaceMachineConnectionPending({ ...settled, machineId: null, executionLoading: true })).toBe(true);
+    expect(isPluginSurfaceMachineConnectionPending({ ...settled, machineId: 'machine_1', targetReadLoading: false })).toBe(false);
+    expect(isPluginSurfaceMachineConnectionPending({ ...settled, machineId: 'machine_1', targetReadReady: true })).toBe(false);
   });
 });
