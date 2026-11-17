@@ -1428,6 +1428,25 @@ or wire epoch changes. The inspected `../0.2` frontier at
 changes, has no corresponding managed Action contract; no released adapter or
 reverse-development rollback direction is introduced.
 
+## Machine settlement Events (unreleased 0.3, implementation in progress)
+
+The closed Machine-service Host observation union adds guard-stop, quota,
+credential-health and Project-setup settlement facts. Their existing lifecycle
+owners publish redacted facts after settlement; they carry no native command
+output or credentials. Event observations project known canonical subject
+contexts, including retained Session identity and accepted Project association.
+Unknown association is omitted. Event declarations optionally name plural
+`completesActionIds` for Actions whose accepted handle precedes domain settlement.
+
+Matching development Protocol, SDK, daemon and bundled-plugin declarations must
+reload together because preceding strict readers reject the new union arms and
+metadata. This introduces no persisted format, migration, wire epoch or
+mixed-development adapter. The inspected `../0.2` frontier at
+`f10121a13b7031230f767a3e4e1328e22aa2e7f7` has no Machine-service observation
+schema at the corresponding path. Composed validation remains in progress;
+requester-Account worktree removal publication and worktree creation association
+are unresolved producer seams, not available capabilities.
+
 ## Trigger Event subject projection (unreleased 0.3)
 
 The selected `workflow.trigger.list` input is an unreleased 0.3 direct cut. Its selection

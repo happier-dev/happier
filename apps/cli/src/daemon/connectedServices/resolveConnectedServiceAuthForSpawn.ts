@@ -143,7 +143,7 @@ type ConnectedServiceSpawnCredentialRefreshErrorKind =
 type ConnectedServiceSpawnCredentialRefreshService = Pick<
   import('./refresh/ConnectedServiceRefreshCoordinator').ConnectedServiceRefreshCoordinator,
   'refreshQualifiedConnectedAccountCredentialForSpawnPreflight'
->;
+> & Partial<Pick<import('./refresh/ConnectedServiceRefreshCoordinator').ConnectedServiceRefreshCoordinator, 'publishCredentialHealthTransition'>>;
 
 type ConnectedServicePredictiveSwitchGuard = (
   input: ConnectedServicePredictiveSwitchGuardInput,
@@ -939,8 +939,10 @@ export async function persistMaterializationFailureCredentialHealthForSpawn(para
   diagnostic: ConnectedServicesMaterializationDiagnostic;
   nowMs: number;
   qualifiedCredential?: Parameters<typeof persistConnectedServiceCredentialHealthForMaterializationFailure>[0]['qualifiedCredential'];
+  onCredentialHealthChanged?: Parameters<typeof persistConnectedServiceCredentialHealthForMaterializationFailure>[0]['onCredentialHealthChanged'];
 }>): Promise<void> {
   await persistConnectedServiceCredentialHealthForMaterializationFailure({
+    onCredentialHealthChanged: params.onCredentialHealthChanged,
     binding: { serviceId: params.serviceId, profileId: params.profileId },
     diagnostic: params.diagnostic,
     now: params.nowMs,
@@ -949,6 +951,7 @@ export async function persistMaterializationFailureCredentialHealthForSpawn(para
 }
 
 async function maybeRecoverGroupAfterSpawnMaterializationFailure(params: Readonly<{
+  onCredentialHealthChanged?: Parameters<typeof persistConnectedServiceCredentialHealthForMaterializationFailure>[0]['onCredentialHealthChanged'];
   error: ConnectedServiceMaterializationBlockedError;
   groupSelections: Map<ConnectedAccountServiceKey, ConnectedServiceResolvedGroupSelection>;
   credentialRevisionsByServiceId: Map<ConnectedAccountServiceKey, ConnectedServiceCredentialRevisionV1>;
@@ -980,6 +983,7 @@ async function maybeRecoverGroupAfterSpawnMaterializationFailure(params: Readonl
     // Do not attach an older launch failure to a replacement credential.
     if (profile.credentialRevision === group.credentialRevision) {
       await persistMaterializationFailureCredentialHealthForSpawn({
+        onCredentialHealthChanged: params.onCredentialHealthChanged,
         api: params.api,
         serviceId: legacyServiceId,
         profileId: group.activeProfileId,
@@ -991,6 +995,7 @@ async function maybeRecoverGroupAfterSpawnMaterializationFailure(params: Readonl
           expectedCredentialRevision: profile.credentialRevision,
           expectedConfigurationRevision: profile.configurationRevision,
           previousStatus: profile.status,
+          previousReason: profile.statusReason,
         },
       });
     }
@@ -1504,6 +1509,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
       if (!(error instanceof ConnectedServiceMaterializationBlockedError)) throw error;
       if (attempt >= maxMaterializationAttempts - 1) throw error;
       const recovered = await maybeRecoverGroupAfterSpawnMaterializationFailure({
+        onCredentialHealthChanged: event => params.credentialRefreshService?.publishCredentialHealthTransition?.(event),
         error,
         groupSelections,
         credentialRevisionsByServiceId,

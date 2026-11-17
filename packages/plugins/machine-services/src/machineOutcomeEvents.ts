@@ -3,7 +3,7 @@ import { admitNativeActionCompletionObservation } from './eventCompletion.js';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { defineProtocolLiteral, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import { SCM_WORKTREE_REMOVE_ACTION_ID_V1, PROJECT_PREPARE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, BackupOutcomeEventV1ProtocolSchema, MachinePressureEventV1ProtocolSchema, WorktreeRemovedEventV1ProtocolSchema,
-    ProjectSetupSettledEventV1ProtocolSchema,
+    GuardStoppedEventV1ProtocolSchema, ConnectedServiceQuotaEventV1ProtocolSchema, ConnectedServiceCredentialHealthEventV1ProtocolSchema, ProjectSetupSettledEventV1ProtocolSchema,
     createPluginEventAutomationSetupResultV1JsonSchema, type MachineServiceObservationV1,
     type PluginEventObservationV1 } from '@happier-dev/plugin-sdk/events';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
@@ -23,6 +23,12 @@ const descriptors = {
         description: 'An enabled memory, CPU or disk alert fired or recovered.', schema: MachinePressureEventV1ProtocolSchema },
     'worktree-removed': { subjectKinds: ['machine', 'project'], scope: 'machine', completionOutcome: 'succeeded', completesActionIds: [SCM_WORKTREE_REMOVE_ACTION_ID_V1], key: 'worktreeRemoved', title: 'Worktree removed',
         description: 'An accepted worktree was deleted or retired.', schema: WorktreeRemovedEventV1ProtocolSchema },
+    'guard-stopped': { subjectKinds: ['machine', 'session'], scope: 'machine', key: 'guardStopped', title: 'Guard stopped a Session',
+        description: 'The Machine Guard retained a stopped Session fact.', schema: GuardStoppedEventV1ProtocolSchema },
+    'connected-account-quota-changed': { subjectKinds: ['machine'], scope: 'machine', key: 'connectedAccountQuotaChanged', title: 'Connected Account quota changed',
+        description: 'A Connected Account group became blocked or recovered.', schema: ConnectedServiceQuotaEventV1ProtocolSchema },
+    'connected-account-credential-attention': { subjectKinds: ['machine'], scope: 'machine', key: 'connectedAccountCredentialAttention', title: 'Connected Account needs attention',
+        description: 'Persisted credential health entered or changed an attention state.', schema: ConnectedServiceCredentialHealthEventV1ProtocolSchema },
     'project-setup-finished': { subjectKinds: ['project', 'machine'], scope: 'machine', completionOutcome: 'succeeded', completesActionIds: [PROJECT_PREPARE_ACTION_ID_V1], key: 'projectSetupFinished', title: 'Project setup finished',
         description: 'An accepted Project setup finished.', schema: ProjectSetupSettledEventV1ProtocolSchema },
     'project-setup-failed': { subjectKinds: ['project', 'machine'], scope: 'machine', completionOutcome: 'failed', completesActionIds: [PROJECT_PREPARE_ACTION_ID_V1], key: 'projectSetupFailed', title: 'Project setup failed',
@@ -42,6 +48,16 @@ function projectFact(fact: MachineServiceObservationV1) {
             identity: [fact.episode.rule, fact.episode.volumeId ?? '', fact.episode.state, String(fact.episode.at)], payload: fact };
         case 'worktreeRemoved': return { serverId: fact.serverId, machineId: fact.removal.machineId,
             event: 'worktree-removed' as const, occurredAt: fact.occurredAt, identity: [fact.removal.operationId], payload: fact.removal };
+        case 'guard_stop': return { serverId: fact.serverId, machineId: fact.machineId,
+            event: 'guard-stopped' as const, occurredAt: fact.settledAt ?? fact.at,
+            identity: [fact.sessionId, fact.rule, String(fact.at)], payload: fact };
+        case 'connected_service_quota': return { serverId: fact.serverId, machineId: fact.machineId,
+            event: 'connected-account-quota-changed' as const, occurredAt: fact.occurredAt,
+            identity: [fact.serviceId, fact.groupId, fact.profileId ?? '', fact.phase, fact.cycleId ?? '', fact.issueFingerprint], payload: fact };
+        case 'credential_health': return { serverId: fact.serverId, machineId: fact.machineId,
+            event: 'connected-account-credential-attention' as const, occurredAt: fact.occurredAt,
+            identity: [fact.account.service.pluginId, fact.account.service.localId, fact.account.accountId,
+                fact.status, fact.reason ?? '', String(fact.occurredAt)], payload: fact };
         case 'projectSetupSettled': return { serverId: fact.serverId, machineId: fact.machineId,
             event: fact.settlement.outcome === 'finished' ? 'project-setup-finished' as const : 'project-setup-failed' as const,
             occurredAt: fact.occurredAt, identity: [fact.settlement.operationId], payload: fact.settlement };
@@ -89,6 +105,9 @@ function subjectContextsFor(fact: MachineServiceObservationV1): NonNullable<Plug
         : fact.kind === 'projectSetupSettled' ? fact.settlement.project : null;
     if (project) contexts.push({ role: 'context', subject: {
         kind: 'project', serverId: project.serverId, projectKey: project.projectId,
+    } });
+    if (fact.kind === 'guard_stop') contexts.push({ role: 'context', subject: {
+        kind: 'session', serverId: fact.serverId, sessionId: fact.sessionId,
     } });
     if (fact.kind === 'backup') contexts.push(
         { role: 'operand', subject: { kind: 'backup', serverId: fact.serverId, environmentId: fact.environmentId } },

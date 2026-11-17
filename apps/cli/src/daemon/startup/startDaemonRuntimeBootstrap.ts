@@ -1,3 +1,4 @@
+import type { ConnectedServiceQuotaEventV1, ConnectedServiceCredentialHealthEventV1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
 import type { AgentPluginAccountSettingsSource } from '@/plugins/runtime/agentPluginSettings';
 import { resolveGroupRequiredModelIds } from '../connectedServices/runtimeRegistry/resolveGroupRequiredModelIds';
 import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
@@ -143,7 +144,10 @@ function resolveTrackedSessionNotificationTitle(tracked: TrackedSession | null |
   return getSessionNotificationTitle(() => tracked?.happySessionMetadataFromLocalWebhook ?? null);
 }
 
+type ConnectedServiceObservation = Omit<ConnectedServiceQuotaEventV1, 'serverId' | 'machineId'> | Omit<ConnectedServiceCredentialHealthEventV1, 'serverId' | 'machineId'>;
+
 export type StartDaemonRuntimeBootstrapParams = Readonly<{
+  publishConnectedServiceObservation?(observation: ConnectedServiceObservation): void;
   secretSources?: TargetSecretSourcesV1;
   artifactQueryHints?: Readonly<{ signal: AbortSignal; resolveServerFeaturesSnapshot: ArtifactQueryHintFeatures }>;
   publicProfileRefresh?: Omit<Parameters<typeof startPublicProfileRefresh>[0], 'scheduler'>;
@@ -433,7 +437,7 @@ export async function startDaemonRuntimeBootstrap(
 /** One Account-bound coordinator composition for daemon and requester Session custody. */
 export async function startDaemonConnectedServiceRuntime(
   params: Pick<StartDaemonRuntimeBootstrapParams,
-    'activeServerDir' | 'api' | 'credentials' | 'secretSources' | 'machineId' | 'machineIdProvider' | 'runtimeId'
+    'publishConnectedServiceObservation' | 'activeServerDir' | 'api' | 'credentials' | 'secretSources' | 'machineId' | 'machineIdProvider' | 'runtimeId'
     | 'happyHomeDir' | 'logger' | 'processEnv' | 'trackedSessionsByKey' | 'isDaemonQuiescing'
     | 'connectedServiceAuthGroupPreTurnSwitchCoordinator' | 'connectedServicePredictiveSwitchGuard'
     | 'connectedServiceQuotaFetcherDescriptors' | 'connectedServiceRuntimeQuotaSnapshots'
@@ -583,6 +587,7 @@ export async function startDaemonConnectedServiceRuntime(
               mutateCredentialHealth:
                 mutateQualifiedConnectedAccountCredentialHealthV4,
               onReauthRequired,
+              onCredentialHealthChanged: params.publishConnectedServiceObservation,
               readCredential:
                 readQualifiedConnectedAccountCredentialV4,
               readGroup: ({ service, groupId, signal }) =>
@@ -882,6 +887,9 @@ export async function startDaemonConnectedServiceRuntime(
         });
       },
       onQuotaLifecycleTransition: async (transition, signal) => {
+        params.publishConnectedServiceObservation?.({ kind: 'connected_service_quota', serviceId: transition.serviceId,
+          groupId: transition.groupId, profileId: transition.activeProfileId, phase: transition.phase, cycleId: transition.cycleId ?? null,
+          issueFingerprint: transition.issueFingerprint, occurredAt: Date.now(), limitCategory: 'usage_limit' });
         const settingsSnapshot = readAccountSettingsSnapshot();
         await dispatchConnectedServiceQuotaLifecycleNotificationAsync({
           signal,

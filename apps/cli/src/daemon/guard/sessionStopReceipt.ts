@@ -12,6 +12,7 @@ export function createGuardSessionStopReceipt(input: Readonly<{
   at: number;
   nowMs?: () => number;
   onSettled?(record: SessionStopRecordV1): Promise<void>;
+  onStopped?(record: SessionStopRecordV1): void;
 }>): GuardSessionStopReceipt {
   const localId = buildSessionStopSystemRecordLocalId({ at: input.at });
   let settled: SessionStopRecordV1['status'] = 'requested';
@@ -28,10 +29,12 @@ export function createGuardSessionStopReceipt(input: Readonly<{
         const facts = SessionStopRecordV1StoredSchema.parse(record.payload);
         if (facts.at !== input.at) throw new Error('guard_stop_receipt_identity_changed');
         if (facts.status === 'stopped' || facts.status === 'cancelled' || facts.status === status) {
+          if (facts.status === 'stopped') input.onStopped?.(facts);
           await input.onSettled?.(facts); settled = facts.status; return;
         }
         const result = { ...facts, status, settledAt: (input.nowMs ?? Date.now)() };
         await input.records.write({ namespace: 'activity', kind: 'session_stop.v1', localId, payload: result });
+        if (result.status === 'stopped') input.onStopped?.(result);
         await input.onSettled?.(result);
         settled = status;
       })();

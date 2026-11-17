@@ -68,8 +68,7 @@ it('P01.F6 settled producer fact survives notification fan-out', async () => {
   expect(setup.ok, JSON.stringify(setup)).toBe(true);
   if (!setup.ok) throw new Error(`Removal source setup refused (${setup.errorCode})`);
   const source = PluginEventAutomationSetupResultV1Schema.parse(setup.result);
-  const linked = await actor.execute('workflow.trigger.add', {
-    name: 'Review a removed worktree',
+  const linked = await actor.executeReviewed('workflow.trigger.add', {
     target: { kind: 'inline', definition: { version: 1,
       defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
       blocks: [{ kind: 'step', id: 'review', document: { text: 'Review the settled worktree removal.',

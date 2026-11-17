@@ -34,8 +34,7 @@ export async function assertAcceptedTurnStartLifecycle(
     return V2SessionByIdResponseSchema.parse(response.data).session.projectKey === projectKey;
   }, { context: 'The source Session publishes the accepted Project before turn-start authoring' });
   expect(source.metadata.machineId).toBe(machine.target.machineId);
-  const linked = await actor.execute('workflow.trigger.add', {
-    name: 'Observe an accepted turn start',
+  const linked = await actor.executeReviewed('workflow.trigger.add', {
     target: { kind: 'inline', definition: { version: 1,
       defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
       blocks: [{ kind: 'step', id: 'review', document: { text: 'Review the accepted turn.', references: [], attachments: [] },

@@ -178,3 +178,51 @@ it('projects each matched settled run and pressure transition once, retains arri
     subscription.dispose();
     expect(disposed).toBe(true);
 });
+
+it('keeps settled Guard and quota identities stable across replay and projects changed credential reasons separately', async () => {
+    let listener: ((event: HostEventEnvelope<typeof MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1>) => void | Promise<void>) | undefined;
+    // Only authenticated host transport is replaced; projection and checkpointing stay real.
+    const host = { subscribe(target: { eventId: string }, callback: typeof listener) {
+        if (target.eventId === MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1) listener = callback;
+        return { dispose() {} };
+    } } as unknown as BackgroundServiceContext['services']['events']['host'];
+    const adapter = createMachineOutcomeEventSourceAdapter(host, () => 900);
+    const definitions = ['guard-stopped', 'connected-account-quota-changed', 'connected-account-credential-attention'].map(event => ({
+        ...definition(event), sourceConfig: { v: 1, serverId: 'home', machineId: 'machine' },
+    }));
+    const context = { signal: new AbortController().signal } as BackgroundServiceContext;
+    const observe = async (selected: PluginCheckpointedEventSourceDefinitionV1) => {
+        const decoded = adapter.decode(selected);
+        expect(decoded).not.toBeNull();
+        if (!decoded) throw new Error(`Expected native source ${selected.eventRef.localId}`);
+        return adapter.observe({ context, definition: selected, definitions, source: decoded, isCurrent: async () => true });
+    };
+    for (const selected of definitions) expect((await observe(selected)).observations).toEqual([]);
+    adapter.subscribeWake!(async () => {});
+    const emit = async (payload: HostEventEnvelope<typeof MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1>['payload']) =>
+        listener?.({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' }, payload });
+    const guard = { kind: 'guard_stop', serverId: 'home', machineId: 'machine', sessionId: 'session',
+        at: 100, settledAt: 110, rule: 'idle_sessions' } as const;
+    await emit(guard); await emit(guard);
+    const quota = { kind: 'connected_service_quota', serverId: 'home', machineId: 'machine',
+        serviceId: 'happier.agent.claude/claude-subscription', groupId: 'group', profileId: 'profile',
+        phase: 'blocked', cycleId: 'cycle', issueFingerprint: 'issue', occurredAt: 200, limitCategory: 'usage_limit' } as const;
+    await emit(quota); await emit({ ...quota, occurredAt: 800 });
+    const credential = { kind: 'credential_health', serverId: 'home', machineId: 'machine',
+        account: { service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, accountId: 'profile' },
+        status: 'needs_reauth', reason: 'invalid_grant', occurredAt: 300 } as const;
+    await emit(credential); await emit(credential);
+    await emit({ ...credential, reason: 'missing_refresh_token', occurredAt: 400 });
+    const [guardPage, quotaPage, credentialPage] = await Promise.all(definitions.map(observe));
+    expect(guardPage!.observations.map(row => row.payload)).toEqual([guard, guard]);
+    expect(guardPage!.observations[0]).toMatchObject({ subjectContexts: [
+        { role: 'context', subject: { kind: 'machine', serverId: 'home', machineId: 'machine' } },
+        { role: 'context', subject: { kind: 'session', serverId: 'home', sessionId: 'session' } },
+    ] });
+    expect(new Set(guardPage!.observations.map(row => row.occurrenceId)).size).toBe(1);
+    expect(quotaPage!.observations).toHaveLength(2);
+    expect(new Set(quotaPage!.observations.map(row => row.occurrenceId)).size).toBe(1);
+    expect(credentialPage!.observations).toHaveLength(3);
+    expect(new Set(credentialPage!.observations.map(row => row.occurrenceId)).size).toBe(2);
+    expect(credentialPage!.observations[0]!.payload).toEqual(credential);
+});

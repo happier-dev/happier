@@ -1,17 +1,31 @@
 import { isDeepStrictEqual } from 'node:util';
+import type { ConnectedServiceCredentialHealthEventV1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
 import type { ConnectedServiceCredentialHealthV1, ConnectedServiceCredentialRevisionV1, QualifiedConnectedAccountCredentialSnapshotV4, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 import { logger } from '@/ui/logger';
 import type { QualifiedConnectedAccountEstablishedRuntimeOwner } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
 import type { QualifiedConnectedAccountRefreshRuntime } from './ConnectedServiceRefreshCoordinator';
 import { sanitizeConnectedServiceDiagnosticError } from '../runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 
-export function notifyQualifiedReauth(input: Readonly<{
+export type ConnectedServiceCredentialHealthTransition = Omit<ConnectedServiceCredentialHealthEventV1, 'serverId' | 'machineId'>;
+
+export function notifyQualifiedHealthSettled(input: Readonly<{
     account: QualifiedConnectedAccountRef;
     credentialRevision: ConnectedServiceCredentialRevisionV1;
     previousHealth: ConnectedServiceCredentialHealthV1 | null | undefined;
     previousStatus?: ConnectedServiceCredentialHealthV1['status'];
+    previousReason?: ConnectedServiceCredentialHealthV1['lastRefreshFailureKind'];
     health: ConnectedServiceCredentialHealthV1;
-}>, runtime: Pick<QualifiedConnectedAccountRefreshRuntime, 'onReauthRequired'>): void {
+}>, runtime: Pick<QualifiedConnectedAccountRefreshRuntime, 'onReauthRequired' | 'onCredentialHealthChanged'>): void {
+    const status = input.health.status;
+    const previousStatus = input.previousHealth?.status ?? input.previousStatus;
+    const reason = input.health.lastRefreshFailureKind ?? null;
+    const previousReason = input.previousHealth?.lastRefreshFailureKind ?? input.previousReason ?? null;
+    if ((status === 'needs_reauth' || status === 'refresh_failed_retryable')
+        && (previousStatus !== status || previousReason !== reason)) {
+        runtime.onCredentialHealthChanged?.({ kind: 'credential_health', account: input.account,
+            status, reason,
+            occurredAt: input.health.lastRefreshFailureAt ?? input.health.lastRuntimeAuthFailureAt ?? Date.now() });
+    }
     if (input.health.status !== 'needs_reauth'
         || (input.previousHealth?.status ?? input.previousStatus) === 'needs_reauth'
         || !runtime.onReauthRequired) return;
@@ -93,7 +107,7 @@ export async function settleQualifiedHealth(input: QualifiedHealthSettlementInpu
         || (settledCredentialRevision === undefined && !input.basis.isCurrent())) {
         throw new Error('Qualified Connected Account health mutation settled against a different invocation basis');
     }
-    notifyQualifiedReauth({ account: input.account, credentialRevision: expectedCredentialRevision,
+    notifyQualifiedHealthSettled({ account: input.account, credentialRevision: expectedCredentialRevision,
         previousHealth: input.basis.credentialHealth, health: input.health }, deps.runtime);
     return settledCredentialRevision;
 }

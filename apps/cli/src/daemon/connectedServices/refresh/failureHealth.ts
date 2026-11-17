@@ -5,7 +5,7 @@ import { boundConnectedServiceMaterializationDiagnosticValue } from '../diagnost
 import type { ConnectedServicesMaterializationDiagnostic } from '../materialization/materializer';
 import { sanitizeConnectedServiceDiagnosticError } from '../runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 import type { ConnectedServiceRefreshFailureCategory, QualifiedConnectedAccountRefreshRuntime } from './ConnectedServiceRefreshCoordinator';
-import { notifyQualifiedReauth, recordCredentialHealthWrite } from './qualifiedHealthSettlement';
+import { notifyQualifiedHealthSettled, recordCredentialHealthWrite } from './qualifiedHealthSettlement';
 import type { BoundProfile } from './tick';
 
 export function isReauthRequiredFailure(category: ConnectedServiceRefreshFailureCategory): boolean {
@@ -64,9 +64,11 @@ export async function persistConnectedServiceCredentialHealthForMaterializationF
     expectedConfigurationRevision: string | null;
     previousHealth?: ConnectedServiceCredentialHealthV1 | null;
     previousStatus?: ConnectedServiceCredentialHealthV1['status'];
+    previousReason?: ConnectedServiceCredentialHealthV1['lastRefreshFailureKind'];
   }>;
   mutateCredentialHealth?: QualifiedConnectedAccountRefreshRuntime['mutateCredentialHealth'];
   onReauthRequired?: QualifiedConnectedAccountRefreshRuntime['onReauthRequired'];
+  onCredentialHealthChanged?: QualifiedConnectedAccountRefreshRuntime['onCredentialHealthChanged'];
 }>): Promise<void> {
   if (!input.qualifiedCredential) return;
 
@@ -85,7 +87,7 @@ export async function persistConnectedServiceCredentialHealthForMaterializationF
   } satisfies ConnectedServiceCredentialHealthV1;
 
   try {
-    const { token, previousHealth, previousStatus, ...basis } = input.qualifiedCredential;
+    const { token, previousHealth, previousStatus, previousReason, ...basis } = input.qualifiedCredential;
     recordCredentialHealthWrite({ path: 'materialization-failure', account: basis.ref,
       credentialRevision: basis.expectedCredentialRevision, configurationRevision: basis.expectedConfigurationRevision,
       before: previousHealth, beforeStatus: previousStatus, after: health });
@@ -95,8 +97,8 @@ export async function persistConnectedServiceCredentialHealthForMaterializationF
       || settled.configurationRevision !== basis.expectedConfigurationRevision) {
       throw new Error('Qualified materialization health did not settle against its exact snapshot');
     }
-    notifyQualifiedReauth({ account: basis.ref, credentialRevision: basis.expectedCredentialRevision,
-      previousHealth, previousStatus, health }, { onReauthRequired: input.onReauthRequired });
+    notifyQualifiedHealthSettled({ account: basis.ref, credentialRevision: basis.expectedCredentialRevision,
+      previousHealth, previousStatus, previousReason, health }, { onReauthRequired: input.onReauthRequired, onCredentialHealthChanged: input.onCredentialHealthChanged });
   } catch (error) {
     input.signal?.throwIfAborted();
     logger.warn('[DAEMON RUN] Failed to update connected-service credential health after materialization failure', {

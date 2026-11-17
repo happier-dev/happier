@@ -854,6 +854,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                             reservation.phase('setup');
                             setupInput = buildSetupInput();
                             const outcome = await executeProjectSetup(setupInput);
+                            if (outcome.setupSettlement) current.runtime.publishSetupSettlement?.(outcome.setupSettlement);
                             finishSetup(outcome);
                             return outcome;
                         },

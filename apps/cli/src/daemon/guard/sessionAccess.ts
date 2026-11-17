@@ -6,6 +6,8 @@ import type { TrackedSession } from '../types';
 import type { ResolveRequesterSessionRuntimeContext, ReleaseRequesterSessionRuntimeContext } from '../sessionEncryption/requesterSessionCredentials';
 import { withTrackedSessionRpc } from '../sessionEncryption/withTrackedSessionRpc';
 import { createGuardSessionStopReceipt } from './sessionStopReceipt';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import type { SessionStopRecordV1 } from '@happier-dev/protocol/machines/guard/sessionGuardStateV1';
 
 type GuardAccess = Parameters<typeof withTrackedSessionRpc>[0];
 
@@ -15,6 +17,8 @@ export function createGuardSessionAccess(input: Readonly<{
   resolveRequesterSessionRuntimeContext: ResolveRequesterSessionRuntimeContext;
   releaseRequesterSessionRuntimeContext: ReleaseRequesterSessionRuntimeContext;
   isTrackedCurrent(tracked: TrackedSession): boolean;
+  onStopped?(input: Readonly<{ record: SessionStopRecordV1; sessionId: string;
+    accountId: string | null; serverHttpBaseUrl: string }>): void;
 }>) {
   const withAccess = async <T>(tracked: TrackedSession,
     operation: (access: GuardAccess) => Promise<T>, signal?: AbortSignal): Promise<T> => {
@@ -37,6 +41,8 @@ export function createGuardSessionAccess(input: Readonly<{
         // Retain the admitted requester before publication; even an acknowledgement failure may have committed intent.
         tracked.guardStopReceipt = createGuardSessionStopReceipt({ records: access.systemRecords,
           at: state.at,
+          onStopped: record => input.onStopped?.({ record, sessionId: access.sessionId,
+            accountId: readAccountIdFromToken(access.credentials.token), serverHttpBaseUrl: access.serverHttpBaseUrl }),
           onSettled: async record => {
             const written = await runWithServerHttpBaseUrl(access.serverHttpBaseUrl, () => updateSessionMetadataForTarget({
               credentials: access.credentials, idOrPrefix: access.sessionId, expectedSessionId: access.sessionId,

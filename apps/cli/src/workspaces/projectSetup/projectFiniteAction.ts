@@ -5,7 +5,7 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import type { ProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
-import type { ProjectSetupExecutionInput } from './projectSetupExecution';
+import type { ProjectSetupExecutionInput, ProjectSetupSettlement } from './projectSetupExecution';
 import type { ProjectSetupPreparationInput } from './projectSetupPreparation';
 import { projectRuntimeAccountRowsInput, type ProjectRuntimeAccountAccess } from '@/workspaces/projectAccountRows';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
@@ -59,6 +59,8 @@ export type ProjectFiniteActionRuntime = ProjectRuntimeAccountAccess & Readonly<
     machineId: string;
     accountId: string;
     serverHttpBaseUrl: string;
+    /** Installed native Account sink consumes only the setup owner's settled safe fact. */
+    publishSetupSettlement?: (settlement: ProjectSetupSettlement) => void;
     /** Installed receiving connection Home, never a profile label or workspace operand. */
     resolveHostHomeServerIdentityId?: (signal?: AbortSignal) => Promise<string | null>;
     /** Captured by the installed Project runtime owner, never an Action operand. */
@@ -970,6 +972,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                             setup = await stage('project.setup.execute', () => executeProjectSetup({ ...executionInput(), preparation: { ...executionInput().preparation,
                                 expectedEffectDigest: rechecked.invocation.plan.reviewedEffectDigest }, beforeNativeEffect: beforeSetupEffect }));
                         }
+                        if (setup.setupSettlement) runtime.publishSetupSettlement?.(setup.setupSettlement);
                         kind = setup.kind;
                         if (setup.kind === 'outcome_uncertain') throw coded(setup.result.ok ? 'outcome_uncertain' : setup.result.errorCode);
                         setupState.settled = { outcome: setup, manifest: setupReview.invocation.plan.manifest };

@@ -46,7 +46,7 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
   bootstrapOwnership?: 'borrowed';
   providerAccountUsageStore: ProviderAccountUsageStore;
   signal?: AbortSignal;
-  coordinatorInput: Omit<CoordinatorInput, 'api' | 'credentials' | 'accountSettingsSnapshot' | 'subscribeAccountSettingsSnapshot'
+  coordinatorInput: Omit<CoordinatorInput, 'publishConnectedServiceObservation' | 'api' | 'credentials' | 'accountSettingsSnapshot' | 'subscribeAccountSettingsSnapshot'
     | 'activeServerDir' | 'providerAccountUsageStore' | 'connectedServiceRuntimeQuotaSnapshots'
     | 'qualifiedConnectedAccountEstablishedRuntimeOwner' | 'listScheduledQualifiedConnectedAccounts'
     | 'listQualifiedConnectedAccountGroupQuotaTargets' | 'onQualifiedConnectedAccountCredentialUpdated'

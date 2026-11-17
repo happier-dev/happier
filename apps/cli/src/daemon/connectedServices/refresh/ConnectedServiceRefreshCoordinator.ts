@@ -101,7 +101,7 @@ import {
 } from '../diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
 
 import { bindingKey, qualifiedAccountKey, runConnectedServiceRefreshTick, type BoundProfile } from './tick';
-import { notifyQualifiedReauth, recordCredentialHealthWrite, settleQualifiedHealth, type QualifiedHealthSettlementInput } from './qualifiedHealthSettlement';
+import { notifyQualifiedHealthSettled, recordCredentialHealthWrite, settleQualifiedHealth, type QualifiedHealthSettlementInput } from './qualifiedHealthSettlement';
 import type { ConnectedAccountReauthEvent } from '../accountGroups/switching/reauthPools';
 import { classifyConnectedServiceMaterializationDiagnosticForCredentialRefresh, isReauthRequiredFailure,
   persistConnectedServiceCredentialHealthForMaterializationFailure } from './failureHealth';
@@ -166,6 +166,7 @@ export type QualifiedConnectedAccountRefreshRuntime = Readonly<{
     options?: Readonly<{ reason?: 'provider_context'; signal?: AbortSignal }>,
   ): void | Promise<void>;
   onReauthRequired?(event: ConnectedAccountReauthEvent): Promise<void>;
+  onCredentialHealthChanged?(event: import('./qualifiedHealthSettlement').ConnectedServiceCredentialHealthTransition): void;
 }>;
 
 function peerClassV4Support(
@@ -705,6 +706,10 @@ export class ConnectedServiceRefreshCoordinator {
     }
   }
 
+  publishCredentialHealthTransition(event: import('./qualifiedHealthSettlement').ConnectedServiceCredentialHealthTransition): void {
+    this.params.qualifiedConnectedAccountRuntime?.onCredentialHealthChanged?.(event);
+  }
+
   private async assertAccountRuntimeCurrent(signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
     if (this.params.isAccountRuntimeCurrent && !await this.params.isAccountRuntimeCurrent(signal)) {
@@ -905,7 +910,7 @@ export class ConnectedServiceRefreshCoordinator {
             'Qualified Connected Account reconnect consequence settled against a stale credential basis',
           );
         }
-        notifyQualifiedReauth({ account: input.account, credentialRevision: mutation.credentialRevision,
+        notifyQualifiedHealthSettled({ account: input.account, credentialRevision: mutation.credentialRevision,
           previousHealth: expectedCredential.health, health }, runtime);
         this.armQualifiedConnectedAccountHealthBackoff(input.account);
         await this.notifyQualifiedConnectedAccountCredentialUpdated(input.account);
@@ -3094,7 +3099,7 @@ export class ConnectedServiceRefreshCoordinator {
         || settled.configurationRevision !== basis.expectedConfigurationRevision) {
         throw new Error('Qualified credential health did not settle against its exact snapshot');
       }
-      notifyQualifiedReauth({ account: basis.ref, credentialRevision: basis.expectedCredentialRevision,
+      notifyQualifiedHealthSettled({ account: basis.ref, credentialRevision: basis.expectedCredentialRevision,
         previousHealth, health }, runtime);
       return true;
     } catch (error) {
@@ -3427,6 +3432,7 @@ export class ConnectedServiceRefreshCoordinator {
       qualifiedCredential: { token: this.params.credentials.token, ...basis },
       mutateCredentialHealth: this.params.qualifiedConnectedAccountRuntime?.mutateCredentialHealth,
       onReauthRequired: this.params.qualifiedConnectedAccountRuntime?.onReauthRequired,
+      onCredentialHealthChanged: this.params.qualifiedConnectedAccountRuntime?.onCredentialHealthChanged,
     });
   }
 

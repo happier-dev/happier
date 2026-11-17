@@ -176,6 +176,7 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                                 },
                                 ...(runtime.platform ? { platform: runtime.platform } : {}),
                                 hostEnvironment: originalEnvironment });
+                            if (executed.setupSettlement) runtime.publishSetupSettlement?.(executed.setupSettlement);
                             kind = executed.kind;
                             setupState.outcome = executed;
                             return executed;

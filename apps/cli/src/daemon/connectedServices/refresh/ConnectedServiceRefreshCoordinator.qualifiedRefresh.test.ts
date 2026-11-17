@@ -809,6 +809,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     });
     const requestedInventoryServices: unknown[] = [];
     const reauthEvents: unknown[] = [];
+    const attentionEvents: unknown[] = [];
     const coordinator = new ConnectedServiceRefreshCoordinator({
       api,
       credentials,
@@ -848,6 +849,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
         mutateCredential,
         mutateCredentialHealth,
         onReauthRequired: async (event: unknown) => { reauthEvents.push(event); },
+        onCredentialHealthChanged: (event: unknown) => { attentionEvents.push(event); },
       },
     });
 
@@ -956,6 +958,8 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
       await coordinator.tickOnce();
       expect(profileStatus).toBe('needs_reauth');
       expect(reauthEvents).toEqual([{ account, credentialRevision: firstRevision }]);
+      expect(attentionEvents).toEqual([{ kind: 'credential_health', account,
+        status: 'needs_reauth', reason: 'invalid_grant', occurredAt: clock }]);
       expect(tokenExchangeRequests()).toHaveLength(1);
       clock += 60_001;
       if (entryPoint === 'scheduled_rejected_retry') {
@@ -968,6 +972,8 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
       expect(tokenExchangeRequests()).toHaveLength(1);
       expect(profileStatus).toBe('needs_reauth');
       expect(reauthEvents).toHaveLength(1);
+      expect(attentionEvents).toHaveLength(1);
+      expect(JSON.stringify(attentionEvents)).not.toMatch(/access-old|refresh-old|id-old|providerErrorCode/);
       // A new admitted credential clears the persisted latch; no daemon-local
       // reconnect flag may prevent refreshing that replacement revision.
       qualifiedRevision = secondRevision;

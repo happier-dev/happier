@@ -32,6 +32,7 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
   nativeIo: ReturnType<typeof createProjectNativeIo>;
   agentIsolation?: ProjectFiniteActionRuntime['agentIsolation'];
   plugins?: ProjectFiniteActionRuntime['plugins'];
+  publishSetupSettlement?: ProjectFiniteActionRuntime['publishSetupSettlement'];
   successHomeDir: string;
   isCurrent(): Promise<boolean>;
   prepareBetween: NonNullable<WorkspaceSyncHandoffAdapterDeps['prepareBetween']>;
@@ -48,7 +49,9 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
     return { accountSettings: snapshot.rawSettings ?? snapshot.settings, settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys,
       savedSecretMaterializer: materializer, ...(snapshot.savedSecretResources ? { savedSecretResources: snapshot.savedSecretResources } : {}) };
   };
-  const nativeRuntime = (runtimeCurrent: () => Promise<boolean>) => ({
+  const nativeRuntime = (runtimeCurrent: () => Promise<boolean>, accountId: string) => ({
+    ...(accountId === externalActionAccountId && params.publishSetupSettlement
+      ? { publishSetupSettlement: params.publishSetupSettlement } : {}),
     workerAdmission: admission, isCurrent: runtimeCurrent,
     nativeIo: params.nativeIo.commandIo, environmentIo: params.nativeIo.environmentIo,
     agentIsolation: params.agentIsolation,
@@ -113,7 +116,7 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
       };
       if (readProjectFiniteIngressRefusal(ingress)) return refuse('requester_projection_missing');
       if (!await runtimeCurrent()) return null;
-      return { ...ports, ...nativeRuntime(runtimeCurrent), credentials: session.credentials,
+      return { ...ports, ...nativeRuntime(runtimeCurrent, session.attribution.accountId), credentials: session.credentials,
         serverId: finiteServerId, machineId: registeredMachineId, accountId: session.attribution.accountId,
         serverHttpBaseUrl: session.serverHttpBaseUrl,
         sessionCustody: { serverId: session.attribution.serverId, accountId: session.attribution.accountId,
@@ -144,7 +147,7 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
     const accountAccess = requester ?? (currentCredentials ? { serverId: finiteServerId, machineId: registeredMachineId,
       accountId: externalActionAccountId, credentials: currentCredentials, serverHttpBaseUrl: finiteServerHttpBaseUrl } : null);
     if (!accountAccess) return refuse('account_access_unavailable');
-    return { ...ports, ...accountAccess, ...nativeRuntime(runtimeCurrent),
+    return { ...ports, ...accountAccess, ...nativeRuntime(runtimeCurrent, accountAccess.accountId),
       ...(!requester ? { resolveSecretEnvironment: async (bindings, signal) => {
         if (!bindings) return undefined;
         return await runWithServerHttpBaseUrl(accountAccess.serverHttpBaseUrl, async () => {

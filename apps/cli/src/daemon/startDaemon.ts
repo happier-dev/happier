@@ -67,7 +67,7 @@ import { createMachineVitalsAlerts } from './vitals/alerts/machineVitalsAlerts';
 import { readMachineVitalsWorkingSessionCount } from './vitals/alerts/dispatchMachineVitalsAlertNotification';
 import { dispatchActiveAccountMachineVitalsAlertNotificationAsync } from './vitals/alerts/activeAccountNotification';
 import { createDaemonStorageRoutes, type DaemonStorageRoutes } from '@/rpc/handlers/storage';
-import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { projectWorkspaceRefV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { readMachineProjectWorkspaceRefs } from '@/workspaces/readMachineProjectWorkspaceRefs';
 import type { DaemonPublicVoiceModelPackRuntime } from './voiceInference/publicModelPacks/runtime';
 import type { BrowserRecordingDaemonRuntime } from './browser/recording/runtime';
@@ -947,6 +947,16 @@ export async function startDaemon(
         logger.debug('[DAEMON RUN] Server-features snapshot refresh failed (non-fatal)', error);
       },
     });
+    const resolveBoundHomeServerIdentityId = () => {
+      if (homeTransportCancellation.signal.aborted) return null;
+      // Home transport authenticates the binding at startup/reconnect.
+      // Origin stamps carry that identity; each real use still admits it.
+      if (homeTarget.homeServerIdentityId) return homeTarget.homeServerIdentityId;
+      const snapshot = serverFeaturesSnapshotStore.getSnapshot();
+      return snapshot?.status === 'ready'
+        ? snapshot.features.capabilities.serverIdentity.serverIdentityId ?? null
+        : null;
+    };
     const resolvePeerMediationTrustRoots = () => {
       return resolvePeerMediationTrustRootsFromSnapshot(
         serverFeaturesSnapshotStore.getSnapshot(),
@@ -1195,9 +1205,10 @@ export async function startDaemon(
       sampler: machineVitals, historyStore: machineVitalsHistory, policy: machineResourcesPolicy,
       emit: transition => {
         const target = machineResourceTarget();
-        if (!target) throw new Error('machine_vitals_event_account_unavailable');
+        const serverId = resolveBoundHomeServerIdentityId();
+        if (!target || !serverId) throw new Error('machine_vitals_event_account_unavailable');
         publishDaemonHostEvent({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' },
-          payload: { kind: 'pressure', serverId: target.serverId, machineId: target.machineId,
+          payload: { kind: 'pressure', serverId, machineId: target.machineId,
             episode: transition.episode, since: transition.since } }, () => homeTransportCancellation.signal.aborted);
       },
       notify: async (transition, sample, policy) => {
@@ -1811,16 +1822,6 @@ export async function startDaemon(
       // URL-only predecessor profiles join the existing startup discovery.
       await refreshServerFeaturesSnapshot();
     }
-    const resolveBoundHomeServerIdentityId = () => {
-      if (homeTransportCancellation.signal.aborted) return null;
-      // Home transport authenticates the binding at startup/reconnect.
-      // Origin stamps carry that identity; each real use still admits it.
-      if (homeTarget.homeServerIdentityId) return homeTarget.homeServerIdentityId;
-      const snapshot = serverFeaturesSnapshotStore.getSnapshot();
-      return snapshot?.status === 'ready'
-        ? snapshot.features.capabilities.serverIdentity.serverIdentityId ?? null
-        : null;
-    };
     const resolveCurrentMachineTarget = createBoundMachineTargetResolver({
       resolveCurrentMachineId: () => machineId,
       resolveCurrentServerIdentityId: resolveBoundHomeServerIdentityId,
@@ -2957,6 +2958,16 @@ export async function startDaemon(
         serverId: requesterRuntimeServerId, machineId, serverHttpBaseUrl: readRequesterRuntimeServerHttpBaseUrl() }),
       resolveRequesterSessionRuntimeContext, releaseRequesterSessionRuntimeContext,
       isTrackedCurrent: tracked => !admissionDrain.isPublicationQuiescing() && isCurrentTrackedSession(trackedSessionsByKey, tracked),
+      onStopped: ({ record, sessionId, accountId, serverHttpBaseUrl }) => {
+        const target = machineResourceTarget();
+        const serverId = resolveBoundHomeServerIdentityId();
+        // This broker belongs to the native Account; requester stop records remain in their own Home.
+        if (!target || !serverId || accountId !== externalActionAccountId || serverHttpBaseUrl !== readDaemonHomeServerHttpBaseUrl()) return;
+        publishDaemonHostEvent({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' },
+          payload: { kind: 'guard_stop', serverId, machineId: target.machineId, sessionId,
+              at: record.at, ...(record.settledAt !== undefined ? { settledAt: record.settledAt } : {}), rule: record.rule } },
+          () => homeTransportCancellation.signal.aborted);
+      },
     });
     const readGuardEligibility = async (tracked: TrackedSession, signal?: AbortSignal) =>
       withGuardAccess(tracked, access => readCurrentSessionEligibility({ access }), signal);
@@ -3538,6 +3549,14 @@ export async function startDaemon(
     // Retained Sessions recover requester custody through the factory installed above.
     await initializeReattachedSessions();
     const runtimeBootstrap = await startDaemonRuntimeBootstrap({
+      publishConnectedServiceObservation: observation => {
+        const target = machineResourceTarget();
+        const serverId = resolveBoundHomeServerIdentityId();
+        if (!target || !serverId) return;
+        publishDaemonHostEvent({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' },
+          payload: { ...observation, serverId, machineId: target.machineId } },
+          () => homeTransportCancellation.signal.aborted);
+      },
       secretSources: daemonSecretSources,
       publicProfileRefresh: nativeAccountRefresh,
       artifactQueryHints: { signal: nativeAccountRefresh.signal,
@@ -4207,6 +4226,14 @@ export async function startDaemon(
               isFiniteExecutionLive: () => apiMachineForSessions?.isProjectFiniteExecutionLive() === true,
               isServiceExecutionLive: () => isProjectServiceExecutionLive?.() === true });
             const createProjectFiniteRuntime = createInstalledProjectFiniteRuntime({
+              publishSetupSettlement: settlement => {
+                const serverId = resolveBoundHomeServerIdentityId();
+                if (!serverId) return;
+                publishDaemonHostEvent({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' },
+                  payload: { kind: 'projectSetupSettled', serverId, machineId: registeredMachineId, occurredAt: Date.now(),
+                    settlement: { ...settlement, workspace: workspaceAddressFromRefV1(settlement.workspace) } } },
+                  () => homeTransportCancellation.signal.aborted);
+              },
               api, credentials, externalActionAccountId, finiteServerId,
               get finiteServerHttpBaseUrl() { return readDaemonHomeServerHttpBaseUrl(); },
               registeredMachineId, admission, isCurrent, resolveCurrentMachineExecutionOriginContext,
