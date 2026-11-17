@@ -9312,8 +9312,8 @@ const machineDetailPageTranslations = { ru: translated({
                 sentenceTwo: ({ first, second }) => `${first} и ${second}.`,
                 sentenceMore: ({ first, second, count }) => `${first}, ${second} и ещё ${count}.`,
                 sameReason: ({ word, count }) => `${word} на ${count} машинах.`,
-                otherOnlineCalm: ({ count }) => `Остальные ${count} в сети в порядке.`,
-                allOnlineCalm: ({ count }) => count === 1 ? "Единственная машина в сети в порядке." : `Все машины в сети в порядке.`,
+                otherOnlineCalm: ({ count }) => `На остальных ${count} машинах в сети ничего не требует внимания.`,
+                allOnlineCalm: ({ count }) => count === 1 ? "На единственной машине в сети ничего не требует внимания." : `На ${count} машинах в сети ничего не требует внимания.`,
             },
             machine: {
                 calmLead: "Спокойно.",

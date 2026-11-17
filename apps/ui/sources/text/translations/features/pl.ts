@@ -9313,8 +9313,8 @@ const machineDetailPageTranslations = { pl: translated({
                 sentenceTwo: ({ first, second }) => `${first} i ${second}.`,
                 sentenceMore: ({ first, second, count }) => `${first}, ${second} i jeszcze ${count}.`,
                 sameReason: ({ word, count }) => `${word} na ${count} maszynach.`,
-                otherOnlineCalm: ({ count }) => `Pozostałe ${count} online są spokojne.`,
-                allOnlineCalm: ({ count }) => count === 1 ? "Jedyna maszyna online jest spokojna." : `Wszystkie maszyny online są spokojne.`,
+                otherOnlineCalm: ({ count }) => `Na pozostałych ${count} maszynach online nic nie wymaga uwagi.`,
+                allOnlineCalm: ({ count }) => count === 1 ? "Na jedynej maszynie online nic nie wymaga uwagi." : `Na ${count} maszynach online nic nie wymaga uwagi.`,
             },
             machine: {
                 calmLead: "Spokojnie.",

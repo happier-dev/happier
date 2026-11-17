@@ -9296,8 +9296,8 @@ const machineDetailPageTranslations = { fr: translated({
                 sentenceTwo: ({ first, second }) => `${first} et ${second}.`,
                 sentenceMore: ({ first, second, count }) => `${first}, ${second} et ${count} de plus.`,
                 sameReason: ({ word, count }) => `${word} sur ${count} machines.`,
-                otherOnlineCalm: ({ count }) => `Les ${count} autres en ligne sont calmes.`,
-                allOnlineCalm: ({ count }) => count === 1 ? "La seule en ligne est calme." : `Toutes les machines en ligne sont calmes.`,
+                otherOnlineCalm: ({ count }) => `Rien sur les ${count} autres machines en ligne ne demande votre attention.`,
+                allOnlineCalm: ({ count }) => count === 1 ? "Rien sur la seule machine en ligne ne demande votre attention." : `Rien sur les ${count} machines en ligne ne demande votre attention.`,
             },
             machine: {
                 calmLead: "Calme.",

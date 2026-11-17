@@ -9280,8 +9280,8 @@ const machineDetailPageTranslations = { ca: translated({
                 sentenceTwo: ({ first, second }) => `${first} i ${second}.`,
                 sentenceMore: ({ first, second, count }) => `${first}, ${second} i ${count} més.`,
                 sameReason: ({ word, count }) => `${word} en ${count} màquines.`,
-                otherOnlineCalm: ({ count }) => `Les altres ${count} en línia estan tranquil·les.`,
-                allOnlineCalm: ({ count }) => count === 1 ? "L’única en línia està tranquil·la." : `Totes les màquines en línia estan tranquil·les.`,
+                otherOnlineCalm: ({ count }) => `Res de les altres ${count} màquines en línia no et necessita.`,
+                allOnlineCalm: ({ count }) => count === 1 ? "Res de l’única màquina en línia no et necessita." : `Res de les ${count} màquines en línia no et necessita.`,
             },
             machine: {
                 calmLead: "Tranquil.",

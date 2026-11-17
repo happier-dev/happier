@@ -9181,8 +9181,8 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                 sentenceTwo: ({ first, second }) => `${first}和${second}。`,
                 sentenceMore: ({ first, second, count }) => `${first}、${second}，还有${count}项。`,
                 sameReason: ({ word, count }) => `${count}台机器上出现${word}。`,
-                otherOnlineCalm: ({ count }) => `其余 ${count} 台在线机器都很平稳。`,
-                allOnlineCalm: ({ count }) => count === 1 ? "唯一在线的机器很平稳。" : `所有在线机器都很平稳。`,
+                otherOnlineCalm: ({ count }) => `其余 ${count} 台在线机器没有需要你处理的事。`,
+                allOnlineCalm: ({ count }) => count === 1 ? "唯一在线的机器没有需要你处理的事。" : `${count} 台在线机器都没有需要你处理的事。`,
             },
             machine: {
                 calmLead: "平稳。",

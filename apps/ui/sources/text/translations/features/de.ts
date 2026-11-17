@@ -9289,8 +9289,8 @@ const machineDetailPageTranslations = { de: translated({
                 sentenceTwo: ({ first, second }) => `${first} und ${second}.`,
                 sentenceMore: ({ first, second, count }) => `${first}, ${second} und ${count} weitere.`,
                 sameReason: ({ word, count }) => `${word} auf ${count} Maschinen.`,
-                otherOnlineCalm: ({ count }) => `Die anderen ${count} online sind ruhig.`,
-                allOnlineCalm: ({ count }) => count === 1 ? "Der eine Rechner online ist ruhig." : `Alle Rechner online sind ruhig.`,
+                otherOnlineCalm: ({ count }) => `Bei den anderen ${count} Rechnern online ist nichts zu tun.`,
+                allOnlineCalm: ({ count }) => count === 1 ? "Beim einen Rechner online ist nichts zu tun." : `Bei den ${count} Rechnern online ist nichts zu tun.`,
             },
             machine: {
                 calmLead: "Ruhig.",

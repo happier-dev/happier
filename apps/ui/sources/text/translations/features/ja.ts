@@ -9236,8 +9236,8 @@ const machineDetailPageTranslations = { ja: translated({
                 sentenceTwo: ({ first, second }) => `${first}、${second}。`,
                 sentenceMore: ({ first, second, count }) => `${first}、${second}、ほか${count}件。`,
                 sameReason: ({ word, count }) => `${count}台のマシンで${word}。`,
-                otherOnlineCalm: ({ count }) => `オンラインの他の ${count} 台は安定しています。`,
-                allOnlineCalm: ({ count }) => count === 1 ? "オンラインの1台は安定しています。" : `オンラインのマシンはすべて安定しています。`,
+                otherOnlineCalm: ({ count }) => `オンラインの他の ${count} 台に対応が必要なものはありません。`,
+                allOnlineCalm: ({ count }) => count === 1 ? "オンラインの1台に対応が必要なものはありません。" : `オンラインの ${count} 台に対応が必要なものはありません。`,
             },
             machine: {
                 calmLead: "安定。",

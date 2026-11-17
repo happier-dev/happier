@@ -551,7 +551,7 @@ export const english = {
             sentenceTwo: ({ first, second }: { first: string; second: string }) => `${first} and ${second}.`,
             sentenceMore: ({ first, second, count }: { first: string; second: string; count: number }) => `${first}, ${second} and ${count} more.`,
             sameReason: ({ word, count }: { word: string; count: number }) => `${word} on ${count} machines.`,
-            otherOnlineCalm: ({ count }: { count: number }) => count === 1 ? 'The other one online is calm.' : `The other ${count} online are calm.`,
+            otherOnlineCalm: ({ count }: { count: number }) => count === 1 ? 'Nothing on the other machine online needs you.' : `Nothing on the other ${count} machines online needs you.`,
             // Under the title "All calm": what that means, without saying "calm" twice.
             allOnlineCalm: ({ count }: { count: number }): string => count === 1 ? 'Nothing on the one machine online needs you.' : `Nothing on the ${count} machines online needs you.`,
         },

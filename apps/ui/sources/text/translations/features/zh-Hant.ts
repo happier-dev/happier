@@ -9180,8 +9180,8 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                 sentenceTwo: ({ first, second }) => `${first}和${second}。`,
                 sentenceMore: ({ first, second, count }) => `${first}、${second}，還有${count}項。`,
                 sameReason: ({ word, count }) => `${count}台機器上出現${word}。`,
-                otherOnlineCalm: ({ count }) => `其餘 ${count} 台在線機器都很平穩。`,
-                allOnlineCalm: ({ count }) => count === 1 ? "唯一在線的機器很平穩。" : `所有在線機器都很平穩。`,
+                otherOnlineCalm: ({ count }) => `其餘 ${count} 台在線機器沒有需要你處理的事。`,
+                allOnlineCalm: ({ count }) => count === 1 ? "唯一在線的機器沒有需要你處理的事。" : `${count} 台在線機器都沒有需要你處理的事。`,
             },
             machine: {
                 calmLead: "平穩。",

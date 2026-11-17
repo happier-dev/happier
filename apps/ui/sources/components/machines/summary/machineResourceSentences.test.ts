@@ -44,16 +44,16 @@ describe('machine sentences (MPG-28)', () => {
     it('never repeats the title or the Needs-you list: the sentence says only how the others online are', () => {
         // The Needs-you rows beneath name each machine and its reason; the sentence does not name them again.
         expect(describeFleetDescription({ subjects: fleet, reportingCount: 3, onlineCount: 6, nowMs: NOW }))
-            .toBe('The other 4 online are calm.');
+            .toBe('Nothing on the other 4 machines online needs you.');
         const one = [fleet[1]!];
         expect(describeFleetTitle({ subjects: one, reportingCount: 3 })).toBe('edge-1 is short on memory');
         expect(describeFleetDescription({ subjects: one, reportingCount: 3, onlineCount: 6, nowMs: NOW }))
-            .toBe('The other 5 online are calm.');
+            .toBe('Nothing on the other 5 machines online needs you.');
         // With nothing else to say the page keeps its own line.
         expect(describeFleetDescription({ subjects: one, reportingCount: 1, onlineCount: 1, nowMs: NOW })).toBeNull();
         const four = ['a', 'b', 'c', 'd'].map(name => ({ name, attention: { level: 'needs_you' as const, reasons: [memory] } }));
         expect(describeFleetDescription({ subjects: four, reportingCount: 4, onlineCount: 11, nowMs: NOW }))
-            .toBe('The other 7 online are calm.');
+            .toBe('Nothing on the other 7 machines online needs you.');
         expect(describeFleetDescription({ subjects: four.slice(0, 2), reportingCount: 2, onlineCount: 2, nowMs: NOW })).toBeNull();
         const mixed = [...four.slice(0, 2), { name: 'e', attention: { level: 'look' as const, reasons: [disk] } }];
         expect(describeFleetDescription({ subjects: mixed, reportingCount: 3, onlineCount: 3, nowMs: NOW })).toBeNull();
@@ -69,13 +69,13 @@ describe('machine sentences (MPG-28)', () => {
         const quiet = { name: '5964', attention: calm, failingServices: 0 };
         expect(describeFleetTitle({ subjects: [failing, quiet], reportingCount: 2 })).toBe('eadc has 8 failing services');
         expect(describeFleetDescription({ subjects: [failing, quiet], reportingCount: 2, onlineCount: 2, nowMs: NOW }))
-            .toBe('The other one online is calm.');
+            .toBe('Nothing on the other machine online needs you.');
         expect(describeFleetTitle({ subjects: [failing, fleet[1]!], reportingCount: 2 })).toBe('2 machines need a look');
         expect(describeFleetDescription({ subjects: [failing, fleet[1]!], reportingCount: 2, onlineCount: 2, nowMs: NOW })).toBeNull();
         expect(describeFleetTitle({ subjects: [{ ...failing, failingServices: 1 }], reportingCount: 1 })).toBe('eadc has a failing service');
         // With no title above it (the Needs-you list shows), the sentence carries its own antecedent (TH MB-2).
         expect(describeFleetDescription({ subjects: [failing, fleet[1]!, quiet], reportingCount: 3, onlineCount: 5, nowMs: NOW, titleShown: false }))
-            .toBe('2 machines need a look. The other 3 online are calm.');
+            .toBe('2 machines need a look. Nothing on the other 3 machines online needs you.');
         expect(describeFleetDescription({ subjects: [failing, fleet[1]!], reportingCount: 2, onlineCount: 2, nowMs: NOW, titleShown: false }))
             .toBe('2 machines need a look.');
     });
