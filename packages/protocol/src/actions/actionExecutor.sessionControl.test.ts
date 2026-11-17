@@ -21,6 +21,7 @@ import { listActionSpecsForCatalogSurface } from './actionCatalog.js';
 import { resolveSocketRpcSessionAuthorization } from '../rpc/socket.js';
 import { SessionModelSetResultV1Schema } from '../sessions/control/modelTransitionV1.js';
 import { createEmptyWorkflowActionHost } from './executor/emptyWorkflowActionHost.testkit.js';
+import { bindPresentUserActionConfirmationV1 } from './executor/approvalReview.js';
 
 function modelSetSuccess(request: Parameters<NonNullable<ActionExecutorDeps['sessionModelSet']>>[0]) {
   const modelId = request.teamCredentialModel?.modelId ?? request.modelId;
@@ -799,6 +800,22 @@ describe('createActionExecutor (session control)', () => {
       })).resolves.toMatchObject({ ok: true });
       expect(homeDomainAction).toHaveBeenLastCalledWith(expect.objectContaining({ actionId, input }));
     }
+  });
+
+  it('preserves an extant active Session when its reviewed Stop fails', async () => {
+    const homeDomainAction = vi.fn(async () => ({ ok: false, errorCode: 'session_active', error: 'session_active' }));
+    const stop = vi.fn(async () => ({ ok: false as const, errorCode: 'agent_unavailable', error: 'agent_unavailable' }));
+    const executor = createExecutor({ homeDomainAction, sessionStop: stop });
+    const input = { sessionId: 's1' };
+    const context = bindPresentUserActionConfirmationV1('session.delete', input, {
+      surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      actionsSettings: normalizeActionsSettingsV1({ v: 1 }),
+      serverId: 'home-1', runtimeAccountId: 'alice', actionRequestId: 'delete-active', defaultSessionId: 's1',
+    });
+    await expect(executor.execute('session.delete', input, context))
+      .resolves.toMatchObject({ ok: false, errorCode: 'agent_unavailable' });
+    expect(stop).toHaveBeenCalledOnce();
+    expect(homeDomainAction).toHaveBeenCalledTimes(1);
   });
 
   it('binds parity Actions to the existing delete and organization routes', () => {
