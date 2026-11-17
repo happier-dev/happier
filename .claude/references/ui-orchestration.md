@@ -35,6 +35,10 @@ Load before any rendered surface change, UI-lane brief, capture or taste review.
   Source-only verification of a UI lane is not a completion state. The orchestrator itself looks at the
   rendered whole pages (not only cropped elements) next to the lab at every UI boundary.
 
+- **Looks run one at a time per host.** On Expo READY, wake owed looks in sequence, each in a new tab of
+  the host's warm signed-in browser, not a cold profile each. Acceptance reviewers judge the builder's
+  frames from disk and re-render live only for stale, wrong-state or doubtful frames.
+
 - **Who builds and checks surfaces (user ruling 2026-10-11).** Lanes that design or change how a
   user-facing page looks run on Opus with `happier-ui-craft` loaded and a live stack to render on.
   Sol/Codex lanes may wire data, Actions and behaviour behind a surface but must not change its visual

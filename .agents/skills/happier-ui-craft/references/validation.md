@@ -126,8 +126,10 @@ scope comes from the surfaces the program touched, not from a list of earlier fi
    bundler on current source, or which export) next to each pair.
 7. **An unseen change stays open.** A lane that changed a surface but could not render it reports
    it as "visual: not seen" with the exact page and state. Passing tests, a later lane's partial
-   capture or a "styling-only" label never close it; only a whole-page live pair does. Dev fixture
-   routes and component boards are intermediate evidence, never acceptance.
+   capture or a "styling-only" label never close it; only a whole-page live pair does. Specimen
+   routes (`/dev/*`) are the default render while building and the way to see states the dev
+   Account cannot reach (empty, error, long). They prove the states, not the composed page:
+   acceptance still needs the whole-page live pair.
 8. **Capture what the user sees.** Wait for hydration, theme and animation to settle, and confirm
    the theme from the pixels, not the filename. After every viewport change, wait for two animation
    frames and confirm the captured surface's bounding rect is stable before the capture counts as evidence.
@@ -168,7 +170,7 @@ These rules come from the Teams/Home program (2026-10-11). Every finding list wa
 - **Parallel lanes don't compose a page.** While one lane owns a page's composition, other lanes that need the page supply data, hooks and logic and leave it a mount point; they don't restyle or reorder it. When five lanes edited the same screens at once, the result was a patchwork that nobody had looked at as a whole.
 - **Translate the lab's scale; don't copy it.** Labs are HTML. Map each lab gap, size and weight to the product's spacing, type and material tokens. Then measure the rendered result against the lab's rhythm. A page with the right structure but the wrong rhythm is what reads as generic rather than premium.
 - **Reach the lab through the shared components; never fork them to match it.** If a shared component differs slightly from the lab, either improve the shared component for all its consumers or record the difference as an accepted refinement. A lab-shaped local copy is a defect. Build on recent improvements other lanes made to shared components rather than reverting them, and when you find duplicates, merge them into one owner.
-- **An older build is not evidence.** Screenshots from before the latest changes don't verify a page, and neither do source-level comparisons of lab markup with components. Until the current build has been rendered and compared, the page stays `IMPLEMENTED_NOT_VERIFIED`. A component specimen (for example `/dev/plugin-ui`) with fixture data proves a primitive, never the composed page.
+- **An older build is not evidence.** Screenshots from before the latest changes don't verify a page, and neither do source-level comparisons of lab markup with components. Until the current build has been rendered and compared, the page stays `IMPLEMENTED_NOT_VERIFIED`. A specimen route (for example `/dev/plugin-ui`) is the default render while building and shows states the dev Account cannot reach; it proves the states, not the composed page.
 
 ## Review checklist
 
