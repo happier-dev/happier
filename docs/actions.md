@@ -8449,6 +8449,18 @@ mutations send the remaining fields; GET encodes the remaining fields as query p
 external entry; a per-Action server route is the Home's data operation, never a second way to
 invoke the Action.
 
+Action Workflow triggers in unreleased 0.3 source observe executor invocations.
+An authenticated request sent directly to a Home data route bypasses them (P02
+D6). For example, a direct profile mutation at `/v1/account/profile` does not
+become an `account.name.set` invocation. The UI's
+`createHomeDomainActionExecutorForScope` and the CLI's `homeDomainAction` port in
+`accountServerActionDeps.ts` are transport dependencies beneath the shared
+executor; their HTTP calls do not start another Action or publish another Action
+event. Home route authorization and native domain events still belong to their
+existing owners. External callers that need Action admission and triggers use
+`POST /v1/actions/:actionId`.
+
+
 In 0.3 development, mounted Plugin UI also uses this existing Account root
 carrier to reach its exact admitted daemon and then the canonical domain owner.
 Provenance-only Action shapes are signed-root eligible only with the narrowing
