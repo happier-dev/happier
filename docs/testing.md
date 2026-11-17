@@ -1754,7 +1754,8 @@ still rebuild through the existing recovery path.
 
 The committed FIN Workflow regression journeys use the existing slow core-e2e
 runner. The initial packet covers saved-command Start, retained Run history and
-refused native Goal handoff, plus selected Muse Review and Check convergence:
+refused native Goal handoff, selected Muse Review and Check convergence, Action
+workspace Restore and typed Discussion refusals:
 
 ```sh
 ./apps/stack/bin/hstack-exec --target=nl1 -- env HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT=1 HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD=1 HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD=1 pnpm --dir packages/tests run test:core:fin-journeys
