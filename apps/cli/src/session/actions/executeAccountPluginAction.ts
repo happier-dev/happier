@@ -45,6 +45,8 @@ export async function executeAccountPluginAction(params: Readonly<{
   // permits evaluating a Machine handler from these bytes.
   const search = params.actionId === 'action.spec.search';
   if (!pluginId && !search) return { matched: false };
+  if (params.context?.signal?.aborted) return { matched: true,
+    result: { ok: false, errorCode: 'cancelled', error: 'cancelled' } };
   if (params.accountRuntime) {
     return await executeInAccountRuntime(params, await params.accountRuntime.read(), true);
   }

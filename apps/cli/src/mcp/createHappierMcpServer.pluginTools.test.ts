@@ -10,6 +10,7 @@ import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { registerAccountHomeHttp } from '@/session/actions/widgetApproval.testkit';
 import { registerAuthoredAccountActionRelease } from '@/plugins/runtime/accountPluginActions.testkit';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { bindRequesterSessionCredentialScope, writeStoredCredentialsForServerId } from '@/persistence';
 import { adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
@@ -41,11 +42,13 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 
 function sessionClient(sessionId: string): HappyMcpSessionClient {
+  const metadata = createTestMetadata();
   return {
     sessionId,
     getServerBinding: () => ({ serverId: 'test-home', serverUrl: 'https://test-home.example.test' }),
     rpcHandlerManager: new RpcHandlerManager({ scopePrefix: sessionId, encryptionMode: 'plain' }),
     updateMetadata() {},
+    getMetadataSnapshot: () => metadata,
     getWorkDepth: () => 0,
     getHostTurnWorkDepth: turnId => turnId === 'plugin-tool-turn' ? 0 : undefined,
     getActiveTurnPermissionWitness: () => ({ turnId: 'plugin-tool-turn',
@@ -218,9 +221,8 @@ describe('createHappierMcpServer plugin tools', () => {
       const listed = await client.listTools();
       const advertised = listed.tools.find(tool => tool.name === entry.name);
       expect(advertised).toMatchObject({ inputSchema: entry.inputSchema });
-      // Registration composes completed output with the canonical approval
-      // envelope; the real SDK validates the completed structured result below.
-      expect(advertised?.outputSchema).toBeDefined();
+      // Action dispatch owns output validation; MCP discovery presents inputs.
+      expect(advertised).not.toHaveProperty('outputSchema');
       const result = CallToolResultSchema.parse(await client.callTool({ name: entry.name, arguments: { scope: 'diff' } }));
       expect(result).toEqual({ content: [{ type: 'text', text: '{"completed":true}' }],
         structuredContent: { completed: true }, isError: false });

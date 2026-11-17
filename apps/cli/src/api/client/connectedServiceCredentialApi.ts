@@ -15,6 +15,7 @@ import { resolveConnectedServicesServerApiTimeoutMs } from './connectedServicesS
 import { logServerEndpointFailure } from './serverEndpointFailureLog';
 import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
 import { readAccountEncryptionModeOnce } from './accountEncryptionMode';
+import type { AccountModeRequestCredential } from './accountModeAdmission';
 import { createHttpStatusError } from './httpStatusError';
 import { fetchAccountEncryptionCurrentness } from './accountEncryptionCurrentness';
 export { AccountEncryptionCurrentnessUnavailableError, fetchAccountEncryptionCurrentness, fetchAccountEncryptionCurrentnessFromServer } from './accountEncryptionCurrentness';
@@ -124,12 +125,9 @@ function createHeaders(token: string): Readonly<Record<string, string>> {
 }
 
 export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCredentialApi {
-  private readonly token: string;
   private readonly connectedServiceProfileListCache = new Map<ConnectedServiceId, ConnectedServiceProfileListCacheEntry>();
 
-  constructor(credential: Readonly<{ token: string }>) {
-    this.token = credential.token;
-  }
+  constructor(private readonly credential: Readonly<{ token: string }> & AccountModeRequestCredential) {}
 
   invalidateConnectedServiceProfileListCache(serviceId?: ConnectedServiceId): void {
     if (serviceId) {
@@ -140,7 +138,8 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
   }
 
   async getAccountEncryptionCurrentness(): Promise<AccountEncryptionCurrentnessResponse> {
-    return await fetchAccountEncryptionCurrentness({ token: this.token });
+    return await fetchAccountEncryptionCurrentness({ token: this.credential.token,
+      ...('encryption' in this.credential ? { credentials: this.credential } : {}) });
   }
 
   async getConnectedServiceCredentialSealed(params: Readonly<{
@@ -156,7 +155,7 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
       const response = await axios.get(
         `${serverUrl}/v2/connect/${serviceId}/profiles/${profileId}/credential`,
         {
-          headers: createHeaders(this.token),
+          headers: createHeaders(this.credential.token),
           timeout: resolveConnectedServicesServerApiTimeoutMs(),
           ...(params.signal ? { signal: params.signal } : {}),
         },
@@ -272,7 +271,7 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
       const response = await axios.delete(
         `${serverUrl}/${version}/connect/${serviceId}/profiles/${profileId}/credential?${query.toString()}`,
         {
-          headers: createHeaders(this.token),
+          headers: createHeaders(this.credential.token),
           timeout: resolveConnectedServicesServerApiTimeoutMs(),
         },
       );
@@ -320,7 +319,7 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
       `${serverUrl}/v2/connect/${serviceId}/profiles`,
       {
         signal: params.signal,
-        headers: createHeaders(this.token),
+        headers: createHeaders(this.credential.token),
         timeout: resolveConnectedServicesServerApiTimeoutMs(),
       },
     );
@@ -375,11 +374,11 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
     const serverUrl = resolveServerHttpBaseUrl();
     try {
       const result = await readAccountEncryptionModeOnce({
-        credentials: { token: this.token },
-        scope: { token: this.token, serverBaseUrl: serverUrl, ...(signal ? { signal } : {}) },
+        credentials: this.credential,
+        scope: { token: this.credential.token, serverBaseUrl: serverUrl, ...(signal ? { signal } : {}) },
         usage,
         request: async () => await axios.get(`${serverUrl}/v1/account/encryption`, {
-          headers: createHeaders(this.token),
+          headers: createHeaders(this.credential.token),
           timeout: resolveConnectedServicesServerApiTimeoutMs(),
           validateStatus: () => true,
           ...(signal ? { signal } : {}),
@@ -416,7 +415,7 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
       const response = await axios.get(
         `${serverUrl}/v3/connect/${serviceId}/profiles/${profileId}/credential`,
         {
-          headers: createHeaders(this.token),
+          headers: createHeaders(this.credential.token),
           timeout: resolveConnectedServicesServerApiTimeoutMs(),
           ...(params.signal ? { signal: params.signal } : {}),
         },
@@ -476,7 +475,7 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
 }
 
 export function createConnectedServiceCredentialApi(
-  credential: Readonly<{ token: string }>,
+  credential: ConstructorParameters<typeof ConnectedServiceCredentialHttpClient>[0],
 ): ConnectedServiceCredentialHttpClient {
   return new ConnectedServiceCredentialHttpClient(credential);
 }

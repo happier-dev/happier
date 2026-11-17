@@ -1,4 +1,5 @@
 import axios from 'axios';
+import fs from 'node:fs/promises';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('axios');
@@ -13,6 +14,7 @@ vi.mock('./serverEndpointFailureLog', () => ({
 import {
   AccountEncryptionCurrentnessUnavailableError,
   ConnectedServiceCredentialHttpClient,
+  createConnectedServiceCredentialApi,
 } from './connectedServiceCredentialApi';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { acquireRequesterAccountEncryptionCurrentness } from './accountEncryptionCurrentnessObservation';
@@ -20,6 +22,7 @@ import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requ
 import { projectAutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import { readAccountEncryptionModeOnce } from './accountEncryptionMode';
 import { projectAccountEncryptionIdentity } from '@happier-dev/sync-client';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 
 import { parseQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
 import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
@@ -31,6 +34,34 @@ describe('connected-service credential exact 0.2.1 response boundary', () => {
     vi.mocked(axios.get).mockReset();
     vi.mocked(axios.delete).mockReset();
     vi.mocked(axios.isAxiosError).mockReset();
+  });
+
+  it.each([
+    { label: 'keyless Plain', mode: 'plain', encryption: null, refusesPlain: false },
+    { label: 'active E2EE', mode: 'e2ee', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(8) }, refusesPlain: false },
+    { label: 'active-key downgrade', mode: 'plain', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(8) }, refusesPlain: true },
+    { label: 'historical-key Plain', mode: 'plain', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(8) },
+      accountE2eeCustody: 'historical', refusesPlain: false },
+  ] as const)('retains the in-hand $label credential for mode and currentness admission', async ({ mode, refusesPlain, ...fixture }) => {
+    const credentials = { token: `connected-service-${fixture.label}`, encryption: fixture.encryption,
+      ...('accountE2eeCustody' in fixture ? { accountE2eeCustody: fixture.accountE2eeCustody } : {}) };
+    vi.mocked(axios.get).mockImplementation(async url => ({ status: 200, data: String(url).endsWith('/currentness')
+      ? createAccountEncryptionCurrentnessFixture({ mode }) : { mode, updatedAt: 1 } }));
+    // Persistence is the system boundary: a captured credential must not reopen access.key.
+    const fileReads = vi.spyOn(fs, 'readFile');
+    try {
+      const api = createConnectedServiceCredentialApi(credentials);
+      if (refusesPlain) {
+        await expect(api.getAccountEncryptionMode({ throwOnTransportError: true }))
+          .rejects.toMatchObject({ code: 'account_mode_downgrade_unverified' });
+        await expect(api.getAccountEncryptionCurrentness())
+          .rejects.toMatchObject({ code: 'account_mode_downgrade_unverified' });
+      } else {
+        await expect(api.getAccountEncryptionMode()).resolves.toBe(mode);
+        await expect(api.getAccountEncryptionCurrentness()).resolves.toMatchObject({ mode });
+      }
+      expect(fileReads.mock.calls.filter(([path]) => String(path).endsWith('access.key'))).toHaveLength(0);
+    } finally { fileReads.mockRestore(); }
   });
 
 

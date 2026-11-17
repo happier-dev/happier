@@ -16,6 +16,7 @@ import { SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 } from '@happier-dev/protoco
 import type { ArtifactCallerAccessV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { decodeExternalActionHttpBodyV1, EXTERNAL_ACTION_HTTP_BODY_HEADER_V1,
     EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1, EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 
 export type CounterWidgetFixture = Readonly<{
     pluginId: string;
@@ -100,6 +101,7 @@ export function registerAccountHomeHttp(app: FastifyInstance, input: Readonly<{ 
     }>;
 }>) {
     registerActionHttpBodyBoundary(app);
+    app.get(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, async () => ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
     const mode = input.encryptionMode ?? 'plain';
     app.get('/v1/account/encryption', async () => ({ mode, updatedAt: 1 }));
     app.get('/v1/account/encryption/currentness', async () => ({ mode, version: 1,
