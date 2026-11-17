@@ -1,9 +1,12 @@
 import { AutomationDefinitionDetailsRequestSchema, AutomationDefinitionDetailsResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1, AutomationActionAdmitRequestV1Schema } from '../../../protocol/src/automations/automationActionOccurrenceV1';
-import { fakeClaudeFixturePath } from './fakeClaude';
+import { FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS, fakeClaudeFixturePath } from './fakeClaude';
 import type { RecordedHttpProxyRequest } from './httpRequestRecordingProxy';
 import { startProjectDaemonFixture } from './daemon/projectDaemon';
 import { runCliJson } from './uiE2e/cliJson';
+import { readDecryptedSessionMetadataV2 } from './sessionHandoffMetadata';
+import { waitForAssistantMessageContaining } from './providers/scenarios/sessionRuntime';
 
 /** Team setup extends the canonical project journey startup with fake-Agent
  * defaults and scenario observations. Home pairing, auth and daemon lifecycle
@@ -55,6 +58,26 @@ export async function startTeamSetupFFixture(params: Readonly<{
 
     return { ...core,
       createAccount, enrollDaemon, assertKnownGoodMachineControl,
+      async assertKnownGoodSessionControl(account: Awaited<ReturnType<typeof createAccount>>,
+        machine: Parameters<typeof core.assertKnownGoodSessionControl>[1]) {
+        const control = await core.assertKnownGoodSessionControl(account, machine);
+        const sent = await account.execute('session.message.send', {
+          sessionId: control.sessionId, message: 'Confirm the Team setup F control reaches its enrolled Agent.', reply: 'none',
+        });
+        if (!sent.ok) throw new Error(`F baseline Agent turn refused (${sent.errorCode})`);
+        const admission = SessionMessageSendResultV1Schema.parse(sent.result);
+        if (admission.status !== 'accepted' && admission.status !== 'alreadyAccepted') {
+          throw new Error(`F baseline Agent turn was not admitted (${JSON.stringify(admission)})`);
+        }
+        const sessionCrypto = await readDecryptedSessionMetadataV2({ baseUrl: server.baseUrl,
+          token: account.auth.token, sessionId: control.sessionId, machineKeys: [account.auth.accountMachineKey] });
+        if (!sessionCrypto.selectedSecret) throw new Error('F baseline Session content key unavailable');
+        await waitForAssistantMessageContaining({ baseUrl: server.baseUrl, token: account.auth.token,
+          sessionId: control.sessionId, secret: sessionCrypto.selectedSecret,
+          encryptionVariant: sessionCrypto.selectedUsesDataKeyVariant ? 'dataKey' : 'legacy',
+          requiredSubstring: 'FAKE_CLAUDE_OK_', timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS });
+        return control;
+      },
       createSessionFromArgv(machine: Awaited<ReturnType<typeof enrollDaemon>>, args: string[], label: string) {
         return runCliJson({ testDir: params.testDir, cliHomeDir: machine.homeDir,
           serverUrl: server.baseUrl, webappUrl: server.baseUrl, label,

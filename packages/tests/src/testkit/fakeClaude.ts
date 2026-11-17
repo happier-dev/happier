@@ -22,6 +22,8 @@ export type FakeClaudeInvocation = {
 
 export type FakeClaudeLogEvent = Record<string, unknown>;
 
+export const FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS = 60_000;
+
 export function fakeClaudeEchoResponseText(promptText: string): string {
   return formatFakeClaudeEchoResponseText(promptText);
 }
@@ -149,7 +151,7 @@ export async function waitForFakeClaudeInvocation(
   predicate: (i: FakeClaudeInvocation) => boolean,
   opts?: { timeoutMs?: number; pollMs?: number },
 ): Promise<FakeClaudeInvocation> {
-  const timeoutMs = opts?.timeoutMs ?? 60_000;
+  const timeoutMs = opts?.timeoutMs ?? FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS;
   const pollMs = opts?.pollMs ?? 100;
   const startedAt = Date.now();
 
@@ -198,7 +200,7 @@ export async function waitForFakeClaudeUserText(
   predicate: (text: string) => boolean,
   opts?: { invocationId?: string; timeoutMs?: number; pollMs?: number },
 ): Promise<string> {
-  const timeoutMs = opts?.timeoutMs ?? 60_000;
+  const timeoutMs = opts?.timeoutMs ?? FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS;
   const pollMs = opts?.pollMs ?? 100;
   const startedAt = Date.now();
 

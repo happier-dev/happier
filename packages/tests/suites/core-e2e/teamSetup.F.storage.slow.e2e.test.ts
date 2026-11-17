@@ -23,34 +23,36 @@ describe('Team setup F: project defaults persistence', () => {
     fixture = await startTeamSetupFFixture({ testDir: await mkdtemp(join(tmpdir(), 'team-setup-f-storage-')) });
     admin = await fixture.createAccount('defaults-admin');
     machine = await fixture.enrollDaemon(admin);
+    expect((await fixture.claimHomeOwner(admin)).result.status).toBe('claimed');
   });
   afterAll(async () => { await fixture?.stop(); });
 
   it('TS.F.projectThin persists a Team-owned defaults leaf without changing Source revision or catalog shape', async () => {
     await fixture.assertKnownGoodSessionControl(admin, machine);
-    const createdTeam = await admin.execute('teams.create', { v: 1, name: 'F Project defaults', requestKey: randomUUID() });
-    expect(createdTeam.ok).toBe(true);
+    const createdTeam = await admin.executeReviewed('teams.create', { v: 1, name: 'F Project defaults', requestKey: randomUUID(),
+      initialOwnerAccountId: readAccountIdFromToken(admin.credentials.token) });
     if (!createdTeam.ok) throw new Error(`Team creation refused (${createdTeam.errorCode})`);
+    expect(createdTeam.ok).toBe(true);
     const teamId = TeamSummaryV1Schema.parse(createdTeam.result).id;
-    const created = await admin.execute('projects.sources.create', { serverId: fixture.serverId,
+    const created = await admin.executeReviewed('projects.sources.create', { serverId: fixture.serverId,
       name: 'F Project', owner: { kind: 'team', teamId }, requestKey: randomUUID() });
-    expect(created.ok).toBe(true);
     if (!created.ok) throw new Error(`Source creation refused (${created.errorCode})`);
+    expect(created.ok).toBe(true);
     const initial = ProjectSourcesReadOutputV1Schema.parse(created.result);
     if (!initial.ok) throw new Error(`Source creation refused (${initial.error})`);
-    const updated = await admin.execute('projects.sources.update', { serverId: fixture.serverId,
+    const updated = await admin.executeReviewed('projects.sources.update', { serverId: fixture.serverId,
       sourceId: initial.source.id, expectedRevision: initial.source.revision,
       patch: { sessionDefaults: { expectedRevision: 'absent', defaults } } });
     // Initial behavioral RED: the existing Source Action rejects this defaults edit.
-    expect(updated.ok).toBe(true);
     if (!updated.ok) throw new Error(`Defaults write refused (${updated.errorCode})`);
+    expect(updated.ok).toBe(true);
     expect(updated.result).toMatchObject({ ok: true, source: { revision: initial.source.revision },
       sessionDefaults: { revision: expect.any(Number), defaults } });
     const read = await admin.execute('projects.sources.read', { serverId: fixture.serverId, sourceId: initial.source.id });
-    expect(read.ok).toBe(true);
     if (!read.ok) throw new Error(`Defaults read refused (${read.errorCode})`);
+    expect(read.ok).toBe(true);
     expect(read.result).toMatchObject({ sessionDefaults: { defaults } });
-    const missingMachine = await admin.execute('projects.sources.update', { serverId: fixture.serverId,
+    const missingMachine = await admin.executeReviewed('projects.sources.update', { serverId: fixture.serverId,
       sourceId: initial.source.id, expectedRevision: initial.source.revision,
       patch: { sessionDefaults: { expectedRevision: 1, defaults: {
         ...defaults, placement: { kind: 'machine', target: { serverId: fixture.serverId, machineId: randomUUID() } },
@@ -59,50 +61,52 @@ describe('Team setup F: project defaults persistence', () => {
       ok: false, error: 'managed_default_machine_not_member_usable',
     } });
     const listed = await admin.execute('projects.sources.list', { serverId: fixture.serverId });
-    expect(listed.ok).toBe(true);
     if (!listed.ok) throw new Error(`Source listing refused (${listed.errorCode})`);
+    expect(listed.ok).toBe(true);
     expect(listed.result).toMatchObject({ sources: [expect.not.objectContaining({ sessionDefaults: expect.anything() })] });
 
     const member = await fixture.createAccount('defaults-member');
     const outsider = await fixture.createAccount('defaults-outsider');
-    const audienceTeam = await admin.execute('teams.create', { v: 1, name: 'F Audience only', requestKey: randomUUID() });
+    const audienceTeam = await admin.executeReviewed('teams.create', { v: 1, name: 'F Audience only', requestKey: randomUUID(),
+      initialOwnerAccountId: readAccountIdFromToken(admin.credentials.token) });
     if (!audienceTeam.ok) throw new Error(`Audience Team creation refused (${audienceTeam.errorCode})`);
     const audienceTeamId = TeamSummaryV1Schema.parse(audienceTeam.result).id;
-    expect((await admin.execute('teams.members.add', { v: 1, teamId: audienceTeamId,
-      accountId: readAccountIdFromToken(outsider.credentials.token), role: 'admin', historyAccess: 'all_existing' })).ok).toBe(true);
-    const membership = await admin.execute('teams.members.add', { v: 1, teamId,
+    expect(await admin.executeReviewed('teams.members.add', { v: 1, teamId: audienceTeamId,
+      accountId: readAccountIdFromToken(outsider.credentials.token), role: 'admin', historyAccess: 'all_existing' }))
+      .toMatchObject({ ok: true });
+    const membership = await admin.executeReviewed('teams.members.add', { v: 1, teamId,
       accountId: readAccountIdFromToken(member.credentials.token), role: 'member', historyAccess: 'all_existing' });
-    expect(membership.ok).toBe(true);
     if (!membership.ok) throw new Error(`Member admission refused (${membership.errorCode})`);
+    expect(membership.ok).toBe(true);
     const membershipId = TeamMembershipV1Schema.parse(membership.result).id;
     const selected = { serverId: fixture.serverId, sourceId: initial.source.id };
     const memberRead = await member.execute('projects.sources.read', selected);
     expect(memberRead).toMatchObject({ ok: true, result: { sessionDefaults: { defaults } } });
-    const memberWrite = await member.execute('projects.sources.update', { ...selected,
+    const memberWrite = await member.executeReviewed('projects.sources.update', { ...selected,
       expectedRevision: initial.source.revision,
       patch: { sessionDefaults: { expectedRevision: 'absent', defaults: null } } });
     expect(memberWrite).toMatchObject({ ok: true, result: { ok: false, error: 'source_access_denied' } });
-    const placementWrite = await admin.execute('projects.sources.update', { ...selected,
+    const placementWrite = await admin.executeReviewed('projects.sources.update', { ...selected,
       expectedRevision: initial.source.revision,
       patch: { sessionDefaults: { expectedRevision: 1,
         defaults: { ...defaults, placement: { kind: 'machine', target: machine.target } } } } });
     expect(placementWrite).toMatchObject({ ok: true, result: {
       ok: false, error: 'managed_default_machine_not_member_usable',
     } });
-    const staleWrite = await admin.execute('projects.sources.update', { ...selected,
+    const staleWrite = await admin.executeReviewed('projects.sources.update', { ...selected,
       expectedRevision: initial.source.revision,
       patch: { sessionDefaults: { expectedRevision: 'absent', defaults: null } } });
     expect(staleWrite).toMatchObject({ ok: true, result: { ok: false, error: 'source_conflict' } });
-    const granted = await admin.execute('projects.sources.update', { ...selected,
+    const granted = await admin.executeReviewed('projects.sources.update', { ...selected,
       expectedRevision: initial.source.revision,
       patch: { audience: [{ principal: { kind: 'team', teamId: audienceTeamId }, level: 'view' }] } });
-    expect(granted.ok).toBe(true);
     if (!granted.ok) throw new Error(`Audience grant refused (${granted.errorCode})`);
+    expect(granted.ok).toBe(true);
     const grantedSource = ProjectSourcesReadOutputV1Schema.parse(granted.result);
     if (!grantedSource.ok) throw new Error(`Audience grant refused (${grantedSource.error})`);
     const outsiderRead = await outsider.execute('projects.sources.read', selected);
-    expect(outsiderRead.ok).toBe(true);
     if (!outsiderRead.ok) throw new Error(`Audience Source read refused (${outsiderRead.errorCode})`);
+    expect(outsiderRead.ok).toBe(true);
     // Audience Team admins manage Source metadata and read defaults, but the owner side alone writes them.
     expect(outsiderRead.result).toMatchObject({ canManage: true, canManageSessionDefaults: false,
       sessionDefaults: { revision: 1, defaults } });
@@ -111,21 +115,21 @@ describe('Team setup F: project defaults persistence', () => {
       context: { projectDefaults: defaults, teamDefaults: null },
       sourceDefaultsRow: { revision: 1, defaults }, canManageSource: false,
     } });
-    const outsiderWrite = await outsider.execute('projects.sources.update', { ...selected,
+    const outsiderWrite = await outsider.executeReviewed('projects.sources.update', { ...selected,
       expectedRevision: grantedSource.source.revision,
       patch: { sessionDefaults: { expectedRevision: 1, defaults: null } } });
     expect(outsiderWrite).toMatchObject({ ok: true, result: { ok: false, error: 'source_access_denied' } });
     // Defaults have their own CAS, independent of an intervening ordinary Source edit.
-    const clear = await admin.execute('projects.sources.update', { ...selected,
+    const clear = await admin.executeReviewed('projects.sources.update', { ...selected,
       expectedRevision: initial.source.revision,
       patch: { sessionDefaults: { expectedRevision: 1, defaults: null } } });
     expect(clear).toMatchObject({ ok: true, result: { ok: true, canManageSessionDefaults: true,
       source: { revision: grantedSource.source.revision }, sessionDefaults: { revision: 2, defaults: null } } });
-    const restore = await admin.execute('projects.sources.update', { ...selected,
+    const restore = await admin.executeReviewed('projects.sources.update', { ...selected,
       expectedRevision: grantedSource.source.revision,
       patch: { sessionDefaults: { expectedRevision: 2, defaults } } });
     expect(restore).toMatchObject({ ok: true, result: { ok: true, sessionDefaults: { revision: 3, defaults } } });
-    expect((await admin.execute('teams.members.remove', { v: 1, teamId, membershipId })).ok).toBe(true);
+    expect(await admin.executeReviewed('teams.members.remove', { v: 1, teamId, membershipId })).toMatchObject({ ok: true });
     const revokedRead = await member.execute('projects.sources.read', selected);
     expect(revokedRead).toMatchObject({ ok: true, result: { ok: false, error: 'source_unavailable' } });
   });
@@ -133,13 +137,13 @@ describe('Team setup F: project defaults persistence', () => {
   it('TS.F.accountSource uses the same defaults leaf and existing Source authority', async () => {
     await fixture.assertKnownGoodSessionControl(admin, machine);
     const other = await fixture.createAccount('defaults-account-unrelated');
-    const created = await admin.execute('projects.sources.create', { serverId: fixture.serverId,
+    const created = await admin.executeReviewed('projects.sources.create', { serverId: fixture.serverId,
       name: 'F Account Project', requestKey: randomUUID() });
     if (!created.ok) throw new Error(`Account Source creation refused (${created.errorCode})`);
     const initial = ProjectSourcesReadOutputV1Schema.parse(created.result);
     if (!initial.ok) throw new Error(`Account Source creation refused (${initial.error})`);
     const selected = { serverId: fixture.serverId, sourceId: initial.source.id };
-    const saved = await admin.execute('projects.sources.update', { ...selected, expectedRevision: initial.source.revision,
+    const saved = await admin.executeReviewed('projects.sources.update', { ...selected, expectedRevision: initial.source.revision,
       patch: { sessionDefaults: { expectedRevision: 'absent', defaults } } });
     expect(saved).toMatchObject({ ok: true, result: { ok: true, sessionDefaults: { revision: 1, defaults } } });
     const foreign = await other.execute('projects.sources.read', selected);
@@ -153,10 +157,10 @@ describe('Team setup F: project defaults persistence', () => {
     const absent = await admin.execute('projects.sessionDefaults.get', { projectRef });
     // P04: the real admitted Session control above must settle before this
     // missing Action is accepted as behavioral RED.
-    expect(absent.ok).toBe(true);
     if (!absent.ok) throw new Error(`Demanded defaults read refused (${absent.errorCode})`);
+    expect(absent.ok).toBe(true);
     expect(absent.result).toMatchObject({ personalDefaultsRow: null });
-    const saved = await admin.execute('projects.organization.update', { projectRef, expectedRevision: 'absent',
+    const saved = await admin.executeReviewed('projects.organization.update', { projectRef, expectedRevision: 'absent',
       sessionDefaults: { expectedRevision: 'absent', defaults } });
     expect(saved.ok).toBe(true);
     const selected = await admin.execute('projects.sessionDefaults.get', { projectRef });
@@ -172,11 +176,11 @@ describe('Team setup F: project defaults persistence', () => {
   it('TS.F.personalProject saves a deliberate project pick through the existing organization Action', async () => {
     await fixture.assertKnownGoodSessionControl(admin, machine);
     const projectRef = { serverId: fixture.serverId, projectKey: `project-${randomUUID()}` };
-    const saved = await admin.execute('projects.organization.update', { projectRef, expectedRevision: 'absent',
+    const saved = await admin.executeReviewed('projects.organization.update', { projectRef, expectedRevision: 'absent',
       sessionDefaults: { expectedRevision: 'absent', defaults } });
     // Initial behavioral RED: private project defaults are absent from the existing Action grammar.
-    expect(saved.ok).toBe(true);
     if (!saved.ok) throw new Error(`Personal defaults write refused (${saved.errorCode})`);
+    expect(saved.ok).toBe(true);
     expect(saved.result).toMatchObject({ ok: true, sessionDefaults: { revision: expect.any(Number), defaults } });
     const request = async (route: 'read' | 'list', input: unknown) => fetchJson<unknown>(
       `${fixture.server.baseUrl}/v1/account/project-rows/${route}`, { method: 'POST',

@@ -27,11 +27,15 @@ describe('fake Claude CLI fixture', () => {
     try {
       const ambientHome = join(dir, 'ambient-home');
       await mkdir(ambientHome, { recursive: true });
+      const startupInstructionsPath = join(dir, 'startup-instructions.txt');
+      const startupInstructions = 'SCENARIO_OWNED_STARTUP_INSTRUCTIONS';
+      await writeFile(startupInstructionsPath, startupInstructions);
       const fixture = await createIsolatedFakeClaudeControlShim({
         testDir: dir,
         invocationId: 'isolated-invocation',
         captureEnvironmentKeys: ['ANTHROPIC_API_KEY'],
         logFullStdin: true,
+        captureStartupInstructions: true,
       });
       const marker = 'ISOLATED_FAKE_CLAUDE_STDIN';
       const input = JSON.stringify({
@@ -51,7 +55,8 @@ describe('fake Claude CLI fixture', () => {
 
       const res = spawnSync(
         process.execPath,
-        [fixture.executablePath, '--output-format', 'stream-json', '--input-format', 'stream-json'],
+        [fixture.executablePath, '--output-format', 'stream-json', '--input-format', 'stream-json',
+          '--append-system-prompt-file', startupInstructionsPath],
         {
           cwd: dir,
           env: filteredParentEnv,
@@ -61,8 +66,10 @@ describe('fake Claude CLI fixture', () => {
       );
 
       expect(res.status).toBe(0);
+      await rm(startupInstructionsPath);
       const events = parseJsonLines(await readFile(fixture.logPath, 'utf8'));
       expect(events).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: 'startup_instructions', invocationId: 'isolated-invocation', text: startupInstructions }),
         expect.objectContaining({
           type: 'invocation',
           invocationId: 'isolated-invocation',

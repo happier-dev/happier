@@ -9,9 +9,11 @@ import { DiscussionCreateResultV1Schema, DiscussionListResultV1Schema } from '@h
 import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { sealSavedSecretResourceRecipientEnvelopeV1, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
-import { sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
+import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH } from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
+import { prepareCliPrivateLabels } from '../../../../apps/cli/src/api/privateLabels';
 import { teamGroupLabelBinding } from '@happier-dev/protocol/teams/groupLabel';
 import { fetchAccountId } from '../../src/testkit/socialFriends';
+import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 
 describe('Team setup F: credential and conversation discovery', () => {
@@ -31,9 +33,11 @@ describe('Team setup F: credential and conversation discovery', () => {
     owner = await fixture.createAccount('resource-credentials-owner');
     machine = await fixture.enrollDaemon(owner);
     await fixture.assertKnownGoodSessionControl(owner, machine);
-    const team = await owner.execute('teams.create', { v: 1, name: 'F Credential resources', requestKey: randomUUID() });
-    expect(team.ok).toBe(true);
+    expect((await fixture.claimHomeOwner(owner)).result.status).toBe('claimed');
+    const team = await owner.executeReviewed('teams.create', { v: 1, name: 'F Credential resources', requestKey: randomUUID(),
+      initialOwnerAccountId: readAccountIdFromToken(owner.credentials.token) });
     if (!team.ok) throw new Error(`Team creation refused (${team.errorCode})`);
+    expect(team.ok).toBe(true);
     teamId = TeamSummaryV1Schema.parse(team.result).id;
     const accountId = await fetchAccountId(fixture.server.baseUrl, owner.credentials.token);
     author = await fixture.createAccount('resource-group-author');
@@ -43,46 +47,35 @@ describe('Team setup F: credential and conversation discovery', () => {
     teamOnlyReader = await fixture.createAccount('resource-team-only-reader');
     const teamOnlyReaderId = await fetchAccountId(fixture.server.baseUrl, teamOnlyReader.credentials.token);
     for (const memberId of [authorId, groupReaderId, teamOnlyReaderId]) {
-      const member = await owner.execute('teams.members.add', { v: 1, teamId, accountId: memberId,
+      const member = await owner.executeReviewed('teams.members.add', { v: 1, teamId, accountId: memberId,
         role: 'member', historyAccess: 'all_existing' });
-      expect(member.ok).toBe(true);
       if (!member.ok) throw new Error(`Team membership refused (${member.errorCode})`);
+      expect(member.ok).toBe(true);
     }
     groupId = randomUUID();
-    const labelKey = Uint8Array.from(randomBytes(32));
-    const group = await owner.execute('teams.groups.create', { v: 1, teamId, groupId, requestKey: randomUUID(),
-      name: sealPrivateLabelV1({ mode: 'e2ee', binding: teamGroupLabelBinding(groupId, 'name'),
-        value: 'Restricted group', dataKey: labelKey, randomBytes, recipients: [{ accountId,
-          envelope: sealSavedSecretResourceRecipientEnvelopeV1({ resourceDataKey: labelKey,
-            recipientContentPublicKey: owner.credentials.encryption.publicKey, randomBytes }),
-        }, { accountId: authorId,
-          envelope: sealSavedSecretResourceRecipientEnvelopeV1({ resourceDataKey: labelKey,
-            recipientContentPublicKey: author.credentials.encryption.publicKey, randomBytes }),
-        }, { accountId: groupReaderId,
-          envelope: sealSavedSecretResourceRecipientEnvelopeV1({ resourceDataKey: labelKey,
-            recipientContentPublicKey: groupReader.credentials.encryption.publicKey, randomBytes }),
-        }, { accountId: teamOnlyReaderId,
-          envelope: sealSavedSecretResourceRecipientEnvelopeV1({ resourceDataKey: labelKey,
-            recipientContentPublicKey: teamOnlyReader.credentials.encryption.publicKey, randomBytes }),
-        }] }),
-    });
-    expect(group.ok).toBe(true);
+    const [groupName] = await prepareCliPrivateLabels({ endpoint: fixture.server.baseUrl,
+      token: owner.credentials.token, accountMode: 'e2ee', owner: { kind: 'team', teamId },
+      recipientCensusPath: PRIVATE_LABEL_RECIPIENT_CENSUS_PATH,
+      labels: [{ binding: teamGroupLabelBinding(groupId, 'name'), value: 'Restricted group' }] });
+    const group = await owner.executeReviewed('teams.groups.create', { v: 1, teamId, groupId,
+      requestKey: randomUUID(), name: groupName });
     if (!group.ok) throw new Error(`Group creation refused (${group.errorCode})`);
+    expect(group.ok).toBe(true);
     for (const memberId of [authorId, groupReaderId]) {
-      const groupMember = await owner.execute('teams.groups.members.add', { v: 1, teamId, groupId,
+      const groupMember = await owner.executeReviewed('teams.groups.members.add', { v: 1, teamId, groupId,
         accountId: memberId, historyAccess: 'all_existing' });
-      expect(groupMember.ok).toBe(true);
       if (!groupMember.ok) throw new Error(`Group membership refused (${groupMember.errorCode})`);
+      expect(groupMember.ok).toBe(true);
     }
     // Team ownership does not make the viewer a member of this Group.
     for (const scope of ['team', 'private', 'group'] as const) {
       const shared = scope === 'team';
       const writer = scope === 'group' ? author : owner;
       const writerId = scope === 'group' ? authorId : accountId;
-      const created = await writer.execute('discussion.create', { title: `${scope} discussion`,
+      const created = await writer.executeReviewed('discussion.create', { title: `${scope} discussion`,
         firstMessage: { content: { v: 1, parts: [{ t: 'text', text: 'Selected Team resource' }] } } });
-      expect(created.ok).toBe(true);
       if (!created.ok) throw new Error(`Discussion creation refused (${created.errorCode})`);
+      expect(created.ok).toBe(true);
       const discussionId = DiscussionCreateResultV1Schema.parse(created.result).discussion.id;
       if (scope !== 'private') {
         if (shared) sharedDiscussionId = discussionId;
@@ -99,7 +92,7 @@ describe('Team setup F: credential and conversation discovery', () => {
       if (shared) sharedSecretId = resourceId;
       const resourceDataKey = Uint8Array.from(randomBytes(32));
       const displayName = `${scope} saved secret`;
-      const secret = await writer.execute('secrets.shared.create', { resourceId, displayName, kind: 'token',
+      const secret = await writer.executeReviewed('secrets.shared.create', { resourceId, displayName, kind: 'token',
         encryptionMode: 'e2ee', teamGrants: shared ? [teamId] : [], groupGrants: scope !== 'private' ? [groupId] : [],
         storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'e2ee', resourceDataKey,
           content: { v: 1, name: displayName, kind: 'token', value: 'F_RESOURCE_SECRET_SENTINEL' }, randomBytes }),
@@ -115,8 +108,8 @@ describe('Team setup F: credential and conversation discovery', () => {
             recipientContentPublicKey: teamOnlyReader.credentials.encryption.publicKey, randomBytes }),
         }] : [])],
       });
-      expect(secret.ok).toBe(true);
       if (!secret.ok) throw new Error(`Saved Secret creation refused (${secret.errorCode})`);
+      expect(secret.ok).toBe(true);
     }
   });
   afterAll(async () => { await fixture?.stop(); });
@@ -124,8 +117,8 @@ describe('Team setup F: credential and conversation discovery', () => {
   it('TS.F.kindPaging keeps unrelated owned discussions outside the selected Team', async () => {
     await fixture.assertKnownGoodSessionControl(owner, machine);
     const listed = await owner.execute('discussion.list', { sharedWithTeamId: teamId, limit: 1 });
-    expect(listed.ok).toBe(true);
     if (!listed.ok) throw new Error(`Discussion page refused (${listed.errorCode})`);
+    expect(listed.ok).toBe(true);
     const result = DiscussionListResultV1Schema.parse(listed.result);
     expect(result.discussions.map(row => row.id)).toEqual([sharedDiscussionId]);
     expect(result.nextCursor).toBeNull();
@@ -136,8 +129,8 @@ describe('Team setup F: credential and conversation discovery', () => {
   it('TS.F.kindPaging keeps unrelated owned Saved Secrets outside the selected Team', async () => {
     await fixture.assertKnownGoodSessionControl(owner, machine);
     const listed = await owner.execute('secrets.shared.list', { sharedWithTeamId: teamId, limit: 1 });
-    expect(listed.ok).toBe(true);
     if (!listed.ok) throw new Error(`Saved Secret page refused (${listed.errorCode})`);
+    expect(listed.ok).toBe(true);
     const result = SharedSavedSecretListOutputV1Schema.parse(listed.result);
     expect(result.resources).toEqual([expect.objectContaining({ ref: formatSharedSavedSecretRefV1(sharedSecretId), sharedWithTeamScope: 'team_and_group' })]);
     expect(JSON.stringify(result)).not.toContain('F_RESOURCE_SECRET_SENTINEL');
@@ -146,8 +139,8 @@ describe('Team setup F: credential and conversation discovery', () => {
   it('TS.F.summaryDemand agrees with credential-domain Team pages without revealing content', async () => {
     await fixture.assertKnownGoodSessionControl(owner, machine);
     const summary = await owner.execute('teams.sharedResources.summary' as ActionId, { v: 1, teamId });
-    expect(summary.ok).toBe(true);
     if (!summary.ok) throw new Error(`Resource summary refused (${summary.errorCode})`);
+    expect(summary.ok).toBe(true);
     expect(summary.result).toMatchObject({ teamId, kinds: expect.arrayContaining([
       expect.objectContaining({ kind: 'discussions', status: 'available', count: 1 }),
       expect.objectContaining({ kind: 'savedSecrets', status: 'available', count: 1 }),
@@ -164,8 +157,8 @@ describe('Team setup F: credential and conversation discovery', () => {
     do {
       const page = await groupReader.execute('discussion.list', { sharedWithTeamId: teamId, limit: 1,
         ...(discussionCursor ? { cursor: discussionCursor } : {}) });
-      expect(page.ok).toBe(true);
       if (!page.ok) throw new Error(`Group Discussion page refused (${page.errorCode})`);
+      expect(page.ok).toBe(true);
       const parsed = DiscussionListResultV1Schema.parse(page.result);
       expect(parsed.discussions).toHaveLength(1);
       discussions.push(...parsed.discussions.map(row => row.id));
@@ -181,8 +174,8 @@ describe('Team setup F: credential and conversation discovery', () => {
     do {
       const page = await groupReader.execute('secrets.shared.list', { sharedWithTeamId: teamId, limit: 1,
         ...(secretCursor ? { cursor: secretCursor } : {}) });
-      expect(page.ok).toBe(true);
       if (!page.ok) throw new Error(`Group Saved Secret page refused (${page.errorCode})`);
+      expect(page.ok).toBe(true);
       const parsed = SharedSavedSecretListOutputV1Schema.parse(page.result);
       expect(parsed.resources).toHaveLength(1);
       secrets.push(...parsed.resources.flatMap(row => 'ref' in row ? [row.ref] : []));
@@ -192,8 +185,8 @@ describe('Team setup F: credential and conversation discovery', () => {
     expect(new Set(secrets).size).toBe(2);
     expect(secretScopes.sort()).toEqual(['group', 'team_and_group']);
     const summary = await groupReader.execute('teams.sharedResources.summary' as ActionId, { v: 1, teamId });
-    expect(summary.ok).toBe(true);
     if (!summary.ok) throw new Error(`Group resource summary refused (${summary.errorCode})`);
+    expect(summary.ok).toBe(true);
     expect(summary.result).toMatchObject({ kinds: expect.arrayContaining([
       expect.objectContaining({ kind: 'discussions', status: 'available', count: 2 }),
       expect.objectContaining({ kind: 'savedSecrets', status: 'available', count: 2 }),
@@ -203,14 +196,14 @@ describe('Team setup F: credential and conversation discovery', () => {
   it('TS.F.kindPaging projects only the Team arm for a reader outside the private Group', async () => {
     await fixture.assertKnownGoodSessionControl(owner, machine);
     const discussionPage = await teamOnlyReader.execute('discussion.list', { sharedWithTeamId: teamId, limit: 1 });
-    expect(discussionPage.ok).toBe(true);
     if (!discussionPage.ok) throw new Error(`Team-only Discussion page refused (${discussionPage.errorCode})`);
+    expect(discussionPage.ok).toBe(true);
     expect(DiscussionListResultV1Schema.parse(discussionPage.result).discussions).toEqual([
       expect.objectContaining({ id: sharedDiscussionId, sharedWithTeamScope: 'team' }),
     ]);
     const secretPage = await teamOnlyReader.execute('secrets.shared.list', { sharedWithTeamId: teamId, limit: 1 });
-    expect(secretPage.ok).toBe(true);
     if (!secretPage.ok) throw new Error(`Team-only Saved Secret page refused (${secretPage.errorCode})`);
+    expect(secretPage.ok).toBe(true);
     expect(SharedSavedSecretListOutputV1Schema.parse(secretPage.result).resources).toEqual([
       expect.objectContaining({ ref: formatSharedSavedSecretRefV1(sharedSecretId), sharedWithTeamScope: 'team' }),
     ]);
@@ -228,12 +221,12 @@ describe('Team setup F: credential and conversation discovery', () => {
       expectedRevision: 1, accountGrants: [], teamGrants: [], groupGrants: [] });
     expect(secrets.ok).toBe(true);
     const listed = await owner.execute('discussion.list', { sharedWithTeamId: teamId, limit: 1 });
-    expect(listed.ok).toBe(true);
     if (!listed.ok) throw new Error(`Discussion page refused (${listed.errorCode})`);
+    expect(listed.ok).toBe(true);
     expect(DiscussionListResultV1Schema.parse(listed.result).discussions).toEqual([]);
     const secretPage = await owner.execute('secrets.shared.list', { sharedWithTeamId: teamId, limit: 1 });
-    expect(secretPage.ok).toBe(true);
     if (!secretPage.ok) throw new Error(`Saved Secret page refused (${secretPage.errorCode})`);
+    expect(secretPage.ok).toBe(true);
     expect(SharedSavedSecretListOutputV1Schema.parse(secretPage.result).resources).toEqual([]);
     const detail = await owner.execute('discussion.get', { discussionId: sharedDiscussionId });
     expect(detail.ok).toBe(true);

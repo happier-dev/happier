@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { resolveSessionApprovalProfileReferenceV1 } from '@happier-dev/protocol/actions/approvalProfiles';
+import { ActionPolicyOutputSchemas } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { WorkflowDefinitionCreateResultV1Schema, WorkflowInvocationListResultV1Schema,
@@ -15,6 +16,18 @@ import { reloadConfiguration } from '../../../../apps/cli/src/configuration';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { fetchSessionV2 } from '../../src/testkit/sessions';
 import { isRecord } from '@happier-dev/protocol/common/records';
+
+async function createApprovalProfile(member: Awaited<ReturnType<TeamSetupFFixture['createAccount']>>, name: string) {
+  const created = await member.executeAsPerson('actions.policy.set', {
+    profileChange: { kind: 'create', profile: { name } },
+  });
+  if (!created.ok) throw new Error(`Profile fixture creation refused (${created.errorCode})`);
+  const result = ActionPolicyOutputSchemas['actions.policy.set'].parse(created.result);
+  if (!('profileChange' in result) || result.profileChange.kind !== 'create') {
+    throw new Error('Profile fixture creation did not return its Artifact identity');
+  }
+  return result.profileChange.id;
+}
 
 describe('Team setup F: every launcher captures Session defaults', () => {
   let fixture: TeamSetupFFixture | undefined;
@@ -39,14 +52,10 @@ describe('Team setup F: every launcher captures Session defaults', () => {
           provisioner: { pluginId: 'happier.provisioner.local', localId: 'local' }, presetId: 'not-configured' } },
     })).toMatchObject({ ok: false, errorCode: 'target_unavailable', effectAttempted: false,
       details: { reason: 'machine_isolation_sandbox_unavailable' } });
-    const firstProfile = 'custom:f-first';
-    const secondProfile = 'custom:f-second';
-    for (const id of [firstProfile, secondProfile]) {
-      const saved = await member.execute('actions.policy.set', { profileChange: { kind: 'upsert', profile: { id, name: id } } });
-      if (!saved.ok) throw new Error(`Profile fixture write refused (${saved.errorCode})`);
-    }
+    const firstProfile = await createApprovalProfile(member, 'F first');
+    const secondProfile = await createApprovalProfile(member, 'F second');
     const changeMachineDefault = async (id: string | null) => {
-      const changed = await member.execute('actions.policy.set', { profileChange: {
+      const changed = await member.executeAsPerson('actions.policy.set', { profileChange: {
         kind: 'machine_default', machineId: machine.target.machineId, id,
       } });
       if (!changed.ok) throw new Error(`Machine default fixture write refused (${changed.errorCode})`);
@@ -62,9 +71,9 @@ describe('Team setup F: every launcher captures Session defaults', () => {
         ...(projectContext ? { projectContext } : {}),
       };
       const result = surface === 'ui' ? await member.executeAsPerson('session.spawn_new', input)
-        : await member.execute('session.spawn_new', input, { surface });
+        : await member.executeReviewed('session.spawn_new', input, { surface });
       if (!result.ok) throw new Error(`Session creation refused (${result.errorCode})`);
-      const created = SessionSpawnNewResultV1Schema.parse(result.result);
+      const created = SessionSpawnNewActionResultV1Schema.parse(result.result);
       expect(created.type).toBe('success');
       if (created.type !== 'success') throw new Error(`Session creation did not settle (${created.type === 'error' ? created.code : created.outcome})`);
       return { sessionId: created.sessionId, metadata: await member.readSessionMetadata(created.sessionId) };
@@ -84,12 +93,12 @@ describe('Team setup F: every launcher captures Session defaults', () => {
     expect(accountSettings.metadata.approvalProfileTeamOrGroupDerived).toBe(false);
     expect(resolveSessionApprovalProfileReferenceV1(accountSettings.metadata)).toBeNull();
 
-    const createdSource = await member.execute('projects.sources.create', { serverId: fixture.serverId,
+    const createdSource = await member.executeReviewed('projects.sources.create', { serverId: fixture.serverId,
       name: 'Account Project defaults', requestKey: 'f-launcher-source' });
     if (!createdSource.ok) throw new Error(`Project Source creation refused (${createdSource.errorCode})`);
     const source = ProjectSourcesReadOutputV1Schema.parse(createdSource.result);
     if (!source.ok) throw new Error(`Project Source creation refused (${source.error})`);
-    const sourceDefaults = await member.execute('projects.sources.update', { serverId: fixture.serverId,
+    const sourceDefaults = await member.executeReviewed('projects.sources.update', { serverId: fixture.serverId,
       sourceId: source.source.id, expectedRevision: source.source.revision,
       patch: { sessionDefaults: { expectedRevision: 'absent', defaults: { approvalProfileId: firstProfile,
         defaultAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
@@ -103,12 +112,12 @@ describe('Team setup F: every launcher captures Session defaults', () => {
     const fromSource = await create('cli', undefined, projectContext);
     expect(fromSource.metadata).toMatchObject({ approvalProfileId: firstProfile, approvalProfileTeamOrGroupDerived: true });
     fixture.takeRequestObservations();
-    const inheritedTargetResult = await member.execute('session.spawn_new', {
+    const inheritedTargetResult = await member.executeReviewed('session.spawn_new', {
       projectContext, directory: { kind: 'path', path: machine.workspaceDir }, terminal: { mode: 'plain' },
     });
     expect(inheritedTargetResult).toMatchObject({ ok: true, result: { type: 'success' } });
     if (!inheritedTargetResult.ok) throw new Error(`Selected Project launch refused (${inheritedTargetResult.errorCode})`);
-    const inheritedTarget = SessionSpawnNewResultV1Schema.parse(inheritedTargetResult.result);
+    const inheritedTarget = SessionSpawnNewActionResultV1Schema.parse(inheritedTargetResult.result);
     if (inheritedTarget.type !== 'success') throw new Error('Selected Project launch did not settle');
     expect(await member.readSessionMetadata(inheritedTarget.sessionId)).toMatchObject({
       machineId: machine.target.machineId, approvalProfileId: firstProfile, approvalProfileTeamOrGroupDerived: true,
@@ -136,7 +145,7 @@ describe('Team setup F: every launcher captures Session defaults', () => {
       directory: { kind: 'path', path: machine.workspaceDir }, terminal: { mode: 'plain' } }));
     expect(voice).toMatchObject({ ok: true, result: { type: 'success' } });
     if (!isRecord(voice) || voice.ok !== true) throw new Error('Voice Project creation refused');
-    const voiceSession = SessionSpawnNewResultV1Schema.parse(voice.result);
+    const voiceSession = SessionSpawnNewActionResultV1Schema.parse(voice.result);
     if (voiceSession.type !== 'success') throw new Error('Voice Project creation did not settle');
     expect(await member.readSessionMetadata(voiceSession.sessionId)).toMatchObject({
       machineId: machine.target.machineId, approvalProfileId: firstProfile, approvalProfileTeamOrGroupDerived: true,
@@ -144,7 +153,7 @@ describe('Team setup F: every launcher captures Session defaults', () => {
       modelSelectionIntentV2: { v: 2, ref: { source: 'native', agentTargetKey: 'agent:happier.agent.claude/claude',
         modelId: 'f-source-model' } },
     });
-    const savedPersonal = await member.execute('projects.organization.update', {
+    const savedPersonal = await member.executeReviewed('projects.organization.update', {
       projectRef: projectContext.projectRef, expectedRevision: 'absent',
       sessionDefaults: { expectedRevision: 'absent', defaults: { approvalProfileId: secondProfile } },
     });
@@ -170,13 +179,9 @@ describe('Team setup F: every launcher captures Session defaults', () => {
     const member = await fixture.createAccount('run-member');
     const machine = await fixture.enrollDaemon(member);
     await fixture.assertKnownGoodSessionControl(member, machine);
-    const profiles = ['custom:f-run-first', 'custom:f-run-second'] as const;
-    for (const id of profiles) {
-      expect(await member.execute('actions.policy.set', { profileChange: {
-        kind: 'upsert', profile: { id, name: id },
-      } })).toMatchObject({ ok: true });
-    }
-    const created = await member.execute('projects.sources.create', { serverId: fixture.serverId,
+    const profiles = [await createApprovalProfile(member, 'F Run first'),
+      await createApprovalProfile(member, 'F Run second')] as const;
+    const created = await member.executeReviewed('projects.sources.create', { serverId: fixture.serverId,
       name: 'Run defaults', requestKey: 'f-run-source' });
     if (!created.ok) throw new Error(`Run Source creation refused (${created.errorCode})`);
     let source = ProjectSourcesReadOutputV1Schema.parse(created.result);
@@ -184,7 +189,7 @@ describe('Team setup F: every launcher captures Session defaults', () => {
     const sourceId = source.source.id;
     const setSourceDefault = async (approvalProfileId: string) => {
       if (!source.ok) throw new Error('Run Source is unavailable');
-      const changed = await member.execute('projects.sources.update', { serverId: fixture!.serverId, sourceId,
+      const changed = await member.executeReviewed('projects.sources.update', { serverId: fixture!.serverId, sourceId,
         expectedRevision: source.source.revision, patch: { sessionDefaults: {
           expectedRevision: source.sessionDefaults?.revision ?? 'absent', defaults: { approvalProfileId },
         } } });
@@ -195,7 +200,7 @@ describe('Team setup F: every launcher captures Session defaults', () => {
     const projectContext = { sourceRef: { serverId: fixture.serverId, sourceId } };
     const context = { executionRunTargetMachineId: machine.target.machineId };
     const start = async (approvalProfileId?: null) => {
-      const result = await member.execute('execution.run.start', { sessionId: null, intent: 'agent',
+      const result = await member.executeReviewed('execution.run.start', { sessionId: null, intent: 'agent',
         backendTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
         instructions: 'Reply ready.', permissionMode: 'read_only', retentionPolicy: 'resumable',
         runClass: 'long_lived', ioMode: 'request_response', cwd: machine.workspaceDir, projectContext,
@@ -230,7 +235,7 @@ describe('Team setup F: every launcher captures Session defaults', () => {
     const first = await start();
     expect(await readCaptured(first)).toMatchObject({ approvalProfileId: profiles[0], approvalProfileTeamOrGroupDerived: true });
     await setSourceDefault(profiles[1]);
-    expect(await member.execute('execution.run.send', { sessionId: null, runId: first,
+    expect(await member.executeReviewed('execution.run.send', { sessionId: null, runId: first,
       message: 'Reply ready again.', resume: true, delivery: 'prompt' }, context)).toMatchObject({ ok: true });
     expect(await member.execute('execution.run.wait', { sessionId: null, runId: first }, context))
       .toMatchObject({ ok: true, result: { ok: true, status: 'succeeded' } });
@@ -245,12 +250,9 @@ describe('Team setup F: every launcher captures Session defaults', () => {
     const member = await fixture.createAccount('workflow-member');
     const machine = await fixture.enrollDaemon(member, { env: features });
     await fixture.assertKnownGoodSessionControl(member, machine);
-    const profiles = ['custom:f-workflow-first', 'custom:f-workflow-second'] as const;
-    for (const id of profiles) {
-      expect(await member.execute('actions.policy.set', { profileChange: { kind: 'upsert', profile: { id, name: id } } }))
-        .toMatchObject({ ok: true });
-    }
-    const createdSource = await member.execute('projects.sources.create', { serverId: fixture.serverId,
+    const profiles = [await createApprovalProfile(member, 'F Workflow first'),
+      await createApprovalProfile(member, 'F Workflow second')] as const;
+    const createdSource = await member.executeReviewed('projects.sources.create', { serverId: fixture.serverId,
       name: 'Workflow Project defaults', requestKey: 'f-workflow-source' });
     if (!createdSource.ok) throw new Error(`Workflow Source creation refused (${createdSource.errorCode})`);
     let source = ProjectSourcesReadOutputV1Schema.parse(createdSource.result);
@@ -258,7 +260,7 @@ describe('Team setup F: every launcher captures Session defaults', () => {
     let defaultsRevision: number | 'absent' = 'absent';
     const setSourceDefault = async (approvalProfileId: string) => {
       if (!source.ok) throw new Error('Workflow Source is unavailable');
-      const updated = await member.execute('projects.sources.update', { serverId: fixture!.serverId,
+      const updated = await member.executeReviewed('projects.sources.update', { serverId: fixture!.serverId,
         sourceId: source.source.id, expectedRevision: source.source.revision,
         patch: { sessionDefaults: { expectedRevision: defaultsRevision, defaults: { approvalProfileId } } } });
       if (!updated.ok) throw new Error(`Workflow Source update refused (${updated.errorCode})`);
@@ -268,7 +270,7 @@ describe('Team setup F: every launcher captures Session defaults', () => {
     };
     const projectContext = { sourceRef: { serverId: fixture.serverId, sourceId: source.source.id } };
     const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
-    const authored = await member.execute('workflow.definition.create', { definitionId: randomUUID(),
+    const authored = await member.executeReviewed('workflow.definition.create', { definitionId: randomUUID(),
       metadata: { title: 'Project defaults Session' }, definition: { version: 1,
         defaults: { agentTarget, projectContext, permissionMode: 'read-only', modelSelection: null,
           connectedServices: null, terminal: { mode: 'plain' } },
@@ -279,7 +281,7 @@ describe('Team setup F: every launcher captures Session defaults', () => {
     const saved = WorkflowDefinitionCreateResultV1Schema.parse(authored.result);
     expect(saved.definition.defaults).toMatchObject({ agentTarget, projectContext });
     const start = async () => {
-      const started = await member.execute('workflow.run.start', { runId: randomUUID(),
+      const started = await member.executeReviewed('workflow.run.start', { runId: randomUUID(),
         source: { kind: 'saved', definitionId: saved.definitionId, revision: saved.revision },
         executionTarget: { kind: 'session' } }, { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId,
           project: { machineId: machine.target.machineId, directory: machine.workspaceDir } } });

@@ -1,22 +1,19 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ApprovalRequestPublicSettlementSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { teamGroupLabelBinding } from '@happier-dev/protocol/teams/groupLabel';
 import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH } from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { prepareCliPrivateLabel } from '../../../../apps/cli/src/api/privateLabels';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
-import { createIsolatedFakeClaudeControlShim, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
+import { createIsolatedFakeClaudeControlShim, readFakeClaudeLogEvents, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
 
 describe('Team setup F: Artifact resource discovery', () => {
   let fixture: TeamSetupFFixture;
@@ -34,17 +31,7 @@ describe('Team setup F: Artifact resource discovery', () => {
   let privateGroupId: string;
 
   async function invoke(account: typeof owner, actionId: ActionId, input: unknown) {
-    let result = await account.execute(actionId, input);
-    const approval = result.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(result.result) : null;
-    if (approval?.success) {
-      const decision = await account.executeAsPerson('approval.request.decide', { artifactId: approval.data.artifactId, decision: 'approve' });
-      expect(decision.ok).toBe(true);
-      const read = await account.execute('approval.request.get', { artifactId: approval.data.artifactId });
-      if (!read.ok) throw new Error(`Approval unavailable (${read.errorCode})`);
-      const settled = getActionSpec('approval.request.get').outputSchema?.parse(read.result);
-      if (!settled || typeof settled !== 'object' || !('request' in settled)) throw new Error('Approval settlement missing');
-      result = ApprovalRequestPublicSettlementSchema.parse(settled.request).execution;
-    }
+    const result = await account.executeReviewed(actionId, input);
     if (!result.ok) throw new Error(`${actionId} refused (${result.errorCode})`);
     return result.result;
   }
@@ -58,14 +45,15 @@ describe('Team setup F: Artifact resource discovery', () => {
     member = await fixture.createAccount('artifact-member');
     admin = await fixture.createAccount('artifact-admin');
     agent = await createIsolatedFakeClaudeControlShim({ testDir: join(testDir, 'agent'),
-      invocationId: 'artifact-resource-use', captureEnvironmentKeys: [], logFullStdin: false });
+      invocationId: 'artifact-resource-use', captureEnvironmentKeys: [], logFullStdin: false, captureStartupInstructions: true });
     machine = await fixture.enrollDaemon(member, { env: { HAPPIER_CLAUDE_PATH: agent.executablePath } });
     // P04: the actual admitted native path must work before feature setup can
     // produce a meaningful missing-resource RED.
     await fixture.assertKnownGoodSessionControl(member, machine);
     await waitForFakeClaudeInvocation(agent.logPath, invocation => invocation.mode === 'sdk');
+    expect((await fixture.claimHomeOwner(owner)).result.status).toBe('claimed');
     teamId = TeamSummaryV1Schema.parse(await invoke(owner, 'teams.create', {
-      v: 1, name: 'Artifact discovery', requestKey: randomUUID(),
+      v: 1, name: 'Artifact discovery', requestKey: randomUUID(), initialOwnerAccountId: readAccountIdFromToken(owner.credentials.token),
     })).id;
     for (const [account, role] of [[member, 'member'], [admin, 'admin']] as const) {
       await invoke(owner, 'teams.members.add', { v: 1, teamId, role,
@@ -159,7 +147,7 @@ describe('Team setup F: Artifact resource discovery', () => {
     const selected = await invoke(member, 'artifact.get', { artifactId: documentId });
     expect(ArtifactActionOutputSchemasV1['artifact.get'].parse(selected).artifact?.artifactId).toBe(documentId);
     const launchedAfter = Date.now();
-    const launched = SessionSpawnNewResultV1Schema.parse(await invoke(member, 'session.spawn_new', {
+    const launched = SessionSpawnNewActionResultV1Schema.parse(await invoke(member, 'session.spawn_new', {
       executionTarget: machine.target, directory: { kind: 'path', path: machine.workspaceDir },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, terminal: { mode: 'plain' },
       promptStack: [{ id: 'selected-document', ref: { kind: 'doc', artifactId: documentId }, enabled: true, placement: 'system_append' }],
@@ -169,12 +157,13 @@ describe('Team setup F: Artifact resource discovery', () => {
     expect(await member.readSessionMetadata(launched.sessionId)).toMatchObject({ work: { promptStack: [expect.objectContaining({
       ref: expect.objectContaining({ artifactId: documentId }),
     })] } });
-    const invocation = await waitForFakeClaudeInvocation(agent.logPath, item => item.mode === 'sdk'
+    await invoke(member, 'session.message.send', { sessionId: launched.sessionId,
+      message: 'Use the selected shared document.', reply: 'wait' });
+    await waitForFakeClaudeInvocation(agent.logPath, item => item.mode === 'sdk'
       && typeof item.ts === 'number' && item.ts >= launchedAfter);
-    const promptFileIndex = invocation.argv.indexOf('--append-system-prompt-file');
-    const nativePrompt = promptFileIndex >= 0
-      ? await readFile(invocation.argv[promptFileIndex + 1]!, 'utf8') : invocation.argv.join('\n');
-    expect(nativePrompt).toContain('Edited shared document context');
+    expect(await readFakeClaudeLogEvents(agent.logPath)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'startup_instructions', text: expect.stringContaining('Edited shared document context') }),
+    ]));
     await invoke(owner, 'artifact.access.grants.remove', { artifactId: privateGroupId, principal: { kind: 'group', teamId, groupId } });
     expect((await list(member, 'prompts')).items.map(item => item.artifactId)).toEqual([promptId]);
   });

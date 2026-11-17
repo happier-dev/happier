@@ -32,7 +32,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     return value as Record<string, unknown>;
 }
 
-async function readDecryptedSessionMetadataV2(params: Readonly<{
+export async function readDecryptedSessionMetadataV2(params: Readonly<{
     baseUrl: string;
     token: string;
     sessionId: string;

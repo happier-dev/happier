@@ -10,7 +10,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { ManagedMachinePresetRecipientCensusResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
-import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH } from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 import { prepareCliPrivateLabels } from '../../../../apps/cli/src/api/privateLabels';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
@@ -36,10 +36,12 @@ describe('Team setup F: Machine resource owner filters', () => {
     owner = await fixture.createAccount('resource-machines-owner');
     machine = await fixture.enrollDaemon(owner);
     await fixture.assertKnownGoodSessionControl(owner, machine);
+    expect((await fixture.claimHomeOwner(owner)).result.status).toBe('claimed');
     const createTeam = async (name: string) => {
-      const result = await owner.execute('teams.create', { v: 1, name, requestKey: randomUUID() });
-      expect(result.ok).toBe(true);
+      const result = await owner.executeReviewed('teams.create', { v: 1, name, requestKey: randomUUID(),
+        initialOwnerAccountId: readAccountIdFromToken(owner.credentials.token) });
       if (!result.ok) throw new Error(`Team fixture refused (${result.errorCode})`);
+      expect(result.ok).toBe(true);
       return TeamSummaryV1Schema.parse(result.result).id;
     };
     teamId = await createTeam('Selected Machine resources');
@@ -49,9 +51,9 @@ describe('Team setup F: Machine resource owner filters', () => {
       token: owner.credentials.token, accountMode: 'e2ee', owner: { kind: 'team', teamId },
       recipientCensusPath: PRIVATE_LABEL_RECIPIENT_CENSUS_PATH,
       labels: [{ binding: teamGroupLabelBinding(groupId, 'name'), value: 'Machine readers' }] });
-    expect(await owner.execute('teams.groups.create', { v: 1, teamId, groupId, name: groupName, requestKey: randomUUID() }))
+    expect(await owner.executeReviewed('teams.groups.create', { v: 1, teamId, groupId, name: groupName, requestKey: randomUUID() }))
       .toMatchObject({ ok: true });
-    expect(await owner.execute('teams.groups.members.add', { v: 1, teamId, groupId,
+    expect(await owner.executeReviewed('teams.groups.members.add', { v: 1, teamId, groupId,
       accountId: readAccountIdFromToken(owner.credentials.token), historyAccess: 'all_existing' }))
       .toMatchObject({ ok: true });
     const grant = await owner.executeAsPerson('machines.access.grant.set', { ...machine.target,
@@ -63,7 +65,7 @@ describe('Team setup F: Machine resource owner filters', () => {
         token: owner.credentials.token, accountMode: 'e2ee', owner: { kind: 'team', teamId: selectedTeamId },
         recipientCensusPath: PRIVATE_LABEL_RECIPIENT_CENSUS_PATH,
         labels: [{ binding: { entity: 'machine_pool', field: 'name', id }, value: 'Team pool' }] });
-      expect(await owner.execute('machines.pools.create', { poolId: id, name,
+      expect(await owner.executeReviewed('machines.pools.create', { poolId: id, name,
         audience: { kind: 'team', teamId: selectedTeamId }, members: [] })).toMatchObject({ ok: true });
       if (selectedTeamId === teamId) poolId = id;
       const presetOwner = { kind: 'team' as const, teamId: selectedTeamId };
@@ -75,7 +77,7 @@ describe('Team setup F: Machine resource owner filters', () => {
       const census = ManagedMachinePresetRecipientCensusResultV1Schema.parse(await censusResponse.json());
       if (census.kind !== 'ready') throw new Error(`Preset census refused (${census.code})`);
       const preset = randomUUID();
-      expect(await owner.execute('machines.presets.create', { id: preset, homeId: fixture.serverId,
+      expect(await owner.executeReviewed('machines.presets.create', { id: preset, homeId: fixture.serverId,
         owner: presetOwner, contentEncryptionMode: 'e2ee', ...sealManagedMachinePresetContentV1({
           presetId: preset, mode: 'e2ee', content: { v: 1, name: 'Team preset', setup: { scripts: [{ body: 'true', affects: 'none' }] } },
           recipientCensus: census.recipients, randomBytes: length => new Uint8Array(randomBytes(length)),
@@ -108,13 +110,13 @@ describe('Team setup F: Machine resource owner filters', () => {
   afterAll(async () => { await fixture?.stop(); });
 
   async function spawnSession(extra: Readonly<Record<string, unknown>> = {}) {
-    const result = await owner.execute('session.spawn_new', { executionTarget: machine.target,
+    const result = await owner.executeReviewed('session.spawn_new', { executionTarget: machine.target,
       directory: { kind: 'path', path: machine.workspaceDir },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
       terminal: { mode: 'plain' }, ...extra });
-    expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(`Machine use refused (${result.errorCode})`);
-    const launched = SessionSpawnNewResultV1Schema.parse(result.result);
+    expect(result.ok).toBe(true);
+    const launched = SessionSpawnNewActionResultV1Schema.parse(result.result);
     expect(launched.type).toBe('success');
     if (launched.type !== 'success') throw new Error(`Machine launch failed (${launched.type === 'error' ? launched.code : launched.outcome})`);
     expect(await owner.readSessionMetadata(launched.sessionId)).toBeTruthy();
@@ -150,7 +152,7 @@ describe('Team setup F: Machine resource owner filters', () => {
       sharedWithTeamId: teamId, includeArchived: true });
     expect(listed).toMatchObject({ ok: true, result: { kind: 'listed', presets: [{ id: presetId, sharedWithTeamScope: 'team' }] } });
     if (listed.ok) expect((listed.result as { presets: unknown[] }).presets).toHaveLength(1);
-    const archived = await owner.execute('machines.presets.archive', { homeId: fixture.serverId,
+    const archived = await owner.executeReviewed('machines.presets.archive', { homeId: fixture.serverId,
       id: presetId, expectedRevision: 0 });
     expect(archived).toMatchObject({ ok: true, result: { kind: 'saved', preset: { archivedAt: expect.any(Number) } } });
     expect(await owner.execute('machines.presets.list', { homeId: fixture.serverId, sharedWithTeamId: teamId }))
@@ -160,7 +162,7 @@ describe('Team setup F: Machine resource owner filters', () => {
       .toMatchObject({ ok: true, result: { kind: 'listed', presets: [{ id: presetId, archivedAt: expect.any(Number) }] } });
     if (!archived.ok) throw new Error(`Preset archive refused (${archived.errorCode})`);
     const archivedRevision = (archived.result as { preset: { revision: number } }).preset.revision;
-    expect(await owner.execute('machines.presets.restore', { homeId: fixture.serverId,
+    expect(await owner.executeReviewed('machines.presets.restore', { homeId: fixture.serverId,
       id: presetId, expectedRevision: archivedRevision })).toMatchObject({ ok: true, result: { kind: 'saved' } });
     await useSelectedMachine();
   });
@@ -185,12 +187,12 @@ describe('Team setup F: Machine resource owner filters', () => {
     await fixture.assertKnownGoodSessionControl(owner, machine);
     const viewer = await fixture.createAccount('resources-machine-admin');
     const accountId = readAccountIdFromToken(viewer.credentials.token);
-    expect(await owner.execute('teams.members.add', { v: 1, teamId, accountId,
+    expect(await owner.executeReviewed('teams.members.add', { v: 1, teamId, accountId,
       role: 'admin', historyAccess: 'all_existing' })).toMatchObject({ ok: true });
     for (const state of ['outside', 'joined', 'revoked'] as const) {
-      if (state === 'joined') expect(await owner.execute('teams.groups.members.add', {
+      if (state === 'joined') expect(await owner.executeReviewed('teams.groups.members.add', {
         v: 1, teamId, groupId, accountId, historyAccess: 'all_existing' })).toMatchObject({ ok: true });
-      if (state === 'revoked') expect(await owner.execute('teams.groups.members.remove', {
+      if (state === 'revoked') expect(await owner.executeReviewed('teams.groups.members.remove', {
         v: 1, teamId, groupId, accountId })).toMatchObject({ ok: true });
       const listed = await viewer.execute('machines.list', { serverId: fixture.serverId, sharedWithTeamId: teamId });
       expect(listed).toMatchObject({ ok: true, result: { items: state === 'joined'
@@ -206,9 +208,9 @@ describe('Team setup F: Machine resource owner filters', () => {
       ...machine.target, principal: { kind: 'team', teamId: selectedTeamId }, level: 'view',
     })).toMatchObject({ ok: true });
     for (const state of ['outside', 'joined', 'revoked'] as const) {
-      if (state === 'joined') expect(await owner.execute('teams.groups.members.add', {
+      if (state === 'joined') expect(await owner.executeReviewed('teams.groups.members.add', {
         v: 1, teamId, groupId, accountId, historyAccess: 'all_existing' })).toMatchObject({ ok: true });
-      if (state === 'revoked') expect(await owner.execute('teams.groups.members.remove', {
+      if (state === 'revoked') expect(await owner.executeReviewed('teams.groups.members.remove', {
         v: 1, teamId, groupId, accountId })).toMatchObject({ ok: true });
       expect(await viewer.execute('machines.list', { serverId: fixture.serverId, sharedWithTeamId: teamId }))
         .toMatchObject({ ok: true, result: { items: [{ machineId: machine.target.machineId,
@@ -227,7 +229,7 @@ describe('Team setup F: Machine resource owner filters', () => {
     const grant = { subject: { kind: 'team', teamId }, accessLevel: 'view', canApprovePermissions: false };
     const historical = await spawnSession({ primaryTeamId: teamId, initialAccess: { grants: [grant] } });
     const viewer = await fixture.createAccount('resources-session-viewer');
-    expect(await owner.execute('teams.members.add', { v: 1, teamId,
+    expect(await owner.executeReviewed('teams.members.add', { v: 1, teamId,
       accountId: readAccountIdFromToken(viewer.credentials.token), role: 'member', historyAccess: 'from_membership' }))
       .toMatchObject({ ok: true });
     const groupGrant = { subject: { kind: 'group', teamId, groupId }, accessLevel: 'view', canApprovePermissions: false };
@@ -236,8 +238,8 @@ describe('Team setup F: Machine resource owner filters', () => {
     const unrelated = await spawnSession({ primaryTeamId: otherTeamId });
     const listed = await viewer.execute('session.list', { query: { v: 1, storage: 'active', includeInactive: true,
       scope: 'all_accessible', attention: 'any', audiences: [{ kind: 'team', teamId }], tagIds: [] } });
-    expect(listed.ok).toBe(true);
     if (!listed.ok) throw new Error(`Session list refused (${listed.errorCode})`);
+    expect(listed.ok).toBe(true);
     const rows = (listed.result as { sessions: { id: string; sharedWithTeamScope?: string }[] }).sessions;
     const sessionIds = rows.map(session => session.id);
     expect(sessionIds).toContain(current);
@@ -248,16 +250,16 @@ describe('Team setup F: Machine resource owner filters', () => {
         { kind: 'sessions', status: 'available', count: 1 },
       ]) } });
     const accountId = readAccountIdFromToken(viewer.credentials.token);
-    expect(await owner.execute('teams.groups.members.add', { v: 1, teamId, groupId, accountId,
+    expect(await owner.executeReviewed('teams.groups.members.add', { v: 1, teamId, groupId, accountId,
       historyAccess: 'all_existing' })).toMatchObject({ ok: true });
     const groupOnly = await spawnSession({ primaryTeamId: teamId, initialAccess: { grants: [groupGrant] } });
     for (const joined of [true, false]) {
-      if (!joined) expect(await owner.execute('teams.groups.members.remove', { v: 1, teamId, groupId, accountId }))
+      if (!joined) expect(await owner.executeReviewed('teams.groups.members.remove', { v: 1, teamId, groupId, accountId }))
         .toMatchObject({ ok: true });
       const scoped = await viewer.execute('session.list', { query: { v: 1, storage: 'active', includeInactive: true,
         scope: 'all_accessible', attention: 'any', audiences: [{ kind: 'team', teamId }], tagIds: [] } });
-      expect(scoped.ok).toBe(true);
       if (!scoped.ok) throw new Error(`Session list refused (${scoped.errorCode})`);
+      expect(scoped.ok).toBe(true);
       const scopedRows = (scoped.result as { sessions: { id: string; sharedWithTeamScope?: string }[] }).sessions;
       expect(scopedRows.find(row => row.id === current)).toMatchObject({
         sharedWithTeamScope: joined ? 'team_and_group' : 'team',
