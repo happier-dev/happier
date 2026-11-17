@@ -6,13 +6,15 @@ import { resolveGlassPaint } from '@/dev/testkit/glass/resolveGlassPaint';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 
 installMessageViewCommonModuleMocks();
+const { UserMessageBubble } = await import('./UserMessageBubble');
+const { StyleSheet } = await import('react-native');
 
 async function renderBubbleFill(): Promise<string> {
-    const { UserMessageBubble } = await import('./UserMessageBubble');
     const screen = await renderScreen(<UserMessageBubble><React.Fragment>message</React.Fragment></UserMessageBubble>);
-    const bubble = screen.tree.root.findAll(node => typeof node.type === 'string' && node.props.style?.backgroundColor)[0];
-    expect(bubble.props.style.opacity).toBeUndefined();
-    return String(bubble.props.style.backgroundColor);
+    const bubble = screen.tree.root.findAll(node => typeof node.type === 'string' && node.props.dataSet?.surface === 'user-bubble')[0];
+    const style = StyleSheet.flatten(bubble.props.style);
+    expect(style.opacity).toBeUndefined();
+    return String(style.backgroundColor);
 }
 
 describe('user bubble material', () => {
