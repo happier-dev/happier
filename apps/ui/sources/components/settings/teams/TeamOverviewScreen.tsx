@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { presentHomeInvitePeople, teamInvitePeopleAction } from '@/components/settings/home/governance/HomeInvitePeopleDialog';
 import { Avatar } from '@/components/ui/avatar/Avatar';
+import { TeamHeaderAvatar } from './TeamHeaderAvatar';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { AvatarStack } from '@/components/ui/avatar/AvatarStack';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -54,7 +55,6 @@ import {
 import { Icon } from '@/components/ui/icons/Icon';
 
 /** The size of an entity mark at the head of its page. */
-const TEAM_HEADER_AVATAR_SIZE = 44;
 /** The Members row shows this many faces before its chevron (lab `tsOverview-A`). */
 const MEMBER_PREVIEW_COUNT = 4;
 const MEMBER_PREVIEW_AVATAR_SIZE = 22;
@@ -129,16 +129,7 @@ const TeamOverviewHeader = React.memo(function TeamOverviewHeader(
       alwaysShowTitle
       title={team.name}
       description={team.description ?? undefined}
-      leading={
-        <Avatar
-          id={address.teamId}
-          monogram={team.name}
-          square
-          size={TEAM_HEADER_AVATAR_SIZE}
-          imageUrl={team.logo?.url ?? null}
-          thumbhash={team.logo?.thumbhash ?? null}
-        />
-      }
+      leading={<TeamHeaderAvatar address={address} team={team} />}
       meta={[
         ...(standing
           ? [
