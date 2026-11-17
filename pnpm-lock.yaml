@@ -4553,6 +4553,9 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk
+      '@happier-dev/plugin-ui':
+        specifier: 0.0.0
+        version: link:../../plugin-ui
       '@happier-dev/triage-protocol':
         specifier: 0.0.0
         version: link:../../triage-protocol
@@ -4566,6 +4569,15 @@ importers:
       '@types/node':
         specifier: ^22.19.3
         version: 22.20.5
+      '@types/react':
+        specifier: 19.2.0
+        version: 19.2.0
+      react:
+        specifier: 19.2.0
+        version: 19.2.0
+      react-native:
+        specifier: 0.83.5
+        version: 0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.0)(react@19.2.0)(supports-color@8.1.1)
       typescript:
         specifier: ^5.9.2
         version: 5.9.3

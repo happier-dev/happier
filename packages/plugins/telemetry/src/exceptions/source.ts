@@ -17,6 +17,7 @@ import {
   TELEMETRY_EXCEPTION_ISSUES_COLLECTION_V1,
   type ExceptionIssueRecord,
 } from './issueRecord.js';
+import type { ExceptionDetailDataV1 } from './contracts.js';
 
 export const TELEMETRY_EXCEPTION_SOURCE_V1 = Object.freeze({
   pluginId: 'happier.telemetry',
@@ -48,6 +49,13 @@ export const TELEMETRY_EXCEPTION_SOURCE_DESCRIPTOR_V1 =
         displayName: 'Exception',
         pluralDisplayName: 'Exceptions',
         detailActions: true,
+        // The Triage frame draws these tabs (r0.42); Overview carries Triage's own agent step.
+        detailTabs: [
+          { kind: 'shared', id: 'overview' },
+          { kind: 'source', id: 'stack-trace', title: 'Stack trace', titleKey: 'plugins.telemetry.exceptions.tab.stackTrace' },
+          { kind: 'source', id: 'occurrences', title: 'Occurrences', titleKey: 'plugins.telemetry.exceptions.tab.occurrences',
+            summaryFact: 'events', scrollOwner: 'list' },
+        ],
       },
     ],
   });
@@ -173,7 +181,7 @@ function observation(
  * Source-owned presentation for the detail surface, on the exact read only: what its occurrence and stack reads
  * address (the Environment and fingerprint) and the lifecycle facts its overview states. Never retained.
  */
-function detailData(record: Item['value'], shared: boolean) {
+function detailData(record: Item['value'], shared: boolean): ExceptionDetailDataV1 {
   return {
     v: 1 as const,
     environmentId: record.environmentId,

@@ -15,7 +15,8 @@
       "happier-source": "./src/manifest.ts",
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
-    }
+    },
+    "./happier-plugin-ui/telemetry-exception-detail-native": "./src/ui/exceptionDetail.tsx"
   },
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
@@ -31,10 +32,14 @@
     "@happier-dev/database-protocol": "0.0.0",
     "@happier-dev/triage-protocol": "0.0.0",
     "@happier-dev/triage-sources": "0.0.0",
-    "protobufjs": "7.6.6"
+    "protobufjs": "7.6.6",
+    "@happier-dev/plugin-ui": "0.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.3",
+    "@types/react": "19.2.0",
+    "react": "19.2.0",
+    "react-native": "0.83.5",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   }

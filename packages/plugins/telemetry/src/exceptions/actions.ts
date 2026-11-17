@@ -4,14 +4,6 @@ import {
 } from '@happier-dev/plugin-sdk';
 import type { PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import {
-  defineProtocolArray,
-  defineProtocolLiteral,
-  defineProtocolNumber,
-  defineProtocolObject,
-  defineProtocolString,
-  defineProtocolUnion,
-} from '@happier-dev/plugin-sdk/protocol';
-import {
   TELEMETRY_EXCEPTION_ISSUE_TRANSITION_ACTION_ID_V1,
   TELEMETRY_EXCEPTION_ISSUES_REFRESH_ACTION_ID_V1,
   TELEMETRY_EXCEPTION_OCCURRENCES_READ_ACTION_ID_V1,
@@ -23,137 +15,23 @@ import { localCaptureBackground } from '../background.js';
 import { telemetryPartition } from '../telemetry/assignments.js';
 import { readExceptionIssueWriter } from './collectorIssues.js';
 import type { ExceptionIssueRow } from './issueWriter.js';
+import {
+  exceptionIssueTransitionInputSchema,
+  exceptionIssueTransitionResultSchema,
+  exceptionIssuesRefreshInputSchema,
+  exceptionIssuesRefreshResultSchema,
+  exceptionOccurrencesReadInputSchema,
+  exceptionOccurrencesReadResultSchema,
+} from './contracts.js';
 
-const text = defineProtocolString({ minLength: 1 });
-const time = defineProtocolNumber({ integer: true, minimum: 0 });
-const environment = { serverId: text, environmentId: text };
-const maybe = (schema: ReturnType<typeof defineProtocolString>) =>
-  defineProtocolUnion([schema, defineProtocolLiteral(null)]).optional();
-
-export const exceptionOccurrencesReadInputSchema = defineProtocolObject(
-  {
-    ...environment,
-    fingerprint: text,
-    page: defineProtocolObject(
-      {
-        limit: defineProtocolNumber({ integer: true, minimum: 1 }),
-        before: defineProtocolObject(
-          { at: time, id: text },
-          { policy: 'closed' },
-        ).optional(),
-      },
-      { policy: 'closed' },
-    ),
-    /** Demand one occurrence's redacted stack; list items never carry stacks. */
-    occurrenceId: text.optional(),
-  },
-  { policy: 'closed' },
-);
-const occurrenceSchema = defineProtocolObject(
-  {
-    id: text,
-    at: time,
-    origin: defineProtocolUnion([
-      defineProtocolLiteral('span'),
-      defineProtocolLiteral('log'),
-    ]),
-    serviceName: maybe(defineProtocolString()),
-    serviceVersion: maybe(defineProtocolString()),
-    type: maybe(defineProtocolString()),
-    message: maybe(defineProtocolString()),
-    topFrame: maybe(defineProtocolString()),
-    traceId: maybe(defineProtocolString()),
-    spanId: maybe(defineProtocolString()),
-    escaped: defineProtocolUnion([
-      defineProtocolLiteral(true),
-      defineProtocolLiteral(false),
-    ]).optional(),
-  },
-  { policy: 'closed' },
-);
-export const exceptionOccurrencesReadResultSchema = defineProtocolUnion([
-  defineProtocolObject(
-    { status: defineProtocolLiteral('disabled') },
-    { policy: 'closed' },
-  ),
-  defineProtocolObject(
-    {
-      status: defineProtocolLiteral('ok'),
-      items: defineProtocolArray(occurrenceSchema),
-      nextCursor: defineProtocolObject(
-        { at: time, id: text },
-        { policy: 'closed' },
-      ).optional(),
-      /** Redacted app text; consumers frame it as data, never as instructions. */
-      stacktrace: maybe(defineProtocolString()),
-    },
-    { policy: 'closed' },
-  ),
-]);
-
-const transitionAction = defineProtocolUnion([
-  defineProtocolLiteral('resolve'),
-  defineProtocolLiteral('reopen'),
-  defineProtocolLiteral('ignore'),
-  defineProtocolLiteral('unignore'),
-]);
-export const exceptionIssueTransitionInputSchema = defineProtocolObject(
-  {
-    ...environment,
-    issueId: text,
-    action: transitionAction,
-    /** The fixed release, when the person names one on Resolve. */
-    version: text.optional(),
-  },
-  { policy: 'closed' },
-);
-const issueSummarySchema = defineProtocolObject(
-  {
-    issueId: text,
-    revision: time,
-    status: defineProtocolUnion([
-      defineProtocolLiteral('open'),
-      defineProtocolLiteral('resolved'),
-      defineProtocolLiteral('ignored'),
-    ]),
-    regressed: defineProtocolLiteral(true).optional(),
-    count: time,
-    lastSeenAtMs: time,
-    asOfMs: time,
-  },
-  { policy: 'closed' },
-);
-export const exceptionIssueTransitionResultSchema = defineProtocolUnion([
-  defineProtocolObject(
-    { status: defineProtocolLiteral('absent') },
-    { policy: 'closed' },
-  ),
-  defineProtocolObject(
-    {
-      status: defineProtocolUnion([
-        defineProtocolLiteral('applied'),
-        defineProtocolLiteral('unchanged'),
-      ]),
-      issue: issueSummarySchema,
-    },
-    { policy: 'closed' },
-  ),
-]);
-export const exceptionIssuesRefreshInputSchema = defineProtocolObject(
-  { ...environment, issueId: text.optional() },
-  { policy: 'closed' },
-);
-export const exceptionIssuesRefreshResultSchema = defineProtocolObject(
-  {
-    projection: defineProtocolUnion([
-      defineProtocolLiteral('ready'),
-      defineProtocolLiteral('unavailable'),
-    ]),
-    code: text.optional(),
-    issue: issueSummarySchema.optional(),
-  },
-  { policy: 'closed' },
-);
+export {
+  exceptionIssueTransitionInputSchema,
+  exceptionIssueTransitionResultSchema,
+  exceptionIssuesRefreshInputSchema,
+  exceptionIssuesRefreshResultSchema,
+  exceptionOccurrencesReadInputSchema,
+  exceptionOccurrencesReadResultSchema,
+};
 
 type Id =
   | typeof TELEMETRY_EXCEPTION_OCCURRENCES_READ_ACTION_ID_V1

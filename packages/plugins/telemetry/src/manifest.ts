@@ -4,7 +4,7 @@ import { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from '@happier-dev/plugin-
 import { DATABASE_CAPTURE_RESOURCE_ID_V1, databaseActionLocalIdV1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import { localCaptureBackground } from './background.js';
 import { telemetryCollectorRunner } from './telemetry/runner.js';
-import { telemetryExceptionManifestParts } from './exceptions/contribution.js';
+import { telemetryExceptionManifestParts, telemetryExceptionSourceContribution } from './exceptions/contribution.js';
 import { createCaptureActions, createCapturePublicActionProducers } from './actions.js';
 import { createCaptureResourceRuntime } from './resources.js';
 import { telemetryPartition } from './telemetry/assignments.js';
@@ -26,6 +26,9 @@ const { clearCapture: _clear, ...captureReads } = createCapturePublicActionProdu
  },
 });
 
+const EXCEPTION_DETAIL_RENDERER_ID = 'exception-detail';
+const EXCEPTION_DETAIL_FALLBACK_RENDERER_ID = 'exception-detail-fallback';
+
 export const DATABASE_CAPTURE_PLUGIN = definePlugin({
  id: 'happier.telemetry', version: '0.0.0', displayName: 'Telemetry',
  description: 'Machine-local database observations and application telemetry.',
@@ -45,6 +48,14 @@ export const DATABASE_CAPTURE_PLUGIN = definePlugin({
  notifications: telemetryExceptionManifestParts.notifications,
  events: telemetryExceptionManifestParts.events,
  workflows: { [TELEMETRY_REGRESSION_WORKFLOW_ID_V1]: TELEMETRY_REGRESSION_WORKFLOW_V1 },
+ // D30/J2: the native exception detail, mounted by PRs & Issues for the Happier exceptions source.
+ ui: { views: [], renderers: [
+  // The detail reads occurrences and writes lifecycle through this plugin's own Actions.
+  { id: EXCEPTION_DETAIL_RENDERER_ID, kind: 'reactNative', artifact: 'telemetry-exception-detail-native', requiredHostMethods: ['executeAction'] },
+  { id: EXCEPTION_DETAIL_FALLBACK_RENDERER_ID, kind: 'declarative', root: { kind: 'text', text: {
+   key: 'plugins.telemetry.exceptions.detail.fallback', fallback: 'Exception details are unavailable on this surface.' } } },
+ ] },
+ contributesTo: telemetryExceptionSourceContribution({ renderer: EXCEPTION_DETAIL_RENDERER_ID, fallbackRenderers: [EXCEPTION_DETAIL_FALLBACK_RENDERER_ID] }),
  healthCheckKinds: { 'key-flow': { title: 'Key flow', configSchema: keyFlowConfigSchema.jsonSchema,
   action: databaseActionLocalIdV1(TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1) } },
  backgroundServices: [
