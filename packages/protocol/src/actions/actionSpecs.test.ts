@@ -98,6 +98,33 @@ it('classifies Machine RPC reads from Action effects and exact internal read fac
   expect(resolveMachineRpcGovernance(RPC_METHODS.DAEMON_SESSION_GOAL_GET).rpcClassification).toBe('advisory_unclassified');
 });
 
+it.each([
+  ['session.continue_with_replay', 'write'],
+  ['session.rollback', 'danger'],
+  ['session.checkpoint_code_rollback', 'danger'],
+  ['session.checkpoint', 'write'],
+  ['session.restore', 'danger'],
+  ['session.handoff.prepare_target', 'write'],
+  ['session.handoff.prepare_target.resume', 'write'],
+  ['session.handoff.commit', 'write'],
+  ['session.handoff.abort', 'write'],
+  ['session.title.set', 'write'],
+  ['session.permission_mode.set', 'write'],
+  ['session.model.set', 'write'],
+  ['session.archive', 'write'],
+  ['session.unarchive', 'write'],
+  ['session.goal.set', 'write'],
+  ['session.goal.clear', 'write'],
+  ['session.usageLimit.waitResume.enable', 'write'],
+  ['session.usageLimit.waitResume.cancel', 'write'],
+  ['session.usageLimit.checkNow', 'write'],
+  ['session.usageLimit.consumeResetCredit', 'external'],
+  ['agents.acp.backends.upsert', 'write'],
+  ['agents.acp.backends.delete', 'write'],
+] as const)('publishes the effect of %s in Action discovery', (actionId, effect) => {
+  expect(serializeActionSpec(getActionSpec(actionId))).toMatchObject({ id: actionId, sideEffectClass: effect });
+});
+
 it('publishes receiver mute and autonomous exchange controls to the Voice catalog', () => {
   const voiceActions = listVoiceToolActionSpecs().map(spec => spec.id);
   expect(voiceActions).toEqual(expect.arrayContaining([

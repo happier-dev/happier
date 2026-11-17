@@ -174,6 +174,7 @@ function createSessionStateActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.title.set', approval: {result: 'none'},
+    sideEffectClass: 'write',
     title: 'Set session title',
     description: 'Set the title (summary text) shown for a session.',
     safety: 'safe',
@@ -318,6 +319,7 @@ function createSessionStateActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.permission_mode.set', executionPlacement: 'session', approval: {result: 'none'},
+    sideEffectClass: 'write',
     title: 'Set session permission mode',
     description: `Immediately update the permission intent (${SESSION_PERMISSION_INTENT_INPUTS.join('/')}) for the specified session. Compatible aliases are accepted. To apply a mode with the next prompt, use session.message.send with permissionModeOverride.`,
     safety: 'safe',
@@ -351,6 +353,7 @@ function createSessionStateActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.model.set', executionPlacement: 'session', approval: {result: 'none'},
+    sideEffectClass: 'write',
     title: 'Set session model',
     description: 'Set the model override for the specified session.',
     safety: 'safe',
@@ -382,6 +385,7 @@ function createSessionStateActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.archive', executionPlacement: 'session', approval: {result: 'none'},
+    sideEffectClass: 'write',
     sessionTarget: { field: 'sessionId', cardinality: 'one' },
     title: 'Archive session',
     description: 'Archive the specified session, optionally also archiving its unarchived direct reports. Each report retains its own rights and approval requirements; results include partial outcomes.',
@@ -486,6 +490,7 @@ function createSessionStateActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.unarchive', executionPlacement: 'session', approval: {result: 'none'},
+    sideEffectClass: 'write',
     sessionTarget: { field: 'sessionId', cardinality: 'one' },
     title: 'Unarchive session',
     description: 'Unarchive the specified session.',
@@ -617,6 +622,7 @@ function createSessionStateActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.goal.set', executionPlacement: 'session', approval: {result: 'none'},
+    sideEffectClass: 'write',
     sessionTarget: { field: 'sessionId', cardinality: 'one' },
     title: 'Set session goal',
     description: 'Set or update the native session goal.',
@@ -650,6 +656,7 @@ function createSessionStateActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.goal.clear', executionPlacement: 'session', approval: {result: 'required'},
+    sideEffectClass: 'write',
     sessionTarget: { field: 'sessionId', cardinality: 'one' },
     title: 'Clear session goal',
     description: 'Clear the native session goal.',

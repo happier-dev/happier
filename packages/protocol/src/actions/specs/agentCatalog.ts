@@ -705,6 +705,7 @@ function createAcpBackendActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'agents.acp.backends.upsert', executionPlacement: 'account', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'direct' },
+    sideEffectClass: 'write',
     title: 'Save custom ACP agent',
     description: 'Add or replace one custom ACP agent (a command that speaks the Agent Client Protocol) in the Account agent catalog. Names must be unique; an existing id is replaced.',
     safety: 'danger',
@@ -749,6 +750,7 @@ function createAcpBackendActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'agents.acp.backends.delete', executionPlacement: 'account', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'policy' },
+    sideEffectClass: 'write',
     title: 'Delete custom ACP agent',
     description: 'Remove one custom ACP agent from the Account agent catalog.',
     safety: 'danger',

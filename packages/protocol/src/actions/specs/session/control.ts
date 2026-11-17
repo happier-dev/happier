@@ -235,6 +235,7 @@ function createSessionRecoveryActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.usageLimit.waitResume.enable', executionPlacement: 'session', approval: {result: 'none',flow: 'deferred'},
+    sideEffectClass: 'write',
     title: 'Enable usage-limit wait resume',
     description: 'Arm a durable intent to continue a session when a provider usage limit is lifted.',
     safety: 'safe',
@@ -275,6 +276,7 @@ function createSessionRecoveryActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.usageLimit.waitResume.cancel', executionPlacement: 'session', approval: {result: 'none',flow: 'deferred'},
+    sideEffectClass: 'write',
     title: 'Cancel usage-limit wait resume',
     description: 'Cancel the active usage-limit wait/resume intent for a session.',
     safety: 'safe',
@@ -308,6 +310,7 @@ function createSessionRecoveryActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.usageLimit.checkNow', executionPlacement: 'session', approval: {result: 'required'},
+    sideEffectClass: 'write',
     title: 'Check usage-limit recovery now',
     description: 'Ask the session runtime to perform a safe provider-owned usage-limit recovery check.',
     safety: 'safe',
@@ -361,6 +364,7 @@ function createSessionRecoveryActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.usageLimit.consumeResetCredit', executionPlacement: 'session', approval: {result: 'required'},
+    sideEffectClass: 'external',
     title: 'Apply usage-limit reset credit',
     description: 'Ask the session runtime to spend a connected-service reset credit for usage-limit recovery.',
     safety: 'danger',

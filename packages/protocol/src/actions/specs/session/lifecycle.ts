@@ -323,6 +323,7 @@ function createSessionLifecycleActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.continue_with_replay', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    sideEffectClass: 'write',
     title: 'Continue session with replay',
     description: 'Create a continuation session from a replay seed while preserving the existing RPC wire contract.',
     safety: 'safe',
@@ -350,6 +351,7 @@ function createSessionLifecycleActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.rollback', executionPlacement: 'session', approval: {result: 'required',flow: 'deferred'},
+    sideEffectClass: 'danger',
     title: 'Rollback conversation',
     description: 'Roll back conversation state in the selected session.',
     safety: 'danger',
@@ -373,6 +375,7 @@ function createSessionLifecycleActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.checkpoint_code_rollback', executionPlacement: 'session', approval: {result: 'required',flow: 'deferred'},
+    sideEffectClass: 'danger',
     title: 'Rollback code to checkpoint',
     description: 'Apply a checkpoint-backed code rollback for the selected session turn.',
     safety: 'danger',
@@ -400,6 +403,7 @@ function createSessionLifecycleActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.checkpoint', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    sideEffectClass: 'write',
     approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Create checkpoint',
     description: 'Create a source-qualified checkpoint for the selected session.',
@@ -427,6 +431,7 @@ function createSessionLifecycleActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.restore', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    sideEffectClass: 'danger',
     title: 'Restore checkpoint',
     description: 'Restore a selected session checkpoint source.',
     safety: 'danger',
@@ -510,6 +515,7 @@ function createSessionLifecycleActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.handoff.prepare_target', executionPlacement: 'session', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'optional',flow: 'deferred'},
+    sideEffectClass: 'write',
     title: 'Prepare session handoff target',
     description: 'Prepare a target machine to receive an in-progress session handoff.',
     safety: 'safe',
@@ -567,6 +573,7 @@ function createSessionLifecycleActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.handoff.prepare_target.resume', executionPlacement: 'session', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'optional',flow: 'deferred'},
+    sideEffectClass: 'write',
     title: 'Resume interrupted session handoff target preparation',
     description: 'Explicitly continue one interrupted prepare-target job at its current durable revision.',
     safety: 'safe',
@@ -595,6 +602,7 @@ function createSessionLifecycleActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.handoff.commit', executionPlacement: 'session', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'optional',flow: 'deferred'},
+    sideEffectClass: 'write',
     title: 'Commit session handoff',
     description: 'Finalize a prepared session handoff.',
     safety: 'safe',
@@ -621,6 +629,7 @@ function createSessionLifecycleActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.handoff.abort', executionPlacement: 'session', originalExecution: { accountRoot: 'allowed' }, approval: {result: 'optional',flow: 'deferred'},
+    sideEffectClass: 'write',
     title: 'Abort session handoff',
     description: 'Cancel an in-progress session handoff.',
     safety: 'safe',

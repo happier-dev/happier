@@ -43,6 +43,18 @@ function loaded(
   };
 }
 
+it('keeps conditional mutations visible in the static Action effect catalog', async () => {
+  const { definePlugin } = await import('@happier-dev/plugin-sdk');
+  const common = { title: 'Catalog effect', dangerLevel: 'safe', run: () => {} } as const;
+  const plugin = definePlugin({ id: 'example.effect-catalog', version: '1.0.0', actions: {
+    conditional: { ...common, readOnly: { op: 'eq', path: 'mode', value: 'preview' } },
+    read: { ...common, readOnly: true }, effect: { ...common, readOnly: false }, undeclared: common,
+  } });
+  const registry = buildPluginContributionRegistry({ loadedPlugins: [loaded(plugin.manifest.id, plugin.manifest.contributes)] });
+  const effects = Object.fromEntries(registry.actions.map(action => [action.identity.localId, action.definition.sideEffectClass]));
+  expect(effects).toEqual({ conditional: 'external', read: 'read', effect: 'external', undeclared: undefined });
+});
+
 function bundledAgentWithConnectedAccounts(
   pluginId: string,
   connectedAccounts: readonly Readonly<{

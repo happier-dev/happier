@@ -309,7 +309,7 @@ function toActionDefinition(definition: PluginActionContributionV2): ResolvedAct
     ...(definition.confirmationWhen === undefined ? {} : { confirmationWhen: definition.confirmationWhen }),
     ...(definition.approvalScope === undefined ? {} : { approvalScope: definition.approvalScope }),
     ...(definition.readOnly === undefined ? {} : { readOnly: definition.readOnly,
-      sideEffectClass: definition.readOnly ? 'read' as const : 'external' as const }),
+      sideEffectClass: definition.readOnly === true ? 'read' as const : 'external' as const }),
     ...(definition.operation ? { operation: definition.operation } : {}),
     scopes: definition.scopes,
     ...(definition.placementBindings ? { placementBindings: [...definition.placementBindings] } : {}),
