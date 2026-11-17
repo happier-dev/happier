@@ -2192,6 +2192,11 @@ test('AUTO sends test overflow to a Mac only while every Linux worker would queu
   const build = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'apps/stack/scripts/utils/dev_targets/config.test.mjs'], fixture.invocation);
   assert.equal(build.status, 0, build.stderr);
   assert.equal(build.stdout, 'remote:nl1\n', 'package builds are not Mac overflow');
+  // 2026-11-17 live: with mac-host in the pool, light (unclassified) commands
+  // competed by load and 24 went to the Mac. It takes test overflow only.
+  const lightFleet = await placementFleet(t, { nl1: placementSample({ load: 7, achievableKiB: gibKiB(16), ceilingKiB: gibKiB(100) }), 'mac-host': mac });
+  assert.equal(spawnSync('/bin/sh', [launcher, '--', 'probe-command'], lightFleet.invocation).stdout, 'remote:nl1\n',
+    'light commands never go to the Mac');
   const fitting = await placementFleet(t, {
     nl1: placementSample({ achievableKiB: gibKiB(16), ceilingKiB: gibKiB(100), unreservedKiB: gibKiB(8), expectedStartMs: 0 }), 'mac-host': mac });
   const linux = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], fitting.invocation);

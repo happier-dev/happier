@@ -1835,6 +1835,14 @@ for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
       export HSTACK_EXEC_PRE_DISPATCH_REFUSALS HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED
       candidate_cache=prerequisite ;;
   esac
+  # A Darwin worker is test overflow only (owner ruling 2026-11-17): light
+  # commands never compete for it by load; explicit pins still reach it.
+  if [ "$heavyweight_placement_required" -eq 0 ] && [ -z "$explicit_target_number" ] && [ "$candidate_name" != local ] \
+    && { [ "$candidate_available" = 1 ] || [ "$candidate_available" = busy ]; } \
+    && [ "$(awk '{print $16}' "$cache_dir/$candidate_name.telemetry" 2>/dev/null)" = darwin ]; then
+    candidate_available=0
+    candidate_cache=overflow-only
+  fi
   if [ "$candidate_available" != 1 ] && [ "$candidate_available" != busy ]; then
     report_placement_exclusion "$candidate_name" "$candidate_cache"
   fi
