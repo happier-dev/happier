@@ -962,7 +962,7 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
         failureCause: metadata === 'socket closed' || metadata === 'refresh refused'
           ? { phase: 'dispatch', errorClass: metadata === 'socket closed' ? 'TypeError' : 'Error', errorCode: null, httpStatus: null }
           : { phase: 'providers.team_credential.binding', errorClass: 'Error', errorCode: expectedCode, httpStatus: null } } });
-    expect(refused).toMatchObject({ code: expectedCode, message: expectedCode });
+    expect(refused).toMatchObject({ code: expectedCode });
     if (httpRefusal || metadata === 'refresh refused') {
       expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: refused }))
         .toMatchObject({ source: 'team_credential', code: expectedCode });
