@@ -899,7 +899,12 @@ describe('workflow detached Execution Run step executor', () => {
     }
   });
 
-  it.each([false, true])('uses the portable Launch Profile and preserves frozen rendered input=%s without duplicate role text', async (retained) => {
+  it.each([
+    { retained: false, source: 'v1' },
+    { retained: true, source: 'native' },
+    { retained: false, source: 'account_provider_connection' },
+    { retained: true, source: 'team_resource' },
+  ] as const)('uses the portable Launch Profile and preserves $source selection with frozen input=$retained', async ({ retained, source }) => {
     let localInputId = '';
     // Native daemon transport is the boundary; the Action executor remains real.
     const executionRunStart = vi.fn<NonNullable<ActionExecutorDeps['executionRunStart']>>(async (_sessionId, value: unknown) => {
@@ -925,15 +930,26 @@ describe('workflow detached Execution Run step executor', () => {
 
     const frozenText = 'Original role\n\n<happier_forge_evidence v="1">Original PR comment</happier_forge_evidence>';
     const beforeInputAdmission = vi.fn(async (_renderedText?: string) => {});
+    const legacyRef = baseParams().execution.modelSelection.ref;
+    const { providerConnectionId: _providerConnectionId, ...nativeRef } = legacyRef;
+    const teamRef = { ...nativeRef, resourceId: 'team-resource', teamId: 'team-1',
+      expectedResourceRevision: 1, deliveryMode: 'brokered' as const };
+    const modelSelection = source === 'v1' ? baseParams().execution.modelSelection
+      : { v: 2, updatedAt: 1, ref: source === 'native' ? { ...nativeRef, source }
+        : source === 'account_provider_connection' ? { ...nativeRef, source, providerConnectionId: 'provider-1' }
+          : { ...teamRef, source } };
     const result = await execute(baseParams({
-      execution: { ...baseParams().execution, profileId: 'launch-profile-1' },
+      execution: { ...baseParams().execution, modelSelection, profileId: 'launch-profile-1' },
       beforeInputAdmission,
       ...(retained ? { input: { ...baseParams().input, renderedText: frozenText } } : {}),
     }));
     expect(result, JSON.stringify(result)).toMatchObject({ kind: 'completed' });
     expect(executionRunStart).toHaveBeenCalledWith(null, expect.objectContaining({
       instructions: retained ? frozenText : expect.stringContaining('Frozen reviewer instructions'),
-      modelSelection: baseParams().execution.modelSelection.ref,
+      ...(source === 'team_resource'
+        ? { teamCredentialModel: { kind: 'team_credential_provider_model', ...teamRef } }
+        : { modelSelection: { ...legacyRef, providerConnectionId: source === 'account_provider_connection' ? 'provider-1' : null } }),
+      sessionConfigOptionOverrides: baseParams().execution.sessionConfigOptionOverrides,
     }), expect.objectContaining({ workDepth: 3, workspaceWrites: 'deny', exactMachineId: 'machine-1',
       actionCaller: { kind: 'workflowRun', runId: 'workflow-1', authorization: baseParams().authorization },
     }));

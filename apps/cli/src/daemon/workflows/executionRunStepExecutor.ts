@@ -39,6 +39,7 @@ import { resolveWorkflowConversationSelection, type WorkflowConversationBinding 
 import type { WorkflowProducerBinding } from './workflowScopeBinding';
 import { withWorkflowRoleInstructions } from './sessionStepExecutor';
 import { buildWorkflowActionContext } from './workflowActionContext';
+import { projectActionWorkflowSelectionInputV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { readWorkflowActionApprovalSettlement } from './actionApproval';
 
 type WorkflowExecutionRunConversation = Readonly<{
@@ -400,7 +401,10 @@ function buildNativeAgentRunStartInput(params: Readonly<{
 }>): Record<string, unknown> {
   const { executionParams, sessionId, localInputId } = params;
   const selection = executionParams.execution;
-  const modelSelection = selection.modelSelection?.ref;
+  const modelSelection = selection.modelSelection;
+  const runModelSelection = modelSelection
+    ? projectActionWorkflowSelectionInputV1('execution.run.start', {}, { modelSelection })
+    : undefined;
   return {
     sessionId,
     intent: 'agent',
@@ -419,7 +423,7 @@ function buildNativeAgentRunStartInput(params: Readonly<{
     runClass: 'long_lived',
     ioMode: 'request_response',
     cwd: executionParams.workspace.directory,
-    ...(modelSelection ? { modelId: modelSelection.modelId, modelSelection } : {}),
+    ...(modelSelection ? { modelId: modelSelection.ref.modelId, ...runModelSelection } : {}),
     ...(selection.sessionConfigOptionOverrides
       ? { sessionConfigOptionOverrides: selection.sessionConfigOptionOverrides }
       : {}),
