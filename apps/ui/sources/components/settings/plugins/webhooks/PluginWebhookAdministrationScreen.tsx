@@ -30,6 +30,7 @@ import { canPublishCatalogReceipt } from '@/sync/store/settings/wholeCatalogRece
 import { t } from '@/text';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 type AccountStatus = Awaited<ReturnType<PluginWebhookAdministrationHttpClient['readStatus']>>;
 type EndpointStatus = AccountStatus['endpoints'][number] & Readonly<{
@@ -593,9 +594,12 @@ export const PluginWebhookAdministrationScreen = React.memo(function PluginWebho
 
     React.useEffect(() => {
         if (!webhooksAvailable) return;
+        const unsubscribe = scope ? subscribeHomeAccountChange(event => {
+            if (event.changeKinds === undefined || event.changeKinds.includes('pluginDomain')) void refresh();
+        }, { serverIds: [scope.serverId], reconnect: 'refresh' }) : null;
         void refresh();
-        return () => { activeRead.current = null; };
-    }, [refresh, webhooksAvailable]);
+        return () => { activeRead.current = null; unsubscribe?.(); };
+    }, [refresh, webhooksAvailable, scope?.serverId, scope?.accountId]);
 
     if (!webhooksAvailable) {
         return (
