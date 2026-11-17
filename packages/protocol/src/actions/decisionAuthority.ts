@@ -4,6 +4,7 @@ import type { ActionSpec } from './actionSpecs.js';
 import type { ActionId } from './actionIds.js';
 import type { QualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 import { DECISION_ACTION_IDS } from './actionIds.js';
+import { REVIEW_HUMAN_ACTION_IDS_V1 } from './actionIdsReviewHumanV1.js';
 export { DECISION_ACTION_IDS } from './actionIds.js';
 import { HandoffWorkspaceActionV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 import { readRecord } from '../inputs/inputRecords.js';
@@ -103,7 +104,8 @@ export function canRequestPresentUserApprovalForActionInputV1(
   spec: Pick<ActionSpec, 'id' | 'requiredAuthority' | 'approvalInputCustody'>,
   input?: unknown,
 ): boolean {
-  return !(DECISION_ACTION_IDS as readonly string[]).includes(spec.id)
+  return spec.id !== REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict
+    && !(DECISION_ACTION_IDS as readonly string[]).includes(spec.id)
     && requiresPresentUserExecutionAuthorityForActionInputV1(spec, input);
 }
 

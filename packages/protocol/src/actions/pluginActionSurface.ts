@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
 import { ACTION_IDS, ActionIdSchema, type ActionId } from './actionIds.js';
+import { REVIEW_HUMAN_ACTION_IDS_V1 } from './actionIdsReviewHumanV1.js';
 
 /** Host lifecycle/plumbing operations that are not author-facing Actions. */
 export const INTERNAL_ACTION_REASONS = Object.freeze({
@@ -64,6 +65,7 @@ export function isHumanSecretApiExcludedActionId(
  * initialization cycle through the full Action registry.
  */
 export const PLUGIN_SURFACE_EXCLUSION_REASONS = Object.freeze({
+  [REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict]: 'Only the requested person may submit their own Review verdict.',
   'computer.secret.fill': 'Confidential filling belongs to the present person through its native input owner.',
   'secrets.shared.reveal': 'Only the present person in the app may display a Saved Secret.',
   ...INTERNAL_ACTION_REASONS,

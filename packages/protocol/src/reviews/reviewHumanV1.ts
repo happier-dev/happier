@@ -135,3 +135,22 @@ export function projectReviewNeedsYouV1(input: Readonly<{
     needsYou: requestedVerdict || pendingDecisions, requestedVerdict, pendingDecisions,
     canSubmitVerdict: ownRequests.length > 0 };
 }
+
+export const ReviewHumanGetInputV1Schema = lazyZodSchema(() => z.strictObject({
+  reviewId: z.string().check(z.minLength(1)),
+}));
+export const ReviewHumanErrorCodeV1Schema = lazyZodSchema(() => z.enum([
+  'review_invalid_request', 'review_not_found', 'review_access_forbidden', 'review_round_not_admitted',
+  'review_request_duplicate', 'review_reviewer_not_requested',
+  'review_verdict_content_unavailable', 'review_verdict_encryption_mode_mismatch',
+  'review_verdict_content_mismatch', 'review_verdict_revision_mismatch', 'present_user_required',
+]));
+export type ReviewHumanErrorCodeV1 = z.infer<typeof ReviewHumanErrorCodeV1Schema>;
+export const ReviewHumanErrorV1Schema = lazyZodSchema(() => z.strictObject({ error: ReviewHumanErrorCodeV1Schema }));
+export const ReviewOpenedVerdictV1Schema = lazyZodSchema(() => z.extend(
+  z.omit(ReviewVerdictV1Schema, { content: true }), { body: z.optional(z.string()) },
+));
+export const ReviewHumanActionStateV1Schema = lazyZodSchema(() => z.extend(ReviewHumanStateV1Schema, {
+  verdicts: z.array(ReviewOpenedVerdictV1Schema),
+}));
+export type ReviewHumanActionStateV1 = z.infer<typeof ReviewHumanActionStateV1Schema>;

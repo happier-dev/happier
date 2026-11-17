@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { openReviewVerdictContentV1, projectReviewNeedsYouV1 } from './reviewHumanV1.js';
+import { getActionSpec } from '../actions/actionSpecs.js';
+import { canRequestPresentUserApprovalForActionInputV1 } from '../actions/decisionAuthority.js';
 
 describe('Review human attention', () => {
   const input = {
@@ -43,4 +45,12 @@ describe('Review human attention', () => {
     }
   });
 
+  it('offers verdict submission only to answering people and rejects an actor operand', () => {
+    const spec = getActionSpec('review.verdict.submit');
+    expect(spec.requiredAuthority).toBe('present_user');
+    expect(spec.surfaces).toMatchObject({ ui: true, cli: true, agent: false, mcp: false, voice: false, plugin: false });
+    expect(canRequestPresentUserApprovalForActionInputV1(spec)).toBe(false);
+    expect(spec.inputSchema.safeParse({ reviewId: 'review', roundOrdinal: 1, verdict: 'approve', accountId: 'someone-else' }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ reviewId: 'review', roundOrdinal: 1, verdict: 'approve', body: 'Looks ready' }).success).toBe(true);
+  });
 });

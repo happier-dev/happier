@@ -1,3 +1,5 @@
+import { REVIEW_HUMAN_ACTION_IDS_V1 } from '../actionIds.js';
+import { ReviewHumanGetInputV1Schema, ReviewHumanActionStateV1Schema, ReviewReviewersSetInputV1Schema, ReviewVerdictActionInputV1Schema } from '../../reviews/reviewHumanV1.js';
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { selectTeamCredentialSourcesForApproval } from './teamCredentialApproval.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -14,6 +16,46 @@ import { resolveExecutionRunMachineRuntimeDemand } from '../executor/sessionScop
 
 function createReviewActionSpecs() {
   return Object.freeze([
+// Imports added to existing specs/reviews.ts; canonical Action-id constants live in actionIds.ts.
+{
+  id: REVIEW_HUMAN_ACTION_IDS_V1.get, executionPlacement: 'account', requiredAuthority: 'account_automation',
+  approval: { result: 'required' }, title: 'Read requested reviewers and verdicts', safety: 'safe', sideEffectClass: 'read',
+  description: 'Read the authorized Review’s requested people, round verdict history and needs-you facts.',
+  placements: [], surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: false },
+  bindings: { mcpToolName: 'review_human_get', voiceClientToolName: 'review_human_get' },
+  serverTransport: { method: 'GET', path: '/v1/reviews/:reviewId/human' },
+  cli: { acceptsServerId: true, commands: [{ path: ['review', 'human', 'get'], visibility: 'canonical' }] },
+  inputHints: { fields: [{ path: 'reviewId', title: 'Review', widget: 'text', required: true }] },
+  inputSchema: ReviewHumanGetInputV1Schema, outputSchema: ReviewHumanActionStateV1Schema,
+} satisfies PreNormalizedActionSpec,
+{
+  id: REVIEW_HUMAN_ACTION_IDS_V1.setReviewers, executionPlacement: 'account', requiredAuthority: 'account_automation',
+  approval: { result: 'required' }, title: 'Set requested reviewers', safety: 'safe', sideEffectClass: 'external',
+  description: 'Request people, Teams or Groups for this round. Requires Edit; requesting creates no access grant.',
+  placements: [], surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: false },
+  bindings: { mcpToolName: 'review_reviewers_set', voiceClientToolName: 'review_reviewers_set' },
+  serverTransport: { method: 'POST', path: '/v1/reviews/:reviewId/reviewers' },
+  cli: { acceptsServerId: true, commands: [{ path: ['review', 'reviewers', 'set'], visibility: 'canonical' }] },
+  inputHints: { fields: [{ path: 'reviewId', title: 'Review', widget: 'text', required: true },
+    { path: 'roundOrdinal', title: 'Round', widget: 'integer', required: true },
+    { path: 'reviewers', title: 'Requested reviewers', widget: 'json', required: true }] },
+  inputSchema: ReviewReviewersSetInputV1Schema, outputSchema: ReviewHumanActionStateV1Schema,
+} satisfies PreNormalizedActionSpec,
+{
+  id: REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict, executionPlacement: 'account', requiredAuthority: 'present_user',
+  approval: { result: 'required' }, title: 'Submit your verdict', safety: 'safe', sideEffectClass: 'external',
+  description: 'Answer a review request as yourself. View access and a request for you are required.',
+  placements: [], surfaces: { ui: true, cli: true, agent: false, mcp: false, voice: false, rpc: false },
+  serverTransport: { method: 'POST', path: '/v1/reviews/:reviewId/verdicts' },
+  cli: { acceptsServerId: true, commands: [{ path: ['review', 'verdict', 'submit'], visibility: 'canonical' }] },
+  inputHints: { fields: [{ path: 'reviewId', title: 'Review', widget: 'text', required: true },
+    { path: 'roundOrdinal', title: 'Round', widget: 'integer', required: true },
+    { path: 'verdict', title: 'Verdict', widget: 'select', required: true, options: [
+      { value: 'approve', label: 'Approve' }, { value: 'request_changes', label: 'Request changes' }, { value: 'comment', label: 'Comment' }] },
+    { path: 'body', title: 'Comment', widget: 'textarea' }] },
+  inputSchema: ReviewVerdictActionInputV1Schema, outputSchema: ReviewHumanActionStateV1Schema,
+} satisfies PreNormalizedActionSpec,
+
   {
     id: 'review.start', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     approvalPresentation: { teamCredentialSources: selectTeamCredentialSourcesForApproval },
