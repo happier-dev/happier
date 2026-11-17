@@ -74,9 +74,10 @@ export async function installRemoteCli(input: Readonly<{
     }
     if (account.status !== 0) throw new SystemTaskExecutionError('dedicated_identity_unconfirmed', 'The dedicated daemon account could not be prepared.');
   }
-  const sourcePlacement: RemoteCliInstallation = managedEnrollment && homeTarget
-    ? { requireHomePayload: true, homeUrl: homeTarget.applicationUrl,
-      ...(bootstrap?.parsed.guestCli ? { guestCli: bootstrap.parsed.guestCli } : {}) } : {};
+  const homeUrl = homeTarget?.applicationUrl ?? bootstrap?.parsed.relay.relayUrl;
+  const sourcePlacement: RemoteCliInstallation = homeUrl
+    ? { requireHomePayload: true, homeUrl,
+      ...(managedEnrollment && bootstrap?.parsed.guestCli ? { guestCli: bootstrap.parsed.guestCli } : {}) } : {};
   const installed = await transport.install({
     ...sourcePlacement,
     ...(identity?.kind === 'dedicatedDaemonUser' ? {

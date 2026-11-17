@@ -2640,7 +2640,12 @@ managed resource. The captured role and administrator choice cannot change
 after task admission.
 
 `cli-common/systemTasks/ssh/installRemoteCli.ts` owns the installation placement
-and bootstrap sequence. Its shared `dedicatedDaemonBootstrap.ts` composes the
+and bootstrap sequence. Managed and standalone SSH bootstrap both pass the selected
+Home application URL (or the legacy enrollment relay URL) to the shared Home CLI
+source supplier; a public release from another Home line is never a fallback.
+Only managed admission carries a pinned Home export into installation. Generic
+host CLI installation without a selected Home retains its release-channel selection.
+Its shared `dedicatedDaemonBootstrap.ts` composes the
 same setup steps and transient IPC codec for the CLI, desktop `hsetup` and mobile
 SSH adapters. The adapters provide command execution, payload transfer and prompt
 identifiers; they do not choose another identity or implement another installer.

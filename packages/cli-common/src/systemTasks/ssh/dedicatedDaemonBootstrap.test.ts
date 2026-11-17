@@ -84,7 +84,8 @@ describe('portable dedicated daemon bootstrap', () => {
     }, transport: {
       install: async placement => {
         phases.push('install');
-        expect(placement).toEqual({ remoteHomeDir: DEDICATED_DAEMON_INSTALL_HOME, daemonUsername: 'happier' });
+        expect(placement).toEqual({ requireHomePayload: true, homeUrl: 'https://home.example',
+          remoteHomeDir: DEDICATED_DAEMON_INSTALL_HOME, daemonUsername: 'happier' });
         return { binaryPath: '/opt/happier/cli/current/happier' };
       },
       exec: async request => {
