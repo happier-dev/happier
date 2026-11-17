@@ -7047,7 +7047,6 @@
     "sources/sync/domains/settings/settingsFacadeArchitecture.test.ts",
     "sources/sync/domains/settings/settingsLegacyArchitecture.test.ts",
     "sources/sync/domains/settings/terminalSettings.spec.ts",
-    "sources/sync/domains/settings/themeProfiles.test.ts",
     "sources/sync/domains/settings/usageLimitRecoverySettings.test.ts",
     "sources/sync/domains/settings/voiceCredentialBindingCompatibility.test.ts",
     "sources/sync/domains/settings/voiceOpenAiChatProviderMigration.test.ts",
