@@ -174,6 +174,17 @@ export function actionInputServerId<TSchema extends z.ZodMiniType>(schema: TSche
   };
 }
 
+const ExecutionRunCompletionDeclarationSchema = lazyZodSchema(() => z.strictObject({
+  awaits: z.literal('execution_runs'),
+  terminalOutputSchema: ZodSchemaLike,
+  launched: z.custom<Extract<ActionCompletionDeclaration, { awaits: 'execution_runs' }>['launched']>(
+    (value) => typeof value === 'function',
+  ),
+  terminal: z.custom<Extract<ActionCompletionDeclaration, { awaits: 'execution_runs' }>['terminal']>(
+    (value) => typeof value === 'function',
+  ),
+}));
+
 export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
   id: ActionIdSchema,
   title: z.string().check(z.minLength(1)),
@@ -244,16 +255,7 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
   })),
   /** Host-private launch/terminal projection. Only its schema and awaits marker are frozen. */
   completion: z.optional(z.discriminatedUnion('awaits', [
-    z.strictObject({
-      awaits: z.literal('execution_runs'),
-      terminalOutputSchema: ZodSchemaLike,
-      launched: z.custom<Extract<ActionCompletionDeclaration, { awaits: 'execution_runs' }>['launched']>(
-        (value) => typeof value === 'function',
-      ),
-      terminal: z.custom<Extract<ActionCompletionDeclaration, { awaits: 'execution_runs' }>['terminal']>(
-        (value) => typeof value === 'function',
-      ),
-    }),
+    ExecutionRunCompletionDeclarationSchema,
     z.strictObject({
       awaits: z.literal('action_operations'),
       immediateResultSchema: z.optional(ZodSchemaLike),
@@ -262,6 +264,18 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
         (value) => typeof value === 'function',
       ),
       terminal: z.custom<Extract<ActionCompletionDeclaration, { awaits: 'action_operations' }>['terminal']>(
+        (value) => typeof value === 'function',
+      ),
+    }),
+    z.strictObject({
+      awaits: z.literal('workflow_runs'),
+      immediateResultSchema: z.optional(ZodSchemaLike),
+      executionRuns: z.optional(ExecutionRunCompletionDeclarationSchema),
+      terminalOutputSchema: ZodSchemaLike,
+      launched: z.custom<Extract<ActionCompletionDeclaration, { awaits: 'workflow_runs' }>['launched']>(
+        (value) => typeof value === 'function',
+      ),
+      terminal: z.custom<Extract<ActionCompletionDeclaration, { awaits: 'workflow_runs' }>['terminal']>(
         (value) => typeof value === 'function',
       ),
     }),

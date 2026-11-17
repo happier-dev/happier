@@ -2,12 +2,13 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 
-import type { ActionCompletionDeclaration, ActionCompletionRun, ExecutionRunTerminalObservation } from '../actionCompletion.js';
+import type { ActionCompletionDeclaration, ExecutionRunCompletionDeclaration, ActionCompletionRun, ExecutionRunTerminalObservation } from '../actionCompletion.js';
 import { readExecutionRunStartRunCreation } from '../../execution/runs/responseSchemas.js';
 import { ScmDiffSummaryGenerateOutputSchema } from '../../scm/diffSummary.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { ReviewWalkthroughObservationSchema } from '../../reviews/reviewNarration.js';
 import { ReviewPublicationEvidenceSchema, ReviewReviewerOutcomeV1Schema } from '../../reviews/reviewPublicationEvidence.js';
+import { ReviewRoundBindingV1Schema } from '../../reviews/reviewArtifactV1.js';
 
 import { SessionRuntimeIssueV1Schema } from '../../sessions/control/runtimeIssueV1.js';
 import { projectSessionRuntimeIssueMetadataV1 } from '../../sessions/control/runtimeIssueMetadataV1.js';
@@ -18,6 +19,7 @@ const FanoutOutputSchema = lazyZodSchema(() => z.looseObject({
   intent: z.enum(['review', 'plan']),
   sessionId: z.nullable(z.string()),
   reviewedFingerprint: z.optional(z.nullable(z.string())),
+  reviewRound: z.optional(ReviewRoundBindingV1Schema),
   results: z.array(z.discriminatedUnion('ok', [
     z.looseObject({ key: z.string().check(z.minLength(1)), ok: z.literal(true), result: z.looseObject({ runId: z.string().check(z.minLength(1)) }) }),
     z.looseObject({ key: z.string().check(z.minLength(1)), ok: z.literal(false), errorCode: z.optional(z.string().check(z.minLength(1))), error: z.optional(z.string().check(z.minLength(1))) }),
@@ -80,11 +82,13 @@ function narrationTerminalValue(run: ObservedRun, purpose: 'input' | 'stored') {
 }
 
 export const ReviewStartTerminalValueV1Schema = lazyZodSchema(() => z.strictObject({
+  reviewRound: z.optional(ReviewRoundBindingV1Schema),
   reviewedFingerprint: z.nullable(z.string()),
   commentIds: z.array(z.string().check(z.minLength(1))),
   perEngineOutcome: z.array(ReviewReviewerOutcomeV1Schema),
   narration: z.optional(NarrationTerminalValueSchema),
 }));
+export const ReviewStartNativeTerminalValueV1Schema = ReviewStartTerminalValueV1Schema;
 
 export const reviewWalkthroughCompletion: ActionCompletionDeclaration = {
   awaits: 'execution_runs',
@@ -100,7 +104,7 @@ export const reviewWalkthroughCompletion: ActionCompletionDeclaration = {
   },
 };
 
-export const reviewStartCompletion: ActionCompletionDeclaration = {
+export const reviewStartExecutionRunCompletion: ExecutionRunCompletionDeclaration = {
   awaits: 'execution_runs',
   terminalOutputSchema: ReviewStartTerminalValueV1Schema,
   launched: (output, purpose = 'input') => {
@@ -150,13 +154,15 @@ export const reviewStartCompletion: ActionCompletionDeclaration = {
       && (retained.reviewedFingerprint === undefined || retained.reviewedFingerprint === agreed)
       ? agreed : null;
     return {
+      ...(retained.reviewRound ? { reviewRound: retained.reviewRound } : {}),
       reviewedFingerprint,
       // Only the host bridge's materialized ids count; raw findings are not proof of writes.
       commentIds: [...new Set(completed.flatMap((outcome) => outcome.commentIds ?? []))],
       perEngineOutcome: [
         ...reviewRuns.map((run) => {
           const reviewOutcome = run.observation
-            ? reviewedRuns?.find((review) => review.runId === run.runId)?.reviewOutcome ?? 'unavailable' : undefined;
+            ? reviewedRuns?.find((review) => review.runId === run.runId)?.reviewOutcome ?? 'unavailable'
+            : run.outcome.kind === 'completed' ? run.outcome.reviewOutcome : undefined;
           return {
             ...perRunOutcome(run),
             ...(reviewOutcome ? { reviewOutcome } : {}),
@@ -174,6 +180,8 @@ export const reviewStartCompletion: ActionCompletionDeclaration = {
     };
   },
 };
+
+export const reviewStartCompletion = reviewStartExecutionRunCompletion;
 
 export const planStartCompletion: ActionCompletionDeclaration = {
   awaits: 'execution_runs',

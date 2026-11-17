@@ -3,15 +3,34 @@ import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.
 
 import { getActionSpec } from './actionSpecs.js';
 import { serializeActionSpec } from './actionCatalog.js';
+import { reviewStartExecutionRunCompletion } from './specs/executionRunCompletion.js';
 import { readActionCompletionRunObservationV1, prepareActionCompletionV1,
   freezeActionCompletionContractV1, resumeActionCompletionV1 } from './actionCompletion.js';
 
 describe('Action completion contract', () => {
+  it('retains the admitted Review binding after a clean direct reviewer completes', () => {
+    const declaration = reviewStartExecutionRunCompletion;
+    const reviewRound = { reviewId: 'review-existing', roundOrdinal: 2 };
+    const value = declaration.terminal({ intent: 'review', sessionId: 'source', reviewRound,
+      results: [{ key: 'reviewer-1', ok: true, result: { runId: 'run-clean' } }] },
+    [{ key: 'reviewer-1', runId: 'run-clean', outcome: { kind: 'completed', result: {}, commentIds: [],
+      materialization: { kind: 'complete' } } }]);
+    expect(declaration.terminalOutputSchema.parse(value)).toMatchObject({ reviewRound, commentIds: [] });
+  });
+  it('preserves native partial review coverage independently of complete comment publication', () => {
+    const outcome = readActionCompletionRunObservationV1({ run: { status: 'succeeded' }, latestToolResult: {
+      reviewOutcome: 'partial', commentIds: [], materialization: { kind: 'complete' },
+    } });
+    expect(outcome).toMatchObject({ kind: 'completed', reviewOutcome: 'partial', materialization: { kind: 'complete' } });
+    expect(reviewStartExecutionRunCompletion.terminal({ intent: 'review', sessionId: 'source',
+      results: [{ key: 'reviewer', ok: true, result: { runId: 'partial' } }] }, [{ key: 'reviewer', runId: 'partial', outcome }]))
+      .toMatchObject({ perEngineOutcome: [{ outcome: 'completed', reviewOutcome: 'partial' }] });
+  });
   it.each([undefined, { kind: 'review_walkthrough', comparisonId: 'c' }] as const)('CC5 carries runtime issue through terminal Action values (%s)', (observation) => {
     const runtimeIssueV1 = { v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit', source: 'usage_limit', occurredAt: 1, failureCause: { phase: 'client_start', failureReason: 'usage_limit', retryable: false } } as const;
     const outcome = readActionCompletionRunObservationV1({ run: { status: 'failed', error: { code: 'execution_run_failed', runtimeIssueV1 } } }, observation);
     expect(outcome).toMatchObject({ kind: 'failed', runtimeIssueV1 });
-    const declaration = getActionSpec('review.start').completion!;
+    const declaration = reviewStartExecutionRunCompletion;
     const value = declaration.terminal({ intent: 'review', sessionId: null, results: [{ key: 'engine', ok: true, result: { runId: 'r' } }] }, [{ key: 'engine', runId: 'r', outcome }]);
     expect(declaration.terminalOutputSchema.parse(value)).toMatchObject({ perEngineOutcome: [{ runtimeIssueV1 }] });
   });
@@ -105,7 +124,7 @@ describe('Action completion contract', () => {
       .toMatchObject({ kind: 'outcome_uncertain', code: 'execution_run_result_unavailable' });
   });
   it('links one narrator operation without treating it as an additional reviewer', () => {
-    const launched = getActionSpec('review.start').completion!.launched({ intent: 'review', sessionId: 's1', results: [
+    const launched = reviewStartExecutionRunCompletion.launched({ intent: 'review', sessionId: 's1', results: [
       { key: 'codex', ok: true, result: { runId: 'review-1' } },
     ], narration: { runId: 'narrator-1', comparisonId: 'comparison-1', state: 'collecting', mode: 'seeded_narrator' } });
     expect(launched.runs).toEqual([{ key: 'codex', runId: 'review-1' }, { key: 'narrator', runId: 'narrator-1',

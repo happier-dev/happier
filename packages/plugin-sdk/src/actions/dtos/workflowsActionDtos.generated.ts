@@ -29489,6 +29489,10 @@ type WorkflowsActionExecution1 = undefined | {
         machineId: string;
         operationId: string;
     }[];
+    awaitedWorkflows?: undefined | {
+        key: string;
+        runId: string;
+    }[];
 } | {
     localInputId: string;
     kind: 'detached_run';

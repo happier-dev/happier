@@ -14,9 +14,11 @@ import { ExecutionRunStartRunCreationSchema, type ExecutionRunStartRunCreation }
 import { ExecutionRunOutputObservationSchema, type ExecutionRunOutputObservation } from '../reviews/reviewNarration.js';
 import { ScmDiffSummaryGenerateOutputSchema, type ScmDiffSummaryReviewRun } from '../scm/diffSummary.js';
 import { ScmDiffSummaryResultErrorCodeSchema } from '../scm/diffSummaryResult.js';
-import { ReviewPublicationEvidenceSchema, type ReviewPublicationMaterialization } from '../reviews/reviewPublicationEvidence.js';
+import { ReviewPublicationEvidenceSchema, type ReviewPublicationMaterialization, type ReviewReviewerOutcomeV1 } from '../reviews/reviewPublicationEvidence.js';
 import { ActionOperationSnapshotV1Schema, type ActionOperationSnapshotV1 } from './operations/v1.js';
 import type { DeploymentReceiptResultV1 } from '../deployments/deploymentActionsV1.js';
+import type { WorkflowRunWaitResultV1 } from '../workflows/actionsV1.js';
+import { isTerminalAutomationRunStateV3 } from '../automations/automationRunStateV3.js';
 
 import { projectSessionRuntimeIssueMetadataV1 } from '../sessions/control/runtimeIssueMetadataV1.js';
 import type { SessionRuntimeIssueV1 } from '../sessions/control/runtimeIssueV1.js';
@@ -32,6 +34,7 @@ export type ExecutionRunTerminalObservation =
     reviewedFingerprint?: string | null;
     commentIds?: readonly string[];
     materialization?: ReviewRunMaterialization;
+    reviewOutcome?: ReviewReviewerOutcomeV1['reviewOutcome'];
   }>
   | Readonly<{ kind: 'failed'; code: string; runtimeIssueV1?: SessionRuntimeIssueV1; reviewedRuns?: readonly ScmDiffSummaryReviewRun[] }>
   | Readonly<{ kind: 'cancelled'; code?: string; reviewedRuns?: readonly ScmDiffSummaryReviewRun[] }>
@@ -96,13 +99,14 @@ export function isActionCompletionRunObservationPendingV1(observation: Execution
 }
 
 export type ActionCompletionOperation = Readonly<{ key: string; serverId: string; machineId: string; operationId: string }>;
+export type ActionCompletionWorkflow = Readonly<{ key: string; runId: string }>;
 export type ActionCompletionContextV1 = Readonly<{
   serverId?: string | null;
   /** The admitted invocation's frozen input, also retained by Workflow recovery. */
   input?: unknown;
 }>;
 
-type ExecutionRunCompletionDeclaration = Readonly<{
+export type ExecutionRunCompletionDeclaration = Readonly<{
   awaits: 'execution_runs';
   launched: (output: unknown, purpose?: 'input' | 'stored') => Readonly<{
     runs: readonly ActionCompletionRun[];
@@ -126,10 +130,23 @@ type OperationCompletionDeclaration = Readonly<{
     ActionCompletionOperation & { operation: ActionOperationSnapshotV1 }
   >[]) => unknown;
 }>;
-export type ActionCompletionDeclaration = ExecutionRunCompletionDeclaration | OperationCompletionDeclaration;
+type WorkflowCompletionDeclaration = Readonly<{
+  awaits: 'workflow_runs';
+  immediateResultSchema?: z.ZodMiniType;
+  /** Direct starts retain their existing native completion owner. */
+  executionRuns?: ExecutionRunCompletionDeclaration;
+  launched: (output: unknown, context?: ActionCompletionContextV1) => Readonly<{
+    workflows: readonly ActionCompletionWorkflow[];
+  }>;
+  terminalOutputSchema: z.ZodMiniType;
+  terminal: (output: unknown, workflows: readonly Readonly<
+    ActionCompletionWorkflow & { workflow: WorkflowRunWaitResultV1 }
+  >[]) => unknown;
+}>;
+export type ActionCompletionDeclaration = ExecutionRunCompletionDeclaration | OperationCompletionDeclaration | WorkflowCompletionDeclaration;
 
 export const ActionCompletionContractV1Schema = lazyZodSchema(() => z.strictObject({
-  awaits: z.enum(['execution_runs', 'action_operations']),
+  awaits: z.enum(['execution_runs', 'action_operations', 'workflow_runs']),
   terminalOutputSchema: PluginJsonSchemaV2Schema,
 }));
 export type ActionCompletionContractV1 = z.infer<typeof ActionCompletionContractV1Schema>;
@@ -148,11 +165,18 @@ const ActionCompletionOperationSchema = lazyZodSchema(() => z.strictObject({
 const ActionCompletionOperationLaunchesSchema = lazyZodSchema(() => z.strictObject({
   operations: z.array(ActionCompletionOperationSchema).check(z.minLength(1)),
 }));
+const ActionCompletionWorkflowSchema = lazyZodSchema(() => z.strictObject({
+  key: z.string().check(z.minLength(1)), runId: z.string().check(z.minLength(1)),
+}));
+const ActionCompletionWorkflowLaunchesSchema = lazyZodSchema(() => z.strictObject({
+  workflows: z.array(ActionCompletionWorkflowSchema),
+}));
 export const ActionCompletionStateV1Schema = lazyZodSchema(() => z.strictObject({
   output: StrictJsonValueSchema,
   awaitedRuns: z.optional(z.array(ActionCompletionRunSchema).check(z.minLength(1))),
   awaitedOperations: z.optional(z.array(ActionCompletionOperationSchema).check(z.minLength(1))),
-}).check(z.refine(state => (state.awaitedRuns !== undefined) !== (state.awaitedOperations !== undefined), {
+  awaitedWorkflows: z.optional(z.array(ActionCompletionWorkflowSchema).check(z.minLength(1))),
+}).check(z.refine(state => [state.awaitedRuns, state.awaitedOperations, state.awaitedWorkflows].filter(owner => owner !== undefined).length === 1, {
   message: 'Completion retains exactly one observation owner.',
 })));
 export type ActionCompletionStateV1 = z.infer<typeof ActionCompletionStateV1Schema>;
@@ -188,6 +212,13 @@ export function prepareActionCompletionV1(
   if (!output.success) return { kind: 'failed', errorCode: 'invalid_action_output' };
   if (!declaration) return { kind: 'completed', value: output.data };
   try {
+    if (declaration.awaits === 'workflow_runs') {
+      if (declaration.immediateResultSchema?.safeParse(output.data).success) return { kind: 'completed', value: output.data };
+      const launched = ActionCompletionWorkflowLaunchesSchema.parse(declaration.launched(output.data, context));
+      if (launched.workflows.length > 0) return { kind: 'awaiting', state: { output: output.data, awaitedWorkflows: launched.workflows } };
+      if (!declaration.executionRuns) return { kind: 'outcome_uncertain', errorCode: 'outcome_uncertain' };
+      declaration = declaration.executionRuns;
+    }
     if (declaration.awaits === 'action_operations') {
       const immediate = declaration.immediateResultSchema?.safeParse(output.data);
       if (immediate?.success) return { kind: 'completed', value: output.data };
@@ -216,11 +247,38 @@ export async function resumeActionCompletionV1(params: Readonly<{
   resolveDeclaration: (actionId: string) => ActionCompletionDeclaration | undefined;
   observeRun?: (run: ActionCompletionRun) => Promise<ExecutionRunTerminalObservation>;
   observeOperation?: (operation: ActionCompletionOperation) => Promise<unknown>;
+  observeWorkflow?: (workflow: ActionCompletionWorkflow) => Promise<unknown>;
 }>): Promise<ActionCompletionResult> {
   const uncertain = { kind: 'outcome_uncertain', errorCode: 'outcome_uncertain' } as const;
   const contract = createStoredReadSchema(ActionCompletionContractV1Schema).safeParse(params.completion);
   const state = createStoredReadSchema(ActionCompletionStateV1Schema).safeParse(params.state);
   if (!contract.success || !state.success) return uncertain;
+  if (state.data.awaitedWorkflows) {
+    try {
+      const declaration = params.resolveDeclaration(params.actionId);
+      if (contract.data.awaits !== 'workflow_runs' || declaration?.awaits !== 'workflow_runs' || !params.observeWorkflow) return uncertain;
+      const launched = ActionCompletionWorkflowLaunchesSchema.parse(declaration.launched(state.data.output, params.context));
+      if (!sameStrictJsonValue(launched.workflows, state.data.awaitedWorkflows)) return uncertain;
+      // Workflow contracts themselves depend on completion correspondence. Resolve
+      // their observation schema only after the module graph has initialized.
+      const { WorkflowRunWaitResultV1Schema } = await import('../workflows/actionsV1.js');
+      const observed = await Promise.all(state.data.awaitedWorkflows.map(async target => {
+        const workflow = WorkflowRunWaitResultV1Schema.parse(await params.observeWorkflow!(target));
+        if (workflow.run.id !== target.runId || workflow.observation !== 'terminal' || !isTerminalAutomationRunStateV3(workflow.run.state)) {
+          throw new Error('workflow_terminal_observation_unavailable');
+        }
+        return { ...target, workflow };
+      }));
+      const failed = observed.find(({ workflow }) => workflow.run.state !== 'succeeded' && workflow.run.state !== 'cancelled');
+      if (failed) return failed.workflow.run.state === 'outcome_uncertain' ? uncertain
+        : { kind: 'failed', errorCode: failed.workflow.run.errorCode ?? 'action_failed' };
+      if (observed.some(({ workflow }) => workflow.run.state === 'cancelled')) return { kind: 'cancelled', errorCode: 'cancelled' };
+      const value = StrictJsonValueSchema.safeParse(declaration.terminal(state.data.output, observed));
+      if (!value.success) return { kind: 'failed', errorCode: 'invalid_action_output' };
+      const validated = validateExecutionRunProfileResult(value.data, { kind: 'json', schema: contract.data.terminalOutputSchema });
+      return validated.ok ? { kind: 'completed', value: validated.value } : { kind: 'failed', errorCode: 'invalid_action_output' };
+    } catch { return uncertain; }
+  }
   if (contract.data.awaits === 'action_operations') {
     try {
       const declaration = params.resolveDeclaration(params.actionId);
@@ -256,10 +314,11 @@ export async function resumeActionCompletionV1(params: Readonly<{
   }
   if (!state.data.awaitedRuns || !params.observeRun) return uncertain;
   const observeRun = params.observeRun;
-  let declaration: ActionCompletionDeclaration | undefined;
+  let declaration: ExecutionRunCompletionDeclaration | undefined;
   let hasUnknownLaunch = false;
   try {
-    declaration = params.resolveDeclaration(params.actionId);
+    const current = params.resolveDeclaration(params.actionId);
+    declaration = current?.awaits === 'workflow_runs' ? current.executionRuns : current?.awaits === 'execution_runs' ? current : undefined;
     if (!declaration || declaration.awaits !== 'execution_runs') return uncertain;
     const launches = ActionCompletionLaunchesSchema.parse(declaration.launched(state.data.output, 'stored'));
     if (!sameStrictJsonValue(launches.runs, state.data.awaitedRuns)) return uncertain;
