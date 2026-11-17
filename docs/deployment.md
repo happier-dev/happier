@@ -2626,6 +2626,10 @@ the host approves through `approveTerminalAuthRequest`, and the container claims
 and persists its own credential from Home. The enrolled container Machine is the
 collector selected by `telemetryMachineId`.
 
+When the controller host belongs to another Team member, the enrolled App keeps
+a lasting credential for the deployer's Account on that host, under the same
+trusted-custodian model as the deployment secrets that host already receives.
+
 Only this App placement declares `HAPPIER_DEPLOYED_TELEMETRY_PORT`. The same
 receiver uses that fixed container-interface port; all other placements retain
 their localhost listener. The existing Domain/Caddy owner supplies TLS ingress,
