@@ -26,9 +26,14 @@ type NavigateToSessionOptions = Readonly<{
     requireActiveHome?: boolean;
 }>;
 
+export type SessionNavigationRouter = Readonly<{
+    navigate: (href: ReturnType<typeof buildScopedSessionRouteHref>,
+        options?: Parameters<ReturnType<typeof useDestinationRouter>['navigate']>[1]) => void;
+}>;
+
 /** The hook and interaction-only callers share the same Home switch and destination owner. */
 export async function navigateToSession(sessionId: string, opts: NavigateToSessionOptions | undefined, owner: Readonly<{
-    router: Pick<ReturnType<typeof useDestinationRouter>, 'navigate'>;
+    router: SessionNavigationRouter;
     refreshFromActiveServer: () => Promise<void>;
     /** Account admission already established this active Home before handing off. */
     activeHomeScope?: ServerAccountScope;

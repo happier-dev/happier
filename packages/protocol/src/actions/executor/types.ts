@@ -2149,7 +2149,7 @@ export type ActionExecutorDeps = Readonly<{
   /** Rejoin a terminal outcome at its original publisher; null uses this host's input transport. */
   approvalRequestOutcomePublication?: (args: Readonly<{
     artifactId: string;
-    request: ApprovalRequestV2;
+    request: StoredApprovalRequestV2;
     context: ActionExecutorContext;
   }>) => Promise<ActionExecuteResult | null>;
   /**
