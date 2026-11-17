@@ -192,6 +192,7 @@ async function runSingleSpecialCommand(params: Readonly<{
   hostContextOnly?: PreparedHostContextOnly;
   onHostEventCommitted?: (localId: string) => void;
   onPromptFailure?: Parameters<typeof runPermissionModePromptLoop>[0]['onPromptFailure'];
+  onAfterStart?: Parameters<typeof runPermissionModePromptLoop>[0]['onAfterStart'];
   resolveComposerAttachmentForDispatch?: Parameters<typeof runPermissionModePromptLoop>[0]['resolveComposerAttachmentForDispatch'];
   checkpointLifecycle?: Parameters<typeof runPermissionModePromptLoop>[0]['checkpointLifecycle'];
   exitWhen?: () => boolean;
@@ -266,6 +267,7 @@ async function runSingleSpecialCommand(params: Readonly<{
     formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     registerProviderAcceptedEffect: params.registerProviderAcceptedEffect ?? (() => undefined),
     ...(params.onPromptFailure ? { onPromptFailure: params.onPromptFailure } : {}),
+    ...(params.onAfterStart ? { onAfterStart: params.onAfterStart } : {}),
     ...(params.resolveComposerAttachmentForDispatch ? { resolveComposerAttachmentForDispatch: params.resolveComposerAttachmentForDispatch } : {}),
     ...(params.resolveFreshSessionSystemPrompt ? { resolveFreshSessionSystemPrompt: params.resolveFreshSessionSystemPrompt } : {}),
     ...(params.checkpointLifecycle ? { checkpointLifecycle: params.checkpointLifecycle } : {}),
@@ -543,7 +545,36 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
     expect(JSON.stringify(result.enqueueAgentMessageCommitted.mock.calls)).not.toContain('PRIVATE_NATIVE_COMPLETION');
   });
 
-  it.each(['structured input', 'daemon refusal', 'bridge refusal', 'native send'] as const)('logs only class, code and phase for a %s failure', async (boundary) => {
+  it('retains safe source coordinates when runtime startup fails without exposing private error text or paths', async () => {
+    const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => undefined);
+    const privateText = 'PRIVATE_RUNTIME_PROMPT_AND_CREDENTIAL';
+    const message = `${privateText}\n    at forged (/private/${privateText}/${privateText}.ts:11:2)`;
+    const error = new Error(message);
+    error.stack = `Error: ${message}\n    at nativeBoundary (/private/${privateText}/nativeStartup.ts:41:7)\n    at pluginBoundary (C:\\private\\${privateText}\\pluginStart.mjs:11:9)\n    at fileBoundary (file:///private/${privateText}/fileStartup.js:23:4)`;
+    const onPromptFailure = vi.fn();
+    try {
+      const { runtime } = await runSingleSpecialCommand({
+        text: privateText, localId: 'runtime-start-failure', onPromptFailure,
+        onAfterStart: async () => { throw error; },
+      });
+      const failures = log.mock.calls.filter(([label]) => label === '[PermissionModePromptLoop] Prompt failed');
+      expect(failures).toHaveLength(1);
+      expect(failures[0]?.[1]).toEqual({
+        sessionId: 'session-local-special-command', localId: 'runtime-start-failure',
+        phase: 'runtime_start', errorClass: 'Error', errorCode: null,
+        sourceLocations: ['nativeStartup.ts:41:7', 'pluginStart.mjs:11:9', 'fileStartup.js:23:4'],
+      });
+      expect(JSON.stringify(failures)).not.toContain(privateText);
+      expect(JSON.stringify(failures)).not.toContain('/private/');
+      expect(JSON.stringify(failures)).not.toContain('C:\\private');
+      expect(onPromptFailure).toHaveBeenCalledWith(error, { preparingPrompt: false, startupPhase: 'turn_start' });
+      expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it.each(['structured input', 'daemon refusal', 'bridge refusal', 'native send'] as const)('logs only class, code, phase and safe coordinates for a %s failure', async (boundary) => {
     // File logging and native process delivery are real system boundaries.
     const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => undefined);
     const runtime = createRuntime();
@@ -583,6 +614,7 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
         errorClass: boundary !== 'native send' ? 'Error' : 'TypeError',
         errorCode: boundary === 'structured input' ? 'composer_attachment_resolution_unavailable'
           : boundary !== 'native send' ? 'composer_attachment_resolution_failed' : 'ECONNRESET',
+        sourceLocations: expect.any(Array),
         ...(boundary === 'daemon refusal' || boundary === 'bridge refusal' ? { preparationCause: {
           code: boundary === 'bridge refusal' ? 'native_agent_privileged_effect_authority_unavailable'
             : 'triage_account_storage_unavailable', stage: 'dispatch',

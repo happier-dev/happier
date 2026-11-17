@@ -79,6 +79,7 @@ import {
 import type { StructuredInputCatalogReaders, StructuredInputComposerReferenceResolver } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
 import { prepareSessionInputForProviderDispatch, renderSessionInputProviderPrompt, resolveSessionInputForProviderDispatch, readStructuredInputPreparationFailure, type ComposerAttachmentDispatchResolver } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
 import { logger } from '@/ui/logger';
+import { projectProviderFailureSourceLocations } from '@/providers/diagnostics';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import type { AgentCompositionToolSelection } from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
 import type { HostPreparedContext } from '@/agent/runtime/session/contextOnly/hostContextOnlyInput';
@@ -1984,6 +1985,7 @@ export async function runPermissionModePromptLoop(opts: {
           phase: promptFailurePhase,
           errorClass: diagnostic.errorClass,
           errorCode: preparation?.code ?? diagnostic.errorCode,
+          sourceLocations: projectProviderFailureSourceLocations(diagnostic),
           ...(preparation?.preparationCause ? { preparationCause: preparation.preparationCause } : {}),
         });
         await opts.onPromptFailure?.(error, {

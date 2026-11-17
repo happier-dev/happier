@@ -1,4 +1,5 @@
-import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { win32 } from 'node:path';
+import { projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
 
 type RunPreparationPhase =
@@ -36,6 +37,13 @@ export async function traceRunPreparationPhase<T>(
   }
 }
 
+/** Strip parent paths from frames validated by the canonical error parser. */
+export function projectProviderFailureSourceLocations(
+  diagnostic: Pick<ReturnType<typeof readUnexpectedActionErrorDiagnosticV1>, 'stackFrames'>,
+): readonly string[] {
+  return diagnostic.stackFrames.map(frame => `${win32.basename(frame.file)}:${frame.line}:${frame.column}`);
+}
+
 /** Unexpected failures may contain credentials in their message or cause.
  * Retain the exception class and source coordinates, never arbitrary prose,
  * paths, request data, or serialized error objects. */
@@ -50,12 +58,7 @@ export function logProviderUnexpectedFailure(
         ? [Error, TypeError, ReferenceError, RangeError, SyntaxError, URIError, EvalError]
           .find(type => failure.constructor === type)?.name ?? 'Error'
         : 'Unknown';
-      const sourceLocations = failure instanceof Error && typeof failure.stack === 'string'
-        ? failure.stack.split('\n').flatMap(line => {
-          if (!/^\s+at /.test(line)) return [];
-          const location = /[/\\]([^/\\():\s]+\.(?:[cm]?js|tsx?)):(\d+):(\d+)\)?$/.exec(line);
-          return location ? [`${location[1]}:${location[2]}:${location[3]}`] : [];
-        }) : [];
+      const sourceLocations = projectProviderFailureSourceLocations(readUnexpectedActionErrorDiagnosticV1(failure));
       logger.warnLocalFile('[PROVIDER] Unexpected failure', { operation, errorType, sourceLocations, failureCause: projectActionFailureCauseV1(failure) });
     }
   } catch { /* Diagnostics cannot replace the original Provider failure. */ }
