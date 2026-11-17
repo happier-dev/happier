@@ -282,7 +282,7 @@ importers:
         version: 7.8.5
       sharp:
         specifier: ^0.35.5
-        version: 0.35.5(@types/node@25.1.0)
+        version: 0.35.5(@types/node@25.0.10)
       shiki:
         specifier: 4.5.0
         version: 4.5.0
@@ -303,7 +303,7 @@ importers:
         version: 5.9.3
       vite:
         specifier: 7.3.1
-        version: 7.3.1(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 7.3.1(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
       yaml:
         specifier: 2.9.0
         version: 2.9.0
@@ -903,7 +903,7 @@ importers:
         version: 16.4.11(@types/react@19.2.14)(lucide-react@0.563.0(react@19.2.0))(next@16.1.4(@babel/core@7.29.0(supports-color@8.1.1))(@opentelemetry/api@1.9.1)(@playwright/test@1.58.2)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(supports-color@8.1.1)(zod@4.6.7)
       fumadocs-mdx:
         specifier: 14.2.6
-        version: 14.2.6(@types/react@19.2.14)(fumadocs-core@16.4.11(@types/react@19.2.14)(lucide-react@0.563.0(react@19.2.0))(next@16.1.4(@babel/core@7.29.0(supports-color@8.1.1))(@opentelemetry/api@1.9.1)(@playwright/test@1.58.2)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(supports-color@8.1.1)(zod@4.6.7))(next@16.1.4(@babel/core@7.29.0(supports-color@8.1.1))(@opentelemetry/api@1.9.1)(@playwright/test@1.58.2)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(react@19.2.0)(supports-color@8.1.1)(vite@7.3.1(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0))
+        version: 14.2.6(@types/react@19.2.14)(fumadocs-core@16.4.11(@types/react@19.2.14)(lucide-react@0.563.0(react@19.2.0))(next@16.1.4(@babel/core@7.29.0(supports-color@8.1.1))(@opentelemetry/api@1.9.1)(@playwright/test@1.58.2)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(supports-color@8.1.1)(zod@4.6.7))(next@16.1.4(@babel/core@7.29.0(supports-color@8.1.1))(@opentelemetry/api@1.9.1)(@playwright/test@1.58.2)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(react@19.2.0)(supports-color@8.1.1)(vite@7.3.1(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0))
       fumadocs-ui:
         specifier: 16.4.11
         version: 16.4.11(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(fumadocs-core@16.4.11(@types/react@19.2.14)(lucide-react@0.563.0(react@19.2.0))(next@16.1.4(@babel/core@7.29.0(supports-color@8.1.1))(@opentelemetry/api@1.9.1)(@playwright/test@1.58.2)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(supports-color@8.1.1)(zod@4.6.7))(next@16.1.4(@babel/core@7.29.0(supports-color@8.1.1))(@opentelemetry/api@1.9.1)(@playwright/test@1.58.2)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(tailwindcss@4.1.18)
@@ -934,7 +934,7 @@ importers:
         version: 2.0.13
       '@types/node':
         specifier: ^25.0.10
-        version: 25.1.0
+        version: 25.0.10
       '@types/react':
         specifier: ^19.2.9
         version: 19.2.14
@@ -1652,7 +1652,7 @@ importers:
         version: 7.14.10(6848bfffbc62b860409c81de87af410f)
       '@revenuecat/purchases-js':
         specifier: ^1.11.1
-        version: 1.24.3
+        version: 1.71.0
       '@ricky0123/vad-web':
         specifier: 0.0.30
         version: 0.0.30
@@ -1742,7 +1742,7 @@ importers:
         version: 1.1.3
       diff:
         specifier: ^8.0.2
-        version: 8.0.4
+        version: 8.0.2
       expo:
         specifier: ^55.0.0
         version: 55.0.11(patch_hash=97ff07c32c24fbcb1a04e488a259b2fab0c10cbfcba3f3890c8e7eb80e8237e1)(@babel/core@7.29.0(supports-color@8.1.1))(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.10)(expo-widgets@55.0.15)(react-dom@19.2.0(react@19.2.0))(react-native-webview@13.16.0(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0))(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)(supports-color@8.1.1)(typescript@5.9.3)
@@ -2104,7 +2104,7 @@ importers:
         version: 19.2.3(@types/react@19.2.14)
       '@vitejs/plugin-react':
         specifier: ^4.3.4
-        version: 4.7.0(supports-color@8.1.1)(vite@6.4.3(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0))
+        version: 4.7.0(supports-color@8.1.1)(vite@6.4.3(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0))
       autoprefixer:
         specifier: ^10.4.21
         version: 10.4.24(postcss@8.5.6)
@@ -2113,7 +2113,7 @@ importers:
         version: 8.5.6
       sharp:
         specifier: ^0.35.5
-        version: 0.35.5(@types/node@25.1.0)
+        version: 0.35.5(@types/node@25.0.10)
       tailwindcss:
         specifier: ^3.4.17
         version: 3.4.19(tsx@4.23.12)(yaml@2.9.0)
@@ -2122,10 +2122,10 @@ importers:
         version: 5.9.3
       vite:
         specifier: ^6.4.1
-        version: 6.4.3(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 6.4.3(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/agents:
     dependencies:
@@ -2141,7 +2141,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/audio-stream-native:
     devDependencies:
@@ -2153,7 +2153,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/brand:
     dependencies:
@@ -2175,7 +2175,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/cli-common:
     dependencies:
@@ -2224,7 +2224,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/database-protocol:
     dependencies:
@@ -2240,7 +2240,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/databases:
     dependencies:
@@ -2287,7 +2287,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/deployments:
     dependencies:
@@ -2309,7 +2309,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/desktop-native:
     devDependencies:
@@ -2318,7 +2318,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/email-transports-protocol:
     devDependencies:
@@ -2333,7 +2333,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/embed:
     dependencies:
@@ -2361,7 +2361,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/forge-ci:
     dependencies:
@@ -2389,7 +2389,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/iroh-native:
     dependencies:
@@ -2405,7 +2405,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/peer-mediation:
     dependencies:
@@ -2418,7 +2418,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/peer-transport:
     dependencies:
@@ -2431,7 +2431,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugin-sdk:
     dependencies:
@@ -2544,7 +2544,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/antigravity:
     dependencies:
@@ -2563,7 +2563,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/app-context:
     dependencies:
@@ -2588,7 +2588,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/asciinema:
     dependencies:
@@ -2610,7 +2610,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/backup-destinations:
     dependencies:
@@ -2626,7 +2626,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/channel-discord:
     dependencies:
@@ -2645,7 +2645,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/channel-email:
     dependencies:
@@ -2712,7 +2712,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/channel-slack:
     dependencies:
@@ -2728,7 +2728,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/channel-telegram:
     dependencies:
@@ -2744,7 +2744,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/channels:
     dependencies:
@@ -2845,7 +2845,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/cliproxyapi:
     dependencies:
@@ -2883,7 +2883,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/codebuddy:
     dependencies:
@@ -2908,7 +2908,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/codex:
     dependencies:
@@ -2945,7 +2945,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/copilot:
     dependencies:
@@ -2973,7 +2973,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/cursor:
     dependencies:
@@ -2989,7 +2989,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/custom-acp:
     dependencies:
@@ -3002,7 +3002,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/database-capture:
     dependencies:
@@ -3048,7 +3048,7 @@ importers:
         version: link:../../plugin-ui
       mysql2:
         specifier: 3.24.6
-        version: 3.24.6(@types/node@25.1.0)
+        version: 3.24.6(@types/node@25.0.10)
       pg:
         specifier: 8.23.1
         version: 8.23.1
@@ -3070,7 +3070,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/deepseek:
     dependencies:
@@ -3086,7 +3086,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/deploy-cloudflare:
     dependencies:
@@ -3105,7 +3105,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/deploy-vercel:
     dependencies:
@@ -3143,7 +3143,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/deployment-supabase:
     dependencies:
@@ -3159,7 +3159,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/deployment-templates:
     dependencies:
@@ -3175,7 +3175,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/devcontainer:
     dependencies:
@@ -3207,7 +3207,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/droid:
     dependencies:
@@ -3238,7 +3238,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/elevenlabs:
     dependencies:
@@ -3260,7 +3260,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/fx:
     dependencies:
@@ -3288,7 +3288,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/gemini:
     dependencies:
@@ -3304,7 +3304,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/google:
     dependencies:
@@ -3339,7 +3339,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/inspector:
     dependencies:
@@ -3364,7 +3364,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/jira:
     dependencies:
@@ -3429,7 +3429,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/kimi:
     dependencies:
@@ -3448,7 +3448,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/kiro:
     dependencies:
@@ -3461,7 +3461,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/lang-markdown:
     dependencies:
@@ -3487,7 +3487,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/lang-web:
     dependencies:
@@ -3547,7 +3547,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/machine-agent37:
     dependencies:
@@ -3579,7 +3579,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/machine-coder:
     dependencies:
@@ -3608,7 +3608,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/machine-cua:
     dependencies:
@@ -3757,7 +3757,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/machine-lima:
     dependencies:
@@ -3770,7 +3770,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/machine-lume:
     dependencies:
@@ -3789,7 +3789,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/machine-maritime:
     dependencies:
@@ -3853,7 +3853,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/machine-services:
     dependencies:
@@ -3942,7 +3942,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/muse:
     dependencies:
@@ -3967,7 +3967,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/ohmypi:
     dependencies:
@@ -3998,7 +3998,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/ollama:
     dependencies:
@@ -4014,7 +4014,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/onepassword:
     dependencies:
@@ -4027,7 +4027,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/openai:
     dependencies:
@@ -4049,7 +4049,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/openai-compat:
     dependencies:
@@ -4062,7 +4062,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/openai-models:
     dependencies:
@@ -4078,7 +4078,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/opencode:
     dependencies:
@@ -4127,7 +4127,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/openrouter:
     dependencies:
@@ -4143,7 +4143,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/outbound-notify:
     dependencies:
@@ -4156,7 +4156,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/pi:
     dependencies:
@@ -4202,34 +4202,34 @@ importers:
         version: 8.17.1
       pi-ai-0810:
         specifier: npm:@earendil-works/pi-ai@0.81.0
-        version: '@earendil-works/pi-ai@0.81.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)'
+        version: '@earendil-works/pi-ai@0.81.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)'
       pi-ai-0811:
         specifier: npm:@earendil-works/pi-ai@0.81.1
-        version: '@earendil-works/pi-ai@0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)'
+        version: '@earendil-works/pi-ai@0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)'
       pi-ai-0820:
         specifier: npm:@earendil-works/pi-ai@0.82.0
-        version: '@earendil-works/pi-ai@0.82.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)'
+        version: '@earendil-works/pi-ai@0.82.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)'
       pi-ai-0821:
         specifier: npm:@earendil-works/pi-ai@0.82.1
-        version: '@earendil-works/pi-ai@0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)'
+        version: '@earendil-works/pi-ai@0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)'
       pi-coding-agent-0810:
         specifier: npm:@earendil-works/pi-coding-agent@0.81.0
-        version: '@earendil-works/pi-coding-agent@0.81.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)'
+        version: '@earendil-works/pi-coding-agent@0.81.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)'
       pi-coding-agent-0811:
         specifier: npm:@earendil-works/pi-coding-agent@0.81.1
-        version: '@earendil-works/pi-coding-agent@0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)'
+        version: '@earendil-works/pi-coding-agent@0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)'
       pi-coding-agent-0820:
         specifier: npm:@earendil-works/pi-coding-agent@0.82.0
-        version: '@earendil-works/pi-coding-agent@0.82.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)'
+        version: '@earendil-works/pi-coding-agent@0.82.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)'
       pi-coding-agent-0821:
         specifier: npm:@earendil-works/pi-coding-agent@0.82.1
-        version: '@earendil-works/pi-coding-agent@0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)'
+        version: '@earendil-works/pi-coding-agent@0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)'
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/posthog:
     dependencies:
@@ -4307,7 +4307,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/review-deepsec:
     dependencies:
@@ -4323,7 +4323,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/scm-azure-devops:
     dependencies:
@@ -4394,7 +4394,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/scm-git:
     dependencies:
@@ -4410,7 +4410,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/scm-github:
     dependencies:
@@ -4493,7 +4493,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/scm-sapling:
     dependencies:
@@ -4509,7 +4509,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/sentry:
     dependencies:
@@ -4602,7 +4602,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/xai:
     dependencies:
@@ -4621,7 +4621,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/zai:
     dependencies:
@@ -4637,7 +4637,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/privacy-kit:
     dependencies:
@@ -4837,7 +4837,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/sherpa-native:
     devDependencies:
@@ -4855,7 +4855,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/support:
     dependencies:
@@ -4892,7 +4892,7 @@ importers:
         version: 4.8.3(patch_hash=ab6e6def4479ea9130976d86aaa205391e4f8543f87fec93d3739b849fdbd751)(supports-color@8.1.1)
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/terminal-native:
     devDependencies:
@@ -4904,7 +4904,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/tests:
     dependencies:
@@ -5018,7 +5018,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/triage-sources:
     dependencies:
@@ -5043,7 +5043,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/voice-modelpacks:
     dependencies:
@@ -9167,9 +9167,6 @@ packages:
   '@revenuecat/purchases-js-hybrid-mappings@19.14.1':
     resolution: {integrity: sha512-Sj/sqXuQu0D3GKQQIhL8KQtAqpMUBGJjeXACrgzbvZBGbDu4AKPrnix0kwTOlGDoS4Cw5NZHJEnNU9D8jOxBmQ==}
 
-  '@revenuecat/purchases-js@1.24.3':
-    resolution: {integrity: sha512-shkbf0zBG23rabEMDnHh8RZt6dqTey0eU1YJyRLTAB0Mr7ZqfiND/8h8K9PQ8SNmwgdma+NuuEgRbyk/AeFr2A==}
-
   '@revenuecat/purchases-js@1.71.0':
     resolution: {integrity: sha512-FC118I8NvBh1gvFCw/JtL6oRoZwXws4TnfGtUY7YFPZIA39+kTpmWkGxQwSwn9XXqXPtBVD1b3Hvs7d+OgBpHQ==}
 
@@ -10376,9 +10373,6 @@ packages:
   '@types/estree@1.0.10':
     resolution: {integrity: sha512-lTyOMnOcmRBzdCv6/4zUZCrEhV0xrqQiUZBZtVcbmLHBXKLnN8q89v/wKRF/Q0HbwVsqbIG3o5HDoFl9sduM+g==}
 
-  '@types/estree@1.0.8':
-    resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
-
   '@types/express-serve-static-core@4.19.8':
     resolution: {integrity: sha512-02S5fmqeoKzVZCHPZid4b8JH2eM5HzQLZWN2FohQEy/0eXTq8VXZfSN6Pcr3F6N9R/vNrj7cpgbhjie6m/1tCA==}
 
@@ -10456,9 +10450,6 @@ packages:
 
   '@types/node@25.0.10':
     resolution: {integrity: sha512-zWW5KPngR/yvakJgGOmZ5vTBemDoSqF3AcV/LrO5u5wTWyEAVVh+IT39G4gtyAkh3CtTZs8aX/yRM82OfzHJRg==}
-
-  '@types/node@25.1.0':
-    resolution: {integrity: sha512-t7frlewr6+cbx+9Ohpl0NOTKXZNV9xHRmNOvql47BFJKcEG1CxtxlPEEe+gR9uhVWM4DwhnvTF110mIL4yP9RA==}
 
   '@types/nodemailer@7.0.12':
     resolution: {integrity: sha512-80vKwiIsVSyFA1rRovH59jNPLBOuc6dRZIHEu40gXTkBkZnQv8vog1xSGEb9j5q/tdMAs5ivvDR2pLTU0hGHXA==}
@@ -11631,9 +11622,6 @@ packages:
   confbox@0.1.8:
     resolution: {integrity: sha512-RMtmw0iFkeR4YV+fUOSucriAQNb9g8zFR52MWCtl+cCZOFRNL6zeB395vPzFhEjjn4fMxXudmELnl/KF/WrK6w==}
 
-  confbox@0.2.2:
-    resolution: {integrity: sha512-1NB+BKqhtNipMsov4xI/NnhCKp9XG9NamYp5PVm9klAT0fsrNPjaFICsCFhNhwZJKNh7zB/3q8qXz0E9oaMNtQ==}
-
   confbox@0.2.4:
     resolution: {integrity: sha512-ysOGlgTFbN2/Y6Cg3Iye8YKulHw+R2fNXHrgSmXISQdMnomY6eNDprVdW9R5xBguEqI954+S6709UyiO7B+6OQ==}
 
@@ -12152,9 +12140,6 @@ packages:
     resolution: {integrity: sha512-cgwlv/1iFQiFnU96XXgROh8xTeetsnJiDsTc7TYCLFd9+/WNkIqPTxiM/8pSd8VIrhXGTf1Ny1q1hquVqDJB5w==}
     engines: {node: '>= 4'}
 
-  dompurify@3.4.13:
-    resolution: {integrity: sha512-2vmYIoqjze2d+kakP8S/nS5shfsl587kzwEjcGlTdiksUVgFHnFCsLYDVj/JNqJVOQZGSYBTmuycv0PodwmnMQ==}
-
   dompurify@3.4.15:
     resolution: {integrity: sha512-EUBjM+B+lkDE41iE82DDSCfkoPGfXx8IxFxPMjNzm/Uk4xDet77rTN9wqlxlVg71kK7XGuUMv6wUxJUwwv+Xyw==}
 
@@ -12171,10 +12156,6 @@ packages:
 
   dotenv@16.6.1:
     resolution: {integrity: sha512-uBq4egWHTcTt33a72vpSG0z3HnPuIl6NqYcTrKEg2azoEyl2hpW0zqlxysq2pK9HlDIHyHyakeYaYnSAwd8bow==}
-    engines: {node: '>=12'}
-
-  dotenv@17.2.3:
-    resolution: {integrity: sha512-JVUnt+DUIzu87TABbhPmNfVdBDt18BLOWjMUFJMSi/Qqg7NTYtabbvSNJGOJ7afbRuv9D/lngizHtP7QyLQ+9w==}
     engines: {node: '>=12'}
 
   dotenv@17.4.2:
@@ -14370,10 +14351,6 @@ packages:
 
   lru-cache@10.4.3:
     resolution: {integrity: sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ==}
-
-  lru-cache@11.4.0:
-    resolution: {integrity: sha512-W+R+kFL4HgVxONq2bhXPi3bGpzGe/yEhVOp233qw9wCRtgncJ15P3bC+e4zZMu4Cq7d+WAJjXGW0uUkifhcatA==}
-    engines: {node: 20 || >=22}
 
   lru-cache@11.5.3:
     resolution: {integrity: sha512-U4N8FgzmWxc8k1VH8Kr6lQg18U7Fjvby6wXHVRX/ZZ7IwWbRMgrRbP0Wrb5q5NVinryp4SQampHKdvtecItxUg==}
@@ -17873,18 +17850,6 @@ packages:
       utf-8-validate:
         optional: true
 
-  ws@8.21.3:
-    resolution: {integrity: sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==}
-    engines: {node: '>=10.0.0'}
-    peerDependencies:
-      bufferutil: ^4.0.1
-      utf-8-validate: '>=5.0.2'
-    peerDependenciesMeta:
-      bufferutil:
-        optional: true
-      utf-8-validate:
-        optional: true
-
   wsl-utils@0.1.0:
     resolution: {integrity: sha512-h3Fbisa2nKGPxCpm89Hk33lBLsnaGBvctQopaBSOW/uIs6FTe1ATyAnKFJrzVs9vpGdsTe73WF3V4lIsk4Gacw==}
     engines: {node: '>=18'}
@@ -18067,23 +18032,23 @@ snapshots:
       '@aws-sdk/types': 3.974.2
       '@aws-sdk/util-locate-window': 3.965.8
       '@smithy/util-utf8': 2.3.0
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-crypto/sha256-js@5.2.0':
     dependencies:
       '@aws-crypto/util': 5.2.0
       '@aws-sdk/types': 3.974.2
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-crypto/supports-web-crypto@5.2.0':
     dependencies:
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-crypto/util@5.2.0':
     dependencies:
       '@aws-sdk/types': 3.974.2
       '@smithy/util-utf8': 2.3.0
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/client-bedrock-runtime@3.1048.0':
     dependencies:
@@ -18100,7 +18065,7 @@ snapshots:
       '@smithy/fetch-http-handler': 5.6.11
       '@smithy/node-http-handler': 4.7.3
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/core@3.977.1':
     dependencies:
@@ -18111,7 +18076,7 @@ snapshots:
       '@smithy/signature-v4': 5.6.10
       '@smithy/types': 4.16.1
       bowser: 2.14.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/credential-provider-env@3.972.61':
     dependencies:
@@ -18119,7 +18084,7 @@ snapshots:
       '@aws-sdk/types': 3.974.2
       '@smithy/core': 3.30.0
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/credential-provider-http@3.972.63':
     dependencies:
@@ -18129,7 +18094,7 @@ snapshots:
       '@smithy/fetch-http-handler': 5.6.11
       '@smithy/node-http-handler': 4.9.11
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/credential-provider-ini@3.973.6':
     dependencies:
@@ -18145,7 +18110,7 @@ snapshots:
       '@smithy/core': 3.30.0
       '@smithy/credential-provider-imds': 4.4.14
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/credential-provider-login@3.972.68':
     dependencies:
@@ -18154,7 +18119,7 @@ snapshots:
       '@aws-sdk/types': 3.974.2
       '@smithy/core': 3.30.0
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/credential-provider-node@3.972.72':
     dependencies:
@@ -18168,7 +18133,7 @@ snapshots:
       '@smithy/core': 3.30.0
       '@smithy/credential-provider-imds': 4.4.14
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/credential-provider-process@3.972.61':
     dependencies:
@@ -18176,7 +18141,7 @@ snapshots:
       '@aws-sdk/types': 3.974.2
       '@smithy/core': 3.30.0
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/credential-provider-sso@3.973.5':
     dependencies:
@@ -18186,7 +18151,7 @@ snapshots:
       '@aws-sdk/types': 3.974.2
       '@smithy/core': 3.30.0
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/credential-provider-web-identity@3.972.67':
     dependencies:
@@ -18195,21 +18160,21 @@ snapshots:
       '@aws-sdk/types': 3.974.2
       '@smithy/core': 3.30.0
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/eventstream-handler-node@3.972.30':
     dependencies:
       '@aws-sdk/types': 3.974.2
       '@smithy/core': 3.30.0
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/middleware-eventstream@3.972.25':
     dependencies:
       '@aws-sdk/types': 3.974.2
       '@smithy/core': 3.30.0
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/middleware-websocket@3.972.43':
     dependencies:
@@ -18219,7 +18184,7 @@ snapshots:
       '@smithy/fetch-http-handler': 5.6.11
       '@smithy/signature-v4': 5.6.10
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/nested-clients@3.997.35':
     dependencies:
@@ -18230,14 +18195,14 @@ snapshots:
       '@smithy/fetch-http-handler': 5.6.11
       '@smithy/node-http-handler': 4.9.11
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/signature-v4-multi-region@3.996.42':
     dependencies:
       '@aws-sdk/types': 3.974.2
       '@smithy/signature-v4': 5.6.10
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/token-providers@3.1048.0':
     dependencies:
@@ -18246,7 +18211,7 @@ snapshots:
       '@aws-sdk/types': 3.974.2
       '@smithy/core': 3.30.0
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/token-providers@3.1095.0':
     dependencies:
@@ -18255,21 +18220,21 @@ snapshots:
       '@aws-sdk/types': 3.974.2
       '@smithy/core': 3.30.0
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/types@3.974.2':
     dependencies:
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/util-locate-window@3.965.8':
     dependencies:
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/xml-builder@3.972.37':
     dependencies:
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws/lambda-invoke-store@0.3.0': {}
 
@@ -19110,9 +19075,9 @@ snapshots:
       http-response-object: 3.0.2
       parse-cache-control: 1.0.1
 
-  '@earendil-works/pi-agent-core@0.81.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)':
+  '@earendil-works/pi-agent-core@0.81.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)':
     dependencies:
-      '@earendil-works/pi-ai': 0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)
+      '@earendil-works/pi-ai': 0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)
       ignore: 7.0.5
       typebox: 1.1.38
       yaml: 2.9.0
@@ -19124,9 +19089,9 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-agent-core@0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)':
+  '@earendil-works/pi-agent-core@0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)':
     dependencies:
-      '@earendil-works/pi-ai': 0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)
+      '@earendil-works/pi-ai': 0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)
       ignore: 7.0.5
       typebox: 1.1.38
       yaml: 2.9.0
@@ -19138,9 +19103,9 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-agent-core@0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)':
+  '@earendil-works/pi-agent-core@0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)':
     dependencies:
-      '@earendil-works/pi-ai': 0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)
+      '@earendil-works/pi-ai': 0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)
       diff: 8.0.4
       ignore: 7.0.5
       typebox: 1.1.38
@@ -19153,7 +19118,7 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-ai@0.81.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)':
+  '@earendil-works/pi-ai@0.81.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)':
     dependencies:
       '@anthropic-ai/sdk': 0.91.1(zod@4.6.7)
       '@aws-sdk/client-bedrock-runtime': 3.1048.0
@@ -19163,7 +19128,7 @@ snapshots:
       '@smithy/node-http-handler': 4.7.3
       http-proxy-agent: 7.0.2(supports-color@8.1.1)
       https-proxy-agent: 7.0.6(supports-color@8.1.1)
-      openai: 6.26.0(ws@8.21.3)(zod@4.6.7)
+      openai: 6.26.0(ws@8.21.1)(zod@4.6.7)
       partial-json: 0.1.7
       typebox: 1.1.38
     transitivePeerDependencies:
@@ -19174,7 +19139,7 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-ai@0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)':
+  '@earendil-works/pi-ai@0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)':
     dependencies:
       '@anthropic-ai/sdk': 0.91.1(zod@4.6.7)
       '@aws-sdk/client-bedrock-runtime': 3.1048.0
@@ -19184,7 +19149,7 @@ snapshots:
       '@smithy/node-http-handler': 4.7.3
       http-proxy-agent: 7.0.2(supports-color@8.1.1)
       https-proxy-agent: 7.0.6(supports-color@8.1.1)
-      openai: 6.26.0(ws@8.21.3)(zod@4.6.7)
+      openai: 6.26.0(ws@8.21.1)(zod@4.6.7)
       partial-json: 0.1.7
       typebox: 1.1.38
     transitivePeerDependencies:
@@ -19195,7 +19160,7 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-ai@0.82.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)':
+  '@earendil-works/pi-ai@0.82.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)':
     dependencies:
       '@anthropic-ai/sdk': 0.91.1(zod@4.6.7)
       '@aws-sdk/client-bedrock-runtime': 3.1048.0
@@ -19205,7 +19170,7 @@ snapshots:
       '@smithy/node-http-handler': 4.7.3
       http-proxy-agent: 7.0.2(supports-color@8.1.1)
       https-proxy-agent: 7.0.6(supports-color@8.1.1)
-      openai: 6.26.0(ws@8.21.3)(zod@4.6.7)
+      openai: 6.26.0(ws@8.21.1)(zod@4.6.7)
       partial-json: 0.1.7
       typebox: 1.1.38
     transitivePeerDependencies:
@@ -19216,7 +19181,7 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-ai@0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)':
+  '@earendil-works/pi-ai@0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)':
     dependencies:
       '@anthropic-ai/sdk': 0.91.1(zod@4.6.7)
       '@aws-sdk/client-bedrock-runtime': 3.1048.0
@@ -19226,7 +19191,7 @@ snapshots:
       '@smithy/node-http-handler': 4.7.3
       http-proxy-agent: 7.0.2(supports-color@8.1.1)
       https-proxy-agent: 7.0.6(supports-color@8.1.1)
-      openai: 6.26.0(ws@8.21.3)(zod@4.6.7)
+      openai: 6.26.0(ws@8.21.1)(zod@4.6.7)
       partial-json: 0.1.7
       typebox: 1.1.38
     transitivePeerDependencies:
@@ -19237,10 +19202,10 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-coding-agent@0.81.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)':
+  '@earendil-works/pi-coding-agent@0.81.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)':
     dependencies:
-      '@earendil-works/pi-agent-core': 0.81.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)
-      '@earendil-works/pi-ai': 0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)
+      '@earendil-works/pi-agent-core': 0.81.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)
+      '@earendil-works/pi-ai': 0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)
       '@earendil-works/pi-tui': 0.81.1
       '@silvia-odwyer/photon-node': 0.3.4
       chalk: 5.6.2
@@ -19267,10 +19232,10 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-coding-agent@0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)':
+  '@earendil-works/pi-coding-agent@0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)':
     dependencies:
-      '@earendil-works/pi-agent-core': 0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)
-      '@earendil-works/pi-ai': 0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)
+      '@earendil-works/pi-agent-core': 0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)
+      '@earendil-works/pi-ai': 0.81.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)
       '@earendil-works/pi-tui': 0.81.1
       '@silvia-odwyer/photon-node': 0.3.4
       chalk: 5.6.2
@@ -19297,10 +19262,10 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-coding-agent@0.82.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)':
+  '@earendil-works/pi-coding-agent@0.82.0(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)':
     dependencies:
-      '@earendil-works/pi-agent-core': 0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)
-      '@earendil-works/pi-ai': 0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)
+      '@earendil-works/pi-agent-core': 0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)
+      '@earendil-works/pi-ai': 0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)
       '@earendil-works/pi-tui': 0.82.1
       '@silvia-odwyer/photon-node': 0.3.4
       chalk: 5.6.2
@@ -19327,10 +19292,10 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-coding-agent@0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)':
+  '@earendil-works/pi-coding-agent@0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)':
     dependencies:
-      '@earendil-works/pi-agent-core': 0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)
-      '@earendil-works/pi-ai': 0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.3)(zod@4.6.7)
+      '@earendil-works/pi-agent-core': 0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)
+      '@earendil-works/pi-ai': 0.82.1(@modelcontextprotocol/sdk@1.25.3(supports-color@8.1.1)(zod@4.6.7))(supports-color@8.1.1)(ws@8.21.1)(zod@4.6.7)
       '@earendil-works/pi-tui': 0.82.1
       '@silvia-odwyer/photon-node': 0.3.4
       chalk: 5.6.2
@@ -19413,7 +19378,7 @@ snapshots:
 
   '@emnapi/runtime@1.11.3':
     dependencies:
-      tslib: 2.8.1
+      tslib: 2.9.1
     optional: true
 
   '@epic-web/invariant@1.0.0': {}
@@ -19790,7 +19755,7 @@ snapshots:
       terminal-link: 2.1.1
       toqr: 0.1.1
       wrap-ansi: 7.0.0
-      ws: 8.21.3
+      ws: 8.21.1
       zod: 3.25.76
     optionalDependencies:
       expo-router: 55.0.10(patch_hash=8dc1dba25693d51b9ae069ed3a99a8a9ce22f2f4eb57cf6fb7b1e148820566a1)(7308c62e4a0408f83f75285cd1974dc4)
@@ -20223,12 +20188,12 @@ snapshots:
 
   '@formatjs/fast-memoize@3.1.0':
     dependencies:
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@formatjs/intl-localematcher@0.8.1':
     dependencies:
       '@formatjs/fast-memoize': 3.1.0
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@fumadocs/ui@16.4.11(@types/react@19.2.14)(fumadocs-core@16.4.11(@types/react@19.2.14)(lucide-react@0.563.0(react@19.2.0))(next@16.1.4(@babel/core@7.29.0(supports-color@8.1.1))(@opentelemetry/api@1.9.1)(@playwright/test@1.58.2)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(supports-color@8.1.1)(zod@4.6.7))(next@16.1.4(@babel/core@7.29.0(supports-color@8.1.1))(@opentelemetry/api@1.9.1)(@playwright/test@1.58.2)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(tailwindcss@4.1.18)':
     dependencies:
@@ -20660,14 +20625,14 @@ snapshots:
     dependencies:
       '@jest/fake-timers': 29.7.0
       '@jest/types': 29.6.3
-      '@types/node': 25.0.10
+      '@types/node': 22.20.5
       jest-mock: 29.7.0
 
   '@jest/fake-timers@29.7.0':
     dependencies:
       '@jest/types': 29.6.3
       '@sinonjs/fake-timers': 10.3.0
-      '@types/node': 25.0.10
+      '@types/node': 22.20.5
       jest-message-util: 29.7.0
       jest-mock: 29.7.0
       jest-util: 29.7.0
@@ -20701,7 +20666,7 @@ snapshots:
       '@jest/schemas': 29.6.3
       '@types/istanbul-lib-coverage': 2.0.6
       '@types/istanbul-reports': 3.0.4
-      '@types/node': 25.0.10
+      '@types/node': 22.20.5
       '@types/yargs': 17.0.35
       chalk: 4.1.2
 
@@ -20946,7 +20911,7 @@ snapshots:
 
   '@mdx-js/mdx@3.1.1(supports-color@8.1.1)':
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.10
       '@types/estree-jsx': 1.0.5
       '@types/hast': 3.0.5
       '@types/mdx': 2.0.13
@@ -21512,21 +21477,21 @@ snapshots:
       '@peculiar/asn1-x509': 2.6.0
       '@peculiar/asn1-x509-attr': 2.6.0
       asn1js: 3.0.7
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@peculiar/asn1-csr@2.6.0':
     dependencies:
       '@peculiar/asn1-schema': 2.6.0
       '@peculiar/asn1-x509': 2.6.0
       asn1js: 3.0.7
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@peculiar/asn1-ecc@2.6.0':
     dependencies:
       '@peculiar/asn1-schema': 2.6.0
       '@peculiar/asn1-x509': 2.6.0
       asn1js: 3.0.7
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@peculiar/asn1-pfx@2.6.0':
     dependencies:
@@ -21535,14 +21500,14 @@ snapshots:
       '@peculiar/asn1-rsa': 2.6.0
       '@peculiar/asn1-schema': 2.6.0
       asn1js: 3.0.7
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@peculiar/asn1-pkcs8@2.6.0':
     dependencies:
       '@peculiar/asn1-schema': 2.6.0
       '@peculiar/asn1-x509': 2.6.0
       asn1js: 3.0.7
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@peculiar/asn1-pkcs9@2.6.0':
     dependencies:
@@ -21553,34 +21518,34 @@ snapshots:
       '@peculiar/asn1-x509': 2.6.0
       '@peculiar/asn1-x509-attr': 2.6.0
       asn1js: 3.0.7
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@peculiar/asn1-rsa@2.6.0':
     dependencies:
       '@peculiar/asn1-schema': 2.6.0
       '@peculiar/asn1-x509': 2.6.0
       asn1js: 3.0.7
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@peculiar/asn1-schema@2.6.0':
     dependencies:
       asn1js: 3.0.7
       pvtsutils: 1.3.6
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@peculiar/asn1-x509-attr@2.6.0':
     dependencies:
       '@peculiar/asn1-schema': 2.6.0
       '@peculiar/asn1-x509': 2.6.0
       asn1js: 3.0.7
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@peculiar/asn1-x509@2.6.0':
     dependencies:
       '@peculiar/asn1-schema': 2.6.0
       asn1js: 3.0.7
       pvtsutils: 1.3.6
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@peculiar/x509@1.14.3':
     dependencies:
@@ -21593,7 +21558,7 @@ snapshots:
       '@peculiar/asn1-x509': 2.6.0
       pvtsutils: 1.3.6
       reflect-metadata: 0.2.2
-      tslib: 2.8.1
+      tslib: 2.9.1
       tsyringe: 4.10.0
 
   '@peoplesgrocers/seti-ui-file-icons@1.11.3': {}
@@ -22597,8 +22562,6 @@ snapshots:
     dependencies:
       '@revenuecat/purchases-js': 1.71.0
 
-  '@revenuecat/purchases-js@1.24.3': {}
-
   '@revenuecat/purchases-js@1.71.0': {}
 
   '@revenuecat/purchases-typescript-internal@19.14.1': {}
@@ -22673,7 +22636,7 @@ snapshots:
 
   '@rollup/pluginutils@5.3.0(rollup@4.68.3)':
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.10
       estree-walker: 2.0.2
       picomatch: 4.0.3
     optionalDependencies:
@@ -23081,55 +23044,55 @@ snapshots:
   '@smithy/core@3.30.0':
     dependencies:
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@smithy/credential-provider-imds@4.4.14':
     dependencies:
       '@smithy/core': 3.30.0
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@smithy/fetch-http-handler@5.6.11':
     dependencies:
       '@smithy/core': 3.30.0
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@smithy/is-array-buffer@2.2.0':
     dependencies:
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@smithy/node-http-handler@4.7.3':
     dependencies:
       '@smithy/core': 3.30.0
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@smithy/node-http-handler@4.9.11':
     dependencies:
       '@smithy/core': 3.30.0
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@smithy/signature-v4@5.6.10':
     dependencies:
       '@smithy/core': 3.30.0
       '@smithy/types': 4.16.1
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@smithy/types@4.16.1':
     dependencies:
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@smithy/util-buffer-from@2.2.0':
     dependencies:
       '@smithy/is-array-buffer': 2.2.0
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@smithy/util-utf8@2.3.0':
     dependencies:
       '@smithy/util-buffer-from': 2.2.0
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@socket.io/component-emitter@3.1.2': {}
 
@@ -23151,7 +23114,7 @@ snapshots:
 
   '@swc/helpers@0.5.15':
     dependencies:
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@szmarczak/http-timer@4.0.6':
     dependencies:
@@ -23553,7 +23516,7 @@ snapshots:
     dependencies:
       '@types/http-cache-semantics': 4.2.0
       '@types/keyv': 3.1.4
-      '@types/node': 25.0.10
+      '@types/node': 22.20.5
       '@types/responselike': 1.0.3
 
   '@types/chai@5.2.3':
@@ -23563,7 +23526,7 @@ snapshots:
 
   '@types/chalk@2.2.4':
     dependencies:
-      chalk: 5.6.2
+      chalk: 4.1.2
 
   '@types/connect@3.4.38':
     dependencies:
@@ -23634,7 +23597,7 @@ snapshots:
 
   '@types/d3-interpolate@3.0.1':
     dependencies:
-      '@types/d3-color': 3.1.3
+      '@types/d3-color': 3.1.0
 
   '@types/d3-interpolate@3.0.4':
     dependencies:
@@ -23652,7 +23615,7 @@ snapshots:
 
   '@types/d3-scale@4.0.2':
     dependencies:
-      '@types/d3-time': 3.0.4
+      '@types/d3-time': 3.0.0
 
   '@types/d3-scale@4.0.9':
     dependencies:
@@ -23730,11 +23693,9 @@ snapshots:
 
   '@types/estree-jsx@1.0.5':
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.10
 
   '@types/estree@1.0.10': {}
-
-  '@types/estree@1.0.8': {}
 
   '@types/express-serve-static-core@4.19.8':
     dependencies:
@@ -23754,7 +23715,7 @@ snapshots:
 
   '@types/graceful-fs@4.1.9':
     dependencies:
-      '@types/node': 25.0.10
+      '@types/node': 22.20.5
 
   '@types/hammerjs@2.0.46': {}
 
@@ -23787,7 +23748,7 @@ snapshots:
 
   '@types/keyv@3.1.4':
     dependencies:
-      '@types/node': 25.0.10
+      '@types/node': 22.20.5
 
   '@types/libsodium-wrappers-sumo@0.7.8':
     dependencies:
@@ -23823,10 +23784,6 @@ snapshots:
       undici-types: 7.18.2
 
   '@types/node@25.0.10':
-    dependencies:
-      undici-types: 7.16.0
-
-  '@types/node@25.1.0':
     dependencies:
       undici-types: 7.16.0
 
@@ -23880,7 +23837,7 @@ snapshots:
 
   '@types/responselike@1.0.3':
     dependencies:
-      '@types/node': 25.0.10
+      '@types/node': 22.20.5
 
   '@types/retry@0.12.0': {}
 
@@ -24081,7 +24038,7 @@ snapshots:
       d3-time-format: 4.1.0
       internmap: 2.0.3
 
-  '@vitejs/plugin-react@4.7.0(supports-color@8.1.1)(vite@6.4.3(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0))':
+  '@vitejs/plugin-react@4.7.0(supports-color@8.1.1)(vite@6.4.3(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0))':
     dependencies:
       '@babel/core': 7.29.0(supports-color@8.1.1)
       '@babel/plugin-transform-react-jsx-self': 7.27.1(@babel/core@7.29.0(supports-color@8.1.1))
@@ -24089,7 +24046,7 @@ snapshots:
       '@rolldown/pluginutils': 1.0.0-beta.27
       '@types/babel__core': 7.20.5
       react-refresh: 0.17.0
-      vite: 6.4.3(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+      vite: 6.4.3(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -24101,13 +24058,13 @@ snapshots:
       chai: 5.3.3
       tinyrainbow: 2.0.0
 
-  '@vitest/mocker@3.2.4(vite@7.3.1(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0))':
+  '@vitest/mocker@3.2.4(vite@7.3.1(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0))':
     dependencies:
       '@vitest/spy': 3.2.4
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 7.3.1(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+      vite: 7.3.1(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   '@vitest/pretty-format@3.2.4':
     dependencies:
@@ -24291,7 +24248,7 @@ snapshots:
 
   aria-hidden@1.2.6:
     dependencies:
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   array-buffer-byte-length@1.0.2:
     dependencies:
@@ -24336,13 +24293,13 @@ snapshots:
     dependencies:
       pvtsutils: 1.3.6
       pvutils: 1.1.5
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   assertion-error@2.0.1: {}
 
   ast-types@0.13.4:
     dependencies:
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   astring@1.9.0: {}
 
@@ -24706,7 +24663,7 @@ snapshots:
   c12@3.1.0:
     dependencies:
       chokidar: 4.0.3
-      confbox: 0.2.2
+      confbox: 0.2.4
       defu: 6.1.7
       dotenv: 16.6.1
       exsolve: 1.0.8
@@ -24721,9 +24678,9 @@ snapshots:
   c12@3.3.3:
     dependencies:
       chokidar: 5.0.0
-      confbox: 0.2.2
+      confbox: 0.2.4
       defu: 6.1.7
-      dotenv: 17.2.3
+      dotenv: 17.4.2
       exsolve: 1.0.8
       giget: 2.0.0
       jiti: 2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214)
@@ -24907,7 +24864,7 @@ snapshots:
 
   chrome-launcher@0.15.2(supports-color@8.1.1):
     dependencies:
-      '@types/node': 25.0.10
+      '@types/node': 22.20.5
       escape-string-regexp: 4.0.0
       is-wsl: 2.2.0
       lighthouse-logger: 1.4.2(supports-color@8.1.1)
@@ -24916,7 +24873,7 @@ snapshots:
 
   chromium-edge-launcher@0.2.0(supports-color@8.1.1):
     dependencies:
-      '@types/node': 25.0.10
+      '@types/node': 22.20.5
       escape-string-regexp: 4.0.0
       is-wsl: 2.2.0
       lighthouse-logger: 1.4.2(supports-color@8.1.1)
@@ -25099,8 +25056,6 @@ snapshots:
       typedarray: 0.0.6
 
   confbox@0.1.8: {}
-
-  confbox@0.2.2: {}
 
   confbox@0.2.4: {}
 
@@ -25593,10 +25548,6 @@ snapshots:
     dependencies:
       domelementtype: 2.3.0
 
-  dompurify@3.4.13:
-    optionalDependencies:
-      '@types/trusted-types': 2.0.7
-
   dompurify@3.4.15:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
@@ -25617,8 +25568,6 @@ snapshots:
   dotenv-expand@10.0.0: {}
 
   dotenv@16.6.1: {}
-
-  dotenv@17.2.3: {}
 
   dotenv@17.4.2: {}
 
@@ -26010,7 +25959,7 @@ snapshots:
 
   estree-util-attach-comments@3.0.0:
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.10
 
   estree-util-build-jsx@3.0.1:
     dependencies:
@@ -26023,7 +25972,7 @@ snapshots:
 
   estree-util-scope@1.0.0:
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.10
       devlop: 1.1.0
 
   estree-util-to-js@2.0.0:
@@ -26034,7 +25983,7 @@ snapshots:
 
   estree-util-value-to-estree@3.5.0:
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.10
 
   estree-util-visit@2.0.0:
     dependencies:
@@ -26047,7 +25996,7 @@ snapshots:
 
   estree-walker@3.0.3:
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.10
 
   esutils@2.0.3: {}
 
@@ -26898,7 +26847,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  fumadocs-mdx@14.2.6(@types/react@19.2.14)(fumadocs-core@16.4.11(@types/react@19.2.14)(lucide-react@0.563.0(react@19.2.0))(next@16.1.4(@babel/core@7.29.0(supports-color@8.1.1))(@opentelemetry/api@1.9.1)(@playwright/test@1.58.2)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(supports-color@8.1.1)(zod@4.6.7))(next@16.1.4(@babel/core@7.29.0(supports-color@8.1.1))(@opentelemetry/api@1.9.1)(@playwright/test@1.58.2)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(react@19.2.0)(supports-color@8.1.1)(vite@7.3.1(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)):
+  fumadocs-mdx@14.2.6(@types/react@19.2.14)(fumadocs-core@16.4.11(@types/react@19.2.14)(lucide-react@0.563.0(react@19.2.0))(next@16.1.4(@babel/core@7.29.0(supports-color@8.1.1))(@opentelemetry/api@1.9.1)(@playwright/test@1.58.2)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(supports-color@8.1.1)(zod@4.6.7))(next@16.1.4(@babel/core@7.29.0(supports-color@8.1.1))(@opentelemetry/api@1.9.1)(@playwright/test@1.58.2)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(react@19.2.0)(supports-color@8.1.1)(vite@7.3.1(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)):
     dependencies:
       '@mdx-js/mdx': 3.1.1(supports-color@8.1.1)
       '@standard-schema/spec': 1.1.0
@@ -26922,7 +26871,7 @@ snapshots:
       '@types/react': 19.2.14
       next: 16.1.4(@babel/core@7.29.0(supports-color@8.1.1))(@opentelemetry/api@1.9.1)(@playwright/test@1.58.2)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
       react: 19.2.0
-      vite: 7.3.1(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+      vite: 7.3.1(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -27193,7 +27142,7 @@ snapshots:
 
   hast-util-to-estree@3.1.3(supports-color@8.1.1):
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.10
       '@types/estree-jsx': 1.0.5
       '@types/hast': 3.0.5
       comma-separated-tokens: 2.0.3
@@ -27228,7 +27177,7 @@ snapshots:
 
   hast-util-to-jsx-runtime@2.3.6(supports-color@8.1.1):
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.10
       '@types/hast': 3.0.5
       '@types/unist': 3.0.3
       comma-separated-tokens: 2.0.3
@@ -27290,7 +27239,7 @@ snapshots:
 
   hosted-git-info@9.0.3:
     dependencies:
-      lru-cache: 11.4.0
+      lru-cache: 11.5.3
 
   html-encoding-sniffer@4.0.0:
     dependencies:
@@ -27644,7 +27593,7 @@ snapshots:
 
   is-reference@1.2.1:
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.10
 
   is-regex@1.2.1:
     dependencies:
@@ -27747,7 +27696,7 @@ snapshots:
       '@jest/environment': 29.7.0
       '@jest/fake-timers': 29.7.0
       '@jest/types': 29.6.3
-      '@types/node': 25.0.10
+      '@types/node': 22.20.5
       jest-mock: 29.7.0
       jest-util: 29.7.0
 
@@ -27757,7 +27706,7 @@ snapshots:
     dependencies:
       '@jest/types': 29.6.3
       '@types/graceful-fs': 4.1.9
-      '@types/node': 25.0.10
+      '@types/node': 22.20.5
       anymatch: 3.1.3
       fb-watchman: 2.0.2
       graceful-fs: 4.2.11
@@ -27784,7 +27733,7 @@ snapshots:
   jest-mock@29.7.0:
     dependencies:
       '@jest/types': 29.6.3
-      '@types/node': 25.0.10
+      '@types/node': 22.20.5
       jest-util: 29.7.0
 
   jest-regex-util@29.6.3: {}
@@ -27792,7 +27741,7 @@ snapshots:
   jest-util@29.7.0:
     dependencies:
       '@jest/types': 29.6.3
-      '@types/node': 25.0.10
+      '@types/node': 22.20.5
       chalk: 4.1.2
       ci-info: 3.9.0
       graceful-fs: 4.2.11
@@ -27809,7 +27758,7 @@ snapshots:
 
   jest-worker@29.7.0:
     dependencies:
-      '@types/node': 25.0.10
+      '@types/node': 22.20.5
       jest-util: 29.7.0
       merge-stream: 2.0.0
       supports-color: 8.1.1
@@ -27864,7 +27813,7 @@ snapshots:
       whatwg-encoding: 3.1.1
       whatwg-mimetype: 4.0.0
       whatwg-url: 14.2.0
-      ws: 8.21.3
+      ws: 8.21.1
       xml-name-validator: 5.0.0
     transitivePeerDependencies:
       - bufferutil
@@ -27891,7 +27840,7 @@ snapshots:
       whatwg-encoding: 3.1.1
       whatwg-mimetype: 4.0.0
       whatwg-url: 14.2.0
-      ws: 8.21.3
+      ws: 8.21.1
       xml-name-validator: 5.0.0
     transitivePeerDependencies:
       - bufferutil
@@ -28231,8 +28180,6 @@ snapshots:
 
   lru-cache@10.4.3: {}
 
-  lru-cache@11.4.0: {}
-
   lru-cache@11.5.3: {}
 
   lru-cache@5.1.1:
@@ -28504,7 +28451,7 @@ snapshots:
       d3-sankey: 0.12.3
       dagre-d3-es: 7.0.13
       dayjs: 1.11.19
-      dompurify: 3.4.13
+      dompurify: 3.4.15
       katex: 0.16.28
       khroma: 2.1.0
       lodash-es: 4.17.23
@@ -28766,7 +28713,7 @@ snapshots:
 
   micromark-extension-mdx-expression@3.0.1:
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.10
       devlop: 1.1.0
       micromark-factory-mdx-expression: 2.0.3
       micromark-factory-space: 2.0.1
@@ -28777,7 +28724,7 @@ snapshots:
 
   micromark-extension-mdx-jsx@3.0.2:
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.10
       devlop: 1.1.0
       estree-util-is-identifier-name: 3.0.0
       micromark-factory-mdx-expression: 2.0.3
@@ -28794,7 +28741,7 @@ snapshots:
 
   micromark-extension-mdxjs-esm@3.0.0:
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.10
       devlop: 1.1.0
       micromark-core-commonmark: 2.0.3
       micromark-util-character: 2.1.1
@@ -28830,7 +28777,7 @@ snapshots:
 
   micromark-factory-mdx-expression@2.0.3:
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.10
       devlop: 1.1.0
       micromark-factory-space: 2.0.1
       micromark-util-character: 2.1.1
@@ -28894,7 +28841,7 @@ snapshots:
 
   micromark-util-events-to-acorn@2.0.3:
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.10
       '@types/unist': 3.0.3
       devlop: 1.1.0
       estree-util-visit: 2.0.0
@@ -29084,9 +29031,20 @@ snapshots:
       named-placeholders: 1.1.6
       sql-escaper: 1.6.0
 
-  mysql2@3.24.6(@types/node@25.1.0):
+  mysql2@3.24.6(@types/node@22.20.5):
     dependencies:
-      '@types/node': 25.1.0
+      '@types/node': 22.20.5
+      aws-ssl-profiles: 1.1.2
+      generate-function: 2.3.1
+      iconv-lite: 0.7.3
+      long: 5.3.2
+      lru.min: 1.1.5
+      named-placeholders: 1.1.6
+      sql-escaper: 1.6.0
+
+  mysql2@3.24.6(@types/node@25.0.10):
+    dependencies:
+      '@types/node': 25.0.10
       aws-ssl-profiles: 1.1.2
       generate-function: 2.3.1
       iconv-lite: 0.7.3
@@ -29373,11 +29331,6 @@ snapshots:
       ws: 8.21.1
       zod: 4.6.7
 
-  openai@6.26.0(ws@8.21.3)(zod@4.6.7):
-    optionalDependencies:
-      ws: 8.21.3
-      zod: 4.6.7
-
   openapi-types@12.1.3: {}
 
   openid-client@6.8.1:
@@ -29606,7 +29559,7 @@ snapshots:
 
   path-scurry@2.0.2:
     dependencies:
-      lru-cache: 11.4.0
+      lru-cache: 11.5.3
       minipass: 7.1.3
 
   path-to-regexp@8.3.0: {}
@@ -29746,7 +29699,7 @@ snapshots:
 
   pkg-types@2.3.0:
     dependencies:
-      confbox: 0.2.2
+      confbox: 0.2.4
       exsolve: 1.0.8
       pathe: 2.0.3
 
@@ -29878,7 +29831,7 @@ snapshots:
       '@posthog/core': 1.46.9
       '@posthog/types': 1.402.2
       core-js: 3.50.0
-      dompurify: 3.4.13
+      dompurify: 3.4.15
       fflate: 0.4.9
       preact: 10.29.8(preact-render-to-string@6.6.4)
       query-selector-shadow-dom: 1.0.1
@@ -30157,7 +30110,7 @@ snapshots:
 
   pvtsutils@1.3.6:
     dependencies:
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   pvutils@1.1.5: {}
 
@@ -30566,7 +30519,7 @@ snapshots:
     dependencies:
       react: 19.2.0
       react-style-singleton: 2.2.3(@types/react@19.2.14)(react@19.2.0)
-      tslib: 2.8.1
+      tslib: 2.9.1
     optionalDependencies:
       '@types/react': 19.2.14
 
@@ -30575,7 +30528,7 @@ snapshots:
       react: 19.2.0
       react-remove-scroll-bar: 2.3.8(@types/react@19.2.14)(react@19.2.0)
       react-style-singleton: 2.2.3(@types/react@19.2.14)(react@19.2.0)
-      tslib: 2.8.1
+      tslib: 2.9.1
       use-callback-ref: 1.3.3(@types/react@19.2.14)(react@19.2.0)
       use-sidecar: 1.1.3(@types/react@19.2.14)(react@19.2.0)
     optionalDependencies:
@@ -30585,7 +30538,7 @@ snapshots:
     dependencies:
       get-nonce: 1.0.1
       react: 19.2.0
-      tslib: 2.8.1
+      tslib: 2.9.1
     optionalDependencies:
       '@types/react': 19.2.14
 
@@ -30654,7 +30607,7 @@ snapshots:
 
   recma-build-jsx@1.0.0:
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.10
       estree-util-build-jsx: 3.0.1
       vfile: 6.0.3
 
@@ -30669,14 +30622,14 @@ snapshots:
 
   recma-parse@1.0.0:
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.10
       esast-util-from-js: 2.0.1
       unified: 11.0.5
       vfile: 6.0.3
 
   recma-stringify@1.0.0:
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.10
       estree-util-to-js: 2.0.0
       unified: 11.0.5
       vfile: 6.0.3
@@ -30769,7 +30722,7 @@ snapshots:
 
   rehype-recma@1.0.0(supports-color@8.1.1):
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.10
       '@types/hast': 3.0.5
       hast-util-to-estree: 3.1.3(supports-color@8.1.1)
     transitivePeerDependencies:
@@ -31031,7 +30984,7 @@ snapshots:
 
   rxjs@7.8.2:
     dependencies:
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   safe-array-concat@1.1.3:
     dependencies:
@@ -31297,39 +31250,6 @@ snapshots:
       '@img/sharp-win32-x64': 0.35.5
       '@types/node': 25.0.10
 
-  sharp@0.35.5(@types/node@25.1.0):
-    dependencies:
-      '@img/colour': 1.1.0
-      detect-libc: 2.1.2
-      semver: 7.8.5
-    optionalDependencies:
-      '@img/sharp-darwin-arm64': 0.35.5
-      '@img/sharp-darwin-x64': 0.35.5
-      '@img/sharp-freebsd-wasm32': 0.35.5
-      '@img/sharp-libvips-darwin-arm64': 1.3.4
-      '@img/sharp-libvips-darwin-x64': 1.3.4
-      '@img/sharp-libvips-linux-arm': 1.3.4
-      '@img/sharp-libvips-linux-arm64': 1.3.4
-      '@img/sharp-libvips-linux-ppc64': 1.3.4
-      '@img/sharp-libvips-linux-riscv64': 1.3.4
-      '@img/sharp-libvips-linux-s390x': 1.3.4
-      '@img/sharp-libvips-linux-x64': 1.3.4
-      '@img/sharp-libvips-linuxmusl-arm64': 1.3.4
-      '@img/sharp-libvips-linuxmusl-x64': 1.3.4
-      '@img/sharp-linux-arm': 0.35.5
-      '@img/sharp-linux-arm64': 0.35.5
-      '@img/sharp-linux-ppc64': 0.35.5
-      '@img/sharp-linux-riscv64': 0.35.5
-      '@img/sharp-linux-s390x': 0.35.5
-      '@img/sharp-linux-x64': 0.35.5
-      '@img/sharp-linuxmusl-arm64': 0.35.5
-      '@img/sharp-linuxmusl-x64': 0.35.5
-      '@img/sharp-webcontainers-wasm32': 0.35.5
-      '@img/sharp-win32-arm64': 0.35.5
-      '@img/sharp-win32-ia32': 0.35.5
-      '@img/sharp-win32-x64': 0.35.5
-      '@types/node': 25.1.0
-
   shebang-command@2.0.0:
     dependencies:
       shebang-regex: 3.0.0
@@ -31474,7 +31394,7 @@ snapshots:
   socket.io-adapter@2.5.8(patch_hash=c9419eff262eefa61c07a7a7c990698f0a01a93842628a8977c4e021b8293956)(supports-color@8.1.1):
     dependencies:
       debug: 4.4.3(supports-color@8.1.1)
-      ws: 8.21.3
+      ws: 8.21.1
     transitivePeerDependencies:
       - bufferutil
       - supports-color
@@ -32233,7 +32153,7 @@ snapshots:
   use-callback-ref@1.3.3(@types/react@19.2.14)(react@19.2.0):
     dependencies:
       react: 19.2.0
-      tslib: 2.8.1
+      tslib: 2.9.1
     optionalDependencies:
       '@types/react': 19.2.14
 
@@ -32245,7 +32165,7 @@ snapshots:
     dependencies:
       detect-node-es: 1.1.0
       react: 19.2.0
-      tslib: 2.8.1
+      tslib: 2.9.1
     optionalDependencies:
       '@types/react': 19.2.14
 
@@ -32345,27 +32265,6 @@ snapshots:
       - tsx
       - yaml
 
-  vite-node@3.2.4(patch_hash=8ef7ee10b9aeef8ad82d2a4aec528336688a89e90b5333ff5be6be07e7c10dcb)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0):
-    dependencies:
-      cac: 6.7.14
-      debug: 4.4.3(supports-color@8.1.1)
-      es-module-lexer: 1.7.0
-      pathe: 2.0.3
-      vite: 7.3.1(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
-    transitivePeerDependencies:
-      - '@types/node'
-      - jiti
-      - less
-      - lightningcss
-      - sass
-      - sass-embedded
-      - stylus
-      - sugarss
-      - supports-color
-      - terser
-      - tsx
-      - yaml
-
   vite-tsconfig-paths@5.1.4(supports-color@8.1.1)(typescript@5.9.3)(vite@7.3.1(@types/node@22.20.5)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)):
     dependencies:
       debug: 4.4.3(supports-color@8.1.1)
@@ -32377,7 +32276,7 @@ snapshots:
       - supports-color
       - typescript
 
-  vite@6.4.3(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0):
+  vite@6.4.3(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0):
     dependencies:
       esbuild: 0.25.12
       fdir: 6.5.0(picomatch@4.0.3)
@@ -32386,7 +32285,7 @@ snapshots:
       rollup: 4.68.3
       tinyglobby: 0.2.15
     optionalDependencies:
-      '@types/node': 25.1.0
+      '@types/node': 25.0.10
       fsevents: 2.3.3
       jiti: 2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214)
       lightningcss: 1.31.1
@@ -32428,28 +32327,11 @@ snapshots:
       tsx: 4.23.12
       yaml: 2.9.0
 
-  vite@7.3.1(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0):
-    dependencies:
-      esbuild: 0.27.2
-      fdir: 6.5.0(picomatch@4.0.3)
-      picomatch: 4.0.3
-      postcss: 8.5.6
-      rollup: 4.68.3
-      tinyglobby: 0.2.15
-    optionalDependencies:
-      '@types/node': 25.1.0
-      fsevents: 2.3.3
-      jiti: 2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214)
-      lightningcss: 1.31.1
-      terser: 5.46.0
-      tsx: 4.23.12
-      yaml: 2.9.0
-
   vitest@3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@22.20.5)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/expect': 3.2.4
-      '@vitest/mocker': 3.2.4(vite@7.3.1(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0))
+      '@vitest/mocker': 3.2.4(vite@7.3.1(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0))
       '@vitest/pretty-format': 3.2.7
       '@vitest/runner': 3.2.4
       '@vitest/snapshot': 3.2.4
@@ -32492,7 +32374,7 @@ snapshots:
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/expect': 3.2.4
-      '@vitest/mocker': 3.2.4(vite@7.3.1(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0))
+      '@vitest/mocker': 3.2.4(vite@7.3.1(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0))
       '@vitest/pretty-format': 3.2.7
       '@vitest/runner': 3.2.4
       '@vitest/snapshot': 3.2.4
@@ -32531,11 +32413,11 @@ snapshots:
       - tsx
       - yaml
 
-  vitest@3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0):
+  vitest@3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/expect': 3.2.4
-      '@vitest/mocker': 3.2.4(vite@7.3.1(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0))
+      '@vitest/mocker': 3.2.4(vite@7.3.1(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0))
       '@vitest/pretty-format': 3.2.7
       '@vitest/runner': 3.2.4
       '@vitest/snapshot': 3.2.4
@@ -32553,12 +32435,12 @@ snapshots:
       tinyglobby: 0.2.15
       tinypool: 1.1.1
       tinyrainbow: 2.0.0
-      vite: 7.3.1(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
-      vite-node: 3.2.4(patch_hash=8ef7ee10b9aeef8ad82d2a4aec528336688a89e90b5333ff5be6be07e7c10dcb)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+      vite: 7.3.1(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+      vite-node: 3.2.4(patch_hash=8ef7ee10b9aeef8ad82d2a4aec528336688a89e90b5333ff5be6be07e7c10dcb)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/debug': 4.1.12
-      '@types/node': 25.1.0
+      '@types/node': 25.0.10
       jsdom: 26.1.0(supports-color@8.1.1)
     transitivePeerDependencies:
       - jiti
@@ -32770,8 +32652,6 @@ snapshots:
   ws@7.5.11: {}
 
   ws@8.21.1: {}
-
-  ws@8.21.3: {}
 
   wsl-utils@0.1.0:
     dependencies:
