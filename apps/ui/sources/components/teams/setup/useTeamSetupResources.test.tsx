@@ -61,7 +61,10 @@ it.each([
     } finally { await hook.unmount(); await scopeHook.unmount(); }
 });
 
-it('shows the admitted Team resource counts and owner refusals inside Joined', async () => {
+it.each([
+    { sources: 'repository and repository-free Sources', secondRepository: false },
+    { sources: 'repository-only Sources', secondRepository: true },
+])('shows the admitted Project Source total and owner refusals inside Joined for $sources', async ({ secondRepository }) => {
     onTestFinished(await installRealActionExecutorModuleLoader());
     const serverId = await homes.addHome({ name: 'Joined Home', serverUrl: 'https://joined-resources.example.test',
         serverIdentityId: 'srv_joined_resources', accountId: 'member', currentAccount: true, teamsEnabled: true });
@@ -75,9 +78,12 @@ it('shows the admitted Team resource counts and owner refusals inside Joined', a
         { kind: 'credentials', status: 'unavailable', count: null, reason: 'team_authentication_required' },
         { kind: 'sessions', status: 'available', count: 0 },
     ] } });
+    const repository = { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+        repository: { nameWithOwner: 'team/application' }, protocol: 'https' };
     homes.answer(serverId, '/v1/projects/sources', { body: { ok: true, sources: [
-        { id: 'shared-app', revision: 1, name: 'Team application', audience: [], createdByAccountId: 'member' },
-        { id: 'shared-tools', revision: 1, name: 'Team tools', audience: [], createdByAccountId: 'member' },
+        { id: 'shared-app', revision: 1, name: 'Team application', audience: [], createdByAccountId: 'member', repository },
+        { id: 'shared-tools', revision: 1, name: 'Team tools', audience: [], createdByAccountId: 'member',
+            ...(secondRepository ? { repository } : {}) },
     ], coverage: { complete: true, nextCursor: null } } });
     const { TeamJoinedCard } = await import('@/components/teams/join/TeamJoinedCard');
     const { TeamJoinedSummary } = await import('@/components/teams/join/TeamJoinedSummary');
@@ -89,7 +95,10 @@ it('shows the admitted Team resource counts and owner refusals inside Joined', a
     try {
         await waitForHomeGovernance(() => expect(screen.findByTestId('joined-resources-projectSources'), screen.getTextContent()).not.toBeNull());
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Team application'));
-        expect(screen.getTextContent()).toContain(t('teams.join.summary.repositories', { count: 2 }));
+        expect(screen.getTextContent()).toContain('Team tools');
+        expect(screen.getTextContent()).toContain(t('teams.overview.shared.kinds.projectSources'));
+        expect(screen.getTextContent()).toMatch(/\b2\b/);
+        expect(screen.getTextContent()).not.toContain(t('teams.join.summary.repositories', { count: 2 }));
         expect(screen.findByTestId('joined-resources-credentials')).not.toBeNull();
         expect(screen.getTextContent()).toContain(t('teams.join.summary.unavailable'));
         expect(screen.findByTestId('joined-resources-sessions')).toBeNull();

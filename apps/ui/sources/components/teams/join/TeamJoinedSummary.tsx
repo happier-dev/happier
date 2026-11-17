@@ -6,6 +6,7 @@ import {
   useTeamSetupResources,
   type TeamSetupResourceContext,
 } from '@/components/teams/setup/useTeamSetupResources';
+import { TEAM_SHARED_KIND_PRESENTATION } from '@/components/settings/teams/shared/teamSharedKindPresentation';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -31,12 +32,12 @@ const ICONS: Record<SummaryKind, IconName> = {
   projectSources: 'git-branch',
   credentials: 'key',
 };
-const NAMED_REPOSITORIES = 3;
+const NAMED_SOURCES = 3;
 /** The kind's name alone, for a row whose owner could not count it. */
 const UNAVAILABLE_TITLE: Record<SummaryKind, () => string> = {
   sessions: () => t('teams.join.summary.sessionsUnavailable'),
   machinePresets: () => t('teams.join.summary.machinePresetsUnavailable'),
-  projectSources: () => t('teams.join.summary.projectSourcesUnavailable'),
+  projectSources: () => t(TEAM_SHARED_KIND_PRESENTATION.projectSources.title),
   credentials: () => t('teams.join.summary.credentialsUnavailable'),
 };
 
@@ -51,7 +52,7 @@ function findKind(
  * "What you get" after joining (plan D, L1 Joined): what the Team already shares with this member,
  * read from F's summary projection after admission. A kind the Team shares nothing of is left out;
  * a kind its owner could not read says so in its row rather than disappearing. The Machine setup is
- * named once its own owner opens it, and the repositories by their Source names.
+ * named once its own owner opens it, and the Project Sources by their names.
  */
 export const TeamJoinedSummary = React.memo(function TeamJoinedSummary(
   props: Readonly<{
@@ -66,15 +67,17 @@ export const TeamJoinedSummary = React.memo(function TeamJoinedSummary(
     resources.preset?.state.value && 'name' in resources.preset.state.value
       ? String(resources.preset.state.value.name)
       : null;
-  const repositoryNames = React.useMemo(
+  const sourceNames = React.useMemo(
     () =>
       resources.sources.state.rows
-        .slice(0, NAMED_REPOSITORIES)
+        .slice(0, NAMED_SOURCES)
         .map((source) => source.name),
     [resources.sources.state.rows],
   );
 
-  const rows = SUMMARY_KINDS.flatMap((kind) => {
+  const rows = SUMMARY_KINDS.flatMap<Readonly<{
+    kind: SummaryKind; title: string; detail: string | null; count?: number;
+  }>>((kind) => {
     const row = findKind(kinds, kind);
     if (!row) return [];
     if (row.status === 'unavailable') {
@@ -107,14 +110,15 @@ export const TeamJoinedSummary = React.memo(function TeamJoinedSummary(
           },
         ];
       case 'projectSources': {
-        const named = repositoryNames.join(', ');
+        const named = sourceNames.join(', ');
         const detail =
-          named && row.count > repositoryNames.length ? `${named}, …` : named;
+          named && row.count > sourceNames.length ? `${named}, …` : named;
         return [
           {
             kind,
-            title: t('teams.join.summary.repositories', { count: row.count }),
+            title: t(TEAM_SHARED_KIND_PRESENTATION.projectSources.title),
             detail: detail || null,
+            count: row.count,
           },
         ];
       }
@@ -153,6 +157,7 @@ export const TeamJoinedSummary = React.memo(function TeamJoinedSummary(
           }
           title={row.title}
           subtitle={row.detail ?? undefined}
+          detail={row.count === undefined ? undefined : String(row.count)}
           showChevron={false}
         />
       ))}
