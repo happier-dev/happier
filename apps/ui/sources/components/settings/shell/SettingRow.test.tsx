@@ -221,6 +221,28 @@ describe('SettingSection', () => {
 });
 
 describe('SettingAnchor divider', () => {
+    it('gives each row of an anchored fragment its own place in the section', async () => {
+        const { ItemGroupRowPositionProvider, useItemGroupRowPosition } = await import('@/components/ui/lists/ItemGroupRowPosition');
+        function Row(props: { testID: string }) {
+            const position = useItemGroupRowPosition();
+            return <View testID={props.testID} accessibilityHint={JSON.stringify(position)} />;
+        }
+        // The anchor is the section's last child, so it alone sits last; its rows above it do not.
+        const screen = await renderScreen(<ItemGroupRowPositionProvider value={{ isFirst: false, isLast: true }}>
+            <SettingAnchor setting={PAGE.settings.backfill}>
+                <>
+                    {['first', 'middle'].map((id) => <Row key={id} testID={id} />)}
+                    <Row testID="last" />
+                </>
+            </SettingAnchor>
+        </ItemGroupRowPositionProvider>);
+        const position = (id: string) => JSON.parse(screen.findByTestId(id)!.props.accessibilityHint);
+        expect(position('first')).toEqual({ isFirst: false, isLast: false });
+        expect(position('middle')).toEqual({ isFirst: false, isLast: false });
+        expect(position('last')).toEqual({ isFirst: false, isLast: true });
+        await screen.unmount();
+    });
+
     it('passes the section divider to a single row but never to a fragment of rows', async () => {
         const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
         function Row(props: { testID: string; showDivider?: boolean }) {

@@ -178,6 +178,8 @@ const styles = StyleSheet.create((theme) => ({
 
 export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   testID: string;
+  /** Injected by `ItemGroup` (or the section composing the rows) and drawn by the row. */
+  showDivider?: boolean;
   registry?: ConnectedServiceRegistrySnapshot;
   /** Plugin that authored the localized purpose title. */
   localizedTextPluginId: string;
@@ -443,6 +445,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   return (
     <Item
       testID={props.testID}
+      showDivider={props.showDivider}
       icon={props.icon}
       title={props.title ?? purposeTitle}
       subtitle={subtitle}

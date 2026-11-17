@@ -12,7 +12,7 @@ import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { ItemRevealContext } from '@/components/ui/lists/ItemRevealContext';
-import { useItemGroupRowPosition } from '@/components/ui/lists/ItemGroupRowPosition';
+import { ItemGroupRowPositionProvider, useItemGroupRowPosition } from '@/components/ui/lists/ItemGroupRowPosition';
 import { getItemGroupRowCornerRadii } from '@/components/ui/lists/itemGroupRowCorners';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { SETTING_ANCHOR_QUERY_PARAM, type SettingRef, type SettingsSectionRef } from '@/components/settings/catalog/settingDeclarations';
@@ -222,9 +222,11 @@ type SettingAnchorProps = Readonly<{
 export const SettingAnchor = React.memo(function SettingAnchor(props: SettingAnchorProps) {
     const requested = useRequestedSettingAnchor();
     // A fragment of rows has no divider of its own; only a single row takes the section's divider.
-    const child = props.showDivider === undefined || props.children.type === React.Fragment
-        ? props.children
-        : React.cloneElement(props.children as React.ReactElement<{ showDivider?: boolean }>, { showDivider: props.showDivider });
+    const child = props.children.type === React.Fragment
+        ? <AnchoredRows>{(props.children as React.ReactElement<{ children?: React.ReactNode }>).props.children}</AnchoredRows>
+        : props.showDivider === undefined
+            ? props.children
+            : React.cloneElement(props.children as React.ReactElement<{ showDivider?: boolean }>, { showDivider: props.showDivider });
     const isTarget = requested !== null && (props.setting
         ? props.setting.anchor === requested
         : props.settings.some((setting) => setting.anchor === requested));
@@ -232,6 +234,24 @@ export const SettingAnchor = React.memo(function SettingAnchor(props: SettingAnc
         {props.setting ? <SettingAnchorHost setting={props.setting} isTarget={isTarget}>{child}</SettingAnchorHost> : child}
     </ItemRevealContext.Provider>;
 });
+
+/**
+ * The rows of an anchored fragment. The section sees the anchor as one row, so each row inside gets its own
+ * place from the anchor's: only the anchor's first row can be first and only its last row can be last.
+ */
+function AnchoredRows(props: Readonly<{ children?: React.ReactNode }>) {
+    const position = useItemGroupRowPosition();
+    const rows = React.Children.toArray(props.children);
+    if (position === null) return <>{rows}</>;
+    return <>{rows.map((row, index) => (
+        <ItemGroupRowPositionProvider
+            key={React.isValidElement(row) && row.key !== null ? row.key : index}
+            value={{ isFirst: position.isFirst && index === 0, isLast: position.isLast && index === rows.length - 1 }}
+        >
+            {row}
+        </ItemGroupRowPositionProvider>
+    ))}</>;
+}
 
 function SettingAnchorHost(props: Readonly<{
     setting: SettingRef;
@@ -255,11 +275,15 @@ function SettingAnchorHost(props: Readonly<{
  * section): it scrolls into view and pulses once when `active` turns on. The host is always rendered so
  * the row keeps its mount when the pulse starts.
  */
-export function RowArrivalReveal(props: Readonly<{ active: boolean; testID: string; children: React.ReactElement }>) {
+export function RowArrivalReveal(props: Readonly<{ active: boolean; testID: string; children: React.ReactElement; showDivider?: boolean }>) {
     const { hostRef, highlight } = useSettingReveal(props.active, 0);
+    // Like SettingAnchor: the row draws the divider its section gives this wrapper.
+    const child = props.showDivider === undefined
+        ? props.children
+        : React.cloneElement(props.children as React.ReactElement<{ showDivider?: boolean }>, { showDivider: props.showDivider });
     return (
         <View ref={hostRef} style={styles.host}>
-            {props.children}
+            {child}
             {props.active ? <RevealOverlay highlight={highlight} testID={props.testID} /> : null}
         </View>
     );

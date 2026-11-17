@@ -279,9 +279,11 @@ export const ProviderGatewaySections = React.memo(
             'settingsProvidersCollection.gateway.modelsFromDescription',
           )}
         >
-          <SettingAnchor setting={PROVIDER_GATEWAY_SETTINGS.settings.slots}><>{families.shown.map((declaration) => (
+          {/* The anchor holds every row, so ItemGroup sees one child: the rows take their dividers here. */}
+          <SettingAnchor setting={PROVIDER_GATEWAY_SETTINGS.settings.slots}><>{families.shown.map((declaration, index) => (
             <RowArrivalReveal
               key={`${buildQualifiedPluginContributionKey(declaration.service)}/${declaration.purpose}`}
+              showDivider={index < families.shown.length - 1 || families.folded.length > 0}
               active={arrived.has(declaration.purpose)}
               testID={`provider-gateway-slot:${declaration.purpose}:arrived`}
             >
@@ -510,6 +512,7 @@ const GatewaySlotRow = React.memo(function GatewaySlotRow(
     disabledReason?: string;
     onChange: ProviderGatewaySectionsProps['onChangeSlot'];
     onConnect: ProviderGatewaySectionsProps['onConnectService'];
+    showDivider?: boolean;
   }>,
 ) {
   const { declaration } = props;
@@ -553,6 +556,7 @@ const GatewaySlotRow = React.memo(function GatewaySlotRow(
     return (
       <Item
         testID={testID}
+        showDivider={props.showDivider}
         icon={mark}
         title={title}
         // Why its account can't serve here, then what a restricted family serves; Connect says the rest.
@@ -580,6 +584,7 @@ const GatewaySlotRow = React.memo(function GatewaySlotRow(
   return (
     <ConnectedAccountPurposeTargetChooser
       testID={testID}
+      showDivider={props.showDivider}
       localizedTextPluginId={props.localizedTextPluginId}
       declaration={serviceDeclaration}
       value={props.value}
