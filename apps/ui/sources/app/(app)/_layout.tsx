@@ -439,6 +439,10 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                     name="teams/[teamId]/sessions"
                     options={rootStackRouteOptions['teams/[teamId]/sessions']}
                 />
+                <Stack.Screen
+                    name="teams/[teamId]/setup"
+                    options={rootStackRouteOptions['teams/[teamId]/setup']}
+                />
                 {/*
                  * The two public Team entries. Both are opened from a link by
                  * somebody who may have no Home Account yet, so they take the

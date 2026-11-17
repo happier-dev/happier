@@ -282,6 +282,8 @@ export function createRootStackRouteOptions(newSessionPresentationMode: NewSessi
         ...Object.fromEntries(Object.entries(createSessionPageScreenOptions()).map(([name, options]) => [`session/[id]/${name}`, options])),
         'teams/[teamId]/sessions': options.teamSessions,
         'teams/[teamId]/sign-in': options.hiddenHeader,
+        // The page heads itself with the Team's lockup; the header only carries Back.
+        'teams/[teamId]/setup': options.visibleBlankBack,
         'join/[token]': options.hiddenHeader,
         'terminal/connect': options.hiddenHeader,
         'terminal/index': options.hiddenHeader,

@@ -32,6 +32,10 @@ export const registeredWorkspaceRoutes: Readonly<Record<string, WorkspaceRouteRe
         moduleKey: './(app)/bot-template.tsx', destinationId: 'bot-template',
         catalogEntry: { titleKey: 'botTemplates.title', icon: 'file-text', visibility: 'hidden' },
     },
+    'teams/[teamId]/setup': {
+        moduleKey: './(app)/teams/[teamId]/setup.tsx', destinationId: 'team-setup',
+        catalogEntry: { titleKey: 'teams.title', icon: 'users-three', visibility: 'hidden' },
+    },
 };
 
 /** Workspace-eligible Expo modules; registered configuration routes are a projection, not another inventory. */

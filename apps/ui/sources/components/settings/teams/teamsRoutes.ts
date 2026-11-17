@@ -144,6 +144,11 @@ export function teamSettingsPath(address: TeamAddress): `/settings/teams/${strin
     return `${teamDetailPath(address)}/settings`;
 }
 
+/** Set up for a Team (plan D, L2): the member's setup page, on the exact Home that holds the Team. */
+export function teamSetupPath(address: TeamAddress): `/teams/${string}/setup?serverId=${string}` {
+    return `/teams/${encodeURIComponent(address.teamId)}/setup?serverId=${encodeURIComponent(address.serverId)}`;
+}
+
 /**
  * Lane 03 contributes the Authentication destination under the Team's own path
  * rather than adding a second Team root; the path owner still lives here so the

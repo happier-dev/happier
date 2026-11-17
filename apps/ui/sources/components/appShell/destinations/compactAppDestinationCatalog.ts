@@ -398,6 +398,7 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
         registration.catalogEntry ? [{
             id: registration.destinationId, ...registration.catalogEntry,
             placement: { kind: 'rail', region: 'account' }, activation: 'navigate', routePath: `/${routeKey}`,
+            currentRoutePatterns: [`/${routeKey}`],
         } satisfies BuiltinDestinationRow] : []
     )),
     ];

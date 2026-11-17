@@ -11,6 +11,7 @@ const context = { load: vi.fn<(key: string) => unknown>() };
 import { workspaceRouteBodies } from './workspaceRouteBodies';
 import { registerWorkspaceRouteContext } from './workspaceRouteContext';
 import { workspaceRouteFiles } from './workspaceRoutes';
+import { hrefForDestinationRef, resolveCompactAppDestinations, resolveDestinationRefFromHref } from '../destinations/compactAppDestinationCatalog';
 
 const Body: React.ComponentType = () => null;
 const appRoot = fileURLToPath(new URL('../../../app/', import.meta.url));
@@ -21,13 +22,26 @@ beforeEach(() => {
 });
 
 describe('workspace loading through the canonical Expo context', () => {
-    it('hosts checkout-independent deployment Projects through their registered body', async () => {
+    it('retains the admitted Team and Home when continuing to Team setup in the workspace', () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false,
+        } });
+        const teamHref = '/settings/teams/srv-home/team-one';
+        const team = resolveDestinationRefFromHref(catalog, teamHref);
+        expect(team).not.toBeNull();
+        expect(hrefForDestinationRef(catalog, team!)).toBe(teamHref);
+        const setupHref = '/teams/team-one/setup?serverId=srv-home';
+        const setup = resolveDestinationRefFromHref(catalog, setupHref);
+        expect(setup).not.toBeNull();
+        expect(hrefForDestinationRef(catalog, setup!)).toBe(setupHref);
+    });
+    it.each(['deployments/[projectSourceId]', 'teams/[teamId]/setup'])('hosts checkout-independent route %s through its registered body', async route => {
         context.load.mockImplementation(key => {
-            if (key !== './(app)/deployments/[projectSourceId].tsx') throw new Error('wrong deployment entry');
+            if (key !== `./(app)/${route}.tsx`) throw new Error('wrong deployment entry');
             return { WorkspaceRouteBody: Body };
         });
-        expect(workspaceRouteBodies['deployments/[projectSourceId]']).toBeTypeOf('function');
-        await expect(workspaceRouteBodies['deployments/[projectSourceId]']!()).resolves.toEqual({ default: Body });
+        expect(workspaceRouteBodies[route]).toBeTypeOf('function');
+        await expect(workspaceRouteBodies[route]!()).resolves.toEqual({ default: Body });
     });
     it('hosts the Monitoring destination through its registered body', async () => {
         context.load.mockImplementation(key => {

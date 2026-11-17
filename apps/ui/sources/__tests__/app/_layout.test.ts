@@ -715,6 +715,10 @@ describe('RootLayout public capability entry routes', () => {
         // exact entry leaf is a public destination.
         const teamSessions = screens.find((node) => node.props?.name === 'teams/[teamId]/sessions');
         expect(teamSessions?.props?.options?.headerShown).not.toBe(false);
+
+        const teamSetup = screens.find((node) => node.props?.name === 'teams/[teamId]/setup');
+        expect(teamSetup).toBeDefined();
+        expect(teamSetup?.props?.options?.headerShown).not.toBe(false);
     }, 60_000);
 });
 
