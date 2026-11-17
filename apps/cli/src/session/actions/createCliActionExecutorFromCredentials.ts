@@ -810,6 +810,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   workflowAction?: ActionExecutorDeps['workflowAction'];
   registerWorkflowTriggerList?: Parameters<typeof createCliActionDeps>[0]['registerWorkflowTriggerList'];
   managedMachineAction?: ActionExecutorDeps['managedMachineAction'];
+  machinePresetPrepare?: ActionExecutorDeps['machinePresetPrepare'];
   acquireSessionIsolationSandbox?: Parameters<typeof createCliActionDeps>[0]['acquireSessionIsolationSandbox'];
   machineRecipesRead?: ActionExecutorDeps['machineRecipesRead'];
   machineSetupPlan?: ActionExecutorDeps['machineSetupPlan'];
@@ -1118,6 +1119,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(params.actionsSettingsProvider ? { actionsSettingsProvider: params.actionsSettingsProvider } : {}),
       ...(params.pluginChangeService ? { pluginChangeService: params.pluginChangeService } : {}),
       ...(params.managedMachineAction ? { managedMachineAction: params.managedMachineAction } : {}),
+      ...(params.machinePresetPrepare ? { machinePresetPrepare: params.machinePresetPrepare } : {}),
       ...(params.machineRecipesRead ? { machineRecipesRead: params.machineRecipesRead } : {}),
       ...(params.machineSetupPlan ? { machineSetupPlan: params.machineSetupPlan } : {}),
       ...(params.machineReachabilityAction ? { machineReachabilityAction: params.machineReachabilityAction } : {}),
