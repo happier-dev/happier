@@ -28,6 +28,8 @@ import { createMachineFixture, createMachineReadBatchResponseFixture, createPlai
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { NewSessionEmbeddedHostProvider, type NewSessionEmbeddedHost } from '@/components/sessions/new/navigation/newSessionHost';
 import { NewBotDraftFace } from '@/components/sessions/bots/NewBotDraftHeader';
+import { PortablePetFace } from '@/components/sessions/bots/face/PortablePetFace';
+import { Switch } from '@/components/ui/forms/Switch';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
@@ -333,6 +335,45 @@ describe('recipient template page', () => {
         expect(screen.findByTestId('bot-template-connect-issues')).not.toBeNull();
         expect(screen.getTextContent()).toContain('botTemplateRecipient.setupIncomplete');
         expect(home.boundary.list()).toHaveLength(1);
+        await screen.unmount();
+    });
+
+    it('offers the template pet as one Copy item, on by default, and leaves it out when deselected', async () => {
+        const petFeatures = createRootLayoutFeaturesResponse({ features: { pets: { companion: { enabled: true }, sync: { enabled: true } } } });
+        home = await createPlainArtifactHomeFixture('https://template-recipient-pet.test', { currentAccount: true, serverFeatures: petFeatures,
+            handleRequest: async path => path === '/v1/features/authenticated' ? Response.json(petFeatures)
+                : path === '/v2/account/session-drafts/read' ? Response.json({ status: 'absent' }) : null });
+        storage.setState({ isSessionDraftsReady: true });
+        storage.getState().applySettingsLocal({ experiments: true, featureToggles: { 'pets.companion': true, 'pets.sync': true } });
+        const release = BotTemplateReleaseV1Schema.parse({ v: 1, version: '1.0.0', releasedAtMs: 1, changelog: '',
+            content: { v: 1, identity: { name: 'Garden', description: 'Garden advice', face: { seed: 'fallback' } },
+                pet: { name: 'Capy', source: { kind: 'registry', sourceId: 'codex-pets', itemId: 'capy' } },
+                instructions: { markdown: 'Grow herbs' }, skills: [], memoryRules: [],
+                needs: { software: [], connectedAccounts: [], mcpServers: [] } } });
+        const artifact = { v: 1 as const, state: 'released' as const, release };
+        home.boundary.replaceStoredRow({ id: 'pet-template', ownerAccountId: 'artifact-account', access: 'owner',
+            publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            header: encodePlainArtifactStoredContent(projectBotTemplateArtifactHeaderV1(artifact)), headerVersion: 1,
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify(artifact) }), bodyVersion: 1,
+            seq: 1, createdAt: 1, updatedAt: 1 });
+        const credentials = await TokenStorage.getCredentialsForServerUrl(home.home.serverUrl);
+        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><BotTemplateRecipientScreen source={{ kind: 'artifact', serverId: home.home.id,
+            artifactId: 'pet-template' }} serverId={home.home.id} /></InjectedAuthProvider>);
+        await vi.waitFor(() => expect(screen.findByTestId('bot-template-make-own')).not.toBeNull());
+        await screen.pressByTestIdAsync('bot-template-make-own');
+        await vi.waitFor(() => expect(screen.findByTestId('bot-template-copy-pet')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('petShare.copyRow');
+        const petSwitch = () => screen.root.find(node => node.type === Switch && node.props.testID === 'bot-template-copy-pet-switch');
+        // Selected by default: the copy wears the pet, so "Your copy" shows it rather than the face chooser.
+        expect(petSwitch().props.value).toBe(true);
+        expect(screen.root.findAll(node => node.type === PortablePetFace && node.props.testID === 'bot-template-copy-pet-face')).toHaveLength(1);
+        expect(screen.root.findAllByType(NewBotDraftFace)).toHaveLength(0);
+        await act(async () => { petSwitch().props.onValueChange(false); });
+        expect(petSwitch().props.value).toBe(false);
+        expect(screen.getTextContent()).toContain('petShare.copyRowOff');
+        expect(screen.root.findAllByType(NewBotDraftFace)).toHaveLength(1);
+        const copyProps: React.ComponentProps<typeof BotTemplateCopyForm> = screen.findByType<typeof BotTemplateCopyForm>(BotTemplateCopyForm).props;
+        expect(copyProps.preview.release.content.pet?.name).toBe('Capy');
         await screen.unmount();
     });
 

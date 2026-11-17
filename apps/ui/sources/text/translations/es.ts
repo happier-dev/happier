@@ -1,3 +1,4 @@
+import { petShareTranslations } from './petShareTranslations';
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
 import { simulatorViewerTranslations } from './simulatorViewerTranslations';
 import { deploymentMonitoringTranslations } from './deploymentMonitoringTranslations';
@@ -1435,7 +1436,7 @@ export const es: TranslationStructure = {
     guide: "Guía de la política",
   },
   botTemplates: botTemplateTranslations['es'],
-  botTemplateRecipient: botTemplateRecipientTranslations['es'],
+  botTemplateRecipient: botTemplateRecipientTranslations['es'], petShare: petShareTranslations['es'],
   transcriptPassage: {
     quote: "Citar",
     annotate: "Anotar",

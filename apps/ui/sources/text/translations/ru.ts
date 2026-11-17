@@ -1,3 +1,4 @@
+import { petShareTranslations } from './petShareTranslations';
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
 import { simulatorViewerTranslations } from './simulatorViewerTranslations';
 import { deploymentMonitoringTranslations } from './deploymentMonitoringTranslations';
@@ -1449,7 +1450,7 @@ export const ru: TranslationStructure = {
     guide: "Руководство по политике",
   },
   botTemplates: botTemplateTranslations['ru'],
-  botTemplateRecipient: botTemplateRecipientTranslations['ru'],
+  botTemplateRecipient: botTemplateRecipientTranslations['ru'], petShare: petShareTranslations['ru'],
   transcriptPassage: {
     quote: "Цитировать",
     annotate: "Добавить заметку",

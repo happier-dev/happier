@@ -394,7 +394,9 @@ export const BotFacePickerPanel = React.memo(function BotFacePickerPanel(
             ? t('bots.face.failed')
             : worn
               ? worn.kind === 'accountPet'
-                ? t('bots.face.petAccountNote', { name: wornChoice?.name ?? '' })
+                ? wornChoice?.portable
+                  ? t('petShare.chooserRegistryNote', { name: wornChoice.name })
+                  : t('bots.face.petAccountNote', { name: wornChoice?.name ?? '' })
                 : pets.accountCount === 0 ? t('bots.face.petEmptyNote') : ''
             : customHint
               ? t('bots.face.customEmptyNote')
@@ -429,7 +431,7 @@ const FIND_PET = 'find-pet';
 const CREATE_PET = 'create-pet';
 const DEFAULT_PET: PetAccountReferenceV1 = { kind: 'builtIn', petId: DEFAULT_BUILT_IN_PET_ID };
 const petChoiceId = (ref: PetAccountReferenceV1) => (ref.kind === 'builtIn' ? `builtIn:${ref.petId}` : `accountPet:${ref.accountPetId}`);
-type PetChoice = Readonly<{ id: string; ref: PetAccountReferenceV1; name: string }>;
+type PetChoice = Readonly<{ id: string; ref: PetAccountReferenceV1; name: string; portable?: boolean }>;
 const BUILT_IN_PET_CHOICES: readonly PetChoice[] = BUILT_IN_PET_IDS.map((petId) => ({
   id: petChoiceId({ kind: 'builtIn', petId }),
   ref: { kind: 'builtIn', petId },
@@ -451,8 +453,10 @@ function usePetChoices(): Readonly<{ enabled: boolean; choices: readonly PetChoi
     const own: PetChoice[] = accountPets
       ? Object.values(library).map((pet) => ({
         id: petChoiceId({ kind: 'accountPet', accountPetId: pet.accountPetId }),
+        // A worn catalog pet carries its portable origin and name, so people the Bot is shared with can add it (PET-SHARE).
         ref: createAccountPetReferenceV1(pet),
         name: pet.manifest.displayName,
+        portable: pet.origin.kind === 'registry',
       }))
       : [];
     return { enabled, choices: own.length ? [...BUILT_IN_PET_CHOICES, ...own] : BUILT_IN_PET_CHOICES, accountCount: own.length };

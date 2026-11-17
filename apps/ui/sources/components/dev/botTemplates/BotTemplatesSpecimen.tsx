@@ -2,7 +2,11 @@ import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ToolCall } from '@happier-dev/session-core/messages';
-import type { BotTemplateInstanceV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
+import type { BotTemplateContentV1, BotTemplateInstanceV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
+import type { SessionBotFaceV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import { buildAccountPetCreateRequestV1 } from '@happier-dev/protocol/pets/importActionV1';
+import { resolveBuiltInPetPackage } from '@/components/pets/builtIns/builtInPetRegistry';
+import { SharedBotPetOffer } from '@/components/sessions/bots/SharedBotPetOffer';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -40,7 +44,7 @@ const DRAFT_TOOL: ToolCall = {
 
 /**
  * Dev-only: the Bot template surfaces through their real components on the round-2 lab's content,
- * for side-by-side lab comparison without an Agent turn. `?frame=card|pane|page|preview|refused-not_found|refused-no_access|refused-plain_account|info|update|update-conflict|update-done|saved-skill`.
+ * for side-by-side lab comparison without an Agent turn. `?frame=card|pane|page|preview|preview-pet|page-pet|pet-offer|refused-not_found|refused-no_access|refused-plain_account|info|update|update-conflict|update-done|saved-skill`.
  * Never linked from product surfaces; nothing here writes.
  */
 export function BotTemplatesSpecimen(
@@ -51,6 +55,18 @@ export function BotTemplatesSpecimen(
   if (frame === 'pane' || frame === 'page')
     return <EditorFrame serverId={serverId} presentation={frame} />;
   if (frame === 'preview') return <PreviewFrame serverId={serverId} />;
+  // PET-SHARE: a template carrying Milo as a bundled package (its Copy shows "Pet: Milo"), and a shared Bot's offer.
+  if (frame === 'preview-pet') return <PetPreviewFrame serverId={serverId} />;
+  if (frame === 'page-pet') return <PetEditorFrame serverId={serverId} />;
+  if (frame === 'pet-offer')
+    return (
+      <ItemList>
+        {/* As Info's identity draws it: under where the Bot runs, no sheet. Nothing shows where pets or their sync are off. */}
+        <ItemGroup surface="none" header="none">
+          <SharedBotPetOffer face={SPECIMEN_SHARED_PET_FACE} />
+        </ItemGroup>
+      </ItemList>
+    );
   // The skill a Bot saves in its own turn, in a transcript-width column (lab r2 skills-states).
   if (frame === 'saved-skill')
     return (
@@ -118,7 +134,7 @@ const saveLocally: BotTemplateSave = async ({ revision }) => ({
 });
 
 function EditorFrame(
-  props: Readonly<{ serverId: string; presentation: 'pane' | 'page' }>,
+  props: Readonly<{ serverId: string; presentation: 'pane' | 'page'; pet?: BotTemplateContentV1['pet'] }>,
 ) {
   const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
   const execution = useMountedActionExecution(binding?.scope ?? null);
@@ -127,6 +143,7 @@ function EditorFrame(
       createBotTemplateEditorBuffer({
         draft: {
           ...SPECIMEN_TEMPLATE_DRAFT,
+          ...(props.pet ? { content: { ...SPECIMEN_TEMPLATE_DRAFT.content, pet: props.pet } } : {}),
           sourceSessionRef: {
             ...SPECIMEN_TEMPLATE_DRAFT.sourceSessionRef,
             serverId: props.serverId,
@@ -134,7 +151,7 @@ function EditorFrame(
         },
         revision: { headerVersion: 1, bodyVersion: 1 },
       }),
-    [props.serverId],
+    [props.serverId, props.pet],
   );
   if (!binding) return null;
   const body = (
@@ -158,10 +175,46 @@ function EditorFrame(
   );
 }
 
+/** A Bot someone shared, wearing a catalog pet the viewer doesn't hold yet. */
+const SPECIMEN_SHARED_PET_FACE: SessionBotFaceV1 = { seed: 'release-captain', pet: { kind: 'accountPet',
+  accountPetId: 'owner-capy', displayName: 'Capy', origin: { kind: 'registry', sourceId: 'builtin:petdex', itemId: 'capy' } } };
+
+/** The built-in Milo's real sheet, read once and carried as a template's bundled package (what a created pet ships as). */
+function useSpecimenBundledPet(): BotTemplateContentV1['pet'] | null {
+  const [pet, setPet] = React.useState<BotTemplateContentV1['pet'] | null>(null);
+  React.useEffect(() => {
+    const source = resolveBuiltInPetPackage('milo').spritesheetSource;
+    const uri = typeof source === 'string' ? source : source && typeof source === 'object' && 'uri' in source ? source.uri : null;
+    if (!uri) return;
+    let active = true;
+    void fetch(uri).then(response => response.arrayBuffer()).then(buffer => {
+      const bytes = new Uint8Array(buffer);
+      if (!active) return;
+      setPet({ name: 'Milo', source: { kind: 'package', package: buildAccountPetCreateRequestV1({
+        manifest: { id: 'milo-copy', displayName: 'Milo', description: 'A small companion', spritesheetPath: 'spritesheet.webp' },
+        mediaType: 'image/webp', spritesheetBytes: bytes, origin: { kind: 'manualImport' } }) } });
+    });
+    return () => { active = false; };
+  }, []);
+  return pet;
+}
+
+function PetEditorFrame(props: Readonly<{ serverId: string }>) {
+  const pet = useSpecimenBundledPet();
+  if (!pet) return null;
+  return <EditorFrame serverId={props.serverId} presentation="page" pet={pet} />;
+}
+
+function PetPreviewFrame(props: Readonly<{ serverId: string }>) {
+  const pet = useSpecimenBundledPet();
+  if (!pet) return null;
+  return <PreviewFrame serverId={props.serverId} pet={pet} />;
+}
+
 const REFUSALS: readonly BotTemplateOpenRefusal[] = ['not_found', 'no_access', 'plain_account'];
 
 /** `refusal` renders the refused open (deleted, no longer shared, Plain recipient) instead of the release. */
-function PreviewFrame(props: Readonly<{ serverId: string; refusal?: BotTemplateOpenRefusal }>) {
+function PreviewFrame(props: Readonly<{ serverId: string; refusal?: BotTemplateOpenRefusal; pet?: BotTemplateContentV1['pet'] }>) {
   const execution = useMountedActionExecution(props.serverId);
   const source = React.useMemo(
     () =>
@@ -173,13 +226,14 @@ function PreviewFrame(props: Readonly<{ serverId: string; refusal?: BotTemplateO
   );
   const reader = React.useMemo(
     () => ({
-      preview: props.refusal ? null : { ...SPECIMEN_PREVIEW, source },
+      preview: props.refusal ? null : { ...SPECIMEN_PREVIEW, source, ...(props.pet ? { release: { ...SPECIMEN_PREVIEW.release,
+        content: { ...SPECIMEN_PREVIEW.release.content, pet: props.pet } } } : {}) },
       failed: Boolean(props.refusal),
       refusal: props.refusal ?? null,
       reload: async () => null,
       execution,
     }),
-    [source, execution, props.refusal],
+    [source, execution, props.refusal, props.pet],
   );
   return (
     <BotTemplateRecipientBody

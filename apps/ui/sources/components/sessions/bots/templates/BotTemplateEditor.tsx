@@ -164,6 +164,7 @@ function AuthorAside({ buffer }: Readonly<{ buffer: BotTemplateEditorBuffer }>) 
 
 function EditorIdentity(props: BodyProps) {
     const identity = useBotTemplateEditorValue(props.buffer, state => state.draft.content.identity);
+    const pet = useBotTemplateEditorValue(props.buffer, state => state.draft.content.pet);
     const version = useBotTemplateEditorValue(props.buffer, state => state.releaseOptions.version);
     const released = props.released;
     const source = useBotTemplateEditorValue(props.buffer, state => state.draft.sourceSessionRef);
@@ -178,7 +179,7 @@ function EditorIdentity(props: BodyProps) {
     const edit = (key: 'name' | 'description', value: string) => props.buffer.edit(draft => ({ ...draft,
         content: { ...draft.content, identity: { ...draft.content.identity, [key]: value } } }));
     // Once a version is shared, the header names that version and says so; until then it is the private draft.
-    return <BotTemplateHeader identity={identity} author={author} version={released?.version ?? version}
+    return <BotTemplateHeader identity={identity} pet={pet} author={author} version={released?.version ?? version}
         sharing={t(released ? 'botTemplates.shared' : 'botTemplates.privateDraft')}
         titleEditor={{ value: identity.name, placeholder: t('common.name'), accessibilityLabel: t('common.name'),
             onChangeText: value => edit('name', value), onCommit: () => { void props.buffer.commit(props.save); }, testID: 'bot-template-name' }}

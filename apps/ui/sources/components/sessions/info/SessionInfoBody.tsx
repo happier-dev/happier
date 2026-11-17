@@ -162,6 +162,7 @@ import {
   type SessionInfoContextAction,
 } from './SessionInfoIdentity';
 import { useSessionRetentionSummary } from './SessionRetentionNotice';
+import { readSessionBotFaceFacts } from '@/components/sessions/bots/face/sessionBotFaceFacts';
 import {
   SessionInfoSectionSummaryProvider,
   useSessionInfoSectionSummaryHost,
@@ -1300,6 +1301,7 @@ function SessionInfoContent({
           ) : undefined
         }
         contextAction={contextAction}
+        botFace={readSessionBotFaceFacts(session, sessionServerId)?.face}
         menuActions={routeMenuActions}
         onClose={onRequestClose}
       />

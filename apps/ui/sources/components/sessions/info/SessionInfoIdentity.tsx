@@ -4,6 +4,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SessionElapsedClock } from '@/components/sessions/companion/summary/SessionSummaryStatusLine';
 import { SessionAvatar } from '@/components/sessions/bots/face/SessionAvatar';
+import { SharedBotPetOffer } from '@/components/sessions/bots/SharedBotPetOffer';
+import type { SessionBotFaceV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { PageHeader, type PageHeaderTextEditor } from '@/components/ui/layout/PageHeader';
@@ -59,6 +61,8 @@ export const SessionInfoIdentity = React.memo(function SessionInfoIdentity(
     /** The Agent's own mark at the given glyph size (no tile behind it): the route header's mark. */
     renderAgentMark?: (sizePx: number) => React.ReactNode;
     contextAction: SessionInfoContextAction | null;
+    /** A Bot's face: a shared Bot wearing a catalog pet the viewer lacks offers "Add <pet>" under where it runs (PET-SHARE). */
+    botFace?: SessionBotFaceV1 | null;
     menuActions: readonly MenuAction[];
     /** The route's in-place rename of the title. */
     titleEditor?: PageHeaderTextEditor;
@@ -146,6 +150,7 @@ export const SessionInfoIdentity = React.memo(function SessionInfoIdentity(
           <View style={styles.routeDetails}>
             {statusLine}
             {placeLine}
+            <SharedBotPetOffer face={props.botFace} />
             {action ? <View style={styles.routeAction}>{action}</View> : null}
           </View>
         }
@@ -168,6 +173,7 @@ export const SessionInfoIdentity = React.memo(function SessionInfoIdentity(
         {action}
       </View>
       {placeLine}
+      <SharedBotPetOffer face={props.botFace} style={styles.paneOffer} />
     </ItemGroup>
   );
 });
@@ -182,6 +188,10 @@ const styles = StyleSheet.create((theme) => ({
   // The header already puts its line gap above the details; the lines keep that same gap between them.
   routeDetails: {
     gap: HAPPIER_PAGE_METRICS.pageHeaderLineGapPx,
+  },
+  // The offer is its own beat under the place line, like the route's action.
+  paneOffer: {
+    marginTop: theme.space.s8,
   },
   // The action closes the identity: its own beat under the place line, on the title's edge.
   routeAction: {

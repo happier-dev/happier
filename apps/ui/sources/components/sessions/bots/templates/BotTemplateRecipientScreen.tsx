@@ -114,7 +114,7 @@ export function BotTemplateRecipientBody({ reader, source, serverId }: Readonly<
         disabled={!execution.ready || refreshing || reader.failed} onPress={makeOwn} />;
     return <BotTemplatePageLayout testID="bot-template-recipient" content={preview.release.content}
         footer={phone ? makeOwnButton : undefined}
-        header={<BotTemplateHeader identity={preview.release.content.identity} version={preview.release.version}
+        header={<BotTemplateHeader identity={preview.release.content.identity} pet={preview.release.content.pet} version={preview.release.version}
             presentation={preview.presentation} descriptionPlacement="body"
             actions={phone ? undefined : makeOwnButton} />}
         notice={<>

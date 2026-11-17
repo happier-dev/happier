@@ -8,7 +8,7 @@ import { PAGE_HEADER_MARK_SLOT_SIZE_PX, PageHeaderMarkSlot } from '@/components/
 import { Text } from '@/components/ui/text/Text';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
-import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
+import { BotTemplateFace } from './BotTemplateFace';
 import { t } from '@/text';
 
 /**
@@ -19,6 +19,8 @@ import { t } from '@/text';
  */
 export function BotTemplateHeader(props: Readonly<{
     identity: BotTemplateContentV1['identity'];
+    /** The pet that travels with the template (PET-SHARE): drawn as the face when present. */
+    pet?: BotTemplateContentV1['pet'];
     author?: string;
     version: string;
     sharing?: string;
@@ -42,8 +44,7 @@ export function BotTemplateHeader(props: Readonly<{
         description={props.descriptionPlacement === 'body' ? undefined : props.identity.description}
         titleEditor={props.titleEditor} descriptionEditor={props.descriptionPlacement === 'body' ? undefined : props.descriptionEditor}
         leading={<PageHeaderMarkSlot testID="bot-template-header-mark">{props.leading
-            ?? <SessionBotFace facts={{ seed: props.identity.name, face: props.identity.face ?? null }}
-                size={PAGE_HEADER_MARK_SLOT_SIZE_PX.page} motion={false} />}</PageHeaderMarkSlot>}
+            ?? <BotTemplateFace identity={props.identity} pet={props.pet} size={PAGE_HEADER_MARK_SLOT_SIZE_PX.page} />}</PageHeaderMarkSlot>}
         details={<View style={styles.identityLines}>
             {/* The byline leads with the author's own mark (lab r2 R10 header); a template with no known author has none. */}
             <View style={styles.bylineRow}>

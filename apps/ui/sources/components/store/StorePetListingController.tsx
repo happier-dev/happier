@@ -1,15 +1,13 @@
 import * as React from 'react';
 import type { Href } from 'expo-router';
-import { PET_IMPORT_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsPetsV1';
 import { PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
-import { readPetImportOutcomeV1, type PetImportOutcomeV1 } from '@happier-dev/protocol/pets/importActionV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import {
   resolveBuiltInPetPackage,
   type BuiltInPetId,
 } from '@/components/pets/builtIns/builtInPetRegistry';
+import { usePetImport, type PetImportResult } from '@/components/pets/source/usePetImport';
 import { usePetSelectionAction } from '@/components/pets/source/usePetSelectionAction';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { BUILT_IN_PET_SUBTITLE_KEYS } from '@/components/settings/pets/devicePetSelector/constants';
@@ -22,7 +20,6 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useRegistryItem } from '@/registries/useRegistryItem';
 import { useRegistrySourceDescriptor } from '@/registries/useRegistrySourceRevision';
 import { storage, usePeripheralFeedDemand } from '@/sync/domains/state/storage';
-import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 import { formatCalendarDate } from '@/utils/datetime/cachedIntlFormatters';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -137,8 +134,7 @@ function RegistryPetListing(
       ) ?? null,
     [accountPetsById, props.sourceId, props.itemId],
   );
-  const scope = useAccountSettingsScope();
-  const { execute } = useMountedActionExecution(scope);
+  const importPet = usePetImport();
   const selectPet = usePetSelectionAction();
   const open = useOpenSettings();
   const [adding, setAdding] = React.useState(false);
@@ -152,21 +148,15 @@ function RegistryPetListing(
     fireAndForget(
       (async () => {
         try {
-          const result = await execute(PET_IMPORT_ACTION_ID_V1, { source: { kind: 'registry', sourceId: props.sourceId, itemId: props.itemId } });
           // The pet-import owner names the outcome; the listing only says it (one Action, one set of outcomes).
-          const next = readPetImportOutcomeV1(result.ok ? { ok: true, result: result.result }
-            : { ok: false, errorCode: result.errorCode, ...(result.details === undefined ? {} : { details: result.details }) });
-          if (next?.kind === 'added') storage.getState().upsertAccountPet(next.pet);
-          setOutcome(listingStateOfImport(next));
-        } catch {
-          setOutcome({ kind: 'unreachable' });
+          setOutcome(listingStateOfImport(await importPet({ source: { kind: 'registry', sourceId: props.sourceId, itemId: props.itemId } })));
         } finally {
           setAdding(false);
         }
       })(),
       { tag: 'StorePetListing.add' },
     );
-  }, [execute, props.sourceId, props.itemId]);
+  }, [importPet, props.sourceId, props.itemId]);
 
   if (!summary) {
     return read.loading || !read.error ? (
@@ -252,12 +242,12 @@ function RegistryPetListing(
 }
 
 /** A failed import as the listing says it; an added pet is shown from the Account library, not from this state. */
-function listingStateOfImport(outcome: PetImportOutcomeV1 | null): StorePetListingState | null {
-  switch (outcome?.kind) {
+function listingStateOfImport(outcome: PetImportResult): StorePetListingState | null {
+  switch (outcome.kind) {
     case 'added': return null;
     case 'library_full': return { kind: 'libraryFull', limit: PET_PACKAGE_LIMITS_V1.maxImportedPetsPerAccount };
     case 'pet_sync_off': return { kind: 'syncOff' };
     case 'could_not_add': return { kind: 'couldntAdd' };
-    default: return { kind: 'unreachable' };
+    case 'unreachable': return { kind: 'unreachable' };
   }
 }

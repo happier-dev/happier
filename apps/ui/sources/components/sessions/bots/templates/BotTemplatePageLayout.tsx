@@ -13,7 +13,7 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { Icon } from '@/components/ui/icons/Icon';
 import type { IconName } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
-import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
+import { BotTemplateFace } from './BotTemplateFace';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
 
@@ -119,14 +119,7 @@ export function BotTemplateWhatYouGet({
             {t('botTemplates.whatYouGet')}
           </Text>
           <View style={styles.identity}>
-            <SessionBotFace
-              facts={{
-                seed: content.identity.name,
-                face: content.identity.face ?? null,
-              }}
-              size={ASIDE_FACE_SIZE}
-              motion={false}
-            />
+            <BotTemplateFace identity={content.identity} pet={content.pet} size={ASIDE_FACE_SIZE} />
             <View style={styles.identityText}>
               <Text variant="label" emphasis="semiBold" numberOfLines={1} style={styles.ink}>
                 {content.identity.name}

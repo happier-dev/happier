@@ -1,3 +1,4 @@
+import { petShareTranslations } from './petShareTranslations';
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
 import { simulatorViewerTranslations } from './simulatorViewerTranslations';
 import { deploymentMonitoringTranslations } from './deploymentMonitoringTranslations';
@@ -1419,7 +1420,7 @@ export const ja: TranslationStructure = {
     guide: "ポリシーガイド",
   },
   botTemplates: botTemplateTranslations['ja'],
-  botTemplateRecipient: botTemplateRecipientTranslations['ja'],
+  botTemplateRecipient: botTemplateRecipientTranslations['ja'], petShare: petShareTranslations['ja'],
   transcriptPassage: {
     quote: "引用",
     annotate: "注釈を付ける",

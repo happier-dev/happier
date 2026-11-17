@@ -1,3 +1,4 @@
+import { petShareTranslations } from './petShareTranslations';
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
 import { simulatorViewerTranslations } from './simulatorViewerTranslations';
 import { deploymentMonitoringTranslations } from './deploymentMonitoringTranslations';
@@ -1227,7 +1228,7 @@ export const de: TranslationStructure = {
     guide: "Anleitung zur Richtlinie",
   },
   botTemplates: botTemplateTranslations['de'],
-  botTemplateRecipient: botTemplateRecipientTranslations['de'],
+  botTemplateRecipient: botTemplateRecipientTranslations['de'], petShare: petShareTranslations['de'],
   transcriptPassage: {
     quote: "Zitieren",
     annotate: "Anmerken",

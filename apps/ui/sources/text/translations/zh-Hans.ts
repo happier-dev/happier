@@ -1,3 +1,4 @@
+import { petShareTranslations } from './petShareTranslations';
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
 import { simulatorViewerTranslations } from './simulatorViewerTranslations';
 import { deploymentMonitoringTranslations } from './deploymentMonitoringTranslations';
@@ -1435,7 +1436,7 @@ export const zhHans: TranslationStructure = {
     guide: "策略指南",
   },
   botTemplates: botTemplateTranslations['zh-Hans'],
-  botTemplateRecipient: botTemplateRecipientTranslations['zh-Hans'],
+  botTemplateRecipient: botTemplateRecipientTranslations['zh-Hans'], petShare: petShareTranslations['zh-Hans'],
   transcriptPassage: {
     quote: "引用",
     annotate: "添加批注",

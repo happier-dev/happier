@@ -1,3 +1,4 @@
+import { petShareTranslations } from './petShareTranslations';
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
 import { simulatorViewerTranslations } from './simulatorViewerTranslations';
 import { simulatorDeviceToolsTranslations } from './simulatorDeviceToolsTranslations';
@@ -24409,7 +24410,7 @@ export const en: TranslationStructure = {
   },
   organizationPolicy: enOrganizationPolicy,
   botTemplates: botTemplateTranslations['en'],
-  botTemplateRecipient: botTemplateRecipientTranslations['en'],
+  botTemplateRecipient: botTemplateRecipientTranslations['en'], petShare: petShareTranslations['en'],
   transcriptPassage: {
     quote: "Quote",
     annotate: "Annotate",
