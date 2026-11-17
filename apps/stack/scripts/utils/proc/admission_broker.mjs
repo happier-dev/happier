@@ -46,6 +46,8 @@ const FOCUSED_TEST_PRIORITY_RANK = 1.5;
 const FOCUSED_TEST_CLASSES = new Set(FOCUSED_TEST_ADMISSION_CLASSES);
 const PRODUCER_RANK = 2;
 function headPriorityRank(request) {
+  const classPriority = HEAVYWEIGHT_COMMAND_RESOURCES[request.resourceClass ?? request.className]?.headPriority;
+  if (classPriority !== undefined) return classPriority;
   if (FOCUSED_TEST_CLASSES.has(request.resourceClass ?? request.className)) return FOCUSED_TEST_PRIORITY_RANK;
   const script = typeof request.entry === 'string' ? request.entry.split(' ')[1] : undefined;
   if (!script || typeof request.repoDir !== 'string') return 0;

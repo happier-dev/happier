@@ -202,6 +202,14 @@ waiter record or catch-up poll. Relevant workspace-resource changes wake only
 blocked demand that consumes those resources. Replacing the launcher affects new
 invocations; already-running shells retain their parsed code.
 
+In 0.3 development, finite daemon Plugin UI preparation during a source reload
+uses `source-reload` admission at producer priority, ahead of validation, focused
+tests and typechecks. It retains the observed 17 GiB floor, host CPU reservation,
+validation disk budget and existing capacity checks; priority never preempts
+active work. Reload coordinators still delegate admission to finite producers.
+A queued client retains its submitted class: relaunch it to adopt a changed
+classification. A long-lived broker must adopt updated priority policy too.
+
 In 0.3 development, public package typechecks resolve first-party workspace
 exports to their TypeScript source through `happier-source`. The shared compiler
 runner uses the canonical workspace source-export mapping, including when an

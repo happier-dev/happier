@@ -9,6 +9,7 @@ controller_coalescing_environment_names='CI GOMAXPROCS HAPPIER_CLI_TEST_SKIP_BUI
 placement_probe_connect_timeout_seconds() { printf '%s' '7'; }
 heavyweight_cpu_cores() {
   case "$1" in
+    source-reload) heavyweight_cpu_cost=$2 ;;
     validation) heavyweight_cpu_cost=$2 ;;
     focused-validation) heavyweight_cpu_cost=1 ;;
     focused-validation-ui) heavyweight_cpu_cost=1 ;;
@@ -62,6 +63,7 @@ heavyweight_requested_cpu_cores() {
 heavyweight_focused_test_class() { case "$1" in focused-validation|focused-validation-ui|focused-validation-cli) return 0 ;; *) return 1 ;; esac; }
 heavyweight_memory_floor_kib() {
   case "$1" in
+    source-reload) heavyweight_policy_floor='17825792' ;;
     validation) heavyweight_policy_floor='2097152' ;;
     focused-validation) heavyweight_policy_floor='1048576' ;;
     focused-validation-ui) heavyweight_policy_floor='3145728' ;;
@@ -339,6 +341,9 @@ native_command_policy_base() {
     policy_componentOverride='apps/stack'
     policy_selfPublisher='1'
   fi
+  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_nativeTest" = '0' ]; } && { [ "$policy_entryRepositoryPath" = 'apps/stack/scripts/runtime/launch/prepareSourceRuntimeReload.mjs' ]; }; then
+    policy_heavyClass='source-reload'
+  fi
   if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_nativeTest" = '0' ]; } && { [ "$policy_sourceCondition" = '1' ]; } && { [ "$policy_entryRepositoryPath" = 'apps/stack/scripts/runtime/launch/prepareSourceRuntimeReload.mjs' ] || [ "$policy_entryRepositoryPath" = 'apps/stack/scripts/utils/dev_targets/source_runtime_producer.mjs' ]; }; then
     policy_kind='source-test'
   fi
@@ -529,6 +534,9 @@ native_command_policy_finish() {
   fi
   if { [ "$policy_admissionWrapper" = '1' ]; }; then
     policy_heavyClass='compilation'
+  fi
+  if { [ "$policy_admissionWrapper" = '1' ]; } && { [ "$policy_admissionClass" = 'source-reload' ]; }; then
+    policy_heavyClass='source-reload'
   fi
   if { [ "$policy_admissionWrapper" = '1' ]; } && { [ "$policy_admissionClass" = 'validation' ]; }; then
     policy_heavyClass='validation'

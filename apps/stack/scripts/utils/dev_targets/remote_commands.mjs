@@ -29,8 +29,8 @@ import { resolveRemoteValidationPlacementClass } from './validation_preparation_
 import { readShellCommandPrefix, workspaceBuildCommands, workspaceBuildSequence } from './shell_command_sequence.mjs';
 import { HOST_ADMISSION_OBSERVATION, HOST_OBSERVATION_PROGRAMS } from './host_observation.mjs';
 import { COMPILER_NATIVE_TEST_FILES, COMPILER_TEST_SUITES, refineCompilerSuiteSelection } from './compiler_test_suites.mjs';
-import { ADMISSION_CPU_WORKER_ENV_NAMES, ADMISSION_CPU_WORKER_FLAGS, FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_WEB_EXPORT_MEMORY as EXPORT_MEMORY } from './command_resources.mjs';
-export { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES } from './command_resources.mjs';
+import { ADMISSION_CPU_WORKER_ENV_NAMES, ADMISSION_CPU_WORKER_FLAGS, FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_RELOAD_ADMISSION_CLASS, SOURCE_WEB_EXPORT_MEMORY as EXPORT_MEMORY } from './command_resources.mjs';
+export { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_RELOAD_ADMISSION_CLASS } from './command_resources.mjs';
 
 // Both dispatchers evaluate this policy. The native artifact is generated once,
 // while argv and path normalization remain thin transport adapters.
@@ -264,6 +264,9 @@ const COMMAND_RULES = [
     'apps/stack/scripts/utils/dev_targets/source_runtime_producer.mjs',
   ] },
     set: { ...validation, kind: 'runtime', componentOverride: 'apps/stack', heavyClass: 'source-bundle', selfPublisher: '1' } },
+  { when: { command: ['node', 'nodejs'], nativeTest: ['0'],
+    entryRepositoryPath: ['apps/stack/scripts/runtime/launch/prepareSourceRuntimeReload.mjs'] },
+    set: { heavyClass: SOURCE_RELOAD_ADMISSION_CLASS } },
   // Explicit source workers preload the canonical resolver before linking
   // their static graph. They must not prepare/read a shared emitted closure.
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'], sourceCondition: ['1'],

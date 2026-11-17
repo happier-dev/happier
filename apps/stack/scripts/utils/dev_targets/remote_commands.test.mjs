@@ -1683,13 +1683,13 @@ test('source reload preparation delegates admission to finite producers in both 
   const args = ['node', './apps/stack/scripts/runtime/launch/prepareSourceRuntimeReload.mjs', '--worker', '{}'];
   const policy = resolveRemoteCommandPolicy(args, { cwd: root });
   assert.equal(policy.kind, 'runtime', 'reload worker static imports consume emitted workspace packages');
-  assert.equal(policy.heavyClass, 'source-bundle');
+  assert.equal(policy.heavyClass, 'source-reload');
   assert.equal(policy.selfPublisher, '1', 'reload coordination must not charge capacity while its finite producer waits for a lease');
   if (process.platform !== 'win32') {
     const artifact = fileURLToPath(new URL('./native_command_policy.sh', import.meta.url));
     const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$2; shift 2; resolve_native_command_policy "$@"; printf "%s,%s,%s" "$policy_kind" "$policy_heavyClass" "$policy_selfPublisher"', 'policy', artifact, root, ...args], { encoding: 'utf8' });
     assert.equal(native.status, 0, native.stderr);
-    assert.equal(native.stdout, 'runtime,source-bundle,1');
+    assert.equal(native.stdout, 'runtime,source-reload,1');
   }
   const target = { name: 'worker', platform: 'linux', repoDir: root, cliHomeDir: '/tmp/reload-worker-home' };
   const dispatched = buildRemoteExecCommand(target, { commandArgs: args, admissionClass: 'source-bundle', executionId });

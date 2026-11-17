@@ -15,6 +15,7 @@ import { captureSourceWebBuildInputs, resolveSourceRuntimeProducerContext, setBu
 import { readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment } from './source_guest_payload.mjs';
 import { run, runCapture } from '../utils/proc/proc.mjs';
 import { resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
+import { SOURCE_RELOAD_ADMISSION_CLASS } from '../utils/dev_targets/remote_commands.mjs';
 import { runSourceBuildCommand, sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH } from '../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
 import { deriveRevisionGeneratedInputs, isRevisionGeneratorInput, isRevisionKeptUntrackedPath, readDeclaredShippedPaths, readSourceRevisionDescriptor, readSourceRevisionOverlayBytes, resolveSourceRevisionIdentity, sourceRevisionKey, writeSourceRevisionDescriptor } from './source_revision.mjs';
@@ -289,7 +290,7 @@ await prepareSourceCliPluginUiArtifacts({ repoRoot: ${JSON.stringify(treeDir)},
   workspaceNames: BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES.map(name => name.slice('@happier-dev/'.length)) });`;
   await runSourceBuildCommand({ repoDir: treeDir, command: process.execPath,
     args: sourceBuildNodeArgs({ repoDir: treeDir, scriptPath: '--input-type=module', args: ['-e', code] }),
-    cwd: treeDir, env, signal, captureStdout: false });
+    cwd: treeDir, env, signal, captureStdout: false, admissionClass: SOURCE_RELOAD_ADMISSION_CLASS });
 }
 
 function supportStoreDir(treesRoot) {

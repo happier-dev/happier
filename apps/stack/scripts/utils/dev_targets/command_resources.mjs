@@ -16,7 +16,12 @@ export const COMMAND_MEMORY_MEASUREMENTS = Object.freeze({
   // Owner GO (Continuation 2); no extra margin beyond rounding.
   'package-dist': Object.freeze({ samples: 310, p95KiB: 4624416, maxKiB: 5327920, roundingKiB: 512 * 1024 }),
 });
+export const SOURCE_RELOAD_ADMISSION_CLASS = 'source-reload';
 export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
+  // Owner 2026-11-17: daemon Plugin UI preparation in QA reload #172 waited
+  // behind validation. Retain its observed 17 GiB reservation (17825792 KiB)
+  // and validation disk/host CPU shape; only queue precedence changes.
+  [SOURCE_RELOAD_ADMISSION_CLASS]: { memoryKiB: 17825792, cpuCores: 'host', diskClass: 'validation', headPriority: 2 },
   // Owner Q1 (2026-10-29): successful measured peak rounded up to whole GiB,
   // with no blanket margin. Three loaded deployment-protocol suite runs
   // peaked at 1,825,056 KiB; validation-floor-sizing-1104/measurements.json.
