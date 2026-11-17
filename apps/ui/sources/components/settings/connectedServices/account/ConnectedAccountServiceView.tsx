@@ -335,6 +335,13 @@ const ConnectedAccountServiceController = React.memo(
     const submittedManualDraftRef = React.useRef<Readonly<Parameters<React.ComponentProps<typeof ConnectedAccountManualForm>['onSubmit']>[0] & {
         selectedTarget: MachineAdministrationTargetSelectionV1['selectedTarget'];
     }> | null>(null);
+    // A pressed Connect shows in progress while its draft waits for the service description or target.
+    // The ref holds the draft; this one writer keeps the rendered flag equal to it.
+    const [manualDraftQueued, setManualDraftQueued] = React.useState(false);
+    const setSubmittedManualDraft = React.useCallback((draft: typeof submittedManualDraftRef.current) => {
+        submittedManualDraftRef.current = draft;
+        setManualDraftQueued(draft !== null);
+    }, []);
     const [configuration, setConfiguration] = React.useState<ConfigurationDescription | null>(null);
     const [
         configurationContinuationAttemptId,
@@ -1293,7 +1300,7 @@ const ConnectedAccountServiceController = React.memo(
         if (machineRequired
             && (draft.selectedTarget?.serverIdentityId !== targetSelection.selectedTarget?.serverIdentityId
                 || draft.selectedTarget?.machineId !== targetSelection.selectedTarget?.machineId)) {
-            submittedManualDraftRef.current = null;
+            setSubmittedManualDraft(null);
             return;
         }
         if (!attempt && !configuration && !pendingIntent && !errorCode && panelIntent?.kind === 'add'
@@ -1305,14 +1312,14 @@ const ConnectedAccountServiceController = React.memo(
             return;
         }
         if (configuration && draft.configuration) {
-            submittedManualDraftRef.current = { fields: draft.fields, displayName: draft.displayName, selectedTarget: draft.selectedTarget,
+            setSubmittedManualDraft({ fields: draft.fields, displayName: draft.displayName, selectedTarget: draft.selectedTarget,
                 ...(draft.selectedSecrets ? { selectedSecrets: draft.selectedSecrets } : {}),
-            };
+            });
             void saveConfiguration(draft.configuration);
             return;
         }
         if (attempt?.status !== 'awaitingManual') return;
-        submittedManualDraftRef.current = null;
+        setSubmittedManualDraft(null);
         draftDisplayNameRef.current = draft.displayName ?? null;
         void runAuthentication({ operation: 'submitManual', attemptId: attempt.attemptId, fields: draft.fields,
             ...(draft.selectedSecrets ? { selectedSecrets: draft.selectedSecrets } : {}),
@@ -1632,7 +1639,7 @@ const ConnectedAccountServiceController = React.memo(
         deviceCodeRef.current = null;
         draftDisplayNameRef.current = null;
         accountDirectIdRef.current = null;
-        submittedManualDraftRef.current = null;
+        setSubmittedManualDraft(null);
         setBusy(false);
         if (attemptId && attempt) {
             cancelDiscardedAttempt(attemptId);
@@ -1743,7 +1750,7 @@ const ConnectedAccountServiceController = React.memo(
                             accountLifetime: 'scope' in accountLifetime ? accountLifetime : undefined,
                         } : undefined}
                     guided={manualGuide}
-                    submitting={busy || retryingDescription}
+                    submitting={busy || retryingDescription || manualDraftQueued && !attempt && !configuration && !errorCode}
                     navigation={navigation}
                     onCancel={panelCancel}
                     // The failure sits with the draft it refused; its Retry submits the values on screen.
@@ -1753,10 +1760,10 @@ const ConnectedAccountServiceController = React.memo(
                         if (accountDirectMode) return saveAccountCredential({ fields, ...(selectedSecrets ? { selectedSecrets } : {}), ...(displayName ? { displayName } : {}) });
                         if (!attempt || configuration || restartsFailedAttempt) {
                             if (configurationDraft) setCombinedDraftSubmitted(true);
-                            submittedManualDraftRef.current = { fields, displayName, selectedTarget: targetSelection.selectedTarget,
+                            setSubmittedManualDraft({ fields, displayName, selectedTarget: targetSelection.selectedTarget,
                                 ...(selectedSecrets ? { selectedSecrets } : {}),
                                 ...(configurationDraft && !configuration ? { configuration: configurationDraft } : {}),
-                            };
+                            });
                             panelRef.current?.onModeChange?.(activeMode.id);
                             if (configuration && configurationDraft) {
                                 await saveConfiguration(configurationDraft);

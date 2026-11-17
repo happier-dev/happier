@@ -187,7 +187,8 @@ function PortableSetup(props: Readonly<{ credentials: NonNullable<Awaited<Return
     </InjectedAuthProvider>;
 }
 
-async function restorePortableFixture(requestedService = service, homeClient = false, vendorResponseReady?: Promise<void>, machinePresence: boolean | 'online' | 'legacy' | 'guests' | 'mixed' = false, offlineMachineId?: string, vendorStatus = 503) {
+async function restorePortableFixture(requestedService = service, homeClient = false, vendorResponseReady?: Promise<void>, machinePresence: boolean | 'online' | 'legacy' | 'guests' | 'mixed' = false, offlineMachineId?: string, vendorStatus = 503,
+    accountsReady?: Promise<void>) {
     const accountId = 'portable-controller';
     const credentials = { token: createAccountTokenForTests(accountId) };
     const serverUrl = 'https://portable-controller.test';
@@ -266,6 +267,9 @@ async function restorePortableFixture(requestedService = service, homeClient = f
                 vendorRequests.push(request.href);
                 vendorCredentialMatches.push(new Headers(init?.headers).get('authorization') === 'Bearer portable-cloudflare-token-fixture');
                 if (request.origin === 'https://api.vercel.com') {
+                    if (request.pathname === '/v2/teams') return Response.json({
+                        teams: [{ id: 'team_fixture', name: 'Fixture team' }], pagination: { next: null },
+                    });
                     expect(request.pathname).toBe('/v2/teams/team_fixture');
                     return Response.json({ id: 'team_fixture', name: 'Fixture team' });
                 }
@@ -304,7 +308,10 @@ async function restorePortableFixture(requestedService = service, homeClient = f
                 return Response.json(SharedSavedSecretPromoteOutputV1Schema.parse({ resourceId: promotion.resourceId, settingsVersion: 0,
                     connectedAccountCredential: { credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: 'configured-account-1' } }));
             }
-            if (request.pathname === '/v4/connect/qualified/accounts') return Response.json({ service: requestedService, accounts: [] });
+            if (request.pathname === '/v4/connect/qualified/accounts') {
+                await accountsReady;
+                return Response.json({ service: requestedService, accounts: [] });
+            }
             return homes.request(input, init);
         },
     });
@@ -850,6 +857,29 @@ it('renders Vercel configuration and secret token fields with a stale registry a
         expect(fixture.machineReads).toBe(0);
     } finally { await screen.unmount(); }
 });
+
+it('shows a fresh Connect as in progress while the Account description loads, then connects once', () => withPortableSheetBrowser(async () => {
+    let releaseAccounts!: () => void;
+    const accountsReady = new Promise<void>(resolve => { releaseAccounts = resolve; });
+    const fixture = await restorePortableFixture(vercel, false, undefined, false, undefined, 503, accountsReady);
+    const screen = await renderScreen(<PortableSetup credentials={fixture.credentials} service={vercel} sheet onCancel={() => {}} />);
+    try {
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:token'), screen.getTextContent()).not.toBeNull());
+        await act(async () => { screen.changeTextByTestId('connected-account-manual:token', 'synthetic-inline-token'); });
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:submit')!.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('connected-account-manual:submit');
+        await flushHookEffects({ cycles: 10 });
+        // The same mounted draft is still on screen: pressing Connect does not remount the sign-in.
+        expect(screen.findHostByTestId('connected-account-manual:token')!.props.value).toBe('synthetic-inline-token');
+        // The submitted draft waits for the Account description; the person sees it in progress, not an idle form.
+        // A busy web control stays focusable, so the pending state is its busy accessibility state.
+        expect(screen.findHostByTestId('connected-account-manual:submit')!.props.accessibilityState).toMatchObject({ busy: true });
+        expect(fixture.promotions).toHaveLength(0);
+        releaseAccounts();
+        await vi.waitFor(() => expect(fixture.promotions, screen.getTextContent()).toHaveLength(1), { timeout: 10_000 });
+        expect(fixture.vendorRequests).toContain('https://api.vercel.com/v2/teams');
+    } finally { releaseAccounts(); await screen.unmount(); }
+}));
 
 it.each([
     { service: coder, fieldId: 'endpoint', value: 'https://coder-fixture.test' },
