@@ -49,6 +49,8 @@ export function useSettingActionWriter(options: Readonly<{ serverId?: string; be
     [isAccountCurrent, lifetime, localLifetime, mounted.isCurrent]);
     const write = React.useCallback(async (setting: SettingActionAddress, value: SettingValue,
         operation?: Readonly<{ signal?: AbortSignal; expectedSettingsVersion?: number;
+            /** This control's deliberate press already confirms this exact preference value. */
+            confirmed?: true;
             invocation?: CurrentUiContextCommandInvocation;
             onApprovalPending?: () => void;
             executorOptions?: NonNullable<Parameters<typeof useMountedActionExecution>[1]>['executorOptions'];
@@ -57,7 +59,7 @@ export function useSettingActionWriter(options: Readonly<{ serverId?: string; be
             : { expectedSettingsVersion: operation.expectedSettingsVersion };
         // Device preferences remain available before sign-in, through the same executor policy.
         if (!lifetime && isCurrent(setting) && !operation?.invocation) {
-            return await localFrontDoor('settings.set', { anchor: setting.anchor,
+            return await (operation?.confirmed ? localFrontDoor.confirmed : localFrontDoor)('settings.set', { anchor: setting.anchor,
                 ...revision,
                 ...(setting.key !== undefined ? { key: setting.key } : {}),
                 ...(setting.target ? { target: setting.target } : {}), value }, {
@@ -71,6 +73,7 @@ export function useSettingActionWriter(options: Readonly<{ serverId?: string; be
         const input = { anchor: setting.anchor, ...revision, ...(setting.key !== undefined ? { key: setting.key } : {}),
             ...(setting.target ? { target: setting.target } : {}), value };
         const mountedOperation = {
+            ...(operation?.confirmed ? { confirmed: true as const } : {}),
             signal: operation?.signal,
             onApprovalPending: operation?.onApprovalPending,
             ...(operation?.executorOptions ? { executorOptions: operation.executorOptions } : {}),

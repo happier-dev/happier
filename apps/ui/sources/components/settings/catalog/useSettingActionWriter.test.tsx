@@ -12,6 +12,7 @@ import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
 import { PROMPTS_CONTEXT_SETTINGS } from '@/components/settings/prompts/context/promptsContextSettings';
 import { useSettingActionWriter } from './useSettingActionWriter';
+import { useCollectionColumns } from '@/components/ui/lists/collection/useCollectionColumns';
 import { useMachineSummarySetting } from '@/components/machines/summary/useMachineSummarySetting';
 import { useMachinesIndexView } from '@/components/settings/machines/machinesIndexSettings';
 import { useMachineStorageViewSetting } from '@/components/machines/storage/useMachineStorageViewSetting';
@@ -84,6 +85,37 @@ beforeEach(() => { previousAuth = getCurrentAuth(); });
 afterEach(() => { standardCleanup(); setCurrentAuth(previousAuth); storage.setState(originalState, true); routeParams.current = {}; native.os = 'web'; });
 
 describe('declared setting Action writer', () => {
+    it.each([false, true])('commits a person’s column choices directly without creating an Inbox approval (configured Ask=%s)', async ask => {
+        const sibling = { orderedIds: [], placements: { state: 'hidden' } };
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({
+            collectionColumnPreferencesV1: { sibling },
+            ...(ask ? { actionsSettingsV1: { v: 1, actions: { 'settings.set': { approvalRequiredSurfaces: ['ui'] } } } } : {}),
+        }) });
+        const columns = [{ id: 'name', title: 'Name', primary: true }, { id: 'runsOn', title: 'Runs on' }, { id: 'state', title: 'State' }];
+        const hook = await renderHook(() => useCollectionColumns('happier.services.apps', columns));
+        vi.mocked(Modal.confirm).mockClear();
+        try {
+            let result: boolean | undefined;
+            await act(async () => { void hook.getCurrent().setVisible('runsOn', false).then(value => { result = value; }); });
+            await vi.waitFor(() => expect(account.settingsWrites).toHaveLength(1));
+            await vi.waitFor(() => expect(result).toBe(true));
+            expect(hook.getCurrent().visibleIds).toEqual(['name', 'state']);
+            await act(async () => { expect(await hook.getCurrent().reorder('state', 'runsOn')).toBe(true); });
+            expect(hook.getCurrent().preferences.orderedIds).toEqual(['state', 'runsOn']);
+            await act(async () => { expect(await hook.getCurrent().reset()).toBe(true); });
+            expect(account.settingsWrites).toHaveLength(3);
+            expect(account.persistedSettings.collectionColumnPreferencesV1).toEqual({ sibling });
+            expect(hook.getCurrent().visibleIds).toEqual(['name', 'runsOn', 'state']);
+            await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings,
+                actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } },
+            })); });
+            await act(async () => { expect(await hook.getCurrent().setVisible('runsOn', false)).toBe(false); });
+            expect(account.settingsWrites).toHaveLength(3);
+            expect(hook.getCurrent().visibleIds).toEqual(['name', 'runsOn', 'state']);
+            expect(Modal.confirm).not.toHaveBeenCalled();
+            expect(account.artifacts.list()).toHaveLength(0);
+        } finally { standardCleanup(); await account.dispose(); }
+    });
     it('retains an agent caller restriction through the declared setting writer', async () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({
             usageCoachPreferencesV1: { v: 1, disabledChecks: [], modelSuggestion: 'complete_only' },

@@ -23,7 +23,7 @@ export function useCollectionColumns(collectionId: string, columns: readonly Col
     const preferences = useCollectionColumnPreferences(collectionId);
     const write = useSettingActionWriter();
     const commit = React.useCallback(async (value: typeof preferences | null) =>
-        (await write({ anchor: 'appearance.collectionColumns' }, { collectionId, preferences: value })).ok, [collectionId, write]);
+        (await write({ anchor: 'appearance.collectionColumns' }, { collectionId, preferences: value }, { confirmed: true })).ok, [collectionId, write]);
     const resolved = React.useMemo(() => resolveCollectionColumns(columns, preferences), [columns, preferences]);
     return React.useMemo(() => ({ ...resolved, preferences, save: commit,
         setVisible: (id: string, visible: boolean) => columns.some(column => column.id === id && !column.primary)
