@@ -651,3 +651,24 @@ test('a revision tree derives its ignored package manifests from the revision; a
   assert.equal(JSON.parse(await readFile(manifestIn(tree), 'utf8')).version, '1', 'the earlier tree keeps its own manifest');
   assert.equal((await lstat(manifestIn(tree))).ino, baseManifest.ino, 'the clone never writes through its base inode');
 });
+
+// 2026-11-17 00:41Z (Fork C RELOAD167, RU2 #111): base f6b7be69 held a committed schema
+// change without its regenerated enums; the regeneration commit changed only
+// enums.generated.ts, so every reload reused that base and its schema check refused.
+// A regenerated schema output reshapes the base like the schema itself.
+test('a commit that regenerates the schema-checked enums builds a new base instead of overlaying a stale one', async t => {
+  const { fixture, repoDir } = await createRevisionFixture(t);
+  const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
+  const enums = join(repoDir, 'apps/server/sources/storage/enums.generated.ts');
+  await mkdir(dirname(enums), { recursive: true });
+  await writeFile(enums, 'export const Kind = ["a"] as const;\n');
+  await gitIn('add', 'apps/server/sources/storage/enums.generated.ts');
+  await gitIn('commit', '--quiet', '-m', 'stale enums');
+  const treesRoot = fixture.path('trees');
+  const first = await resolveSourceTreeRevision({ repoDir, treesRoot, rev: 'HEAD', overlay: [], outputDir: fixture.path('d1') });
+  await writeFile(enums, 'export const Kind = ["a", "action"] as const;\n');
+  await gitIn('commit', '--quiet', '-am', 'regenerate enums');
+  const second = await resolveSourceTreeRevision({ repoDir, treesRoot, rev: 'HEAD', overlay: [], outputDir: fixture.path('d2') });
+  assert.notEqual(second.revision, first.revision);
+  assert.equal(second.base, second.revision, 'the regenerated revision is its own base');
+});

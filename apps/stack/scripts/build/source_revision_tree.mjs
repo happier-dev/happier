@@ -56,6 +56,8 @@ function shapesBase(path) {
     || path === 'apps/cli/scripts/prepareSourcePluginUiArtifacts.mjs'
     // The base places the serialized package manifests this generator emits.
     || path === 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts'
+    // The base schema check consumes the tracked enum output before commit overlays.
+    || path === 'apps/server/sources/storage/enums.generated.ts'
     || isRevisionGeneratorInput(path);
 }
 
