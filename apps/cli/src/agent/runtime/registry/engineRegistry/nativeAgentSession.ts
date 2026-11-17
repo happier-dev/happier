@@ -4635,7 +4635,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     identity.agentId,
                     params.sessionInput,
                     hostRuntimeParams.metadata,
-                    hostRuntimeParams.providerBindingMaterialization,
+                    useRunnerManagedProviderBinding
+                        ? undefined
+                        : hostRuntimeParams.providerBindingMaterialization,
                     hostRuntimeParams.getPermissionMode(),
                     hostRuntimeParams.getWorkspaceWrites,
                     { idleCompaction, providerBinding: hostRuntimeParams.providerBinding,

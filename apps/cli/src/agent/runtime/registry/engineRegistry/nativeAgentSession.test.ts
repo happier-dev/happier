@@ -8291,6 +8291,7 @@ describe('native Agent session host adapter', () => {
         const created = await plan.config.createSessionRuntime({
             directory: '/tmp/acme-runner-public-provider-agent',
             metadata: { providerBindingV1: metadata },
+            providerBindingMaterialization: { v: 1, kind: 'spawnEnv' },
             machineId: 'machine-1',
             session,
             transcriptSession: {},
