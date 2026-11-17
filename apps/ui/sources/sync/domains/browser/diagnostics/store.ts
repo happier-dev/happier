@@ -671,17 +671,38 @@ export function selectBrowserDiagnosticRequest(
     return selectBrowserDiagnosticRequests(projection).find(request => request.requestId === requestId);
 }
 
+function latestBrowserDiagnosticStorageInventories(
+    projection: Pick<BrowserViewDiagnosticsProjection, 'events'>,
+) {
+    const latest = new Map<string, BrowserDiagnosticEventProjection>();
+    for (const event of projection.events) {
+        if (event.kind === 'storage.keyInventory') latest.set(diagnosticString(event, 'storageType') ?? 'storage', event);
+    }
+    return latest;
+}
+
+/** Reported totals include keys omitted from a truncated inventory; missing totals stay unknown. */
+export function selectBrowserDiagnosticStorageKeyCount(
+    projection: Pick<BrowserViewDiagnosticsProjection, 'events'>,
+): number | null {
+    const latest = latestBrowserDiagnosticStorageInventories(projection);
+    if (latest.size === 0) return null;
+    let total = 0;
+    for (const event of latest.values()) {
+        const count = diagnosticNumber(event, 'keyCount');
+        if (count === null) return null;
+        total += count;
+    }
+    return total;
+}
+
 /** Latest inventory per storage area; filtering never combines old inventories with current values. */
 export function selectBrowserDiagnosticStorageRows(
     projection: Pick<BrowserViewDiagnosticsProjection, 'events'>,
     filters: BrowserDiagnosticRowFilters = {},
 ): readonly BrowserDiagnosticStorageRow[] {
     const matchesSearch = diagnosticSearchMatcher(filters.search);
-    const latest = new Map<string, BrowserDiagnosticEventProjection>();
-    for (const event of projection.events) {
-        if (event.kind === 'storage.keyInventory') latest.set(diagnosticString(event, 'storageType') ?? 'storage', event);
-    }
-    return [...latest.entries()].flatMap(([storageType, event]) => {
+    return [...latestBrowserDiagnosticStorageInventories(projection).entries()].flatMap(([storageType, event]) => {
         const values = new Map((event.detail?.storageEntries ?? []).map(entry => [entry.key, entry]));
         const names = event.detail?.keys ?? [...values.keys()];
         return names.map((name, index): BrowserDiagnosticStorageRow => ({

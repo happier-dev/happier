@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Text } from '@/components/ui/text/Text';
 
-import { selectBrowserDiagnosticStorageRows } from '@/sync/domains/browser/diagnostics/store';
+import { selectBrowserDiagnosticStorageKeyCount, selectBrowserDiagnosticStorageRows } from '@/sync/domains/browser/diagnostics/store';
 import type { BrowserDiagnosticStorageRow } from '@/sync/domains/browser/diagnostics';
 import { t } from '@/text';
 
@@ -33,6 +33,7 @@ function storageSections(rows: readonly BrowserDiagnosticStorageRow[]): readonly
 export function BrowserStoragePanel(props: BrowserDiagnosticsFamilyPanelProps): React.ReactElement {
     const events = props.events;
     const rows = React.useMemo(() => selectBrowserDiagnosticStorageRows({ events }), [events]);
+    const keyCount = React.useMemo(() => selectBrowserDiagnosticStorageKeyCount({ events }), [events]);
     const sections = React.useMemo(() => storageSections(rows), [rows]);
     const anyValue = rows.some((row) => row.value !== null);
     const selectItems = React.useCallback(
@@ -44,6 +45,7 @@ export function BrowserStoragePanel(props: BrowserDiagnosticsFamilyPanelProps): 
             {...props}
             familyKey="storage"
             items={rows}
+            reportedCount={keyCount}
             countLabel={(count) => t('browserDiagnostics.host.devtools.count.keys', { count })}
             note={anyValue ? null : t('browserDiagnostics.host.devtools.storage.valuesHidden')}
             searchPlaceholder={t('browserDiagnostics.host.devtools.search.storage')}

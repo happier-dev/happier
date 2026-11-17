@@ -2,6 +2,8 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { BrowserDiagnosticEventV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
+import { applyBrowserDiagnosticEvents, applyBrowserDiagnosticsSnapshotState, createBrowserDiagnosticsUiStore, selectBrowserDiagnosticsForView } from '@/sync/domains/browser/diagnostics/store';
 
 // Load the required renderer during collection, before a case starts its render/interaction deadline.
 import './BrowserDiagnosticsPanel';
@@ -73,6 +75,43 @@ const availablePreviewProxyDiagnostics = {
 } as const;
 
 describe('BrowserDiagnosticsPanel', () => {
+  it.each([
+    { name: 'empty inventories', data: [{ storageType: 'localStorage', keyCount: 0, keys: [] }, { storageType: 'sessionStorage', keyCount: 0, keys: [] }], count: 0 },
+    { name: 'latest inventories with omitted keys', data: [{ storageType: 'localStorage', keyCount: 3, keys: ['old'] }, { storageType: 'localStorage', keyCount: 12, keys: ['shown'], keysTruncated: true }, { storageType: 'sessionStorage', keyCount: 4 }], count: 16 },
+    { name: 'unreported count', data: [{ storageType: 'localStorage' }], count: null },
+    { name: 'retained partial inventory', data: [{ storageType: 'localStorage', keyCount: 12, keys: ['shown'], keysTruncated: true }], count: 12, disconnected: true },
+  ])('counts storage keys from $name rather than diagnostic events', async ({ data, count, ...options }) => {
+    const mod = await loadBrowserDiagnosticsPanelModule();
+    if (!mod?.BrowserDiagnosticsPanel) throw new Error('Browser diagnostics panel unavailable');
+    const events = data.map((inventory, index) => BrowserDiagnosticEventV1Schema.parse({
+      v: 1, eventId: `storage-${index}`, browserSessionId: 'browser-session', viewId: 'view', navigationGeneration: 1,
+      family: 'storage', kind: 'storage.keyInventory', fidelity: 'cdp', trusted: true, capturedAtMs: index + 1,
+      data: inventory, redaction: { level: 'none', queryRedacted: false, headersRedacted: false, truncated: false },
+    }));
+    let store = applyBrowserDiagnosticEvents(createBrowserDiagnosticsUiStore(), { events });
+    if ('disconnected' in options && options.disconnected) {
+      store = applyBrowserDiagnosticsSnapshotState(store, {
+        browserSessionId: 'browser-session', viewId: 'view', navigationGeneration: 1,
+        connection: 'disconnected', reasonCode: 'request_failed',
+      });
+    }
+    const diagnostics = selectBrowserDiagnosticsForView(store, { browserSessionId: 'browser-session', viewId: 'view' });
+    const screen = await renderScreen(<mod.BrowserDiagnosticsPanel diagnostics={diagnostics} testID="storage-count" />);
+    const retained = 'disconnected' in options && options.disconnected;
+    const label = screen.findHostByTestId(`storage-count-storage-${retained ? 'partial' : 'available'}`)?.props.children;
+    if (retained) {
+      expect(label).toBeTruthy();
+    } else if (count === null) {
+      expect(label).not.toMatch(/\d+ keys?/);
+    } else {
+      expect(label).toContain(`${count} keys`);
+    }
+    if (count === 16 || retained) {
+      expect(screen.findHostByTestId('storage-count-storage-localStorage-key-0-subject')?.props.children).toBe('shown');
+      expect(screen.findHostByTestId('storage-count-storage-localStorage-title')?.props.children).toContain('12 keys');
+    }
+  });
+
   it('renders previewProxy flow diagnostics with fidelity and attribution state', async () => {
     const mod = await loadBrowserDiagnosticsPanelModule();
 

@@ -792,6 +792,8 @@ export function BrowserDiagnosticsFamilyPanelFrame<T>(props: BrowserDiagnosticsF
     items: readonly T[];
     /** How much there is, in the tab's own noun ("12 messages"); omitted for single-snapshot tabs. */
     countLabel?: (count: number) => string;
+    /** An owner-reported total; null means unknown, undefined uses the displayed event/item units. */
+    reportedCount?: number | null;
     /** One honest note about what this page does not share (said once, not on every row). */
     note?: string | null;
     segments?: DiagnosticsFilterSegments;
@@ -823,15 +825,17 @@ export function BrowserDiagnosticsFamilyPanelFrame<T>(props: BrowserDiagnosticsF
         () => (props.items.length === 0 ? props.events.filter((event) => typeof event.summary === 'string' && event.summary.length > 0) : []),
         [props.events, props.items.length],
     );
-    const shownCount = props.items.length > 0 ? props.items.length : summaryEvents.length;
+    const shownCount = props.reportedCount === undefined
+        ? props.items.length > 0 ? props.items.length : summaryEvents.length
+        : props.reportedCount;
     const source = unavailable ? null : sourceLabel(props.family.fidelity, props.family.trusted);
     const stateText = unavailable
         ? t('browserDiagnostics.host.familyNotReported')
         : props.family.status === 'stale'
             ? t('browserDiagnostics.host.devtools.stale')
-            : shownCount === 0
+            : props.reportedCount === undefined && shownCount === 0
                 ? t('browserDiagnostics.host.devtools.empty')
-                : [props.countLabel?.(shownCount), source].filter(Boolean).join(' · ');
+                : [shownCount === null ? null : props.countLabel?.(shownCount), source].filter(Boolean).join(' · ');
 
     const showToolbar = !unavailable && props.items.length > 0 && props.selectItems && (props.segments || props.searchPlaceholder);
     const filterBar = props.segments ? (
