@@ -8,7 +8,7 @@ import { PROMPT_LIBRARY_ROWS_ROUTE_V1 } from '@happier-dev/protocol/prompts/libr
 import { createSessionListSourceFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import type { CustomModalInjectedProps } from '@/modal/types';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createPlainSessionByIdResponseFixture, createSessionFixture, createSessionOwnerViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -75,6 +75,26 @@ afterEach(async () => {
     enableAction.mockReset();
     await connection?.dispose(); connection = undefined;
     getStorage().setState(previous, true);
+});
+
+it('keeps unknown Machine reachability distinct from observed online and offline presence', async () => {
+    const session = { ...getStorage().getState().sessions.coordinator!,
+        metadata: { path: '/work/payments', host: 'test', machineId: 'coordinator-machine' } };
+    getStorage().setState({ sessions: { coordinator: session } });
+    const machine = createMachineFixture({ id: 'coordinator-machine', active: true, activeAt: Date.now(), presenceProtocolVersion: 1 });
+    getStorage().getState().applyMachines([machine], true, { sourceServerId: serverId });
+    const screen = await renderScreen(<MakeCoordinatorDialog serverId={serverId} sessionId="coordinator" onClose={() => {}} />);
+    const note = () => screen.findAll(node => node.props.testID === 'make-coordinator-machine' && node.props.title !== undefined)[0];
+    await waitForHomeGovernance(() => expect(note()?.props).toMatchObject({
+        title: 'sessionCoordinator.make.machineOnline', subtitle: 'sessionCoordinator.make.machineOnlineDescription',
+    }));
+    await act(async () => getStorage().getState().applyMachines([{ ...machine, active: false }], true, { sourceServerId: serverId }));
+    expect(note()?.props).toMatchObject({
+        title: 'sessionCoordinator.make.machineOffline', subtitle: 'sessionCoordinator.make.machineOfflineDescription',
+    });
+    // The recorded Session hostname remains readable when its Machine is not visible.
+    await act(async () => getStorage().getState().applyMachines([], true, { sourceServerId: serverId }));
+    expect(note()?.props).toMatchObject({ title: 'test', subtitle: 'common.unavailable' });
 });
 
 it('reads the private rule census once per Make coordinator open for suggestions, Managed by and overlap', async () => {

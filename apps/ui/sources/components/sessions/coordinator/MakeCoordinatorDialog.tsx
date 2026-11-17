@@ -523,14 +523,17 @@ function MachineNote(props: Readonly<{ sessionId: string; serverId: string }>) {
     const handoff = useInboxSessionHandoff(useSession(props.sessionId, props.serverId) ?? null);
     if (!machineName) return null;
     const reachable = machineReachability === 'reachable';
+    const unreachable = machineReachability === 'unreachable';
     return (
         <ItemGroup>
             <Item
                 testID="make-coordinator-machine"
                 icon={<Icon name="desktop" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
-                title={reachable ? t('sessionCoordinator.make.machineOnline', { machine: machineName }) : t('sessionCoordinator.make.machineOffline', { machine: machineName })}
+                title={reachable ? t('sessionCoordinator.make.machineOnline', { machine: machineName })
+                    : unreachable ? t('sessionCoordinator.make.machineOffline', { machine: machineName }) : machineName}
                 titleLines={0}
-                subtitle={reachable ? t('sessionCoordinator.make.machineOnlineDescription') : t('sessionCoordinator.make.machineOfflineDescription')}
+                subtitle={reachable ? t('sessionCoordinator.make.machineOnlineDescription')
+                    : unreachable ? t('sessionCoordinator.make.machineOfflineDescription') : t('common.unavailable')}
                 subtitleLines={0}
                 mode="info"
                 showChevron={false}
