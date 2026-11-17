@@ -1,6 +1,7 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { isHappierPageRowNarrow } from '@happier-dev/plugin-ui/presentation';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { fieldBoxShapeStyle } from '@/components/ui/forms/fieldBox';
@@ -51,7 +52,7 @@ const DeviceCodeWaitingLine = React.memo(function DeviceCodeWaitingLine(props: R
         if (expired && expiresAtMs !== undefined) onExpired(expiresAtMs);
     }, [expired, expiresAtMs, onExpired]);
     return (
-        <Text style={stylesheet.waitingText} numberOfLines={1}>{msLeft !== null
+        <Text style={stylesheet.waitingText}>{msLeft !== null
             ? t('connectedServicesSettings.deviceWaitingApprovalExpires', { time: formatExpiry(msLeft) })
             : t('connectedServicesSettings.deviceWaitingApproval')}</Text>
     );
@@ -84,7 +85,15 @@ export const ConnectedAccountDeviceForm = React.memo(function ConnectedAccountDe
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const openUrl = props.verificationUriComplete ?? props.verificationUri ?? '';
-    const where = props.verificationUri ? props.verificationUri.replace(/^https?:\/\//, '') : null;
+    // The address may break after a slash (a zero-width space there), never inside a word.
+    const where = props.verificationUri
+        ? props.verificationUri.replace(/^https?:\/\//, '').replace(/\//g, '/\u200B')
+        : null;
+    // A narrow row (the page rows' one rule) keeps the code and Copy on the first line and the words beneath.
+    const [narrow, setNarrow] = React.useState(false);
+    const onStatusLayout = React.useCallback((event: LayoutChangeEvent) => {
+        setNarrow(isHappierPageRowNarrow(event.nativeEvent.layout.width));
+    }, []);
     // The deadline that has run out; a new code (a new deadline) is live again until its own runs out.
     const [expiredAtMs, setExpiredAtMs] = React.useState<number | null>(null);
     const expired = props.expiresAtMs !== undefined
@@ -97,50 +106,75 @@ export const ConnectedAccountDeviceForm = React.memo(function ConnectedAccountDe
         : service ? t('connectedServicesSetup.deviceEnterIn', { service }) : null;
     const pollManually = !expired && props.automaticPolling === false;
 
+    const code = (
+        <Text
+            testID="connected-account-device:code"
+            selectable
+            style={[styles.code, expired ? styles.expired : null]}
+            accessibilityLabel={props.userCode ? props.userCode.split('').join(' ') : undefined}
+        >
+            {props.userCode ?? t('connectedServices.deviceAuth.preparing')}
+        </Text>
+    );
+    const statusText = (
+        <View style={narrow ? null : styles.statusText} accessibilityLiveRegion="polite">
+            {enterLine ? (
+                <Text testID="connected-account-device:where" style={[styles.enterLine, expired ? styles.expired : null]}>
+                    {enterLine}
+                </Text>
+            ) : null}
+            {expired ? (
+                <View style={styles.expiredLine}>
+                    <Icon name="clock" size={14} color={theme.colors.text.secondary} />
+                    <Text style={styles.expiredText}>{t('connectedServicesSettings.deviceExpired')}</Text>
+                </View>
+            ) : (
+                // The wait and its deadline, the time in tabular figures; a narrow line wraps rather than cuts.
+                <DeviceCodeWaitingLine expiresAtMs={props.expiresAtMs} onExpired={setExpiredAtMs} />
+            )}
+        </View>
+    );
+    const controls = (
+        <>
+            {pollManually ? (
+                <RoundButton testID="connected-account-device:poll" size="small" display="secondary"
+                    title={t('connectedServicesSetup.deviceCheckNow')} disabled={props.busy} onPress={props.onPoll} />
+            ) : null}
+            {props.userCode && !expired ? (
+                <RoundButton
+                    testID="connected-account-device:copy"
+                    size="small"
+                    display="secondary"
+                    title={copied ? t('common.copied') : t('common.copy')}
+                    leading={<Icon name={copied ? 'check' : 'copy'} size={14} color={theme.colors.text.secondary} />}
+                    onPress={async () => {
+                        setCopied(await writeClipboard(props.userCode ?? ''));
+                    }}
+                />
+            ) : null}
+        </>
+    );
+
     return (
         <ConnectedAccountFormSection embedded={props.embedded}>
             <View style={props.embedded ? styles.embedded : styles.page}>
-                <View testID="connected-account-device:status" style={styles.status}>
-                    <Text
-                        testID="connected-account-device:code"
-                        selectable
-                        style={[styles.code, expired ? styles.expired : null]}
-                        accessibilityLabel={props.userCode ? props.userCode.split('').join(' ') : undefined}
-                    >
-                        {props.userCode ?? t('connectedServices.deviceAuth.preparing')}
-                    </Text>
-                    <View style={styles.statusText} accessibilityLiveRegion="polite">
-                        {enterLine ? (
-                            <Text testID="connected-account-device:where" style={[styles.enterLine, expired ? styles.expired : null]}>
-                                {enterLine}
-                            </Text>
-                        ) : null}
-                        {expired ? (
-                            <View style={styles.expiredLine}>
-                                <Icon name="clock" size={14} color={theme.colors.text.secondary} />
-                                <Text style={styles.expiredText}>{t('connectedServicesSettings.deviceExpired')}</Text>
+                <View testID="connected-account-device:status" style={[styles.status, narrow ? styles.statusStacked : null]}
+                    onLayout={onStatusLayout}>
+                    {narrow ? (
+                        <>
+                            <View testID="connected-account-device:status-head" style={styles.statusHead}>
+                                {code}
+                                <View style={styles.controls}>{controls}</View>
                             </View>
-                        ) : (
-                            // One status line, never wrapped: the wait and its deadline, the time in tabular figures.
-                            <DeviceCodeWaitingLine expiresAtMs={props.expiresAtMs} onExpired={setExpiredAtMs} />
-                        )}
-                    </View>
-                    {pollManually ? (
-                        <RoundButton testID="connected-account-device:poll" size="small" display="secondary"
-                            title={t('connectedServicesSetup.deviceCheckNow')} disabled={props.busy} onPress={props.onPoll} />
-                    ) : null}
-                    {props.userCode && !expired ? (
-                        <RoundButton
-                            testID="connected-account-device:copy"
-                            size="small"
-                            display="secondary"
-                            title={copied ? t('common.copied') : t('common.copy')}
-                            leading={<Icon name={copied ? 'check' : 'copy'} size={14} color={theme.colors.text.secondary} />}
-                            onPress={async () => {
-                                setCopied(await writeClipboard(props.userCode ?? ''));
-                            }}
-                        />
-                    ) : null}
+                            {statusText}
+                        </>
+                    ) : (
+                        <>
+                            {code}
+                            {statusText}
+                            {controls}
+                        </>
+                    )}
                 </View>
                 <ConnectedServiceSetupFlowActions
                     onCancel={props.onCancel}
@@ -183,6 +217,23 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: fieldBoxShapeStyle.borderRadius,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.colors.border.default,
+    },
+    // Narrow: the code and its controls on the first line, the words beneath at the row's full width.
+    statusStacked: {
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        gap: theme.space.s8,
+    },
+    statusHead: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: theme.space.s12,
+    },
+    controls: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s8,
     },
     code: {
         ...Typography.variant('heading'),

@@ -12,7 +12,6 @@ import { ConnectedAccountAdvancedFields } from './ConnectedAccountAdvancedFields
 import { ConnectedAccountConfigurationSecretField } from './ConnectedAccountConfigurationSecretField';
 import { ConnectedAccountFormSection } from './ConnectedAccountFormSection';
 import { ConnectedAccountGuide, type ConnectedAccountGuideContent } from './ConnectedAccountGuide';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -44,13 +43,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     accessories: { flexDirection: 'row', alignItems: 'center' },
     note: {  ...Typography.variant('meta'),  color: theme.colors.text.secondary },
     lead: { ...Typography.variant('body'), color: theme.colors.text.secondary },
-    // The content row already spaces the footer from the rows above it.
-    panelActions: {},
-    actions: {
-        alignItems: 'flex-end',
-        paddingHorizontal: theme.space.s16,
-        paddingVertical: theme.space.s12,
-    },
 }));
 
 type ManualAuthenticationField =
@@ -399,31 +391,20 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
             ) : null}
             {guided?.billingNote ? <Text style={[styles.note, styles.billing]}>{guided.billingNote}</Text> : null}
             {props.renderFailure ? <SectionContentRow showDivider={false}>{props.renderFailure(() => void submit())}</SectionContentRow> : null}
-            {props.onCancel ? (
-                <SectionContentRow showDivider={false}><View style={styles.panelActions}>
-                    <ConnectedServiceSetupFlowActions
-                        onCancel={props.onCancel}
-                        primary={{
-                            testID: 'connected-account-manual:submit',
-                            label: t('connectedServicesSettings.connect'),
-                            disabled: props.submitting || missingRequired,
-                            loading: props.submitting,
-                            onPress: () => void submit(),
-                        }}
-                    />
-                </View></SectionContentRow>
-            ) : (
-                <View style={styles.actions}>
-                    <RoundButton
-                        testID="connected-account-manual:submit"
-                        title={t('connectedServicesSettings.connect')}
-                        size={guided ? 'small' : undefined}
-                        disabled={props.submitting || missingRequired}
-                        loading={props.submitting}
-                        onPress={submit}
-                    />
-                </View>
-            )}
+            {/* The sign-in forms' one footer (browser and code forms too): the trust line, then Connect at the
+                field's right edge and size, with Cancel beside it in a setup panel. */}
+            <SectionContentRow showDivider={false}>
+                <ConnectedServiceSetupFlowActions
+                    onCancel={props.onCancel}
+                    primary={{
+                        testID: 'connected-account-manual:submit',
+                        label: t('connectedServicesSettings.connect'),
+                        disabled: props.submitting || missingRequired,
+                        loading: props.submitting,
+                        onPress: () => void submit(),
+                    }}
+                />
+            </SectionContentRow>
         </ConnectedAccountFormSection>
     );
 }

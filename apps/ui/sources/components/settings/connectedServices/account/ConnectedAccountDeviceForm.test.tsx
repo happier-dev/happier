@@ -66,6 +66,28 @@ describe('ConnectedAccountDeviceForm', () => {
         expect(screen.findByTestId('connected-account-device:open')).not.toBeNull();
     });
 
+    it('stacks where to enter the code under the code and Copy when the row is narrow, and joins them when wide', async () => {
+        const screen = await renderScreen(<ConnectedAccountDeviceForm verificationUri="https://chatgpt.com/device" userCode="WDJB-MJHT"
+            expiresAtMs={Date.now() + 60_000} serviceTitle="ChatGPT" busy={false} onPoll={vi.fn()} onResume={vi.fn()} />);
+        const layout = async (width: number) => act(async () => {
+            screen.tree.find((node) => node.props.testID === 'connected-account-device:status')
+                .props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height: 80 } } });
+        });
+        const headIds = () => screen.tree.findAll((node) => node.props.testID === 'connected-account-device:status-head')
+            .flatMap((head) => head.findAll((node) => typeof node.props.testID === 'string').map((node) => node.props.testID));
+
+        // A phone column (~358 px): the code and Copy share the first line, the words wrap beneath at full width.
+        await layout(358);
+        expect(headIds()).toEqual(expect.arrayContaining(['connected-account-device:code', 'connected-account-device:copy']));
+        expect(headIds()).not.toContain('connected-account-device:where');
+        expect(screen.findByTestId('connected-account-device:where')).not.toBeNull();
+
+        // A wide sheet keeps the lab's one row: code · where and the wait · Copy.
+        await layout(720);
+        expect(headIds()).toEqual([]);
+        expect(screen.findByTestId('connected-account-device:where')).not.toBeNull();
+    });
+
     it('offers a new code after the provider expiry, without an inoperable check action', async () => {
         const onResume = vi.fn();
         const screen = await renderScreen(<ConnectedAccountDeviceForm userCode="ABCD" expiresAtMs={Date.now() - 1000}
