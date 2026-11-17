@@ -38,6 +38,23 @@ throw new PluginError({
 });
 ```
 
+### Plugin subject identities (0.3 development source)
+
+Declare domain identities, such as tickets, in `definePlugin({ subjectKinds: ... })`.
+Each keyed descriptor supplies `label`, optional `icon`, a recursively closed
+`identitySchema`, and `listAction`, the local id of an ordinary same-plugin
+read-only Action. Use `PluginSubjectKindListInputV1Schema` and
+`PluginSubjectKindListResultV1Schema` from `@happier-dev/plugin-sdk/automations`:
+the requested page is `{ query?, limit, cursor? }` and the result is
+`{ items: [{ identity, label }], nextCursor: string | null }`.
+
+An effectful Action identifies its operand through its existing `approvalScope`:
+`{ kind: 'plugin', subjectKindId: 'ticket', identityField: 'ticket' }` reads the
+identity from the `ticket` field of its input. The host validates that identity
+against the declaring kind. Subjects are qualified by Home, plugin id and local
+kind id; equal ticket ids in another plugin or Home remain separate. Plugin
+subjects are owner-only, including when their Workflow is shared.
+
 ### Scheduled and Event-driven Actions (0.3 development source)
 
 The existing Automation API accepts a contributed Action as its execution

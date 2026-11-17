@@ -13304,6 +13304,24 @@ Root `AGENTS.md` "Runtime core, plugin platform, and SDK seam" points here.
 - Runtime events converge on one canonical strict-schema union. Stable events use bounded strict schemas and reject unknown top-level fields; provider-native bags and generic `{ kind, data }` streams are not public ABI. Any compatibility period with two unions names the active producer/consumer directions and the contraction condition. `@happier/runtime/*`, `@happier/lifecycle/*`, and `@happier/session/*` are host-emit-only namespaces.
 - Each contribution family has one catalog/normalizer/projection owner, generated projections are authoritative, and feature/availability/confirmation decisions use the shared policy owner. Do not add a second registry, catalog, loader, or decision engine for a concept the platform already centralizes.
 
+### Automation subject kinds (unreleased 0.3)
+
+The existing contribution catalog owns `subjectKinds`. Each descriptor names a
+plugin-local kind, presentation metadata, a recursively closed portable identity
+schema and an ordinary same-plugin read-only `listAction`. The list contract is
+one requested `{ query?, limit, cursor? }` page returning
+`{ items: [{ identity, label }], nextCursor }`. These are domain identities;
+packaged and dynamic Resource bytes remain in the `resources` family.
+
+An Action's existing `approvalScope` or an Event's `automation.subjects` declares
+the payload/input identity path. The shared plugin-subject reader validates at
+identity ingress. Native and plugin subjects consume the same Automation matcher;
+plugin identities remain qualified by Home, plugin and kind and owner-only.
+The Event owner's existing private definition projection carries declared subject
+metadata with its payload schema so encrypted hosts apply the same rule without
+exposing private identities to the server. Matching development Protocol, SDK and
+hosts reload together; this adds no released compatibility adapter or epoch.
+
 ### Deployment target plan facts (unreleased 0.3)
 
 A `deploymentTargets` descriptor may declare `plans`, an ordered array of

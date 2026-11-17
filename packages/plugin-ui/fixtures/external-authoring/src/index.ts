@@ -17,7 +17,10 @@ import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import { publicSnapshotTemplate } from './publicWidget.js';
 import { externalWorkflowPatternContribution } from './workflowPattern.js';
 import { REVIEW_READY_NOTICE_CATEGORY, sendReviewReadyNotice } from './reviewReadyNotice.js';
+import { externalTicketContributions } from './ticketAutomationPlugin.js';
 export { sendReviewReadyNotice } from './reviewReadyNotice.js';
+export { createExternalTicketPlugin, EXTERNAL_TICKET_PLUGIN_ID, OTHER_EXTERNAL_TICKET_PLUGIN_ID,
+  EXTERNAL_TICKET_ID, EXTERNAL_TICKET_KIND_ID } from './ticketAutomationPlugin.js';
 export { externalWorkflowStartInput, startExternalWorkflowThroughActions, pauseExternalWorkflowThroughActions } from './workflowPattern.js';
 export { readExternalDoc, commentOnExternalDoc, proposeExternalDocEdit,
   requestExternalDocAcceptance, requestExternalDocDecline } from './docReview.js';
@@ -139,6 +142,7 @@ export const externalAuthoringPlugin = definePlugin({
     [REVIEW_READY_NOTICE_CATEGORY]: { kind: 'activity', title: 'Review ready', eventIds: [] },
   },
   actions: {
+    ...externalTicketContributions.actions,
     'send-review-ready-notice': {
       title: 'Send the review-ready notice',
       surfaces: ['plugin'],
@@ -146,6 +150,8 @@ export const externalAuthoringPlugin = definePlugin({
       run: async (_input, context) => sendReviewReadyNotice(context.services.notifications, context.signal),
     },
   },
+  subjectKinds: externalTicketContributions.subjectKinds,
+  events: externalTicketContributions.events,
   resources: {
     'review-options': {
       source: 'dynamic', kind: 'config', scope: 'global', contentType: 'application/json',

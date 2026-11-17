@@ -30,6 +30,16 @@ transport the source supports, and each trigger on that source selects one of
 them: a GitHub-style source can declare both checkpointed pull and durable
 push, with one trigger per transport.
 
+In unreleased 0.3 development source, an Event can declare plugin operands with
+`automation.subjects: [{ kind: 'plugin', subjectKindId: 'ticket', identityField: 'ticket' }]`.
+The kind comes from the same plugin's `subjectKinds` contribution. Admission
+reads the identity from the declared payload field and validates its identity
+schema; callers cannot replace it with a separate plugin subject context.
+A trigger may select one exact qualified identity or leave its subject unset to
+match all occurrences that satisfy its Event filter. See
+[plugin subject identities](/plugins/api/actions-tools-commands#plugin-subject-identities-03-development-source)
+for the declaration and list-page contract.
+
 For durable provider feeds, prefer `checkpointedPull`. In unreleased 0.3
 development source, use `runCheckpointedPluginEventObserverV1` from the
 daemon-only `@happier-dev/plugin-sdk/background-services` entrypoint for its
