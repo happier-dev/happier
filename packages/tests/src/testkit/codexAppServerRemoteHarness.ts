@@ -4,16 +4,18 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createTestAuth, type TestAuth } from './auth';
+import { startHttpRequestRecordingProxy } from './httpRequestRecordingProxy';
 import { seedCliAuthForTestAccount } from './cliAuth';
 import { writeCliSessionAttachFile } from './cliAttachFile';
-import { stopDaemonFromHomeDir } from './daemon/daemon';
+import { resolveDaemonStartupPhaseTimeoutMs, startTestDaemon } from './daemon/daemon';
 import { writeTestManifestForServer } from './manifestForServer';
 import { encryptLegacyBase64 } from './messageCrypto';
 import { repoRootDir } from './paths';
 import { startServerLight, type StartedServer } from './process/serverLight';
 import { spawnLoggedProcess, type SpawnedProcess } from './process/spawnProcess';
-import { pnpmCommand } from './process/commands';
+import { resolveCliTestLaunchSpec } from './process/cliLaunchSpec';
 import { createSessionWithCiphertexts, fetchSessionV2, type SessionV2 } from './sessions';
+import { waitFor } from './timing';
 
 export type FakeCodexAppServerRequest = Readonly<{
   method?: string;
@@ -208,6 +210,10 @@ export async function writeFakeCodexAppServerScript(params: Readonly<{
     '    continue;',
     '  }',
     '  if (msg.method === "initialized") continue;',
+    '  if (msg.method === "thread/name/set") {',
+    '    process.stdout.write(JSON.stringify({ id: msg.id, result: {} }) + "\\n");',
+    '    continue;',
+    '  }',
     '  if (msg.method === "thread/start") {',
     '    process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: "thread-started", model: "gpt-5.4", serviceTier: null } }) + "\\n");',
     '    continue;',
@@ -434,6 +440,7 @@ export type StartedCodexAppServerRemoteHarness = Readonly<{
   requestLogPath: string;
   fakeAppServerPath: string;
   readySession: SessionV2;
+  waitForProviderStartup: () => Promise<void>;
   stopRuntime: () => Promise<void>;
   stop: () => Promise<void>;
 }>;
@@ -447,17 +454,22 @@ export async function startCodexAppServerRemoteHarness(params: Readonly<{
   manifestEnv?: Record<string, string>;
   metadataOverrides?: Record<string, unknown>;
   waitForPublishedMetadata?: boolean;
+  serverRequestProxy?: Omit<Parameters<typeof startHttpRequestRecordingProxy>[0], 'targetBaseUrl'>;
 }>): Promise<StartedCodexAppServerRemoteHarness> {
   const startedAt = new Date().toISOString();
   const server = await startServerLight({
     testDir: params.testDir,
     dbProvider: 'sqlite',
     extraEnv: {
+      ...process.env,
       HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1',
     },
   });
 
-  const serverBaseUrl = server.baseUrl;
+  const serverProxy = params.serverRequestProxy
+    ? await startHttpRequestRecordingProxy({ targetBaseUrl: server.baseUrl, ...params.serverRequestProxy })
+    : undefined;
+  const serverBaseUrl = serverProxy?.baseUrl ?? server.baseUrl;
   const auth = await createTestAuth(serverBaseUrl);
   const cliHome = resolve(join(params.testDir, 'cli-home'));
   const workspaceDir = resolve(join(params.testDir, 'workspace'));
@@ -472,7 +484,6 @@ export async function startCodexAppServerRemoteHarness(params: Readonly<{
       path: workspaceDir,
       host: 'e2e',
       name: params.testName,
-      createdAt: Date.now(),
       permissionMode: 'default',
       permissionModeUpdatedAt: 1000,
       codexBackendMode: 'appServer',
@@ -521,13 +532,21 @@ export async function startCodexAppServerRemoteHarness(params: Readonly<{
     ...params.cliEnvOverrides,
   };
 
+  const launch = await resolveCliTestLaunchSpec({ testDir: params.testDir, env: cliEnv }, {
+    snapshotDir: resolve(params.testDir, 'cli-launch'),
+    skipDistIntegrityCheck: true,
+    skipSourceFreshnessCheck: true,
+  });
+  const daemon = await startTestDaemon({ testDir: params.testDir, happyHomeDir: cliHome, env: cliEnv }).catch(async error => {
+    await launch.cleanup?.();
+    await serverProxy?.stop();
+    await server.stop();
+    throw error;
+  });
   const proc: SpawnedProcess = spawnLoggedProcess({
-    command: pnpmCommand(),
+    command: launch.command,
     args: [
-      '-s',
-      'workspace',
-      '@happier-dev/cli',
-      'dev',
+      ...launch.args,
       'codex',
       '--existing-session',
       sessionId,
@@ -536,8 +555,9 @@ export async function startCodexAppServerRemoteHarness(params: Readonly<{
       '--happy-starting-mode',
       'remote',
     ],
-    cwd: repoRootDir(),
-    env: cliEnv,
+    cwd: launch.cwd ?? repoRootDir(),
+    env: { ...cliEnv, ...launch.env },
+    cleanup: launch.cleanup,
     stdoutPath: resolve(join(params.testDir, 'cli.stdout.log')),
     stderrPath: resolve(join(params.testDir, 'cli.stderr.log')),
   });
@@ -547,12 +567,16 @@ export async function startCodexAppServerRemoteHarness(params: Readonly<{
     if (runtimeStopped) return;
     runtimeStopped = true;
     await proc.stop().catch(() => {});
-    await stopDaemonFromHomeDir(cliHome).catch(() => {});
+    await daemon.stop();
   };
 
   const stop = async (): Promise<void> => {
-    await stopRuntime();
-    await server.stop().catch(() => {});
+    try {
+      await stopRuntime();
+    } finally {
+      await serverProxy?.stop();
+      await server.stop().catch(() => {});
+    }
   };
 
   try {
@@ -567,6 +591,13 @@ export async function startCodexAppServerRemoteHarness(params: Readonly<{
       requestLogPath,
       fakeAppServerPath: fakeAppServer,
       readySession: await fetchSessionV2(serverBaseUrl, auth.token, sessionId),
+      waitForProviderStartup: () => waitFor(async () => {
+        if (proc.child.exitCode !== null || proc.child.signalCode !== null) {
+          throw new Error(`Native Codex Session exited before provider startup; see ${proc.stdoutPath} and ${proc.stderrPath}`);
+        }
+        return (await readFakeCodexAppServerRequestLog(requestLogPath)).some(request => request.method === 'initialize');
+      }, { timeoutMs: resolveDaemonStartupPhaseTimeoutMs(cliEnv, undefined), failFast: true,
+        context: 'native Codex provider initialize request' }),
       stopRuntime,
       stop,
     };

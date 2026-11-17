@@ -119,8 +119,8 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
    */
   captureResponseBody?: boolean;
   /**
-   * Replace selected upstream response bodies before forwarding them, modelling an endpoint that
-   * answers with something other than what the real target said.
+   * Replace selected upstream response bodies and optionally their status before forwarding,
+   * modelling an endpoint that answers with something other than what the real target said.
    *
    * `when` decides eligibility from the request alone, before the request is forwarded. Enabling
    * rewrite therefore buffers only eligible responses — they are requested with
@@ -132,6 +132,8 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
   rewriteResponseBody?: Readonly<{
     when: (request: RecordedHttpProxyRequest) => boolean;
     rewrite: (request: RecordedHttpProxyRequest, upstreamBody: string) => string;
+    /** Model a typed HTTP refusal while retaining the real upstream evidence. */
+    statusCode?: number;
     maxBufferedBytes?: number;
   }>;
   beforeForwardResponse?: (
@@ -304,7 +306,8 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
         forwardedHeaders[key] = value;
       }
       forwardedHeaders['content-length'] = forwardedBytes.byteLength;
-      res.writeHead(statusCode, upstreamRes.statusMessage, forwardedHeaders);
+      res.writeHead(rewriter.statusCode ?? statusCode,
+        rewriter.statusCode === undefined ? upstreamRes.statusMessage : undefined, forwardedHeaders);
       res.end(forwardedBytes);
       finish(entry, { statusCode });
     });

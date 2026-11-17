@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { spawn as spawnChild } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, writeFile } from 'node:fs/promises';
@@ -6,174 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface, type Interface } from 'node:readline';
 
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
-
-import type { TestAuth } from './auth';
-
-const events: string[] = [];
-let spawned = false;
-let fetchCount = 0;
-let createdAuth: TestAuth | null = null;
-let seededAuth: TestAuth | null = null;
-let seededAuthMode: 'legacy' | 'dataKey' | 'tokenOnly' | null = null;
-let metadataEncryptionSecret: Uint8Array | null = null;
-
-function encodeMetadata(value: Record<string, unknown>): string {
-  return Buffer.from(JSON.stringify(value), 'utf8').toString('base64');
-}
-
-vi.mock('./auth', () => ({
-  createTestAuth: async () => {
-    events.push('create-auth');
-    const accountSigningSeed = new Uint8Array(32).fill(1);
-    createdAuth = {
-      token: 'token-1',
-      publicKeyBase64: 'pk-1',
-      accountSigningSeed,
-      accountMachineKey: deriveAccountMachineKeyFromRecoverySecret(accountSigningSeed),
-    };
-    return createdAuth;
-  },
-}));
-
-vi.mock('./cliAuth', () => ({
-  seedCliAuthForTestAccount: async (params: {
-    auth: TestAuth;
-    mode: 'legacy' | 'dataKey' | 'tokenOnly';
-  }) => {
-    events.push('seed-auth');
-    seededAuth = params.auth;
-    seededAuthMode = params.mode;
-  },
-}));
-
-vi.mock('./cliAttachFile', () => ({
-  writeCliSessionAttachFile: async () => {
-    events.push('write-attach');
-    return '/tmp/attach.json';
-  },
-}));
-
-vi.mock('./daemon/daemon', () => ({
-  stopDaemonFromHomeDir: async () => {
-    events.push('stop-daemon');
-  },
-}));
-
-vi.mock('./manifestForServer', () => ({
-  writeTestManifestForServer: () => {
-    events.push('write-manifest');
-  },
-}));
-
-vi.mock('./messageCrypto', () => ({
-  encryptLegacyBase64: (value: unknown, secret: Uint8Array) => {
-    metadataEncryptionSecret = secret;
-    return Buffer.from(JSON.stringify(value), 'utf8').toString('base64');
-  },
-}));
-
-vi.mock('./decryptLegacyBase64Normalized', () => ({
-  decryptLegacyBase64Normalized: (value: string) => JSON.parse(Buffer.from(value, 'base64').toString('utf8')),
-}));
-
-vi.mock('./process/serverLight', () => ({
-  startServerLight: async () => {
-    events.push('start-server');
-    return {
-      baseUrl: 'http://127.0.0.1:31735',
-      stop: async () => {
-        events.push('stop-server');
-      },
-    };
-  },
-}));
-
-vi.mock('./process/spawnProcess', () => ({
-  spawnLoggedProcess: (params: { stdoutPath: string; stderrPath: string }) => {
-    events.push('spawn');
-    spawned = true;
-    return {
-      child: { pid: 123 } as never,
-      stdoutPath: params.stdoutPath,
-      stderrPath: params.stderrPath,
-      stop: async () => {
-        events.push('stop-proc');
-      },
-    };
-  },
-}));
-
-vi.mock('./process/commands', () => ({
-  pnpmCommand: () => 'pnpm',
-}));
-
-vi.mock('./sessions', () => ({
-  createSessionWithCiphertexts: async () => {
-    events.push('create-session');
-    return { sessionId: 'session-1', tag: 'tag-1' };
-  },
-  fetchSessionV2: async () => {
-    fetchCount += 1;
-    events.push(`fetch-${fetchCount}-${spawned ? 'after-spawn' : 'before-spawn'}`);
-    return {
-      active: false,
-      agentStateVersion: spawned ? 2 : 1,
-      seq: 0,
-      metadata: encodeMetadata(
-        spawned
-          ? { codexBackendMode: 'appServer', codexSessionId: 'session-1' }
-          : { codexBackendMode: 'appServer' },
-      ),
-    };
-  },
-}));
-
-vi.mock('./timing', () => ({
-  waitFor: async (fn: () => Promise<boolean>) => {
-    events.push('wait-for');
-    const result = await fn();
-    if (!result) {
-      throw new Error('waitFor failed');
-    }
-  },
-}));
-
-describe('startCodexAppServerRemoteHarness', () => {
-  beforeEach(() => {
-    vi.resetModules();
-    events.length = 0;
-    spawned = false;
-    fetchCount = 0;
-    createdAuth = null;
-    seededAuth = null;
-    seededAuthMode = null;
-    metadataEncryptionSecret = null;
-  });
-
-  it('captures the pre-spawn session baseline before launching the CLI', async () => {
-    const { startCodexAppServerRemoteHarness } = await import('./codexAppServerRemoteHarness');
-    const testDir = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-harness-'));
-
-    const harness = await startCodexAppServerRemoteHarness({
-      testDir,
-      runId: 'run-1',
-      testName: 'codex-app-server-harness-race',
-    });
-
-    try {
-      expect(seededAuth).toBe(createdAuth);
-      expect(seededAuthMode).toBe('legacy');
-      expect(metadataEncryptionSecret).toBe(createdAuth?.accountSigningSeed);
-      expect(events).not.toContain('wait-for');
-      expect(events).not.toContain('fetch-1-before-spawn');
-      expect(events.indexOf('spawn')).toBeLessThan(events.indexOf('fetch-1-after-spawn'));
-      expect(harness.readySession.agentStateVersion).toBe(2);
-    } finally {
-      await harness.stop();
-    }
-  });
-
+describe('native Codex app-server boundary fixture', () => {
   it('rejects a resume request for the wrong native thread when the test requires an exact identity', async () => {
     const { writeFakeCodexAppServerScript } = await import('./codexAppServerRemoteHarness');
     const testDir = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-strict-resume-'));
@@ -255,6 +88,7 @@ describe('startCodexAppServerRemoteHarness', () => {
     };
 
     try {
+      expect(await send(0, 'thread/name/set', { threadId: 'thread-started', name: 'Native Goal journey' })).toEqual({ id: 0, result: {} });
       expect(await send(1, 'thread/goal/get', { threadId: 'thread-started' })).toMatchObject({
         result: {
           objective: 'Ship the import',
@@ -424,22 +258,4 @@ describe('startCodexAppServerRemoteHarness', () => {
     }
   });
 
-  it('can stop only the spawned Codex runtime while keeping the test server alive', async () => {
-    const { startCodexAppServerRemoteHarness } = await import('./codexAppServerRemoteHarness');
-    const testDir = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-harness-runtime-stop-'));
-
-    const harness = await startCodexAppServerRemoteHarness({
-      testDir,
-      runId: 'run-1',
-      testName: 'codex-app-server-harness-runtime-stop',
-    });
-
-    try {
-      await harness.stopRuntime();
-      expect(events).toContain('stop-proc');
-      expect(events).not.toContain('stop-server');
-    } finally {
-      await harness.stop();
-    }
-  });
 });

@@ -504,7 +504,7 @@ function parsePositiveInteger(raw: string | undefined): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-function resolveDaemonStartupPhaseTimeoutMs(env: NodeJS.ProcessEnv, startupTimeoutMs: number | undefined): number {
+export function resolveDaemonStartupPhaseTimeoutMs(env: NodeJS.ProcessEnv, startupTimeoutMs: number | undefined): number {
   return parsePositiveInteger(env.HAPPIER_E2E_DAEMON_STARTUP_PHASE_TIMEOUT_MS) ?? startupTimeoutMs ?? 300_000;
 }
 

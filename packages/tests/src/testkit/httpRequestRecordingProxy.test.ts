@@ -200,7 +200,7 @@ describe('startHttpRequestRecordingProxy', () => {
     }
   });
 
-  it('forwards a rewritten response body for eligible requests while recording the genuine upstream bytes', async () => {
+  it.each([undefined, 409])('forwards a rewritten response with status %s while recording the genuine upstream bytes', async (statusCode) => {
     const target = createServer((req, res) => {
       req.resume();
       req.once('end', () => {
@@ -216,6 +216,7 @@ describe('startHttpRequestRecordingProxy', () => {
       targetBaseUrl: `http://127.0.0.1:${targetAddress.port}`,
       captureResponseBody: true,
       rewriteResponseBody: {
+        ...(statusCode === undefined ? {} : { statusCode }),
         when: (request) => {
           eligible.push(request.path);
           return request.path === '/forged';
@@ -227,14 +228,17 @@ describe('startHttpRequestRecordingProxy', () => {
 
     try {
       const forged = await fetch(`${proxy.baseUrl}/forged`);
+      expect(forged.status).toBe(statusCode ?? 200);
       expect(await forged.json()).toEqual({ path: '/forged', origin: 'forged' });
       const passthrough = await fetch(`${proxy.baseUrl}/untouched`);
+      expect(passthrough.status).toBe(200);
       expect(await passthrough.json()).toEqual({ path: '/untouched', origin: 'genuine' });
 
       // Eligibility is decided from the request, before anything is forwarded, so an
       // ineligible request is never buffered.
       expect(eligible).toEqual(['/forged', '/untouched']);
       const recorded = proxy.entries();
+      expect(recorded[0]?.statusCode).toBe(200);
       expect(recorded.map((entry) => entry.path)).toEqual(['/forged', '/untouched']);
       expect(JSON.parse(recorded[0]!.responseBody!.text)).toEqual({ path: '/forged', origin: 'genuine' });
       expect(JSON.parse(recorded[1]!.responseBody!.text)).toEqual({ path: '/untouched', origin: 'genuine' });
