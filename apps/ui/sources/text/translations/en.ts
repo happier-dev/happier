@@ -1099,7 +1099,7 @@ const settingsAppearanceTranslationExtension = {
     deactivateProfileSubtitle:
       'Deactivate the custom profile and keep it saved',
     deleteProfile: 'Delete profile',
-    deleteProfileSubtitle: 'Remove this local custom theme profile',
+    deleteProfileSubtitle: "Delete this theme from your themes on every device.",
     deleteAssignedThemeBody: ({ slots }: { slots: string }) =>
       `It is the ${slots} theme. Deleting it returns that mode to its default theme.`,
     saveAndActivate: 'Save & Activate',

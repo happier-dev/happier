@@ -976,7 +976,7 @@ const settingsAppearanceTranslationExtension = {
     deactivateProfile: 'デフォルトのテーマを使用する',
     deactivateProfileSubtitle: 'カスタム プロファイルを非アクティブ化して保存したままにします',
     deleteProfile: 'プロフィールの削除',
-    deleteProfileSubtitle: 'このローカル カスタム テーマ プロファイルを削除します',
+    deleteProfileSubtitle: "このテーマを、すべてのデバイスのあなたのテーマから削除します。",
     deleteAssignedThemeBody: ({ slots }: { slots: string }) => `${slots} のテーマです。削除すると、そのモードは既定のテーマに戻ります。`,
     saveAndActivate: '保存して有効化',
     missingProfile: 'テーマプロファイルが見つかりません',

@@ -970,7 +970,7 @@ const settingsAppearanceTranslationExtension = {
     deactivateProfile: 'Использовать тему по умолчанию',
     deactivateProfileSubtitle: 'Деактивируйте пользовательский профиль и сохраните его.',
     deleteProfile: 'Удалить профиль',
-    deleteProfileSubtitle: 'Удалить этот локальный профиль пользовательской темы',
+    deleteProfileSubtitle: "Удалить эту тему из ваших тем на всех устройствах.",
     deleteAssignedThemeBody: ({ slots }: { slots: string }) => `Это тема режима «${slots}». После удаления этот режим вернётся к теме по умолчанию.`,
     saveAndActivate: 'Сохранить и активировать',
     missingProfile: 'Профиль темы не найден',

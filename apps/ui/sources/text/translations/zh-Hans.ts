@@ -976,7 +976,7 @@ const settingsAppearanceTranslationExtension = {
     deactivateProfile: '使用默认主题',
     deactivateProfileSubtitle: '停用自定义配置文件并保存它',
     deleteProfile: '删除个人资料',
-    deleteProfileSubtitle: '删除此本地自定义主题配置文件',
+    deleteProfileSubtitle: "从你所有设备上的主题中删除此主题。",
     deleteAssignedThemeBody: ({ slots }: { slots: string }) => `这是${slots}的主题。删除后，该模式将恢复为默认主题。`,
     saveAndActivate: '保存并激活',
     missingProfile: '未找到主题配置文件',

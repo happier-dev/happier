@@ -969,7 +969,7 @@ const settingsAppearanceTranslationExtension = {
     deactivateProfile: 'Utilitza el tema predeterminat',
     deactivateProfileSubtitle: 'Desactiva el perfil personalitzat i mantén-lo desat',
     deleteProfile: 'Suprimeix el perfil',
-    deleteProfileSubtitle: 'Suprimeix aquest perfil de tema personalitzat local',
+    deleteProfileSubtitle: "Suprimeix aquest tema dels teus temes a tots els dispositius.",
     deleteAssignedThemeBody: ({ slots }: { slots: string }) => `És el tema de ${slots}. En suprimir-lo, aquest mode torna al tema per defecte.`,
     saveAndActivate: 'Desa i activa',
     missingProfile: 'No s\'ha trobat el perfil del tema',

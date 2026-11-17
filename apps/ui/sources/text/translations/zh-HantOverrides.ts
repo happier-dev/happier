@@ -974,7 +974,7 @@ const settingsAppearanceTranslationExtension = {
     deactivateProfile: '使用預設主題',
     deactivateProfileSubtitle: '停用自訂設定檔並儲存它',
     deleteProfile: '刪除個人資料',
-    deleteProfileSubtitle: '刪除此本機自訂主題設定檔',
+    deleteProfileSubtitle: "從你所有裝置上的主題中刪除此主題。",
     deleteAssignedThemeBody: ({ slots }: { slots: string }) => `這是${slots}的主題。刪除後，該模式將恢復為預設主題。`,
     saveAndActivate: '保存並激活',
     missingProfile: '未找到主題設定檔',

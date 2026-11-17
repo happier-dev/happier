@@ -1004,7 +1004,7 @@ const settingsAppearanceTranslationExtension = {
     deactivateProfile: 'Usar tema padrão',
     deactivateProfileSubtitle: 'Desative o perfil personalizado e mantenha-o salvo',
     deleteProfile: 'Excluir perfil',
-    deleteProfileSubtitle: 'Remova este perfil de tema personalizado local',
+    deleteProfileSubtitle: "Excluir este tema dos seus temas em todos os dispositivos.",
     deleteAssignedThemeBody: ({ slots }: { slots: string }) => `É o tema de ${slots}. Ao eliminá-lo, esse modo volta ao tema predefinido.`,
     saveAndActivate: 'Salvar e ativar',
     missingProfile: 'Perfil do tema não encontrado',

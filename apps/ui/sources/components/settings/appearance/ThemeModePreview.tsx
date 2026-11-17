@@ -19,6 +19,12 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 
 export type { ThemeMiniatureForm, ThemePreviewPalette };
+
+/**
+ * The narrowest card that still reads as a theme's miniature (lab A1/C1): four across the 704 pt reading
+ * column, two across a 390 pt phone. Theme grids pass it to their Collection as `minCardWidth`.
+ */
+export const THEME_MINIATURE_CARD_MIN_WIDTH = 150;
 type Palette = ThemePreviewPalette;
 
 /** The soft scale uses the shared drawing's default; the other scales override it. */

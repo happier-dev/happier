@@ -5,6 +5,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import {
+  THEME_MINIATURE_CARD_MIN_WIDTH,
   ThemeMiniaturePreview,
   ThemePalettePreview,
   type ThemeMiniatureForm,
@@ -175,6 +176,7 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
                 anatomy={anatomy}
                 accessibilityLabel={modeTitle(mode)}
                 presentation="grid"
+                minCardWidth={THEME_MINIATURE_CARD_MIN_WIDTH}
                 detail="none"
                 // Collection's page grid windows against ItemList's physical page tracker.
                 scroll="page"

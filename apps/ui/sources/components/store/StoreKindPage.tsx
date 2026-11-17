@@ -68,6 +68,7 @@ import type { ThemeProfileMode } from '@/theme/profiles/themeProfileTypes';
 import type { RegistryCuration } from '@/registries/useRegistrySuggestions';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { THEME_MINIATURE_CARD_MIN_WIDTH } from '@/components/settings/appearance/ThemeModePreview';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { StoreMachineScopeContext, StoreMachineSelectionContext, useStoreMachineScope } from '@/components/settings/plugins/model/useStoreMachineScope';
 
@@ -417,7 +418,9 @@ function ThemeDirectory(props: Readonly<{ list: StoreKindList<'theme'>; query: s
     <Directory kind="theme" rows={rows} groups={registry.groups} list={props.list} sourceTitle={sourceTitle}
       query={props.query || (mode === null ? '' : modeLabel)}
       {...(!props.query && mode !== null ? { onClear: () => setMode(null) } : {})}
-      anatomy={anatomy} presentation="grid" />
+      anatomy={anatomy} presentation="grid"
+      // Phones keep two miniatures across (lab C1P); wider pages keep the Store's three-across default.
+      {...(phone ? { minCardWidth: THEME_MINIATURE_CARD_MIN_WIDTH } : {})} />
   </>;
 }
 
@@ -899,6 +902,8 @@ export function Directory<Row extends DirectoryRow = DirectoryRow>(
     /** Kind-owned anatomy uses this same directory's source states, selection and paging. */
     anatomy?: CollectionAnatomy<Row>;
     presentation?: 'list' | 'grid';
+    /** Grid only: the kind's narrowest readable card (its own preview's proportions). */
+    minCardWidth?: number;
     groups: readonly DirectoryGroup[];
     list: DirectoryList;
     query: string;
@@ -1043,6 +1048,7 @@ export function Directory<Row extends DirectoryRow = DirectoryRow>(
               props.label ?? (props.kind === 'search' ? '' : kindCopy(props.kind).title)
             }
             presentation={props.presentation ?? 'list'}
+            {...(props.minCardWidth === undefined ? {} : { minCardWidth: props.minCardWidth })}
             detail="none"
             scroll="page-virtualized"
             minListWidth={280}

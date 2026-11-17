@@ -969,7 +969,7 @@ const settingsAppearanceTranslationExtension = {
     deactivateProfile: 'Użyj motywu domyślnego',
     deactivateProfileSubtitle: 'Dezaktywuj profil niestandardowy i zachowaj go',
     deleteProfile: 'Usuń profil',
-    deleteProfileSubtitle: 'Usuń ten lokalny niestandardowy profil motywu',
+    deleteProfileSubtitle: "Usuń ten motyw z twoich motywów na wszystkich urządzeniach.",
     deleteAssignedThemeBody: ({ slots }: { slots: string }) => `To motyw trybu ${slots}. Po usunięciu ten tryb wróci do motywu domyślnego.`,
     saveAndActivate: 'Zapisz i aktywuj',
     missingProfile: 'Nie znaleziono profilu motywu',
