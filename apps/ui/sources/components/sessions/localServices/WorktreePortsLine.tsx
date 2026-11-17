@@ -95,33 +95,45 @@ export const WorktreePortsLine = React.memo(function WorktreePortsLine(
             : theme.colors.state.warning.foreground
         }
       />
-      <Text style={styles.text} variant="meta">
-        {sentence}
-      </Text>
-      {workspace && accountId ? (
-        <TextLinkButton
-          testID={`${props.testID}-reassign`}
-          label={t('localServices.worktreePorts.reassign')}
-          tone="quiet"
-          size="meta"
-          disabled={pending}
-          onPress={() => {
-            void chooseNewPorts();
-          }}
-        />
-      ) : null}
+      {/* The sentence wraps beside its mark; the link follows it on the same line when there is room. */}
+      <View style={styles.body}>
+        <Text style={styles.text} variant="meta">
+          {sentence}
+        </Text>
+        {workspace && accountId ? (
+          <TextLinkButton
+            testID={`${props.testID}-reassign`}
+            label={t('localServices.worktreePorts.reassign')}
+            tone="quiet"
+            size="meta"
+            disabled={pending}
+            onPress={() => {
+              void chooseNewPorts();
+            }}
+          />
+        ) : null}
+      </View>
     </View>
   );
 });
 
 const styles = StyleSheet.create((theme) => ({
+  // Under the scope bar, on its inset.
   line: {
     flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
+    alignItems: 'flex-start',
     gap: theme.space.s8,
+    marginHorizontal: theme.space.s16,
     marginTop: theme.space.s4,
     marginBottom: theme.space.s8,
+  },
+  body: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    columnGap: theme.space.s8,
   },
   text: {
     flexShrink: 1,
