@@ -88,36 +88,8 @@ scope comes from the surfaces the program touched, not from a list of earlier fi
    - **lab outdated**: update the lab scene so the reference stays true.
 
    Write the classification next to the comparison in the program's review report; don't create a
-   separate ledger.
-
-   A difference from the lab is never a reason to add a second component, variant or style path for the
-   same concept. Fix the shared owner (reuse, extend, refactor), keep improvements that are better
-   than the lab and record them as refinements, and consolidate any duplicate or similar-but-different
-   implementations you find.
-
-   Never resolve a difference by creating a duplicate, competing or similar-but-different component,
-   style or logic path. Either the shared component is right (accepted refinement), or the shared
-   component improves for every consumer. Keep good improvements other work already made to shared
-   components, updating the lab instead, and contract any duplicates you find into one owner.
-
-   **Fix through the shared owner, never around it.** When a difference comes from a shared component
-   or primitive (row, chip, card, popover, field, header), the choice is only:
-   - **refine the shared component** for all its consumers, after checking those consumers and
-     keeping their behaviour intact; or
-   - **accept the difference** as a refinement.
-
-   Never make the screen match the lab by building a local lookalike, a one-off style override, or a
-   similar-but-different component or logic path. Matching through a fork is a defect, even if the
-   pixels match. Reuse, extend, extract or refactor the existing component instead.
-
-   **Keep other lanes' step-ups.** Before changing a shared component, read its current bytes and
-   recent history. An improvement another lane made that's better than the lab is an accepted
-   refinement; keep it, and update the lab if it should become the reference. Don't regress it to
-   match an older scene.
-
-   **Contract what you find.** If the comparison exposes two components, presenters or state owners
-   for the same thing (two renderings of one condition, two rows for one fact, two decision paths),
-   unify them onto one owner and delete the other, rather than styling both.
+   separate ledger. Resolve every defect through the shared owner, never with a fork:
+   [Fidelity without forks](#fidelity-without-forks).
 
 6. **Live, not only source.** Compare a source-rendered capture with fixtures to the lab only as an
    intermediate check. The acceptance pass uses the loaded runtime with real data. First confirm
@@ -169,7 +141,7 @@ These rules come from the Teams/Home program (2026-10-11). Every finding list wa
 
 - **Parallel lanes don't compose a page.** While one lane owns a page's composition, other lanes that need the page supply data, hooks and logic and leave it a mount point; they don't restyle or reorder it. When five lanes edited the same screens at once, the result was a patchwork that nobody had looked at as a whole.
 - **Translate the lab's scale; don't copy it.** Labs are HTML. Map each lab gap, size and weight to the product's spacing, type and material tokens. Then measure the rendered result against the lab's rhythm. A page with the right structure but the wrong rhythm is what reads as generic rather than premium.
-- **Reach the lab through the shared components; never fork them to match it.** If a shared component differs slightly from the lab, either improve the shared component for all its consumers or record the difference as an accepted refinement. A lab-shaped local copy is a defect. Build on recent improvements other lanes made to shared components rather than reverting them, and when you find duplicates, merge them into one owner.
+- **Reach the lab through the shared components; never fork them to match it** ([Fidelity without forks](#fidelity-without-forks)).
 - **An older build is not evidence.** Screenshots from before the latest changes don't verify a page, and neither do source-level comparisons of lab markup with components. Until the current build has been rendered and compared, the page stays `IMPLEMENTED_NOT_VERIFIED`. A specimen route (for example `/dev/plugin-ui`) is the default render while building and shows states the dev Account cannot reach; it proves the states, not the composed page.
 
 ## Review checklist
@@ -277,11 +249,8 @@ Labs are good because one designer composes a whole page in one pass, at one sca
   line each. A round whose findings are mostly navigation, state or data bugs has not reviewed the
   design. Don't let a numbered punch-list replace the page verdict: closing every item does not make
   a page premium.
-- **Match a lab through the existing components, never around them.** When a lab element differs
-  slightly from a generic component, the generic component wins and the difference is an accepted
-  refinement. When the lab's version is better, refine the generic component for every consumer and
-  check them. Never create a page-local look-alike or a one-page variant. Keep improvements other lanes
-  made to shared components; extend them rather than reverting to the lab.
+- **Match a lab through the existing components, never around them.** Briefs say so and point at
+  [Fidelity without forks](#fidelity-without-forks).
 - **A verdict covers the bundle it saw.** A UI-touching change that lands after the last design
   verdict reopens the surfaces it touched, even when the change was functional (a new control, state,
   tint, menu or copy).
@@ -295,19 +264,6 @@ Labs are good because one designer composes a whole page in one pass, at one sca
 - **One composition owner per page.** When several lanes contribute tabs or sections to one page or
   page family, one design lane owns the composed page: header, tab container, density, rhythm and
   spacing across the tabs. It reviews every contribution inside the composed page, not in isolation.
-- **One component per concept; the lab never justifies a fork.** Never create a duplicate, competing
-  or similar-but-different component, style or helper just to make a screen match its lab, and never
-  hand-roll a local copy of an existing component.
-  - **When the canonical component differs only slightly from the lab,** keep the canonical one and
-    record it as an accepted refinement.
-  - **When the lab's version is a real step-up** (clearer hierarchy, better rhythm, nicer motion),
-    improve the canonical component itself, as a variant, token, prop or refactor, so every consumer
-    benefits. Check those other consumers in the render loop before calling it done.
-  - **A reuse that lowers the look** is a defect to fix in the owner, not an excuse for a fork.
-  - **Don't undo other lanes' work.** Preserve improvements other lanes made to shared components;
-    a refinement layers on them unless it is clearly better, and the reason is recorded.
-  - **Contract duplicates you meet** in the touched corridor (two formatters, two row variants for one
-    fact, local style copies) into the canonical owner, and migrate their consumers.
 - **Keep design lanes on design.** Compile closure, gate attribution and partition chores go to
   non-design lanes. A design lane whose context was spent on that work hands visual verification to a
   fresh design lane.
@@ -381,7 +337,29 @@ the fix.
 
 ## Fidelity without forks
 
-Matching a lab never justifies a second component.
-- **Where to fix a difference.** When a shared component differs from the lab, either refine that component at its owner, so every consumer gains, or record the difference as an accepted refinement. Never add a similar-but-different copy, a page-local restyle or a call-site override.
-- **Keep improvements that are better than the lab.** Other lanes may have improved a shared component beyond the lab. Keep those improvements, and classify the lab as outdated rather than reverting them.
-- **Merge competing versions.** When a page shows competing versions of one element (two card frames, two menu styles, two empty states), merge them into one owner and migrate every consumer.
+One component per concept; matching a lab never justifies a second one. This is the single statement
+of the rule; the other sections point here.
+
+- **Fix through the shared owner, never around it.** When a difference comes from a shared component
+  or primitive (row, chip, card, popover, field, header), the choice is only:
+  - **accept the difference** as a refinement, which is the default when the canonical component
+    differs only slightly from the lab; or
+  - **refine the shared component** when the lab's version is a real step-up (clearer hierarchy,
+    better rhythm, nicer motion): improve the canonical component itself, as a variant, token, prop or
+    refactor, so every consumer gains. Check those consumers in the render loop and keep their
+    behaviour intact before calling it done.
+- **A fork is a defect even if the pixels match.** Never make a screen match its lab with a duplicate,
+  competing or similar-but-different component, style, helper or logic path: no local lookalike,
+  hand-rolled copy, one-page variant, page-local restyle, one-off style or call-site override. Reuse,
+  extend, extract or refactor the existing component instead.
+- **A reuse that lowers the look** is a defect to fix in the owner, not an excuse for a fork.
+- **Keep other lanes' step-ups.** Before changing a shared component, read its current bytes and
+  recent history. An improvement another lane made that is better than the lab is an accepted
+  refinement: keep it, classify the lab as outdated and update it if it should become the reference.
+  Don't regress it to match an older scene; a refinement layers on it unless it is clearly better, and
+  the reason is recorded.
+- **Contract what you find.** When the comparison or the touched corridor exposes two components,
+  presenters, state owners or helpers for one thing (two renderings of one condition, two rows for one
+  fact, two decision paths, two formatters, two card frames, two menu styles, two empty states, local
+  style copies), unify them onto one owner, migrate every consumer and delete the other, rather than
+  styling both.
