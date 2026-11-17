@@ -173,11 +173,12 @@ export function createConnectedServiceContinuationMessageDispatcher(
               return true;
             }
             // Local failure reporting does not await its durable turn projection.
-            // Wait only while the original turn is still known to be in progress;
-            // a restored recovery without that witness cannot safely admit a turn
-            // or assume a projection producer remains. Settle through the scheduler.
+            // A local failed turn is cleared before its durable projection settles,
+            // and daemon replacement also loses that local witness. Keep the latest
+            // in-progress projection pending under the scheduler's existing budget.
             const retryable = !supersededRecovery && session.latestTurnStatus === 'in_progress'
-              && Boolean(activeTurnId) && activeTurnId === session.latestTurnId;
+              && Boolean(session.latestTurnId)
+              && (!activeTurnId || activeTurnId === session.latestTurnId);
             const code = supersededRecovery
               ? 'connected_service_continuation_failure_superseded'
               : retryable ? 'connected_service_continuation_turn_projection_pending'

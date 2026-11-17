@@ -2204,10 +2204,26 @@ continues to require the exact captured issue. The arming-time check cannot esta
 the original failure across a restart or re-arming. A superseded live turn or
 archived session settles the old recovery
 terminally instead of waiting for provider proof after suppressing admission.
+Claude's public usage-limit issue is projected through the protocol schema's own
+field set without validating provider values before failure publication. Provider
+observation time, account attribution, sidechain attribution and note kind remain
+internal evidence. Invalid values reach the existing durable admission reduction
+below rather than throwing before local turn failure and recovery reporting. At durable mutation validation, an invalid
+issue on an otherwise valid terminal failure is reduced to valid diagnostic fields
+or the shared generic failure issue, with a warning in the default file log. The
+terminal transition remains authoritative; malformed mutation fields still fail
+validation. Startup re-admits recoverable authoritative dead letters using their
+retained payload through the same validation, including older failures with invalid
+optional issue details. This does not repair sessions until their journal resumes.
+Runtime-state revision and generation conflicts retry under the existing recovery
+scheduler budget and backoff, rather than immediately cancelling recovery.
 Failure reporting does not wait for its durable projection.
-An unresolved projection is retryable while the live turn matches the projected
-in-progress turn. Without that witness, or when the projected turn is already
-completed or cancelled, recovery settles terminally without admitting a continuation.
+An unresolved in-progress projection remains retryable when there is no local
+active turn, or when the local active turn matches the projection. This allows a
+locally failed turn to publish its durable terminal mutation before continuation
+admission. A conflicting local turn, an archived session or a failure after arming
+still supersedes recovery; completed or cancelled projections settle terminally.
+Projection waits consume the existing recovery attempt budget and backoff.
 Completed projections omit both the failed issue and input origin; they cannot
 distinguish provider task notifications from newer human work. The terminal
 recovery event appears in the session transcript, but cancelled usage-limit

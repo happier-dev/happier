@@ -28,6 +28,10 @@ import { createRuntimeAuthFailureReportIntake } from '@/daemon/controlServer';
 import { buildConnectedServiceAuthGroupCommittedGenerationFact } from '../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
 import { listProviderActivityRecoveryIdentitiesFromRuntimeBindings } from '../continuation/continuationRecoveryIdentity';
 import { buildObservedFailureMemberRuntimeState } from '../accountGroups/memberRuntimeState';
+import {
+  ConnectedServiceAuthGroupGenerationConflictError,
+  ConnectedServiceAuthGroupRuntimeStateRevisionConflictError,
+} from '@/api/connectedServices/connectedServiceCredentialApi';
 
 function classification(): ConnectedServiceRuntimeFailureClassification {
   return {
@@ -100,6 +104,36 @@ async function settleRecoveryGeneration(input: Parameters<NonNullable<Parameters
 }
 
 describe('RuntimeAuthRecoveryScheduler', () => {
+  it.each([
+    new ConnectedServiceAuthGroupRuntimeStateRevisionConflictError(2),
+    new ConnectedServiceAuthGroupGenerationConflictError(2),
+  ])('retries concurrent auth-group writes through the existing backoff (%s)', async (conflict) => {
+    let nowMs = 1_000;
+    let attempts = 0;
+    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => nowMs,
+      baseBackoffMs: 100, jitterMs: () => 0,
+      recover: async () => {
+        // A competing server write won again on the first recovery attempt.
+        if (attempts++ === 0) throw conflict;
+        return { status: 'credential_refreshed' };
+      },
+    });
+    try {
+      await expect(scheduler.enqueueHandlerFailure({ sessionId: 'concurrent-group-write',
+        classification: classification(), switchesThisTurn: 0, error: conflict,
+      })).resolves.toMatchObject({ status: 'scheduled', retryable: true });
+      await expect(scheduler.wake({ sessionId: 'concurrent-group-write', reason: 'manual' }))
+        .resolves.toMatchObject({ status: 'waiting' });
+      expect(scheduler.readForSession('concurrent-group-write')[0]).toMatchObject({
+        status: 'waiting', attemptCount: 1, nextRetryAtMs: 1_200,
+        lastError: conflict.message, lastErrorClassification: { kind: 'dependency_unavailable', retryable: true },
+      });
+      nowMs = 1_200;
+      await scheduler.wake({ sessionId: 'concurrent-group-write', reason: 'manual' });
+      expect(scheduler.readForSession('concurrent-group-write')[0]).toMatchObject({ status: 'resumed_awaiting_proof' });
+    } finally { scheduler.dispose(); }
+  });
+
   it('retains the failed ai1 turn through batiplus adoption, daemon replacement, retry and outbox replay', async () => {
     const durableStore = createSerializedRecoveryStore();
     const sessionId = 'ai1-failed-turn';

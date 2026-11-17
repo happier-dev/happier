@@ -69,6 +69,32 @@ describe('composed connected-service pool recovery (synthetic boundaries)', () =
     await expectSettledAfterProviderOutput(fixture);
   });
 
+  it('durably validates the seven-day failure before publishing its terminal turn and continuation', async () => {
+    const fixture = await setup({ window: 'seven_day', deferTurnDelivery: true });
+    await fixture.fail();
+    const sessionId = fixture.sessions[0]!.happySessionId!;
+    expect(fixture.rawSessions.get(sessionId)?.latestTurnStatus).toBe('in_progress');
+    const queuedFailure = (await fixture.sessionMutations()).map(mutation => mutation.payload)
+      .find(mutation => mutation.action === 'fail');
+    expect(queuedFailure?.issue?.usageLimit).toMatchObject({
+      providerLimitId: 'seven_day', resetAtMs: fixture.resetAt + 86_400_000,
+      connectedService: { serviceId: 'claude-subscription', profileId: 'A' },
+    });
+    expect(queuedFailure?.issue?.usageLimit).not.toHaveProperty('providerObservedAtMs');
+    expect(queuedFailure?.issue?.usageLimit).not.toHaveProperty('sourcedFromSidechain');
+    await fixture.releaseTurnDelivery();
+    expect(await fixture.sessionDeadLetters()).toEqual([]);
+    expect(fixture.rawSessions.get(sessionId)).toMatchObject({
+      latestTurnStatus: 'failed', lastRuntimeIssue: { usageLimit: {
+        providerLimitId: 'seven_day', resetAtMs: fixture.resetAt + 86_400_000,
+        connectedService: { serviceId: 'claude-subscription', profileId: 'A' },
+      } },
+    });
+    await advanceClock(5_000);
+    await vi.waitFor(() => expectContinued(fixture), { timeout: 5_000, interval: 20 });
+    await expectSettledAfterProviderOutput(fixture);
+  });
+
   it('recovers twelve sessions after a sixty-second Happier 503 burst', async () => {
     const fixture = await setup({ serverOutageMs: 60_000 });
     // Initial load retries sleep on the injected clock while the server is unavailable.
