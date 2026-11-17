@@ -42,6 +42,11 @@ describe('stripMarkdown', () => {
       .toBe('Use *literal* and read a|b, then a`b|c and [x](y).');
   });
 
+  it('keeps underscores inside words, as CommonMark does, while removing underscore emphasis', () => {
+    expect(stripMarkdown('Reply exactly PROBE_OK_2 from snake_case_name; _this_ and __that__ are emphasis.'))
+      .toBe('Reply exactly PROBE_OK_2 from snake_case_name; this and that are emphasis.');
+  });
+
   it('does not confuse answer text with protected code or consume unmatched delimiters', () => {
     expect(stripMarkdown('\u00000\u0000 `a|b` and ``unclosed`'))
       .toBe('\u00000\u0000 a|b and ``unclosed`');

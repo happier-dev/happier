@@ -29,8 +29,9 @@ export function stripMarkdown(text: string, options?: Readonly<{
     .replace(/\|/g, ' ')
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/\*([^*]+)\*/g, '$1')
-    .replace(/__([^_]+)__/g, '$1')
-    .replace(/_([^_]+)_/g, '$1')
+    // Underscore emphasis never opens or closes inside a word (CommonMark), so PROBE_OK_2 and snake_case stay whole.
+    .replace(/(^|[^\p{L}\p{N}_])__([^_]+)__(?![\p{L}\p{N}_])/gu, '$1$2')
+    .replace(/(^|[^\p{L}\p{N}_])_([^_]+)_(?![\p{L}\p{N}_])/gu, '$1$2')
     .replace(/```[\s\S]*?```/g, '[code]')
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
     .replace(/^---+$/gm, '')
