@@ -4335,12 +4335,14 @@ export async function verifyExternalActionMachinePublicationRequester(input: Rea
     custodianAccountId: string;
     machineId: string;
     installationId: string;
+    requestId?: string;
 }>): Promise<string | null> {
     const binding = await auth.verifyExternalActionExecutionAuthorization(input.authorizationToken);
     if (!binding
         || binding.serverIdentityId !== await initializeServerIdentityCache()
         || binding.custodianAccountId !== input.custodianAccountId
-        || binding.machineId !== input.machineId || binding.installationId !== input.installationId) return null;
+        || binding.machineId !== input.machineId || binding.installationId !== input.installationId
+        || input.requestId !== undefined && binding.requestId !== input.requestId) return null;
     return binding.accountId;
 }
 

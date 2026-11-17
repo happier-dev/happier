@@ -134,7 +134,7 @@ function isSameAdmissionSelector(
     && left.sourceSelectorId === right.sourceSelectorId;
 }
 
-function createDefaultTransport(credentials: StoredCredentials): AutomationEventActionTransport {
+function createDefaultTransport(credentials: Pick<StoredCredentials, 'token'>): AutomationEventActionTransport {
   return Object.freeze({
     async execute(actionId, request, signal) {
       const path = AutomationEventActionHttpPathsV1[actionId];
@@ -177,6 +177,9 @@ function createDefaultTransport(credentials: StoredCredentials): AutomationEvent
  */
 export function createAutomationEventActionExecutor(params: Readonly<{
   credentials: StoredCredentials;
+  /** Physical installation bearer carries the existing requester admission. */
+  publisherCredentials?: Pick<StoredCredentials, 'token'>;
+  requesterOperation?: AutomationEventActionHttpCallerV1['requesterOperation'];
   transport?: AutomationEventActionTransport;
   revalidateCallerMaterialization?: RevalidatePluginActionCallerMaterialization;
   /** Rechecks the exact host-stamped admitted bytes; it never substitutes one. */
@@ -188,7 +191,7 @@ export function createAutomationEventActionExecutor(params: Readonly<{
   nativeCompletion?: NativeActionCompletionHost;
   randomBytes?: (length: number) => Uint8Array;
 }>): ExecuteAutomationEventAction {
-  const transport = params.transport ?? createDefaultTransport(params.credentials);
+  const transport = params.transport ?? createDefaultTransport(params.publisherCredentials ?? params.credentials);
   const revalidateCallerMaterialization = params.revalidateCallerMaterialization;
   const revalidateCallerOccurrence = params.revalidateCallerOccurrence;
   const resolveAccountId = params.resolveAccountId
@@ -349,6 +352,7 @@ export function createAutomationEventActionExecutor(params: Readonly<{
     }
 
     const caller: AutomationEventActionHttpCallerV1 = {
+      ...(params.requesterOperation ? { requesterOperation: params.requesterOperation } : {}),
       pluginId: args.caller.pluginId,
       ...(args.caller.contributionLocalId
         ? { contributionLocalId: args.caller.contributionLocalId }

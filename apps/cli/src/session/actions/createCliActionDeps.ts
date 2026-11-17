@@ -628,6 +628,10 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const automationEventAction = params.credentials && params.resolveAutomationEventAdoptedDefinitionSet
     ? createAutomationEventActionExecutor({
       credentials: params.credentials,
+      ...(params.automationEventPublisher ? {
+        publisherCredentials: params.automationEventPublisher.credentials,
+        requesterOperation: params.automationEventPublisher.requesterOperation,
+      } : {}),
       ...(params.resolveAuthenticatedAccountId ? { resolveAccountId: params.resolveAuthenticatedAccountId } : {}),
       resolveAdoptedDefinitionSet: params.resolveAutomationEventAdoptedDefinitionSet,
       nativeCompletion: {

@@ -15,6 +15,8 @@ export type AutomationEventCallerV1 = Readonly<{
     machineId: string;
     machineInstallationId: string;
     materializationId: string;
+    /** Derived from the verified admitted requester root, never HTTP input. */
+    materializationAccountId?: string;
     /** Durable host-stamped source custody. */
     sourceCustody: PluginSourceCustodyV1;
 }>;
@@ -133,6 +135,7 @@ export async function assertCurrentAutomationEventCallerMaterializationTx(params
     version: string;
     eventDeclarationRelease: AutomationEventDeclarationReleaseV1;
 }>> {
+    const materializationAccountId = params.caller.materializationAccountId ?? params.accountId;
     const row = await params.tx.pluginMachineMaterialization.findUnique({
         where: {
             machineId_materializationId: {
@@ -145,13 +148,13 @@ export async function assertCurrentAutomationEventCallerMaterializationTx(params
     });
     if (
         !row
-        || row.accountId !== params.accountId
+        || row.accountId !== materializationAccountId
         || row.pluginId !== params.caller.pluginId
     ) fail("caller_materialization_not_current");
 
     const current = await resolveCurrentClaimablePluginMachineMaterializationTx({
         tx: params.tx,
-        accountId: params.accountId,
+        accountId: materializationAccountId,
         serverIdentityId: params.serverIdentityId,
         machineId: params.caller.machineId,
         machineInstallationId: params.caller.machineInstallationId,

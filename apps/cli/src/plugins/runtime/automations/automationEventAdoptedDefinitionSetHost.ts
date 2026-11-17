@@ -44,7 +44,8 @@ export type AutomationEventStoredDefinitionsHttpTransportV1 = Readonly<{
  * create this body.
  */
 export function createAutomationEventStoredDefinitionsHttpTransportV1(params: Readonly<{
-  credentials: StoredCredentials;
+  credentials: Pick<StoredCredentials, 'token'>;
+  requesterOperation?: AutomationEventActionHttpCallerV1['requesterOperation'];
   revalidateCaller(caller: AutomationEventActionHttpCallerV1, signal?: AbortSignal): Promise<boolean>;
 }>): AutomationEventStoredDefinitionsHttpTransportV1 {
   return Object.freeze({
@@ -56,6 +57,7 @@ export function createAutomationEventStoredDefinitionsHttpTransportV1(params: Re
           occurrenceId: request.caller.occurrenceId,
           sourceCustody: request.caller.sourceCustody,
           materialization: request.caller.materialization,
+          ...(params.requesterOperation ? { requesterOperation: params.requesterOperation } : {}),
         },
         input: request.input,
         ...(request.webhookInvocationReference === undefined

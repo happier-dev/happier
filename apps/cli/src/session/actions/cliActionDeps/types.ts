@@ -291,6 +291,11 @@ export type CliActionDepsParams = Readonly<{
   prepareWorkspaceWritesPolicy?: RoleWorkspaceWritesPolicyPreparer;
   happyHomeDir?: string;
   resolveAutomationEventAdoptedDefinitionSet?: ResolveAutomationEventAdoptedDefinitionSetV1;
+  /** Installed publication transport; Account data and crypto still use `credentials`. */
+  automationEventPublisher?: Readonly<{
+    credentials: Pick<StoredCredentials, 'token'>;
+    requesterOperation: NonNullable<import('@happier-dev/protocol/automations/event').AutomationEventActionHttpCallerV1['requesterOperation']>;
+  }>;
   /** The host's server-verified Account id (a daemon's Machine connection owns it); never re-read per Action. */
   resolveAuthenticatedAccountId?: (signal?: AbortSignal) => Promise<string>;
   acquireAutomationEventObservationRegistry?: import('@/deployments/platformFailureNotices').PlatformFailureNoticeHost['acquirePluginRuntimeRegistryLease'];

@@ -304,6 +304,7 @@ describe('Automation Event adopted-definition host factory', () => {
       sourceInstanceId: 'health:service-a', signal })).toEqual({ kind: 'unavailable', reason: 'source_unavailable' });
   });
   it('uses the incumbent private Event route and rejects malformed response bytes at the HTTP boundary', async () => {
+    const requesterOperation = { authorizationToken: 'existing-home-admission', requestId: 'original-request' };
     const immutableGenerationId = 'github-generation-current';
     const stampedCaller = {
       pluginId: caller.pluginId,
@@ -324,6 +325,7 @@ describe('Automation Event adopted-definition host factory', () => {
     transportMocks.post.mockResolvedValueOnce({ data: page });
     const transport = createAutomationEventStoredDefinitionsHttpTransportV1({
       credentials,
+      requesterOperation,
       revalidateCaller,
     });
 
@@ -337,7 +339,7 @@ describe('Automation Event adopted-definition host factory', () => {
       path: '/v1/automations/events/stored-definitions/read',
       body: {
         v: 1,
-        caller: stampedCaller,
+        caller: { ...stampedCaller, requesterOperation },
         input: { transport: { kind: 'checkpointedPull' }, pageSize: 500 },
       },
     });

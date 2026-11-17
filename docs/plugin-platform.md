@@ -6099,6 +6099,17 @@ or cancellation discards late checkpoint effects. A buffered immediate drain tha
 cannot advance before admission settles waits for settlement or an authenticated
 wake. Finite `once` mode still awaits admission and checkpoint completion.
 
+In unreleased 0.3 source, the private Event read, status and admission HTTP
+routes accept an installation publisher acting for an already admitted requester.
+The installation signs the same parsed body carrying the original opaque Action
+admission token and request id. Home verifies that root against the custodian,
+Machine and installation, then selects the requester's Account rows while keeping
+the physical watcher materialization under its custodian. This carries the existing
+admission without issuing a credential or evaluating permissions again. The CLI
+uses the custodian bearer only for publication transport; stored Event definitions
+and payload encryption still use the requester's credentials and Home. Matching
+development CLI and server readers are required for this private HTTP field.
+
 In unreleased 0.3 source, the Machine services catalog also projects backup
 success/failure and existing memory/CPU/disk alert transitions. The Action
 operation store owns backup settlement; `machineVitalsAlerts.ts` owns pressure

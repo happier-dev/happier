@@ -232,7 +232,7 @@ async function assertCurrentDurablePushCatalogScope(params: Readonly<{
 
     const manifest = await resolveCurrentEventManifest({
         tx: params.tx,
-        accountId: params.accountId,
+        accountId: params.caller.materializationAccountId ?? params.accountId,
         pluginId: params.caller.pluginId,
         version: params.callerVersion,
         machineId: params.caller.machineId,
@@ -319,7 +319,7 @@ async function assertCurrentSourceStatusTarget(params: SourceStatusParams): Prom
 
     const eventContribution = await assertCurrentEventContribution({
         tx: params.tx,
-        accountId: params.accountId,
+        accountId: params.caller.materializationAccountId ?? params.accountId,
         pluginId: params.caller.pluginId,
         version: params.callerVersion,
         machineId: params.caller.machineId,
@@ -467,7 +467,7 @@ async function assertCurrentCatalogStatusTarget(params: CatalogStatusParams) {
     if (params.input.scope.kind === "checkpointedPull") {
         await assertCurrentCheckpointedPullCatalogScope({
             tx: params.tx,
-            accountId: params.accountId,
+            accountId: params.caller.materializationAccountId ?? params.accountId,
             pluginId: params.caller.pluginId,
             version: params.callerVersion,
             machineId: params.caller.machineId,
@@ -477,7 +477,7 @@ async function assertCurrentCatalogStatusTarget(params: CatalogStatusParams) {
     } else if (params.input.scope.kind === "socket") {
         await assertCurrentSocketCatalogScope({
             tx: params.tx,
-            accountId: params.accountId,
+            accountId: params.caller.materializationAccountId ?? params.accountId,
             pluginId: params.caller.pluginId,
             version: params.callerVersion,
             machineId: params.caller.machineId,

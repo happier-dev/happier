@@ -20,6 +20,7 @@ import {
     verifyPluginInstallationPublisherBodyBinding,
     verifyPluginInstallationPublisherHeaderBeforeBody,
     verifyPluginInstallationPublisherHeader,
+    verifyPluginInstallationPublisherRequesterOperation,
     type VerifiedPluginInstallationPublisherPreBody,
 } from "@/app/plugins/installations/publisherProof";
 import type { Fastify } from "../../types";
@@ -36,6 +37,7 @@ type RouteDependencies = Readonly<{
     verifyPublisher: typeof verifyPluginInstallationPublisherHeader;
     verifyPublisherBeforeBody: typeof verifyPluginInstallationPublisherHeaderBeforeBody;
     verifyPublisherBodyBinding: typeof verifyPluginInstallationPublisherBodyBinding;
+    verifyPublisherRequesterOperation: typeof verifyPluginInstallationPublisherRequesterOperation;
 }>;
 
 const DEFAULT_DEPENDENCIES: RouteDependencies = {
@@ -45,6 +47,7 @@ const DEFAULT_DEPENDENCIES: RouteDependencies = {
     verifyPublisher: verifyPluginInstallationPublisherHeader,
     verifyPublisherBeforeBody: verifyPluginInstallationPublisherHeaderBeforeBody,
     verifyPublisherBodyBinding: verifyPluginInstallationPublisherBodyBinding,
+    verifyPublisherRequesterOperation: verifyPluginInstallationPublisherRequesterOperation,
 };
 
 function noStore(reply: { header(name: string, value: string): unknown }): void {
@@ -75,6 +78,7 @@ export function registerAutomationEventRoutes(
         try {
             const publisher = await resolvedDependencies.verifyPublisher({
                 accountId: request.userId,
+                requesterOperation: request.body.caller.requesterOperation,
                 request,
                 path: STORED_DEFINITION_READ_PATH,
                 required: true,
@@ -85,8 +89,9 @@ export function registerAutomationEventRoutes(
             }
 
             return await reply.send(await resolvedDependencies.readStoredDefinitions({
-                accountId: request.userId,
+                accountId: publisher.requesterOperation?.accountId ?? request.userId,
                 caller: {
+                    ...(publisher.requesterOperation ? { materializationAccountId: publisher.requesterOperation.custodianAccountId } : {}),
                     pluginId: request.body.caller.pluginId,
                     machineId: request.body.caller.materialization.machineId,
                     machineInstallationId: publisher.installationId,
@@ -146,17 +151,22 @@ export function registerAutomationEventRoutes(
             const publisherProof = admitPublisherProofs.get(request);
             admitPublisherProofs.delete(request);
             if (!publisherProof) return reply.code(401).send(null);
-            const publisher = resolvedDependencies.verifyPublisherBodyBinding({
+            const boundPublisher = resolvedDependencies.verifyPublisherBodyBinding({
                 proof: publisherProof,
                 body: request.body,
+            });
+            const publisher = await resolvedDependencies.verifyPublisherRequesterOperation({
+                publisher: boundPublisher, accountId: request.userId,
+                requesterOperation: request.body.caller.requesterOperation,
             });
             if (request.body.caller.materialization.machineId !== publisher.machineId) {
                 return reply.code(401).send(null);
             }
 
             return await reply.send(await resolvedDependencies.admitEvent({
-                accountId: request.userId,
+                accountId: publisher.requesterOperation?.accountId ?? request.userId,
                 caller: {
+                    ...(publisher.requesterOperation ? { materializationAccountId: publisher.requesterOperation.custodianAccountId } : {}),
                     pluginId: request.body.caller.pluginId,
                     machineId: request.body.caller.materialization.machineId,
                     machineInstallationId: publisher.installationId,
@@ -194,6 +204,7 @@ export function registerAutomationEventRoutes(
         try {
             const publisher = await resolvedDependencies.verifyPublisher({
                 accountId: request.userId,
+                requesterOperation: request.body.caller.requesterOperation,
                 request,
                 path: STATUS_REPORT_PATH,
                 required: true,
@@ -204,8 +215,9 @@ export function registerAutomationEventRoutes(
             }
 
             return await reply.send(await resolvedDependencies.reportSourceStatus({
-                accountId: request.userId,
+                accountId: publisher.requesterOperation?.accountId ?? request.userId,
                 caller: {
+                    ...(publisher.requesterOperation ? { materializationAccountId: publisher.requesterOperation.custodianAccountId } : {}),
                     pluginId: request.body.caller.pluginId,
                     machineId: request.body.caller.materialization.machineId,
                     machineInstallationId: publisher.installationId,

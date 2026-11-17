@@ -452,7 +452,7 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
         const pageRows = rows.slice(0, input.pageSize);
         const contributions = await resolveCurrentAutomationEventContributionsTx({
             tx,
-            accountId: params.accountId,
+            accountId: params.caller.materializationAccountId ?? params.accountId,
             pluginId: params.caller.pluginId,
             version: callerVersion,
             machineId: params.caller.machineId,

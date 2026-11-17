@@ -3,6 +3,7 @@ import { createPluginInstallationManifestPublisherSigningInputV1, PLUGIN_INSTALL
 import tweetnacl from "tweetnacl";
 
 import { db } from "@/storage/db";
+import type { AutomationEventActionHttpCallerV1 } from '@happier-dev/protocol/automations/event';
 
 const DEFAULT_PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_PROOF_MAX_AGE_MS = 5 * 60_000;
 const DEFAULT_PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_PROOF_CLOCK_SKEW_MS = 60_000;
@@ -23,6 +24,7 @@ export class PluginInstallationPublisherProofError extends Error {
 export type VerifiedPluginInstallationPublisher = Readonly<{
     machineId: string;
     installationId: string;
+    requesterOperation?: Readonly<{ accountId: string; custodianAccountId: string; requestId: string }>;
 }>;
 
 /**
@@ -221,6 +223,7 @@ export function verifyPluginInstallationPublisherBodyBinding(params: Readonly<{
  */
 export async function verifyPluginInstallationPublisherHeader(params: Readonly<{
     accountId: string;
+    requesterOperation?: AutomationEventActionHttpCallerV1['requesterOperation'];
     request: Readonly<{
         method?: string;
         headers?: Record<string, string | string[] | undefined>;
@@ -231,8 +234,32 @@ export async function verifyPluginInstallationPublisherHeader(params: Readonly<{
 }>): Promise<VerifiedPluginInstallationPublisher | null> {
     const preBodyProof = await verifyPluginInstallationPublisherHeaderBeforeBody(params);
     if (!preBodyProof) return null;
-    return verifyPluginInstallationPublisherBodyBinding({
+    const publisher = verifyPluginInstallationPublisherBodyBinding({
         proof: preBodyProof,
         body: params.request.body,
     });
+    return await verifyPluginInstallationPublisherRequesterOperation({
+        publisher, accountId: params.accountId, requesterOperation: params.requesterOperation,
+    });
+}
+
+/** The installation proves the physical writer; Home's existing root selects
+ * its requester. No grant or permission is re-evaluated after admission. */
+export async function verifyPluginInstallationPublisherRequesterOperation(params: Readonly<{
+    publisher: VerifiedPluginInstallationPublisher;
+    accountId: string;
+    requesterOperation?: AutomationEventActionHttpCallerV1['requesterOperation'];
+}>): Promise<VerifiedPluginInstallationPublisher> {
+    if (!params.requesterOperation) return params.publisher;
+    const { verifyExternalActionMachinePublicationRequester } = await import('@/app/auth/externalActionExecutionAuthorization');
+    const accountId = await verifyExternalActionMachinePublicationRequester({
+        authorizationToken: params.requesterOperation.authorizationToken,
+        requestId: params.requesterOperation.requestId,
+        custodianAccountId: params.accountId,
+        machineId: params.publisher.machineId,
+        installationId: params.publisher.installationId,
+    });
+    if (!accountId) throw new PluginInstallationPublisherProofError('invalid', 'Invalid admitted requester publication');
+    return { ...params.publisher, requesterOperation: { accountId, custodianAccountId: params.accountId,
+        requestId: params.requesterOperation.requestId } };
 }

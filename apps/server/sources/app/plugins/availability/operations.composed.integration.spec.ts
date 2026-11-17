@@ -2346,6 +2346,21 @@ describe("plugin Availability operations", () => {
             });
         }
 
+        it('uses the verified custodian materialization for an admitted requester Event without moving its physical watcher', async () => {
+            await seedWebhookCapableMachine();
+            const service = operations();
+            await service.claimCollectionWriters({ accountId: ACCOUNT_ID, input: { manifest: declaredManifest() } });
+            await reportMaterialization(service, { sourceClass: 'bundledFirstParty', version: DECLARED_VERSION });
+            const requesterAccountId = 'requester-event-account';
+            await db.account.create({ data: { id: requesterAccountId, publicKey: null, encryptionMode: 'plain' } });
+            const read = (caller: typeof CALLER & { materializationAccountId?: string }) => inTx(tx =>
+                assertCurrentAutomationEventCallerMaterializationTx({ tx, accountId: requesterAccountId,
+                    serverIdentityId: SERVER_IDENTITY_ID, caller }));
+            await expect(read({ ...CALLER, materializationAccountId: ACCOUNT_ID })).resolves.toMatchObject({ version: DECLARED_VERSION });
+            await expect(read(CALLER)).rejects.toMatchObject({ code: 'caller_materialization_not_current' });
+            await expect(read({ ...CALLER, materializationAccountId: requesterAccountId })).rejects.toMatchObject({ code: 'caller_materialization_not_current' });
+        });
+
         it("rejoins digest-only declarations without manifest bytes and requests the full declaration only on a miss", async () => {
             await seedWebhookCapableMachine();
             const publisher = { machineId: MACHINE_ID, installationId: CALLER.machineInstallationId };

@@ -561,7 +561,7 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
             try {
                 event = await resolveCurrentAutomationEventContributionTx({
                     tx,
-                    accountId: params.accountId,
+                    accountId: params.caller.materializationAccountId ?? params.accountId,
                     pluginId: params.caller.pluginId,
                     version: callerVersion,
                     machineId: params.caller.machineId,
@@ -936,7 +936,7 @@ export async function admitAutomationEventV1(params: Readonly<{
         try {
             event = await resolveCurrentAutomationEventContributionTx({
                 tx,
-                accountId: params.accountId,
+                accountId: params.caller.materializationAccountId ?? params.accountId,
                 pluginId: params.caller.pluginId,
                 version: callerVersion,
                 machineId: params.caller.machineId,

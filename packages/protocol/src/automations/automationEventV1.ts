@@ -1,4 +1,5 @@
 import * as zMini from '../zodRuntimePolicy.js';
+import { ExternalActionRequestIdV1Schema } from '../actions/externalActionHttpError.js';
 import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
 import { PluginSubjectKindContributionV1Schema } from '../plugins/contributions/subjectKinds.js';
 import { PluginSubjectProjectionV1Schema } from '../plugins/actions/v2.js';
@@ -1519,6 +1520,12 @@ export const AutomationEventActionHttpCallerV1Schema = lazyZodSchema(() => z.str
   pluginId: asProtocolZod(PluginIdSchema),
   contributionLocalId: zMini.optional(asProtocolZod(PluginContributionLocalIdSchema)),
   materialization: PluginMachineMaterializationRefV1Schema,
+  // Existing Home admission carried only by the installed finite host. The
+  // signed publisher body binds it; public plugin Action input cannot set it.
+  requesterOperation: z.optional(z.strictObject({
+    authorizationToken: z.string().check(z.minLength(1)),
+    requestId: ExternalActionRequestIdV1Schema,
+  })),
   // The host derives this from the admitted process-local plugin occurrence;
   // plugin Action input never supplies caller provenance.
   occurrenceId: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),

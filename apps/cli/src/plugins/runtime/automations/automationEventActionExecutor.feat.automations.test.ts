@@ -41,6 +41,7 @@ import type {
   AutomationEventAdoptedDefinitionSetV1,
 } from './automationEventAdoptedDefinitionSet';
 import { createAutomationEventAdoptedDefinitionSetHostV1 } from './automationEventAdoptedDefinitionSetHost';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import {
   readCurrentPluginWebhookAutomationAdmissionUnresolvedV1,
   runWithPluginWebhookInvocationReferenceV1,
@@ -869,16 +870,17 @@ describe('createAutomationEventActionExecutor', () => {
         continuation: readyAdmissionContinuation,
       },
     });
-    const executor = createAutomationEventActionExecutor({
-      credentials,
-      revalidateCallerMaterialization: async () => true,
-      revalidateCallerOccurrence: async () => true,
-      resolveAccountId: async () => 'account-1',
-      resolveAdoptedDefinitionSet: (_caller, _occurrenceId, transport) => (
+    const requesterOperation = { authorizationToken: 'existing-admitted-root', requestId: 'original-native-operation' };
+    const executor = createCliActionDeps({
+      credentials, token: credentials.token, sessionId: '',
+      automationEventPublisher: { credentials: { ...credentials, token: 'custodian-publisher' }, requesterOperation },
+      revalidatePluginActionCallerMaterialization: async () => true,
+      revalidatePluginActionCallerOccurrence: async () => true,
+      resolveAuthenticatedAccountId: async () => 'account-1',
+      resolveAutomationEventAdoptedDefinitionSet: (_caller, _occurrenceId, transport) => (
         transport.kind === 'checkpointedPull' ? adoptedSet : null
       ),
-      randomBytes: (length) => Uint8Array.from({ length }, (_, index) => index + 1),
-    });
+    }).automationEventAction!;
     const input = AutomationEventAdmitInputV1Schema.parse({
       eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
       occurrenceId: 'delivery-1',
@@ -902,6 +904,8 @@ describe('createAutomationEventActionExecutor', () => {
     });
 
     const postedBody = transportMocks.post.mock.calls.at(-1)?.[1];
+    expect(transportMocks.post.mock.calls.at(-1)?.[2]?.headers.Authorization).toBe('Bearer custodian-publisher');
+    expect(postedBody.caller.requesterOperation).toEqual(requesterOperation);
     expect(postedBody).not.toHaveProperty('input');
     const request = AutomationEventActionHttpRequestSchemasV1['automation.event.admit'].parse(
       postedBody,
