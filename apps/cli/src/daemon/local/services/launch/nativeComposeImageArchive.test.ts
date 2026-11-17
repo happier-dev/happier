@@ -19,6 +19,8 @@ async function fixture(run: (input: {
     setExpectedImage(value: Readonly<{ configDigest?: string; platform?: string }>): void;
     setCopyError(error: Error): void;
     setLoadError(error: Error): void;
+    setManifestLookupOnly(): void;
+    setPlatformChild(): void;
     readReceived(): Promise<Buffer>;
 }) => Promise<void>) {
     const root = await mkdtemp(join(tmpdir(), 'happier-native-archive-'));
@@ -49,10 +51,18 @@ async function fixture(run: (input: {
         let selectedImage = image;
         let copyError: Error | undefined;
         let loadError: Error | undefined;
+        let manifestLookupOnly = false;
+        let platformChild = false;
+        const rootReference = `archive@sha256:${'a'.repeat(64)}`;
         const native = createNativeComposeImageIdentity({ async directory() { return receiver; }, async run(args) {
             operations.push([...args]);
-            if (args[1] === 'inspect') return local || loaded ? { stdout: JSON.stringify([{ Id: 'store-specific-id' }]), exitCode: 0 } : { stdout: '', exitCode: 1 };
-            if (args[1] === 'save') { await copyFile(archive, args[args.indexOf('--output') + 1]!); return { stdout: '', exitCode: 0 }; }
+            if (args[1] === 'inspect') return (local || loaded) && (!manifestLookupOnly || args.at(-1) === selectedImage.manifestDigest)
+                ? { stdout: JSON.stringify([{ Id: manifestLookupOnly ? selectedImage.manifestDigest : 'store-specific-id', ...(platformChild ? { RepoDigests: [rootReference] } : {}) }]), exitCode: 0 }
+                : { stdout: '', exitCode: 1 };
+            if (args[1] === 'save') {
+                if (platformChild && args.at(-1) !== rootReference) throw new Error('No such image: platform child');
+                await copyFile(archive, args[args.indexOf('--output') + 1]!); return { stdout: '', exitCode: 0 };
+            }
             if (args[1] === 'load') { if (loadError) throw loadError; loaded = true; return { stdout: 'Loaded image: archive:retained', exitCode: 0 }; }
             throw new Error(`Unexpected native request ${args.join(' ')}`);
         } });
@@ -63,6 +73,8 @@ async function fixture(run: (input: {
             setRegistryAccess(value) { registryAccess = value; }, setBuildSource(value) { buildSource = value; },
             setExpectedImage(value) { selectedImage = { ...image, ...value }; platform = selectedImage.platform; },
             setCopyError(error) { copyError = error; }, setLoadError(error) { loadError = error; },
+            setManifestLookupOnly() { manifestLookupOnly = true; },
+            setPlatformChild() { platformChild = true; },
             readReceived() { return readFile(join(receiver, 'received.tar')); },
             acquire() { return native.acquire({ ...selectedImage, ...(registry ? { registryReference: `registry.example/app@${manifestDigest}` } : {}) }, {
                 references: ['owned:retained'], authority: { context },
@@ -87,6 +99,13 @@ async function fixture(run: (input: {
 }
 
 describe('receiver archive acquisition at the canonical native image owner', () => {
+    it('proves a containerd platform child through its addressable immutable root', async () => {
+        await fixture(async input => {
+            input.setPlatformChild();
+            input.setLocal(true);
+            await expect(input.acquire()).resolves.toMatchObject({ config: { os: 'linux', architecture: 'amd64' } });
+        });
+    });
     it('rejects a classic archive containing an extra image before it can be loaded', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-extra-archive-'));
         try {
@@ -119,6 +138,18 @@ describe('receiver archive acquisition at the canonical native image owner', () 
             expect(acquired.config).toMatchObject({ os: 'linux', architecture: 'amd64' });
             expect(input.operations.filter(args => args[0] === 'copy')).toHaveLength(1);
             expect(input.operations.find(args => args[1] === 'load')).toEqual(['image', 'load', '--platform', 'linux/amd64', '--input', expect.any(String)]);
+        });
+    });
+    it('acquires a verified archive when the receiver exposes its manifest identity instead of CONFIG', async () => {
+        await fixture(async input => {
+            input.setManifestLookupOnly();
+            const acquired = await input.acquire();
+            expect(acquired.config).toMatchObject({ os: 'linux', architecture: 'amd64' });
+            expect(acquired.reference).toMatch(/^sha256:[a-f0-9]{64}$/u);
+            // A later acquisition must use the proved local image even when
+            // the original archive holder is no longer reachable.
+            input.setCopyError(new Error('The original archive holder is unavailable'));
+            await expect(input.acquire()).resolves.toMatchObject(acquired);
         });
     });
     it('uses exact local CONFIG with zero archive copy or load', async () => {

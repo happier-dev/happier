@@ -274,16 +274,20 @@ export function createNativeComposeImageIdentity(input: Readonly<{
         if (!Array.isArray(observed) || observed.length !== 1 || !record(observed[0])) return refuse('deployment_image_identity_unavailable');
         const nativeId = observed[0].Id;
         if (typeof nativeId !== 'string') return refuse('deployment_image_identity_unavailable');
+        // Containerd's platform child Id need not be addressable by image save.
+        // Use the immutable root alias, as resolve does; CONFIG/platform proof
+        // below still establishes the admitted image's portable identity.
+        const repoDigests = observed[0].RepoDigests;
+        const saveReference = Array.isArray(repoDigests)
+            ? repoDigests.find((value): value is string => typeof value === 'string') ?? nativeId : nativeId;
         const nativeKey = JSON.stringify([nativeId, image.configDigest, image.manifestDigest, image.platform]);
         const file = join(await input.directory(), `image-${createHash('sha256').update(nativeKey).digest('hex')}.tar`);
         try {
-            // Native Id is an invocation-local lookup alias only. Snapshot it
-            // before saving so a mutable source tag cannot change these bytes.
-            await input.run(['image', 'save', '--platform', image.platform, '--output', file, nativeId]);
+            await input.run(['image', 'save', '--platform', image.platform, '--output', file, saveReference]);
             const saved = await verifyNativeComposeImageArchive(file, image);
             // Classic and containerd stores retain different manifest metadata.
             // Receipt CONFIG bytes and platform establish portable equality.
-            const snapshot = { reference: nativeId, config: saved.config };
+            const snapshot = { reference: saveReference, config: saved.config };
             proven.set(key, snapshot);
             proven.set(nativeKey, snapshot);
             return saved.config;
@@ -557,7 +561,9 @@ export function createNativeComposeImageIdentity(input: Readonly<{
             pull(registry: NativeComposeRegistryAcquisition | null, reference: string): Promise<void>;
         }>) {
             if (image.registryReference && !image.registryReference.endsWith(`@${image.manifestDigest}`)) return refuse('deployment_image_manifest_mismatch');
-            const local = await locate(request.references, image);
+            // Containerd can expose the admitted manifest as its local lookup alias.
+            const references = [...request.references, image.manifestDigest];
+            const local = await locate(references, image);
             if (local) return local;
             if (request.purpose === 'buildSource' && request.localSourceReference) {
                 const source = await locate([await request.localSourceReference()], image);
@@ -573,7 +579,7 @@ export function createNativeComposeImageIdentity(input: Readonly<{
                 if (!repository || /[\s@\\]/u.test(repository) || repository.includes('://') || repository.startsWith('-')) return refuse('deployment_image_registry_mismatch');
                 if (!request.authority) throw new MachineNativeEffectAdmissionError('admission_unavailable');
                 await request.pull(registry ?? null, reference);
-                return await locate(request.references, image) ?? refuse('deployment_image_identity_unavailable');
+                return await locate(references, image) ?? refuse('deployment_image_identity_unavailable');
             }
             const archive = request.acquisition?.archives?.find(candidate => candidate.image.service === image.service
                 && normalizeNativeComposePlatform(candidate.image.platform) === normalizeNativeComposePlatform(image.platform) && candidate.image.configDigest === image.configDigest
@@ -589,7 +595,7 @@ export function createNativeComposeImageIdentity(input: Readonly<{
             // Project disposal must not remove operation-held archive custody.
             if (!request.authority) throw new MachineNativeEffectAdmissionError('admission_unavailable');
             await input.run(['image', 'load', '--platform', image.platform, '--input', received.path], undefined, undefined, request.authority);
-            return await locate(request.references, image) ?? refuse('deployment_image_identity_unavailable');
+            return await locate(references, image) ?? refuse('deployment_image_identity_unavailable');
         },
     };
     return identity;
