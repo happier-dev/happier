@@ -8,6 +8,7 @@ import { DEFAULT_CURATED_MARKETPLACE_SOURCE_TITLE, deriveMarketplaceSourceId, Ma
 import { HAPPIER_PICKS_SOURCE_ID, readRegistrySourcesRecordV1 } from '@happier-dev/protocol/registries';
 import { setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import { installPromptRegistriesCommonModuleMocks } from '@/components/settings/prompts/registries/promptRegistriesScreenTestHelpers';
+import { createRegistryPluginCatalogFixture } from '@/dev/testkit/fixtures/registryPluginCatalog';
 
 const modal = vi.hoisted(() => ({ show: vi.fn<IModal['show']>(() => 'picker'), confirm: vi.fn<IModal['confirm']>(async () => true) }));
 function readRegistryTokenPickerProps(): Readonly<{ request: ConnectSheetKeyRequest; onResult(result: ConnectSheetKeyResult): void }> {
@@ -39,6 +40,67 @@ const { CapabilityDetailHeader } = await import('@/components/capabilities/detai
 const actionFrontDoor = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
 
 describe('RegistrySourcesView through real registry Actions', () => {
+    it('withdraws the prior detection when the edited registry link changes', async () => {
+        const urlA = 'https://registry.acme.test/catalog-a.json';
+        const urlB = 'https://registry.acme.test/catalog-b.json';
+        const { externalRequests } = await createRegistrySourcesUiHome('detect-edited-link', {
+            external: async candidate => {
+                if (candidate !== urlA && candidate !== urlB) return null;
+                const catalog = createRegistryPluginCatalogFixture({ sourceUrl: candidate,
+                    entries: [{ pluginId: 'sample.plugin', title: 'Sample Plugin', botTemplates: [] }] });
+                return Response.json({ ...catalog, source: { ...catalog.source, title: candidate === urlA ? 'Catalog A' : 'Catalog B' } });
+            },
+        });
+        const screen = await renderScreen(<RegistrySourcesView kind="plugin" initialIntent="add" testID="registries" />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('registries:add:link')).not.toBeNull());
+        vi.useFakeTimers();
+        try {
+            await React.act(async () => { screen.changeTextByTestId('registries:add:link', urlA); });
+            await React.act(async () => { await vi.runOnlyPendingTimersAsync(); });
+        } finally { vi.useRealTimers(); }
+        const detectedTitle = () => screen.findAllByTestId('registries:add:detected').find(node => typeof node.props.title === 'string')?.props.title;
+        await waitForHomeGovernance(() => expect(detectedTitle()).toBe('Catalog A'));
+        expect(externalRequests).toContain(urlA);
+        vi.useFakeTimers();
+        try {
+            await React.act(async () => { screen.changeTextByTestId('registries:add:link', urlB); });
+            expect(screen.findAllByTestId('registries:add:link').some(node => node.props.value === urlB)).toBe(true);
+            expect(externalRequests).not.toContain(urlB);
+            expect(detectedTitle()).not.toBe('Catalog A');
+            expect(screen.findByTestId('registries:add:submit')?.props.disabled).toBe(true);
+            await React.act(async () => { await vi.runOnlyPendingTimersAsync(); });
+        } finally { vi.useRealTimers(); }
+        await waitForHomeGovernance(() => expect(detectedTitle()).toBe('Catalog B'));
+        expect(screen.findByTestId('registries:add:submit')?.props.disabled).toBe(false);
+    });
+
+    it.each(['extension-only', 'plugin-only', 'mixed'] as const)('keeps the detected plugin count scoped to plugins for a %s catalog', async shape => {
+        const url = 'https://registry.acme.test/counts.json';
+        const catalog = MarketplaceIndexSourceSnapshotV1Schema.parse({
+            ...createRegistryPluginCatalogFixture({ sourceUrl: url, entries: shape === 'extension-only' ? []
+                : [{ pluginId: 'sample.plugin', title: 'Sample Plugin', botTemplates: [] }] }),
+            browserExtensions: shape === 'plugin-only' ? [] : [{ itemId: 'password-manager', title: 'Password manager',
+                description: 'Fill passwords in your browser', extension: { kind: 'webStore', extensionId: 'a'.repeat(32) } }],
+        });
+        await createRegistrySourcesUiHome(`detect-count-${shape}`, {
+            external: async candidate => candidate === url ? Response.json(catalog) : null,
+        });
+        const screen = await renderScreen(<RegistrySourcesView kind="plugin" initialIntent="add" testID="registries" />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('registries:add:link')).not.toBeNull());
+        vi.useFakeTimers();
+        try {
+            await React.act(async () => { screen.changeTextByTestId('registries:add:link', url); });
+            await React.act(async () => { await vi.runOnlyPendingTimersAsync(); });
+        } finally { vi.useRealTimers(); }
+        await waitForHomeGovernance(() => expect(screen.findByTestId('registries:add:submit')?.props.disabled).toBe(false));
+        const subtitle = screen.findAllByTestId('registries:add:detected').find(node => typeof node.props.subtitle === 'string')?.props.subtitle;
+        if (shape === 'plugin-only') {
+            expect(subtitle).toContain('capabilities.registries.add.found(kind=plugin,count=1)');
+        } else {
+            expect(subtitle).toContain('capabilities.registries.add.foundNoCount');
+        }
+    });
+
     it.each([
         ['http://registry.acme.test/catalog.json', 'capabilities.registries.add.httpsRequired'],
         ['https://fixture-user:fixture-password@registry.acme.test/catalog.json', 'capabilities.registries.add.credentialsInLink'],

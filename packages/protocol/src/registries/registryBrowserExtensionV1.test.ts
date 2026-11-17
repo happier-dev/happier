@@ -45,9 +45,12 @@ describe('host-defined browser extension catalog', () => {
 
   it('detects, searches and reads an extension through real host Actions without acquiring its package', async () => {
     const { host, source, requests } = fixture();
-    expect(await host.execute('registries.sources.detect', { url })).toMatchObject({ detected: {
-      format: 'happier-catalog', kinds: ['plugin', 'browserExtension'], itemCount: 1,
+    const detection = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.sources.detect'].parse(
+      await host.execute('registries.sources.detect', { url }));
+    expect(detection).toMatchObject({ detected: {
+      format: 'happier-catalog', kinds: ['plugin', 'browserExtension'],
     } });
+    expect(detection.detected).not.toHaveProperty('itemCount');
     const listed = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse(await host.execute('registries.items.list', {
       kind: 'browserExtension', sourceIds: [source.id], query: 'passwords',
     }));

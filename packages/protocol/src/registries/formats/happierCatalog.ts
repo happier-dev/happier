@@ -45,11 +45,13 @@ export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
       id: deriveMarketplaceSourceId(sourceUrl), url: sourceUrl, title: catalog.source.title, format: 'happier-catalog',
       kinds: [...REGISTRY_FORMAT_KINDS_V1['happier-catalog']], enabled: true, addedAt: 0,
     });
-    return { format: 'happier-catalog', kinds: [...new Set(['plugin' as const, ...catalog.picks.map(pick => pick.kind),
+    const kinds = [...new Set(['plugin' as const, ...catalog.picks.map(pick => pick.kind),
         ...(catalog.entries.some(entry => registryPluginSupportsKindV1(entry, 'agent')) ? ['agent' as const] : []),
         ...(catalog.browserExtensions?.length ? ['browserExtension' as const] : []),
-        ...(catalog.themes?.length ? ['theme' as const] : [])])],
-      title: catalog.source.title, itemCount: catalog.entries.length + catalog.picks.length + (catalog.browserExtensions?.length ?? 0) + (catalog.themes?.length ?? 0) };
+        ...(catalog.themes?.length ? ['theme' as const] : [])])];
+    // Detection has no requested kind, so a mixed catalog has no single-kind count.
+    return { format: 'happier-catalog', kinds, title: catalog.source.title,
+      ...(kinds.length === 1 ? { itemCount: catalog.entries.length } : {}) };
   },
   async list(ctx, req) {
     try {

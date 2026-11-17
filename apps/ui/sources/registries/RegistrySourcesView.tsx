@@ -753,7 +753,8 @@ function RegistryAddForm(
 
   const formats = addableFormats(props.kind);
   const supportedFormatTitles = formats.map(format => formatOption(format, props.kind).title).join(', ');
-  const detected = detection.state === 'done' ? detection.detected : null;
+  const currentDetection = detection.state !== 'idle' && detection.url === link.trim() ? detection : null;
+  const detected = currentDetection?.state === 'done' ? currentDetection.detected : null;
   const supported =
     detected !== null &&
     'format' in detected &&
@@ -766,8 +767,8 @@ function RegistryAddForm(
     'unsupported' in detected &&
     detected.unsupported === 'needs_token';
   const fieldError =
-    detection.state === 'failed'
-      ? describeRegistrySourceInputFailure(detection.failure)
+    currentDetection?.state === 'failed'
+      ? describeRegistrySourceInputFailure(currentDetection.failure)
       : detected !== null && 'unsupported' in detected && !needsToken
         ? unsupportedCopy(detected.unsupported, supportedFormatTitles)
         : detected !== null && supported === null && !needsToken
@@ -855,7 +856,7 @@ function RegistryAddForm(
                 inputMode="url"
                 error={fieldError}
               />
-              {detection.state === 'checking' ? (
+              {currentDetection?.state === 'checking' ? (
                 <Text
                   variant="meta"
                   style={{ color: theme.colors.text.secondary }}
