@@ -100,6 +100,8 @@ describe('qualified Project new-Session origin', () => {
       resource: { kind: 'file', path: 'src/a.ts', anchor: { kind: 'fileLine', startLine: 3 } },
     };
     expect(PluginUiNewSessionSeedOriginV1Schema.safeParse(origin).success).toBe(true);
+    expect(PluginUiNewSessionSeedOriginV1Schema.safeParse({ ...origin, page: 'unknown-page' }).success).toBe(false);
+    expect(PluginUiNewSessionSeedOriginV1Schema.safeParse({ ...origin, surface: 'unknown-surface' }).success).toBe(false);
     expect(PluginUiNewSessionSeedOriginV1Schema.safeParse({ ...origin, href: '/foreign' }).success).toBe(false);
     expect(PluginUiNewSessionSeedOriginV1Schema.safeParse({ ...origin, resource: { ...origin.resource, href: '/foreign' } }).success).toBe(false);
     expect(StoredPluginUiNewSessionSeedOriginV1Schema.parse({ ...origin, future: true,

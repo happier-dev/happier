@@ -1,11 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+import { PROJECT_PAGES } from '@/components/workspaceCockpit/project/projectPages';
 import { buildProjectNewSessionOrigin, buildProjectRouteHref, readProjectAttachedDashboardSelection, readProjectCodeRouteLocation, readProjectFileRouteTarget, readProjectRouteCheckoutRootPath, readProjectRouteWorktreeSelection, resolveProjectOpenHref, resolveProjectRouteHeaderTitle, resolveProjectAuthoringReturn, readProjectSessionAuthoringOrigin } from './projectRouteState';
 
 const workspaceRef: WorkspaceRefV1 = { id: 'wr_1', serverId: 'home-a', machineId: 'machine-a',
     rootPath: '/repo', label: 'Project Alpha', createdAtMs: 1, lastOpenedAtMs: null };
 
 describe('project route state', () => {
+    it.each(PROJECT_PAGES)('creates and restores a New Session origin from the %s page', page => {
+        const scope = { serverId: workspaceRef.serverId, accountId: 'account-a' };
+        const origin = buildProjectNewSessionOrigin({ scope, page, workspace: {
+            serverId: workspaceRef.serverId, workspaceId: workspaceRef.id, machineId: workspaceRef.machineId,
+            rootPath: workspaceRef.rootPath,
+        }, routeParams: { mobileSurface: page } });
+        expect(origin).toMatchObject({ kind: 'project', purpose: 'session', page, surface: page });
+        const captured = readProjectSessionAuthoringOrigin(JSON.parse(JSON.stringify({ work: { authoringOriginV1: origin } })));
+        expect(captured).toEqual(origin);
+        const restored = resolveProjectAuthoringReturn(captured, { scope, workspaceRefs: [workspaceRef] });
+        expect(restored.kind).toBe('ready');
+        if (restored.kind !== 'ready') throw new Error('Project New Session origin was not restored');
+        const url = new URL(restored.href, 'https://happier.test');
+        expect(url.pathname).toBe(`/projects/${workspaceRef.id}/${page}`);
+        expect(Object.fromEntries(url.searchParams)).toMatchObject({ serverId: workspaceRef.serverId,
+            worktreeId: '@root' });
+    });
     it('keeps plugin identity and local location when the checkout changes without leaking built-in selection', () => {
         const href = buildProjectRouteHref({ workspaceRefId: workspaceRef.id, serverId: workspaceRef.serverId,
             selection: { kind: 'plugin', destination: { pluginId: 'acme.tools', localId: 'builds' }, subPath: 'runs/42/page' },
@@ -140,7 +158,7 @@ describe('project route state', () => {
         }
         if ('resource' in destination) expect(readProjectFileRouteTarget(params)).toEqual(destination.resource);
     });
-    it.each(['overview', 'code', 'changes', 'scripts', 'services', 'context'] as const)('preserves qualified state on %s', (segment) => {
+    it.each(PROJECT_PAGES)('preserves qualified state on %s', (segment) => {
         const href = buildProjectRouteHref({ workspaceRefId: workspaceRef.id, segment,
             activeRootPath: '/repo/feature', defaultRootPath: '/repo', activeWorktreeId: 'checkout-a',
             serverId: 'home-a', layoutId: 'dashboard-a', comparisonId: 'comparison-a',

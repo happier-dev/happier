@@ -3,6 +3,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { WorkspaceAddressV1Schema } from '../../workspaces/workspaceRefV1.js';
+import { PROJECT_PAGES } from '../../workspaces/projectPagesV1.js';
 import { WorkspaceAnchorV1Schema, WorkspaceAnchorSourceV1Schema } from '../../workspace/anchors/v1.js';
 import { PluginContributionIdentityV1Schema } from '../contributionIdentity.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
@@ -16,7 +17,7 @@ export const PluginUiNewSessionSeedOriginV1Schema = lazyZodSchema(() => z.strict
   kind: z.literal('project'),
   accountId: z.string().check(z.trim(), z.minLength(1)),
   workspace: WorkspaceAddressV1Schema,
-  page: z.enum(['overview', 'code', 'changes', 'scripts', 'services', 'context']),
+  page: z.enum(PROJECT_PAGES),
   /** Omitted by incumbent setup/discussion seeds; ordinary New session is never setup evidence. */
   purpose: z.optional(z.literal('session')),
   comparisonId: z.optional(z.string().check(z.trim(), z.minLength(1))),
@@ -32,7 +33,7 @@ export const PluginUiNewSessionSeedOriginV1Schema = lazyZodSchema(() => z.strict
       anchorSource: zMini.optional(WorkspaceAnchorSourceV1Schema) }),
     z.strictObject({ kind: z.literal('commit'), sha: z.string().check(z.trim(), z.minLength(1)) }),
   ])),
-  surface: z.optional(z.enum(['overview', 'code', 'changes', 'scripts', 'services', 'context', 'browse', 'git', 'tabs', 'terminal', 'browser'])),
+  surface: z.optional(z.enum([...PROJECT_PAGES, 'browse', 'git', 'tabs', 'terminal', 'browser'])),
   companion: z.optional(z.union([
     z.enum(['files', 'git', 'scripts', 'services', 'terminal', 'browser']),
     z.strictObject({ kind: z.literal('plugin'), destination: asProtocolZod(PluginContributionIdentityV1Schema),
