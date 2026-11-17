@@ -25,6 +25,12 @@ test('Action dependency composition retains every port published by its factory'
     content: file.content.replace(/projectsSetupSet:\s*projectDeps\.projectsSetupSet,/, ''),
   } : file);
   assert.deepEqual(collectActionDependencyForwardingParity(missing).map(row => row.operation), ['projectsSetupSet']);
+  // Preparation reading a port does not make it callable by the executor.
+  const preparationOnly = missing.map(file => file.filePath === owner ? { ...file,
+    content: file.content.replace('const actionDeps: CliActionDeps = {',
+      'void projectDeps.projectsSetupSet; const actionDeps: CliActionDeps = {'),
+  } : file);
+  assert.deepEqual(collectActionDependencyForwardingParity(preparationOnly).map(row => row.operation), ['projectsSetupSet']);
 });
 
 test('source discovery excludes test harnesses and composed fixtures while retaining product controls', () => {

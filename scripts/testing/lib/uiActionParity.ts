@@ -47,16 +47,72 @@ export function collectActionDependencyForwardingParity(files: readonly UiParity
           }
           ports(declaration.type);
           const receiver = node.name.text;
+          function executorType(type: ts.TypeNode | undefined, seen = new Set<string>()): boolean {
+            if (!type) return false;
+            if (ts.isIntersectionTypeNode(type)) return type.types.some(member => executorType(member, seen));
+            if (!ts.isTypeReferenceNode(type) || !ts.isIdentifier(type.typeName)) return false;
+            const name = type.typeName.text;
+            if (name === 'ActionExecutorDeps') return true;
+            if (['Readonly', 'Partial', 'Required', 'Pick', 'Omit'].includes(name)) return executorType(type.typeArguments?.[0], seen);
+            if (seen.has(name)) return false;
+            seen.add(name);
+            const alias = source.statements.find(statement => ts.isTypeAliasDeclaration(statement) && statement.name.text === name);
+            return !!alias && ts.isTypeAliasDeclaration(alias) && executorType(alias.type, seen);
+          }
+          function executorObject(candidate: ts.ObjectLiteralExpression): boolean {
+            let expression: ts.Expression = candidate;
+            while (ts.isAsExpression(expression.parent) || ts.isSatisfiesExpression(expression.parent)
+              || ts.isParenthesizedExpression(expression.parent)) {
+              const parent = expression.parent;
+              if (!ts.isParenthesizedExpression(parent) && executorType(parent.type)) return true;
+              expression = parent;
+            }
+            const parent = expression.parent;
+            if (ts.isVariableDeclaration(parent)) return executorType(parent.type);
+            if (ts.isCallExpression(parent) && parent.arguments[0] === expression
+              && ts.isIdentifier(parent.expression) && parent.expression.text === 'createActionExecutor') return true;
+            if (ts.isReturnStatement(parent)) {
+              let owner: ts.Node = parent;
+              while (owner.parent && !ts.isFunctionLike(owner)) owner = owner.parent;
+              return ts.isFunctionLike(owner) && executorType(owner.type);
+            }
+            return false;
+          }
           function consume(candidate: ts.Node): void {
-            if (ts.isPropertyAccessExpression(candidate) && ts.isIdentifier(candidate.expression)
-              && candidate.expression.text === receiver) keys.delete(candidate.name.text);
-            if (ts.isSpreadAssignment(candidate) && ts.isIdentifier(candidate.expression)
-              && candidate.expression.text === receiver) keys.clear();
+            if (ts.isObjectLiteralExpression(candidate) && executorObject(candidate)) {
+              for (const field of candidate.properties) {
+                if (ts.isSpreadAssignment(field) && ts.isIdentifier(unwrap(field.expression))
+                  && unwrap(field.expression).getText(source) === receiver) keys.clear();
+                if (!ts.isPropertyAssignment(field) || !ts.isIdentifier(field.name) && !ts.isStringLiteral(field.name)) continue;
+                const key = field.name.text;
+                function forwards(value: ts.Node, seen = new Set<ts.Node>()): boolean {
+                  if (seen.has(value)) return false;
+                  seen.add(value);
+                  if (ts.isIdentifier(value) && value.text !== receiver) {
+                    const initializer = values.get(value.text);
+                    if (initializer && forwards(initializer, seen)) return true;
+                  }
+                  return ts.isPropertyAccessExpression(value) && ts.isIdentifier(value.expression)
+                    && value.expression.text === receiver && value.name.text === key
+                    || ts.forEachChild(value, child => forwards(child, seen)) === true;
+                }
+                if (forwards(field.initializer)) keys.delete(key);
+              }
+            }
             ts.forEachChild(candidate, consume);
           }
           // Only the enclosing function owns this binding; unrelated functions cannot forward it.
           let scope: ts.Node = node;
           while (scope.parent && !ts.isFunctionLike(scope)) scope = scope.parent;
+          const values = new Map<string, ts.Expression>();
+          function bindings(candidate: ts.Node): void {
+            if (candidate !== scope && ts.isFunctionLike(candidate)) return;
+            if (ts.isVariableDeclaration(candidate) && ts.isIdentifier(candidate.name) && candidate.initializer) {
+              values.set(candidate.name.text, candidate.initializer);
+            }
+            ts.forEachChild(candidate, bindings);
+          }
+          bindings(scope);
           consume(scope);
           for (const key of keys) findings.push({ filePath, operation: key, factory: imported!.name });
         }
