@@ -264,9 +264,52 @@ export function DeploymentBackupDestinationRow(props: Readonly<{
 }
 
 /**
- * Settings › Backups keep counts (lab `database/keep`) and Remove old backups now. Change edits the counts in place and
- * Save writes them through `deployments.backups.configure`; Remove runs
- * `deployments.backups.prune` with the saved counts. Both are the Actions an agent calls.
+ * Remove old backups now: runs `deployments.backups.prune` with the saved keep counts, the Action an agent calls. The
+ * Database page offers it with its other backup operations; Settings offers it only where no Database page exists.
+ */
+export function DeploymentBackupPruneRow(props: Readonly<{
+  detail: DeploymentEnvironmentReadDetailV1;
+  configuration: DeploymentBackupConfigurationV1;
+  actions: ActionsFactory | null;
+  review: DeploymentReviewHandle | null;
+  machineName: (machineId: string) => string;
+  testID: string;
+}>) {
+  const { configuration, actions } = props;
+  const target = useBackupTarget(props.detail, configuration);
+  const prune = useDeploymentChangePress(props.review, noop);
+  const [pruned, setPruned] = React.useState<string | null>(null);
+  const removeOld = () => prune.press(async () => {
+    if (!actions || !target || configuration.retention.kind !== 'keep') return { ok: true };
+    setPruned(null);
+    const result = await actions.pruneBackups({ ...target, retention: configuration.retention });
+    setPruned(result.forgottenSnapshotIds.length > 0
+      ? t('projects.deployments.settingsSections.pruned', { count: result.forgottenSnapshotIds.length })
+      : t('projects.deployments.settingsSections.prunedNothing'));
+    return { ok: true };
+  });
+  if (!actions || !target || configuration.retention.kind !== 'keep') return null;
+  return (
+    <>
+      <Item
+        testID={`${props.testID}.prune`}
+        title={t('projects.deployments.settingsSections.pruneTitle')}
+        subtitle={pruned ?? t('projects.deployments.settingsSections.pruneDescription')}
+        mode="info"
+        rightElement={
+          <SectionActionButton testID={`${props.testID}.prune.run`}
+            title={t('projects.deployments.settingsSections.pruneAction')} disabled={prune.running} onPress={removeOld} />
+        }
+      />
+      {prune.outcome && props.review ? <DeployOutcomeBanner controller={prune.banner}
+        machine={props.machineName(target.machineId)} copy="setting" /> : null}
+    </>
+  );
+}
+
+/**
+ * Settings › Backups keep counts (lab `database/keep`). Change edits the counts in place and Save writes them through
+ * `deployments.backups.configure`, the Action an agent calls.
  */
 export function DeploymentBackupRetentionRows(props: Readonly<{
   detail: DeploymentEnvironmentReadDetailV1;
@@ -277,14 +320,13 @@ export function DeploymentBackupRetentionRows(props: Readonly<{
   actions: ActionsFactory | null;
   review: DeploymentReviewHandle | null;
   machineName: (machineId: string) => string;
+  /** Remove old backups now, where no Database page owns it (owner 2026-11-17). */
+  prune: boolean;
   testID: string;
 }>) {
-  const { configuration, onSave, actions } = props;
+  const { configuration, onSave } = props;
   const [draft, setDraft] = React.useState<Record<KeepField, string> | null>(null);
   const [saving, setSaving] = React.useState(false);
-  const target = useBackupTarget(props.detail, configuration);
-  const prune = useDeploymentChangePress(props.review, noop);
-  const [pruned, setPruned] = React.useState<string | null>(null);
   const next = draft ? retentionFromDraft(draft) : null;
   const save = async () => {
     if (!onSave || !next || saving) return;
@@ -293,15 +335,6 @@ export function DeploymentBackupRetentionRows(props: Readonly<{
     setSaving(false);
     if (settled) setDraft(null);
   };
-  const removeOld = () => prune.press(async () => {
-    if (!actions || !target || configuration.retention.kind !== 'keep') return { ok: true };
-    setPruned(null);
-    const result = await actions.pruneBackups({ ...target, retention: configuration.retention });
-    setPruned(result.forgottenSnapshotIds.length > 0
-      ? t('projects.deployments.settingsSections.pruned', { count: result.forgottenSnapshotIds.length })
-      : t('projects.deployments.settingsSections.prunedNothing'));
-    return { ok: true };
-  });
   return (
     <>
       <Item
@@ -344,20 +377,8 @@ export function DeploymentBackupRetentionRows(props: Readonly<{
           }}
         />
       )) : null}
-      {actions && target && configuration.retention.kind === 'keep' && !draft ? (
-        <Item
-          testID={`${props.testID}.prune`}
-          title={t('projects.deployments.settingsSections.pruneTitle')}
-          subtitle={pruned ?? t('projects.deployments.settingsSections.pruneDescription')}
-          mode="info"
-          rightElement={
-            <SectionActionButton testID={`${props.testID}.prune.run`}
-              title={t('projects.deployments.settingsSections.pruneAction')} disabled={prune.running} onPress={removeOld} />
-          }
-        />
-      ) : null}
-      {prune.outcome && props.review && target ? <DeployOutcomeBanner controller={prune.banner}
-        machine={props.machineName(target.machineId)} copy="setting" /> : null}
+      {props.prune && !draft ? <DeploymentBackupPruneRow detail={props.detail} configuration={configuration}
+        actions={props.actions} review={props.review} machineName={props.machineName} testID={props.testID} /> : null}
     </>
   );
 }

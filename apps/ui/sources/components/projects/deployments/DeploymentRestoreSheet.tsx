@@ -270,8 +270,11 @@ function DeploymentRestoreSheet(
   const uploadForm = uploadTarget && step.kind !== 'settled' && step.kind !== 'prepared' ? (
     <ItemGroup title={t('projects.deployments.settingsSections.restoreExtended.uploadTitle')}>
       {uploadTarget.destinations.length > 1 ? uploadTarget.destinations.map((destination, index) => (
-        <Item key={`${destination.service}-${destination.kind}`} title={destination.service}
-          subtitle={destination.kind === 'volume' ? destination.volume : t('projects.deployments.restoreDatabase')}
+        // Each choice says what it replaces in the words Backups uses for what it copies ("postgres-data on database").
+        <Item key={`${destination.service}-${destination.kind}-${destination.kind === 'volume' ? destination.volume : ''}`}
+          title={destination.kind === 'volume'
+            ? t('projects.deployments.backupSourceVolume', { service: destination.service, volume: destination.volume })
+            : t('projects.deployments.backupSourceDump', { service: destination.service })}
           selected={index === uploadDestinationIndex} disabled={busy} onPress={() => {
             setUploadDestinationIndex(index); setUploadDatabase(destination.kind === 'database' ? destination.database ?? '' : '');
           }} />

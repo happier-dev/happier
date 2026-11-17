@@ -721,7 +721,7 @@ function BackupRows(props: SectionProps) {
         key={`${backup.configRevision}:${props.detail.environment.revision}`}
         detail={props.detail} configuration={backup} label={retentionLabel(backup.retention)}
         onSave={saveRetention} actions={actions} review={props.review ?? null}
-        machineName={props.machineName} testID={props.testID}
+        machineName={props.machineName} prune={operationsHere} testID={props.testID}
       />
       <DeploymentBackupConfigurationResult result={retentionResult}
         machine={props.machineName(props.detail.environment.controllerMachineId)} testID={`${props.testID}.retention`} />

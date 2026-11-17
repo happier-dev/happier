@@ -1125,16 +1125,15 @@ describe('Environment → Settings: checks, backups, previews', () => {
     const id = 'project-deployments.environment.settings.backups';
     const { t } = await import('@/text');
     const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
-    const { presentActionFailureOutcome } = await import('@/components/tools/shell/approvals/approvalFailureOutcome');
     try {
       expect(await settle(`${id}.schedule`)).not.toBeNull();
       await vi.waitFor(() => expect(homes.requestsFor('/v3/automations/query')).not.toHaveLength(0));
       await vi.waitFor(() => {
         const subtitle = screen.findAllByProps({ testID: `${id}.schedule` })[0]?.props.subtitle;
         expect(subtitle).toContain(t('common.unavailable'));
-        const failure = presentActionFailureOutcome({ errorCode: 'storage_unavailable', error: 'storage_unavailable' }, 'deployment');
+        // A failed read says it could not load (68eb39182b2), not that a change failed; the code stays in Details.
         expect(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === `${id}.schedule.failed`)?.props)
-          .toMatchObject({ title: failure.reason, diagnosticCode: 'storage_unavailable' });
+          .toMatchObject({ title: t('automations.session.failedToLoad'), diagnosticCode: 'storage_unavailable' });
       });
       expect(screen.findByTestId(`${id}.schedule.on`)).toBeNull();
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }

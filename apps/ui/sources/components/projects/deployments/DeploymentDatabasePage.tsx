@@ -46,7 +46,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
-import { DeploymentBackupControls, DeploymentRestoreDrillRow, deploymentBackupAttention, useDeploymentBackupFacts } from './DeploymentBackupControls';
+import { DeploymentBackupControls, DeploymentBackupPruneRow, DeploymentRestoreDrillRow, deploymentBackupAttention, useDeploymentBackupFacts } from './DeploymentBackupControls';
 import { databaseEngineTitle, describeDatabaseSize } from './databasePresentation';
 import {
   DeployOutcomeBanner,
@@ -380,7 +380,10 @@ export function DeploymentDatabasePage(
   } : null;
   const uploadTarget: DeploymentRestoreSheetInput['uploadTarget'] = lifetime && target && activeId && database.kind === 'selfHosted'
     ? { scope: lifetime.scope, operands: { ...target, deploymentId: activeId }, destinations: [{ kind: 'database', service: database.data.service,
-      ...(retainedBackup?.service === database.data.service ? { database: retainedBackup.database } : {}) }] } : undefined;
+      ...(retainedBackup?.service === database.data.service ? { database: retainedBackup.database } : {}) },
+      // This database's backed-up named volumes restore here too (owner 2026-11-17: Settings no longer offers restore).
+      ...(backupConfiguration?.sources ?? []).flatMap(source => source.kind === 'volume' && source.service === database.data.service
+        ? [{ kind: 'volume' as const, service: source.service, volume: source.volume }] : [])] } : undefined;
   const restoreMachineId = restoreOperands?.machineId ?? target?.machineId ?? null;
   const openRestore = restoreAction && loadChoices && restoreMachineId ? () => showDeploymentRestoreSheet({
     name: detail.content.name,
@@ -623,6 +626,8 @@ export function DeploymentDatabasePage(
                 />
               ) : null}
               {lifetime ? <DeploymentRestoreDrillRow serverId={detail.environment.serverId} testID={`${id}.controls.drill`} /> : null}
+              {lifetime ? <DeploymentBackupPruneRow detail={detail} configuration={backupConfiguration} actions={actions}
+                review={props.review} machineName={machineName} testID={`${id}.controls`} /> : null}
             </ItemGroup>
           ) : null}
 

@@ -162,6 +162,8 @@ async function renderDatabase(
     moveManagedDestination?: boolean;
     managed?: boolean;
     multipleManagedDatabases?: boolean;
+    /** Keeps the last 3 copies (a prune-able retention) and also backs up the database's named data volume. */
+    keepLastWithVolume?: boolean;
   }> = {},
 ) {
   await homes.reset();
@@ -195,8 +197,9 @@ async function renderDatabase(
         service: 'postgres',
         consistency: 'logical' as const,
       },
+      ...(input.keepLastWithVolume ? [{ kind: 'volume' as const, sourceId: 'postgres-data', service: 'postgres', volume: 'postgres-data', consistency: 'stopDuringCopy' as const }] : []),
     ],
-    retention: { kind: 'keepEverything' as const },
+    retention: input.keepLastWithVolume ? { kind: 'keep' as const, last: 3 } : { kind: 'keepEverything' as const },
   };
   const authored = createDeploymentEnvironmentDetailV1({
     content: {
@@ -1340,6 +1343,23 @@ describe('Environment → Data → Database page (P9)', () => {
         .toBe(formatAsOfTime(Date.parse('2026-11-07T10:01:00Z'))));
       expect(view.screen.findAllByProps({ testID: `${page}.lastGood` })).toHaveLength(0);
       expect(view.effects.filter((effect) => effect.actionId === 'deployments.backups.history')).toHaveLength(2);
+    } finally {
+      await view.dispose();
+    }
+  });
+
+  it('owns the backup operations Settings links to: Remove old backups now and restoring its named data volume (owner 2026-11-17)', async () => {
+    const view = await renderDatabase({ keepLastWithVolume: true, restore: vi.fn() as never });
+    try {
+      expect(await view.settle(`${page}.history.empty`)).not.toBeNull();
+      // Prune: the same row and Action Settings had, now offered once, here.
+      expect(await view.settle(`${page}.controls.prune.run`)).not.toBeNull();
+      const { Item } = await import('@/components/ui/lists/Item');
+      expect(view.screen.findAllByType(Item).filter(row => row.props.testID === `${page}.controls.prune`)).toHaveLength(1);
+      // Restore offers this database's named volume next to its dump.
+      expect(await view.settle(`${page}.restore`)).not.toBeNull();
+      await view.screen.pressByTestIdAsync(`${page}.restore`);
+      await vi.waitFor(() => expect(view.screen.getTextContent()).toContain('postgres-data'));
     } finally {
       await view.dispose();
     }
