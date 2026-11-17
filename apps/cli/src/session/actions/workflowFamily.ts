@@ -75,6 +75,7 @@ import { readSessionLegacyMetadata } from './cliActionDeps/sessionStateReaders';
 
 export type CliWorkflowFamilyHost = Readonly<{
   readLocalActionSpec: ReadLocalWorkflowActionSpec;
+  listContributedActionDefinitions?: ActionExecutorDeps['listContributedActionDefinitions'];
   nativeAccount?: Parameters<typeof createCliWorkflowTriggerActions>[0]['nativeAccount'];
   deploymentAction: NonNullable<ActionExecutorDeps['deploymentAction']>;
   roleArtifactStore: ReturnType<typeof createCredentialedAccountArtifactStore> | undefined;
@@ -168,6 +169,7 @@ export function createCliWorkflowFamily(
     }) : null;
   const workflowTriggers: ReturnType<typeof createCliWorkflowTriggerActions> | null = params.credentials && workflowDefinitions
     ? createCliWorkflowTriggerActions({ credentials: params.credentials,
+      ...(host.listContributedActionDefinitions ? { listContributedActionDefinitions: host.listContributedActionDefinitions } : {}),
       ...(params.workflowRequesterCustody ? { workflowRequesterCustody: params.workflowRequesterCustody } : {}),
       ...(host.nativeAccount ? { nativeAccount: host.nativeAccount } : {}),
       deploymentAction: host.deploymentAction,

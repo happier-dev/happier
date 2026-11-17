@@ -77,11 +77,13 @@ export function createCliWorkflowTriggerActions(params: Readonly<{
   pullRequests?: WorkflowTriggerActionsDependencies['pullRequests'];
   nativeAccount?: WorkflowTriggerActionsDependencies['nativeAccount'];
   deploymentAction?: WorkflowTriggerActionsDependencies['deploymentAction'];
+  listContributedActionDefinitions?: WorkflowTriggerActionsDependencies['listContributedActionDefinitions'];
 }>) {
   const onServer = <T>(operation: () => Promise<T>): Promise<T> => params.serverHttpBaseUrl
     ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, operation) : operation();
   const token = params.credentials.token;
   return createAccountWorkflowTriggerActions({
+    ...(params.listContributedActionDefinitions ? { listContributedActionDefinitions: params.listContributedActionDefinitions } : {}),
     ...(params.workflowRequesterCustody ? { workflowRequesterCustody: params.workflowRequesterCustody } : {}),
     automations: {
       list: (input) => onServer(() => listAutomationDefinitions({ token, ...input })),

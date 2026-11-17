@@ -844,6 +844,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     : undefined;
   const workflowRunStorageHost = createCliWorkflowRunStorage(params, resolveCurrentSessionValue, resolveServerRequestHeaders, normalizeStringValue);
   const workflowFamilyHost: CliWorkflowFamilyHost = {
+    listContributedActionDefinitions: selection => (readEffectiveDeps?.() ?? actionDeps).listContributedActionDefinitions?.(selection) ?? [],
     readLocalActionSpec: async (input, target) => {
       const installedMachineId = localMachineId ?? (await readCurrentMachineControlIdentity()).machineId;
       if (target.machineId !== installedMachineId) return null;

@@ -8,7 +8,7 @@ import { isExecutionRunTerminalStatus } from '@happier-dev/protocol/execution/ru
 import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { WorkflowActionOutputSchemasV1, WorkflowInvocationGetResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
-import type { WorkflowActionExecute, WorkflowActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecutorDeps, WorkflowActionExecute, WorkflowActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
 import { isWorkflowTriggerAgentCallerV1, type WorkflowTriggerActionsDependencies } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
 import type { AutomationTemplateRetainedSessionV1 } from '@happier-dev/protocol/automations/automationTemplateStoredV1';
 import { WorkflowStepExecutionSelectionSchema } from '@happier-dev/protocol/workflows/workflowV1';
@@ -147,6 +147,7 @@ export function createUiTriggerSessionResolver(account: LazyActionAccountContext
 export function createUiWorkflowAction(params: Readonly<{
     account: LazyActionAccountContext;
     transport?: WorkflowActionTransport;
+    listContributedActionDefinitions?: ActionExecutorDeps['listContributedActionDefinitions'];
 }>): WorkflowActionExecute {
     const account = params.account;
     const executeRelay = createUiAccountAction(params);
@@ -312,6 +313,7 @@ export function createUiWorkflowAction(params: Readonly<{
         randomBytes: getRandomBytes,
     });
     const triggers = createAccountWorkflowTriggerActions({
+        ...(params.listContributedActionDefinitions ? { listContributedActionDefinitions: params.listContributedActionDefinitions } : {}),
         workflowRequesterCustody,
         sessionRead: createUiSessionRead(account),
         automations,

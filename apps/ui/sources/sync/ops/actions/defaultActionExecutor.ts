@@ -1330,7 +1330,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   const approvalCoordinator = getSharedBlockingApprovalCoordinator();
   const capturedFamilyPorts = accountContext ? createCapturedScopeFamilyPorts(accountContext, opts?.discussionAttachmentSources, onPublicLinkIssued) : null;
   const machineAccessAction = opts?.machineAccessAction ?? capturedFamilyPorts?.machineAccessAction;
-  const workflowAction = opts?.workflowAction ?? (accountContext ? createUiWorkflowAction({ account: accountContext }) : undefined);
+  const workflowAction = opts?.workflowAction ?? (accountContext ? createUiWorkflowAction({ account: accountContext,
+    listContributedActionDefinitions: opts?.listContributedActionDefinitions ?? listCurrentUiContextContributedActionDefinitions,
+  }) : undefined);
   const projectSourceTeamMove = accountContext && deploymentActionDeps?.deploymentAction && machineAccessAction && workflowAction
     ? createProjectSourceTeamMoveDeps(accountContext, { deploymentAction: deploymentActionDeps.deploymentAction, machineAccessAction, workflowAction })
     : null;

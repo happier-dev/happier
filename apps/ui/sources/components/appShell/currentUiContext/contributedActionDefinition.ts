@@ -1,6 +1,7 @@
 import type { ActionDefinitionSummaryV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import type { PluginProjectedActionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { readPluginActionApprovalScopeSubjectKindV1 } from '@happier-dev/protocol/plugins/actions/approvalScope';
 import { resolvePluginProjectedActionPresentation } from '@/sync/domains/plugins/ui/actionPresentation';
 import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
@@ -24,6 +25,8 @@ export function projectedActionToDefinition(action: PluginProjectedActionV2, pro
         localize: createPluginLocalizedTextResolver({ projection,
             runtime: readCurrentAppShellPluginUiTranslationRuntime(projection), locale: getPreferredLanguage() }),
     });
+    const subjectKind = readPluginActionApprovalScopeSubjectKindV1({ declaration: action.approvalScope,
+        pluginId: action.pluginId, subjectKinds: Object.values(projection?.subjectKindsById ?? {}) });
     const sideEffectClass = actionSideEffectClass(action.dangerLevel);
     const approval: NonNullable<ActionDefinitionSummaryV1['approval']> = action.dangerLevel === 'safe'
         ? { result: 'none' } : { result: 'required', flow: 'blocking' };
@@ -37,6 +40,8 @@ export function projectedActionToDefinition(action: PluginProjectedActionV2, pro
             rpc: false, api: false, plugin: action.surfaces.includes('plugin') },
         inputHints: presentation.inputHints,
         ...(action.sessionTarget === undefined ? {} : { sessionTarget: action.sessionTarget }),
+        ...(action.approvalScope === undefined ? {} : { approvalScope: action.approvalScope }),
+        ...(subjectKind.ok && subjectKind.subjectKind?.kind === 'plugin' ? { subjectKindDefinition: subjectKind.subjectKind.definition } : {}),
         ...(sideEffectClass ? { sideEffectClass } : {}),
     });
 }

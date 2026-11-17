@@ -3335,3 +3335,27 @@ describe('workflow trigger Automation composition', () => {
     expect(rows.get(row!.id)?.triggers).toEqual([]);
   });
 });
+
+describe('declared plugin Action subject authoring', () => {
+  it('accepts the declared identity and refuses schema-invalid or missing kind metadata', async () => {
+    const f = fixture();
+    const kind = { id: 'ticket', label: 'Ticket', listAction: 'list-tickets',
+      identitySchema: { type: 'object', properties: { ticketId: { type: 'string' } }, required: ['ticketId'], additionalProperties: false } };
+    const actionId = 'example.tickets/actions/close-ticket';
+    const descriptor = { ...actionSpecToActionDefinitionV1(getActionSpec('scm.commit.create')), id: actionId,
+      approvalScope: { kind: 'plugin' as const, subjectKindId: 'ticket', identityField: 'ticket' }, subjectKindDefinition: kind };
+    let available = true;
+    const owner = createWorkflowTriggerActions({ ...f.deps,
+      listContributedActionDefinitions: () => [available ? descriptor : { ...descriptor, subjectKindDefinition: undefined }] });
+    const authored = (identity: unknown) => ({ workflow, project, trigger: { kind: 'action' as const, enabled: true,
+      phase: 'after' as const, actionIds: [actionId], subject: { kind: 'plugin' as const,
+        serverId: 'home', pluginId: 'example.tickets', subjectKindId: 'ticket', identity } } });
+    const valid = await owner.add(WorkflowTriggerAddRequestV1Schema.parse(authored({ ticketId: 'one' })));
+    expect(f.rows.has(valid.set.automationId)).toBe(true);
+    await expect(owner.add(WorkflowTriggerAddRequestV1Schema.parse(authored({ ticketId: 1 }))))
+      .rejects.toMatchObject({ code: 'invalid_input' });
+    available = false;
+    await expect(owner.add(WorkflowTriggerAddRequestV1Schema.parse(authored({ ticketId: 'one' }))))
+      .rejects.toMatchObject({ code: 'target_unavailable' });
+  });
+});

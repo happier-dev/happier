@@ -2,6 +2,8 @@ import { createExternalActionRequesterServerRequestHeaders } from '@/api/externa
 import { fingerprintPluginAccountActionConfirmation } from '@happier-dev/protocol/plugins/actions/invocation';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { admitAccountActionInvokeConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
+import { readPluginActionApprovalScopeSubjectKindV1 } from '@happier-dev/protocol/plugins/actions/approvalScope';
+import type { PluginAutomationSubjectKindDeclarationV1 } from '@happier-dev/protocol/automations/automationPluginSubjectV1';
 import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ActionDefinitionV1 } from '@happier-dev/protocol';
@@ -33,7 +35,9 @@ import type { ManagedProviderOperationAuthority, ManagedProviderOperationAuthori
 import type { AdmittedManagedProviderOperationExecutionRequest } from './managedProviderCustody';
 import { projectContributedActionFailure } from './contributedActionFailure';
 
-function projectDefinition(definition: ResolvedActionDefinition, identity: NonNullable<ResolvedActionContribution['identity']>): ActionDefinitionV1 {
+function projectDefinition(definition: ResolvedActionDefinition, identity: NonNullable<ResolvedActionContribution['identity']>,
+  subjectKinds: readonly PluginAutomationSubjectKindDeclarationV1[]): ActionDefinitionV1 {
+  const kind = readPluginActionApprovalScopeSubjectKindV1({ declaration: definition.approvalScope, pluginId: identity.pluginId, subjectKinds });
   const execution = PluginActionExecutionV2Schema.safeParse(definition.execution);
   return Object.freeze({
     kindVersion: definition.kindVersion,
@@ -53,6 +57,8 @@ function projectDefinition(definition: ResolvedActionDefinition, identity: NonNu
     ...(definition.contextualDefaults === undefined ? {} : { contextualDefaults: definition.contextualDefaults }),
     ...(definition.sessionTarget === undefined ? {} : { sessionTarget: definition.sessionTarget }),
     ...(definition.approval === undefined ? {} : { approval: definition.approval }),
+    ...(definition.approvalScope === undefined ? {} : { approvalScope: definition.approvalScope }),
+    ...(kind.ok && kind.subjectKind?.kind === 'plugin' ? { subjectKindDefinition: kind.subjectKind.definition } : {}),
     ...(definition.toolExposure === undefined ? {} : { toolExposure: definition.toolExposure }),
     ...(definition.outputSchema === undefined ? {} : { outputSchema: definition.outputSchema }),
     ...(definition.execution === undefined ? {} : { execution: definition.execution }),
@@ -310,7 +316,7 @@ export function listRuntimeContributedActionDefinitions(
     const identity = action.identity;
     if (!identity || identity.localId !== action.definition.id
       || targetActionInvocations.evaluateCatalogPolicy(identity.pluginId, identity.localId).outcome !== 'visible') return [];
-    return [projectDefinition(action.definition, identity)];
+    return [projectDefinition(action.definition, identity, registry.contributes.subjectKinds ?? [])];
   }));
 }
 
