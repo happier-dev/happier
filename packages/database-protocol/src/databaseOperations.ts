@@ -5,7 +5,7 @@ import { AutomationDatabaseSubjectReadV1Schema } from '@happier-dev/protocol/aut
 export { readAutomationDatabaseSubjectV1, type AutomationDatabaseSubjectReadV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { DatabaseEngineIdV1Schema, DatabaseTargetV1Schema, DatabaseWorktreeTargetV1Schema } from './databaseTargets.js';
 import { DatabaseAccessSummaryV1Schema, DatabaseOperationClassV1Schema } from './databaseAccess.js';
-import { DatabaseStatsObservationV1Schema } from './databaseStats.js';
+import { DatabaseStatsObservationV1Schema, DatabaseStatsSizeV1Schema } from './databaseStats.js';
 import {
     DatabaseRelationV1Schema,
     type DatabaseRelationV1,
@@ -161,6 +161,7 @@ export type DatabaseTargetsListResultV1 = z.infer<typeof DatabaseTargetsListResu
 
 export const DatabaseRelationSummaryV1Schema = z.strictObject({
     relation: DatabaseRelationV1Schema, kind: z.enum(['table', 'view', 'materialized_view']), estimatedRows: z.optional(count),
+    size: z.optional(DatabaseStatsSizeV1Schema),
 });
 export type DatabaseRelationSummaryV1 = z.infer<typeof DatabaseRelationSummaryV1Schema>;
 export const DatabaseIndexV1Schema = z.strictObject({

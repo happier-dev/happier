@@ -1,4 +1,4 @@
-import { DatabaseStatsObservationV1Schema, type DatabaseStatsIntervalBasisV1, type DatabaseStatsObservationV1, type DatabaseStatsReadV1, type DatabaseStatsReasonV1, type DatabaseOperationResultV1 } from '@happier-dev/database-protocol';
+import { DatabaseStatsObservationV1Schema, type DatabaseStatsIntervalBasisV1, type DatabaseStatsObservationV1, type DatabaseStatsReadV1, type DatabaseStatsReasonV1, type DatabaseStatsSizeV1, type DatabaseOperationResultV1 } from '@happier-dev/database-protocol';
 
 export type DatabaseStatsSqlStatementV1 = Readonly<{ sql: string; parameters: readonly (string | number)[] }>;
 export type DatabaseStatsDecodeContextV1 = Readonly<{
@@ -117,8 +117,10 @@ export function statsSqlPlan(engineId: string, operation: DatabaseStatsReadV1, s
 export function statsRelation(row: DatabaseStatsNativeRowV1) {
     return { schema: statsText(row, 'schema_name'), name: statsText(row, 'relation_name') };
 }
-export function statsSize(row: DatabaseStatsNativeRowV1, measurement: 'database_bytes' | 'table_bytes_estimate' | 'page_allocation') {
-    return { bytes: statsCounter(row, 'size_bytes'), measurement,
+export function statsSize(row: DatabaseStatsNativeRowV1, measurement: DatabaseStatsSizeV1['measurement']): DatabaseStatsSizeV1 {
+    const bytes = statsCounter(row, 'size_bytes');
+    if (bytes === undefined) throw new Error('invalid_database_stats_counter');
+    return { bytes, measurement,
         ...statsOptional('relationBytes', statsCounter(row, 'relation_bytes')),
         ...statsOptional('tableBytes', statsCounter(row, 'table_bytes')),
         ...statsOptional('indexBytes', statsCounter(row, 'index_bytes')),

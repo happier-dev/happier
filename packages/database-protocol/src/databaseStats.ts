@@ -48,7 +48,8 @@ export const DatabaseStatsTableV1Schema = z.strictObject({
     relation: DatabaseStatsRelationV1Schema, estimatedRows: z.optional(counter), liveRows: z.optional(counter), deadRows: z.optional(counter),
     sequentialScans: z.optional(counter), indexScans: z.optional(counter), rowsRead: z.optional(counter),
     inserted: z.optional(counter), updated: z.optional(counter), deleted: z.optional(counter),
-    lastVacuum: z.optional(name), lastAnalyze: z.optional(name), size: z.optional(DatabaseStatsSizeV1Schema),
+    lastVacuum: z.optional(name), lastAnalyze: z.optional(name),
+    lastAutovacuum: z.optional(name), lastAutoanalyze: z.optional(name), size: z.optional(DatabaseStatsSizeV1Schema),
 });
 export const DatabaseStatsIndexV1Schema = z.strictObject({
     relation: DatabaseStatsRelationV1Schema, name, columns: z.array(z.nullable(z.string())),

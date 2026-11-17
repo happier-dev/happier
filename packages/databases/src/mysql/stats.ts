@@ -46,7 +46,7 @@ export function compileMysqlStatsV1(operation: DatabaseStatsReadV1): DatabaseSta
             relation:statsRelation(row),...statsOptional('estimatedRows',statsCounter(row,'estimated_rows')),
             ...statsOptional('rowsRead',statsCounter(row,'rows_read')),...statsOptional('inserted',statsCounter(row,'inserted')),
             ...statsOptional('updated',statsCounter(row,'updated')),...statsOptional('deleted',statsCounter(row,'deleted')),
-            size:statsSize(row,'table_bytes_estimate'),
+            ...(statsCounter(row,'size_bytes') === undefined ? {} : { size:statsSize(row,'table_bytes_estimate') }),
         })),['reset_marker_unavailable']);
     }
     if(operation.group==='indexes') {

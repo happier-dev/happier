@@ -7,7 +7,7 @@ import type {
 import { admitMysqlWorkbenchStatement } from './statement.js';
 import { databaseRowsBindingV1 } from '../rows.js';
 import { compileMysqlStatsV1 } from './stats.js';
-import { statsNativeRowsV1, statsOperationResultV1, type DatabaseStatsExecutionContextV1, type DatabaseStatsNativeRowV1 } from '../stats.js';
+import { statsNativeRowsV1, statsOperationResultV1, statsSize, type DatabaseStatsExecutionContextV1, type DatabaseStatsNativeRowV1 } from '../stats.js';
 
 export interface MysqlNativeField { name: string; columnType: number; characterSet: number }
 export type MysqlNativeValue = string | number | Buffer | null;
@@ -280,9 +280,10 @@ export async function executeMysqlOperation(input: DatabaseOperationInputV1, que
             return { ok: true, operation: input.operation, schemas: rows.map(row => ({ name: scalar(row, 0) })), completeness: native.rows.length > rows.length ? { complete: false, reason: 'page', continuation: { kind: 'catalog', operation: input.operation, target: input.target, ...(input.database ? { database: input.database } : {}), ...(input.search ? { search: input.search } : {}), after: scalar(rows.at(-1)!, 0) } } : { complete: true } };
         }
         case 'relations.list': {
-            const native = await query({ text: 'SELECT TABLE_NAME,TABLE_TYPE,TABLE_ROWS FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND (? IS NULL OR LOCATE(?,TABLE_NAME)>0) AND (? IS NULL OR TABLE_NAME>?) ORDER BY TABLE_NAME LIMIT ?', values: [input.schema, input.search ?? null, input.search ?? null, input.page.after ?? null, input.page.after ?? null, input.page.rows + 1] });
+            const native = await query({ text: 'SELECT TABLE_NAME,TABLE_TYPE,CAST(TABLE_ROWS AS CHAR),CAST(DATA_LENGTH AS CHAR),CAST(INDEX_LENGTH AS CHAR),CAST(DATA_LENGTH+INDEX_LENGTH AS CHAR) FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND (? IS NULL OR LOCATE(?,TABLE_NAME)>0) AND (? IS NULL OR TABLE_NAME>?) ORDER BY TABLE_NAME LIMIT ?', values: [input.schema, input.search ?? null, input.search ?? null, input.page.after ?? null, input.page.after ?? null, input.page.rows + 1] });
             const rows = native.rows.slice(0, input.page.rows);
-            return { ok: true, operation: input.operation, relations: rows.map(row => ({ relation: { schema: input.schema, name: scalar(row, 0) }, kind: row[1] === 'VIEW' ? 'view' : 'table', ...(row[2] === null ? {} : { estimatedRows: scalar(row, 2) }) })), completeness: native.rows.length > rows.length ? { complete: false, reason: 'page', continuation: { kind: 'catalog', operation: input.operation, target: input.target, schema: input.schema, ...(input.database ? { database: input.database } : {}), ...(input.search ? { search: input.search } : {}), after: scalar(rows.at(-1)!, 0) } } : { complete: true } };
+            return { ok: true, operation: input.operation, relations: rows.map(row => ({ relation: { schema: input.schema, name: scalar(row, 0) }, kind: row[1] === 'VIEW' ? 'view' : 'table', ...(row[2] == null ? {} : { estimatedRows: scalar(row, 2) }),
+                ...(row[5] == null ? {} : { size: statsSize({ table_bytes: row[3], index_bytes: row[4], size_bytes: row[5] }, 'table_bytes_estimate') }) })), completeness: native.rows.length > rows.length ? { complete: false, reason: 'page', continuation: { kind: 'catalog', operation: input.operation, target: input.target, schema: input.schema, ...(input.database ? { database: input.database } : {}), ...(input.search ? { search: input.search } : {}), after: scalar(rows.at(-1)!, 0) } } : { complete: true } };
         }
         case 'relation.structure': return { ok: true, operation: input.operation, structure: await structure(query, input.relation) };
         case 'rows.read': {

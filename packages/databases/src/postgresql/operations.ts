@@ -9,7 +9,7 @@ import { fitDatabaseOperationResult } from '../resultEnvelope.js';
 import { databaseRowsBindingV1 } from '../rows.js';
 import { quotePostgresqlIdentifier } from './identifiers.js';
 import { compilePostgresqlStatsV1, type PostgresqlStatsCompilationV1 } from './stats.js';
-import { statsNativeRowsV1, statsOperationResultV1, type DatabaseStatsExecutionContextV1, type DatabaseStatsNativeRowV1 } from '../stats.js';
+import { statsNativeRowsV1, statsOperationResultV1, statsSize, type DatabaseStatsExecutionContextV1, type DatabaseStatsNativeRowV1 } from '../stats.js';
 export { quotePostgresqlIdentifier } from './identifiers.js';
 
 export interface PostgresqlNativeResult {
@@ -358,9 +358,16 @@ async function executeDialectOperation(input: DatabaseOperationInputV1, query: P
                 ? { complete: false, reason: 'page', continuation: { kind: 'catalog', operation: input.operation, target: input.target, ...(input.database ? { database: input.database } : {}), ...(input.search ? { search: input.search } : {}), after: scalar(rows.at(-1)!, 0) } } : { complete: true } };
         }
         case 'relations.list': {
-            const native = await query({ text: "SELECT c.relname,c.relkind,GREATEST(c.reltuples,0)::bigint::text FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relkind IN ('r','p','v','m') AND ($2::text IS NULL OR strpos(c.relname,$2)>0) AND ($3::text IS NULL OR c.relname>$3) ORDER BY c.relname LIMIT $4", values: [input.schema, input.search ?? null, input.page.after ?? null, String(input.page.rows + 1)] });
+            const native = await query({ text: `SELECT c.relname,c.relkind,CASE WHEN c.reltuples>=0 THEN c.reltuples::bigint::text END,
+                CASE WHEN c.relkind<>'v' THEN pg_catalog.pg_relation_size(c.oid)::text END,
+                CASE WHEN c.relkind<>'v' THEN pg_catalog.pg_table_size(c.oid)::text END,
+                CASE WHEN c.relkind<>'v' THEN pg_catalog.pg_indexes_size(c.oid)::text END,
+                CASE WHEN c.relkind<>'v' THEN pg_catalog.pg_total_relation_size(c.oid)::text END
+                FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relkind IN ('r','p','v','m') AND ($2::text IS NULL OR strpos(c.relname,$2)>0) AND ($3::text IS NULL OR c.relname>$3) ORDER BY c.relname LIMIT $4`, values: [input.schema, input.search ?? null, input.page.after ?? null, String(input.page.rows + 1)] });
             const rows = native.rows.slice(0, input.page.rows);
-            return { ok: true, operation: input.operation, relations: rows.map(row => ({ relation: { schema: input.schema, name: scalar(row, 0) }, kind: row[1] === 'v' ? 'view' : row[1] === 'm' ? 'materialized_view' : 'table', estimatedRows: scalar(row, 2) })), completeness: native.rows.length > rows.length
+            return { ok: true, operation: input.operation, relations: rows.map(row => ({ relation: { schema: input.schema, name: scalar(row, 0) }, kind: row[1] === 'v' ? 'view' : row[1] === 'm' ? 'materialized_view' : 'table',
+                ...(row[2] == null ? {} : { estimatedRows: scalar(row, 2) }),
+                ...(row[6] == null ? {} : { size: statsSize({ relation_bytes: row[3], table_bytes: row[4], index_bytes: row[5], size_bytes: row[6] }, 'database_bytes') }) })), completeness: native.rows.length > rows.length
                 ? { complete: false, reason: 'page', continuation: { kind: 'catalog', operation: input.operation, target: input.target, schema: input.schema, ...(input.database ? { database: input.database } : {}), ...(input.search ? { search: input.search } : {}), after: scalar(rows.at(-1)!, 0) } } : { complete: true } };
         }
         case 'relation.structure': return { ok: true, operation: input.operation, structure: await structure(query, input.relation) };

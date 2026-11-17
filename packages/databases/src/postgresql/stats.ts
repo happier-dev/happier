@@ -72,6 +72,7 @@ export function compilePostgresqlStatsV1(operation: DatabaseStatsReadV1, capabil
             (s.seq_tup_read + s.idx_tup_fetch)::text AS rows_read,
             s.n_tup_ins::text AS inserted, s.n_tup_upd::text AS updated, s.n_tup_del::text AS deleted,
             s.last_vacuum::text AS last_vacuum, s.last_analyze::text AS last_analyze,
+            s.last_autovacuum::text AS last_autovacuum, s.last_autoanalyze::text AS last_autoanalyze,
             pg_catalog.pg_relation_size(c.oid)::text AS relation_bytes, pg_catalog.pg_table_size(c.oid)::text AS table_bytes,
             pg_catalog.pg_indexes_size(c.oid)::text AS index_bytes, pg_catalog.pg_total_relation_size(c.oid)::text AS size_bytes,
             ${metadata} FROM pg_catalog.pg_stat_user_tables s JOIN pg_catalog.pg_class c ON c.oid = s.relid
@@ -82,6 +83,7 @@ export function compilePostgresqlStatsV1(operation: DatabaseStatsReadV1, capabil
             ...statsOptional('rowsRead', statsCounter(row, 'rows_read')), ...statsOptional('inserted', statsCounter(row, 'inserted')),
             ...statsOptional('updated', statsCounter(row, 'updated')), ...statsOptional('deleted', statsCounter(row, 'deleted')),
             ...statsOptional('lastVacuum', statsText(row, 'last_vacuum')), ...statsOptional('lastAnalyze', statsText(row, 'last_analyze')),
+            ...statsOptional('lastAutovacuum', statsText(row, 'last_autovacuum')), ...statsOptional('lastAutoanalyze', statsText(row, 'last_autoanalyze')),
             size: statsSize(row, 'database_bytes'),
         })));
     }

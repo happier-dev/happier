@@ -21,6 +21,21 @@ function executeSqlite(plan: DatabaseStatsSqlPlanV1) {
     return operation.decode([rows], context);
 }
 describe('shared stats dialects', () => {
+    it('retains PostgreSQL automatic maintenance timestamps independently from manual maintenance', () => {
+        const plan = compiled(compilePostgresqlStatsV1({ kind: 'stats.read', group: 'tables', selection: { relation: { schema: 'public', name: 'items' } } }));
+        const result = plan.decode([[{ key: '1', schema_name: 'public', relation_name: 'items', size_bytes: '0',
+            last_vacuum: null, last_analyze: 'manual', last_autovacuum: 'automatic-vacuum', last_autoanalyze: 'automatic-analyze' }]], context);
+        expect(result).toMatchObject({ status: 'available', data: [{ lastAnalyze: 'manual', lastAutovacuum: 'automatic-vacuum', lastAutoanalyze: 'automatic-analyze' }] });
+    });
+    it('leaves unavailable MySQL table sizes and estimates absent without inventing zero', () => {
+        const plan = compiled(compileMysqlStatsV1({ kind: 'stats.read', group: 'tables', selection: { relation: { schema: 'app', name: 'items' } } }));
+        const result = plan.decode([[{ key: 'app:items', schema_name: 'app', relation_name: 'items', estimated_rows: null,
+            size_bytes: null, table_bytes: null, index_bytes: null }]], context);
+        expect(result).toMatchObject({ status: 'available', data: [{ relation: { schema: 'app', name: 'items' } }] });
+        if (result.status !== 'available' || result.group !== 'tables') throw new Error('Expected table evidence');
+        expect(result.data[0]).not.toHaveProperty('estimatedRows');
+        expect(result.data[0]).not.toHaveProperty('size');
+    });
     it('executes SQLite stats through the shared operation owner and preserves typed unsupported groups', () => {
         const target = { kind: 'manual', accountId: 'a', installationId: 'i', projectKey: 'p', savedSecretId: 's',
             workspace: { serverId: 'h', machineId: 'm', workspaceId: 'w', rootPath: '/project' } } as const;
@@ -72,8 +87,8 @@ describe('shared stats dialects', () => {
         expect(plan.statements[0]!.sql).toContain('"custom stats"."pg_stat_statements"');
         expect(plan.statements[0]!.sql).not.toContain('pg_catalog.pg_extension');
         expect(plan.statements[0]!.parameters).toEqual([13, 24, '1.11']);
-        const result = plan.decode([[{ key: '7:8:9:true', database: 'main', user_id: '8', top_level: true, calls: '9007199254740993', total_time_ms: '120', rows: '40', query: "ALTER USER me PASSWORD 'secret'", extension_version: '1.11', stats_reset: 'today', deallocated: '0', engine_started_at: 'boot' }]], context);
-        expect(result).toMatchObject({ status: 'available', data: [{ key: '7:8:9:true', calls: '9007199254740993', totalTimeMs: 120 }] });
+        const result = plan.decode([[{ key: '7:8:9:true', database: 'main', user_id: '8', top_level: true, calls: '9007199254740993', total_time_ms: '120', rows: '40', blocks_read: '10', blocks_hit: '90', query: "ALTER USER me PASSWORD 'secret'", extension_version: '1.11', stats_reset: 'today', deallocated: '0', engine_started_at: 'boot' }]], context);
+        expect(result).toMatchObject({ status: 'available', data: [{ key: '7:8:9:true', calls: '9007199254740993', totalTimeMs: 120, blocksRead: '10', blocksHit: '90' }] });
         expect(JSON.stringify(result)).not.toContain('secret');
         expect(compilePostgresqlStatsV1(operation, { pgStatStatements: null })).toEqual({ status: 'unavailable', reason: 'extension_missing' });
     });
