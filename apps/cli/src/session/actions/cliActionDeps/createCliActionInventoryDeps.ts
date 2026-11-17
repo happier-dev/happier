@@ -588,6 +588,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
         ...(machine.arch === undefined ? {} : { arch: machine.arch }),
         ...(machine.homeDir === undefined ? {} : { homeDir: machine.homeDir }),
         ...(machine.access ? { access: machine.access } : {}),
+        ...(machine.deploymentApp === undefined ? {} : { deploymentApp: machine.deploymentApp }),
         ...(machine.sharedWithTeamScope ? { sharedWithTeamScope: machine.sharedWithTeamScope } : {}),
       }));
       return {

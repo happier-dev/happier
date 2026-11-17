@@ -129,6 +129,7 @@ import { createPluginNativeNotificationDelivery } from '@/notifications/activity
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { createDeploymentTelemetryHost } from '@/deployments/telemetry/collectorHost';
+import { readInstalledCollectorCaddy } from '@/deployments/telemetry/collectorDomainBridge';
 import { QualifiedConnectedAccountPurposeBindingsV1Schema, qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { SessionExecutionTargetV1Schema } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import type { QualifiedConnectedAccountPurposeBindingsV1, ConnectedAccountRequestAuthUseV1, ProviderRuntimeBindingBasisV1, PluginContributionIdentityV1, PluginMachineExecutionOriginV1, PluginMachineMaterializationRefV1, TargetActionApprovalReplayPlacementV1, NormalizedPluginAccountCollectionContractV1, PluginCollectionCandidatePreparationBindingV1, PluginCollectionContractRefV1, PluginReleaseRefV1, PluginUiArtifactDigestV1, PluginResourceContextV1, PluginActionPresentUserGatePolicy } from '@happier-dev/protocol';
@@ -3579,6 +3580,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const deploymentTelemetry = !accountExecution && sessionCredentials && notificationAccountId && telemetryMachineId
         ? createDeploymentTelemetryHost({
             serverBaseUrl: notificationServerHttpBaseUrl, token: sessionCredentials.token, machineId: telemetryMachineId,
+            readInstalledCollectorCaddy,
             subscribeMachineChanges(listener) {
                 const accountChanges = acquireRequesterAccountEncryptionCurrentness({ accountId: notificationAccountId,
                     token: sessionCredentials.token, serverBaseUrl: notificationServerHttpBaseUrl });
@@ -6610,6 +6612,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         },
         currentDomainEdgeObservation,
         readTelemetryCollectorEndpoint: () => deploymentTelemetry?.readEndpoint() ?? null,
+        ...(deploymentTelemetry ? { acquireTelemetryCollectorDomainEndpoint: deploymentTelemetry.acquireDomainEndpoint } : {}),
         readHealthAlertSource: automationAssembly.readHealthAlertSource,
         readHealthCheckSource(sourceInstanceId, signal) {
             const owner = params?.accountExecution ? null : resolveHealthCheckSourceOwner();

@@ -416,6 +416,7 @@ type MachineCommon = {
   dataEncryptionKey?: string | null,
   keyBasis?: import('@happier-dev/protocol/machines/machineContentKeyTransitionV1').MachineKeyBasisV1,
   access?: import('@happier-dev/protocol/machines/machineAccessV1').AccessibleMachineAccessV1,
+  deploymentApp?: import('@happier-dev/protocol/machines/enrollmentV1').DeploymentAppMachineAssociationV1 | null,
   metadata: MachineMetadata | null,
   metadataVersion: number,
   daemonState: DaemonState | null,

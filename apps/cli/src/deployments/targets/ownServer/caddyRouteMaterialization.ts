@@ -36,6 +36,7 @@ type CaddyHandler = CaddyProxy
     | { handler: 'static_response'; status_code: number; headers?: Readonly<Record<string, readonly string[]>> }
     | { handler: 'subroute'; routes: readonly CaddyRoute[] }
     | { handler: 'vars'; happierLocalProxy: string }
+    | { handler: 'vars'; happierTelemetryCollectorNetwork: string }
     | { handler: 'authentication'; providers: { http_basic: {
         hash: { algorithm: 'bcrypt' };
         accounts: readonly { username: string; password?: string }[];
@@ -48,17 +49,52 @@ export type CaddyRoute = {
     terminal?: boolean;
 };
 
+/** Only collector routes retain gateway bridges. Ordinary Domain upstreams
+ * are never rebound by the receiver on daemon startup. */
+export function readCaddyTelemetryCollectorBridges(configuration: unknown): readonly Readonly<{
+    networkId: string; host: string; port: number;
+}>[] {
+    const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
+    const result: { networkId: string; host: string; port: number }[] = [];
+    const visit = (value: unknown) => {
+        if (Array.isArray(value)) { for (const child of value) visit(child); return; }
+        if (!object(value)) return;
+        if (Array.isArray(value.handle)) {
+            const marker = value.handle.find(item => object(item) && item.handler === 'vars'
+                && typeof item.happierTelemetryCollectorNetwork === 'string');
+            const proxy = value.handle.find(item => object(item) && item.handler === 'reverse_proxy');
+            if (object(marker) && typeof marker.happierTelemetryCollectorNetwork === 'string' && object(proxy) && Array.isArray(proxy.upstreams)) {
+                for (const upstream of proxy.upstreams) {
+                    if (!object(upstream) || typeof upstream.dial !== 'string') continue;
+                    try {
+                        const address = new URL(`http://${upstream.dial}`);
+                        if (address.port && address.pathname === '/' && !address.username && !address.password)
+                            result.push({ networkId: marker.happierTelemetryCollectorNetwork, host: address.hostname, port: Number(address.port) });
+                    } catch { /* Native malformed upstreams stay unavailable to the Domain owner. */ }
+                }
+            }
+        }
+        for (const child of Object.values(value)) visit(child);
+    };
+    visit(configuration);
+    return result;
+}
+
+type CaddyReplicaUpstreams = { kind: 'replicas'; containerNames: readonly string[]; containerPort?: number };
 export type CaddyDomainRouteInput = {
     domainId: string;
     domain: Pick<DeploymentDomainContentV1, 'hostname' | 'healthCheck' | 'target'>;
     listener: 'privateOrigin' | 'public';
     upstreams:
-        | { kind: 'replicas'; containerNames: readonly [string, ...string[]] }
+        | (CaddyReplicaUpstreams & { containerNames: readonly [string, ...string[]] })
         | { kind: 'privateOrigins'; endpoints: readonly [string, ...string[]] };
     /** Only this Environment's already-admitted P21 ranges; never inferred here. */
     privateSourceRanges: readonly string[];
     /** Exact, already-admitted private origins; no public-address fallback. */
     peerOrigins?: readonly string[];
+    /** Existing bridge network, retained in native route bytes for daemon restart. */
+    telemetryBridgeNetworkId?: string;
+    telemetryPrivateHosts?: readonly string[];
     /** P42 custody supplies bcrypt hashes; this codec never opens credentials. */
     basicAuth?: readonly { username: string; bcryptHash?: string }[];
     /** Role-limited P42 delivery, never Domain metadata. Omitted PEM is removal-only. */
@@ -74,7 +110,7 @@ export class CaddyDomainMaterializationError extends Error {
     }
 }
 type CaddyDomainRenderInput = Omit<CaddyDomainRouteInput, 'upstreams'> & {
-    upstreams: { kind: 'replicas'; containerNames: readonly string[] } | { kind: 'privateOrigins'; endpoints: readonly string[] };
+    upstreams: CaddyReplicaUpstreams | { kind: 'privateOrigins'; endpoints: readonly string[] };
 };
 
 export type CaddyDomainTlsMaterial = {
@@ -94,6 +130,7 @@ export type CaddyDomainRouteMaterial = {
     tls?: CaddyDomainTlsMaterial;
 };
 export type CaddyDomainObservedMaterial = CaddyDomainRouteMaterial & {
+    replicaContainerPort?: number;
     /** Native dynamic routing facts, deliberately excluding hashes and PEM. */
     observedRoute: Omit<CaddyDomainRouteInput, 'upstreams'>;
 };
@@ -197,12 +234,23 @@ export function materializeCaddyDomainRemovalV1(input: CaddyDomainRouteRemovalIn
     const routes = at(installed.route, ['handle', 0, 'routes']);
     const handles = Array.isArray(routes) ? at(routes.at(-1), ['handle']) : undefined;
     const local = installed.route === undefined ? installed.fallbackRoute !== undefined
-        : Array.isArray(handles) && at(handles[0], ['handler']) === 'vars';
+        : Array.isArray(handles) && typeof at(handles[0], ['happierLocalProxy']) === 'string';
+    const telemetryBridgeNetworkId = Array.isArray(handles) ? at(handles[0], ['happierTelemetryCollectorNetwork']) : undefined;
+    const hosts = at(installed.route, ['match', 0, 'host']);
+    const telemetryPrivateHosts = input.domain.target.kind === 'telemetry' && input.listener === 'privateOrigin'
+        && Array.isArray(hosts) && hosts.every(host => typeof host === 'string')
+        ? hosts.filter(host => host !== input.domain.hostname) as string[] : undefined;
     const proxy = Array.isArray(handles) ? handles.at(-1) : undefined;
     const dials = installed.route === undefined || input.listener === 'public' && input.domain.target.redirectTo !== undefined
         ? [] : dialList(at(proxy, ['upstreams']));
     if (dials === undefined) return;
-    const suffix = `:${input.domain.target.containerPort}`;
+    let replicaContainerPort = input.domain.target.containerPort;
+    if (local && input.domain.target.kind === 'telemetry') {
+        try { replicaContainerPort = Number(new URL(`http://${dials[0]}`).port) || undefined; }
+        catch { return; }
+        if (!replicaContainerPort) return;
+    }
+    const suffix = `:${replicaContainerPort}`;
     if (local && dials.some(dial => !dial.endsWith(suffix) || dial.length === suffix.length)) return;
     const peerOrigins = installed.fallbackRoute === undefined ? [] : dialList(at(installed.fallbackRoute, ['handle', 0, 'upstreams']));
     if (peerOrigins === undefined) return;
@@ -211,18 +259,23 @@ export function materializeCaddyDomainRemovalV1(input: CaddyDomainRouteRemovalIn
     const privateSourceRanges = Array.isArray(ranges) ? ranges as string[] : [];
     const observedRoute: CaddyDomainObservedMaterial['observedRoute'] = {
         domainId: input.domainId, domain: input.domain, listener: input.listener, privateSourceRanges, peerOrigins,
+        ...(typeof telemetryBridgeNetworkId === 'string' ? { telemetryBridgeNetworkId } : {}),
+        ...(telemetryPrivateHosts ? { telemetryPrivateHosts } : {}),
         ...(input.basicAuth ? { basicAuth: input.basicAuth.map(({ username }) => ({ username })) } : {}),
         ...(input.publicTls ? { publicTls: { kind: input.publicTls.kind } } : {}),
     };
     return { ...renderCaddyDomainRoute({ ...input, privateSourceRanges, peerOrigins,
-        upstreams: local ? { kind: 'replicas', containerNames: dials.map(dial => dial.slice(0, -suffix.length)) }
-            : { kind: 'privateOrigins', endpoints: dials } }, installed.fallbackRoute !== undefined), observedRoute };
+        ...(typeof telemetryBridgeNetworkId === 'string' ? { telemetryBridgeNetworkId } : {}),
+        ...(telemetryPrivateHosts ? { telemetryPrivateHosts } : {}),
+        upstreams: local ? { kind: 'replicas', containerNames: dials.map(dial => dial.slice(0, -suffix.length)), containerPort: replicaContainerPort }
+            : { kind: 'privateOrigins', endpoints: dials } }, installed.fallbackRoute !== undefined), observedRoute,
+        ...(local && input.domain.target.kind === 'telemetry' && replicaContainerPort ? { replicaContainerPort } : {}) };
 }
 
 /** Start-first changes only this same codec's local proxy, preserving native custody. */
 export function materializeCaddyDomainReplicaSetV1(observed: CaddyDomainObservedMaterial,
     containerNames: readonly [string, ...string[]]): CaddyDomainRouteMaterial {
-    return renderCaddyDomainRoute({ ...observed.observedRoute, upstreams: { kind: 'replicas', containerNames } },
+    return renderCaddyDomainRoute({ ...observed.observedRoute, upstreams: { kind: 'replicas', containerNames, containerPort: observed.replicaContainerPort } },
         observed.fallbackRoute !== undefined);
 }
 
@@ -232,8 +285,10 @@ function renderCaddyDomainRoute(input: CaddyDomainRenderInput, privatePeerAllowe
         ? canonicalRedirectDestination(domain.target.redirectTo) : undefined;
     const { routeId, proxyId, fallbackId, redirectId, tlsPolicyId, certificateId, removalIds } = nativeCaddyDomainRouteIdsV1(domainId, listener);
     const local = input.upstreams.kind === 'replicas';
+    const containerPort = domain.target.kind === 'telemetry' && input.upstreams.kind === 'replicas'
+        ? input.upstreams.containerPort : domain.target.containerPort;
     const upstreams = input.upstreams.kind === 'replicas'
-        ? input.upstreams.containerNames.map((name) => `${name}:${domain.target.containerPort}`)
+        ? input.upstreams.containerNames.map((name) => `${name}:${containerPort}`)
         : input.upstreams.endpoints;
     const healthCheck = domain.healthCheck;
     // Caddy's active checks take an upstream out of rotation, so they run only for an explicitly expected status:
@@ -287,11 +342,16 @@ function renderCaddyDomainRoute(input: CaddyDomainRenderInput, privatePeerAllowe
     const appProxy = redirectTo ? undefined : proxy(proxyId, upstreams, local ? 'local' : 'privateOrigin');
     routes.push(redirectTo ? { handle: [{ handler: 'static_response', status_code: 308,
         headers: { Location: [`${redirectTo}{http.request.uri}`] } }] } : { handle: [
-        ...(local ? [{ handler: 'vars' as const, happierLocalProxy: proxyId }] : []),
+        ...(local ? [{ handler: 'vars' as const, happierLocalProxy: proxyId }]
+            : input.telemetryBridgeNetworkId ? [{ handler: 'vars' as const, happierTelemetryCollectorNetwork: input.telemetryBridgeNetworkId }] : []),
         appProxy!,
     ] });
 
-    const hostMatch: CaddyMatcher = { host: [domain.hostname] };
+    // Only the collector's private listener accepts its observed IP URL. A
+    // Machine has one token-admitting collector; ordinary service Domains and
+    // public TLS routes retain their authored hostname match.
+    const hostMatch: CaddyMatcher = { host: [domain.hostname, ...(domain.target.kind === 'telemetry'
+        && listener === 'privateOrigin' ? input.telemetryPrivateHosts ?? [] : [])] };
     const match = domain.target.path
         ? [{ ...hostMatch, path: [`${domain.target.path}*`] },
             ...(healthCheck ? [{ ...hostMatch, path_regexp: exactPath(healthCheck.path) }] : [])]

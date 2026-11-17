@@ -26,6 +26,9 @@ import { deploymentDomainProviderObservationProofPayloadV1 } from '@happier-dev/
 import { DeploymentDomainProviderResultV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainProviderResultV1';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import * as vercelDomainPlugin from '../../../../../packages/plugins/deploy-vercel/src/index';
+import { DeploymentChildRoutingV1Schema } from '@happier-dev/protocol';
+import { readDeploymentChildAdmissionInTx } from './deploymentChildAuthorization';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 
 describe('public Domain storage and native custody', () => {
     const serverId = `srv_${'d'.repeat(32)}`;
@@ -46,14 +49,15 @@ describe('public Domain storage and native custody', () => {
             metadata: '{}', installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(key.publicKey) } });
         const source = await db.projectSource.create({ data: { createdByAccountId: owner.id,
             owner: { kind: 'account', accountId: owner.id }, name: 'Domain owner', audience: [], attachments: [] } });
-        const content = async (kind: string) => {
+        const content = async (kind: string, domainTarget = { service: 'web', containerPort: 80 } as
+            { service: string; containerPort: number } | { kind: 'telemetry' }) => {
             const dataKey = nacl.randomBytes(32);
             const seal = async (value: unknown) => mode === 'plain' ? privacyKit.decodeBase64(encodePlainArtifactStoredContent(value))
                 : new Uint8Array(await sealSessionDataKeyBundleV0(value, dataKey));
             const artifact = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),
                 kind: `v1:other:${kind}`, header: await seal({ kind, title: 'Private domain' }),
                 body: await seal({ body: JSON.stringify(kind === 'deployment-domain.v1' ? { hostname: 'qa-domain-1101-ingress.localhost',
-                    target: { service: 'web', containerPort: 80 }, healthCheck: { path: '/', expectStatus: 200 } } : { hostname: 'private.example.test' }) }),
+                    target: domainTarget, healthCheck: { path: '/', expectStatus: 200 } } : { hostname: 'private.example.test' }) }),
                 dataEncryptionKey: mode === 'plain' ? privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)
                     : new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: contentKeys.publicKey, randomBytes: nacl.randomBytes })) });
             if (!artifact.ok) throw new Error(artifact.error);
@@ -70,6 +74,59 @@ describe('public Domain storage and native custody', () => {
         return { owner, foreign, machine, key, environment, target, content };
     }
 
+    it.each(['machine', 'deployed App'] as const)('admits a collector Domain only on the Environment selected collector, independently of workload membership (%s)', async kind => {
+        const f = await fixture();
+        await db.machine.update({ where: { id: f.machine.id }, data: {
+            metadata: encodePlainMachineStoredContent({ host: 'workload-host', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/workload', happyHomeDir: '/home/workload/.happier' }),
+            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } });
+        const collector = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: f.owner.id,
+            metadata: encodePlainMachineStoredContent({ host: 'collector-host', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/collector', happyHomeDir: '/home/collector/.happier' }),
+            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+            installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(f.key.publicKey) } });
+        let selected = collector;
+        if (kind === 'deployed App') {
+            const receipt = await db.deployment.create({ data: { environmentId: f.environment.id, targetLinkId: f.target.id,
+                operation: 'deploy', state: 'succeeded', requestKey: crypto.randomUUID(), requestedByAccountId: f.owner.id,
+                actionOperationId: crypto.randomUUID(), acceptedControllerMachineId: collector.id,
+                acceptedControllerInstallationId: collector.installationId!, ...await f.content('deployment-receipt.v1') } });
+            selected = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: f.owner.id,
+                metadata: '{}', installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(f.key.publicKey),
+                deploymentAppDeploymentId: receipt.id } });
+        }
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { telemetryMachineId: selected.id } });
+        const content = await f.content('deployment-domain.v1', { kind: 'telemetry' });
+        const input = { serverId, domainId: crypto.randomUUID(), environmentId: f.environment.id, expectedRevision: 1,
+            targetLinkId: f.target.id, expectedTargetLinkRevision: 1, requestKey: crypto.randomUUID(),
+            actionOperationId: crypto.randomUUID(), requestId: crypto.randomUUID(), telemetryMachineId: selected.id,
+            placements: [{ machineId: collector.id, installationId: collector.installationId!, dockerEngineId: 'native',
+                nativeServer: 'private', listener: 'privateOrigin' as const }], ...content };
+        const binding = { accountId: f.owner.id, custodianAccountId: f.owner.id,
+            authentication: { kind: 'account' as const, tokenEpoch: 1 }, accountEncryptionMode: 'plain' as const,
+            serverIdentityId: serverId, machineId: f.machine.id, installationId: f.machine.installationId!,
+            target: { kind: 'machine' as const, machineId: f.machine.id }, actionId: 'deployments.domains.add',
+            requestId: input.requestId, environmentId: f.environment.id } satisfies ExternalActionExecutionAuthorizationBindingV1;
+        const { placements: _placements, actionOperationId: _operation, requestId: _request, ...discoveryInput } = input;
+        const routing = DeploymentChildRoutingV1Schema.parse({ v: 1, kind: 'domainDiscover', actionId: 'deployments.domains.add',
+            machineId: collector.id, installationId: collector.installationId!, input: discoveryInput });
+        expect(await inTx(tx => readDeploymentChildAdmissionInTx(tx, binding, routing))).not.toBeNull();
+        const { telemetryMachineId: _selected, ...nativeServiceInput } = discoveryInput;
+        expect(await inTx(tx => readDeploymentChildAdmissionInTx(tx, binding, DeploymentChildRoutingV1Schema.parse({
+            ...routing, input: nativeServiceInput, machineId: f.machine.id, installationId: f.machine.installationId! })))).not.toBeNull();
+        expect(await inTx(tx => readDeploymentChildAdmissionInTx(tx, binding, DeploymentChildRoutingV1Schema.parse({
+            ...routing, machineId: f.machine.id, installationId: f.machine.installationId! })))).toBeNull();
+        const result = await inTx(tx => createDeploymentDomainInTx(tx, f.owner.id, input));
+        expect(DeploymentDomainMutationResultV1Schema.parse(result)).toMatchObject({ ok: true,
+            domain: { placements: [{ placement: { machineId: collector.id } }] } });
+        const other = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: f.owner.id,
+            metadata: '{}', installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(f.key.publicKey) } });
+        const rejected = await inTx(tx => createDeploymentDomainInTx(tx, f.owner.id, { ...input,
+            domainId: crypto.randomUUID(), requestKey: crypto.randomUUID(), expectedRevision: 2,
+            telemetryMachineId: other.id, placements: [{ ...input.placements[0]!, machineId: other.id, installationId: other.installationId! }] }));
+        expect(rejected).toMatchObject({ ok: false, error: 'deployment_conflict' });
+    });
+
     it('returns the structured controller failure when a provider Domain cannot acquire its controller key', async () => {
         const f = await fixture();
         await db.deploymentTargetLink.update({ where: { id: f.target.id }, data: {
@@ -85,6 +142,57 @@ describe('public Domain storage and native custody', () => {
         expect(DeploymentDomainMutationResultV1Schema.parse(result)).toEqual({ ok: false, error: 'machine_unavailable',
             role: 'controller', machineIds: [f.machine.id], nextActions: ['start', 'chooseAnother'] });
         expect(await db.deploymentDomain.count({ where: { environmentId: f.environment.id } })).toBe(0);
+    });
+
+    it('keeps an S4 topology read within its accepted deployment and exact Domain capture after G1', async () => {
+        const f = await fixture();
+        const collector = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: f.owner.id,
+            metadata: '{}', installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(f.key.publicKey) } });
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { telemetryMachineId: collector.id } });
+        const input = { serverId, domainId: crypto.randomUUID(), environmentId: f.environment.id, expectedRevision: 1,
+            targetLinkId: f.target.id, expectedTargetLinkRevision: 1, requestKey: crypto.randomUUID(),
+            actionOperationId: crypto.randomUUID(), requestId: crypto.randomUUID(), telemetryMachineId: collector.id,
+            placements: [{ machineId: collector.id, installationId: collector.installationId!, dockerEngineId: 'native',
+                nativeServer: 'private', listener: 'privateOrigin' as const }], ...await f.content('deployment-domain.v1', { kind: 'telemetry' }) };
+        const added = DeploymentDomainMutationResultV1Schema.parse(await inTx(tx => createDeploymentDomainInTx(tx, f.owner.id, input)));
+        if (!added.ok || !added.domain.placements?.[0]) throw new Error('Domain capture unavailable');
+        const rootOperationId = crypto.randomUUID();
+        const deployment = await db.deployment.create({ data: { environmentId: f.environment.id, targetLinkId: f.target.id,
+            operation: 'deploy', state: 'running', requestKey: crypto.randomUUID(), requestedByAccountId: f.owner.id,
+            actionOperationId: rootOperationId, acceptedControllerMachineId: f.machine.id,
+            acceptedControllerInstallationId: f.machine.installationId!, acceptedBuildMachineId: f.machine.id,
+            acceptedBuildInstallationId: f.machine.installationId!, acceptedRequestEnvelopeDigest: 'a'.repeat(43),
+            ...await f.content('deployment-receipt.v1') } });
+        const binding = { accountId: f.owner.id, custodianAccountId: f.owner.id,
+            authentication: { kind: 'account' as const, tokenEpoch: 1 }, accountEncryptionMode: 'plain' as const,
+            serverIdentityId: serverId, machineId: f.machine.id, installationId: f.machine.installationId!,
+            target: { kind: 'machine' as const, machineId: f.machine.id }, actionId: 'deployments.deploy',
+            requestId: crypto.randomUUID(), requestEnvelopeDigest: 'a'.repeat(43), environmentId: f.environment.id,
+            deploymentChildRoot: true as const } satisfies ExternalActionExecutionAuthorizationBindingV1;
+        const routing = DeploymentChildRoutingV1Schema.parse({ v: 1, kind: 'domain', actionId: 'deployments.domains.verify',
+            machineId: collector.id, installationId: collector.installationId!,
+            input: { serverId, environmentId: f.environment.id, domainId: input.domainId },
+            expectedDomainRevision: added.domain.revision, capture: added.domain.placements[0],
+            observeTopology: { environmentId: f.environment.id, deploymentId: deployment.id, actionOperationId: rootOperationId } });
+        await db.projectSource.update({ where: { id: f.environment.projectSourceId }, data: { owner: { kind: 'account', accountId: f.foreign.id } } });
+        const read = (root = binding, child = routing) => inTx(tx => readDeploymentChildAdmissionInTx(tx, root, child));
+        expect(await read()).toMatchObject({ acceptedReceipt: { id: deployment.id } });
+        expect(await read({ ...binding, accountId: f.foreign.id })).toBeNull();
+        if (routing.kind !== 'domain') throw new Error('Wrong child kind');
+        expect(await read(binding, { ...routing, capture: { ...routing.capture,
+            content: { ...routing.capture.content, contentArtifactId: crypto.randomUUID() } } })).toBeNull();
+        const otherEnvironmentId = crypto.randomUUID();
+        expect(await read(binding, { ...routing, input: { ...routing.input, environmentId: otherEnvironmentId },
+            capture: { ...routing.capture, placement: { ...routing.capture.placement, environmentId: otherEnvironmentId } } })).toBeNull();
+        const otherMachineId = crypto.randomUUID();
+        expect(await read(binding, { ...routing, machineId: otherMachineId,
+            capture: { ...routing.capture, placement: { ...routing.capture.placement, machineId: otherMachineId } } })).toBeNull();
+        const otherInstallationId = crypto.randomUUID();
+        expect(await read(binding, { ...routing, installationId: otherInstallationId,
+            capture: { ...routing.capture, placement: { ...routing.capture.placement, installationId: otherInstallationId } } })).toBeNull();
+        expect(await read(binding, { ...routing, expectedDomainRevision: added.domain.revision + 1 })).toBeNull();
+        await db.deployment.update({ where: { id: deployment.id }, data: { state: 'succeeded' } });
+        expect(await read()).toBeNull();
     });
 
     it('returns the structured controller failure when a provider Domain controller was revoked', async () => {

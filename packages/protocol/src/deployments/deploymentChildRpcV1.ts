@@ -16,7 +16,7 @@ import { deploymentChildEffectActionIdForRootV1, isDeploymentDomainRemoveActionI
     DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
     DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from './deploymentActionIdsV1.js';
 import { DeploymentDomainAddInputV1Schema, DeploymentDomainAddPreparedInputV1Schema, DeploymentDomainRemoveInputV1Schema, DeploymentDomainAttachedVerifyInputV1Schema, DeploymentDomainPreviewInputV1Schema,
-    DeploymentDomainPlacementV1Schema, DeploymentDomainTopologyV1Schema } from './deploymentDomainV1.js';
+    DeploymentDomainPlacementV1Schema, DeploymentDomainTopologyV1Schema, DeploymentDomainTelemetryAppV1Schema } from './deploymentDomainV1.js';
 import type { DeploymentPreparationAdmissionV1 } from './deploymentPreparationAdmissionV1.js';
 import { DeploymentTemplateInstantiateInputV1Schema, readDeploymentTemplateDeployIntentV1 } from './deploymentTemplateInstantiationV1.js';
 import { DeploymentPromoteInputV1Schema, DeploymentPromoteIntentInputV1Schema } from './deploymentPromoteIntentV1.js';
@@ -60,7 +60,10 @@ export const DeploymentDomainChildRoutingV1Schema = lazyZodSchema(() => z.strict
     ...placement, kind: z.literal('domain'), actionId: z.enum(['deployments.domains.add', 'deployments.domains.remove', 'deployments.domains.verify']),
     input: z.strictObject({ serverId: id, environmentId: id, domainId: id }), expectedDomainRevision: revision,
     capture: DeploymentDomainPlacementV1Schema, actionOperationId: z.optional(id),
+    /** Read-only native topology for this admitted launch, never Domain setup. */
+    observeTopology: z.optional(z.strictObject({ environmentId: id, deploymentId: id, actionOperationId: id })),
 }).check(z.refine(value => (value.actionId === 'deployments.domains.verify' || value.actionOperationId !== undefined)
+    && (value.observeTopology === undefined || value.actionId === 'deployments.domains.verify' && value.capture.desired)
     && value.input.serverId === value.capture.placement.serverId && value.input.environmentId === value.capture.placement.environmentId
     && value.input.domainId === value.capture.placement.domainId && value.machineId === value.capture.placement.machineId
     && value.installationId === value.capture.placement.installationId
@@ -76,12 +79,19 @@ export type DeploymentDomainChildRpcV1 = z.infer<typeof DeploymentDomainChildRpc
 export const DeploymentDomainRemoveDiscoverInputV1Schema = lazyZodSchema(() => z.strictObject({
     ...DeploymentDomainRemoveInputV1Schema.shape, ...DeploymentArtifactContentReferenceV1Schema.shape,
     targetLinkId: id, expectedTargetLinkRevision: revision,
+    telemetryMachineId: DeploymentDomainAddPreparedInputV1Schema.shape.telemetryMachineId,
 }));
 export type DeploymentDomainRemoveDiscoverInputV1 = z.infer<typeof DeploymentDomainRemoveDiscoverInputV1Schema>;
-export const DeploymentDomainDiscoverChildRpcV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', [
+const domainDiscoverRoutingShapes = () => [
     z.strictObject({ ...placement, kind: z.literal('domainDiscover'), actionId: z.literal('deployments.domains.add'), input: DeploymentDomainAddPreparedInputV1Schema }),
     z.strictObject({ ...placement, kind: z.literal('domainDiscover'), actionId: z.literal('deployments.domains.remove'), input: DeploymentDomainRemoveDiscoverInputV1Schema }),
-]));
+] as const;
+export const DeploymentDomainDiscoverChildRoutingV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', domainDiscoverRoutingShapes()));
+export const DeploymentDomainDiscoverChildRpcV1Schema = lazyZodSchema(() => {
+    const privatePlacement = { telemetryApp: z.optional(DeploymentDomainTelemetryAppV1Schema) };
+    const [add, remove] = domainDiscoverRoutingShapes();
+    return z.discriminatedUnion('actionId', [z.safeExtend(add, privatePlacement), z.safeExtend(remove, privatePlacement)]);
+});
 export type DeploymentDomainDiscoverChildRpcV1 = z.infer<typeof DeploymentDomainDiscoverChildRpcV1Schema>;
 const job = lazyZodSchema(() => z.union([
     z.strictObject({ ...placement, kind: z.literal('review') }),
@@ -121,6 +131,16 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
     rootPreparationAdmission?: DeploymentPreparationAdmissionV1; reviewedChild?: ReviewedActionChildHttpProofV1;
 }>): boolean {
     const child = input.child;
+    if (child.kind === 'domain' && child.observeTopology) {
+        if (deploymentChildEffectActionIdForRootV1(input.rootActionId ?? '', input.rootPreparationAdmission, child.actionId) !== child.actionId) return false;
+        const binding = input.rootBinding;
+        if (input.rootInput === undefined && binding) return binding.actionId === input.rootActionId
+            && binding.serverIdentityId === child.input.serverId && binding.environmentId === child.observeTopology.environmentId;
+        const original = input.rootInput;
+        return original !== null && typeof original === 'object'
+            && Reflect.get(original, 'serverId') === child.input.serverId
+            && Reflect.get(original, 'environmentId') === child.observeTopology.environmentId;
+    }
     if (child.kind === 'domainDns') {
         const original = DeploymentDomainPreviewInputV1Schema.safeParse(input.rootInput);
         return input.rootActionId === child.actionId && original.success && sameStrictJsonValue(original.data, child.input);
@@ -216,7 +236,7 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
         // Removal discovers current retained content and target references at
         // Home. Those derived observation inputs are not part of its root intent.
         const { contentArtifactId: _contentId, contentHeaderVersion: _header, contentBodyVersion: _body,
-            targetLinkId: _targetId, expectedTargetLinkRevision: _targetRevision, ...removeRoot } = child.input;
+            targetLinkId: _targetId, expectedTargetLinkRevision: _targetRevision, telemetryMachineId: _selectedCollector, ...removeRoot } = child.input;
         const rootOperand = isDeploymentDomainRemoveActionIdV1(child.actionId) ? removeRoot : child.input;
         const binding = input.rootBinding;
         const native = binding?.deploymentNativeAdmission;

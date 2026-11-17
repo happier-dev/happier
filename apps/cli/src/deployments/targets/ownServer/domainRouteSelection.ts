@@ -3,10 +3,12 @@ import type { NativeCaddyObservationResult } from '@happier-dev/cli-common/machi
 import { readCloudflareNamedControllerSelection } from '@happier-dev/cli-common/relayAccess';
 import { accessProviderRefsEqualV1, type MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import type { DeploymentIngressV1, DeploymentDomainAddInputV1, DeploymentDomainHeaderV1,
-    DeploymentDomainListInputV1, DeploymentDomainListResultV1Schema, DeploymentDomainTopologyV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+    DeploymentDomainListInputV1, DeploymentDomainListResultV1Schema, DeploymentDomainTopologyV1,
+    DeploymentDomainMachineTopologyV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readDeploymentDomainArtifactV1, type DeploymentArtifactDocumentV1, type DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol';
 import type { createNativeCaddyRoutes, NativeCaddyStartFirstLeg } from '@/machines/reachability/nativeCaddyRoutes';
 import { caddyPublicHttpServerId, type CaddyDomainRouteInput } from './caddyRouteMaterialization';
+import type { Machine } from '@/api/types';
 
 type ResolvedDomainIngress = Readonly<{ status: 'ready'; ingress?: DeploymentIngressV1;
     selection: ReturnType<typeof readCloudflareNamedControllerSelection> }>
@@ -195,6 +197,59 @@ function createDomainContentReader(input: DomainInventoryInput) {
         return opened;
     };
     return readContent;
+}
+
+export type TelemetryCollectorDomainEndpoint = Readonly<{ kind: 'ready'; endpoint: string }>
+    | Readonly<{ kind: 'unavailable'; reason: string }>;
+
+export type TelemetryCollectorPlacement = Readonly<{ kind: 'ready'; machineId: string; installationId: string;
+    app?: NonNullable<DeploymentDomainMachineTopologyV1['telemetryApp']> }>
+    | Readonly<{ kind: 'unavailable'; reason: string }>;
+
+/** Machine's receipt association owns placement; its opened metadata supplies
+ * private native service identity. Neither fact is inferred from a Domain. */
+export function readTelemetryCollectorPlacementForHost(machine: Pick<Machine, 'id' | 'installationId' | 'deploymentApp'>
+    & Readonly<{ metadata: Pick<NonNullable<Machine['metadata']>, 'deploymentApp'> | null }>): TelemetryCollectorPlacement {
+    if (!machine.deploymentApp) return machine.installationId ? { kind: 'ready', machineId: machine.id,
+        installationId: machine.installationId } : { kind: 'unavailable', reason: 'target_mismatch' };
+    const binding = machine.metadata?.deploymentApp;
+    if (!binding) return { kind: 'unavailable', reason: machine.metadata === null
+        ? 'machine_content_key_unavailable' : 'collector_route_unavailable' };
+    return { kind: 'ready', ...machine.deploymentApp.controller,
+        app: { environmentId: machine.deploymentApp.environmentId, ...binding } };
+}
+
+/** The Domain owner selects the admitted collector route and observes its actual
+ * native privateOrigin. A public hostname is never a substitute for shared scope. */
+export async function readTelemetryCollectorDomainForHost(input: DomainInventoryInput & Readonly<{
+    collectorMachineId: string;
+    observerNetworks: readonly MachinePrivateNetworkObservationV1[];
+    observe(domain: DeploymentDomainHeaderV1, capture: NonNullable<DeploymentDomainHeaderV1['placements']>[number]):
+        Promise<DeploymentDomainMachineTopologyV1 | null>;
+}>): Promise<TelemetryCollectorDomainEndpoint> {
+    const inventory = await readDeploymentDomainInventoryForHost(input);
+    if (inventory.kind !== 'ready') return { kind: 'unavailable', reason: inventory.reason };
+    const readContent = createDomainContentReader(input);
+    for (const domain of inventory.domains) {
+        if (domain.deletedAtMs !== undefined || domain.state === 'removing') continue;
+        for (const capture of domain.placements ?? []) {
+            const placement = capture.placement;
+            if (!capture.desired || capture.listener !== 'privateOrigin' || placement.machineId !== input.collectorMachineId
+                || placement.environmentId !== input.environmentId || placement.targetLinkId !== input.targetLinkId) continue;
+            const opened = await readContent(capture.content);
+            if (!opened.ok) return { kind: 'unavailable', reason: opened.error };
+            if (opened.content.target.kind !== 'telemetry') continue;
+            const topology = await input.observe(domain, capture);
+            if (!topology) return { kind: 'unavailable', reason: 'collector_route_unavailable' };
+            if (topology.machineId !== placement.machineId || topology.installationId !== placement.installationId
+                || topology.dockerEngineId !== capture.dockerEngineId) return { kind: 'unavailable', reason: 'target_mismatch' };
+            const selected = selectPrivateCaddyOriginNetwork({ observerNetworks: input.observerNetworks,
+                members: [{ machineId: topology.machineId, state: 'active', caddy: topology.caddy }] });
+            if (selected.status !== 'ready') return { kind: 'unavailable', reason: selected.reason };
+            return { kind: 'ready', endpoint: new URL(`http://${selected.origins[0].endpoints[0]}`).origin };
+        }
+    }
+    return { kind: 'unavailable', reason: 'collector_route_unavailable' };
 }
 
 /** Exact retained Domain subjects whose declared backend is interrupted by this operation. */

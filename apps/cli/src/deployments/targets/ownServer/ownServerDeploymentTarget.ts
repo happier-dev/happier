@@ -139,6 +139,7 @@ export type OwnServerDeploymentRuntime = Readonly<{
         stageContent(sourceIntent: DeploymentSourceIntentV1): Promise<string>;
         context: ActionExecutorContext;
         readReferenceEnvironment?: OwnServerDeploymentTargetHostInput['readEnvironment'];
+        readTelemetryCollectorDomain?: OwnServerDeploymentTargetHostInput['readTelemetryCollectorDomain'];
         readPreviewDomain?: OwnServerDeploymentTargetHostInput['readPreviewDomain'] }>, environment: DeploymentEnvironmentDetailV1):
         Promise<OwnServerDeploymentRuntimeAcquisition & Readonly<{ sourceIntent: DeploymentOwnServerContentV1['sourceIntent'] }>>;
     acquire(request: OwnServerDeploymentRuntimeRequest, snapshot: Readonly<{
@@ -147,6 +148,7 @@ export type OwnServerDeploymentRuntime = Readonly<{
         /** Selected by the retained-serving source owner for a joining deployment. */
         retainedSourceIntent?: DeploymentOwnServerContentV1['sourceIntent'] | null;
         readReferenceEnvironment?: OwnServerDeploymentTargetHostInput['readEnvironment'];
+        readTelemetryCollectorDomain?: OwnServerDeploymentTargetHostInput['readTelemetryCollectorDomain'];
         readPreviewDomain?: OwnServerDeploymentTargetHostInput['readPreviewDomain'];
         /** Absent only while reviewing a candidate before receipt acceptance. */
         deployment?: DeploymentReceiptHeaderV1;
@@ -208,6 +210,11 @@ export type OwnServerDeploymentTargetHostInput = Readonly<{
     serverHttpBaseUrl: string;
     machineId: string;
     readEnvironment(request: OwnServerDeploymentReadContext): Promise<DeploymentEnvironmentDetailV1>;
+    readTelemetryCollectorPlacement?(machineId: string, context: ActionExecutorContext):
+        Promise<import('./domainRouteSelection').TelemetryCollectorPlacement>;
+    readTelemetryCollectorDomain?(request: OwnServerDeploymentReadContext & Readonly<{
+        targetLinkId: string; collectorMachineId: string; deployment: DeploymentReceiptHeaderV1;
+    }>): Promise<import('./domainRouteSelection').TelemetryCollectorDomainEndpoint>;
     readPreviewDomain?(request: Parameters<typeof import('../../previewDomainForHost').readPreviewDomainForHost>[0]
         & Readonly<{ context: ActionExecutorContext }>): ReturnType<typeof import('../../previewDomainForHost').readPreviewDomainForHost>;
     readExpectedDownDomains?(request: OwnServerDeploymentReadContext & Readonly<{ targetLinkId: string; affectedServices: readonly string[] }>):

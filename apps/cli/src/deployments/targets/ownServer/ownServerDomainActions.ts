@@ -61,6 +61,7 @@ type DomainDiscoveryHost = Readonly<{
     readEnvironment: OwnServerDeploymentTargetHostInput['readEnvironment'];
     readReceipt: OwnServerDeploymentTargetHostInput['readReceipt'];
     readInstallation(machineId: string, context: ActionExecutorContext): Promise<string>;
+    readTelemetryCollectorPlacement?: OwnServerDeploymentTargetHostInput['readTelemetryCollectorPlacement'];
 }>;
 
 /** Add and recovery Remove consume the same native observation and origin selection. */
@@ -76,8 +77,16 @@ async function discoverOwnServerDomainPlacement(request: Readonly<{
     const resolved = resolveDomainIngress(request.content, environment.content.ingress);
     if (resolved.status === 'unavailable') return failure(resolved.reason, resolved.details);
     const ingress = resolved.ingress;
-    const membersForIngress = await readDomainIngressMembersForHost(link,
-        'membershipMachines' in request.input ? request.input.membershipMachines : undefined, context, host.readReceipt);
+    const collectorMachineId = request.content.target.kind === 'telemetry' ? environment.environment.telemetryMachineId : undefined;
+    if (request.content.target.kind === 'telemetry' && !collectorMachineId) return failure('collector_unavailable');
+    if (request.input.telemetryMachineId !== undefined && request.input.telemetryMachineId !== collectorMachineId) return failure('target_mismatch');
+    const collector = collectorMachineId ? await host.readTelemetryCollectorPlacement?.(collectorMachineId, context) : undefined;
+    if (collectorMachineId && (!collector || collector.kind !== 'ready')) return failure(collector?.reason ?? 'collector_unavailable');
+    const membersForIngress = collector?.kind === 'ready' ? [{ machineId: collector.machineId,
+        installationId: collector.installationId, state: 'active' as const }]
+        : await readDomainIngressMembersForHost(link,
+            'membershipMachines' in request.input ? request.input.membershipMachines : undefined, context, host.readReceipt);
+    const discoveryInput = { ...request.input, ...(collectorMachineId ? { telemetryMachineId: collectorMachineId } : {}) };
     const destinations = membersForIngress.map(member => ({
         machineId: member.machineId, installationId: member.installationId }));
     if (ingress?.kind === 'edgeCaddy' && !destinations.some(member => member.machineId === ingress.edgeMachineId)) {
@@ -91,7 +100,9 @@ async function discoverOwnServerDomainPlacement(request: Readonly<{
         let observed: unknown;
         try {
             observed = await host.dispatch(DeploymentDomainDiscoverChildRpcV1Schema.parse({ v: 1,
-                kind: 'domainDiscover', actionId: request.actionId, input: request.input, ...destination }), context);
+                kind: 'domainDiscover', actionId: request.actionId, input: discoveryInput, ...destination,
+                ...(collector?.kind === 'ready' && collector.app && destination.machineId === collector.machineId
+                    ? { telemetryApp: collector.app } : {}) }), context);
         } catch (error) {
             const diagnostic = projectDeploymentFailure(context.signal?.aborted ? 'cancelled'
                 : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'native_route_unavailable',
@@ -122,7 +133,8 @@ async function discoverOwnServerDomainPlacement(request: Readonly<{
     const topology: DeploymentDomainTopologyV1 = { members: membersForIngress.map(member => ({
         machineId: member.machineId, installationId: member.installationId })), machines,
         ...(selected.tunnelOrigin ? { tunnelOrigin: selected.tunnelOrigin } : {}) };
-    return { ok: true as const, placements: selected.placements, topology };
+    return { ok: true as const, placements: selected.placements, topology,
+        ...(collectorMachineId ? { telemetryMachineId: collectorMachineId } : {}) };
 }
 
 /** The Environment Domain owner supplies its complete live set through its existing pages. */
@@ -343,6 +355,7 @@ export function createOwnServerDomainActions(host: Readonly<{
     readEnvironment: OwnServerDeploymentTargetHostInput['readEnvironment'];
     readReceipt: OwnServerDeploymentTargetHostInput['readReceipt'];
     readInstallation(machineId: string, context: ActionExecutorContext): Promise<string>;
+    readTelemetryCollectorPlacement?: OwnServerDeploymentTargetHostInput['readTelemetryCollectorPlacement'];
     open(id: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null>;
     createContent(content: DeploymentDomainContentV1,
         owner: Awaited<ReturnType<OwnServerDeploymentTargetHostInput['readEnvironment']>>['environment']['owner'],
@@ -388,7 +401,8 @@ export function createOwnServerDomainActions(host: Readonly<{
                         environment, content: opened.content, targetLinkId: original.targetLinkId, context }, host);
                     if (!discovered.ok) return discovered;
                     if (original.placements && !isDeepStrictEqual(original.placements, discovered.placements)) return failure('target_mismatch');
-                    input = { ...preparedInput, placements: [...discovered.placements] };
+                    input = { ...preparedInput, placements: [...discovered.placements],
+                        ...(discovered.telemetryMachineId ? { telemetryMachineId: discovered.telemetryMachineId } : {}) };
                     topology = discovered.topology;
                 }
                 let domain: DeploymentDomainHeaderV1;

@@ -10,7 +10,8 @@ import { deploymentOutputValidationFailure } from './outputValidation';
 import { projectDeploymentFailure } from './deploymentFailure';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { readExpectedDownDomainReferencesForHost } from './targets/ownServer/domainRouteSelection';
+import { readExpectedDownDomainReferencesForHost, readTelemetryCollectorDomainForHost,
+    readTelemetryCollectorPlacementForHost } from './targets/ownServer/domainRouteSelection';
 import { resolvePrivateServiceExportAdmissionForHost } from './targets/ownServer/privateServiceReference';
 import { resolveOwnServerDeploymentIdentityForHost } from './targets/ownServer/paths';
 import { configuration } from '@/configuration';
@@ -57,7 +58,7 @@ import {
     type DeploymentEnvironmentCreateIntentInputV1,
     type DeploymentTransitionInputV1, type DeploymentTeardownInputV1,
     DeploymentChildRpcV1Schema, type DeploymentChildRpcV1,
-    DeploymentDomainMutationResultV1Schema, isDeploymentDomainChildActionIdV1,
+    DeploymentDomainMutationResultV1Schema, DeploymentDomainMachineTopologyV1Schema, isDeploymentDomainChildActionIdV1,
     DeploymentTemplateInstantiateInputV1Schema, deploymentOperationForRootActionV1,
 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -480,6 +481,12 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         if (!installed.ok) return refuse(machineUnavailable(installed.details));
         return installed.machine.installationId;
     };
+    const readTelemetryCollectorPlacement: NonNullable<OwnServerDeploymentTargetHostInput['readTelemetryCollectorPlacement']> = async (machineId, context) => {
+        const machine = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, async () => context.externalActionExecutionAuthorization
+            ? ApiClient.getRequesterMachine(machineId, { authorization: context.externalActionExecutionAuthorization, signal: context.signal })
+            : (await ApiClient.create(host.credentials)).getMachine(machineId, { signal: context.signal }));
+        return machine ? readTelemetryCollectorPlacementForHost(machine) : { kind: 'unavailable', reason: 'collector_unavailable' };
+    };
     const readReceiptHistory = (request: Readonly<{ environmentId: string; context: ActionExecutorContext }>, lineage?: ReadonlySet<string>) =>
         readOwnServerDeploymentReceiptHistoryForHost({ environmentId: request.environmentId, lineage,
             async readPage(cursor) {
@@ -510,6 +517,31 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         writeTransition(request: Omit<OwnServerDeploymentTransition, 'content'> & Readonly<{ content?: DeploymentContentV1 }>):
             ReturnType<OwnServerDeploymentTargetHostInput['writeTransition']>;
     }> = { ...host, ...targetHostReaders,
+        readTelemetryCollectorPlacement,
+        async readTelemetryCollectorDomain(request) {
+            const collector = await readTelemetryCollectorPlacement(request.collectorMachineId, request.context);
+            if (collector.kind !== 'ready') return collector;
+            const authorization = request.context.externalActionExecutionAuthorization;
+            const observer = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, async () => authorization
+                ? ApiClient.getRequesterMachine(host.machineId, { authorization, signal: request.context.signal })
+                : (await ApiClient.create(host.credentials)).getMachine(host.machineId, { signal: request.context.signal }));
+            return readTelemetryCollectorDomainForHost({ serverId: host.serverId, environmentId: request.environmentId,
+                targetLinkId: request.targetLinkId, collectorMachineId: collector.machineId,
+                observerNetworks: observer?.daemonState?.reachability?.privateNetworks ?? [], signal: request.context.signal,
+                open: id => open(id, request.context),
+                list: async (query, signal) => DeploymentActionOutputSchemasV1['deployments.domains.list'].parse(
+                    await storage('deployments.domains.list', query, { ...request.context, signal })),
+                async observe(domain, capture) {
+                    const response = readChildResult(await sendChild(DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'domain',
+                        actionId: 'deployments.domains.verify', machineId: capture.placement.machineId,
+                        installationId: capture.placement.installationId, input: { serverId: host.serverId,
+                            environmentId: domain.environmentId, domainId: domain.id }, expectedDomainRevision: domain.revision,
+                        capture, observeTopology: { environmentId: request.environmentId, deploymentId: request.deployment.id,
+                            actionOperationId: request.deployment.actionOperationId } }), request.context));
+                    const parsed = DeploymentDomainMachineTopologyV1Schema.safeParse(response);
+                    return parsed.success ? parsed.data : null;
+                } });
+        },
         readPreviewDomain(request) {
             return readPreviewDomainForHost(request, {
                 readMetadata: operand => storage('deployments.domains.get', operand, request.context),
@@ -1043,6 +1075,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     };
     const domainHost: Parameters<typeof createOwnServerDomainActions>[0] = { ...host,
         storage, headers, dispatch: sendChild, open, readEnvironment: targetHostReaders.readEnvironment, readReceipt: targetHostReaders.readReceipt, readInstallation,
+        readTelemetryCollectorPlacement,
         async createContent(content, owner, context) {
             const binding = context.externalActionExecutionAuthorization?.binding;
             const reviewedChild = readHostAdmittedReviewedChildV1(context);

@@ -300,6 +300,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         const materializationId = request.materialization.kind === 'review' ? request.materialization.contentArtifactId
             : request.materialization.kind === 'restoration' ? request.materialization.sourceDeploymentId : request.materialization.deploymentId;
         const runtime = await host.runtime.acquire(request, { environment, content, readReferenceEnvironment: host.readEnvironment,
+            readTelemetryCollectorDomain: host.readTelemetryCollectorDomain,
             readPreviewDomain: host.readPreviewDomain,
             ...(retainedSourceIntent ? { retainedSourceIntent } : {}),
             ...(snapshot.deployment ? { deployment: snapshot.deployment } : {}) });
@@ -973,7 +974,8 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     return stageMember(request, recordOwnServerCandidateCleanup(previous, 'succeeded'));
                 }
                 const runtime = await host.runtime.acquire({ ...request, materialization: { kind: 'deployment', deploymentId: receipt.deployment.id } }, { ...snapshot,
-                    readReferenceEnvironment: host.readEnvironment, readPreviewDomain: host.readPreviewDomain });
+                    readReferenceEnvironment: host.readEnvironment, readPreviewDomain: host.readPreviewDomain,
+                    readTelemetryCollectorDomain: host.readTelemetryCollectorDomain });
                 let stageOutput: StageOutput | undefined;
                 try {
                     await runtime.assertCurrent();

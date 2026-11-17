@@ -30,11 +30,22 @@ import type { EnvironmentDomainSecretLaunchAdmissionV1 } from '@happier-dev/depl
 import type { DeploymentChildAdmission } from './deploymentChildAuthorization';
 import type { VerifiedExternalActionExecutionRequest } from '@/app/auth/externalActionExecutionAuthorization';
 import { readDeploymentMembershipAdmissionInTx } from './deploymentMembershipService';
+import { readDeploymentAppEnrollmentsForMachinesInTx } from './deploymentAppEnrollment';
 import { DeploymentDomainProviderCaptureV1Schema, deploymentDomainProviderObservationProofPayloadV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 
 type DeploymentDomainRow = NonNullable<Awaited<ReturnType<Tx['deploymentDomain']['findUnique']>>>;
 type AcceptedDeploymentRead = NonNullable<VerifiedExternalActionExecutionRequest['acceptedDeploymentReceipt']>['read'];
 type Captures = ReturnType<typeof DeploymentDomainCapturedPlacementsV1Schema.parse>;
+
+/** The selected collector's accepted App receipt owns its native placement. */
+export async function readDeploymentDomainCollectorPlacementInTx(tx: Tx, machineId: string) {
+    const selected = await tx.machine.findFirst({ where: { id: machineId, revokedAt: null, replacedByMachineId: null },
+        select: { id: true, installationId: true, deploymentAppDeploymentId: true, revokedAt: true, replacedByMachineId: true } });
+    if (!selected?.installationId) return null;
+    const app = (await readDeploymentAppEnrollmentsForMachinesInTx(tx, { machines: [selected] })).get(machineId);
+    if (selected.deploymentAppDeploymentId && !app) return null;
+    return app?.controller ?? { machineId: selected.id, installationId: selected.installationId };
+}
 function readCaptures(row: Readonly<{ capturedPlacements: unknown }>): Captures | null {
     const parsed = DeploymentDomainCapturedPlacementsV1Schema.safeParse(row.capturedPlacements);
     return parsed.success && parsed.data.length > 0 ? parsed.data : null;
@@ -421,7 +432,14 @@ export async function createDeploymentDomainInTx(tx: Tx, actorAccountId: string,
         return domainResult(row, loaded.row.revision + 1);
     }
     if (link.sourceKind !== 'host' || link.targetKind !== 'ownServer') return deploymentFailure('deployment_conflict');
-    const desiredMembers = membership?.members ?? link.machines;
+    if (input.telemetryMachineId && (membership || input.telemetryMachineId !== loaded.row.telemetryMachineId))
+        return deploymentFailure('deployment_conflict');
+    const collector = input.telemetryMachineId
+        ? await readDeploymentDomainCollectorPlacementInTx(tx, input.telemetryMachineId) : null;
+    const desiredMembers = input.telemetryMachineId
+        ? collector ? [collector] : []
+        : membership?.members ?? link.machines;
+    if (input.telemetryMachineId && !desiredMembers.length) return deploymentFailure('deployment_conflict');
     if (input.placements.some(item => !desiredMembers.some(member => member.machineId === item.machineId && member.installationId === item.installationId)
         && item.machineId !== loaded.row.edgeMachineId)
         || desiredMembers.some(member => !input.placements.some(item => item.machineId === member.machineId && item.installationId === member.installationId))
@@ -429,7 +447,8 @@ export async function createDeploymentDomainInTx(tx: Tx, actorAccountId: string,
         return deploymentFailure('deployment_conflict');
     }
     const machineFailure = membership ? null : await admitDeploymentMachinesInTx(tx, owner,
-        input.placements.map(item => ({ ...item, role: 'target' as const })));
+        [...input.placements.map(item => ({ ...item, role: 'target' as const })),
+            ...(input.telemetryMachineId ? [{ machineId: input.telemetryMachineId, role: 'telemetry' as const }] : [])]);
     if (machineFailure) return machineFailure;
     const contentFailure = membership ? null : await admitDeploymentStoredContentInTx(tx, actorAccountId, owner, input, DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1);
     if (contentFailure) return contentFailure;

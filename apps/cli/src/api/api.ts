@@ -1048,6 +1048,7 @@ export class ApiClient {
         dataEncryptionKey: raw.dataEncryptionKey ?? null,
         ...(keyBasis ? { keyBasis } : {}),
         ...(access ? { access } : {}),
+        ...(raw.deploymentApp === undefined ? {} : { deploymentApp: raw.deploymentApp }),
         metadata: projectMachinePublishedMetadataFromRowV1(raw.metadata ? StoredMachinePublishedMetadataV1Schema.parse(openedMetadata) : null, raw.devcontainerChild),
         metadataVersion: raw.metadataVersion || 0,
         daemonState: raw.daemonState ? StoredMachinePublishedDaemonStateV1Schema.parse(openedDaemonState) : null,

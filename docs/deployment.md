@@ -2649,6 +2649,17 @@ standard `parentbased_traceidratio` sampler and argument through ordinary
 Environment bindings. Public collector exposure for platform deployments still
 requires the deployment ingress owner's in-process target integration.
 
+The cross-Machine source path uses an ordinary Domain with
+`target: { kind: 'telemetry' }`. The Domain owner captures the selected collector's
+native placement and resolves its observed Caddy `privateOrigins` against the
+workload Machine's shared private network. An absent route or unrelated network
+returns a typed unavailable result. The admitted launch reads topology through
+the existing Domain Verify child with its exact retained capture; it does not
+repeat Source authorization. Native loopback collectors retain the existing
+gateway bridge for the receiver's lifetime, restore it from the installed Caddy
+route after receiver restart, and close it when the receiver is withdrawn.
+This path still requires composed native reachability validation.
+
 The in-development deployed collector App uses the existing own-server Compose
 lifecycle and dev-box image owner. It runs the daemon with a dedicated volume
 for the whole `HAPPIER_HOME_DIR`, retaining enrollment credentials, installation
@@ -2657,6 +2668,11 @@ the native carrier for managed enrollment: the container creates an auth request
 the host approves through `approveTerminalAuthRequest`, and the container claims
 and persists its own credential from Home. The enrolled container Machine is the
 collector selected by `telemetryMachineId`.
+
+For that App, its accepted deployment receipt identifies the native host while
+Account-mode Machine metadata carries the private service name and declared
+port. The same telemetry Domain routes to the observed service containers.
+Service identity and port are excluded from Home's public Machine association.
 
 When the controller host belongs to another Team member, the enrolled App keeps
 a lasting credential for the deployer's Account on that host, under the same

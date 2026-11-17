@@ -15,7 +15,13 @@ import type { OwnServerDeploymentRuntimeRequest } from './ownServerDeploymentTar
 import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHostRuntime';
 import * as ownServerHostRuntime from './ownServerDeploymentHostRuntime';
 import { createPlainProjectAccountRefRow, mockProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
-import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createOwnServerDockerBoundary } from './ownServerDeployment.testkit';
@@ -99,6 +105,73 @@ function physicalOwnerSourceRequester() {
 }
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+it.skipIf(process.platform !== 'linux')('reaches its own collector through the retained private container bridge', async context => {
+    const receiver = createServer((_request, response) => response.end('collector'));
+    context.onTestFinished(() => new Promise<void>(resolve => receiver.close(() => resolve())));
+    receiver.listen(0, '127.0.0.1');
+    await once(receiver, 'listening');
+    const address = receiver.address();
+    if (!address || typeof address === 'string') throw new Error('Collector socket unavailable');
+    let receiverEndpoint = `http://127.0.0.1:${address.port}`;
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };
+    const plugin = definePlugin({ id: 'fixture.telemetry', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
+        backgroundServices: [{ declaration: { id: 'collector', title: 'Collector' }, runner: async context => {
+            const remove = context.services.deploymentTelemetry!.exposeEndpoint(() => receiverEndpoint);
+            try { await new Promise<void>(resolve => {
+                if (context.signal.aborted) resolve();
+                else context.signal.addEventListener('abort', () => resolve(), { once: true });
+            }); } finally { remove(); }
+        } }],
+    });
+    const mounted = await createAuthoredAdmittedPluginRuntimeFixture({
+        plugins: [{ manifest: plugin.manifest, files: { 'daemon.mjs': 'export function activate() {}' },
+            instantiateCommittedModule: () => ({ activate: plugin.activate }) }],
+        async resolveContributes(happyHomeDir) { return createResolvedContributionRegistry(projectLoadedPluginContributes({
+            loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external' })); },
+        runtimeOptions: { scopedActionRuntime: { credentials, actionsSettingsProvider: createActionSettingsProvider() },
+            resolveCurrentMachineId: () => 'machine' },
+    });
+    context.onTestFinished(() => mounted.dispose());
+    const keys = nacl.sign.keyPair();
+    vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
+        installationId: 'installation', createdAt: 1, publicKey: Buffer.from(keys.publicKey).toString('base64url'),
+        privateKey: Buffer.from(keys.secretKey).toString('base64url') });
+    const document = 'services: {web: {image: app}}';
+    const definition = { kind: 'stored' as const, contentRevision: 2, document,
+        composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, profiles: [], services: ['web'] };
+    const runtime = createOwnServerDeploymentRuntimeForHost({ credentials, serverId: 'home', machineId: 'machine',
+        serverHttpBaseUrl: 'https://home.test', resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
+        async acquirePluginRuntimeRegistryLease() { return mounted.lease; },
+        async readEnvironmentSecretLaunchAdmission() { return { grants: [], async assertCurrent() {} }; },
+    });
+    const acquired = await runtime.acquire({ ...request, executionRole: 'runtime' }, {
+        deployment: receipt.deployment,
+        environment: { ...environment, environment: { ...environment.environment, telemetryMachineId: 'machine' },
+            content: { ...environment.content, definition } },
+        content: { ...receipt.content, sourceIntent: definition },
+    });
+    try {
+        await acquired.prepareReferenceContainerNetwork!({ engine: { id: 'local', kind: 'native' }, networkId: 'consumer',
+            // Docker transport is external; the bridge and HTTP remain real.
+            docker: { engineId: 'local', async run() { return { exitCode: 0, stdout: JSON.stringify([{ Id: 'consumer', Driver: 'bridge',
+                Scope: 'local', IPAM: { Config: [{ Subnet: '127.0.0.0/8', Gateway: '127.0.0.1' }] } }]) }; } } });
+        const endpoint = await acquired.secrets.resolveNonSecret!({ kind: 'deploymentFact', fact: 'telemetryEndpoint' });
+        expect(typeof endpoint).toBe('string');
+        expect(new URL(endpoint as string).port).not.toBe(String(address.port));
+        expect(await (await fetch(endpoint as string)).text()).toBe('collector');
+        const replacement = createServer((_request, response) => response.end('restarted collector'));
+        context.onTestFinished(() => new Promise<void>(resolve => replacement.close(() => resolve())));
+        replacement.listen(0, '127.0.0.1');
+        await once(replacement, 'listening');
+        const next = replacement.address();
+        if (!next || typeof next === 'string') throw new Error('Replacement socket unavailable');
+        receiverEndpoint = `http://127.0.0.1:${next.port}`;
+        await new Promise<void>(resolve => receiver.close(() => resolve()));
+        expect(await (await fetch(endpoint as string)).text()).toBe('restarted collector');
+    } finally {
+        await acquired.release();
+    }
+});
 beforeEach(async () => {
     const settings = await persistence.readSettings();
     const profile: ServerProfile = {

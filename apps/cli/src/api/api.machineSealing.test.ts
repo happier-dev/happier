@@ -7,6 +7,10 @@ import { runWithServerHttpBaseUrl } from './client/serverHttpBaseUrl';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { encodeBase64, encrypt } from './encryption';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol/crypto/boxBundle';
+import { randomBytes } from 'node:crypto';
 import { ApiClient } from './api';
 import { readHttpStatus } from './client/httpStatusError';
 import { consumeMachineReplacementCandidateAfterRegistration, readMachineReplacementCandidateForActiveServer,
@@ -57,11 +61,12 @@ async function fixture(initialMode: 'plain' | 'e2ee' = 'e2ee') {
   await holder.read();
   const api = await ApiClient.create({ token, encryption: initialMode === 'plain' ? null : { type: 'legacy', secret } });
   return {
-    api, metadata, channel, serverBaseUrl, accountId,
+    api, metadata, channel, serverBaseUrl, accountId, secret,
     run: <T>(action: () => T) => runWithServerHttpBaseUrl(serverBaseUrl, action),
     afterMachine(action: () => void) { afterMachine = action; },
     replacement(value: unknown) { machineReplacement = value; },
     registration: () => registrationBody,
+    publish(value: Record<string, unknown>) { Object.assign(row, value); },
     refuseRegistration(reason: string) { registrationRefusal = reason; },
     change(change: 'mode' | 'epoch') { if (change === 'mode') mode = initialMode === 'plain' ? 'e2ee' : 'plain'; else revoked = true; },
     counts: () => ({ modeReads, identityReads, writes }),
@@ -81,6 +86,30 @@ it('keeps ordinary Machine opening on the connected observed identity', async ()
   const f = await fixture('plain');
   for (let i = 0; i < 2; i++) await expect(f.run(() => f.api.getMachine('machine'))).resolves.toMatchObject({ metadata: f.metadata });
   expect(f.counts()).toEqual({ identityReads: 1, modeReads: 0, writes: 0 });
+});
+
+it('preserves the receipt-owned deployed App association when opening Machine content', async () => {
+  const f = await fixture('plain');
+  const deploymentApp = { environmentId: 'collector-environment', deploymentId: 'collector-deployment',
+    targetLinkId: 'collector-link', controller: { machineId: 'collector-host', installationId: 'collector-installation' } };
+  f.publish({ deploymentApp });
+  await expect(f.run(() => f.api.getMachine('machine'))).resolves.toMatchObject({ deploymentApp });
+});
+
+it('opens a selected foreign collector with the recipient envelope and refuses its custodian envelope', async () => {
+  const f = await fixture('e2ee');
+  const recipientSecret = deriveAccountMachineKeyFromRecoverySecret(f.secret);
+  const recipientPublicKey = deriveBoxPublicKeyFromSeed(recipientSecret);
+  const dataKey = randomBytes(32);
+  const seal = (publicKey: Uint8Array) => encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey,
+    recipientPublicKey: publicKey, randomBytes: size => new Uint8Array(randomBytes(size)) }));
+  const custodianEnvelope = seal(deriveBoxPublicKeyFromSeed(randomBytes(32)));
+  f.publish({ metadata: encodeBase64(encrypt(dataKey, 'dataKey', f.metadata)), dataEncryptionKey: seal(recipientPublicKey),
+    access: { custodian: { accountId: 'other-account', displayName: 'Collector owner' }, role: 'use', resourceMode: 'e2ee', accessState: 'ready' },
+    keyBasis: { dataEncryptionKey: custodianEnvelope, metadataVersion: 1, daemonStateVersion: 0 } });
+  await expect(f.run(() => f.api.getMachine('machine'))).resolves.toMatchObject({ metadata: f.metadata });
+  f.publish({ dataEncryptionKey: custodianEnvelope });
+  await expect(f.run(() => f.api.getMachine('machine'))).rejects.toMatchObject({ code: 'machine_content_key_unavailable' });
 });
 
 it.each([undefined, 'installation_id_mismatch', 'untrusted replacement detail'] as const)(

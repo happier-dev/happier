@@ -11,8 +11,10 @@ describe('machines.list installation discovery', () => {
   it.each(['manage', 'use'] as const)('retains the visible %s target identity without disclosing stored content', async role => {
     const access = { custodian: { accountId: 'other-owner', displayName: 'Owner' }, role,
       resourceMode: 'e2ee', accessState: 'key_pending' };
+    const deploymentApp = { environmentId: 'collector-environment', deploymentId: 'collector-deployment',
+      targetLinkId: 'collector-link', controller: { machineId: 'collector-host', installationId: 'host-installation' } };
     http.get.mockResolvedValue({ status: 200, data: [{ id: 'shared-machine', installationId: 'shared-installation',
-      active: true, revokedAt: null, replacedByMachineId: null, access,
+      active: true, revokedAt: null, replacedByMachineId: null, access, deploymentApp,
       metadata: 'private-metadata', daemonState: 'private-daemon-state', dataEncryptionKey: 'private-wrapped-key',
       installationPublicKey: 'public-key-not-needed',
     }, { id: 'legacy-machine', active: false, revokedAt: null, replacedByMachineId: null }] });
@@ -21,7 +23,7 @@ describe('machines.list installation discovery', () => {
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...inventory });
     const result = await executor.execute('machines.list', {}, { surface: 'agent', authority: 'account_automation', serverId: 'home' });
     expect(result).toMatchObject({ ok: true, result: { items: [
-      { serverId: 'home', machineId: 'shared-machine', installationId: 'shared-installation', access },
+      { serverId: 'home', machineId: 'shared-machine', installationId: 'shared-installation', access, deploymentApp },
       { machineId: 'legacy-machine', installationId: null },
     ] } });
     expect(JSON.stringify(result)).not.toMatch(/private-|public-key-not-needed|requester-token/);

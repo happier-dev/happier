@@ -4,6 +4,7 @@ import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/p
 import axios from '@/api/client/credentialAxios';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { createDefaultPluginInstallationPublisherHeader, type CreatePluginInstallationPublisherHeader } from '@/plugins/installations/publisherProof';
+import { createCollectorDomainBridges, type CollectorDomainNative, type InstalledCollectorCaddy } from './collectorDomainBridge';
 
 export const DEPLOYED_TELEMETRY_PORT_ENV = 'HAPPIER_DEPLOYED_TELEMETRY_PORT';
 
@@ -27,17 +28,26 @@ export interface DeploymentTelemetryHostOptions {
     onRefreshError(error: unknown): void;
     createPublisherHeader?: CreatePluginInstallationPublisherHeader;
     environment?: NodeJS.ProcessEnv;
+    readInstalledCollectorCaddy?: (signal: AbortSignal) => Promise<InstalledCollectorCaddy | null>;
 }
 
 /** One runtime endpoint publication, owned by the existing background invocation. */
 export function createDeploymentTelemetryHost(options: DeploymentTelemetryHostOptions): Readonly<{
     bind(signal: AbortSignal): DeploymentTelemetryServiceV1;
     readEndpoint(): string | null;
+    acquireDomainEndpoint(input: CollectorDomainNative & Readonly<{ networkId: string }>): ReturnType<ReturnType<typeof createCollectorDomainBridges>['acquire']>;
+    restoreDomainEndpoints(): Promise<void>;
+    closeDomainEndpoints(): Promise<void>;
 }> {
     let readEndpoint: (() => string | null) | null = null;
+    const domains = createCollectorDomainBridges({ readEndpoint: () => readEndpoint?.() ?? null,
+        readInstalledCaddy: options.readInstalledCollectorCaddy });
     const path = `/v1/deployments/machines/${encodeURIComponent(options.machineId)}/telemetry-assignments`;
     return {
         readEndpoint: () => readEndpoint?.() ?? null,
+        acquireDomainEndpoint: domains.acquire,
+        restoreDomainEndpoints: domains.restore,
+        closeDomainEndpoints: domains.close,
         bind(signal) {
             function retain(dispose: () => void): () => void {
                 if (signal.aborted) { dispose(); return () => {}; }
@@ -78,8 +88,15 @@ export function createDeploymentTelemetryHost(options: DeploymentTelemetryHostOp
                 },
                 exposeEndpoint(read) {
                     signal.throwIfAborted();
+                    const receiver = new AbortController();
                     readEndpoint = read;
-                    return retain(() => { if (readEndpoint === read) readEndpoint = null; });
+                    domains.publish(AbortSignal.any([signal, receiver.signal]));
+                    void domains.restore().catch(error => { if (!receiver.signal.aborted && !signal.aborted) options.onRefreshError(error); });
+                    return retain(() => {
+                        receiver.abort();
+                        if (readEndpoint === read) readEndpoint = null;
+                        void domains.close().catch(options.onRefreshError);
+                    });
                 },
             };
         },

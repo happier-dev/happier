@@ -258,7 +258,7 @@ export function matchesDeploymentDomainPreparedInputV1(input: Readonly<Record<st
     || input.environmentId !== native.environmentId || input.domainId !== native.domainId
     || input.contentArtifactId !== createDeploymentDomainContentArtifactIdV1(publication)
     || input.contentHeaderVersion !== 1 || input.contentBodyVersion !== 1) return false;
-  const { actionOperationId: _operation, requestId: _request, ...original } = input;
+  const { actionOperationId: _operation, requestId: _request, telemetryMachineId: _selectedCollector, ...original } = input;
   if (computeDeploymentDomainAuthoredMetadataDigestV1(original) === native.authoredMetadataDigest) return true;
   if (!('placements' in original)) return false;
   const { placements: _derivedPlacements, provider: _derivedProvider, ...withoutPlacements } = original;

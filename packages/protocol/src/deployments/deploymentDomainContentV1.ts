@@ -15,6 +15,8 @@ export const DeploymentDomainContentV1Schema = lazyZodSchema(() => z.strictObjec
     target: z.union([z.strictObject({ service: text, kind: z.optional(z.literal('native')),
         containerPort: z.number().check(z.int(), z.minimum(1), z.maximum(65535)),
         path: z.optional(path), redirectTo: z.optional(text) }),
+    z.strictObject({ kind: z.literal('telemetry'), service: z.optional(z.never()), containerPort: z.optional(z.never()),
+        path: z.optional(z.never()), redirectTo: z.optional(z.never()) }),
     z.strictObject({ kind: z.literal('provider'), zone: z.optional(DeploymentDomainProviderZoneV1Schema), service: z.optional(z.never()), containerPort: z.optional(z.never()),
         path: z.optional(z.never()), redirectTo: z.optional(z.never()) })]),
     providerObservation: z.optional(DeploymentDomainProviderResultV1Schema),

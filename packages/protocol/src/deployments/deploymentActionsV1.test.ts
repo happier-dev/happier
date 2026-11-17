@@ -333,6 +333,11 @@ describe('Domain admitted child transport', () => {
         ...child, input: { ...prepared, ...patch } }) })).toBe(false);
     }
     expect(DeploymentChildRpcV1Schema.safeParse({ ...child, input: authored }).success).toBe(false);
+    const privateApp = DeploymentChildRpcV1Schema.parse({ ...child, input: { ...child.input, telemetryMachineId: 'collector-child' },
+      telemetryApp: { environmentId: 'collector-environment', serviceName: 'private-collector-service', port: 4318 } });
+    expect(projectDeploymentChildRoutingV1(privateApp)).toEqual({ ...child, input: privateApp.input });
+    expect(DeploymentChildRoutingV1Schema.safeParse(privateApp).success).toBe(false);
+    expect(doesDeploymentChildInputMatchRootV1({ ...derivation, child: privateApp })).toBe(true);
   });
   it('keeps the admitted Cloudflare connector grant private while preserving exact native child identity', () => {
     const wire = { v: 1, kind: 'domain', actionId: 'deployments.domains.add',

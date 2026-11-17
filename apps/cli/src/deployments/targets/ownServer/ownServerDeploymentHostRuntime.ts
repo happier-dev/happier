@@ -37,7 +37,7 @@ import { createDeploymentImageArchiveCopyForHost } from './imageArchiveCopy';
 import { createOwnServerNativeRuntime } from './nativeRuntime';
 import { acquirePrivateServiceReferenceForwardForHost, resolvePrivateServiceReferenceMaterialForHost } from './privateServiceReference';
 import { createServiceReferenceForwardCustody } from './serviceReferenceForwardCustody';
-import { acquirePrivateServiceContainerBridge } from './privateServiceContainerBridge';
+import { acquirePrivateServiceContainerBridge, PrivateServiceContainerBridgeUnavailableError } from './privateServiceContainerBridge';
 import type { ServiceExportMachineForward } from '@/daemon/peer/iroh/serviceExportMachineForward';
 import { privateServiceForwardAcquisitionError, projectDeploymentFailure } from '../../deploymentFailure';
 import { openDeploymentBackupDestinationForHost, prepareOwnServerPreMigrationBackupOperandsForHost, prepareOwnServerBackupRunOperandsForHost, prepareOwnServerBackupRepositoryOperandsForHost } from './backupDestination';
@@ -109,6 +109,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
         retainedSourceIntent?: DeploymentOwnServerContentV1['sourceIntent'] | null;
         deployment?: DeploymentReceiptHeaderV1;
         readReferenceEnvironment?: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readEnvironment'];
+        readTelemetryCollectorDomain?: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readTelemetryCollectorDomain'];
         readPreviewDomain?: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readPreviewDomain'] }>): Promise<OwnServerDeploymentRuntimeAcquisition & Readonly<{
             sourceIntent: DeploymentOwnServerContentV1['sourceIntent'];
         }>> {
@@ -210,6 +211,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 const retainedLease = lease;
                 let referenceContainerNetwork: Parameters<NonNullable<OwnServerDeploymentRuntimeAcquisition['prepareReferenceContainerNetwork']>>[0] | undefined;
                 const referenceBridges = new Map<ServiceExportMachineForward, ReturnType<typeof acquirePrivateServiceContainerBridge> | undefined>();
+                let telemetryForward: ServiceExportMachineForward | undefined;
                 const materializeBridge = async (forward: ServiceExportMachineForward) => {
                     if (!referenceContainerNetwork) return forward;
                     let bridge = referenceBridges.get(forward);
@@ -217,7 +219,13 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                         bridge = acquirePrivateServiceContainerBridge({ ...referenceContainerNetwork, forward, signal: hostSignal });
                         referenceBridges.set(forward, bridge);
                     }
-                    return await bridge;
+                    try { return await bridge; }
+                    catch (error) {
+                        if (forward === telemetryForward && error instanceof PrivateServiceContainerBridgeUnavailableError) return refuse('collector_unreachable', {
+                            reason: error.reason, nextActions: ['use_native_linux_docker', 'configure_public_collector_route'],
+                        });
+                        throw error;
+                    }
                 };
                 const referenceForwards = createServiceReferenceForwardCustody({ signal: hostSignal, async acquire(selected, lifetimeSignal) {
                     const acquisition = new AbortController();
@@ -267,6 +275,38 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                     async resolveNonSecret(source) {
                         // These primitives belong to the already admitted acquisition.
                         if (source.kind === 'deploymentFact') {
+                            if (source.fact === 'telemetryEndpoint') {
+                                if (environment.environment.telemetryMachineId !== host.machineId) {
+                                    if (!environment.environment.telemetryMachineId || !snapshot.readTelemetryCollectorDomain || !snapshot.deployment)
+                                        return refuse('collector_unreachable', { reason: 'collector_route_unavailable' });
+                                    const route = await snapshot.readTelemetryCollectorDomain({ environmentId: environment.environment.id,
+                                        targetLinkId: request.input.targetLinkId ?? environment.environment.runtimeTargetLinkId!,
+                                        collectorMachineId: environment.environment.telemetryMachineId, deployment: snapshot.deployment,
+                                        context: request.context });
+                                    if (route.kind !== 'ready') return refuse('collector_unreachable', { reason: route.reason });
+                                    return route.endpoint;
+                                }
+                                const readEndpoint = retainedLease.registry.readTelemetryCollectorEndpoint;
+                                const endpoint = readEndpoint?.();
+                                if (!endpoint) return refuse('collector_unreachable', {
+                                    reason: 'receiver_unavailable', nextActions: ['enable_telemetry_role'],
+                                });
+                                if (!telemetryForward) {
+                                    const initial = new URL(endpoint);
+                                    const forward: ServiceExportMachineForward = { host: initial.hostname,
+                                        // A role restart may replace its ephemeral listener. The
+                                        // existing bridge reads this address per TCP connection.
+                                        get port() { const current = readEndpoint?.(); return Number(current ? new URL(current).port : initial.port); },
+                                        observedPath: 'direct', async close() {
+                                            try { await (await referenceBridges.get(forward))?.close(); }
+                                            finally { referenceBridges.delete(forward); }
+                                        } };
+                                    referenceBridges.set(forward, undefined);
+                                    telemetryForward = referenceForwards.adopt(forward);
+                                }
+                                const address = await materializeBridge(telemetryForward);
+                                return `http://${address.host}:${address.port}`;
+                            }
                             if (source.fact === 'domainUrl' || source.fact === 'primaryUrl') {
                                 const planned = await readPreviewDomain(source);
                                 if (source.fact === 'domainUrl' && source.domainId !== planned.domainId)
@@ -515,8 +555,11 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
             }
         },
         prepareDomainCaddy(request) {
-            const routedNetworks = [...new Set(request.replicas.flatMap(replica => [...replica.networkNames]))];
-            if (!request.replicas.length) return { status: 'unavailable', reason: 'required_fact_unavailable',
+            const telemetry = request.domain.target.kind === 'telemetry';
+            const replicaNetworks = [...new Set(request.replicas.flatMap(replica => [...replica.networkNames]))];
+            const routedNetworks = replicaNetworks.length ? replicaNetworks : telemetry
+                ? request.retainedCaddy?.networkNames.length ? [...request.retainedCaddy.networkNames] : ['bridge'] : [];
+            if (!telemetry && !request.replicas.length) return { status: 'unavailable', reason: 'required_fact_unavailable',
                 details: { requiredFact: 'deployed_replicas' } };
             if (!routedNetworks.length) return { status: 'unavailable', reason: 'required_fact_unavailable',
                 details: { requiredFact: 'replica_networks' } };
@@ -611,7 +654,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 ...(request.sourceIntent ? { sourceIntent: request.sourceIntent } : {}),
                 ...(request.sha ? { sha: request.sha } : {}),
                 stageContent: request.stageContent }, { environment, readReferenceEnvironment: request.readReferenceEnvironment,
-                    readPreviewDomain: request.readPreviewDomain });
+                    readPreviewDomain: request.readPreviewDomain, readTelemetryCollectorDomain: request.readTelemetryCollectorDomain });
         },
     };
 }

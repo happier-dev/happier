@@ -220,7 +220,8 @@ export function deploymentChildEffectActionIdForRootV1(value: string, admission?
   if (value === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1) return value;
   if (isDeploymentDomainChildActionIdV1(value)) return value;
   if (isDeploymentMembershipActionIdV1(value, admission)
-    && requestedEffectActionId === 'deployments.domains.add') return requestedEffectActionId;
+    && (requestedEffectActionId === DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1
+      || requestedEffectActionId === DEPLOYMENT_DOMAIN_VERIFY_ACTION_ID_V1)) return requestedEffectActionId;
   if (value === 'deployments.teardown' && requestedEffectActionId === 'deployments.domains.remove') return requestedEffectActionId;
   if (value === 'deployments.environments.create' && admission?.operation === 'create'
     && admission.mode === 'apply' && (admission.catalogApp || admission.preview)) return requestedEffectActionId === 'deployments.deploy'

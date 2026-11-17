@@ -1,6 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { DeploymentDomainNativeRequiredFactV1Schema } from './deploymentDomainFailureV1.js';
 import { DeploymentDomainContentV1Schema } from './deploymentDomainContentV1.js';
+import { DeploymentAppMachineBindingV1Schema } from '../machines/machinePublishedContentV1.js';
 export { DeploymentDomainContentV1Schema, type DeploymentDomainContentV1 } from './deploymentDomainContentV1.js';
 export { DeploymentDomainTunnelOwnershipV1Schema, DeploymentDomainTunnelOwnershipV1ProtocolSchema,
     DeploymentDomainTunnelDispositionV1Schema, DeploymentDomainTunnelDispositionV1ProtocolSchema,
@@ -28,6 +29,9 @@ export { deploymentDomainFailureFactsV1, DeploymentDomainNativeRequiredFactV1Sch
     type DeploymentDomainFailureDetailsV1 } from './deploymentDomainFailureV1.js';
 
 /** Finite installed observations remain inside the private controller-to-target payload. */
+export const DeploymentDomainTelemetryAppV1Schema = lazyZodSchema(() => z.strictObject({
+    environmentId: id, ...DeploymentAppMachineBindingV1Schema.shape,
+}));
 export const DeploymentDomainMachineTopologyV1Schema = lazyZodSchema(() => z.strictObject({
     machineId: id, installationId: id, dockerEngineId: id, privateNetworks: z.array(MachinePrivateNetworkObservationV1Schema),
     caddy: z.strictObject({ status: z.literal('ready'), containerId: id, containerName: id, adminSocketPath: id,
@@ -37,6 +41,9 @@ export const DeploymentDomainMachineTopologyV1Schema = lazyZodSchema(() => z.str
         containerOrigins: z.optional(z.array(z.strictObject({ serverId: id, networkName: id, service: id }))),
         privateOrigins: z.optional(z.array(z.strictObject({ serverId: id, endpoint: id, network: MachinePrivateNetworkObservationV1Schema }))),
     }), replicas: z.array(z.strictObject({ containerName: id, networkNames: z.array(id) })),
+    /** Host-local gateway bridge to this Machine's existing loopback collector. */
+    telemetryBridge: z.optional(z.strictObject({ host: id, port: z.number().check(z.int(), z.minimum(1), z.maximum(65535)), networkId: id })),
+    telemetryApp: z.optional(DeploymentDomainTelemetryAppV1Schema),
 }));
 export type DeploymentDomainMachineTopologyV1 = z.infer<typeof DeploymentDomainMachineTopologyV1Schema>;
 export const DeploymentDomainTopologyV1Schema = lazyZodSchema(() => z.strictObject({
@@ -161,6 +168,8 @@ const domain = { ...environment, domainId: id };
 const mutation = { ...domain, expectedRevision: revision, requestKey: id };
 const addMetadata = () => ({
     ...mutation, expectedDomainRevision: z.optional(revision), targetLinkId: id, expectedTargetLinkRevision: revision,
+    /** Host-prepared placement of a telemetry target, matched to the Environment at admission. */
+    telemetryMachineId: z.optional(id),
     /** Existing admitted rollout/teardown whose membership is being reconciled. */
     membershipDeploymentId: z.optional(id),
     membershipMachines: z.optional(DeploymentOwnServerTargetMachinesV1Schema),

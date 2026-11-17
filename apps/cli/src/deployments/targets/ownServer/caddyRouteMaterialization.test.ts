@@ -1,9 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 import { nativeCaddyDomainRouteIdsV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { materializeCaddyDomainRouteV1, materializeCaddyInitialConfigV1 } from './caddyRouteMaterialization';
+import { materializeCaddyDomainRouteV1, materializeCaddyInitialConfigV1,
+    materializeCaddyDomainRemovalV1, materializeCaddyDomainReplicaSetV1 } from './caddyRouteMaterialization';
 import { logger } from '@/ui/logger';
 
 describe('Caddy public TLS materialization', () => {
+    it('routes a deployed telemetry App through its private declared replica port as a local origin', () => {
+        const material = materializeCaddyDomainRouteV1({ domainId: 'collector-app', listener: 'privateOrigin',
+            domain: { hostname: 'collector.example.test', target: { kind: 'telemetry' } },
+            upstreams: { kind: 'replicas', containerNames: ['collector-1'], containerPort: 4318 },
+            telemetryPrivateHosts: ['100.70.0.2'], privateSourceRanges: ['100.64.0.0/10'] });
+        expect(material.replicaProxy?.upstreams).toEqual([{ dial: 'collector-1:4318' }]);
+        expect(material.replicaProxy).toHaveProperty('headers.request.delete', ['X-Happier-Fallback']);
+        expect(material.route.match).toEqual([{ host: ['collector.example.test', '100.70.0.2'] }]);
+        const observed = materializeCaddyDomainRemovalV1({ domainId: 'collector-app', listener: 'privateOrigin',
+            domain: { hostname: 'collector.example.test', target: { kind: 'telemetry' } } },
+            { route: material.route, fallbackRoute: material.fallbackRoute });
+        expect(observed?.replicaProxy?.upstreams).toEqual([{ dial: 'collector-1:4318' }]);
+        if (!observed) throw new Error('The installed collector App route must remain observable');
+        expect(materializeCaddyDomainReplicaSetV1(observed, ['collector-2']).replicaProxy?.upstreams)
+            .toEqual([{ dial: 'collector-2:4318' }]);
+    });
     it('routes an unprobed Domain without active checks, extra path matches or authentication exemptions', () => {
         const material = materializeCaddyDomainRouteV1({ domainId: 'unchecked', listener: 'privateOrigin',
             domain: { hostname: 'app.example.test', target: { service: 'web', containerPort: 3000, path: '/app' } },

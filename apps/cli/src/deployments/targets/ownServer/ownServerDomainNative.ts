@@ -179,6 +179,9 @@ export function createOwnServerDomainNative(host: Readonly<{
         const removing = job.kind === 'domain' ? !job.capture.desired : isDeploymentDomainRemoveActionIdV1(job.actionId);
         const observing = job.kind === 'domain' && job.actionId === 'deployments.domains.verify';
         const withoutWorkload = removing || observing || job.kind === 'domainDns';
+        const telemetryApp = job.kind === 'domainDiscover' ? job.telemetryApp : job.kind === 'domain'
+            ? job.topology?.machines.find(machine => machine.machineId === host.machineId
+                && machine.installationId === identity.installationId)?.telemetryApp : undefined;
         let environmentContent: DeploymentEnvironmentDetailV1['content'] | undefined;
         let members: Array<{ machineId: string; installationId: string; state: 'active' }> = [];
         if (job.kind === 'domainDiscover') {
@@ -186,7 +189,11 @@ export function createOwnServerDomainNative(host: Readonly<{
             const link = environment.targetLinks.find(item => item.targetLink.id === job.input.targetLinkId)?.targetLink;
             if (!link || link.targetKind !== 'ownServer') return refuse('target_mismatch');
             environmentContent = environment.content;
-            members = (await readDomainIngressMembersForHost(link,
+            if (opened.content.target.kind === 'telemetry') {
+                if (!job.input.telemetryMachineId || job.input.telemetryMachineId !== environment.environment.telemetryMachineId) return refuse('target_mismatch');
+                members = telemetryApp || job.input.telemetryMachineId === host.machineId
+                    ? [{ machineId: host.machineId, installationId: identity.installationId, state: 'active' }] : [];
+            } else members = (await readDomainIngressMembersForHost(link,
                 'membershipMachines' in job.input ? job.input.membershipMachines : undefined, context, host.readReceipt)).map(member => ({
                 machineId: member.machineId, installationId: member.installationId, state: 'active' }));
         } else if (job.kind === 'domain' && !withoutWorkload) {
@@ -207,18 +214,22 @@ export function createOwnServerDomainNative(host: Readonly<{
             environmentContent = { ...environmentContent, ingress: resolved.ingress };
         }
         const member = members.find(member => member.machineId === host.machineId && member.installationId === identity.installationId);
-        if (!withoutWorkload && member) await host.ensureServiceObservations?.({
-            environmentId: job.input.environmentId, composeService: opened.content.target.service,
+        const telemetry = opened.content.target.kind === 'telemetry';
+        const nativeService = member && (!telemetry || telemetryApp);
+        const serviceName = telemetryApp?.serviceName ?? opened.content.target.service;
+        const serviceEnvironmentId = telemetryApp?.environmentId ?? job.input.environmentId;
+        if (!withoutWorkload && nativeService) await host.ensureServiceObservations?.({
+            environmentId: serviceEnvironmentId, composeService: serviceName,
         });
         const lease = withoutWorkload ? undefined
             : await (host.acquirePluginRuntimeRegistryLease ?? acquireAuthoritativePluginRuntimeRegistryLease)();
         const custody = createProjectNativeInvocationCustody({ signal });
         try {
-            const service = !withoutWorkload && member ? lease!.registry.projectManagedServices.listProjectServices().find(service =>
-                service.kind === 'environment' && service.environmentId === job.input.environmentId
-                && service.composeService === opened.content.target.service && service.machineId === host.machineId) : undefined;
+            const service = !withoutWorkload && nativeService ? lease!.registry.projectManagedServices.listProjectServices().find(service =>
+                service.kind === 'environment' && service.environmentId === serviceEnvironmentId
+                && service.composeService === serviceName && service.machineId === host.machineId) : undefined;
             let docker: ProjectNativeDockerPort;
-            if (job.kind !== 'domainDns' && !withoutWorkload && member) {
+            if (job.kind !== 'domainDns' && !withoutWorkload && nativeService) {
                 if (!service?.readNativeDocker) return serviceUnavailable(job, 'service_docker');
                 docker = await service.readNativeDocker({ signal });
             } else {
@@ -240,17 +251,17 @@ export function createOwnServerDomainNative(host: Readonly<{
                 const result = await docker.run(command.args, command.signal ?? signal, command.inputBytes);
                 return { code: result.exitCode, stdout: result.stdout, stderr: result.stderr ?? '' };
             };
-            const machine = withoutWorkload ? null : await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, async () => context.externalActionExecutionAuthorization
+            const machine = withoutWorkload && !(job.kind === 'domain' && job.observeTopology) ? null : await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, async () => context.externalActionExecutionAuthorization
                 ? ApiClient.getRequesterMachine(host.machineId, { authorization: context.externalActionExecutionAuthorization, signal,
                     effectActionId: job.actionId })
                 : (await ApiClient.create(host.credentials)).getMachine(host.machineId, { signal }));
             const privateNetworks = machine?.daemonState?.reachability?.privateNetworks ?? [];
             const observed = service?.readNativeContainers?.();
-            const replicas = job.kind === 'domainDns' ? [] : observed?.filter(container => container.service === opened.content.target.service).map(container => {
+            const replicas = job.kind === 'domainDns' ? [] : observed?.filter(container => container.service === serviceName).map(container => {
                 if (!container.containerName || !container.networkNames) return serviceUnavailable(job, 'container_identity');
                 return { containerName: container.containerName, networkNames: [...container.networkNames] };
             }) ?? [];
-            if (job.kind !== 'domainDns' && !withoutWorkload && member && !replicas.length) return serviceUnavailable(job, 'service_replicas');
+            if (job.kind !== 'domainDns' && !withoutWorkload && nativeService && !replicas.length) return serviceUnavailable(job, 'service_replicas');
             let caddy = await observeNativeCaddyContainer({ privateNetworks }, { run, signal });
             const retainedCaddy = caddy.status === 'ready' ? caddy : undefined;
             // Only an admitted Domain add prepares or reconciles infrastructure. Verify,
@@ -258,7 +269,7 @@ export function createOwnServerDomainNative(host: Readonly<{
             if (job.kind === 'domainDiscover' && isDeploymentDomainAddActionIdV1(job.actionId) && member && environmentContent
                 && (caddy.status === 'needs_setup' || caddy.status === 'stopped'
                     || caddy.status === 'unavailable' && caddy.reason === 'required_fact_unavailable'
-                    || retainedCaddy && (retainedCaddy.containerOrigins?.length === 0
+                    || retainedCaddy && ((!telemetry && retainedCaddy.containerOrigins?.length === 0)
                         || replicas.some(replica => replica.networkNames.some(name => !retainedCaddy.networkNames.includes(name)))
                         || (!environmentContent.ingress
                             || environmentContent.ingress.kind === 'edgeCaddy' && environmentContent.ingress.edgeMachineId === host.machineId)
@@ -287,9 +298,17 @@ export function createOwnServerDomainNative(host: Readonly<{
                 caddy.status === 'unavailable' ? caddy.details : undefined);
             if (job.kind === 'domain' && caddy.status === 'ready' && !caddy.servers.some(server => server.serverId === job.capture.placement.nativeServer
                 && (job.capture.listener === 'public' ? server.tls : !server.tls && server.automaticHttpsDisabled))) return refuse('target_mismatch');
+            let telemetryBridge: { host: string; port: number; networkId: string } | undefined;
+            if (telemetry && !telemetryApp && member && !withoutWorkload && caddy.status === 'ready') {
+                const networkId = caddy.networkNames[0];
+                const acquireEndpoint = lease?.registry.acquireTelemetryCollectorDomainEndpoint;
+                if (!networkId || !acquireEndpoint) return serviceUnavailable(job, 'route_upstreams');
+                telemetryBridge = await acquireEndpoint({ docker, engine: { id: docker.engineId, kind: docker.engineKind }, networkId });
+            }
             return { identity, signal, environmentContent, members, domain: opened.content, docker, run, caddy,
                 get topology() { return DeploymentDomainMachineTopologyV1Schema.parse({ machineId: host.machineId,
-                    installationId: identity.installationId, dockerEngineId: docker.engineId, privateNetworks, caddy, replicas }); },
+                    installationId: identity.installationId, dockerEngineId: docker.engineId, privateNetworks, caddy, replicas,
+                    ...(telemetryBridge ? { telemetryBridge } : {}), ...(telemetryApp ? { telemetryApp } : {}) }); },
                 async release() { try { await custody.release(); } finally { custody.dispose(); await lease?.release(); } } };
         } catch (error) {
             try { await custody.release(); } finally { custody.dispose(); await lease?.release(); }
@@ -404,6 +423,7 @@ export function createOwnServerDomainNative(host: Readonly<{
                 if (networkExposure.kind !== 'ready') return failure(job, networkExposure.reason,
                     networkExposure.details ?? { requiredFact: networkExposure.requiredFact, remedy: networkExposure.remedy },
                     networkExposure.failureCause);
+                if (job.observeTopology) return topology;
                 return await signServingObservation({ capture: job.capture, state: 'active', networkExposure });
             }
             if (!job.capture.desired) {
@@ -433,6 +453,24 @@ export function createOwnServerDomainNative(host: Readonly<{
                     ...(basicAuth ? { basicAuth } : {}), publicTls });
                 if (selected.status !== 'ready') return refuse(selected.reason, 'details' in selected ? selected.details : undefined);
                 route = selected.route;
+            } else if (domain.target.kind === 'telemetry') {
+                const bridge = topology.telemetryBridge;
+                const app = topology.telemetryApp;
+                const names = topology.replicas.map(replica => replica.containerName);
+                let upstreams: CaddyDomainRouteInput['upstreams'];
+                if (app) {
+                    const first = names[0];
+                    if (!first) return serviceUnavailable(job, 'route_upstreams');
+                    upstreams = { kind: 'replicas', containerNames: [first, ...names.slice(1)], containerPort: app.port };
+                } else {
+                    if (!bridge) return serviceUnavailable(job, 'route_upstreams');
+                    upstreams = { kind: 'privateOrigins', endpoints: [`${bridge.host}:${bridge.port}`] };
+                }
+                const selected = selectPrivateCaddyOriginNetwork({ observerNetworks: topology.privateNetworks, members });
+                route = { ...routeIdentity, upstreams,
+                    ...(bridge ? { telemetryBridgeNetworkId: bridge.networkId } : {}),
+                    telemetryPrivateHosts: topology.caddy.privateOrigins?.map(origin => new URL(`http://${origin.endpoint}`).hostname),
+                    privateSourceRanges: selected.status === 'ready' ? selected.sourceRanges : [] };
             } else {
                 const selected = selectPrivateCaddyOriginNetwork({ observerNetworks: topology.privateNetworks, members });
                 if (selected.status !== 'ready' && members.filter(member => member.state === 'active').length > 1) routeState = 'warning';

@@ -5,7 +5,7 @@ import { PluginJsonValueV2Schema } from '../plugins/contributions/jsonSchema.js'
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
 import type { DeploymentChildRpcV1 } from './deploymentChildRpcV1.js';
-import { DeploymentDomainChildRoutingV1Schema, DeploymentDomainDiscoverChildRpcV1Schema } from './deploymentChildRpcV1.js';
+import { DeploymentDomainChildRoutingV1Schema, DeploymentDomainDiscoverChildRoutingV1Schema } from './deploymentChildRpcV1.js';
 import { DeploymentTeardownStepV1Schema } from './deploymentTeardownRequestV1.js';
 
 const common = { v: z.literal(1), actionId: z.enum(['deployments.deploy', 'deployments.rollback', 'deployments.promote']),
@@ -27,7 +27,7 @@ export const DeploymentChildRoutingV1Schema = lazyZodSchema(() => {
     z.strictObject({ v: z.literal(1), kind: z.literal('dataRole'), actionId: z.literal('deployments.bindings.set'),
         machineId: id, installationId: id, input: z.strictObject({ serverId: id, environmentId: id, expectedRevision: revision }),
         targetLinkId: id, deploymentId: id, service: id, candidateContent: z.optional(DeploymentArtifactContentReferenceV1Schema) }),
-    DeploymentDomainChildRoutingV1Schema, DeploymentDomainDiscoverChildRpcV1Schema,
+    DeploymentDomainChildRoutingV1Schema, DeploymentDomainDiscoverChildRoutingV1Schema,
     z.strictObject({ v: z.literal(1), kind: z.literal('domainDns'), actionId: z.literal('deployments.domains.verify'),
         machineId: id, installationId: id, input: z.strictObject({ serverId: id, environmentId: id,
             targetLinkId: id, expectedRevision: revision, expectedTargetLinkRevision: revision, requestKey: id }) }),
@@ -73,7 +73,7 @@ export function projectDeploymentChildRoutingV1(job: DeploymentChildRpcV1): Depl
         const { topology: _privateTopology, cloudflareConnector: _privateConnector, ...routing } = job;
         return routing;
     }
-    if (job.kind === 'domainDiscover') return job;
+    if (job.kind === 'domainDiscover') { const { telemetryApp: _privateApp, ...routing } = job; return routing; }
     if (job.kind === 'prepare') return { v: job.v, kind: job.kind, actionId: job.actionId,
         machineId: job.machineId, installationId: job.installationId, input: {
             serverId: job.input.serverId, environmentId: job.input.environmentId, targetLinkId: job.input.targetLinkId },

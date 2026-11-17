@@ -26,6 +26,7 @@ import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/clie
 // CLI projections of that metadata and never alter machine identity.
 const ACCOUNT_MACHINE_ROW_SCHEMA = z.looseObject({ ...ExternalActionMachineBootstrapV1Schema.shape,
     managedInputRuntime: z.optional(z.nullable(ManagedMachineInputRuntimeV1Schema)),
+    deploymentApp: MachinePublishedRowV1Schema.shape.deploymentApp,
     metadata: z.optional(MachinePublishedRowV1Schema.shape.metadata), activeAt: z.optional(z.nullable(z.number())), access: z.optional(AccessibleMachineAccessV1Schema),
     presenceProtocolVersion: MachinePublishedRowV1Schema.shape.presenceProtocolVersion,
     devcontainerChild: z.optional(z.nullable(DevcontainerChildProjectionV1Schema)) });
@@ -53,6 +54,7 @@ export type CurrentAccountMachineInventoryItem = Readonly<{
   operationProtocolCapabilities?: unknown;
   operationProtocolCapabilitiesRevision?: unknown;
   devcontainerChild?: DevcontainerChildProjectionV1;
+  deploymentApp?: z.infer<typeof ACCOUNT_MACHINE_ROW_SCHEMA>['deploymentApp'];
 }>;
 
 export type CurrentAccountMachineTargetResolution =
@@ -218,6 +220,7 @@ async function projectCurrentAccountMachineInventory(
         ...(metadata ? { platform: metadata.platform, homeDir: metadata.homeDir, ...(metadata.arch === undefined ? {} : { arch: metadata.arch }) } : {}),
         ...(metadata?.agentInventory ? { agentInventory: metadata.agentInventory } : {}),
         ...(row.access ? { access: row.access } : {}),
+        ...(row.deploymentApp === undefined ? {} : { deploymentApp: row.deploymentApp }),
         ...(row.sharedWithTeamScope ? { sharedWithTeamScope: row.sharedWithTeamScope } : {}),
         ...(params.projection !== 'hostFacts' && row.devcontainerChild ? { devcontainerChild: row.devcontainerChild } : {}),
         ...(params.projection === 'hostFacts' || row.operationProtocolCapabilities === undefined ? {} : { operationProtocolCapabilities: row.operationProtocolCapabilities }),
