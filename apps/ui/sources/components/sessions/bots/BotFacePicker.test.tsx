@@ -10,6 +10,8 @@ import {
   type SessionBotFaceV1,
 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { normaliseAndValidateBotFaceShape } from '@happier-dev/protocol/sessions/identity/sessionBotFaceV1';
+import type { AccountPetLibraryEntryV1 } from '@happier-dev/protocol/pets/accountLibrary';
+import { PET_PACKAGE_FORMAT_CODEX_ATLAS_V1 } from '@happier-dev/protocol/pets/constants';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
@@ -23,6 +25,10 @@ vi.mock('@shopify/react-native-skia', async () =>
   (
     await import('@/dev/testkit/mocks/reactNativeSkia')
   ).createReactNativeSkiaMock(),
+);
+// The popover's portal and window measurement are its platform boundary; the chooser beneath it is real.
+vi.mock('@/components/ui/popover', async (importOriginal) =>
+  (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal),
 );
 vi.mock(
   '@/components/sessions/bots/face/BotFaceRasterView',
@@ -340,5 +346,113 @@ describe('BotFacePicker', () => {
     } finally {
       setAccountStyle('dither');
     }
+  });
+});
+
+describe('BotFacePicker pets (R11)', () => {
+  async function enablePets(accountPets: readonly { accountPetId: string; displayName: string }[]) {
+    const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit');
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    upsertAndActivateServer({ serverUrl: 'https://pet-faces.example.test', scope: 'tab' });
+    storage.getState().applySettingsLocal({ experiments: true, featureToggles: { 'pets.companion': true, 'pets.sync': true } });
+    primeServerFeaturesSnapshot({ snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse({
+      features: { pets: { companion: { enabled: true }, sync: { enabled: true } } },
+    }) } });
+    await act(async () => {
+      storage.getState().applyAccountPets(accountPets.map((pet): AccountPetLibraryEntryV1 => ({
+        accountPetId: pet.accountPetId,
+        packageFormat: PET_PACKAGE_FORMAT_CODEX_ATLAS_V1,
+        manifest: { id: pet.accountPetId, displayName: pet.displayName, spritesheetPath: 'spritesheet.webp' },
+        spritesheetAssetRef: { assetId: `asset-${pet.accountPetId}`, mediaType: 'image/webp', digest: `digest-${pet.accountPetId}`, sizeBytes: 1024 },
+        digest: `digest-${pet.accountPetId}`,
+        sizeBytes: 1024,
+        createdAt: 1,
+        updatedAt: 1,
+        origin: { kind: 'manualImport' },
+      })));
+    });
+  }
+  afterEach(async () => {
+    const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    resetServerFeaturesClientForTests();
+  });
+
+  it('offers Pet as a seventh style; choosing it wears Blink over the Bot\'s own style, body and colour', async () => {
+    await enablePets([]);
+    const onChange = vi.fn();
+    const own = { style: 'dither' as const, body: 'crab' as const, palette: 'sand' as const, seed: 'bot-a' };
+    const screen = await renderScreen(<BotFacePickerPanel seed="bot-a" face={own} onChange={onChange} />);
+    expect(tileIds(screen.root, 'bot-face-style')).toEqual(['account-default', ...BotFaceStyleSchema.options, 'pet']);
+    await press(screen.root, 'bot-face-style:pet');
+    expect(onChange.mock.calls).toEqual([[{ ...own, pet: { kind: 'builtIn', petId: 'blink' } }]]);
+  });
+
+  it('wearing a pet: built-ins, then Account pets, then Add a pet; body, colour and Surprise me step aside; a style takes it off', async () => {
+    await enablePets([{ accountPetId: 'mochi', displayName: 'Mochi' }]);
+    const onChange = vi.fn();
+    const face = { style: 'dither' as const, body: 'crab' as const, seed: 'bot-a', pet: { kind: 'accountPet' as const, accountPetId: 'mochi' } };
+    const screen = await renderScreen(<BotFacePickerPanel seed="bot-a" face={face} onChange={onChange} />);
+    expect(tileIds(screen.root, 'bot-face-pet')).toEqual([
+      'builtIn:blink', 'builtIn:fury', 'builtIn:milo', 'builtIn:oli', 'builtIn:titi', 'accountPet:mochi', 'find-pet', 'create-pet',
+    ]);
+    expect(tileIds(screen.root, 'bot-face-body')).toEqual([]);
+    expect(tileIds(screen.root, 'bot-face-colour')).toEqual([]);
+    expect(screen.root.findAll(n => n.props.testID === 'bot-face-surprise')).toEqual([]);
+    expect(noteText(screen.root)).toContain('Mochi');
+    await press(screen.root, 'bot-face-pet:builtIn:oli');
+    await press(screen.root, 'bot-face-style:solid');
+    expect(onChange.mock.calls).toEqual([
+      [{ ...face, pet: { kind: 'builtIn', petId: 'oli' } }],
+      [{ style: 'solid', body: 'crab', seed: 'bot-a' }],
+    ]);
+  });
+
+  it('draws a worn pet at every face entry; a pet the viewer cannot read shows the Bot\'s own face; a surface rendition wins', async () => {
+    await enablePets([]);
+    const { BotFacePet } = await import('./face/BotFacePet');
+    const worn = { style: 'pixel' as const, seed: 'bot-a', pet: { kind: 'builtIn' as const, petId: 'milo' } };
+    const gone = { ...worn, pet: { kind: 'accountPet' as const, accountPetId: 'gone' } };
+    const screen = await renderScreen(
+      <>
+        <SessionBotFace facts={{ seed: 'bot-a', face: worn }} size={24} />
+        <SessionBotFace facts={{ seed: 'bot-a', face: gone }} size={24} testID="gone" />
+        <SessionBotFace facts={{ seed: 'bot-a', face: worn }} size={24} style="planet" testID="moon" />
+      </>,
+    );
+    expect(screen.findAllByType(BotFacePet)).toHaveLength(1);
+    const styleOf = (testID: string) => screen.root.find((n) => n.props?.testID === testID && typeof n.props?.style === 'string').props.style;
+    expect(styleOf('gone')).toBe('pixel');
+    expect(styleOf('moon')).toBe('planet');
+  });
+
+  it('opens a Bot\'s chooser wearing a pet handed over by "Use as a Bot\'s face…": one save, nothing else changed', async () => {
+    await enablePets([]);
+    execute.mockReset();
+    execute.mockResolvedValue({ ok: true, result: {} });
+    const { SessionBotFaceMark } = await import('./SessionBotFaceMark');
+    const { requestBotFaceWear } = await import('./botFaceWearIntent');
+    const face = { style: 'dither' as const, body: 'crab' as const, seed: 'kept' };
+    const screen = await renderScreen(
+      <SessionBotFaceMark sessionId="session-1" serverId="server-a" facts={{ seed: 'kept', face }} size={32} />,
+    );
+    expect(screen.root.findAll(n => n.props.testID === 'bot-face-picker')).toEqual([]);
+    await act(async () => { requestBotFaceWear('session-1', { kind: 'builtIn', petId: 'milo' }); });
+    expect(execute.mock.calls.map(call => [call[0], call[1]])).toEqual([
+      ['session.bot.face.set', { sessionId: 'session-1', face: { ...face, pet: { kind: 'builtIn', petId: 'milo' } } }],
+    ]);
+    expect(screen.root.findAll(n => n.props.testID === 'bot-face-picker').length).toBeGreaterThan(0);
+    // Another Bot's handoff is not this one's.
+    await act(async () => { requestBotFaceWear('session-2', { kind: 'builtIn', petId: 'oli' }); });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a deleted pet as the face the Bot shows: its own style chosen, no pet section', async () => {
+    await enablePets([]);
+    const face = { style: 'pixel' as const, seed: 'bot-a', pet: { kind: 'accountPet' as const, accountPetId: 'deleted' } };
+    const screen = await renderScreen(<BotFacePickerPanel seed="bot-a" face={face} onChange={() => {}} />);
+    const tile = (id: string) => screen.root.find((n) => n.props.testID === `bot-face-style:${id}` && typeof n.props.onPress === 'function');
+    expect(tile('pixel').props['aria-checked']).toBe(true);
+    expect(tileIds(screen.root, 'bot-face-pet')).toEqual([]);
   });
 });

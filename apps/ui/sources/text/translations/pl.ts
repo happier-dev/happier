@@ -5675,6 +5675,20 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     },},
 
   settingsPets: {
+  store: {
+    poses: "Pozy",
+    pose: {
+      idle: "Spoczynek",
+      runningRight: "Idzie w prawo",
+      runningLeft: "Idzie w lewo",
+      waving: "Macha",
+      jumping: "Skacze",
+      failed: "Błąd",
+      waiting: "Czeka",
+      running: "Pracuje",
+      review: "Przegląda",
+    },
+  },
     title: 'Zwierzaki',
     previewTitle: 'Towarzysz Blink',
     previewSubtitle: 'Mały towarzysz dla stanu sesji i uwagi wymaganej przy przeglądzie.',
@@ -20701,7 +20715,7 @@ settingsSession: {
             startBlank: "Zacznij pustego bota", menuSubtitle: "Skonfiguruj Happier i odkryj, co potrafi",
         },
         name: { placeholder: "Nowy bot", label: "Nazwa bota", hint: "Zostaw nazwę pustą, aby bot nazwał się sam." },
-        face: { ...botFaceNameTranslations.pl, title: "Wybierz twarz", change: "Zmień twarz", style: "Styl", body: "Ciało", colour: "Kolor", styles: { dither: "Dither", pixel: "Piksel", solid: "Pełny", dots: "Kropki", planet: "Planeta" }, note: "Wygenerowana z tego bota; zmienia się tylko jego twarz.", useDefault: "Użyj mojego domyślnego", surprise: "Zaskocz mnie", shuffle: "Losuj obrazek", custom: "Własny", surpriseNote: "Za każdym razem nowy kształt. Wygenerowany z tego bota; zmienia się tylko jego twarz.", customNote: "Ten kształt narysował twój bot. Poproś go o inny albo wybierz tutaj.", customEmptyNote: "Własny: poproś tego bota o kształt, np. „zamień się w kota”.", failed: "Nie udało się zapisać tej twarzy. Spróbuj ponownie." },
+        face: { ...botFaceNameTranslations.pl, title: "Wybierz twarz", change: "Zmień twarz", style: "Styl", body: "Ciało", colour: "Kolor", styles: { dither: "Dither", pixel: "Piksel", solid: "Pełny", dots: "Kropki", planet: "Planeta" }, note: "Wygenerowana z tego bota; zmienia się tylko jego twarz.", useDefault: "Użyj mojego domyślnego", surprise: "Zaskocz mnie", shuffle: "Losuj obrazek", custom: "Własny", surpriseNote: "Za każdym razem nowy kształt. Wygenerowany z tego bota; zmienia się tylko jego twarz.", customNote: "Ten kształt narysował twój bot. Poproś go o inny albo wybierz tutaj.", pet: "Zwierzak", findPet: "Znajdź zwierzaka", createPet: "Utwórz…", petAccountNote: ({ name }: { name: string }) => `Tylko ty widzisz ${name}. Osoby, którym udostępniasz tego Bota, widzą jego własną twarz.`, wearTitle: ({ name }: { name: string }) => `Użyj ${name} jako twarzy dla…`, wearBody: "Bot zachowuje pod spodem własną twarz. Osoby, którym go udostępniasz, widzą właśnie ją.", wearNewBot: ({ name }: { name: string }) => `${name} będzie jego twarzą`, petEmptyNote: "Zwierzaki dodane w Ustawienia › Zwierzaki pojawią się tutaj.", customEmptyNote: "Własny: poproś tego bota o kształt, np. „zamień się w kota”.", failed: "Nie udało się zapisać tej twarzy. Spróbuj ponownie." },
         create: {
             description: "Powiedz mu, czym ma się zajmować. Nazwę i instrukcje możesz zmienić w każdej chwili.",
             placeholder: "Czym ma się zajmować ten bot?",

@@ -92,8 +92,9 @@ function flattenStyle(style: unknown): Record<string, unknown> {
     return style && typeof style === 'object' ? { ...style } as Record<string, unknown> : {};
 }
 
+/** The atlas offset behind the sprite's window (the image's positioned parent). */
 function spriteTransform(screen: Awaited<ReturnType<typeof renderScreen>>) {
-    return screen.root.findAllByType('Image')[0]?.props.style.transform;
+    return flattenStyle(screen.root.findAllByType('Image')[0]?.parent?.props.style).transform;
 }
 
 function closestMascot(selector: string): object | null {
@@ -500,8 +501,8 @@ describe('PetAppShellCompanionMount', () => {
         const screen = await renderScreen(<PetAppShellCompanionMount />);
 
         expect(spriteTransform(screen)).toEqual([
-            { translateX: -0 },
-            { translateY: -0 },
+            { translateX: 0 },
+            { translateY: 0 },
         ]);
 
         await act(async () => {
@@ -509,8 +510,8 @@ describe('PetAppShellCompanionMount', () => {
         });
 
         expect(spriteTransform(screen)).toEqual([
-            { translateX: -0 },
-            { translateY: -0 },
+            { translateX: 0 },
+            { translateY: 0 },
         ]);
     });
 
@@ -555,8 +556,8 @@ describe('PetAppShellCompanionMount', () => {
 
         expect(screen.findByTestId('pet-companion-state')?.props['data-pet-state']).toBe('idle');
         expect(spriteTransform(screen)).toEqual([
-            { translateX: -0 },
-            { translateY: -0 },
+            { translateX: 0 },
+            { translateY: 0 },
         ]);
         randomSpy.mockRestore();
     });
@@ -581,8 +582,8 @@ describe('PetAppShellCompanionMount', () => {
 
         expect(screen.findByTestId('pet-companion-state')?.props['data-pet-state']).toBe('idle');
         expect(spriteTransform(screen)).toEqual([
-            { translateX: -0 },
-            { translateY: -0 },
+            { translateX: 0 },
+            { translateY: 0 },
         ]);
         randomSpy.mockRestore();
     });

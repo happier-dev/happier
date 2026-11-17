@@ -638,19 +638,22 @@ describe('DesktopPetOverlayRoute selectors', () => {
         const { DesktopPetOverlayRoute } = await import('./DesktopPetOverlayRoute');
 
         const screen = await renderScreen(<DesktopPetOverlayRoute />);
+        // The atlas offset behind the sprite's window (the image's positioned parent).
+        const atlasOffset = () => [screen.root.findAllByType('Image')[0]?.parent?.props.style].flat()
+            .reduce((style, entry) => ({ ...style, ...entry }), {}).transform;
 
-        expect(screen.root.findAllByType('Image')[0]?.props.style.transform).toEqual([
-            { translateX: -0 },
-            { translateY: -0 },
+        expect(atlasOffset()).toEqual([
+            { translateX: 0 },
+            { translateY: 0 },
         ]);
 
         await act(async () => {
             vi.advanceTimersByTime(300);
         });
 
-        expect(screen.root.findAllByType('Image')[0]?.props.style.transform).toEqual([
-            { translateX: -0 },
-            { translateY: -0 },
+        expect(atlasOffset()).toEqual([
+            { translateX: 0 },
+            { translateY: 0 },
         ]);
     });
 

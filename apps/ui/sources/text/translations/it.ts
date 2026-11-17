@@ -6020,6 +6020,20 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     },},
 
   settingsPets: {
+  store: {
+    poses: "Pose",
+    pose: {
+      idle: "Riposo",
+      runningRight: "Cammina a destra",
+      runningLeft: "Cammina a sinistra",
+      waving: "Saluta",
+      jumping: "Salta",
+      failed: "Errore",
+      waiting: "Attende",
+      running: "Lavora",
+      review: "Rivede",
+    },
+  },
     title: 'Mascotte',
     previewTitle: 'Compagno Blink',
     previewSubtitle: 'Un piccolo compagno per lo stato della sessione e le revisioni da seguire.',
@@ -20878,7 +20892,7 @@ settingsSession: {
             startBlank: "Inizia un bot vuoto", menuSubtitle: "Configura Happier e scopri cosa sa fare",
         },
         name: { placeholder: "Nuovo bot", label: "Nome del bot", hint: "Lascia il nome vuoto perché si dia un nome da solo." },
-        face: { ...botFaceNameTranslations.it, title: "Scegli un volto", change: "Cambia volto", style: "Stile", body: "Corpo", colour: "Colore", styles: { dither: "Retinato", pixel: "Pixel", solid: "Pieno", dots: "Punti", planet: "Pianeta" }, note: "Generato da questo bot; cambia solo il suo volto.", useDefault: "Usa la mia impostazione predefinita", surprise: "Sorprendimi", shuffle: "Immagine casuale", custom: "Personalizzata", surpriseNote: "Una forma nuova ogni volta. Generata da questo bot; cambia solo il suo volto.", customNote: "Il tuo bot ha disegnato questa forma. Chiedigliene un’altra o scegline una qui.", customEmptyNote: "Personalizzata: chiedi a questo bot una forma, come «trasformati in un gatto».", failed: "Impossibile salvare questo volto. Riprova." },
+        face: { ...botFaceNameTranslations.it, title: "Scegli un volto", change: "Cambia volto", style: "Stile", body: "Corpo", colour: "Colore", styles: { dither: "Retinato", pixel: "Pixel", solid: "Pieno", dots: "Punti", planet: "Pianeta" }, note: "Generato da questo bot; cambia solo il suo volto.", useDefault: "Usa la mia impostazione predefinita", surprise: "Sorprendimi", shuffle: "Immagine casuale", custom: "Personalizzata", surpriseNote: "Una forma nuova ogni volta. Generata da questo bot; cambia solo il suo volto.", customNote: "Il tuo bot ha disegnato questa forma. Chiedigliene un’altra o scegline una qui.", pet: "Mascotte", findPet: "Trova una mascotte", createPet: "Crea…", petAccountNote: ({ name }: { name: string }) => `Solo tu vedi ${name}. Chi condivide questo Bot con te vede il suo volto.`, wearTitle: ({ name }: { name: string }) => `Usa ${name} come volto per…`, wearBody: "Il Bot mantiene sotto il suo volto. Chi lo condivide con te vede quello.", wearNewBot: ({ name }: { name: string }) => `${name} sarà il suo volto`, petEmptyNote: "Le mascotte che aggiungi in Impostazioni › Mascotte compaiono qui.", customEmptyNote: "Personalizzata: chiedi a questo bot una forma, come «trasformati in un gatto».", failed: "Impossibile salvare questo volto. Riprova." },
         create: {
             description: "Digli di cosa occuparsi. Puoi cambiarne nome e istruzioni in qualsiasi momento.",
             placeholder: "Di cosa deve occuparsi questo bot?",

@@ -32,6 +32,7 @@ import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Text } from '@/components/ui/text/Text';
+import type { PetAccountReferenceV1 } from '@happier-dev/protocol/pets/selection';
 import { Typography } from '@/constants/Typography';
 import {
   useSessionListRelativeNowMs,
@@ -68,6 +69,7 @@ import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { openNewBotDraft } from './newBotDraft';
+import { requestBotFaceWear } from './botFaceWearIntent';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 
@@ -186,6 +188,11 @@ export function BotsPopoverContent(
     close: () => void;
     maxHeight: number;
     presentation?: 'popover' | 'sheet';
+    /**
+     * "Use as a Bot's face…" (DECISIONS-R12 §10): the roster picks the Bot that wears this pet. A chosen Bot opens with
+     * its face chooser wearing it; with no Bots yet, New bot starts one wearing it.
+     */
+    wearPet?: Readonly<{ pet: PetAccountReferenceV1; name: string }>;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -338,11 +345,13 @@ export function BotsPopoverContent(
   const fromTemplate = React.useCallback(() => {
     fireAndForget(openStoreBots(), { tag: 'BotsRoster.fromTemplate' });
   }, [openStoreBots]);
+  const wearPet = props.wearPet?.pet;
   const newBot = React.useCallback(() => {
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (lifetime)
-      fireAndForget(openNewBotDraft(lifetime, executeAuthoring).then(result => { if (result.kind === 'opened') close(); }), { tag: 'BotsRoster.newBot' });
-  }, [close, executeAuthoring]);
+      fireAndForget(openNewBotDraft(lifetime, executeAuthoring, wearPet ? { pet: wearPet } : undefined)
+        .then(result => { if (result.kind === 'opened') close(); }), { tag: 'BotsRoster.newBot' });
+  }, [close, executeAuthoring, wearPet]);
   const askHappier = React.useCallback(() => {
     fireAndForget(openAskHappier().then(result => { if (result.kind === 'opened' || result.kind === 'authenticationRequired') close(); }), { tag: 'BotsRoster.askHappier' });
   }, [close, openAskHappier]);
@@ -418,6 +427,33 @@ export function BotsPopoverContent(
     },
   ];
 
+  if (empty && props.wearPet) {
+    // The roster's own empty row, then New bot wearing the pet (R12 `r12-face-E`).
+    return (
+      <View testID="bots-roster" style={styles.emptyRoot}>
+        <RailPopoverRoster
+          testID="bots-roster.wear"
+          maxHeight={props.maxHeight}
+          title={t('bots.face.wearTitle', { name: props.wearPet.name })}
+          actions={[{
+            id: 'new-bot',
+            testID: 'bots-roster.wear.new-bot',
+            label: t('bots.new'),
+            subtitle: t('bots.face.wearNewBot', { name: props.wearPet.name }),
+            icon: <Icon name="plus" size={MENU_ROW_METRICS.iconGlyphSizePx} color={iconColor} />,
+            onPress: newBot,
+          }]}
+        >
+          <View style={styles.wearEmpty} testID="bots-roster.empty">
+            <Text variant="label" emphasis="semiBold">{t('bots.empty.title')}</Text>
+            <Text variant="meta" style={styles.wearNote}>{t('bots.empty.body')}</Text>
+          </View>
+        </RailPopoverRoster>
+        {freshnessLine}
+      </View>
+    );
+  }
+
   if (empty) {
     return (
       <View testID="bots-roster" style={styles.emptyRoot}>
@@ -481,14 +517,15 @@ export function BotsPopoverContent(
     .filter(Boolean)
     .join(' · ');
 
+  const wearing = props.wearPet;
   return (
     <RailPopoverRoster
       testID="bots-roster"
       maxHeight={props.maxHeight}
-      title={t('bots.title')}
-      actions={footerActions}
-      subheader={readinessLine}
-      summary={
+      title={wearing ? t('bots.face.wearTitle', { name: wearing.name }) : t('bots.title')}
+      actions={wearing ? NO_ACTIONS : footerActions}
+      subheader={wearing ? <Text variant="meta" style={styles.wearNote}>{t('bots.face.wearBody')}</Text> : readinessLine}
+      summary={wearing ? undefined :
         <View style={styles.summary}>
           {counts.needsYou > 0 ? (
             <StatusDot color={theme.colors.state.warning.foreground} />
@@ -525,6 +562,25 @@ export function BotsPopoverContent(
             && row.botActivity === 'quiet'
             ? readinessBindings.get(items[index]!.serverId ?? '') ?? null : null;
           const readinessLifetime = readinessDemanded ? readinessBinding : null;
+          if (wearing) {
+            // Choosing a Bot: its row opens it, where its own face chooser takes the pet. Reports are not Bots.
+            const session = row.session;
+            return session && !items[index]!.reportsDepth ? (
+              <SessionItem
+                key={row.sessionKey ?? items[index]!.sessionId}
+                rowViewModel={row}
+                session={session}
+                serverId={items[index]!.serverId ?? undefined}
+                compact
+                embedded
+                quietWhenOffline
+                secondaryLineMode="path"
+                actionMenuSurface="botsRoster"
+                botActivity={row.botActivity}
+                onOpened={() => { requestBotFaceWear(session.id, wearing.pet); close(); }}
+              />
+            ) : null;
+          }
           return row.session ? (
             <React.Fragment key={row.sessionKey ?? items[index]!.sessionId}>
             <SessionItem
@@ -566,7 +622,17 @@ export function BotsPopoverContent(
   );
 }
 
+const NO_ACTIONS: readonly never[] = [];
+
 const stylesheet = StyleSheet.create((theme) => ({
+  wearEmpty: {
+    paddingHorizontal: theme.space.s12,
+    paddingVertical: theme.space.s8,
+    gap: theme.space.s2,
+  },
+  wearNote: {
+    color: theme.colors.text.secondary,
+  },
   summary: {
     flexDirection: 'row',
     alignItems: 'center',

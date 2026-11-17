@@ -6153,6 +6153,20 @@ localTailscale: {
     },},
 
   settingsPets: {
+  store: {
+    poses: "ポーズ",
+    pose: {
+      idle: "待機",
+      runningRight: "右へ歩く",
+      runningLeft: "左へ歩く",
+      waving: "手を振る",
+      jumping: "ジャンプ",
+      failed: "失敗",
+      waiting: "待つ",
+      running: "作業",
+      review: "レビュー",
+    },
+  },
     title: 'ペット',
     previewTitle: 'Blink コンパニオン',
     previewSubtitle: 'セッション状態とレビューの注意事項を知らせる小さなコンパニオンです。',
@@ -20786,7 +20800,7 @@ settingsSession: {
             startBlank: "空のボットを始める", menuSubtitle: "Happierをセットアップして、できることを見つける",
         },
         name: { placeholder: "新しいボット", label: "ボット名", hint: "名前を空にすると、ボットが自分で名前を付けます。" },
-        face: { ...botFaceNameTranslations.ja, title: "顔を選ぶ", change: "顔を変更", style: "スタイル", body: "ボディ", colour: "カラー", styles: { dither: "ディザ", pixel: "ピクセル", solid: "ソリッド", dots: "ドット", planet: "惑星" }, note: "このボットから生成されます。変わるのは顔だけです。", useDefault: "デフォルトを使う", surprise: "おまかせ", shuffle: "画像をシャッフル", custom: "カスタム", surpriseNote: "押すたびに新しい形。このボットから生成され、変わるのは顔だけです。", customNote: "この形はボットが描きました。別の形を頼むか、ここで選んでください。", customEmptyNote: "カスタム：「ネコになって」のように、このボットに形を頼んでください。", failed: "この顔を保存できませんでした。もう一度お試しください。" },
+        face: { ...botFaceNameTranslations.ja, title: "顔を選ぶ", change: "顔を変更", style: "スタイル", body: "ボディ", colour: "カラー", styles: { dither: "ディザ", pixel: "ピクセル", solid: "ソリッド", dots: "ドット", planet: "惑星" }, note: "このボットから生成されます。変わるのは顔だけです。", useDefault: "デフォルトを使う", surprise: "おまかせ", shuffle: "画像をシャッフル", custom: "カスタム", surpriseNote: "押すたびに新しい形。このボットから生成され、変わるのは顔だけです。", customNote: "この形はボットが描きました。別の形を頼むか、ここで選んでください。", pet: "ペット", findPet: "ペットを探す", createPet: "作成…", petAccountNote: ({ name }: { name: string }) => `${name} が見えるのはあなただけです。この Bot を共有した相手には、Bot 本来の顔が表示されます。`, wearTitle: ({ name }: { name: string }) => `${name} を顔にする Bot…`, wearBody: "Bot 本来の顔はその下に残ります。共有した相手にはそちらが表示されます。", wearNewBot: ({ name }: { name: string }) => `${name} が顔になります`, petEmptyNote: "設定 › ペット で追加したペットがここに表示されます。", customEmptyNote: "カスタム：「ネコになって」のように、このボットに形を頼んでください。", failed: "この顔を保存できませんでした。もう一度お試しください。" },
         create: {
             description: "何を担当するか伝えてください。名前と指示はいつでも変更できます。",
             placeholder: "このボットは何を担当しますか？",

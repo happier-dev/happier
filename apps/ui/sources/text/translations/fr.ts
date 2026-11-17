@@ -5665,6 +5665,20 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     },},
 
   settingsPets: {
+  store: {
+    poses: "Poses",
+    pose: {
+      idle: "Repos",
+      runningRight: "Marche à droite",
+      runningLeft: "Marche à gauche",
+      waving: "Salue",
+      jumping: "Saute",
+      failed: "Échec",
+      waiting: "Attend",
+      running: "Travaille",
+      review: "Relit",
+    },
+  },
     title: 'Animaux de compagnie',
     previewTitle: 'Clignotement',
     previewSubtitle: 'Un petit compagnon pour le statut des sessions et les revues à traiter.',
@@ -20750,7 +20764,7 @@ settingsSession: {
             startBlank: "Commencer un bot vierge", menuSubtitle: "Configurer Happier et découvrir ce qu’il sait faire",
         },
         name: { placeholder: "Nouveau bot", label: "Nom du bot", hint: "Laisse le nom vide pour qu’il se nomme lui-même." },
-        face: { ...botFaceNameTranslations.fr, title: "Choisir un visage", change: "Changer de visage", style: "Style", body: "Corps", colour: "Couleur", styles: { dither: "Tramé", pixel: "Pixel", solid: "Plein", dots: "Points", planet: "Planète" }, note: "Généré à partir de ce bot ; seul son visage change.", useDefault: "Utiliser mon réglage par défaut", surprise: "Surprends-moi", shuffle: "Mélanger l’image", custom: "Personnalisée", surpriseNote: "Une nouvelle forme à chaque fois. Générée à partir de ce bot ; seul son visage change.", customNote: "Ton bot a dessiné cette forme. Demande-lui-en une autre, ou choisis-en une ici.", customEmptyNote: "Personnalisée : demande une forme à ce bot, par exemple « transforme-toi en chat ».", failed: "Impossible d’enregistrer ce visage. Réessaie." },
+        face: { ...botFaceNameTranslations.fr, title: "Choisir un visage", change: "Changer de visage", style: "Style", body: "Corps", colour: "Couleur", styles: { dither: "Tramé", pixel: "Pixel", solid: "Plein", dots: "Points", planet: "Planète" }, note: "Généré à partir de ce bot ; seul son visage change.", useDefault: "Utiliser mon réglage par défaut", surprise: "Surprends-moi", shuffle: "Mélanger l’image", custom: "Personnalisée", surpriseNote: "Une nouvelle forme à chaque fois. Générée à partir de ce bot ; seul son visage change.", customNote: "Ton bot a dessiné cette forme. Demande-lui-en une autre, ou choisis-en une ici.", pet: "Compagnon", findPet: "Trouver un compagnon", createPet: "Créer…", petAccountNote: ({ name }: { name: string }) => `Vous seul voyez ${name}. Les personnes avec qui vous partagez ce Bot voient son propre visage.`, wearTitle: ({ name }: { name: string }) => `Utiliser ${name} comme visage pour…`, wearBody: "Le Bot garde son propre visage en dessous. Les personnes avec qui vous le partagez voient celui-là.", wearNewBot: ({ name }: { name: string }) => `${name} sera son visage`, petEmptyNote: "Les compagnons ajoutés dans Réglages › Animaux de compagnie apparaissent ici.", customEmptyNote: "Personnalisée : demande une forme à ce bot, par exemple « transforme-toi en chat ».", failed: "Impossible d’enregistrer ce visage. Réessaie." },
         create: {
             description: "Dis-lui de quoi s’occuper. Tu peux changer son nom et ses instructions à tout moment.",
             placeholder: "De quoi ce bot doit-il s’occuper ?",

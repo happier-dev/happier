@@ -1,24 +1,33 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter, type Href } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type {
   BotFaceShapeV1,
   BotFaceStyle,
   SessionBotFaceV1,
 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import type { PetAccountReferenceV1 } from '@happier-dev/protocol/pets/selection';
 
+import { BUILT_IN_PET_IDS, DEFAULT_BUILT_IN_PET_ID, resolveBuiltInPetPackage } from '@/components/pets/builtIns/builtInPetRegistry';
+import { usePetReferencePackage } from '@/components/pets/source/usePetReferencePackage';
+import { useCreatePetSession } from '@/components/pets/useCreatePetSession';
+import { buildPluginsHomeRoute, PLUGINS_SURFACE_ICON } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
+import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { Text } from '@/components/ui/text/Text';
 import { randomUUID } from '@/platform/randomUUID';
-import { useSetting } from '@/sync/domains/state/storage';
+import { storage, usePeripheralFeedDemand, useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
 import { BotFace } from './face/BotFace';
+import { SessionBotFacePet } from './face/SessionBotFace';
 import {
   BOT_FACE_BODY_IDS,
   BOT_FACE_COLOURS,
@@ -50,6 +59,8 @@ const BODY_CELLS = {
   sheet: { columns: 6, aspectRatio: 1 },
 } as const;
 const SWATCH_CELL_ASPECT_RATIO = { panel: 1.4, sheet: 1 } as const;
+/** Style and pet cells carry names (lab R11 `r11-picker-P`, `Pp`): up to eight across the panel, four on a phone. */
+const PET_COLUMNS = { panel: 8, sheet: 4 } as const;
 const PICKER_WIDTH_PX = 560;
 const PICKER_MAX_HEIGHT_PX = 640;
 
@@ -67,7 +78,8 @@ export function surpriseBotFaceShape(): BotFaceShapeV1 {
 /**
  * The face one gesture asks for. A style or colour keeps the other choices and the seed shown; a roster body replaces
  * any shape; Surprise me sets a new generated shape and keeps everything else. Account default removes only the
- * style; Use my default (null) clears every override.
+ * style; Use my default (null) clears every override. A pet is worn over the Bot's own style, body and colour, which
+ * stay as the face it falls back to; choosing a style, a body or a new shape takes the pet off (R11).
  */
 export type BotFacePickerGesture =
   | Readonly<{ kind: 'style'; style: BotFaceStyle }>
@@ -75,6 +87,7 @@ export type BotFacePickerGesture =
   | Readonly<{ kind: 'body'; body: BotFaceBodyId }>
   | Readonly<{ kind: 'colour'; colour: BotFaceColourId }>
   | Readonly<{ kind: 'surprise'; shape: BotFaceShapeV1 }>
+  | Readonly<{ kind: 'pet'; pet: PetAccountReferenceV1 }>
   | Readonly<{ kind: 'default' }>;
 
 export function applyBotFacePickerGesture(
@@ -82,16 +95,17 @@ export function applyBotFacePickerGesture(
   shownSeed: string,
   gesture: BotFacePickerGesture,
 ): SessionBotFaceV1 | null {
+  const { pet: _worn, ...own }: SessionBotFaceV1 = face ?? {};
   switch (gesture.kind) {
     case 'style':
-      return { ...face, style: gesture.style, seed: face?.seed ?? shownSeed };
+      return { ...own, style: gesture.style, seed: face?.seed ?? shownSeed };
     case 'inheritStyle': {
       if (!face) return null;
-      const { style: _inherited, ...identity } = face;
+      const { style: _inherited, ...identity } = own;
       return identity;
     }
     case 'body': {
-      const { shape: _replaced, ...rest }: SessionBotFaceV1 = face ?? {};
+      const { shape: _replaced, ...rest } = own;
       return { ...rest, body: gesture.body, seed: face?.seed ?? shownSeed };
     }
     case 'colour':
@@ -101,7 +115,9 @@ export function applyBotFacePickerGesture(
         seed: face?.seed ?? shownSeed,
       };
     case 'surprise':
-      return { ...face, seed: face?.seed ?? shownSeed, shape: gesture.shape };
+      return { ...own, seed: face?.seed ?? shownSeed, shape: gesture.shape };
+    case 'pet':
+      return { ...face, pet: gesture.pet, seed: face?.seed ?? shownSeed };
     case 'default':
       return null;
   }
@@ -124,12 +140,20 @@ export const BotFacePickerPanel = React.memo(function BotFacePickerPanel(
     status?: BotFacePickerStatus;
     /** Where the chooser sits: the floating panel (default) or a phone sheet, which is narrower. */
     layout?: 'panel' | 'sheet';
+    /** Add a pet leaves for Settings › Pets; the chooser closes behind it. */
+    onRequestClose?: () => void;
   }>,
 ) {
   const { theme } = useUnistyles();
+  const router = useRouter();
   const layout = props.layout ?? 'panel';
   const defaultStyle = useSetting('botFaceStyle');
-  const { face, seed, onChange } = props;
+  const { face, seed, onChange, onRequestClose } = props;
+  const pets = usePetChoices();
+  const wornLookup = usePetReferencePackage(pets.enabled ? face?.pet : null);
+  // A pet the face can't show (deleted, unreadable) is not worn: the chooser shows the face the Bot actually shows.
+  const worn = pets.enabled && face?.pet && wornLookup.status !== 'unavailable' ? face.pet : null;
+  const wornChoice = worn ? pets.choices.find(choice => choice.id === petChoiceId(worn)) : undefined;
   const identity = React.useMemo(
     () => resolveBotFaceIdentity(seed, face),
     [seed, face?.body, face?.palette, face?.shape],
@@ -177,8 +201,43 @@ export const BotFacePickerPanel = React.memo(function BotFacePickerPanel(
             />
           </View>
         ),
-      }))],
-    [identity, defaultStyle],
+      })), ...(pets.enabled ? [{
+        id: 'pet' as const,
+        title: t('bots.face.pet'),
+        // The pet worn, or Blink, the default built-in.
+        preview: <View style={styles.cell}><PetTileFace pet={worn ?? DEFAULT_PET} size={STYLE_TILE_FACE_PX} /></View>,
+      }] : [])],
+    [identity, defaultStyle, pets.enabled, worn],
+  );
+  const createPet = useCreatePetSession();
+  // Find a pet and Create… end the grid (R12 §13): both leave the chooser, which closes behind them.
+  const findPet = React.useCallback(() => {
+    onRequestClose?.();
+    router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'pet' }) as Href);
+  }, [onRequestClose, router]);
+  const startCreatePet = React.useCallback(() => {
+    onRequestClose?.();
+    fireAndForget(createPet(), { tag: 'BotFacePicker.createPet' });
+  }, [createPet, onRequestClose]);
+  const petOptions = React.useMemo(
+    () => [
+      ...pets.choices.map((choice) => ({
+        id: choice.id,
+        title: choice.name,
+        preview: <View style={styles.cell}><PetTileFace pet={choice.ref} size={BODY_TILE_FACE_PX} /></View>,
+      })),
+      {
+        id: FIND_PET,
+        title: t('bots.face.findPet'),
+        preview: <ShapeTile icon={PLUGINS_SURFACE_ICON} colour={theme.colors.text.secondary}>{null}</ShapeTile>,
+      },
+      {
+        id: CREATE_PET,
+        title: t('bots.face.createPet'),
+        preview: <ShapeTile icon="sparkle" colour={theme.colors.text.secondary}>{null}</ShapeTile>,
+      },
+    ],
+    [pets.choices, theme.colors.text.secondary],
   );
   const { theme: { colors } } = useUnistyles();
   const bodyOptions = React.useMemo(
@@ -238,23 +297,49 @@ export const BotFacePickerPanel = React.memo(function BotFacePickerPanel(
   );
   return (
     <View style={styles.panel} testID="bot-face-picker">
-      <PickerSection title={t('bots.face.style')} value={face?.style ? styleLabel(style) : t('bots.face.accountDefault')}>
+      <PickerSection title={t('bots.face.style')} value={worn ? t('bots.face.pet') : face?.style ? styleLabel(style) : t('bots.face.accountDefault')}>
         <SelectionTiles
           variant="visual"
           tileSizing="fill"
+          // Seven styles: a phone sheet takes them four across (lab R11 `r11-picker-Pp`), as it does pets.
+          maximumColumns={PET_COLUMNS[layout]}
           accessibilityLabel={t('bots.face.style')}
           testIdPrefix="bot-face-style"
-          value={face?.style ?? 'account-default'}
+          value={worn ? 'pet' : face?.style ?? 'account-default'}
           onChange={(next) => {
-            if (next === 'account-default') {
-              if (face?.style) apply({ kind: 'inheritStyle' });
-            } else if (next && next !== face?.style) apply({ kind: 'style', style: next });
+            if (next === 'pet') {
+              if (!worn) apply({ kind: 'pet', pet: DEFAULT_PET });
+            } else if (next === 'account-default') {
+              if (face?.style || worn) apply({ kind: 'inheritStyle' });
+            } else if (next && (next !== face?.style || worn)) apply({ kind: 'style', style: next });
           }}
           options={styleOptions}
         />
       </PickerSection>
+      {/* A pet replaces the body and colour; the Bot keeps them underneath, as the face it falls back to (R11). */}
+      {worn ? (
+        <PickerSection title={t('bots.face.pet')} value={wornChoice?.name ?? ''}>
+          <SelectionTiles
+            variant="visual"
+            tileSizing="fill"
+            maximumColumns={PET_COLUMNS[layout]}
+            accessibilityLabel={t('bots.face.pet')}
+            testIdPrefix="bot-face-pet"
+            value={wornChoice?.id ?? null}
+            onChange={(next) => {
+              if (next === FIND_PET) findPet();
+              else if (next === CREATE_PET) startCreatePet();
+              else if (next && next !== wornChoice?.id) {
+                const choice = pets.choices.find(candidate => candidate.id === next);
+                if (choice) apply({ kind: 'pet', pet: choice.ref });
+              }
+            }}
+            options={petOptions}
+          />
+        </PickerSection>
+      ) : null}
       {/* Planet is the moon itself: it has no body to choose (lab R6). */}
-      {style === 'planet' ? null : (
+      {worn || style === 'planet' ? null : (
         <PickerSection
           title={t('bots.face.body')}
           value={bodyValue === 'surprise' ? t('bots.face.surprise') : bodyValue === 'custom' ? t('bots.face.custom') : t(`bots.face.bodies.${bodyValue}`)}
@@ -277,7 +362,7 @@ export const BotFacePickerPanel = React.memo(function BotFacePickerPanel(
           />
         </PickerSection>
       )}
-      <PickerSection
+      {worn ? null : <PickerSection
         title={t('bots.face.colour')}
         value={t(`bots.face.colours.${identity.colour}`)}
       >
@@ -295,7 +380,7 @@ export const BotFacePickerPanel = React.memo(function BotFacePickerPanel(
           }}
           options={colourOptions}
         />
-      </PickerSection>
+      </PickerSection>}
       <View style={styles.footer}>
         <Text
           variant="meta"
@@ -307,6 +392,10 @@ export const BotFacePickerPanel = React.memo(function BotFacePickerPanel(
         >
           {props.status === 'failed'
             ? t('bots.face.failed')
+            : worn
+              ? worn.kind === 'accountPet'
+                ? t('bots.face.petAccountNote', { name: wornChoice?.name ?? '' })
+                : pets.accountCount === 0 ? t('bots.face.petEmptyNote') : ''
             : customHint
               ? t('bots.face.customEmptyNote')
               : shapeOrigin === 'custom'
@@ -322,26 +411,69 @@ export const BotFacePickerPanel = React.memo(function BotFacePickerPanel(
           disabled={face === null}
           onPress={() => apply({ kind: 'default' })}
         />
-        <TextLinkButton
-          testID="bot-face-surprise"
-          label={t('bots.face.surprise')}
-          size="meta"
-          onPress={surprise}
-        />
+        {/* Surprise me draws a new body, which a pet would hide: it steps aside while a pet is worn. */}
+        {worn ? null : (
+          <TextLinkButton
+            testID="bot-face-surprise"
+            label={t('bots.face.surprise')}
+            size="meta"
+            onPress={surprise}
+          />
+        )}
       </View>
     </View>
   );
 });
+
+const FIND_PET = 'find-pet';
+const CREATE_PET = 'create-pet';
+const DEFAULT_PET: PetAccountReferenceV1 = { kind: 'builtIn', petId: DEFAULT_BUILT_IN_PET_ID };
+const petChoiceId = (ref: PetAccountReferenceV1) => (ref.kind === 'builtIn' ? `builtIn:${ref.petId}` : `accountPet:${ref.accountPetId}`);
+type PetChoice = Readonly<{ id: string; ref: PetAccountReferenceV1; name: string }>;
+const BUILT_IN_PET_CHOICES: readonly PetChoice[] = BUILT_IN_PET_IDS.map((petId) => ({
+  id: petChoiceId({ kind: 'builtIn', petId }),
+  ref: { kind: 'builtIn', petId },
+  name: resolveBuiltInPetPackage(petId).manifest.displayName,
+}));
+
+/**
+ * The pets a face can wear (R11): the built-ins, then the Account's own pets while Pet sync is on. Device-only pets are
+ * left out, since a face shows on every device; Settings › Pets imports them to the Account. Mounted only while the
+ * chooser is open, so its library demand ends with it.
+ */
+function usePetChoices(): Readonly<{ enabled: boolean; choices: readonly PetChoice[]; accountCount: number }> {
+  const enabled = useFeatureDecision('pets.companion')?.state === 'enabled';
+  const syncEnabled = useFeatureDecision('pets.sync')?.state === 'enabled';
+  const accountPets = enabled && syncEnabled;
+  usePeripheralFeedDemand('accountPets', accountPets);
+  const library = storage((state) => state.accountPetsById);
+  return React.useMemo(() => {
+    const own: PetChoice[] = accountPets
+      ? Object.values(library).map((pet) => ({
+        id: petChoiceId({ kind: 'accountPet', accountPetId: pet.accountPetId }),
+        ref: { kind: 'accountPet', accountPetId: pet.accountPetId },
+        name: pet.manifest.displayName,
+      }))
+      : [];
+    return { enabled, choices: own.length ? [...BUILT_IN_PET_CHOICES, ...own] : BUILT_IN_PET_CHOICES, accountCount: own.length };
+  }, [enabled, accountPets, library]);
+}
+
+/** A pet tile's face, resting: the pet a face would wear, through the face's own pet path (an empty box until it loads). */
+function PetTileFace(props: Readonly<{ pet: PetAccountReferenceV1; size: number }>) {
+  const empty = <View style={{ width: props.size, height: props.size }} />;
+  return <SessionBotFacePet petRef={props.pet} ownFace={empty} size={props.size} mood="quiet" seed={0} motionMode="still" />;
+}
 
 /**
  * A shape tile's preview: the face (or an empty slot's +) over a one-line caption. A body cell is too narrow for
  * "Surprise", so the Surprise face is captioned by its shuffle glyph alone; its name stays the tile's label for
  * assistive tech and the section value.
  */
-function ShapeTile(props: Readonly<{ glyph?: 'shuffle'; label?: string; colour: string; children: React.ReactNode }>) {
+function ShapeTile(props: Readonly<{ glyph?: 'shuffle'; icon?: IconName; label?: string; colour: string; children: React.ReactNode }>) {
   return (
     <View style={styles.shapeCell}>
-      {props.children ?? <Icon name="plus" size={ICON_SIZE.xs} color={props.colour} />}
+      {props.children ?? <Icon name={props.icon ?? 'plus'} size={ICON_SIZE.xs} color={props.colour} />}
       {props.glyph ? <Icon name={props.glyph} size={ICON_SIZE.xxs} color={props.colour} /> : null}
       {props.label ? <Text variant="meta" numberOfLines={1} style={styles.shapeLabel}>{props.label}</Text> : null}
     </View>
@@ -408,6 +540,7 @@ export function BotFacePicker(
       onChange={props.onChange}
       status={props.status}
       layout={layout}
+      onRequestClose={props.onRequestClose}
     />
   );
   return (

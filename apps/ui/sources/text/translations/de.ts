@@ -5417,6 +5417,20 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
     },
 
     settingsPets: {
+  store: {
+    poses: "Posen",
+    pose: {
+      idle: "Ruhe",
+      runningRight: "Läuft nach rechts",
+      runningLeft: "Läuft nach links",
+      waving: "Winkt",
+      jumping: "Hüpft",
+      failed: "Fehler",
+      waiting: "Wartet",
+      running: "Arbeitet",
+      review: "Prüft",
+    },
+  },
         title: 'Haustiere',
         previewTitle: 'Blink',
         previewSubtitle: 'Ein kleiner Begleiter für Session-Status und Review-Hinweise.',
@@ -20982,7 +20996,7 @@ settingsSession: {
             startBlank: "Leeren Bot starten", menuSubtitle: "Happier einrichten und entdecken, was es kann",
         },
         name: { placeholder: "Neuer Bot", label: "Bot-Name", hint: "Lass den Namen leer, damit er sich selbst benennt." },
-        face: { ...botFaceNameTranslations.de, title: "Gesicht wählen", change: "Gesicht ändern", style: "Stil", body: "Körper", colour: "Farbe", styles: { dither: "Dither", pixel: "Pixel", solid: "Matt", dots: "Punkte", planet: "Planet" }, note: "Aus diesem Bot erzeugt; nur sein Gesicht ändert sich.", useDefault: "Meinen Standard verwenden", surprise: "Überrasch mich", shuffle: "Bild mischen", custom: "Eigene", surpriseNote: "Jedes Mal eine neue Form. Aus diesem Bot erzeugt; nur sein Gesicht ändert sich.", customNote: "Dein Bot hat diese Form gezeichnet. Bitte ihn um eine andere oder wähle hier eine.", customEmptyNote: "Eigene: Bitte diesen Bot um eine Form, etwa „mach dich zu einer Katze“.", failed: "Dieses Gesicht konnte nicht gespeichert werden. Versuch es noch einmal." },
+        face: { ...botFaceNameTranslations.de, title: "Gesicht wählen", change: "Gesicht ändern", style: "Stil", body: "Körper", colour: "Farbe", styles: { dither: "Dither", pixel: "Pixel", solid: "Matt", dots: "Punkte", planet: "Planet" }, note: "Aus diesem Bot erzeugt; nur sein Gesicht ändert sich.", useDefault: "Meinen Standard verwenden", surprise: "Überrasch mich", shuffle: "Bild mischen", custom: "Eigene", surpriseNote: "Jedes Mal eine neue Form. Aus diesem Bot erzeugt; nur sein Gesicht ändert sich.", customNote: "Dein Bot hat diese Form gezeichnet. Bitte ihn um eine andere oder wähle hier eine.", pet: "Haustier", findPet: "Haustier finden", createPet: "Erstellen…", petAccountNote: ({ name }: { name: string }) => `Nur du siehst ${name}. Wer diesen Bot mit dir teilt, sieht sein eigenes Gesicht.`, wearTitle: ({ name }: { name: string }) => `${name} als Gesicht verwenden für…`, wearBody: "Der Bot behält darunter sein eigenes Gesicht. Wer ihn mit dir teilt, sieht dieses.", wearNewBot: ({ name }: { name: string }) => `${name} wird sein Gesicht`, petEmptyNote: "Haustiere, die du unter Einstellungen › Haustiere hinzufügst, erscheinen hier.", customEmptyNote: "Eigene: Bitte diesen Bot um eine Form, etwa „mach dich zu einer Katze“.", failed: "Dieses Gesicht konnte nicht gespeichert werden. Versuch es noch einmal." },
         create: {
             description: "Sag ihm, worum er sich kümmern soll. Name und Anweisungen kannst du jederzeit ändern.",
             placeholder: "Worum soll sich dieser Bot kümmern?",

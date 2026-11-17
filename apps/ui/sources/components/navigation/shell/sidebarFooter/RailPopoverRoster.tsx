@@ -102,8 +102,11 @@ export function RailPopoverRoster(
         <View style={styles.subheader}>{props.subheader}</View>
       ) : null}
       {props.children}
-      <View style={styles.divider} />
-      <ActionListSection style={styles.actions} actions={props.actions} />
+      {/* A roster used to pick one of its things (choose a Bot) has no actions of its own beneath it. */}
+      {props.actions.length > 0 ? <>
+        <View style={styles.divider} />
+        <ActionListSection style={styles.actions} actions={props.actions} />
+      </> : null}
     </View>
   );
 }

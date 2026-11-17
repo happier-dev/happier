@@ -53,6 +53,12 @@ export const botFaceMotionTokens = {
     /** One drawing per 0.05 rad of turn; roll in 0.04 rad (it follows yaw at rest, so finer steps only add drawings). The clock steps moving faces at 30 Hz (MonoCode's pulse). */
     turnStep: 0.05, rollStep: 0.04, tickMs: 33,
   },
+  /**
+   * A pet worn as a face (R11, R12): a pointer or press hops it once, and not again inside this window. A v2 pet looks
+   * toward a fine pointer in one of 16 directions, neutral within 0.45 of its box, keeping its direction until the pointer
+   * is 15° past it.
+   */
+  pet: { hopRefractoryMs: 1200, look: { directions: 16, onFaceShare: 0.45, hysteresisDeg: 15 } },
 } as const;
 export type BotFaceIdleGesture = keyof typeof botFaceMotionTokens.idle;
 export type BotFaceReaction = 'working' | 'needsYou' | 'done' | 'failed' | 'perk' | BotFaceIdleGesture;

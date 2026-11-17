@@ -5829,6 +5829,20 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     },},
 
   settingsPets: {
+  store: {
+    poses: "Posturas",
+    pose: {
+      idle: "Reposo",
+      runningRight: "Camina a la derecha",
+      runningLeft: "Camina a la izquierda",
+      waving: "Saluda",
+      jumping: "Salta",
+      failed: "Falla",
+      waiting: "Espera",
+      running: "Trabaja",
+      review: "Revisa",
+    },
+  },
     title: 'Mascotas',
     previewTitle: 'Blink compañero',
     previewSubtitle: 'Un pequeño compañero para el estado de la sesión y las revisiones pendientes.',
@@ -20876,7 +20890,7 @@ settingsSession: {
             startBlank: "Empezar un bot en blanco", menuSubtitle: "Configura Happier y descubre lo que puede hacer",
         },
         name: { placeholder: "Nuevo bot", label: "Nombre del bot", hint: "Deja el nombre vacío para que se ponga nombre solo." },
-        face: { ...botFaceNameTranslations.es, title: "Elige una cara", change: "Cambiar cara", style: "Estilo", body: "Cuerpo", colour: "Color", styles: { dither: "Tramado", pixel: "Píxel", solid: "Sólido", dots: "Puntos", planet: "Planeta" }, note: "Generada a partir de este bot; solo cambia su cara.", useDefault: "Usar mi predeterminado", surprise: "Sorpréndeme", shuffle: "Cambiar imagen al azar", custom: "Personalizada", surpriseNote: "Una forma nueva cada vez. Generada a partir de este bot; solo cambia su cara.", customNote: "Tu bot dibujó esta forma. Pídele otra o elige una aquí.", customEmptyNote: "Personalizada: pide a este bot una forma, como «conviértete en un gato».", failed: "No se pudo guardar esta cara. Inténtalo de nuevo." },
+        face: { ...botFaceNameTranslations.es, title: "Elige una cara", change: "Cambiar cara", style: "Estilo", body: "Cuerpo", colour: "Color", styles: { dither: "Tramado", pixel: "Píxel", solid: "Sólido", dots: "Puntos", planet: "Planeta" }, note: "Generada a partir de este bot; solo cambia su cara.", useDefault: "Usar mi predeterminado", surprise: "Sorpréndeme", shuffle: "Cambiar imagen al azar", custom: "Personalizada", surpriseNote: "Una forma nueva cada vez. Generada a partir de este bot; solo cambia su cara.", customNote: "Tu bot dibujó esta forma. Pídele otra o elige una aquí.", pet: "Mascota", findPet: "Buscar una mascota", createPet: "Crear…", petAccountNote: ({ name }: { name: string }) => `Solo tú ves a ${name}. Quienes comparten este Bot contigo ven su propia cara.`, wearTitle: ({ name }: { name: string }) => `Usar a ${name} como cara de…`, wearBody: "El Bot conserva su propia cara debajo. Quienes lo comparten contigo ven esa.", wearNewBot: ({ name }: { name: string }) => `${name} será su cara`, petEmptyNote: "Las mascotas que añadas en Ajustes › Mascotas aparecen aquí.", customEmptyNote: "Personalizada: pide a este bot una forma, como «conviértete en un gato».", failed: "No se pudo guardar esta cara. Inténtalo de nuevo." },
         create: {
             description: "Dile de qué debe ocuparse. Puedes cambiar su nombre y sus instrucciones cuando quieras.",
             placeholder: "¿De qué debe ocuparse este bot?",

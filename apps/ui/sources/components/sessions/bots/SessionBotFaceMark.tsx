@@ -8,7 +8,8 @@ import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback
 import { sessionDisplayActions } from '@/sync/ops/sessions/sessionDisplayActions';
 import { t } from '@/text';
 
-import { BotFacePicker, type BotFacePickerStatus } from './BotFacePicker';
+import { applyBotFacePickerGesture, BotFacePicker, type BotFacePickerStatus } from './BotFacePicker';
+import { useBotFaceWearRequest } from './botFaceWearIntent';
 import type { BotFaceMood } from './face/botFaceGeometry';
 import { SessionBotFace } from './face/SessionBotFace';
 import type { SessionBotFaceFacts } from './face/sessionBotFaceFacts';
@@ -82,6 +83,13 @@ export const SessionBotFaceMark = React.memo(function SessionBotFaceMark(
   const anchorRef = React.useRef<View | null>(null);
   const [open, setOpen] = React.useState(false);
   const editor = useSessionBotFaceEditor(props);
+  // A pet handed over by "Use as a Bot's face…" (R12 §10): the chooser opens wearing it, and that is the one change.
+  const shown = React.useRef(editor.shown);
+  shown.current = editor.shown;
+  useBotFaceWearRequest(props.sessionId, (pet) => {
+    editor.change(applyBotFacePickerGesture(shown.current.face, shown.current.seed, { kind: 'pet', pet }));
+    setOpen(true);
+  });
   return (
     <View ref={anchorRef} collapsable={false}>
       <HappierPressable

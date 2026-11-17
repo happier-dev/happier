@@ -431,6 +431,38 @@ describe('Bots roster', () => {
     expect(JSON.stringify(navigate.mock.calls[0]?.[0])).toContain('active-bot');
   });
 
+  it('picks the Bot that wears a pet: Bot rows only, no roster actions, and the chosen Bot takes the pet', async () => {
+    const serverId = connection!.home.id;
+    const now = Date.now();
+    storage.getState().applyServerScopedSessionListRows(serverId, [
+      createSessionListRenderableSessionFixture({ id: 'wearing-bot', active: true, activeAt: now, updatedAt: now,
+        metadata: { path: '/project', bot: { kind: 'bot' } } }),
+    ], { source: 'ordinary', mode: 'replace' });
+    const close = vi.fn();
+    const pet = { kind: 'builtIn' as const, petId: 'milo' };
+    const { BotsPopoverContent } = await import('./BotsPopoverContent');
+    const { useBotFaceWearRequest } = await import('./botFaceWearIntent');
+    const taken: unknown[] = [];
+    function WearingHeader() {
+      useBotFaceWearRequest('wearing-bot', (wear) => { taken.push(wear); });
+      return null;
+    }
+    const screen = await renderScreen(
+      <InjectedAuthProvider credentials={null}>
+        <BotsPopoverContent close={close} maxHeight={520} wearPet={{ pet, name: 'Milo' }} />
+        <WearingHeader />
+      </InjectedAuthProvider>,
+    );
+    await flushHookEffects({ cycles: 3 });
+    expect(screen.findByTestId('session-list-item-wearing-bot')).not.toBeNull();
+    expect(screen.findByTestId('bots-roster.new-bot')).toBeNull();
+    expect(screen.findByTestId('bots-roster.ask-happier')).toBeNull();
+    expect(screen.getTextContent()).toContain('Milo');
+    await pressNativeBoundary(screen, 'session-list-item-wearing-bot');
+    expect(close).toHaveBeenCalled();
+    expect(taken).toEqual([pet]);
+  });
+
   it('does not rescan expanded roster membership for hydrated message arrivals or unrelated publications', async () => {
     const serverId = connection!.home.id;
     const now = Date.now();
@@ -865,6 +897,24 @@ describe('Bots roster', () => {
     expect(screen.findByTestId('session-list-item-ordinary')).toBeNull();
     expect(screen.findByTestId('bots-roster.partial')).toBeNull();
     expect(screen.findByTestId('bots-roster.unreadable')).toBeNull();
+  });
+
+  it('with no Bots, offers the roster\'s own empty row and New bot wearing the pet', async () => {
+    serveHealthyOrdinarySnapshot = true;
+    const { sync } = await import('@/sync/sync');
+    await sync.refreshSessions({ awaitSessionListHydration: true });
+    const { BotsPopoverContent } = await import('./BotsPopoverContent');
+    const screen = await renderScreen(
+      <InjectedAuthProvider credentials={null}>
+        <BotsPopoverContent close={() => {}} maxHeight={520} wearPet={{ pet: { kind: 'builtIn', petId: 'milo' }, name: 'Milo' }} />
+      </InjectedAuthProvider>,
+    );
+    await vi.waitFor(async () => {
+      await flushHookEffects();
+      expect(screen.findByTestId('bots-roster.wear.new-bot')).not.toBeNull();
+    });
+    expect(screen.findByTestId('bots-roster.empty')).not.toBeNull();
+    expect(screen.findByTestId('bots-roster.from-template')).toBeNull();
   });
 
   it('explains unreadable candidates neutrally without offering an ineffective retry', async () => {

@@ -3,7 +3,7 @@ export function createReactNativeSkiaMock() {
     return {
         Canvas: 'Canvas', Circle: 'Circle', Image: 'SkiaImage', Rect: 'Rect', Group: 'Group',
         LinearGradient: 'LinearGradient', RadialGradient: 'RadialGradient', Path: 'Path',
-        RoundedRect: 'RoundedRect', DiffRect: 'DiffRect', Picture: 'Picture',
+        RoundedRect: 'RoundedRect', DiffRect: 'DiffRect', Picture: 'Picture', ColorMatrix: 'ColorMatrix',
         // A recorded picture is opaque native state; the stub records nothing.
         createPicture: () => ({ dispose: () => undefined }),
         useFont: () => null,

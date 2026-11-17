@@ -5565,6 +5565,20 @@ export const zhHans: TranslationStructure = {
     },},
 
   settingsPets: {
+  store: {
+    poses: "姿势",
+    pose: {
+      idle: "待机",
+      runningRight: "向右走",
+      runningLeft: "向左走",
+      waving: "挥手",
+      jumping: "跳跃",
+      failed: "失败",
+      waiting: "等待",
+      running: "工作",
+      review: "审阅",
+    },
+  },
     title: '宠物',
     previewTitle: 'Blink 伙伴',
     previewSubtitle: '用于会话状态和审阅提醒的小伙伴。',
@@ -20491,7 +20505,7 @@ settingsSession: {
             startBlank: "开始一个空白机器人", menuSubtitle: "设置 Happier 并了解它能做什么",
         },
         name: { placeholder: "新机器人", label: "机器人名称", hint: "名称留空，它会自己命名。" },
-        face: { ...botFaceNameTranslations['zh-Hans'], title: "选择面孔", change: "更改面孔", style: "风格", body: "身体", colour: "颜色", styles: { dither: "抖动", pixel: "像素", solid: "纯色", dots: "圆点", planet: "星球" }, note: "由此机器人生成；只改变它的面孔。", useDefault: "使用我的默认设置", surprise: "给我惊喜", shuffle: "随机换图", custom: "自定义", surpriseNote: "每次都是新形状。由此机器人生成；只改变它的面孔。", customNote: "这个形状是你的机器人画的。可以让它再画一个，或在这里选择。", customEmptyNote: "自定义：让这个机器人画一个形状，比如“把自己变成一只猫”。", failed: "无法保存此面孔，请重试。" },
+        face: { ...botFaceNameTranslations['zh-Hans'], title: "选择面孔", change: "更改面孔", style: "风格", body: "身体", colour: "颜色", styles: { dither: "抖动", pixel: "像素", solid: "纯色", dots: "圆点", planet: "星球" }, note: "由此机器人生成；只改变它的面孔。", useDefault: "使用我的默认设置", surprise: "给我惊喜", shuffle: "随机换图", custom: "自定义", surpriseNote: "每次都是新形状。由此机器人生成；只改变它的面孔。", customNote: "这个形状是你的机器人画的。可以让它再画一个，或在这里选择。", pet: "宠物", findPet: "查找宠物", createPet: "创建…", petAccountNote: ({ name }: { name: string }) => `只有你能看到 ${name}。与你共享此 Bot 的人看到的是它自己的面孔。`, wearTitle: ({ name }: { name: string }) => `将 ${name} 用作以下 Bot 的面孔…`, wearBody: "Bot 会保留自己原本的面孔。与你共享它的人看到的是原本的面孔。", wearNewBot: ({ name }: { name: string }) => `${name} 将成为它的面孔`, petEmptyNote: "你在 设置 › 宠物 中添加的宠物会显示在这里。", customEmptyNote: "自定义：让这个机器人画一个形状，比如“把自己变成一只猫”。", failed: "无法保存此面孔，请重试。" },
         create: {
             description: "告诉它要负责什么。你可以随时更改它的名称和指令。",
             placeholder: "这个机器人要负责什么？",

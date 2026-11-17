@@ -4949,6 +4949,20 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 		    },
 
 		    settingsPets: {
+  store: {
+    poses: "姿勢",
+    pose: {
+      idle: "待機",
+      runningRight: "向右走",
+      runningLeft: "向左走",
+      waving: "揮手",
+      jumping: "跳躍",
+      failed: "失敗",
+      waiting: "等待",
+      running: "工作",
+      review: "審閱",
+    },
+  },
 		        title: '寵物',
 		        previewTitle: 'Blink 夥伴',
 		        previewSubtitle: '用於工作階段狀態與審查提醒的小夥伴。',
@@ -15538,7 +15552,7 @@ settingsSession: {
             startBlank: "開始一個空白機器人", menuSubtitle: "設定 Happier 並了解它能做什麼",
         },
         name: { placeholder: "新機器人", label: "機器人名稱", hint: "名稱留空，它會自己命名。" },
-        face: { ...botFaceNameTranslations['zh-Hant'], title: "選擇臉孔", change: "更改臉孔", style: "風格", body: "身體", colour: "顏色", styles: { dither: "抖色", pixel: "像素", solid: "純色", dots: "圓點", planet: "星球" }, note: "由此機器人產生；只改變它的臉孔。", useDefault: "使用我的預設", surprise: "給我驚喜", shuffle: "隨機換圖", custom: "自訂", surpriseNote: "每次都是新形狀。由此機器人產生；只改變它的臉孔。", customNote: "這個形狀是你的機器人畫的。可以請它再畫一個，或在這裡選擇。", customEmptyNote: "自訂：請這個機器人畫一個形狀，例如「把自己變成一隻貓」。", failed: "無法儲存此臉孔，請再試一次。" },
+        face: { ...botFaceNameTranslations['zh-Hant'], title: "選擇臉孔", change: "更改臉孔", style: "風格", body: "身體", colour: "顏色", styles: { dither: "抖色", pixel: "像素", solid: "純色", dots: "圓點", planet: "星球" }, note: "由此機器人產生；只改變它的臉孔。", useDefault: "使用我的預設", surprise: "給我驚喜", shuffle: "隨機換圖", custom: "自訂", surpriseNote: "每次都是新形狀。由此機器人產生；只改變它的臉孔。", customNote: "這個形狀是你的機器人畫的。可以請它再畫一個，或在這裡選擇。", pet: "寵物", findPet: "尋找寵物", createPet: "建立…", petAccountNote: ({ name }: { name: string }) => `只有你看得到 ${name}。與你共享此 Bot 的人看到的是它自己的臉孔。`, wearTitle: ({ name }: { name: string }) => `將 ${name} 用作以下 Bot 的臉孔…`, wearBody: "Bot 會保留自己原本的臉孔。與你共享它的人看到的是原本的臉孔。", wearNewBot: ({ name }: { name: string }) => `${name} 將成為它的臉孔`, petEmptyNote: "你在 設定 › 寵物 中新增的寵物會顯示在這裡。", customEmptyNote: "自訂：請這個機器人畫一個形狀，例如「把自己變成一隻貓」。", failed: "無法儲存此臉孔，請再試一次。" },
         create: {
             description: "告訴它要負責什麼。你可以隨時變更它的名稱和指示。",
             placeholder: "這個機器人要負責什麼？",

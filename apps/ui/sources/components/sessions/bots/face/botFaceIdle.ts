@@ -41,7 +41,15 @@ export type BotFaceBrainFace = Readonly<{
   onGesture: (gesture: BotFaceIdleGesture) => void;
   /** The face's centre in viewport css px, for pointer attention (web and desktop); null where there is none. */
   locate?: () => Readonly<{ x: number; y: number }> | null;
+  /**
+   * A pet face's look (R12 §11): the nearest of the look directions toward a fine pointer within reach, clockwise from
+   * up; `'neutral'` with the pointer on the face; null when there is no pointer near. Called only when it changes.
+   */
+  onPoint?: (direction: BotFacePointDirection | null) => void;
+  /** The face's box, css px, for `onPoint`'s on-the-face test. */
+  size?: number;
 }>;
+export type BotFacePointDirection = 'neutral' | number;
 export type BotFaceBrainHandle = Readonly<{
   /** The face's mood. `fact`: it changed now (a failure then shakes its head). */
   setMood: (mood: BotFaceMood, fact: boolean) => void;
@@ -52,6 +60,7 @@ export type BotFaceBrainHandle = Readonly<{
 
 const T = botFaceMotionTokens.alive;
 const M = botFaceMotionTokens.mutter;
+const P = botFaceMotionTokens.pet.look;
 const GESTURES: readonly BotFaceIdleGesture[] = ['smile', 'wiggle', 'sigh'];
 
 /** Seeded randomness (robot-heads' generator, as the lab): the same Bot behaves the same wherever it stands. */
@@ -102,6 +111,7 @@ class Brain {
   emitted = '';
   /** Live faces hand off to the loop; the loop's own simulation does not. */
   looping = true;
+  pointed: BotFacePointDirection | null = null;
   /** When a live face that has not handed off next checks whether its drawing meets the loop's. */
   loopCheckAt = Infinity;
   constructor(public face: BotFaceBrainFace, now: number) {
@@ -139,8 +149,33 @@ class Brain {
     const looks = lookMood(mood) && !this.holdsLooks(this.lastStep) ? this.nextLook : Infinity;
     return Math.min(looks, gestures, this.nextNod, this.mutterDue, this.loopCheckAt);
   }
+  /** A pet face's look direction: the pointer's sector (with hysteresis on its edges), or neutral on the face. */
+  point(pointer: Readonly<{ x: number; y: number }> | null) {
+    const onPoint = this.face.onPoint;
+    if (!onPoint) return;
+    const centre = pointer ? this.face.locate?.() : null;
+    let next: BotFacePointDirection | null = null;
+    if (pointer && centre) {
+      const dx = pointer.x - centre.x, dy = pointer.y - centre.y, distance = Math.hypot(dx, dy);
+      if (distance <= T.pointer.reachPx) {
+        if (distance < (this.face.size ?? 0) * P.onFaceShare) next = 'neutral';
+        else {
+          const sector = 360 / P.directions, angle = ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360;
+          next = Math.round(angle / sector) % P.directions;
+          if (typeof this.pointed === 'number') {
+            const away = Math.abs(angle - this.pointed * sector);
+            if (Math.min(away, 360 - away) < P.hysteresisDeg) next = this.pointed;
+          }
+        }
+      }
+    }
+    if (next === this.pointed) return;
+    this.pointed = next;
+    onPoint(next);
+  }
   /** Advance to `now`; returns whether anything still moves (the clock keeps stepping this face at 30 Hz). */
   step(now: number, dt: number, pointer: Readonly<{ x: number; y: number }> | null): boolean {
+    this.point(pointer);
     const mood = this.face.mood, live = this.lively;
     let moving = false;
     let tYaw = 0, tPitch = 0, tRoll = 0;

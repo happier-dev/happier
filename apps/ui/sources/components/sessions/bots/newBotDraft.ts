@@ -1,4 +1,4 @@
-import type { SessionIdentityAdditions } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import type { SessionBotFaceV1, SessionIdentityAdditions } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 
 import { openSessionAuthoringAction, type MountedAuthoringActionExecute, type SessionAuthoringOpenOutcome } from '@/sync/ops/actions/sessionAuthoringActions';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -12,10 +12,13 @@ export const NEW_BOT_SEED = {
 export async function openNewBotDraft(
   lifetime: ServerAccountScopeLifetime,
   executeAction?: MountedAuthoringActionExecute,
+  /** A face the new Bot starts with (a pet from "Use as a Bot's face…", R12 §10); its seed is still the draft's. */
+  face?: SessionBotFaceV1,
 ): Promise<SessionAuthoringOpenOutcome> {
   // Bot authoring needs its mounted approval custodian; the authoring owner shows a refusal or a waiting approval.
   if (!executeAction) return { kind: 'unavailable', reason: 'client_unavailable' };
-  return openSessionAuthoringAction({ seed: NEW_BOT_SEED }, lifetime, { executeAction });
+  const seed = face ? { initialSessionFacts: { ...NEW_BOT_SEED.initialSessionFacts, botFace: face } } : NEW_BOT_SEED;
+  return openSessionAuthoringAction({ seed }, lifetime, { executeAction });
 }
 
 /**

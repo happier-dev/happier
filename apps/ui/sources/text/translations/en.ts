@@ -6222,6 +6222,20 @@ const enSettingsDesktop = {
 };
 
 const enSettingsPets = {
+  store: {
+    poses: "Poses",
+    pose: {
+      idle: "Idle",
+      runningRight: "Walk right",
+      runningLeft: "Walk left",
+      waving: "Wave",
+      jumping: "Hop",
+      failed: "Fail",
+      waiting: "Wait",
+      running: "Work",
+      review: "Review",
+    },
+  },
   title: 'Pets',
   previewTitle: 'Blink',
   previewSubtitle: 'A small companion for session status and review attention.',
@@ -24723,7 +24737,7 @@ export const en: TranslationStructure = {
         startBlank: "Start a blank bot", menuSubtitle: "Set up Happier and find what it can do",
     },
     name: { placeholder: "New bot", label: "Bot name", hint: "Leave the name empty to let it name itself." },
-    face: { ...botFaceNameTranslations.en, title: "Choose a face", change: "Change face", style: "Style", body: "Body", colour: "Colour", styles: { dither: "Dither", pixel: "Pixel", solid: "Solid", dots: "Dots", planet: "Planet" }, note: "Seeded from this Bot; only its face changes.", useDefault: "Use my default", surprise: "Surprise me", shuffle: "Shuffle picture", custom: "Custom", surpriseNote: "A new shape each time. Seeded from this Bot; only its face changes.", customNote: "Your Bot drew this shape. Ask it for another, or pick one here.", customEmptyNote: "Custom: ask this Bot for a shape, like “make yourself a cat”.", failed: "Couldn't save this face. Try again." },
+    face: { ...botFaceNameTranslations.en, title: "Choose a face", change: "Change face", style: "Style", body: "Body", colour: "Colour", styles: { dither: "Dither", pixel: "Pixel", solid: "Solid", dots: "Dots", planet: "Planet" }, note: "Seeded from this Bot; only its face changes.", useDefault: "Use my default", surprise: "Surprise me", shuffle: "Shuffle picture", custom: "Custom", surpriseNote: "A new shape each time. Seeded from this Bot; only its face changes.", customNote: "Your Bot drew this shape. Ask it for another, or pick one here.", pet: "Pet", findPet: "Find a pet", createPet: "Create…", petAccountNote: ({ name }: { name: string }) => `Only you see ${name}. People you share this Bot with see its own face.`, wearTitle: ({ name }: { name: string }) => `Use ${name} as a face for…`, wearBody: "The Bot keeps its own face underneath. People you share it with see that one.", wearNewBot: ({ name }: { name: string }) => `${name} will be its face`, petEmptyNote: "Pets you add in Settings › Pets appear here.", customEmptyNote: "Custom: ask this Bot for a shape, like “make yourself a cat”.", failed: "Couldn't save this face. Try again." },
     create: {
         description: "Tell it what to look after. You can change its name and instructions any time.",
         placeholder: "What should this bot look after?",
@@ -25002,6 +25016,8 @@ type EnglishNamespaces0 = {
         readonly styles: { readonly dither: string; readonly pixel: string; readonly solid: string; readonly dots: string; readonly planet: string };
         readonly note: string; readonly useDefault: string; readonly surprise: string; readonly shuffle: string; readonly custom: string;
         readonly surpriseNote: string; readonly customNote: string; readonly customEmptyNote: string; readonly failed: string;
+        readonly pet: string; readonly findPet: string; readonly createPet: string; readonly petAccountNote: (params: { name: string }) => string; readonly petEmptyNote: string;
+        readonly wearTitle: (params: { name: string }) => string; readonly wearBody: string; readonly wearNewBot: (params: { name: string }) => string; readonly failed: string;
     } & BotFaceNames;
     readonly create: { readonly description: string; readonly placeholder: string; readonly documentFailed: string };
   };
