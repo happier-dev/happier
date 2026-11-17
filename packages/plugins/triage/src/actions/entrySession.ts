@@ -1,3 +1,4 @@
+import { readTriageAccountDataSourceOptionsV1 } from './accountDataSources.js';
 import { readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 import { PluginError, selectCurrentTargetedContribution, type JsonValue, type PluginInvocationContext, } from '@happier-dev/plugin-sdk';
@@ -66,7 +67,7 @@ export function createTriageVerifyExistingReviewWorkspaceActionHandler(): Triage
         const accepted = status.data.acceptedWorkspace;
         if (accepted === undefined || accepted.checkout.serverId !== input.session.serverId) return unavailable;
         const { sourceInstances } = bindCorpusCollections(requireTriageAccountStorage(context));
-        const row = await findConfiguredSourceInstanceRow(sourceInstances, input.sourceInstanceId, options);
+        const row = await findConfiguredSourceInstanceRow(sourceInstances, input.sourceInstanceId, await readTriageAccountDataSourceOptionsV1(context));
         if (row === null || row.value.lifecycle !== CORPUS_SOURCE_INSTANCE_LIFECYCLE.active
             || !configuredSourceInstanceIsOwnedBy(row.value, input.entryRef.source)) return unavailable;
         const operation = await readCurrentVerifyReviewWorkspaceOperation(input.entryRef.source, context);

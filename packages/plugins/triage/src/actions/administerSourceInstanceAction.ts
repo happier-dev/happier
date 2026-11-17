@@ -1,3 +1,5 @@
+import { readTriageAccountDataSourceOptionsV1 } from './accountDataSources.js';
+import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type {
@@ -64,7 +66,7 @@ export function createTriageAdministerSourceInstanceActionHandler(
         const { sourceInstances } = bindCorpusCollections(requireTriageAccountStorage(context));
 
         const configuredRow = isTriageHostActionCaller(context) && input.kind !== 'create'
-            ? await findConfiguredSourceInstanceRow(sourceInstances, input.sourceInstanceId, cancellation)
+            ? await findConfiguredSourceInstanceRow(sourceInstances, input.sourceInstanceId, await readTriageAccountDataSourceOptionsV1(context))
             : null;
         const selectedSource = configuredRow?.value.configured.instance.source ?? input.source;
         if (configuredRow && input.source && (input.source.pluginId !== selectedSource?.pluginId
@@ -77,6 +79,7 @@ export function createTriageAdministerSourceInstanceActionHandler(
             collections: { sourceInstances },
             source: caller.source,
             declaredPurpose: caller.declaredPurpose,
+            accountDataSources: readAccountDataSourceRecordsV1([caller.contribution]),
             request: requestFrom(input),
             nowMs: options.nowMs(),
             mintSourceInstanceId: options.mintSourceInstanceId,

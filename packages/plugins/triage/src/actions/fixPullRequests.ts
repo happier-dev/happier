@@ -1,3 +1,4 @@
+import { readTriageAccountDataSourceOptionsV1 } from './accountDataSources.js';
 import { admitSourceFacts } from '@happier-dev/triage-protocol/v1';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 
@@ -159,7 +160,7 @@ export function createTriageReadFixPullRequestsActionHandler(): TriageDataAction
         const collections = bindCorpusCollections(requireTriageAccountStorage(context));
         const selected = input.sourceContext === undefined ? undefined : {
             entryRef: input.entryRef,
-            record: await readActiveConfiguredSourceRow(collections.sourceInstances, input.sourceContext.instance, { signal: context.signal })
+            record: await readActiveConfiguredSourceRow(collections.sourceInstances, input.sourceContext.instance, await readTriageAccountDataSourceOptionsV1(context))
                 .catch(() => { throwIfAborted(context.signal); return null; }),
         };
         const sourceRelations = createTriageSourceSessionRelations(context, collections, selected);

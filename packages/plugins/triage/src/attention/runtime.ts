@@ -1,3 +1,4 @@
+import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import { createCoalescedScheduler, sleepWithSignal } from '@happier-dev/plugin-sdk/async';
 import { buildTriageEntryRouteSegmentV1, TriageReadAttentionResultV1Schema, type TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
@@ -60,9 +61,10 @@ export async function runTriageAttention(context: BackgroundServiceContext): Pro
   const reconcile = createCoalescedScheduler({
     onError: () => { if (!context.signal.aborted) context.services.logger.warn('Triage attention source discovery failed'); },
     drain: async () => {
-      const [configured, admitted] = await Promise.all([
-        readActiveConfiguredSourceRows(rows, { signal: context.signal }), observation.readCurrent({ signal: context.signal }),
-      ]);
+      const admitted = await observation.readCurrent({ signal: context.signal });
+      const configured = await readActiveConfiguredSourceRows(rows, {
+        signal: context.signal, accountDataSources: readAccountDataSourceRecordsV1(admitted.contributions),
+      });
       const sources = indexTriageAdmittedSourcesV1(admitted.contributions);
       const current = new Set<string>();
       for (const record of configured.records) {

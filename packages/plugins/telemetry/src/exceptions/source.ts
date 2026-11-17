@@ -41,6 +41,7 @@ export const TELEMETRY_EXCEPTION_SOURCE_DESCRIPTOR_V1 =
     v: 1,
     purpose: 'exceptions',
     displayName: LABEL,
+    accountDataInstance: { sourceInstanceId: '6d04cf37-0f5b-4ccd-9a4b-370491c8c393', configurationRowId: 'happier-exceptions', draft: TELEMETRY_EXCEPTION_SOURCE_DRAFT_V1 },
     // Resolve, Reopen and Ignore are the issue's own header actions, routed to the collector's single writer.
     kinds: [
       {

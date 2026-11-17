@@ -7,8 +7,6 @@ import {
   type TriageConfigureSourceOfferV1,
 } from '@happier-dev/triage-protocol/v1';
 import { createTriageConfigureSourceOfferV1 } from '../../corpus/configuration/sourceSetupOffer.js';
-import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
-import { sameTriageSourceIdentity } from '../../corpus/identity/components.js';
 
 /**
  * Where the shell sends a reader who has nothing configured.
@@ -57,11 +55,8 @@ export function planTriageConfigureSourceOffersV1(
   if (snapshot === undefined) return NONE;
   const offers: TriageConfigureSourceOfferV1[] = [];
   for (const contribution of snapshot.contributions) {
-    // The built-in Account target has no connection/setup step to offer.
-    if (sameTriageSourceIdentity({ pluginId: contribution.contributor.pluginId,
-      localId: contribution.contributor.contributionId }, INTERNAL_TASK_SOURCE_V1)) continue;
     const admitted = admitTriageSourceDescriptorV1(contribution.descriptor);
-    if (!admitted.ok) continue;
+    if (!admitted.ok || admitted.descriptor.accountDataInstance !== undefined) continue;
     const descriptor = options.tasks === true
       ? { ...admitted.descriptor, kinds: admitted.descriptor.kinds.filter((kind) => kind.task === true) }
       : admitted.descriptor;

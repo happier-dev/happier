@@ -1,3 +1,6 @@
+import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
+import type { AccountDataSourceReadOptionsV1 } from './accountDataSources.js';
+import { sameConfiguredSourceAuthority } from './configuredSourceAuthority.js';
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import type {
@@ -17,7 +20,7 @@ import { fromCorpusStoredRow, toCorpusStoredValue, type CorpusRowV1 } from '../c
 import type { CorpusSourceInstanceRowV1 } from '../collections/rows.js';
 import { renderSourceQualifiedId } from '../identity/components.js';
 import { deriveConfiguredSourceInstanceTag } from '../identity/tags.js';
-import { readInternalTaskSourceRecordV1, isInternalTaskConfiguredInstanceV1, projectInternalTaskSourceRecordV1 } from '../../internalTasks/configuration.js';
+import { readInternalTaskSourceRecordV1, projectInternalTaskSourceRecordV1 } from '../../internalTasks/configuration.js';
 
 /**
  * The one canonical `source-instances` lifecycle writer.
@@ -76,6 +79,7 @@ export type CorpusAdministerConfiguredSourceInstanceInputV1 = Readonly<{
     nowMs: number;
     /** Mints one stable private UUID. Called only when a row is genuinely absent. */
     mintSourceInstanceId: () => string;
+    accountDataSources?: AccountDataSourceReadOptionsV1['accountDataSources'];
     signal?: AbortSignal;
 }>;
 
@@ -170,7 +174,7 @@ export function advanceConfiguredSourceCollectionCursor(
 export async function readConfiguredSourceInstanceRow(
     sourceInstances: Pick<CorpusCollectionHandleV1, 'get'>,
     instanceTag: string,
-    options?: PluginCancellationOptions,
+    options?: AccountDataSourceReadOptionsV1,
 ): Promise<CorpusRowV1<CorpusSourceInstanceRowV1> | null> {
     const row = await sourceInstances.get(instanceTag, options);
     return row ? fromCorpusStoredRow<CorpusSourceInstanceRowV1>(row) : null;
@@ -180,11 +184,12 @@ export async function readConfiguredSourceInstanceRow(
 export async function readExactConfiguredSourceInstanceRow(
     sourceInstances: Pick<CorpusCollectionHandleV1, 'get' | 'identityTag'>,
     exact: TriageConfiguredSourceInstanceV1 | Readonly<{ sourceInstanceId: string; configurationRowId: string }>,
-    options?: PluginCancellationOptions,
+    options?: AccountDataSourceReadOptionsV1,
 ): Promise<CorpusRowV1<CorpusSourceInstanceRowV1> | null> {
     const sourceInstanceId = 'instance' in exact ? exact.instance.sourceInstanceId : exact.sourceInstanceId;
-    const builtin = readInternalTaskSourceRecordV1(sourceInstanceId);
-    if (builtin !== null && ('instance' in exact ? isInternalTaskConfiguredInstanceV1(exact)
+    const builtin = options?.accountDataSources?.find(row => row.value.configured.instance.sourceInstanceId === sourceInstanceId)
+        ?? readInternalTaskSourceRecordV1(sourceInstanceId);
+    if (builtin !== null && ('instance' in exact ? sameConfiguredSourceAuthority({ ...builtin.value, configured: exact }, builtin.value)
         : exact.configurationRowId === builtin.rowId)) return builtin;
     const tag = 'instance' in exact
         ? await deriveConfiguredSourceInstanceTag(sourceInstances, {
@@ -217,9 +222,10 @@ export async function findConfiguredSourceInstanceRow(
     // a query-only handle without casting one back to the writer's.
     sourceInstances: Pick<CorpusCollectionHandleV1, 'query'>,
     sourceInstanceId: string,
-    options?: PluginCancellationOptions,
+    options?: AccountDataSourceReadOptionsV1,
 ): Promise<CorpusRowV1<CorpusSourceInstanceRowV1> | null> {
-    const builtin = readInternalTaskSourceRecordV1(sourceInstanceId);
+    const builtin = options?.accountDataSources?.find(row => row.value.configured.instance.sourceInstanceId === sourceInstanceId)
+        ?? readInternalTaskSourceRecordV1(sourceInstanceId);
     if (builtin !== null) return builtin;
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
@@ -435,7 +441,7 @@ export async function removeConfiguredSourceInstance(input: Readonly<{
 export async function administerConfiguredSourceInstance(
     input: CorpusAdministerConfiguredSourceInstanceInputV1,
 ): Promise<CorpusSourceInstanceAdministrationResultV1> {
-    const options = input.signal ? { signal: input.signal } : undefined;
+    const options = { ...(input.signal ? { signal: input.signal } : {}), accountDataSources: input.accountDataSources };
     const { request } = input;
 
     // The account binding a draft carries must be the purpose the caller's
@@ -443,6 +449,18 @@ export async function administerConfiguredSourceInstance(
     // a configuration reaching another purpose's Connected Accounts.
     if (request.kind !== 'remove' && request.draft.binding.purpose !== input.declaredPurpose) {
         return { kind: 'invalidCaller', failure: { class: 'permission', code: 'sourceAdministrationPurposeMismatch', detail: 'The draft purpose does not match the admitted source.' } };
+    }
+
+    const automatic = input.accountDataSources?.find(record => configuredSourceInstanceIsOwnedBy(record.value, input.source));
+    if (automatic) {
+        const configured = automatic.value.configured;
+        if (request.kind !== 'create' && request.sourceInstanceId !== configured.instance.sourceInstanceId) return INVALID_CALLER;
+        if (request.kind === 'remove') return CONFLICT;
+        const { draft } = request;
+        if (!pluginJsonValuesEqual(draft.binding, configured.binding)
+            || draft.localInstanceKey !== configured.localInstanceKey
+            || !pluginJsonValuesEqual(draft.configuration, configured.configuration)) return CONFLICT;
+        return { kind: request.kind === 'create' ? 'reused' : 'active', sourceInstanceId: configured.instance.sourceInstanceId };
     }
 
     if (request.kind === 'create') {

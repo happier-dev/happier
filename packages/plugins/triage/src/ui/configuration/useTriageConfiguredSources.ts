@@ -1,13 +1,14 @@
 import { CORPUS_SOURCE_INSTANCES_COLLECTION } from '../../corpus/collections/definitions.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isPluginError } from '@happier-dev/plugin-sdk';
-import { usePluginHostApi, usePluginTranslation, usePluginUiDataClientOrNull } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, usePluginTranslation, usePluginUiDataClientOrNull, useSurfaceContext } from '@happier-dev/plugin-ui';
 
 import { readActiveConfiguredSourceRows } from '../../corpus/configuration/readConfiguredSourceRows.js';
 import { removeConfiguredSourceInstance } from '../../corpus/configuration/administerConfiguredSourceInstance.js';
 import { useTriageDurableAccount, type TriageDurableAccountV1 } from '../durable/accountDurableState.js';
 import { TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1, type TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
-import { isInternalTaskConfiguredInstanceV1 } from '../../internalTasks/configuration.js';
+import { readAccountDataSourceRecordsV1 } from '../../corpus/configuration/accountDataSources.js';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 } from '@happier-dev/triage-protocol/v1';
 import { presentTriageMountedUiActionFailure } from '../mountedActions.js';
 
 export type TriageMountedConfiguredSourceV1 = Readonly<{
@@ -59,6 +60,12 @@ type ConfiguredSourceRead = Readonly<{
  */
 export function useTriageConfiguredSources(): TriageMountedConfiguredSourcesV1 {
   const host = usePluginHostApi();
+  const surface = useSurfaceContext();
+  const accountDataSources = useMemo(() => readAccountDataSourceRecordsV1(
+    surface.targetedContributions?.points.find(point => point.pointId === TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1)
+      ?.protocols.find(protocol => protocol.protocol.id === TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1
+        && protocol.protocol.version === TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1)?.contributions ?? [],
+  ), [surface.targetedContributions]);
   const dataClient = usePluginUiDataClientOrNull();
   const durable = useTriageDurableAccount();
   const text = usePluginTranslation();
@@ -93,14 +100,14 @@ export function useTriageConfiguredSources(): TriageMountedConfiguredSourcesV1 {
     try {
       const result = await readActiveConfiguredSourceRows(
         durable.collections.sourceInstances,
-        { signal },
+        { signal, accountDataSources },
       );
       if (signal.aborted || generation.current !== current) return false;
       const sources = Object.freeze(result.rows.map((row) => Object.freeze({
         sourceInstanceId: row.configured.instance.sourceInstanceId,
         configured: row.configured,
         displayLabel: row.configured.locator?.displayLabel ?? row.configured.localInstanceKey,
-        removable: !isInternalTaskConfiguredInstanceV1(row.configured),
+        removable: !result.automaticSourceInstanceIds.includes(row.configured.instance.sourceInstanceId),
         ...(row.configured.locator?.displayPath === undefined
           ? {}
           : { displayPath: row.configured.locator.displayPath }),
@@ -113,7 +120,7 @@ export function useTriageConfiguredSources(): TriageMountedConfiguredSourcesV1 {
       await presentTriageMountedUiActionFailure(host, error, text);
       return false;
     }
-  }, [durable.collections, host, setUnavailableReason, text]);
+  }, [accountDataSources, durable.collections, host, setUnavailableReason, text]);
 
   useEffect(() => {
     const controller = new AbortController();

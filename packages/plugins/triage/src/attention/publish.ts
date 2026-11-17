@@ -1,3 +1,4 @@
+import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import { buildTriageEntryRouteSegmentV1, TriagePublishAttentionInputV1Schema, type TriagePublishAttentionResultV1Schema } from '@happier-dev/triage-protocol/v1';
@@ -14,7 +15,7 @@ export async function publishSourceAttention(input: unknown, context: PluginInvo
   const options = { signal: context.signal };
   const source = await resolveTriageCallerSource(context, options, parsed.entryRef.source);
   if (source.kind !== 'source') return { v: 1, kind: 'rejected', code: 'invalid-caller' } as const;
-  const row = await findConfiguredSourceInstanceRow(requireTriageAccountStorage(context).collection(CORPUS_SOURCE_INSTANCES_COLLECTION), parsed.sourceInstanceId, options);
+  const row = await findConfiguredSourceInstanceRow(requireTriageAccountStorage(context).collection(CORPUS_SOURCE_INSTANCES_COLLECTION), parsed.sourceInstanceId, { ...options, accountDataSources: readAccountDataSourceRecordsV1([source.caller.contribution]) });
   if (!row || row.value.lifecycle !== CORPUS_SOURCE_INSTANCE_LIFECYCLE.active
     || !configuredSourceInstanceIsOwnedBy(row.value, source.caller.source)) return { v: 1, kind: 'rejected', code: 'source-unavailable' } as const;
   context.signal.throwIfAborted();

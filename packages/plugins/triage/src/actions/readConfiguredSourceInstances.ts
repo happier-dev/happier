@@ -1,3 +1,4 @@
+import { readAccountDataSourceRecordsV1, projectAccountDataSourceCatalogV1, type AccountDataSourceReadOptionsV1 } from '../corpus/configuration/accountDataSources.js';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
@@ -24,7 +25,7 @@ import {
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { resolveTriageCallerSources } from './callerSource.js';
 import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
-import { projectInternalTaskSourceCatalogV1 } from '../internalTasks/configuration.js';
+import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../internalTasks/configuration.js';
 
 /**
  * The caller-scoped configured-instance read.
@@ -67,6 +68,7 @@ export type TriageReadConfiguredSourceInstancesDepsV1 = Readonly<{
     /** The `source-instances` Collection. This Action never writes it. */
     sourceInstances: Pick<CorpusCollectionHandleV1, 'query'>;
     signal?: AbortSignal;
+    accountDataSources?: AccountDataSourceReadOptionsV1['accountDataSources'];
 }>;
 
 /**
@@ -105,7 +107,8 @@ export async function readTriageConfiguredSourceInstances(
         cursor = advanceConfiguredSourceCollectionCursor(seenCursors, page.nextCursor);
     } while (cursor !== undefined);
 
-    return fitTriageConfiguredSourceInstancesResult(projectInternalTaskSourceCatalogV1(records)
+    const automatic = projectAccountDataSourceCatalogV1(deps.accountDataSources ?? [], [INTERNAL_TASK_SOURCE_RECORD_V1]);
+    return fitTriageConfiguredSourceInstancesResult(projectAccountDataSourceCatalogV1(records, automatic)
         .filter(record => sources.some(candidate => configuredSourceInstanceIsOwnedBy(record.value, candidate)))
         .map(record => recordFrom(record.value)));
 }
@@ -128,7 +131,8 @@ export function createTriageReadConfiguredSourceInstancesActionHandler(): Triage
             if (!resolution.callers.some(caller => sameTriageSourceIdentity(caller.source, exact.instance.source))) {
                 return fitTriageConfiguredSourceInstancesResult([]);
             }
-            const stored = await readExactConfiguredSourceInstanceRow(sourceInstances, exact, cancellation);
+            const stored = await readExactConfiguredSourceInstanceRow(sourceInstances, exact, { ...cancellation,
+                accountDataSources: readAccountDataSourceRecordsV1(resolution.callers.map(caller => caller.contribution)) });
             const row = stored?.value ?? null;
             return fitTriageConfiguredSourceInstancesResult(row !== null
                 && resolution.callers.some(caller => configuredSourceInstanceIsOwnedBy(row, caller.source))
@@ -136,6 +140,7 @@ export function createTriageReadConfiguredSourceInstancesActionHandler(): Triage
         }
         return await readTriageConfiguredSourceInstances(resolution.callers.map((caller) => caller.source), {
             sourceInstances,
+            accountDataSources: readAccountDataSourceRecordsV1(resolution.callers.map(caller => caller.contribution)),
             ...(context.signal ? { signal: context.signal } : {}),
         });
     };

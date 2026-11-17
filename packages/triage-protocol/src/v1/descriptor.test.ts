@@ -246,3 +246,23 @@ describe('the detail header actions panel (r0.42)', () => {
         })).toEqual({ ok: false, reason: 'duplicateDetailTabId' });
     });
 });
+
+
+describe('setup-free Account source declaration', () => {
+    const declaration = {
+        sourceInstanceId: '6d04cf37-0f5b-4ccd-9a4b-370491c8c393', configurationRowId: 'happier-exceptions',
+        draft: { v: 1, binding: { purpose: MINIMAL.purpose, source: 'accountData' }, localInstanceKey: 'account',
+            keyStability: 'stable', configuration: { v: 1, token: 'account-v1' }, locator: { v: 1, displayLabel: 'Account source' } },
+    } as const;
+    it('admits an immutable Account instance while retaining old descriptors, and rejects a connection or unstable declaration', () => {
+        expect(admitTriageSourceDescriptorV1(MINIMAL).ok).toBe(true);
+        expect(admitTriageSourceDescriptorV1({ ...MINIMAL, accountDataInstance: declaration })).toMatchObject({
+            ok: true, descriptor: { accountDataInstance: declaration },
+        });
+        for (const draft of [
+            { ...declaration.draft, keyStability: 'unstable' },
+            { ...declaration.draft, binding: { purpose: 'another-purpose', source: 'accountData' } },
+            { ...declaration.draft, binding: { purpose: MINIMAL.purpose, source: 'native', service: { pluginId: 'happier.example', localId: 'service' } } },
+        ]) expect(admitTriageSourceDescriptorV1({ ...MINIMAL, accountDataInstance: { ...declaration, draft } }).ok).toBe(false);
+    });
+});

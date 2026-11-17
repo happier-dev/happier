@@ -1,3 +1,4 @@
+import { createAccountDataSourceRecordV1 } from '../corpus/configuration/accountDataSources.js';
 import type { TriageConfiguredSourceInstanceV1, TriageSourceInstanceDraftV1 } from '@happier-dev/triage-protocol/v1';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import type { CorpusRowV1 } from '../corpus/collections/rowCodec.js';
@@ -9,6 +10,10 @@ export const INTERNAL_TASK_DRAFT_V1 = {
   configuration: { v: 1, token: 'happier-tasks-v1' }, locator: { v: 1, displayLabel: INTERNAL_TASK_SOURCE_LABEL_V1 },
 } as const satisfies TriageSourceInstanceDraftV1;
 
+export const INTERNAL_TASK_ACCOUNT_DATA_INSTANCE_V1 = {
+  sourceInstanceId: '469228ab-360b-45c2-8b89-9b7ce0505797', configurationRowId: 'happier-personal-tasks', draft: INTERNAL_TASK_DRAFT_V1,
+} as const;
+
 export function isInternalTaskConfiguredInstanceV1(instance: TriageConfiguredSourceInstanceV1): boolean {
   return instance.instance.source.pluginId === INTERNAL_TASK_SOURCE_V1.pluginId && instance.instance.source.localId === INTERNAL_TASK_SOURCE_V1.localId
     && instance.binding.purpose === INTERNAL_TASK_DRAFT_V1.binding.purpose && 'source' in instance.binding && instance.binding.source === 'accountData'
@@ -18,18 +23,10 @@ export function isInternalTaskConfiguredInstanceV1(instance: TriageConfiguredSou
 /** One built-in Account-data target, with no connection row or setup write.
  * Its fixed revision describes this immutable configuration, not a server row.
  * Task content and Account isolation stay with the existing authenticated todo owner. */
-export const INTERNAL_TASK_SOURCE_RECORD_V1: CorpusRowV1<CorpusSourceInstanceRowV1> = Object.freeze({
-  rowId: 'happier-personal-tasks', revision: 1,
-  value: {
-    instanceTag: 'happier-personal-tasks', sourceQualifiedId: 'happier.triage/internal',
-    lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 0,
-    configured: {
-      v: 1, instance: { source: INTERNAL_TASK_SOURCE_V1, sourceInstanceId: '469228ab-360b-45c2-8b89-9b7ce0505797' },
-      binding: INTERNAL_TASK_DRAFT_V1.binding, localInstanceKey: INTERNAL_TASK_DRAFT_V1.localInstanceKey,
-      configuration: INTERNAL_TASK_DRAFT_V1.configuration, locator: INTERNAL_TASK_DRAFT_V1.locator,
-    },
-  },
-} satisfies CorpusRowV1<CorpusSourceInstanceRowV1>);
+export const INTERNAL_TASK_SOURCE_RECORD_V1: CorpusRowV1<CorpusSourceInstanceRowV1> = Object.freeze(createAccountDataSourceRecordV1(
+  { pluginId: INTERNAL_TASK_SOURCE_V1.pluginId, contributionId: INTERNAL_TASK_SOURCE_V1.localId },
+  INTERNAL_TASK_ACCOUNT_DATA_INSTANCE_V1,
+));
 
 export function readInternalTaskSourceRecordV1(sourceInstanceId: string): CorpusRowV1<CorpusSourceInstanceRowV1> | null {
   return sourceInstanceId === INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId
@@ -41,14 +38,4 @@ export function projectInternalTaskSourceRecordV1(record: CorpusRowV1<CorpusSour
   return isInternalTaskConfiguredInstanceV1(record.value.configured)
     ? { ...record, value: { ...record.value, lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active } }
     : record;
-}
-
-/** Older explicit setup rows address the same personal inventory, never another source. */
-export function projectInternalTaskSourceCatalogV1(
-  records: readonly CorpusRowV1<CorpusSourceInstanceRowV1>[], includeBuiltin = true,
-): readonly CorpusRowV1<CorpusSourceInstanceRowV1>[] {
-  return Object.freeze([
-    ...(includeBuiltin ? [INTERNAL_TASK_SOURCE_RECORD_V1] : []),
-    ...records.filter(record => !isInternalTaskConfiguredInstanceV1(record.value.configured)),
-  ]);
 }

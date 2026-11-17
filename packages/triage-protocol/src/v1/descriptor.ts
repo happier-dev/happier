@@ -18,6 +18,8 @@ import {
     TriageSourceWorkflowSubjectV1Schema,
     TriageTextV1ProtocolSchema,
 } from './identity.js';
+import { TriageSourceInstanceDraftV1Schema } from './instances.js';
+import { TriageSourceInstanceIdV1Schema } from './identity.js';
 import { defineTriageSingleLineStringV1 } from './strings.js';
 import { TriageTaskCapabilitiesV1Schema } from './observations.js';
 import { TriageSourceScopeUnitDescriptorV1Schema } from './scopeSelection.js';
@@ -150,6 +152,13 @@ export const TriageSourceDescriptorV1Schema = defineProtocolObject({
      * when it is present.
      */
     settingsPageId: TriageIdentifierV1ProtocolSchema.optional(),
+    /** One immutable, setup-free instance in the invoking Account. Contributor
+     * identity comes from admission, never from descriptor bytes. */
+    accountDataInstance: defineProtocolObject({
+        sourceInstanceId: TriageSourceInstanceIdV1Schema,
+        configurationRowId: TriageIdentifierV1ProtocolSchema,
+        draft: TriageSourceInstanceDraftV1Schema,
+    }, { policy: 'closed' }).optional(),
     /** This source's own client Action accepting TriagePullRequestLocalFormInputV1.
      * It opens an unsent local form without executing a job or reading the provider. */
     pullRequestLocalFormActionId: TriageIdentifierV1ProtocolSchema.optional(),
@@ -177,6 +186,11 @@ export type TriageSourceDescriptorAdmissionV1 =
 export function admitTriageSourceDescriptorV1(input: unknown): TriageSourceDescriptorAdmissionV1 {
     const parsed = TriageSourceDescriptorV1Schema.safeParse(input);
     if (!parsed.success) return Object.freeze({ ok: false, reason: 'invalid' });
+    const automatic = parsed.data.accountDataInstance?.draft;
+    if (automatic && (!('source' in automatic.binding) || automatic.binding.source !== 'accountData'
+        || automatic.binding.purpose !== parsed.data.purpose || automatic.keyStability !== 'stable')) {
+        return Object.freeze({ ok: false, reason: 'invalid' });
+    }
     const kindIds = parsed.data.kinds.map((kind) => kind.id);
     if (new Set(kindIds).size !== kindIds.length) {
         return Object.freeze({ ok: false, reason: 'duplicateKindId' });

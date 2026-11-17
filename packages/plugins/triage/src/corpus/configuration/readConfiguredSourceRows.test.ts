@@ -7,6 +7,9 @@ import { toCorpusStoredValue } from '../collections/rowCodec.js';
 import { createTestkitCorpusCollections } from '../testkit/corpusCollections.test-support.js';
 import { INTERNAL_TASK_DRAFT_V1, INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/source.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuration.js';
+import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../../internalTasks/contribution.js';
+import { TELEMETRY_EXCEPTION_SOURCE_DESCRIPTOR_V1, TELEMETRY_EXCEPTION_SOURCE_V1 } from '../../../../telemetry/src/exceptions/source.js';
+import { readAccountDataSourceRecordsV1 } from './accountDataSources.js';
 import { findConfiguredSourceInstanceRow } from './administerConfiguredSourceInstance.js';
 import {
     readActiveConfiguredSourceRow,
@@ -42,6 +45,28 @@ function sourceRow(seed: number) {
 }
 
 describe('the canonical active configured-source read', () => {
+    it('exposes admitted exceptions in Account A without setup and preserves personal Tasks', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const accountDataSources = readAccountDataSourceRecordsV1([{
+            contributor: { pluginId: 'happier.triage', contributionId: 'internal' },
+            descriptor: INTERNAL_TASK_DESCRIPTOR_V1,
+        }, {
+            contributor: { pluginId: TELEMETRY_EXCEPTION_SOURCE_V1.pluginId, contributionId: TELEMETRY_EXCEPTION_SOURCE_V1.localId },
+            descriptor: TELEMETRY_EXCEPTION_SOURCE_DESCRIPTOR_V1,
+        }]);
+        const options = { accountDataSources };
+        const read = await readActiveConfiguredSourceRows(collections.sourceInstances, options);
+        const exception = read.records.find(row => row.value.sourceQualifiedId === 'happier.telemetry/exceptions');
+        expect(exception?.value.configured).toMatchObject({ binding: { purpose: 'exceptions', source: 'accountData' } });
+        expect(read.records).toContainEqual(INTERNAL_TASK_SOURCE_RECORD_V1);
+        expect(await findConfiguredSourceInstanceRow(collections.sourceInstances, exception!.value.configured.instance.sourceInstanceId, options)).toEqual(exception);
+        expect(await readActiveConfiguredSourceRow(collections.sourceInstances, {
+            sourceInstanceId: exception!.value.configured.instance.sourceInstanceId, configurationRowId: exception!.rowId,
+        }, options)).toEqual(exception);
+        expect((await collections.sourceInstances.query({ index: 'by-lifecycle', order: 'asc' })).rows).toEqual([]);
+        expect(control.sourceInstances.getCallCount()).toBe(0);
+    });
+
     it('resolves exact catalog addresses with current revisions, matching identity and lifecycle, including built-in Tasks', async () => {
         const { collections, control } = createTestkitCorpusCollections();
         const first = sourceRow(1);
@@ -87,6 +112,9 @@ describe('the canonical active configured-source read', () => {
         expect(active.rows.map(row => row.configured.instance.sourceInstanceId)).toEqual([
             builtin.configured.instance.sourceInstanceId, sourceRow(1).configured.instance.sourceInstanceId,
         ]);
+        const firstPage = await readActiveConfiguredSourceRowPage(collections.sourceInstances, { limit: 2 });
+        const nextPage = await readActiveConfiguredSourceRowPage(collections.sourceInstances, { limit: 2, cursor: firstPage.nextCursor });
+        expect([...firstPage.rows, ...nextPage.rows]).toEqual(active.rows);
         control.sourceInstances.seed(toCorpusStoredValue({ ...old, lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.retired }));
         expect((await readActiveConfiguredSourceRows(collections.sourceInstances)).rows).toEqual(active.rows);
         expect((await findConfiguredSourceInstanceRow(collections.sourceInstances, old.configured.instance.sourceInstanceId))?.value)

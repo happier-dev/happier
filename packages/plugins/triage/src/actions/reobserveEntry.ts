@@ -1,3 +1,4 @@
+import { readAccountDataSourceRecordsV1, type AccountDataSourceReadOptionsV1 } from '../corpus/configuration/accountDataSources.js';
 import { admitSourceFacts } from '@happier-dev/triage-protocol/v1';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 import type { PluginCancellationOptions, JsonValue } from '@happier-dev/plugin-sdk';
@@ -18,7 +19,7 @@ import {
 } from '../corpus/fold/qualify.js';
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
-import { findConfiguredSourceInstanceRow, readConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
+import { findConfiguredSourceInstanceRow, readExactConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import type { TriageAdmittedGetExecutorV1 } from '../composer/resolveForDispatch.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
@@ -52,7 +53,7 @@ export type TriageReobserveEntryDepsV1 = Readonly<{
   /** Exact active configured-instance storage read. */
   readConfiguredInstance(
     sourceInstanceId: string,
-    options?: PluginCancellationOptions,
+    options?: AccountDataSourceReadOptionsV1,
   ): Promise<TriageConfiguredSourceInstanceV1 | null>;
   readSourceSnapshot(options?: PluginCancellationOptions): Promise<TriageSourceSnapshotV1>;
   executeGet: TriageAdmittedGetExecutorV1;
@@ -89,10 +90,11 @@ export async function reobserveTriageEntry(
     signal: invocationSignal,
   };
   const invocation = (async (): Promise<TriageReobserveEntryResultV1> => {
-    const [configured, sourceSnapshot] = await Promise.all([
-      deps.readConfiguredInstance(input.sourceInstanceId, options),
-      deps.readSourceSnapshot(options),
-    ]);
+    const sourceSnapshot = await deps.readSourceSnapshot(options);
+    throwIfAborted(invocationSignal);
+    const configured = await deps.readConfiguredInstance(input.sourceInstanceId, {
+      ...options, accountDataSources: readAccountDataSourceRecordsV1(sourceSnapshot.contributions),
+    });
     throwIfAborted(invocationSignal);
     if (configured === null || !sameSource(configured, input.entryRef)) {
       return { kind: 'unavailable' };
@@ -153,7 +155,7 @@ export function createTriageReobserveEntryActionHandler(): TriageDataActionHandl
       readConfiguredInstance: async (sourceInstanceId, options) => {
         const row = input.sourceInstanceRowId === undefined
           ? await findConfiguredSourceInstanceRow(sourceInstances, sourceInstanceId, options)
-          : await readConfiguredSourceInstanceRow(sourceInstances, input.sourceInstanceRowId, options);
+          : await readExactConfiguredSourceInstanceRow(sourceInstances, { sourceInstanceId, configurationRowId: input.sourceInstanceRowId }, options);
         return row?.value.lifecycle === CORPUS_SOURCE_INSTANCE_LIFECYCLE.active
           && (input.sourceInstanceRowId === undefined || row.value.configured.instance.sourceInstanceId === sourceInstanceId)
           ? row.value.configured

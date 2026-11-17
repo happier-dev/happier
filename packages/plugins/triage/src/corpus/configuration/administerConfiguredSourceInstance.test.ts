@@ -11,6 +11,7 @@ import { fromCorpusStoredRow } from '../collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../collections/rows.js';
 import { createTestkitCorpusCollections } from '../testkit/corpusCollections.test-support.js';
 import { administerConfiguredSourceInstance } from './administerConfiguredSourceInstance.js';
+import { INTERNAL_TASK_ACCOUNT_DATA_INSTANCE_V1, INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuration.js';
 
 /**
  * The one canonical `source-instances` lifecycle writer.
@@ -67,6 +68,24 @@ function mintSequence(...ids: readonly string[]): () => string {
 const ID_A = '11111111-1111-4111-8111-111111111111';
 const ID_B = '22222222-2222-4222-8222-222222222222';
 const ID_C = '33333333-3333-4333-8333-333333333333';
+
+it('reuses an automatic Account instance without creating a removable connection or accepting another address', async () => {
+    const { collections } = createTestkitCorpusCollections();
+    const configured = INTERNAL_TASK_SOURCE_RECORD_V1.value.configured;
+    const input = {
+        collections, source: configured.instance.source, declaredPurpose: configured.binding.purpose,
+        accountDataSources: [INTERNAL_TASK_SOURCE_RECORD_V1], nowMs: 1,
+        mintSourceInstanceId: mintSequence(ID_A),
+    };
+    const draft = INTERNAL_TASK_ACCOUNT_DATA_INSTANCE_V1.draft;
+    expect(await administerConfiguredSourceInstance({ ...input, request: { kind: 'create', draft } }))
+        .toEqual({ kind: 'reused', sourceInstanceId: configured.instance.sourceInstanceId });
+    expect(await administerConfiguredSourceInstance({ ...input,
+        request: { kind: 'reconfigure', draft, sourceInstanceId: ID_B } })).toMatchObject({ kind: 'invalidCaller' });
+    expect(await administerConfiguredSourceInstance({ ...input,
+        request: { kind: 'remove', sourceInstanceId: configured.instance.sourceInstanceId } })).toEqual({ kind: 'conflict' });
+    expect(await liveRows(collections.sourceInstances)).toEqual([]);
+});
 
 async function liveRows(
     sourceInstances: CorpusCollectionHandleV1,

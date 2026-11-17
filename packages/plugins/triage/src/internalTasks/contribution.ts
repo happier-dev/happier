@@ -7,7 +7,7 @@ import {
   scanInternalTasks, getInternalTask, createInternalTask, editInternalTask, transitionInternalTask,
   linkInternalTaskSession, readInternalTaskSessionLinks,
 } from './source.js';
-import { INTERNAL_TASK_SOURCE_RECORD_V1 } from './configuration.js';
+import { INTERNAL_TASK_ACCOUNT_DATA_INSTANCE_V1, INTERNAL_TASK_SOURCE_RECORD_V1 } from './configuration.js';
 import { INTERNAL_TASK_SOURCE_LABEL_V1 } from './identity.js';
 
 const protocol = TriageSourcesContributionProtocolV1;
@@ -15,6 +15,7 @@ const fields = INTERNAL_TASK_EDIT_FIELDS_V1;
 const statuses = INTERNAL_TASK_STATES_V1.map(id => ({ id, label: internalTaskStateV1(id).nativeLabel, state: internalTaskStateV1(id) }));
 export const INTERNAL_TASK_DESCRIPTOR_V1 = TriageSourceDescriptorV1Schema.parse({
   v: 1, purpose: 'tasks', displayName: INTERNAL_TASK_SOURCE_LABEL_V1, settingsPageId: 'internal-tasks',
+  accountDataInstance: INTERNAL_TASK_ACCOUNT_DATA_INSTANCE_V1,
   kinds: [{ id: 'task', workflowSubject: 'issue', displayName: 'Task', pluralDisplayName: 'Tasks', task: true,
     taskCapabilities: { completedScan: true, createFields: fields, editFields: fields, completingTransitionId: 'completed',
       initialStatuses: statuses.map(status => ({ ...status, ...(status.id === 'unstarted' ? { isDefault: true } : {}) })),

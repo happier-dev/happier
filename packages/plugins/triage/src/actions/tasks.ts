@@ -1,3 +1,4 @@
+import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
@@ -45,10 +46,10 @@ async function writeTask(request: TaskWriteRequest, context: TriageDataActionCon
             TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1, { onInvalidated: () => {} },
         );
         try {
-            const [row, admitted] = await Promise.all([
-                findConfiguredSourceInstanceRow(sourceInstances, request.input.sourceInstanceId, options),
-                observation.readCurrent(options),
-            ]);
+            const admitted = await observation.readCurrent(options);
+            const row = await findConfiguredSourceInstanceRow(sourceInstances, request.input.sourceInstanceId, {
+                ...options, accountDataSources: readAccountDataSourceRecordsV1(admitted.contributions),
+            });
             throwIfAborted(context.signal);
             return { row, admitted, observation };
         } catch (error) {

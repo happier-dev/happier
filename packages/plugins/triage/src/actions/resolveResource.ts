@@ -1,3 +1,4 @@
+import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { readActiveConfiguredSourceRows } from '../corpus/configuration/readConfiguredSourceRows.js';
@@ -21,10 +22,10 @@ export function createTriageResolveResourceActionHandler(): TriageDataActionHand
       TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1, { onInvalidated: () => {} },
     );
     try {
-      const [configured, admitted] = await Promise.all([
-        readActiveConfiguredSourceRows(sourceInstances, options),
-        observation.readCurrent(options),
-      ]);
+      const admitted = await observation.readCurrent(options);
+      const configured = await readActiveConfiguredSourceRows(sourceInstances, {
+        ...options, accountDataSources: readAccountDataSourceRecordsV1(admitted.contributions),
+      });
       const sources = indexTriageAdmittedSourcesV1(admitted.contributions);
       for (const row of configured.rows) {
         throwIfAborted(context.signal);

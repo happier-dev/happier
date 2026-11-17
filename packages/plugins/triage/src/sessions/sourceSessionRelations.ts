@@ -1,3 +1,4 @@
+import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
 import type { TriageDataActionContext } from '../actions/dataContext.js';
 import { isPluginError, PluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
@@ -154,7 +155,9 @@ export function createTriageSourceSessionRelations(
             ? Promise.resolve({ rows: selectedRecords.map(record => record.value), records: selectedRecords, status: 'complete' as const })
             : isBuiltinSelection(input)
             ? Promise.resolve({ rows: [INTERNAL_TASK_SOURCE_RECORD_V1.value], records: [INTERNAL_TASK_SOURCE_RECORD_V1], status: 'complete' as const })
-            : configuredView ??= readActiveConfiguredSourceRows(collections.sourceInstances, options);
+            : configuredView ??= (sourcesView ??= current()).then(sources => readActiveConfiguredSourceRows(collections.sourceInstances, {
+                ...options, accountDataSources: readAccountDataSourceRecordsV1([...sources.values()]),
+            }));
         return Promise.all([sourcesView ??= current(), configured])
             .then(([sources, configured]) => ({ sources, configured }));
     }

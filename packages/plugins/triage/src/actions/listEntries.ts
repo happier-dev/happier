@@ -1,3 +1,4 @@
+import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
 import { admitSourceFacts } from '@happier-dev/triage-protocol/v1';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 import { isPluginError, readPluginErrorRequestIdV1, type LoggerService, type PluginCancellationOptions, type TargetedContributionSnapshot } from '@happier-dev/plugin-sdk';
@@ -217,12 +218,12 @@ export async function assembleTriageListPass(
     input: TriageListEntriesInputV1,
     deps: TriageListEntriesDepsV1,
 ): Promise<TriageAssembledListPassV1> {
-    const options: PluginCancellationOptions | undefined = deps.signal ? { signal: deps.signal } : undefined;
+    const sourceSnapshot = await deps.readSourceSnapshot(deps.signal ? { signal: deps.signal } : undefined);
+    const options = { ...(deps.signal ? { signal: deps.signal } : {}),
+        accountDataSources: readAccountDataSourceRecordsV1(sourceSnapshot.contributions) };
     const resumeByInstance = resumeByInstanceId(input);
     const sources = input.sources;
-    // Own both rejections before yielding: admission can fail during plugin
-    // retirement while Account storage is pending, and either read can fail first.
-    const [configured, sourceSnapshot] = await Promise.all([
+    const configured = await (
         sources.kind === 'allConfigured'
             ? input.sort !== undefined && input.limit > 0
                 ? readActiveConfiguredSourceRows(deps.sourceInstances, options)
@@ -236,9 +237,8 @@ export async function assembleTriageListPass(
             ).then(records => {
                 const active = records.filter(record => record !== null);
                 return { rows: active.map(record => record.value), records: active, status: 'complete' as const };
-            }),
-        deps.readSourceSnapshot(options),
-    ]);
+            })
+    );
     const configuredRows = configured.rows;
     const selectedSortSourceIds = input.sort === undefined ? undefined : new Set(selectTriageListSourcesV1(
         configuredRows.map(row => row.configured.instance), input.filters ?? TRIAGE_LIST_NO_FILTERS_V1,

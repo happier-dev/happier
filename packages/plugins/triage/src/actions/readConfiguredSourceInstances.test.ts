@@ -1,3 +1,4 @@
+import { TELEMETRY_EXCEPTION_SOURCE_DESCRIPTOR_V1, TELEMETRY_EXCEPTION_SOURCE_V1 } from '../../../telemetry/src/exceptions/source.js';
 import type { PluginInvocationCaller, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import {
@@ -164,6 +165,21 @@ function createContext(input: Readonly<{
 const INPUT = TriageReadConfiguredSourceInstancesInputV1Schema.parse({ v: 1 });
 
 describe('the caller-scoped configured-instance read', () => {
+    it('reads the admitted exceptions instance in a fresh Account without a setup write', async () => {
+        const { collections } = createTestkitCorpusCollections();
+        const source = { ...admittedSource(TELEMETRY_EXCEPTION_SOURCE_V1), descriptor: TELEMETRY_EXCEPTION_SOURCE_DESCRIPTOR_V1 };
+        const context = createContext({ collections, surface: 'ui', admitted: [source] });
+        const handler = createTriageReadConfiguredSourceInstancesActionHandler();
+        const result = await handler({ v: 1, source: TELEMETRY_EXCEPTION_SOURCE_V1 }, context);
+        expect(result).toMatchObject({ kind: 'read', status: 'complete', instances: [{ lifecycle: 'active', configured: {
+            instance: { source: TELEMETRY_EXCEPTION_SOURCE_V1 }, binding: { purpose: 'exceptions', source: 'accountData' },
+        } }] });
+        if (result.kind !== 'read') throw new Error('Expected the configured source');
+        const configured = result.instances[0]!.configured;
+        expect(await handler({ v: 1, source: TELEMETRY_EXCEPTION_SOURCE_V1, exact: configured }, context)).toEqual(result);
+        expect((await collections.sourceInstances.query({ index: 'by-lifecycle', order: 'asc' })).rows).toEqual([]);
+    });
+
     it('checks one exact private tuple with one get and no inventory walk, without disclosing foreign rows', async () => {
         const { collections, control } = createTestkitCorpusCollections();
         const wanted = instanceRow({ source: FORGE, seed: 1 });

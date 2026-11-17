@@ -1,5 +1,4 @@
-import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-
+import { projectAccountDataSourceCatalogV1, type AccountDataSourceReadOptionsV1 } from './accountDataSources.js';
 import type { CorpusCollectionHandleV1 } from '../collections/handles.js';
 import {
     CORPUS_SOURCE_INSTANCES_INDEX_ID,
@@ -8,13 +7,13 @@ import {
 import { fromCorpusStoredRow, type CorpusRowV1 } from '../collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../collections/rows.js';
 import { advanceConfiguredSourceCollectionCursor, readExactConfiguredSourceInstanceRow } from './administerConfiguredSourceInstance.js';
-import { projectInternalTaskSourceCatalogV1 } from '../../internalTasks/configuration.js';
+import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuration.js';
 
 /** The selected-detail counterpart of the active catalog read below. */
 export async function readActiveConfiguredSourceRow(
     sourceInstances: Pick<CorpusCollectionHandleV1, 'get' | 'identityTag'>,
     exact: Parameters<typeof readExactConfiguredSourceInstanceRow>[1],
-    options?: PluginCancellationOptions,
+    options?: AccountDataSourceReadOptionsV1,
 ): Promise<CorpusRowV1<CorpusSourceInstanceRowV1> | null> {
     const record = await readExactConfiguredSourceInstanceRow(sourceInstances, exact, options);
     return record?.value.lifecycle === CORPUS_SOURCE_INSTANCE_LIFECYCLE.active ? record : null;
@@ -30,7 +29,7 @@ export async function readActiveConfiguredSourceRow(
 export async function readActiveConfiguredSourceRowPage(
     sourceInstances: Pick<CorpusCollectionHandleV1, 'query'>,
     input: Readonly<{ limit: number; cursor?: string }>,
-    options?: PluginCancellationOptions,
+    options?: AccountDataSourceReadOptionsV1,
 ): Promise<Readonly<{
     rows: readonly CorpusSourceInstanceRowV1[];
     /** Stored revisions, or the immutable built-in configuration's revision. */
@@ -38,17 +37,18 @@ export async function readActiveConfiguredSourceRowPage(
     status: 'complete' | 'truncated';
     nextCursor?: string;
 }>> {
+    const automatic = projectAccountDataSourceCatalogV1(options?.accountDataSources ?? [], [INTERNAL_TASK_SOURCE_RECORD_V1]);
     const page = await sourceInstances.query({
         index: CORPUS_SOURCE_INSTANCES_INDEX_ID.byLifecycle,
         prefix: [CORPUS_SOURCE_INSTANCE_LIFECYCLE.active],
         order: 'asc',
-        // The first catalog page reserves one place for the built-in source.
-        limit: input.limit - (input.cursor === undefined ? 1 : 0),
+        // Setup-free declarations share the existing catalog page budget.
+        limit: input.limit - (input.cursor === undefined ? automatic.length : 0),
         ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
     }, options);
-    const records = projectInternalTaskSourceCatalogV1(page.rows.map(
+    const records = projectAccountDataSourceCatalogV1(page.rows.map(
         (row) => fromCorpusStoredRow<CorpusSourceInstanceRowV1>(row),
-    ), input.cursor === undefined);
+    ), automatic, input.cursor === undefined);
     return Object.freeze({
         rows: Object.freeze(records.map((record) => record.value)),
         records,
@@ -60,12 +60,14 @@ export async function readActiveConfiguredSourceRowPage(
 /** Reads every active configured source through the same cursor owner. */
 export async function readActiveConfiguredSourceRows(
     sourceInstances: Pick<CorpusCollectionHandleV1, 'query'>,
-    options?: PluginCancellationOptions,
+    options?: AccountDataSourceReadOptionsV1,
 ): Promise<Readonly<{
     rows: readonly CorpusSourceInstanceRowV1[];
     /** Stored revisions, or the immutable built-in configuration's revision. */
     records: readonly CorpusRowV1<CorpusSourceInstanceRowV1>[];
     status: 'complete';
+    /** Setup-free declarations have no stored connection to remove. */
+    automaticSourceInstanceIds: readonly string[];
 }>> {
     const records: CorpusRowV1<CorpusSourceInstanceRowV1>[] = [];
     const seenCursors = new Set<string>();
@@ -83,10 +85,12 @@ export async function readActiveConfiguredSourceRows(
         cursor = advanceConfiguredSourceCollectionCursor(seenCursors, page.nextCursor);
     } while (cursor !== undefined);
 
-    const catalog = projectInternalTaskSourceCatalogV1(records);
+    const automatic = projectAccountDataSourceCatalogV1(options?.accountDataSources ?? [], [INTERNAL_TASK_SOURCE_RECORD_V1]);
+    const catalog = projectAccountDataSourceCatalogV1(records, automatic);
     return Object.freeze({
         rows: Object.freeze(catalog.map((record) => record.value)),
         records: catalog,
         status: 'complete',
+        automaticSourceInstanceIds: automatic.map(record => record.value.configured.instance.sourceInstanceId),
     });
 }

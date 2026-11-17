@@ -9482,6 +9482,15 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Triage descriptors add optional `accountDataInstance`, reusing the
+existing source-instance draft and UUID schemas within a closed declaration.
+The descriptor's additive-open/drop outer policy and existing descriptors remain
+unchanged. Matching development source/target readers load together to project
+setup-free Account instances; older targets drop the declaration and do not
+provide the new automatic instance. Tasks retains its existing UUID and row
+address, including explicit legacy-row reads. No persisted format, migration,
+wire epoch, new registry or mixed-development adapter is introduced.
+
 The unreleased 0.3 `session.draft.model.set` Action's existing closed `selection`
 intent accepts retained V1 refs and source-qualified V2 refs. Its nested source
 refs remain closed and preserve their identity and credential-routing fields.

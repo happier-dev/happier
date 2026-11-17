@@ -2697,6 +2697,19 @@ preview. The investigation result also carries its exact failure subject and a
 continuation address for that same Session. Completion alone does not establish
 a root cause: an inconclusive report remains an inconclusive completed report.
 
+## Setup-free Account sources (unreleased 0.3)
+
+An admitted source can declare `accountDataInstance` with its stable instance
+address, configuration row address and existing source-instance draft. Admission
+requires a stable `accountData` draft whose purpose matches the descriptor.
+Triage's configured-source owner projects this immutable instance into the
+invoking Account's catalog and exact reads without storing a connection or
+running setup. Tasks and native telemetry exceptions use this same declaration;
+older explicit Tasks row addresses remain readable. Such sources have no setup
+offer or removable connection. Connected/native sources retain their existing
+setup and lifecycle writer. A descriptor without this optional declaration keeps
+its existing behavior; a missing Settings page alone never opts a source in.
+
 ## Related
 
 [Plugin platform](plugin-platform.md), [Actions](actions.md), [Collection presentation](collection-presentation.md), [encryption](encryption.md), [compatibility](compatibility.md).
