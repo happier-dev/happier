@@ -4,30 +4,22 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { accountSettingsParse, normalizeActionsSettingsV1, FeaturesResponseSchema, SessionListQueryV1Schema, SessionListQueryResponseV1Schema } from '@happier-dev/protocol';
+import { accountSettingsParse, normalizeActionsSettingsV1, FeaturesResponseSchema, SessionListQueryV1Schema, SessionListQueryResponseV1Schema, SessionReadBatchRequestV1Schema } from '@happier-dev/protocol';
 import { DiscussionSummaryV1Schema } from '@happier-dev/protocol/discussions/models';
 import { SessionForkRpcParamsSchema } from '@happier-dev/protocol/sessions/fork';
-import { createPlainSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { createPlainSessionOwnerMetadataEnvelopeV1, SessionMetadataOwnerPatchV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { createScopedRuntimeActionSettingsProvider } from '@/settings/scopedRuntimeActionSettingsProvider';
-import { configuration } from '@/configuration';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createHappierMcpServer } from '@/mcp/createHappierMcpServer';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { resolveCliAgentStartContextV1 } from '@/session/actions/resolveCliAgentStartContextV1';
 import { createAccountEncryptionCurrentnessFixture, createSessionNotificationContextFixture, createCompactSessionListRowFixture, createSessionReadBatchResponseFixture } from '@/testkit/backends/sessionFixtures';
-import { AgentRuntimeDaemonServiceRequestV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
-import { hashProcessCommand } from '@/daemon/sessionRegistry';
-import { hashPrivateBearer } from '@/daemon/privateBearerFile';
-import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
-import { createAgentRuntimeDaemonServiceAuthorityPath, publishAgentRuntimeDaemonServiceAuthority,
-  removeAgentRuntimeDaemonServiceAuthorityIfOwned } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
+import { createSessionDaemonAuthorityFixture } from './sessionDaemonAuthority.testkit';
 
-const processIdentity = vi.hoisted(() => vi.fn());
 // Only OS inspection and network transports are substituted. MCP, Session
 // routing, credentialed execution, Session opening and projection stay real.
-vi.mock('@/daemon/processIdentity', () => ({ readProcessIdentityByPid: processIdentity }));
 vi.mock('@/daemon/controlClient', async importOriginal => ({
   ...await importOriginal<typeof import('@/daemon/controlClient')>(),
   requestDaemonPluginActionExecution: async () => ({ matched: false }),
@@ -61,25 +53,11 @@ it.each(['session.status.get', 'session.messages.recent.get', 'session.transcrip
   } };
   const row = (id: string) => ({ ...createSessionNotificationContextFixture(id), encryptionMode: 'plain' as const,
     metadata: JSON.stringify({ machineId: 'read-machine', path: '/workspace', ...(id === sessionId ? { connectedServices } : {}) }), active: read || actionId === 'session.open',
-    ...(id === sessionId && actionId === 'session.status.get' ? { metadataLayoutVersion: 1,
+    ...(actionId === 'session.stop' || id === sessionId && actionId === 'session.status.get' ? { metadataLayoutVersion: 1,
       metadata: JSON.stringify({ v: 1 }), ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1({ v: 1,
         workspace: { machineId: 'read-machine', path: '/workspace' }, connectedServices: { connectedServices },
       }) } : {}),
     manager: { sessionId: managerOf.get(id) ?? sessionId } });
-  const command = 'node /runtime/.runner-snapshots/session-read/dist/index.mjs';
-  const runner = { pid: process.pid, processStartTimeMs: 23346,
-    processCommandHash: hashProcessCommand(command), snapshotIdentity: 'snapshot:session-read' };
-  processIdentity.mockResolvedValue({ pid: runner.pid, processStartTimeMs: runner.processStartTimeMs, command });
-  const path = await createAgentRuntimeDaemonServiceAuthorityPath(configuration);
-  const authority = { happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
-    path, sessionId, runner, retainedAgent: createAgentSessionRunnerFactoryBinding({
-      v: 1, pluginId: 'acme.plugin', pluginVersion: '1.2.3', agentId: 'acme-agent', localAgentId: 'acme-agent',
-      sourceCustody: { kind: 'managed', immutableGenerationId: `sha256:${'1'.repeat(64)}`, installSource: 'localPath' },
-      locator: { module: './runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 },
-      normalizedModulePath: '/immutable/acme/runtime.mjs', loadMode: 'immutable-js',
-    }) };
-  await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: 31001, capability: 'A'.repeat(43) });
-  vi.stubEnv('HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE', path);
   const httpReads: string[] = [];
   const queryRequests: unknown[] = [];
   const boundaryFailures: string[] = [];
@@ -126,7 +104,12 @@ it.each(['session.status.get', 'session.messages.recent.get', 'session.transcrip
   });
   vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
     const pathname = new URL(String(url)).pathname;
-    if (pathname === '/v2/sessions/read-batch') return { status: 200, data: createSessionReadBatchResponseFixture({ request: body, sessions: [sessionId, ...children].map(row) }) };
+    if (pathname === '/v2/sessions/read-batch') {
+      const demand = SessionReadBatchRequestV1Schema.parse(body);
+      if (demand.underSessionId !== undefined) expect(demand.underSessionId).toBe(sessionId);
+      const visible = [sessionId, ...children].filter(id => demand.underSessionId === undefined || id === sessionId || members.has(id));
+      return { status: 200, data: createSessionReadBatchResponseFixture({ request: demand, sessions: visible.map(row) }) };
+    }
     if ([sessionId, ...children].some(id => pathname === `/v2/sessions/${id}/archive` || pathname === `/v2/sessions/${id}/unarchive`)) {
       return { status: 200, data: { success: true, archivedAt: pathname.endsWith('/unarchive') ? null : 123 } };
     }
@@ -146,7 +129,11 @@ it.each(['session.status.get', 'session.messages.recent.get', 'session.transcrip
   });
   // A led child's Stop first records the explicit-stop intent in its metadata.
   const metadataPatches: string[] = [];
-  vi.spyOn(axios, 'patch').mockImplementation(async (url) => {
+  vi.spyOn(axios, 'patch').mockImplementation(async (url, body) => {
+    const patch = SessionMetadataOwnerPatchV1Schema.parse(body);
+    expect(patch.ownerMetadata).toMatchObject({ t: 'plain', v: { runtime: {
+      sessionExplicitStopV1: { cause: 'explicit_stop', managerSessionId: sessionId },
+    } } });
     metadataPatches.push(new URL(String(url)).pathname);
     return { status: 200, data: { success: true, metadataLayoutVersion: 1, sharedMetadata: { version: 2 }, agentState: { version: 1 } } };
   });
@@ -173,12 +160,7 @@ it.each(['session.status.get', 'session.messages.recent.get', 'session.transcrip
     } },
   });
   const forwarded: string[] = [];
-  vi.stubGlobal('fetch', async (_url: unknown, init?: RequestInit) => {
-    if (!init?.body) { boundaryFailures.push(`Unexpected fetch: ${String(_url)}`); throw new Error('Unexpected bodyless fetch'); }
-    const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(String(init?.body)));
-    expect(request.context).toEqual({ token: 'A'.repeat(43), sessionId });
-    if (request.operation.kind !== 'action.execute') throw new Error('Expected Action envelope');
-    const operation = request.operation;
+  const daemonAuthority = await createSessionDaemonAuthorityFixture({ sessionId, execute: async operation => {
     expect(getActionSpec(operation.actionId).inputSchema.safeParse(operation.input).success).toBe(true);
     forwarded.push(operation.actionId);
     const outcome = await daemon.execute(operation.actionId, operation.input, { surface: 'agent',
@@ -186,8 +168,8 @@ it.each(['session.status.get', 'session.messages.recent.get', 'session.transcrip
       ...(exactSource ? { sessionInputSource: { sourceSessionId: sessionId, sourceTurnId: operation.witness.turnId,
         sourceInputId: operation.witness.inputId, via: 'action', discussionAddressing: operation.witness.discussionAddressing } } : {}),
       serverId, agentStartContext: startContext, actionRequestId: operation.requestId });
-    return Response.json({ ok: true, result: { kind: 'action.execution', requestId: operation.requestId, outcome } });
-  });
+    return outcome;
+  } });
   const witness = { turnId: 'read-turn', inputId: 'read-input', userMessageSeq: 1, userMessageSeqs: [1],
     agentStartCaller: { kind: 'session' as const, sessionId, starterDepth: 0, turnDepth: 0 }, ...(exactSource ? { discussionAddressing } : {}) };
   let admissionAvailable = true;
@@ -300,6 +282,6 @@ it.each(['session.status.get', 'session.messages.recent.get', 'session.transcrip
   } finally {
     await client.close();
     await runtime.mcp.close();
-    await removeAgentRuntimeDaemonServiceAuthorityIfOwned({ ...authority, capabilityDigest: hashPrivateBearer('A'.repeat(43)) });
+    await daemonAuthority.close();
   }
 });

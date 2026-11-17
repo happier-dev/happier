@@ -3,6 +3,7 @@ import { accountSettingsParse } from '@happier-dev/protocol';
 
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge';
+import { SESSION_MCP_BEARER_ENV } from '@/mcp/runtime/sessionMcpLocalContext';
 import {
   createStablePluginExecService,
   installManagedProcessCustodyForHost,
@@ -81,6 +82,10 @@ describe('Session MCP from a Session-owned managed Agent server', () => {
       );
       const config = bridge.mcpServers.happier;
       if (!config) throw new Error('missing Session MCP relay config');
+      // Exercise kernel peer custody for both processes, without bearer admission.
+      const peerEnvironment = { ...config.env };
+      delete peerEnvironment[SESSION_MCP_BEARER_ENV];
+      const peerConfig = { ...config, env: peerEnvironment };
       const service = createStablePluginExecService({
         signal: new AbortController().signal,
         isOccurrenceCurrent: () => true,
@@ -92,7 +97,7 @@ describe('Session MCP from a Session-owned managed Agent server', () => {
       ) => {
         const request = {
           executable: { kind: 'systemTool', id: 'fixture.node' } as const,
-          args: ['-e', managedServerScript(config)],
+          args: ['-e', managedServerScript(peerConfig)],
         };
         const custody = installManagedProcessCustodyForHost(
           service,
