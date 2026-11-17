@@ -16,6 +16,18 @@ import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/se
 import { createHappierMcpServer } from './createHappierMcpServer';
 import type { HappyMcpSessionClient } from './startHappyServer';
 import { artifactListResponse } from '@/testkit/http/artifactHome';
+import { createSessionRoleContext } from '@/session/roles/sessionRoleContext';
+import { createRoleSourceReader } from '@/session/roles/roleSources';
+
+function goalSessionRoles(metadata: ReturnType<typeof createTestMetadata>) {
+  return createSessionRoleContext({ readMetadata: () => metadata, readOrganization: async () => ({}),
+    readRoleSources: createRoleSourceReader({}),
+    readAccountRoleOverrides: () => ({ status: 'ready', overrides: {} }),
+    readAppliedChildSelection: () => ({ status: 'applied',
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+      modelId: 'fixture-model', connectedServices: null }),
+  });
+}
 
 describe('createHappierMcpServer goal parity', () => {
   afterEach(() => {
@@ -50,6 +62,7 @@ describe('createHappierMcpServer goal parity', () => {
   ] as const)('settles the real bound Goal handler on %s cancellation through %s', async (cancellation, toolName) => {
     const sessionId = 'bound-goal-cancellation';
     const metadata = createTestMetadata({ flavor: 'claude', machineId: 'machine-1', path: '/repo' });
+    const sessionRoles = goalSessionRoles(metadata);
     const rpcHandlerManager = new RpcHandlerManager({ scopePrefix: sessionId, encryptionMode: 'plain' });
     let releaseAcknowledgement!: () => void;
     const acknowledgement = new Promise<void>(resolve => { releaseAcknowledgement = resolve; });
@@ -72,13 +85,16 @@ describe('createHappierMcpServer goal parity', () => {
     const runtime = createHappierMcpServer({ sessionId, rpcHandlerManager, updateMetadata() {},
       getServerBinding: () => ({ serverId: 'goal-home', serverUrl: 'https://goal.test' }),
       getMetadataSnapshot: () => metadata,
+      getBackendTarget: () => ({ kind: 'backend', backendId: 'claude', sourceKind: 'built_in' }),
+      getSessionRoleContext: () => sessionRoles,
       getCurrentSessionLocation: () => ({ machineId: 'machine-1', path: '/repo' }),
       getPermissionMode: () => 'default', getWorkDepth: () => 0, getHostTurnWorkDepth: () => 0,
       getHostTurnAbortSignal: () => hostTurn.signal,
       getActiveTurnPermissionWitness: () => ({ turnId: 'goal-turn', causalPermissionAuthority: {
         kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default',
       } }),
-    }, { credentials: { token: 'goal-account', encryption: null }, accountSettings: admitAccountSettings('goal-account') });
+    }, { credentials: { token: 'goal-account', encryption: null }, accountSettings: admitAccountSettings('goal-account'),
+      requiredDirectActionIds: ['session.goal.set'] });
     const client = new Client({ name: 'goal-cancellation', version: '1' });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     let execution: Promise<unknown> | undefined;
@@ -126,6 +142,7 @@ describe('createHappierMcpServer goal parity', () => {
   it('routes Claude runner goal tools through the bound live Session RPC', async () => {
     const sessionId = 'claude-live-goal-session';
     const metadata = createTestMetadata({ flavor: 'claude', machineId: 'machine-1', path: '/repo' });
+    const sessionRoles = goalSessionRoles(metadata);
     const rpcHandlerManager = new RpcHandlerManager({ scopePrefix: sessionId, encryptionMode: 'plain' });
     const setGoal = vi.fn(async (raw: unknown) => ({
       ok: true,
@@ -142,6 +159,8 @@ describe('createHappierMcpServer goal parity', () => {
       rpcHandlerManager,
       updateMetadata: () => undefined,
       getMetadataSnapshot: () => metadata,
+      getBackendTarget: () => ({ kind: 'backend', backendId: 'claude', sourceKind: 'built_in' }),
+      getSessionRoleContext: () => sessionRoles,
       getCurrentSessionLocation: () => ({ machineId: 'machine-1', path: '/repo' }),
       getPermissionMode: () => 'default',
       getWorkDepth: () => 0,
@@ -154,6 +173,7 @@ describe('createHappierMcpServer goal parity', () => {
     const runtime = createHappierMcpServer(session, {
       credentials: { token: 'claude-goal-account', encryption: null },
       accountSettings: admitAccountSettings('claude-goal-account'),
+      requiredDirectActionIds: ['session.goal.set'],
     });
     try {
       const dedicated = await runtime.executeTool({

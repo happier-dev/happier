@@ -5,12 +5,19 @@ import { CallToolResultSchema, ListToolsResultSchema } from '@modelcontextprotoc
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createHappierMcpServer } from './createHappierMcpServer';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 
 it('the real Session MCP factory advertises subscriptions and refuses unsupported passive feeds', async () => {
   const { mcp, toolNames } = createHappierMcpServer({
     sessionId: 'session',
     rpcHandlerManager: new RpcHandlerManager({ scopePrefix: 'session', encryptionMode: 'plain' }),
     updateMetadata() {},
+    getMetadataSnapshot: () => createTestMetadata(),
+    getWorkDepth: () => 0,
+    getHostTurnWorkDepth: () => 0,
+    getActiveTurnPermissionWitness: () => ({ turnId: 'watch-turn', causalPermissionAuthority: {
+      kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'yolo',
+    } }),
     getServerBinding: () => ({ serverId: 'home', serverUrl: 'https://home.example.test' }),
     getServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated',
       features: FeaturesResponseSchema.parse({ features: {}, capabilities: {} }),
@@ -27,7 +34,7 @@ it('the real Session MCP factory advertises subscriptions and refuses unsupporte
       .toEqual([...toolNames].sort());
     const result = await client.callTool({ name: 'watch', arguments: {
       target: { kind: 'execution_run', serverId: 'home', sessionId: 'session', machineId: 'machine', runId: 'run' },
-      condition: { kind: 'terminal' },
+      condition: { kind: 'idle' },
     } });
     const text = CallToolResultSchema.parse(result).content.find((entry) => entry.type === 'text');
     if (!text || text.type !== 'text') throw new Error('Missing text result');

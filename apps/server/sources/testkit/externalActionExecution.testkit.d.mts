@@ -26,8 +26,10 @@ export interface ExternalActionHomeForTestsOptions {
 
 export interface ExternalActionHomeForTests {
     readonly token: string;
+    /** Real person-review bearer, separate from the original invocation credential. */
+    readonly presentUserToken: string;
     readonly peerMediationGrantSigningKeys?: readonly PeerMediationGrantSigningKeyCapability[];
-    readonly manageGrantee?: Readonly<{ accountId: string; token: string;
+    readonly manageGrantee?: Readonly<{ accountId: string; token: string; presentUserToken: string;
         machineAdmission: SocketRpcMachineAdmissionContextV1 }>;
     /** Actual exact-subject row observation, never read/admission authority. */
     readConnectorGrantCount(subject: MachineConnectorSecretGrantSubjectV1): Promise<number>;

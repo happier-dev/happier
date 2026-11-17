@@ -106,9 +106,10 @@ export async function createExternalActionHomeProcessForTests(options) {
     const { dispatch: _dispatch, installationPublicKey, ...identity } = options;
     child.send({ kind: 'start', options: { ...identity, installationPublicKey: Array.from(installationPublicKey) } });
     try {
-        const { token, manageGrantee, peerMediationGrantSigningKeys } = await ready;
+        const { token, presentUserToken, manageGrantee, peerMediationGrantSigningKeys } = await ready;
         return {
             token,
+            presentUserToken,
             ...(peerMediationGrantSigningKeys ? { peerMediationGrantSigningKeys } : {}),
             ...(manageGrantee ? { manageGrantee } : {}),
             readConnectorGrantCount: subject => control('connector-grant-count', subject),
@@ -177,7 +178,7 @@ if (process.argv[2] === '--external-action-home-child') {
                         try { return await result; } finally { signal.removeEventListener('abort', cancel); }
                     },
                 }, observeSetup);
-                process.send?.({ kind: 'ready', token: home.token,
+                process.send?.({ kind: 'ready', token: home.token, presentUserToken: home.presentUserToken,
                     ...(home.peerMediationGrantSigningKeys ? { peerMediationGrantSigningKeys: home.peerMediationGrantSigningKeys } : {}),
                     ...(home.manageGrantee ? { manageGrantee: home.manageGrantee } : {}) });
             } catch (error) {

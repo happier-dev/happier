@@ -96,6 +96,7 @@ export async function createExternalActionHomeForTests(options: ExternalActionHo
         }
         const token = await auth.createToken(options.accountId, undefined, options.authentication === 'present_user'
             ? { kind: 'account', authority: 'present_user' } : { kind: 'terminal', authority: 'account_automation' });
+        const presentUserToken = await auth.createToken(options.accountId, undefined, { kind: 'account', authority: 'present_user' });
         const peers = [{ accountId: options.accountId, machineId: options.machineId,
             installationId: options.installationId, token }];
         if (options.workspaceSyncTarget) {
@@ -149,6 +150,7 @@ export async function createExternalActionHomeForTests(options: ExternalActionHo
             if (admitted.kind !== 'admitted' || admitted.role !== 'manage') throw new Error('external_action_home_manage_admission_refused');
             manageGrantee = { accountId: options.manageGranteeAccountId,
                 token: await auth.createToken(options.manageGranteeAccountId, undefined, { kind: 'terminal', authority: 'account_automation' }),
+                presentUserToken: await auth.createToken(options.manageGranteeAccountId, undefined, { kind: 'account', authority: 'present_user' }),
                 machineAdmission: SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: admitted.actorAccountId,
                     custodianAccountId: admitted.custodianAccountId, machineId: admitted.machineId,
                     installationId: admitted.installationId, role: admitted.role, encryptionMode: admitted.encryptionMode }),
@@ -210,6 +212,7 @@ export async function createExternalActionHomeForTests(options: ExternalActionHo
         };
         return {
             token,
+            presentUserToken,
             ...(options.workspaceSyncTarget ? { peerMediationGrantSigningKeys:
                 resolveServerFeaturesForGating(sqlite.envBase).capabilities.machines.peerMediation.grantSigningKeys } : {}),
             forwardMachineRpc: async (machineId, payload) => {

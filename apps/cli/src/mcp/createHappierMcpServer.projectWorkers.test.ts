@@ -11,19 +11,17 @@ import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketH
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { configuration } from '@/configuration';
-import { hashProcessCommand } from '@/daemon/sessionRegistry';
-import { hashPrivateBearer } from '@/daemon/privateBearerFile';
+import { readProcessIdentityByPid } from '@/daemon/processIdentity';
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
-import { createAgentRuntimeDaemonServiceAuthorityPath, publishAgentRuntimeDaemonServiceAuthority,
-  removeAgentRuntimeDaemonServiceAuthorityIfOwned } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
-import { AgentRuntimeDaemonServiceRequestV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
+import { removeAgentRuntimeDaemonServiceAuthorityIfOwned } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { createSessionDaemonAuthorityFixture } from './runtime/sessionDaemonAuthority.testkit';
 
-const { io, processIdentity } = vi.hoisted(() => ({ io: vi.fn(), processIdentity: vi.fn() }));
+const { io } = vi.hoisted(() => ({ io: vi.fn() }));
 // Only Socket.IO, HTTP and OS process inspection are replaced. MCP composition,
 // placement, Account delegation, credential codecs and output schemas stay real.
 vi.mock('socket.io-client', () => ({ io }));
-vi.mock('@/daemon/processIdentity', () => ({ readProcessIdentityByPid: processIdentity }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe('MCP worker Action composition', () => {
@@ -72,34 +70,30 @@ describe('MCP worker Action composition', () => {
     const account = createCliActionExecutor({ token: credentials.token, credentials, sessionId, mode: 'plain', ctx: null,
       serverId, serverHttpBaseUrl, actionsSettingsProvider: settings, pluginActionExecutionOwner: 'current_process',
       accountServerActionDeps: createAccountServerActionDeps({ token: credentials.token, credentials, serverId, serverHttpBaseUrl }) });
-    const command = 'node /runtime/.runner-snapshots/worker-mcp/dist/index.mjs';
-    const runner = { pid: process.pid, processStartTimeMs: 23_346,
-      processCommandHash: hashProcessCommand(command), snapshotIdentity: 'snapshot:worker-mcp' };
-    processIdentity.mockResolvedValue({ pid: process.pid, processStartTimeMs: runner.processStartTimeMs, command });
-    const path = await createAgentRuntimeDaemonServiceAuthorityPath(configuration);
-    const authority = { happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
-      path, sessionId, runner, retainedAgent: createAgentSessionRunnerFactoryBinding({
+    const accountActions: string[] = [];
+    let witnessCurrent = true;
+    const daemon = await createSessionDaemonAuthorityFixture({ sessionId,
+      retainedAgent: createAgentSessionRunnerFactoryBinding({
         v: 1, pluginId: 'acme.plugin', pluginVersion: '1.2.3', agentId: 'acme-agent', localAgentId: 'acme-agent',
         sourceCustody: { kind: 'managed', immutableGenerationId: `sha256:${'1'.repeat(64)}`, installSource: 'localPath' },
         locator: { module: './runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 },
         normalizedModulePath: '/immutable/acme/runtime.mjs', loadMode: 'immutable-js',
-      }) };
-    await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: 31_001, capability: 'A'.repeat(43) });
-    vi.stubEnv('HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE', path);
-    const accountActions: string[] = [];
-    let witnessCurrent = true;
-    vi.stubGlobal('fetch', async (_url: unknown, init?: RequestInit) => {
-      const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(String(init?.body)));
-      if (request.operation.kind !== 'action.execute') throw new Error('Expected Account Action delegation');
-      const { actionId, input, requestId } = request.operation;
-      expect(request.context).toEqual({ token: 'A'.repeat(43), sessionId });
-      expect(request.operation.witness).toMatchObject({ turnId: 'worker-turn', inputId: 'worker-input' });
-      accountActions.push(actionId);
-      const outcome = await account.execute(ActionIdSchema.parse(actionId), input, { surface: 'agent', authority: 'account_automation' });
-      return new Response(JSON.stringify({ ok: true, result: { kind: 'action.execution', requestId, outcome } }), { status: 200 });
+      }),
+      execute: async operation => {
+        expect(operation.witness).toMatchObject({ turnId: 'worker-turn', inputId: 'worker-input' });
+        accountActions.push(operation.actionId);
+        return await account.execute(ActionIdSchema.parse(operation.actionId), operation.input,
+          { surface: 'agent', authority: 'account_automation' });
+      },
     });
+    const runnerProcess = await readProcessIdentityByPid(process.pid);
+    if (!runnerProcess) throw new Error('Missing fixture runner process identity');
+    const authority = { happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
+      path: daemon.trackedSession.agentRuntimeDaemonServiceAuthorityFilePath,
+      capabilityDigest: daemon.trackedSession.agentRuntimeDaemonServiceCapabilityHash };
     const runtime = createHappierMcpServer({ sessionId, getServerBinding: () => ({ serverId, serverUrl: serverHttpBaseUrl }),
       rpcHandlerManager: new RpcHandlerManager({ scopePrefix: sessionId, encryptionMode: 'plain' }), updateMetadata() {},
+      getMetadataSnapshot: () => createTestMetadata({ machineId: 'source', path: '/source' }),
       getWorkDepth: () => 0, getHostTurnWorkDepth: () => 0, getPermissionMode: () => 'yolo',
       getCurrentSessionLocation: () => ({ machineId: 'source', path: '/source' }),
       getActiveTurnPermissionWitness: () => ({ turnId: 'worker-turn',
@@ -118,8 +112,8 @@ describe('MCP worker Action composition', () => {
         expectedRelationship: inspect.expectedRelationship })).toMatchObject({ ok: true, result: { status: 'retired' } });
       expect(await invoke('projects.worker.preferences.get', { workspace: inspect.workspace }))
         .toMatchObject({ ok: true, result: { status: 'ready', revision: 'absent' } });
-      expect(accountActions).toEqual(authorityScope === 'account' ? ['projects.worker.preferences.get']
-        : ['projects.worker.status', 'projects.worker.copy.inspect', 'projects.worker.copy.retire', 'projects.worker.preferences.get']);
+      expect(accountActions).toEqual(['projects.worker.status', 'projects.worker.copy.inspect',
+        'projects.worker.copy.retire', 'projects.worker.preferences.get']);
       expect(machineRequests).toEqual([
         expect.objectContaining({ method: 'worker:projects.worker.status', params: status }),
         expect.objectContaining({ method: `${inspect.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT}`, params: inspect }),
@@ -141,27 +135,24 @@ describe('MCP worker Action composition', () => {
       expect(cliDenied).toMatchObject({ ok: false, errorCode: 'permission_denied' });
       expect(await invoke('projects.worker.status', status)).toEqual(cliDenied);
       machineDenied = false;
-      if (authorityScope === 'session') {
+      {
         const before = machineRequests.length;
         witnessCurrent = false;
         expect(await invoke('projects.worker.status', status)).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
         witnessCurrent = true;
-        processIdentity.mockResolvedValue({ pid: process.pid, processStartTimeMs: runner.processStartTimeMs + 60_000, command });
+        vi.mocked(readProcessIdentityByPid).mockResolvedValue({ ...runnerProcess,
+          processStartTimeMs: daemon.runner.processStartTimeMs + 60_000 });
         expect(await invoke('projects.worker.status', status)).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
-        processIdentity.mockResolvedValue({ pid: process.pid, processStartTimeMs: runner.processStartTimeMs, command });
-        await removeAgentRuntimeDaemonServiceAuthorityIfOwned({ ...authority, capabilityDigest: hashPrivateBearer('A'.repeat(43)) });
+        vi.mocked(readProcessIdentityByPid).mockResolvedValue(runnerProcess);
+        await removeAgentRuntimeDaemonServiceAuthorityIfOwned(authority);
         expect(await invoke('projects.worker.status', status)).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
         expect(machineRequests).toHaveLength(before);
         expect(await account.execute('projects.worker.status', status, cliContext))
           .toEqual({ ok: true, result: statusResult });
-      } else {
-        witnessCurrent = false;
-        await removeAgentRuntimeDaemonServiceAuthorityIfOwned({ ...authority, capabilityDigest: hashPrivateBearer('A'.repeat(43)) });
-        expect(await invoke('projects.worker.status', status)).toEqual({ ok: true, result: statusResult });
       }
     } finally {
-      await runtime.mcp.close();
-      await removeAgentRuntimeDaemonServiceAuthorityIfOwned({ ...authority, capabilityDigest: hashPrivateBearer('A'.repeat(43)) });
+      try { await runtime.mcp.close(); }
+      finally { await daemon.close(); }
     }
   });
 });

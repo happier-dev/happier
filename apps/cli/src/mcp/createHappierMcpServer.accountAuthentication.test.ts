@@ -2,6 +2,7 @@ import { expect, it } from 'vitest';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol';
 import axios from '@/api/client/credentialAxios';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createPortableConnectedAccountAuthenticationHttpFixture } from '@/testkit/connectedAccountAuthentication';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
@@ -14,11 +15,11 @@ it('retains explicit Account authentication review and original cancellation bef
     const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin);
     const lifetime = new AbortController();
     const policy = normalizeActionsSettingsV1({ v: 1, actions: {
-        'connectedServices.authentication.beginConnect': { approvalRequiredSurfaces: ['agent'] },
+        'connectedServices.authentication.submitManual': { approvalRequiredSurfaces: ['agent'] },
     } });
     const accountSettings = { ...fixture.settings, actionsSettingsV1: policy };
     // The live MCP client owns the permission witness; ApiSessionClient does not.
-    const session = Object.assign(createMutableApiSessionClientFixture({ sessionId: 'portable-review-session', overrides: {
+    const session = Object.assign(createMutableApiSessionClientFixture({ sessionId: 'portable-review-session', metadata: createTestMetadata(), overrides: {
         getServerBinding: () => ({ serverId: 'portable-review-home', serverUrl: origin }),
         getServerFeaturesSnapshot: () => ({ status: 'ready', features: fixture.features }),
         getWorkDepth: () => 0,
@@ -45,6 +46,15 @@ it('retains explicit Account authentication review and original cancellation bef
                     settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(fixture.credentials) },
             }),
         } });
+        const authentication = registry.connectedAccountAuthenticationHost;
+        if (!authentication) throw new Error('Expected the actual portable Account authentication host');
+        // Starting a manual attempt has durable inputs; submitting its secret fields retains live custody.
+        const begun = await authentication.authenticationCommand(undefined,
+            { operation: 'beginConnect', service: fixture.service, modeId: 'manual' }, {
+                native: async () => { throw new Error('Account attempt must remain portable'); },
+            });
+        expect(begun).toMatchObject({ status: 'awaitingManual', attemptId: expect.any(String) });
+        if (begun.status !== 'awaitingManual') throw new Error('Expected manual attempt');
         const retainedRegistry = registry;
         runtime = createHappierMcpServer(session, { credentials: fixture.credentials,
             actionsSettingsProvider: { getActionsSettings: () => policy, getAccountSettings: () => accountSettings },
@@ -65,7 +75,8 @@ it('retains explicit Account authentication review and original cancellation bef
             return response;
         });
         const execution = runtime.executeTool({ toolName: 'action_execute', toolCallId: 'portable-review-tool', args: {
-            actionId: 'connectedServices.authentication.beginConnect', input: { service: fixture.service, modeId: 'manual' },
+            actionId: 'connectedServices.authentication.submitManual',
+            input: { attemptId: begun.attemptId, fields: { token: 'portable-review-token' } },
         } });
         // A router refusal or a direct unreviewed provider call settles first and fails this assertion.
         expect(await Promise.race([review.then(() => ({ phase: 'review' })), execution.then(result => ({

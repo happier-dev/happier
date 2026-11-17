@@ -1,5 +1,5 @@
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, expect, it, onTestFinished, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -27,7 +27,7 @@ import { maybeStartPeerMediationLoopback } from '@/daemon/machine/bootstrapMachi
 import { IROH_MACHINE_ADMISSION_PATH, IROH_MACHINE_APPLICATION_CAPABILITY_HEADER,
   IROH_MACHINE_APPLICATION_PORT_HEADER, IROH_MACHINE_REMOTE_ENDPOINT_HEADER } from '@happier-dev/iroh-native/node';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
-import { writeStoredCredentialsForServerId } from '@/persistence';
+import { decodeStoredCredentials, encodeStoredCredentials, writeStoredCredentialsForServerId } from '@/persistence';
 import { logger } from '@/ui/logger';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import { createRequesterWorkspaceSyncFixture } from '@/daemon/startup/createRequesterWorkspaceSyncFixture.testkit';
@@ -35,7 +35,9 @@ import { readWorkspaceSyncFinalReadyFactAtPath } from '@/workspaces/sync/workspa
 import { workspaceCheckoutNativeBoundary as native } from '@/workspaces/activation/workspaceCheckoutNative.testkit';
 import { createExternalMcpServer } from './createExternalMcpServer';
 import { db } from '../../../server/sources/storage/db';
+import { inTx } from '../../../server/sources/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '../../../server/sources/testkit/lightSqliteHarness';
+import { setEligibleMachineAccessGrantInTx } from '../../../server/sources/testkit/machineAccessGrant.testkit';
 import { resolveMachineAdmission } from '../../../server/sources/app/machines/machineAccess';
 import { createExternalActionHomeProcessForTests, type ExternalActionHomeForTests } from '../../../server/sources/testkit/externalActionExecution.testkit.mjs';
 
@@ -70,7 +72,7 @@ beforeAll(async () => { sqlite = await createLightSqliteHarness({ tempDirPrefix:
 afterAll(async () => { if (sqlite) await sqlite.close(); vi.unstubAllGlobals(); });
 beforeEach(async () => { native.reset(); vi.restoreAllMocks(); vi.unstubAllGlobals();
   // This harness owns the disposable SQLite boundary for each entry journey.
-  await db.machineAccountGrant.deleteMany(); await db.machine.deleteMany(); await db.account.deleteMany();
+  await db.machine.deleteMany(); await db.account.deleteMany();
 });
 
 it.skipIf(process.platform !== 'linux').each(['create', 'recover', 'retire', 'retire-owner', 'terminate'] as const)('approves standalone MCP worker %s with original requester custody', async cleanup => {
@@ -92,9 +94,15 @@ it.skipIf(process.platform !== 'linux').each(['create', 'recover', 'retire', 're
   const targetCustodian = 'target-custodian';
   const createOnly = cleanup === 'create' || cleanup === 'recover';
   const sourceCustodian = createOnly || cleanup === 'retire-owner' ? 'member-a' : 'source-custodian';
+  let targetMaterializationDirectory: string | undefined;
   const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo,
     sourceCustodianAccountId: sourceCustodian, targetCustodianAccountId: targetCustodian,
     remoteTarget: true, workerCleanCopy: true, remoteSeed: true, originalActionHomeHttp: true,
+    prepareActiveServerDirectory: async directory => {
+      if (directory.includes(`${sep}target-parent${sep}`)) {
+        targetMaterializationDirectory = join(directory, 'workspace-sync', 'materialization');
+      }
+    },
     nativeCarrierHome: {
       resolveTrustRoots: () => originalHome?.peerMediationGrantSigningKeys ?? [],
       // Remote Machine publication is the network boundary. Home independently
@@ -265,6 +273,7 @@ it.skipIf(process.platform !== 'linux').each(['create', 'recover', 'retire', 're
   });
   onTestFinished(() => originalHome!.close());
   const requesterToken = originalHome.manageGrantee?.token ?? originalHome.token;
+  const reviewerToken = originalHome.manageGrantee?.presentUserToken ?? originalHome.presentUserToken;
   carrierApi = await ApiClient.create({ ...setup.credentials, token: requesterToken });
   await db.account.createMany({ data: [...new Set(['member-a', sourceCustodian, targetCustodian])].map(id => ({ id, encryptionMode: 'plain' })) });
   await db.machine.create({ data: { id: 'target-parent', accountId: targetCustodian, active: true,
@@ -276,10 +285,14 @@ it.skipIf(process.platform !== 'linux').each(['create', 'recover', 'retire', 're
     installationId: setup.installed.installation.installationId,
     metadata: encodePlainMachineStoredContent({ host: 'source', platform: 'linux', happyCliVersion: 'test',
       homeDir: '/source', happyHomeDir: '/source/.happier' }), dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
-  await db.machineAccountGrant.create({ data: { machineId: 'target-parent', accountId: 'member-a',
-    accessLevel: 'admin', createdByAccountId: targetCustodian } });
-  if (sourceCustodian !== 'member-a') await db.machineAccountGrant.create({ data: {
-    machineId: setup.installed.machineId, accountId: 'member-a', accessLevel: 'admin', createdByAccountId: sourceCustodian } });
+  expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
+    actorAccountId: targetCustodian, machineId: 'target-parent',
+    principal: { kind: 'account', accountId: 'member-a' }, level: 'admin',
+  }))).toMatchObject({ kind: 'saved' });
+  if (sourceCustodian !== 'member-a') expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
+    actorAccountId: sourceCustodian, machineId: setup.installed.machineId,
+    principal: { kind: 'account', accountId: 'member-a' }, level: 'admin',
+  }))).toMatchObject({ kind: 'saved' });
   for (const method of [RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE,
     RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE]) {
     expect(await resolveMachineAdmission({ actorAccountId: 'member-a', machineId: 'target-parent',
@@ -435,7 +448,7 @@ it.skipIf(process.platform !== 'linux').each(['create', 'recover', 'retire', 're
             const body = reply.content.find(entry => entry.type === 'text');
             return body?.type === 'text' ? JSON.parse(body.text) as unknown : null;
           };
-          const directory = setup.fixture.targetMaterializationDirectory;
+          const directory = targetMaterializationDirectory;
           if (!directory) throw new Error('Native target materialization directory is unavailable');
           const readyFiles = (await readdir(directory)).filter(name => name.endsWith('.ready.json'));
           expect(readyFiles).toHaveLength(1);
@@ -483,8 +496,10 @@ it.skipIf(process.platform !== 'linux').each(['create', 'recover', 'retire', 're
         const body = reply.content.find(entry => entry.type === 'text');
         const proposal = body?.type === 'text' ? JSON.parse(body.text) : null;
         expect(proposal, JSON.stringify({ reply, homeResponses, homeMachineCalls })).toMatchObject({ kind: 'approval_request_created', artifactId: expect.any(String) });
+        const reviewerCredentials = decodeStoredCredentials(encodeStoredCredentials({ ...setup.credentials, token: reviewerToken }));
+        if (!reviewerCredentials) throw new Error('Person reviewer credentials are unavailable');
         const cli = createCliActionExecutorFromCredentials({
-          credentials: { ...setup.credentials, token: requesterToken }, serverId: setup.installed.serverId,
+          credentials: reviewerCredentials, serverId: setup.installed.serverId,
           serverApiUrl: setup.installed.serverHttpBaseUrl, machineId: setup.installed.machineId,
           resolveServerFeaturesSnapshot: () => ({ status: 'ready', features, provenance: 'authenticated' }),
           onRequesterSessionCredentialDisclosure: () => true,
