@@ -2592,6 +2592,31 @@ remain absent unless a person selects a ratio; explicit sampling uses the
 standard `parentbased_traceidratio` sampler and argument through ordinary
 Environment bindings. Public collector exposure for platform deployments still
 requires the deployment ingress owner's in-process target integration.
+
+The in-development deployed collector App uses the existing own-server Compose
+lifecycle and dev-box image owner. It runs the daemon with a dedicated volume
+for the whole `HAPPIER_HOME_DIR`, retaining enrollment credentials, installation
+identity, device-local keys and capture data together. Compose exec/putFile is
+the native carrier for managed enrollment: the container creates an auth request,
+the host approves through `approveTerminalAuthRequest`, and the container claims
+and persists its own credential from Home. The enrolled container Machine is the
+collector selected by `telemetryMachineId`.
+
+Only this App placement declares `HAPPIER_DEPLOYED_TELEMETRY_PORT`. The same
+receiver uses that fixed container-interface port; all other placements retain
+their localhost listener. The existing Domain/Caddy owner supplies TLS ingress,
+and the existing ingest bearer still selects and authenticates the Environment
+partition. Source-driven guest CLI installation uses Home's existing guest CLI
+export and promotion owner; publishing a P6-capable dev-box image remains with
+the image/release owner.
+
+Telemetry content stays on the selected collector Machine; Home and the relay
+do not store it. For a Team Environment without a collector, setup offers the
+existing collector App deployment when no always-on Team Machine is known. It
+does not implicitly select a personal Machine. Teammates read through the
+existing transport under the Environment's data principals; collector Machine
+ownership is separate from that read authority.
+
 OTLP header values follow the [exporter configuration specification](https://opentelemetry.io/docs/specs/otel/protocol/exporter/);
 resource attribute separators follow the [Resource SDK encoding specification](https://opentelemetry.io/docs/specs/otel/resource/sdk/).
 
