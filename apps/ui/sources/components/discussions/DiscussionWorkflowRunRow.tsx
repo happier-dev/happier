@@ -361,6 +361,8 @@ export function DiscussionWorkflowRoundRow(props: Readonly<{
   resolveSessionLabel: (sessionId: string) => string | null;
 }>) {
   const viewable = useTranscriptRowContentDemand();
+  // The round's band sits in the thread column like the Run band above it; its replies keep their own rows.
+  const column = useLayoutMaxWidthStyle();
   const messageIds = React.useMemo(() => props.rows.map(row => row.message.id), [props.rows]);
   const [choice, setChoice] = React.useState<boolean | null>(null);
   const expanded = !props.round.finished || props.round.digestMessageId === null || choice === true;
@@ -376,15 +378,17 @@ export function DiscussionWorkflowRoundRow(props: Readonly<{
   return <View testID={`discussion-workflow-round:${props.round.runId}:${props.round.index}`}>
     <ExpandableItem expanded={expanded} onExpandedChange={setChoice} showDivider={false}
       testID={`discussion-workflow-round-fold:${props.round.runId}:${props.round.index}`}
-      header={({ expanded: disclosed, headerProps }) => <WorkflowRunFoldHeader
+      header={({ expanded: disclosed, headerProps }) => <View style={[styles.outer, column]}><View style={styles.container}><WorkflowRunFoldHeader
         runId={`${props.round.runId}:round:${props.round.index}`}
         disclosure={{ expanded: disclosed, headerProps }}
         presentation={{ verb: t('workflows.run.occurrenceRound', { number: String(props.round.index + 1) }),
           details: [t('session.collaboration.discussion.workflowRound.speakers', { count: props.round.speakerCount })],
-          meta: null, icon: null, workflowName: null, trigger: null }} onOpen={null} />}
+          meta: null, icon: null, workflowName: null, trigger: null }} onOpen={null} /></View></View>}
     ><TranscriptContentDemandProvider enabled={expanded}>{props.children}</TranscriptContentDemandProvider></ExpandableItem>
     {!expanded ? props.digest : null}
-    {names ? <Text style={styles.endLine}>{t('session.collaboration.discussion.workflowRound.sitOut', { names })}</Text> : null}
-    {props.round.allPassed ? <Text style={styles.endLine} accessibilityLiveRegion="polite">{t('session.collaboration.discussion.workflowRound.everyonePassed')}</Text> : null}
+    {names || props.round.allPassed ? <View style={[styles.outer, column]}><View style={styles.endContainer}>
+      {names ? <Text style={styles.endLine}>{t('session.collaboration.discussion.workflowRound.sitOut', { names })}</Text> : null}
+      {props.round.allPassed ? <Text style={styles.endLine} accessibilityLiveRegion="polite">{t('session.collaboration.discussion.workflowRound.everyonePassed')}</Text> : null}
+    </View></View> : null}
   </View>;
 }
