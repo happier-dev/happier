@@ -289,7 +289,6 @@ describe('applyMachineSetup', () => {
     expect(f.spawned.map(process => process.launch.args)).toEqual([['-c', script]]);
     expect(setup[0]?.items?.[0]?.selection.ref).toBe(ref);
     const before = f.spawned.length;
-    expect(f.spawned).toHaveLength(before);
     expect(f.nativeRequests).toEqual([]);
     const conflicting = { ...input, setup: [setup[0]!, { items: [{ kind: 'setupRecipe' as const,
       selection: { ref: { ...ref, revision: '2' }, inputs: {} },

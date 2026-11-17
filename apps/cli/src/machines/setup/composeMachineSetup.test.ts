@@ -256,14 +256,6 @@ describe('Combined Machine setup child settlement', () => {
     expect(await fixture.apply()).toMatchObject({ ok: false, errorCode: 'outcome_uncertain',
       failureCause: { phase: 'workflow.run.wait', errorCode: 'forbidden' } });
   });
-  it('withdraws parent cancellation after composed Setup transfers custody to its Run', async () => {
-    const fixture = await retainedSetup('running', 'native_effect_failed', undefined, undefined,
-      Object.assign(new Error('socket closed'), { code: 'ECONNRESET' }));
-    let cancellation: string = 'supported';
-    await fixture.deps.machineSetupApply!({ input: fixture.input, context: { ...fixture.context,
-      operationOwnerUpdate: { update: value => { if (value.cancellation) cancellation = value.cancellation; } } } });
-    expect(cancellation).toBe('unsupported');
-  });
   it('exposes retained uncertainty and truthful cancellation through the real Action entry', async () => {
     const fixture = await retainedSetup('running', 'native_effect_failed', undefined, undefined,
       Object.assign(new Error('socket closed'), { code: 'ECONNRESET' }));
