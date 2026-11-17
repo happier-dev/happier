@@ -732,7 +732,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         id: 'resources', publicProperty: 'resources', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginResourcesService {
             const fail = unavailableMethod('resources', code, diagnostic);
-            return Object.freeze({ describe: fail, read: fail, async watch() { return fail(); } });
+            return Object.freeze({ describe: fail, read: fail, invokeDemand: fail, notifyDemands: fail, async watch() { return fail(); } });
         },
         createAvailable({ seed, binding, params }): PluginResourcesService | null {
             if (
@@ -743,6 +743,9 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                 pluginId: seed.plugin.id,
                 signal: seed.signal,
                 isOccurrenceCurrent: seed.isOccurrenceCurrent,
+                ...(seed.approvalContext?.runtimeAccountId && seed.occurrenceId ? { demandInvocation: {
+                    accountId: seed.approvalContext.runtimeAccountId, occurrenceId: seed.occurrenceId,
+                } } : {}),
             });
         },
     },

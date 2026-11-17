@@ -18,15 +18,21 @@ export type {
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { JsonValue, PluginContributionRef, PluginJsonSchema } from '../identity.js';
 import type { Disposable, PluginCancellationOptions } from '../lifecycle.js';
-import type { PluginAccountStorageScope } from '../storage.js';
+import type { PluginAccountStorageScope, StorageScopeService } from '../storage.js';
+import type { PluginInvocationContext } from '../invocation.js';
 import type { ActionExecuteResult } from '../actions/service.js';
 import type { TriageEntryRefV1 } from '../protocol/triageEntryRef.js';
+import type { SecretsService } from '../secrets.js';
 
 export type { PluginResourceKind } from '@happier-dev/protocol';
 /** @realm any */
 export type PluginResourceDescriptor = Readonly<{ id: string; kind: PluginResourceKind; contentType: string; digest: string; size: number }>;
 /** @realm any */
 export interface ResourcesService {
+    /** Invoke an already open Resource demand from this admitted Action. */
+    invokeDemand(input: Readonly<{ subscriptionId: string; resourceId: string; input: JsonValue }>, options?: PluginCancellationOptions): Promise<JsonValue>;
+    /** Publish a committed change to this Account's currently open same-plugin demands. */
+    notifyDemands(input: Readonly<{ resourceId: string; input: JsonValue }>, options?: PluginCancellationOptions): Promise<void>;
     describe(id: string): PluginResourceDescriptor;
     read(id: string, options?: { maxBytes?: number; signal?: AbortSignal }): Promise<{ kind: PluginResourceKind; contentType: string; digest: string; bytes: Uint8Array }>;
     /**
@@ -62,6 +68,14 @@ export type PluginDynamicResourceInvocationOptionsV1 = Readonly<{
     resources: ResourcesService;
     /** Present only when this dynamic Resource declares an admitted storage.account request. */
     accountStorage?: PluginAccountStorageScope;
+    /** Private Account custody exists only for an authenticated own-Account demand. */
+    requesterAccount?: Readonly<{ accountId: string }>;
+    secrets?: Pick<SecretsService, 'readSavedSecret'>;
+    chosenMachine?: PluginInvocationContext['chosenMachine'];
+    agentCaller?: PluginInvocationContext['agentCaller'];
+    authority?: PluginInvocationContext['authority'];
+    /** Existing plugin-scoped daemon KV, captured with own-Account custody. */
+    daemonStorage?: Pick<StorageScopeService, 'get' | 'set' | 'delete' | 'list'>;
     /** Explicit read operands only, through the canonical Action executor as this Resource's plugin. */
     readAction(ref: PluginContributionRef, input: JsonValue, options?: PluginCancellationOptions): Promise<ActionExecuteResult>;
     /** Installs the target Action's own qualified dependencies without executing its read handler. */
@@ -70,6 +84,10 @@ export type PluginDynamicResourceInvocationOptionsV1 = Readonly<{
 
 /** @realm any */
 export type PluginDynamicResourceProducer = Readonly<{
+    /** Runs an already admitted operation against this producer's captured target. */
+    invoke?(input: JsonValue, options: Readonly<{ signal: AbortSignal }>): JsonValue | Promise<JsonValue>;
+    /** Consume a committed change from an admitted Action of this Account and plugin occurrence. */
+    notify?(input: JsonValue): void | Promise<void>;
     read(options: PluginDynamicResourceInvocationOptionsV1): Promise<Uint8Array | string> | Uint8Array | string;
     /**
      * Return the installed dependency subscription, awaiting asynchronous
@@ -93,7 +111,8 @@ export type PluginDynamicResourceRuntime = Readonly<{
      * fail explicitly on a host without context-producer support.
      */
     createProducer?(options: Pick<PluginDynamicResourceInvocationOptionsV1,
-        'signal' | 'context' | 'readAction' | 'observeAction'>): PluginDynamicResourceProducer | Promise<PluginDynamicResourceProducer>;
+        'signal' | 'context' | 'readAction' | 'observeAction' | 'requesterAccount' | 'secrets'
+        | 'chosenMachine' | 'agentCaller' | 'authority' | 'daemonStorage'>): PluginDynamicResourceProducer | Promise<PluginDynamicResourceProducer>;
 }>;
 
 export type PluginMcpContributionRef = PluginContributionRef;

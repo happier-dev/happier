@@ -53,12 +53,19 @@ type ResourceGeneration = Readonly<{
     brandMonochrome?: boolean;
 }>;
 
+export type PluginResourceRequesterContext = Pick<PluginDynamicResourceInvocationOptionsV1, 'agentCaller' | 'authority'>;
+
 type BindPluginResources = Readonly<{
     pluginId: string;
     signal: AbortSignal;
     isOccurrenceCurrent(): boolean;
     /** Host-stamped exact target context; required only by contextual Resources. */
     context?: PluginResourceContextV1;
+    /** Captured authenticated Machine actor; never a Resource operand. */
+    requesterAccountId?: string;
+    requesterContext?: PluginResourceRequesterContext;
+    /** Captured admitted Action identity, used only to locate an existing demand. */
+    demandInvocation?: Readonly<{ accountId: string; occurrenceId: string }>;
     query?: PluginDynamicResourceInvocationOptionsV1['query'];
     /** Host-private one-shot proof; only `bindForResource` can mint it. */
     sessionAccessAdmission?: SessionResourceAccessAdmission;
@@ -120,6 +127,8 @@ type AdmittedPackagedResource = Readonly<{
  */
 type DynamicResourceContextState = {
     readonly context: PluginResourceContextV1;
+    requesterAccountId: string | null;
+    requesterContext: PluginResourceRequesterContext | null;
     /** The Account-change access witness that admitted this exact Session context. */
     readonly sessionAccessAccountId: string | null;
     readonly sessionAccessWitnessCursor: number | null;
@@ -143,6 +152,7 @@ type DynamicResourceContextState = {
         runtime: Promise<ContextDynamicResourceProducer>;
         unsubscribe: (() => void) | null;
         accountLifetimeToken: number | null;
+        requesterAccountId: string | null;
     } | null;
 };
 
@@ -193,6 +203,8 @@ function createDynamicContextState(
     }>,
 ): DynamicResourceContextState {
     return {
+        requesterAccountId: null,
+        requesterContext: null,
         context: context.kind === 'session'
             ? Object.freeze({ kind: 'session' as const, sessionId: context.sessionId,
                 ...(context.target ? { target: deepFreezeJson(context.target) } : {}) })
@@ -313,6 +325,8 @@ export type ResolveSessionResourceAccess = (params: Readonly<{
 }>>;
 
 export type StablePluginResourcesOwner = Readonly<{
+    invokeProducer(input: Readonly<{ pluginId: string; resourceId: string; context: PluginResourceContextV1;
+        requesterAccountId: string; input: JsonValue; signal?: AbortSignal }>): Promise<JsonValue>;
     hasPlugin(pluginId: string): boolean;
     getPluginUiResourceCapability(pluginId: string): PluginUiResourceBindingCapability;
     /** Immutable metadata only; never a byte, path, URL, or cache authority. */
@@ -329,6 +343,18 @@ export type StablePluginResourcesOwner = Readonly<{
     /** Applies the canonical Account-change Session-access witness before its cursor is acknowledged. */
     applySessionAccessWitness(params: ResourceSessionAccessWitness): void;
     retirePlugin(pluginId: string): void;
+}>;
+
+export type PluginResourceDemandInvocation = Readonly<{
+    callerPluginId: string; occurrenceId: string; requesterAccountId: string;
+    subscriptionId: string; resourceId: string; input: JsonValue; signal?: AbortSignal;
+}>;
+
+type ResourceDemandHost = Readonly<{
+    readDemandAccountId?(): string | null;
+    bindDynamicResourceCustody?(binding: Parameters<BindDynamicResourceActions>[0]):
+        Pick<PluginDynamicResourceInvocationOptionsV1, 'secrets' | 'chosenMachine' | 'daemonStorage'> | undefined;
+    invokeDemand?(input: PluginResourceDemandInvocation): Promise<JsonValue>;
 }>;
 
 function fail(code: string, message: string, details?: Readonly<{ field: string; reason: string }>): never {
@@ -898,7 +924,7 @@ export async function createStablePluginResourcesOwner(params: Readonly<{
     accountContext?: 'admitted';
     resolveSessionResourceAccess?: ResolveSessionResourceAccess;
     isPluginCurrent?: (pluginId: string) => boolean | Promise<boolean>;
-}>): Promise<StablePluginResourcesOwner> {
+}> & ResourceDemandHost): Promise<StablePluginResourcesOwner> {
     if (!Array.isArray(params.registry.resources)) {
         return fail('plugin_resource_capacity_exceeded', 'Resource occurrenceId exceeds its declaration bound');
     }
@@ -918,6 +944,9 @@ export async function createStablePluginResourcesOwner(params: Readonly<{
             ? { bindDynamicResourceAccountStorage: params.bindDynamicResourceAccountStorage }
             : {}),
         ...(params.bindDynamicResourceActions ? { bindDynamicResourceActions: params.bindDynamicResourceActions } : {}),
+        ...(params.readDemandAccountId ? { readDemandAccountId: params.readDemandAccountId } : {}),
+        ...(params.bindDynamicResourceCustody ? { bindDynamicResourceCustody: params.bindDynamicResourceCustody } : {}),
+        ...(params.invokeDemand ? { invokeDemand: params.invokeDemand } : {}),
         ...(params.accountContext ? { accountContext: params.accountContext } : {}),
         ...(params.resolveSessionResourceAccess
             ? { resolveSessionResourceAccess: params.resolveSessionResourceAccess }
@@ -1078,7 +1107,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
         accountContext?: 'admitted';
         resolveSessionResourceAccess?: ResolveSessionResourceAccess;
         isPluginCurrent?: (pluginId: string) => boolean | Promise<boolean>;
-    }>,
+    }> & ResourceDemandHost,
 ): Promise<StablePluginResourcesOwner> {
     const generationsByPluginId = new Map<string, ReturnType<typeof normalizeGeneration>>();
     const immutableGenerationIdsByPluginId = new Map<string, string>();
@@ -1271,7 +1300,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
         resource: AdmittedDynamicResource,
     ): number | null {
         if (params.accountContext === 'admitted') return null;
-        return resource.hostAccessRequests.length > 0 || params.bindDynamicResourceActions !== undefined
+        return resource.hostAccessRequests.length > 0 || params.bindDynamicResourceActions !== undefined || params.readDemandAccountId !== undefined
             ? getActiveAccountSettingsSnapshotLifetimeToken()
             : null;
     }
@@ -1281,7 +1310,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
         accountLifetimeToken: number | null,
     ): boolean {
         if (params.accountContext === 'admitted') return true;
-        return resource.hostAccessRequests.length === 0 && params.bindDynamicResourceActions === undefined
+        return resource.hostAccessRequests.length === 0 && params.bindDynamicResourceActions === undefined && params.readDemandAccountId === undefined
             || (
                 accountLifetimeToken !== null
                 && accountLifetimeToken === getActiveAccountSettingsSnapshotLifetimeToken()
@@ -1489,14 +1518,20 @@ async function createStablePluginResourcesOwnerFromNormalized(
             };
             // Publish custody before invoking plugin code, including synchronous
             // factories. Late asynchronous creation is disposed by the same owner.
-            const runtime = Promise.resolve().then(async () => {
+            const runtime: Promise<ContextDynamicResourceProducer> = Promise.resolve().then(async () => {
                 if (!isCurrent()) return fail('plugin_resource_context_unavailable', 'Resource context is unavailable');
+                const binding = { pluginId: resource.pluginId, resourceId: resource.id,
+                    occurrenceId: resource.occurrenceId, context: context.context, signal: controller.signal,
+                    isOccurrenceCurrent: composeAccountStorageCurrentness(resource, isCurrent), retireObservation: retireAuthority };
+                const accountId = context.requesterAccountId;
+                const custody = accountId && params.readDemandAccountId?.() === accountId
+                    ? params.bindDynamicResourceCustody?.(binding) : undefined;
+                held.requesterAccountId = custody?.secrets ? accountId : null;
                 const producer = await createProducer.call(resource.runtime, {
                     signal: controller.signal, context: context.context,
-                    ...(params.bindDynamicResourceActions?.({ pluginId: resource.pluginId,
-                        resourceId: resource.id, occurrenceId: resource.occurrenceId, context: context.context,
-                        signal: controller.signal, isOccurrenceCurrent: composeAccountStorageCurrentness(resource, isCurrent),
-                        retireObservation: retireAuthority }) ?? unavailableResourceActions),
+                    ...(params.bindDynamicResourceActions?.(binding) ?? unavailableResourceActions),
+                    ...(custody?.secrets && accountId ? { ...custody, ...context.requesterContext,
+                        requesterAccount: Object.freeze({ accountId }) } : {}),
                 });
                 if (!producer || typeof producer.read !== 'function' || typeof producer.observe !== 'function'
                     || typeof producer.dispose !== 'function') {
@@ -1504,7 +1539,8 @@ async function createStablePluginResourcesOwnerFromNormalized(
                 }
                 return producer;
             });
-            const held = { controller, runtime, unsubscribe: null as (() => void) | null, accountLifetimeToken };
+            const held = { controller, runtime, unsubscribe: null as (() => void) | null, accountLifetimeToken,
+                requesterAccountId: null as string | null };
             context.producer = held;
             if (accountLifetimeToken !== null) held.unsubscribe = subscribeActiveAccountSettingsKeys({}, () => {
                 if (!isDynamicResourceAccountLifetimeCurrent(resource, accountLifetimeToken)) retireAuthority();
@@ -1536,6 +1572,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
                     && !retiredPluginIds.has(resource.pluginId)
                     && isDynamicContextCurrent(resource, context),
                 context: context.context,
+                ...(context.requesterAccountId ? { requesterAccountId: context.requesterAccountId } : {}),
                 ...(context.sessionAccessAdmission ? { sessionAccessAdmission: context.sessionAccessAdmission } : {}),
                 readChain,
                 preferDemandedSnapshot: true,
@@ -1552,6 +1589,8 @@ async function createStablePluginResourcesOwnerFromNormalized(
             return resourceOwner.bind(binding);
         };
         return Object.freeze({
+            async invokeDemand() { return fail('plugin_resource_demand_unavailable', 'No admitted Action demand is bound'); },
+            async notifyDemands() { return fail('plugin_resource_demand_unavailable', 'No admitted Action demand is bound'); },
             describe(id) { return bind(id).describe(id); },
             async read(id, options) { return await bind(id).read(id, options); },
             async watch(id, listener) { return await bind(id).watch(id, listener); },
@@ -2664,6 +2703,9 @@ async function createStablePluginResourcesOwnerFromNormalized(
         const sessionAccess = sessionId === null ? undefined
             : requireSessionAccessAdmission(sessionId, bindParams.sessionAccessAdmission);
         const existing = resource.surfaceContexts.get(context.mountInstanceKey);
+        if (existing && existing.requesterAccountId !== (bindParams.requesterAccountId ?? null)) {
+            return fail('plugin_resource_demand_unavailable', 'Resource demand belongs to another requester');
+        }
         if (
             existing
             && existing.context.kind === 'surface'
@@ -2680,6 +2722,8 @@ async function createStablePluginResourcesOwnerFromNormalized(
         let candidate: DynamicResourceContextState;
         try {
             candidate = createDynamicContextState(context, sessionAccess);
+            candidate.requesterAccountId = bindParams.requesterAccountId ?? null;
+            candidate.requesterContext = bindParams.requesterContext ? Object.freeze({ ...bindParams.requesterContext }) : null;
         } catch {
             return fail('plugin_resource_context_unavailable', 'Resource context is unavailable');
         }
@@ -2694,6 +2738,20 @@ async function createStablePluginResourcesOwnerFromNormalized(
 
     let resourceOwner!: StablePluginResourcesOwner;
     resourceOwner = Object.freeze({
+        async invokeProducer(input) {
+            const resource = admittedByPlugin.get(input.pluginId)?.get(input.resourceId);
+            const context = resource?.source === 'dynamic' && input.context.kind === 'surface'
+                ? resource.surfaceContexts.get(input.context.mountInstanceKey) : undefined;
+            const held = context?.producer;
+            if (!context || !held || context.context.kind !== 'surface' || input.context.kind !== 'surface'
+                || !surfaceContextsMatch(context.context, input.context) || held.requesterAccountId !== input.requesterAccountId
+                || held.controller.signal.aborted) return fail('plugin_resource_demand_unavailable', 'Resource demand is unavailable');
+            const producer = await held.runtime;
+            if (!producer.invoke) return fail('plugin_resource_demand_unsupported', 'Resource does not support demand operations');
+            const signal = input.signal ? AbortSignal.any([held.controller.signal, input.signal]) : held.controller.signal;
+            signal.throwIfAborted();
+            return await producer.invoke(input.input, { signal });
+        },
         async preparePlugin(pluginId: string): Promise<void> {
             for (const dynamic of admittedDynamicResources) {
                 if (dynamic.pluginId !== pluginId) continue;
@@ -2842,6 +2900,30 @@ async function createStablePluginResourcesOwnerFromNormalized(
                 }
             }
             return Object.freeze({
+                async invokeDemand(input, options) {
+                    const invocation = bindParams.demandInvocation;
+                    if (!invocation || !params.invokeDemand) return fail('plugin_resource_demand_unavailable', 'No admitted Action demand is bound');
+                    const signal = options?.signal ? AbortSignal.any([bindParams.signal, options.signal]) : bindParams.signal;
+                    return await params.invokeDemand({ ...input, callerPluginId: bindParams.pluginId,
+                        occurrenceId: invocation.occurrenceId, requesterAccountId: invocation.accountId, signal });
+                },
+                async notifyDemands(input, options) {
+                    const invocation = bindParams.demandInvocation;
+                    if (!invocation) return fail('plugin_resource_demand_unavailable', 'No admitted Action demand is bound');
+                    const resource = find(input.resourceId);
+                    if (resource.source !== 'dynamic' || resource.occurrenceId !== invocation.occurrenceId) {
+                        return fail('plugin_resource_demand_unavailable', 'Resource demand is unavailable');
+                    }
+                    const signal = options?.signal ? AbortSignal.any([bindParams.signal, options.signal]) : bindParams.signal;
+                    signal.throwIfAborted();
+                    for (const context of resource.surfaceContexts.values()) {
+                        const held = context.producer;
+                        if (!held || held.requesterAccountId !== invocation.accountId || held.controller.signal.aborted) continue;
+                        const producer = await held.runtime;
+                        signal.throwIfAborted();
+                        if (!held.controller.signal.aborted) await producer.notify?.(input.input);
+                    }
+                },
                 describe(id: string) {
                     const resource = find(id);
                     if (resource.source !== 'dynamic') return resourceDescriptor(resource);

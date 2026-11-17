@@ -1000,6 +1000,8 @@ describe('production invocation service owners', () => {
 
     it('retires same-label operation resource owners by exact plugin identity', async () => {
         const unavailableResources = Object.freeze({
+            async invokeDemand(): Promise<never> { throw new Error('resource access is not exercised'); },
+            async notifyDemands(): Promise<never> { throw new Error('resource access is not exercised'); },
             describe(): never {
                 throw new Error('resource access is not exercised');
             },
@@ -1016,6 +1018,7 @@ describe('production invocation service owners', () => {
             pluginId: string,
             retirePlugin: (pluginId: string) => void,
         ): StablePluginResourcesOwner => Object.freeze({
+            async invokeProducer(): Promise<never> { throw new Error('resource access is not exercised'); },
             hasPlugin: (candidatePluginId) =>
                 candidatePluginId === pluginId,
             getPluginUiResourceCapability: () => Object.freeze({ readable: false, dynamic: false }),

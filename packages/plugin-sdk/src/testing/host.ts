@@ -113,7 +113,8 @@ type TestkitActionServiceSource = Readonly<{
     signal: AbortSignal;
 }>;
 
-type TestkitRegisteredActionInvocation = Readonly<{
+type TestkitRegisteredActionInvocation = Readonly<Pick<PluginTestkitInvokeActionOptions,
+    'requesterAccount' | 'chosenMachine' | 'agentCaller' | 'authority'> & {
     requestId?: string;
     localId: PluginContributionLocalId;
     input: unknown;
@@ -1342,6 +1343,10 @@ export async function createPluginTestkit(
                 const context = Object.freeze({
                     ...commonContext,
                     invocationId: globalThis.crypto.randomUUID(),
+                    ...(invocationOptions.requesterAccount ? { requesterAccount: Object.freeze({ ...invocationOptions.requesterAccount }) } : {}),
+                    ...(invocationOptions.chosenMachine ? { chosenMachine: Object.freeze({ ...invocationOptions.chosenMachine }) } : {}),
+                    ...(invocationOptions.agentCaller === undefined ? {} : { agentCaller: invocationOptions.agentCaller }),
+                    ...(invocationOptions.authority ? { authority: invocationOptions.authority } : {}),
                     ...(invocationOptions.sessionId === undefined
                         ? {}
                         : { session: Object.freeze({ id: invocationOptions.sessionId }) }),
@@ -1493,25 +1498,10 @@ export async function createPluginTestkit(
             invocationOptions: PluginTestkitInvokeActionOptions = {},
         ) {
             return await invokeRegisteredAction({
+                ...invocationOptions,
                 localId,
                 input: actionInput,
                 surface: invocationOptions.surface ?? 'cli',
-                ...(invocationOptions.requestId === undefined ? {} : { requestId: invocationOptions.requestId }),
-                ...(invocationOptions.signal ? { signal: invocationOptions.signal } : {}),
-                ...(invocationOptions.sessionId === undefined
-                    ? {}
-                    : { sessionId: invocationOptions.sessionId }),
-                ...(invocationOptions.messageAction === undefined
-                    ? {}
-                    : { messageAction: invocationOptions.messageAction }),
-                ...(invocationOptions.accountScope === undefined ? {} : { accountScope: invocationOptions.accountScope }),
-                ...(invocationOptions.sessionTargetsV1 === undefined ? {} : { sessionTargetsV1: invocationOptions.sessionTargetsV1 }),
-                ...(invocationOptions.services === undefined
-                    ? {}
-                    : { services: invocationOptions.services }),
-                ...(invocationOptions.presentation === undefined
-                    ? {}
-                    : { presentation: invocationOptions.presentation }),
             });
         },
         async observeAction(

@@ -12,6 +12,7 @@ import type { ApiMachineClient } from '@/api/apiMachine';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { projectMachineRecipeReadTarget } from '@/machines/setup/machineRecipeActionDeps';
 import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
+import { isAgentCaller } from '@happier-dev/protocol/actions/executor/callerContext';
 import { createDaemonHostResourceRead, readDaemonHostResourceActionFailure } from './daemonHostResourceRead';
 import { openDaemonActionReadWatch } from './actionReadWatch';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -350,6 +351,14 @@ function createProjectionOutputContext(input: ProjectionOutputContext) {
         } : null,
         requestedLocale: full ? input.requestedLocale ?? null : null,
     };
+}
+
+export function projectResourceRequesterContext(context?: RpcHandlerContext) {
+    if (!context) return undefined;
+    const executorContext = buildActionExecutorContextForRpc({ ...context, actionId: 'action.invoke' });
+    return Object.freeze({ agentCaller: isAgentCaller(executorContext),
+        ...(executorContext.authority ? { authority: executorContext.authority } : {}),
+    });
 }
 
 function createProjectionCacheKeyParts(input: ProjectionOutputContext & Readonly<{
@@ -2600,6 +2609,8 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 }, lease.registry.generation);
             }
             const value = await lease.registry.readUiResource({
+                ...(context?.machineAdmission?.actorAccountId ? { requesterAccountId: context.machineAdmission.actorAccountId } : {}),
+                ...(context ? { requesterContext: projectResourceRequesterContext(context) } : {}),
                 expectedCallerOccurrenceId: request.data.expectedCallerOccurrenceId,
                 callerPluginId: request.data.callerPluginId,
                 resourceId: request.data.resource.localId,
@@ -2791,9 +2802,12 @@ export function registerDaemonContributionRegistryProjectionHandler(
             }
             const opened = 'actionRead' in request.data.resource ? await openDaemonActionReadWatch({
                 registry: lease.registry, ...request.data, actionRead: request.data.resource.actionRead,
+                ...(context?.machineAdmission?.actorAccountId ? { requesterAccountId: context.machineAdmission.actorAccountId } : {}),
                 signal: context?.signal,
                 execute: (actionRead, signal, observation) => executeStructuredMessageAction(actionRead, { ...context, signal }, observation),
             }) : await lease.registry.openUiResourceWatch({
+                ...(context?.machineAdmission?.actorAccountId ? { requesterAccountId: context.machineAdmission.actorAccountId } : {}),
+                ...(context ? { requesterContext: projectResourceRequesterContext(context) } : {}),
                 expectedCallerOccurrenceId: request.data.expectedCallerOccurrenceId,
                 callerPluginId: request.data.callerPluginId,
                 subscriptionId: request.data.subscriptionId,
@@ -2871,6 +2885,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 });
             }
             const polled = await lease.registry.pollUiResourceWatch({
+                ...(context?.machineAdmission?.actorAccountId ? { requesterAccountId: context.machineAdmission.actorAccountId } : {}),
                 expectedCallerOccurrenceId: request.data.expectedCallerOccurrenceId,
                 callerPluginId: request.data.callerPluginId,
                 subscriptionId: request.data.subscriptionId,
@@ -2916,6 +2931,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 return DaemonPluginUiResourceWatchCloseResponseSchema.parse({ ok: true, closed });
             }
             const closed = lease.registry.closeUiResourceWatch?.({
+                ...(context?.machineAdmission?.actorAccountId ? { requesterAccountId: context.machineAdmission.actorAccountId } : {}),
                 callerPluginId: request.data.callerPluginId,
                 subscriptionId: request.data.subscriptionId,
             }) === true;
@@ -3095,6 +3111,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 ...context?.localActionContext,
                 ...buildActionExecutorContextForRpc({ ...context, actionId: 'action.invoke',
                     ...(defaultSessionId ? { defaultSessionId } : {}) }),
+                ...(context?.machineAdmission ? { runtimeAccountId: context.machineAdmission.actorAccountId } : {}),
                 ...(context && opts?.createFileDownloadPublisher ? { prepareFileDownload: opts.createFileDownloadPublisher(context) } : {}),
                 authority: context?.callerAuthority ?? context?.localActionContext?.authority ?? 'account_automation',
                 ...(context?.localActionContext?.actionRequestId ?? context?.transportRequestId

@@ -3558,6 +3558,43 @@ The ordinary direct callbacks remain required and must fail explicitly when
 they cannot honor that lifecycle. Domain reads and dependency observation still
 use the canonical Action/Resource owners, not a consumer-owned transport or timer.
 
+An authenticated own-Account surface demand can also receive
+`requesterAccount.accountId`, captured `chosenMachine` identity, the narrow
+`daemonStorage` KV port and `secrets.readSavedSecret` at producer creation. The
+host supplies custody only when the authenticated requester is the daemon's
+active custody Account; foreign or missing requester identity receives none.
+The Machine projection contains `machineId` and `installationId`; it does not
+equate device-local server profile IDs with portable Home identity. Action
+contexts expose the same requester and admitted Machine facts. `agentCaller`
+and `authority` preserve the canonical executor's caller facts rather
+than classifying domain-specific Automation policy. A producer may acquire its selected credential once
+and expose `invoke(input, { signal })` for operations on that held context.
+An admitted Action calls `services.resources.invokeDemand` with the existing
+`subscriptionId`, declared `resourceId` and domain input. The watch owner binds
+that lookup to the authenticated Account, plugin occurrence and original surface
+context; each relayed Action retains the server's existing request authorization.
+The producer owns validation of its captured target against the domain input.
+Operation cancellation leaves the watch open, while watch retirement cancels and
+disposes the producer. Missing demand custody returns
+`plugin_resource_demand_unavailable`; a held producer without `invoke` returns
+`plugin_resource_demand_unsupported`. Other Accounts use ordinary standalone
+Action acquisition rather than this reuse path.
+
+After a committed write, an admitted Action can call
+`services.resources.notifyDemands({ resourceId, input })`. The existing Resource
+owner delivers the domain payload to optional `producer.notify(input)` callbacks
+on open surface producers of the same authenticated Account and plugin
+occurrence. The producer selects its captured target and invalidates its normal
+Resource observation; no new connection or subscription is created. Resource
+delivery still suppresses unchanged digests, so a domain snapshot that signals
+own writes must change its bytes. Database demands publish
+`DatabaseDemandSnapshotV1 { descriptor, ownWriteRevision, relationRevisions }`.
+Unknown-table writes increment the target revision; Apply increments the latest
+revision for its changed relation. The current per-relation projection retains
+changes to several tables when writes coalesce before a read, even when descriptor
+metadata is stable. Consumers compare both target and relation revisions. This
+projection clears with its existing demand; it is not a retained event history.
+
 The host owns `/projects/<workspaceRefId>/plugins/<pluginId>/<localId>` and its
 encoded local subpaths, preserving qualified Home and checkout route context.
 Private launch input stays in the existing ephemeral, target-qualified handoff.

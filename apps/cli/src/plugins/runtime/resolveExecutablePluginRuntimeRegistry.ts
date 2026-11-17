@@ -1327,6 +1327,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     await revalidateResourceSource(options.signal);
                     const producer = await createProducer.call(readRegisteredRuntime(), options);
                     return {
+                        ...(producer.invoke ? { invoke: producer.invoke.bind(producer) } : {}),
+                        ...(producer.notify ? { notify: producer.notify.bind(producer) } : {}),
                         async read(readOptions) {
                             await revalidateResourceSource(readOptions.signal);
                             return await producer.read(readOptions);
@@ -1377,6 +1379,20 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 ))
                 : dynamicResourceProducers,
             bindDynamicResourceAccountStorage,
+            readDemandAccountId: () => !params?.accountExecution && !scopedActionRuntime && sessionCredentials
+                && getActiveAccountSettingsSnapshot()?.scopeKey === resolveAccountSettingsScopeKey(sessionCredentials)
+                ? readAccountIdFromToken(sessionCredentials.token) : null,
+            bindDynamicResourceCustody: binding => {
+                const services = createProjectionPluginServices({ pluginId: binding.pluginId, signal: binding.signal });
+                if (services?.availability('secrets').status !== 'available') return undefined;
+                const machineId = params?.resolveCurrentMachineId?.();
+                const identity = readInstallationIdentityIfExistsSync();
+                return Object.freeze({ secrets: Object.freeze({ readSavedSecret: services.secrets.readSavedSecret }),
+                    ...(machineId && identity ? { chosenMachine: Object.freeze({ machineId, installationId: identity.installationId }) } : {}),
+                    ...(services.availability('storage').status === 'available' ? { daemonStorage: services.storage.daemon } : {}),
+                });
+            },
+            invokeDemand: input => uiResourceWatches.invokeDemand(input),
             // The Account activation source and invocation own this registry's
             // authority. Receiver Settings hydration is a different lifetime.
             ...(params?.accountExecution ? { accountContext: 'admitted' as const } : {}),
@@ -7914,6 +7930,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 const service = await resourcesOwner.bindForResource({
                     pluginId: resourceParams.callerPluginId,
                     resourceId: resourceParams.resourceId,
+                    ...(resourceParams.requesterAccountId ? { requesterAccountId: resourceParams.requesterAccountId } : {}),
+                    ...(resourceParams.requesterContext ? { requesterContext: resourceParams.requesterContext } : {}),
                     ...(resourceParams.query ? { query: resourceParams.query } : {}),
                     signal,
                     isOccurrenceCurrent: isResourceBindingCurrent,
@@ -7970,6 +7988,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 watchParams.expectedCallerOccurrenceId,
             );
             return await watches.open({
+                ...(watchParams.requesterAccountId ? { requesterAccountId: watchParams.requesterAccountId } : {}),
+                ...(watchParams.requesterContext ? { requesterContext: watchParams.requesterContext } : {}),
                 callerPluginId: watchParams.callerPluginId,
                 subscriptionId: watchParams.subscriptionId,
                 ...(watchParams.resourceId === undefined ? {} : { resourceId: watchParams.resourceId }),
@@ -7990,6 +8010,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 watchParams.expectedCallerOccurrenceId,
             );
             return await watches.next({
+                ...(watchParams.requesterAccountId ? { requesterAccountId: watchParams.requesterAccountId } : {}),
                 callerPluginId: watchParams.callerPluginId,
                 subscriptionId: watchParams.subscriptionId,
                 ...(watchParams.waitMs === undefined ? {} : { waitMs: watchParams.waitMs }),
@@ -7999,6 +8020,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         closeUiResourceWatch(watchParams) {
             if (!uiResourceWatches) return false;
             return uiResourceWatches.close({
+                ...(watchParams.requesterAccountId ? { requesterAccountId: watchParams.requesterAccountId } : {}),
                 callerPluginId: watchParams.callerPluginId,
                 subscriptionId: watchParams.subscriptionId,
             }) === true;

@@ -72,6 +72,28 @@ const manifest = {
   },
 } satisfies PluginManifest;
 
+it('keeps synthetic authenticated host identity separate from Action input', async () => {
+  const plugin = definePlugin({ id: 'acme.host-identity', version: '1.0.0', actions: {
+    identity: { title: 'Identity', surfaces: ['cli'], execution: { target: 'daemon' },
+      run: async (_input, context) => ({ account: context.requesterAccount ?? null,
+        machine: context.chosenMachine ?? null, agentCaller: context.agentCaller ?? null,
+        authority: context.authority ?? null }),
+    },
+  } });
+  const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
+  const input = { requesterAccount: { accountId: 'other-account' }, chosenMachine: { machineId: 'other-machine', installationId: 'other-installation' } };
+  try {
+    for (const authority of ['present_user', 'account_automation'] as const) {
+      await expect(kit.invokeAction('identity', input, { requesterAccount: { accountId: 'alice' },
+        chosenMachine: { machineId: 'machine', installationId: 'installation' }, agentCaller: false, authority,
+      })).resolves.toEqual({ account: { accountId: 'alice' }, machine: { machineId: 'machine', installationId: 'installation' },
+        agentCaller: false, authority });
+    }
+    await expect(kit.invokeAction('identity', input)).resolves.toEqual({ account: null, machine: null,
+      agentCaller: null, authority: null });
+  } finally { await kit.dispose(); }
+});
+
 it.each(['daemon', 'account'] as const)('refuses native credential material in an ordinary public testkit invocation (%s)', async realm => {
   const run = async (_input: unknown, context: PluginAccountActionContext | PluginInvocationContext) =>
     context.services.machineProvisioners.materializeNativeCredentialHeaders({ bindingKey: 'unknown-binding' });

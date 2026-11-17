@@ -7,6 +7,8 @@ import { projectContributedActionExecuteResult } from './services/actions';
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 import { runTracedExternalActionInnerStage } from '@/daemon/externalActions/externalActionPhase';
+import { isAgentCaller } from '@happier-dev/protocol/actions/executor/callerContext';
+import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 
 import { ActionOperationProgressV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import type { ActionActorV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
@@ -197,7 +199,9 @@ export type InvokeTargetActionParams = Readonly<{
     /** Host-private external API authority; never projected into plugin context. */
     externalActionContext?: PluginExternalActionContext;
     /** Original host-admitted source, distinct from immediate plugin capability identity. */
-    approvalContext?: import('@happier-dev/protocol').ActionExecutorContext;
+    approvalContext?: import('@happier-dev/protocol').ActionExecutorContext & Readonly<{
+        machineAdmission?: Pick<SocketRpcMachineAdmissionContextV1, 'actorAccountId' | 'machineId' | 'installationId'>;
+    }>;
     /** Account custody retained by the admitted containing Session. */
     requesterAccount?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1;
     /**
@@ -835,6 +839,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         })
                         : serviceBinding;
                     const services = params.createServices(seed, effectiveServiceBinding);
+                    const admittedContext = invocation.approvalContext;
+                    const requesterAccountId = admittedContext?.machineAdmission?.actorAccountId ?? admittedContext?.runtimeAccountId;
+                    const chosenMachine = admittedContext?.machineAdmission;
                     const context: PluginInvocationContext = Object.freeze({
                         plugin: seed.plugin,
                         contribution: seed.contribution,
@@ -843,6 +850,12 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         invocationId: seed.correlationId,
                         ...(seed.requestId === undefined ? {} : { requestId: seed.requestId }),
                         ...(seed.caller ? { caller: seed.caller } : {}),
+                        ...(requesterAccountId ? { requesterAccount: Object.freeze({ accountId: requesterAccountId }) } : {}),
+                        ...(chosenMachine ? { chosenMachine: Object.freeze({ machineId: chosenMachine.machineId,
+                            installationId: chosenMachine.installationId }) } : {}),
+                        ...(admittedContext ? { agentCaller: isAgentCaller(admittedContext),
+                            ...(admittedContext.authority ? { authority: admittedContext.authority } : {}),
+                        } : {}),
                         ...(seed.session ? { session: seed.session } : {}),
                         ...(invocation.approvalContext?.sessionTargetsV1
                             ? { sessionTargetsV1: invocation.approvalContext.sessionTargetsV1 } : {}),

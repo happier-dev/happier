@@ -275,6 +275,8 @@ function createPluginContextualResourceStoreOwner(): PluginContextualResourceSto
                         if (!isCurrent() || !invocation.isCurrent()) return resourceFailure('plugin_surface_retired');
                     };
                     return Object.freeze<ResourcesService>({
+                        async invokeDemand() { return resourceFailure('plugin_resource_producer_placement_unavailable'); },
+                        async notifyDemands() { return resourceFailure('plugin_resource_producer_placement_unavailable'); },
                         describe(id) {
                             assertCurrent();
                             const target = targetBinding(id);

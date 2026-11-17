@@ -20,11 +20,13 @@ export function createTestResourceInvocationContext(
     const unavailable = (): never => {
         throw new PluginError({ code, message });
     };
-    return Object.freeze({
+    return Object.freeze<PluginDynamicResourceInvocationOptionsV1>({
         ...options,
         signal: options.signal ?? new AbortController().signal,
         context: options.context ?? { kind: 'global' },
         resources: options.resources ?? {
+            async invokeDemand() { return unavailable(); },
+            async notifyDemands() { return unavailable(); },
             describe: unavailable,
             async read() { return unavailable(); },
             async watch() { return unavailable(); },

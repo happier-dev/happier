@@ -1,4 +1,5 @@
 import type { PluginAccountSettingsRecordAdapter } from '../invocation/services/settings';
+import type { PluginResourceRequesterContext } from '../invocation/services/resources';
 import type { ResolvedManagedProviderRuntimeInvocationServices, ManagedProviderSessionBootstrapPreparation, ManagedProviderRuntimeOperationClaim, ManagedProviderExplicitStartJoinResult, ManagedProviderExplicitStartJoinInput, RetainedManagedProviderRuntimeInvocationScope, ManagedProviderAdoptedPublicOutcome, ManagedProviderInvocationAccountAuthority } from '../providerBindings/runtimeTypes';
 import type { ManagedExecutableRef } from '@happier-dev/protocol';
 import type { ProviderBrokerRetainedCurrentnessInvalidation } from '@/providers/broker/brokerRetainedCurrentnessInvalidation';
@@ -617,6 +618,8 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
      * resource authority is introduced.
      */
     readUiResource?(params: Readonly<{
+        requesterAccountId?: string;
+        requesterContext?: PluginResourceRequesterContext;
         expectedCallerOccurrenceId: string;
         callerPluginId: string;
         resourceId: string;
@@ -637,6 +640,8 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
      * and absent when this generation admits no resources at all.
      */
     openUiResourceWatch?(params: Readonly<{
+        requesterAccountId?: string;
+        requesterContext?: PluginResourceRequesterContext;
         expectedCallerOccurrenceId: string;
         callerPluginId: string;
         subscriptionId: string;
@@ -646,6 +651,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
         context?: PluginResourceContextV1;
     }>): Promise<Readonly<{ subscriptionId: string; digest?: string }>>;
     pollUiResourceWatch?(params: Readonly<{
+        requesterAccountId?: string;
         expectedCallerOccurrenceId: string;
         callerPluginId: string;
         subscriptionId: string;
@@ -653,6 +659,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
         signal?: AbortSignal;
     }>): Promise<PluginUiResourceWatchPollResult>;
     closeUiResourceWatch?(params: Readonly<{
+        requesterAccountId?: string;
         callerPluginId: string;
         subscriptionId: string;
     }>): boolean;

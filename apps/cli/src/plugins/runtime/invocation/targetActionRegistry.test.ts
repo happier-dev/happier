@@ -62,6 +62,7 @@ import {
 import type { PluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import { createManagedPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
 import { createProductionPluginInvocationServiceOwners } from './services/production';
+import { PLUGIN_SERVICE_DESCRIPTORS } from './services/unavailable';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/createHandler';
 import {
@@ -147,6 +148,40 @@ function reviewedActionContext(pluginId: string, localId: string, input: unknown
 }
 
 describe('target action invocation registry', () => {
+    it('projects authenticated Account and Machine custody independently of Action operands', async () => {
+        const registry = createRegistry({
+            actions: [{ ...action(), handler: async (_input, context) => ({ echoed: JSON.stringify({
+                account: context.requesterAccount ?? null, machine: context.chosenMachine ?? null,
+                agentCaller: context.agentCaller ?? null,
+                authority: context.authority ?? null,
+            }) }) }],
+        });
+        const input = { value: JSON.stringify({ accountId: 'bob', machineId: 'other-machine', installationId: 'other-installation' }) };
+        try {
+            await expect(registry.invoke({ pluginId: 'acme.alpha', localId: 'run', surface: 'cli', input,
+                approvalContext: { surface: 'cli', actionCaller: { kind: 'session', sessionId: 'source-session' }, runtimeAccountId: 'alice', machineAdmission: {
+                    actorAccountId: 'alice', machineId: 'chosen-machine', installationId: 'chosen-installation',
+                } },
+            })).resolves.toMatchObject({ status: 'executed', value: { echoed: JSON.stringify({
+                account: { accountId: 'alice' }, machine: { machineId: 'chosen-machine', installationId: 'chosen-installation' },
+                agentCaller: true,
+                authority: null,
+            }) } });
+            await expect(registry.invoke({ pluginId: 'acme.alpha', localId: 'run', surface: 'cli', input }))
+                .resolves.toMatchObject({ status: 'executed', value: { echoed: JSON.stringify({
+                    account: null, machine: null, agentCaller: null,
+                    authority: null,
+                }) } });
+            for (const authority of ['present_user', 'account_automation'] as const) {
+                await expect(registry.invoke({ pluginId: 'acme.alpha', localId: 'run', surface: 'cli', input,
+                    approvalContext: { authority, runtimeAccountId: 'alice' },
+                })).resolves.toMatchObject({ status: 'executed', value: { echoed: JSON.stringify({
+                    account: { accountId: 'alice' }, machine: null, agentCaller: false, authority,
+                }) } });
+            }
+        } finally { registry.dispose(); }
+    });
+
     it('preserves requester Account custody in the invocation services seed', async () => {
         const requesterAccount = { marker: 'requester-account' } as unknown as import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1;
         let captured: { requesterAccount?: unknown } | undefined;
@@ -1937,7 +1972,7 @@ describe('target action invocation registry', () => {
                 machineProvisioners: ['materializeBootstrapCredential', 'materializeGuestHostCredential', 'withBootstrapCredentialFile'],
                         managedServices: ['dependencies', 'supervise'],
                         sessions: ['current', 'external', 'get', 'list', 'subagents', 'watch'],
-                        resources: ['describe', 'read', 'watch'],
+                        resources: Object.keys(PLUGIN_SERVICE_DESCRIPTORS.resources.createUnavailable()),
                         mcp: ['connect', 'discover', 'list'],
                         notifications: ['listCategories', 'listChannels', 'preferences', 'send', 'watchPreferences'],
                         connectedAccounts: [

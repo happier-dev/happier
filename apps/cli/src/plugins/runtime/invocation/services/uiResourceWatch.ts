@@ -12,7 +12,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
 
 import { createStablePluginEventsBroker, type StablePluginEventsBroker } from './events';
-import type { StablePluginResourcesOwner } from './resources';
+import type { PluginResourceDemandInvocation, PluginResourceRequesterContext, StablePluginResourcesOwner } from './resources';
 
 // App invalidation transport backpressure, not a cap on in-process listeners.
 export const UI_RESOURCE_WATCH_DELIVERY_LIMITS = Object.freeze({
@@ -60,6 +60,7 @@ export type PluginUiResourceWatchPollResult =
 export type HostResourceWatchError = Pick<Extract<PluginUiResourceSubscriptionEventV1, { kind: 'error' }>, 'code' | 'diagnostics'>;
 export type HostResourceWatchEmit = (digest: string, pages?: readonly PluginUiResourceContentV1[]) => void | Promise<void>;
 export type PluginUiResourceWatchOwner = Readonly<{
+    invokeDemand(input: PluginResourceDemandInvocation): Promise<import('@happier-dev/plugin-sdk').JsonValue>;
     /** Host Account demand shares this transport owner without a plugin occurrence. */
     openHost(params: Readonly<{
         accountId: string;
@@ -76,6 +77,8 @@ export type PluginUiResourceWatchOwner = Readonly<{
      * converges on a silent stale view.
      */
     open(params: Readonly<{
+        requesterAccountId?: string;
+        requesterContext?: PluginResourceRequesterContext;
         subscriptionId: string;
         callerPluginId: string;
         resourceId?: string;
@@ -85,13 +88,13 @@ export type PluginUiResourceWatchOwner = Readonly<{
         /** Host-stamped only; required by contextual dynamic Resources. */
         context?: PluginResourceContextV1;
     }>): Promise<Readonly<{ subscriptionId: string; digest?: string }>>;
-    next(params: Readonly<({ callerPluginId: string } | { hostAccountId: string }) & {
+    next(params: Readonly<({ callerPluginId: string; requesterAccountId?: string } | { hostAccountId: string }) & {
         subscriptionId: string;
         resource?: PluginUiHostReadReferenceV1;
         waitMs?: number;
         signal?: AbortSignal;
     }>): Promise<PluginUiResourceWatchPollResult>;
-    close(params: Readonly<({ callerPluginId: string } | { hostAccountId: string }) & {
+    close(params: Readonly<({ callerPluginId: string; requesterAccountId?: string } | { hostAccountId: string }) & {
         subscriptionId: string;
         /** Omitted only for owner-local cleanup, which discloses no Resource data. */
         resource?: PluginUiHostReadReferenceV1;
@@ -156,6 +159,7 @@ type PendingSignal = Readonly<{
 }>;
 
 type UiResourceWatch = {
+    readonly demand?: Readonly<{ accountId: string; occurrenceId: string; context: PluginResourceContextV1 }>;
     readonly key: string;
     readonly subscriptionId: string;
     readonly pluginId?: string;
@@ -206,12 +210,12 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
     const watches = new Map<string, UiResourceWatch>();
     let retired = false;
 
-    function watchKey(pluginId: string, subscriptionId: string): string {
-        return `plugin\u0000${pluginId}\u0000${subscriptionId}`;
+    function watchKey(pluginId: string, subscriptionId: string, requesterAccountId?: string): string {
+        return `plugin\u0000${pluginId}\u0000${requesterAccountId ?? ''}\u0000${subscriptionId}`;
     }
-    function requestedWatchKey(input: { callerPluginId: string } | { hostAccountId: string }, subscriptionId: string): string {
+    function requestedWatchKey(input: { callerPluginId: string; requesterAccountId?: string } | { hostAccountId: string }, subscriptionId: string): string {
         return 'hostAccountId' in input ? `host\u0000${input.hostAccountId}\u0000${subscriptionId}`
-            : watchKey(boundedId(input.callerPluginId, 'Resource watch caller is invalid'), subscriptionId);
+            : watchKey(boundedId(input.callerPluginId, 'Resource watch caller is invalid'), subscriptionId, input.requesterAccountId);
     }
 
     function settleWaiter(watch: UiResourceWatch, result: PluginUiResourceWatchPollResult): void {
@@ -289,6 +293,17 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
     }
 
     return Object.freeze({
+        async invokeDemand(input) {
+            const watch = watches.get(watchKey(input.callerPluginId, input.subscriptionId, input.requesterAccountId));
+            if (!watch || !isWatchCurrent(watch) || !watch.demand || watch.resourceId !== input.resourceId
+                || watch.demand.accountId !== input.requesterAccountId || watch.demand.occurrenceId !== input.occurrenceId
+                || params.readPluginOccurrenceId(input.callerPluginId) !== input.occurrenceId || !params.resources) {
+                return fail('plugin_resource_demand_unavailable', 'Resource demand is unavailable');
+            }
+            const signal = input.signal ? AbortSignal.any([watch.bindingController.signal, input.signal]) : watch.bindingController.signal;
+            return await params.resources.invokeProducer({ pluginId: input.callerPluginId, resourceId: input.resourceId,
+                context: watch.demand.context, requesterAccountId: input.requesterAccountId, input: input.input, signal });
+        },
         async openHost(openParams) {
             if (retired) fail('plugin_resource_service_unavailable', 'Resource owner is retired');
             sweepIdle();
@@ -351,7 +366,7 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
                 if (!params.isPluginConsumerCurrent(pluginId) || (authority
                     ? authority.consumer.pluginId !== pluginId || !params.observeReadAuthority
                     : !openParams.bindRead)) fail('plugin_action_read_observation_unavailable', 'Read authority is unavailable');
-                const key = watchKey(pluginId, subscriptionId);
+                const key = watchKey(pluginId, subscriptionId, openParams.requesterAccountId);
                 const existing = watches.get(key);
                 if (existing) releaseWatch(existing, { status: 'idle' });
                 const watch: UiResourceWatch = { key, subscriptionId, pluginId, resourceId: authority?.consumer.localId
@@ -396,7 +411,7 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
             if (!params.isPluginConsumerCurrent(pluginId) || !resources?.hasPlugin(pluginId)) {
                 fail('plugin_resource_service_unavailable', 'Committed plugin resources are unavailable');
             }
-            const key = watchKey(pluginId, subscriptionId);
+            const key = watchKey(pluginId, subscriptionId, openParams.requesterAccountId);
             const existing = watches.get(key);
             // Re-opening the same id is the reconnect path, not a conflict: the
             // predecessor is retired before its replacement is established so a
@@ -437,6 +452,8 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
                 service = await resources.bindForResource({
                     pluginId,
                     resourceId,
+                    ...(openParams.requesterAccountId ? { requesterAccountId: openParams.requesterAccountId } : {}),
+                    ...(openParams.requesterContext ? { requesterContext: openParams.requesterContext } : {}),
                     signal: bindingController.signal,
                     isOccurrenceCurrent: isBindingCurrent,
                     onReadAuthorityRetired: endExpiredResourceWatch,
@@ -453,6 +470,10 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
             }
 
             const watch: UiResourceWatch = {
+                ...(openParams.requesterAccountId && openParams.context ? { demand: Object.freeze({
+                    accountId: openParams.requesterAccountId, context: structuredClone(openParams.context),
+                    occurrenceId: params.readPluginOccurrenceId(pluginId) ?? '',
+                }) } : {}),
                 key,
                 subscriptionId,
                 pluginId,
@@ -484,10 +505,10 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
                 surface: 'ui' as const,
             });
             // One broker subscription per UI subscription, keyed by the
-            // subscription id rather than the resource id, so an invalidation
-            // owed to one mounted surface is never fanned out to another
-            // surface's poll.
-            const ref = Object.freeze({ pluginId, localId: subscriptionId });
+            // authenticated watch identity rather than the resource id, so
+            // identical client subscription ids from different Accounts never
+            // share invalidations.
+            const ref = Object.freeze({ pluginId, localId: watch.key });
             watch.brokerSubscription = broker.subscribe({
                 ref,
                 identity,

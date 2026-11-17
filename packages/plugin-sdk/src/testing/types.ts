@@ -4,6 +4,7 @@ import type { PluginContributionLocalId, JsonValue } from '../identity.js';
 import type {
     MessageActionAvailableSnapshotV1,
     PluginInvocationSurface,
+    PluginInvocationContext,
     PluginMachineMaterializationRefV1,
 } from '../invocation.js';
 import type { PresentationService } from '../interactions.js';
@@ -167,7 +168,8 @@ export type PluginTestkitOptions = Readonly<{
     presentation?: PresentationService;
 }>;
 
-export type PluginTestkitInvokeActionOptions = Readonly<{
+export type PluginTestkitInvokeActionOptions = Readonly<Pick<PluginInvocationContext,
+    'requesterAccount' | 'chosenMachine' | 'agentCaller' | 'authority'> & {
     /** Existing host-issued diagnostic identity, separate from independent Action identity. */
     requestId?: string;
     /** Handler context only; direct invocation does not run production host admission policy. */
