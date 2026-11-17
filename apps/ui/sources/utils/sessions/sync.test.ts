@@ -283,6 +283,66 @@ describe('InvalidateSync pause behavior', () => {
     });
 });
 
+describe('InvalidateSync user-initiated retry', () => {
+    it('starts a user retry at once while the queue waits out a backoff, and runs it once', async () => {
+        await withFakeTimers(async () => {
+            const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(1);
+            try {
+                let failing = true;
+                const command = vi.fn(async () => {
+                    if (failing) throw new RetryableServerResponseError(503, 'temporarily unavailable');
+                });
+                const sync = new InvalidateSync(command, { backoff: { minDelayMs: 30_000, maxDelayMs: 30_000, maxFailureCount: 'infinite' } });
+                sync.invalidate();
+                await vi.advanceTimersByTimeAsync(0);
+                expect(command).toHaveBeenCalledTimes(1);
+
+                // The Home is back; the user pulls to refresh while the queue sleeps out its 30 s backoff.
+                failing = false;
+                let settled = false;
+                const retry = sync.retryNow().then(() => { settled = true; });
+                await vi.advanceTimersByTimeAsync(0);
+                expect(command).toHaveBeenCalledTimes(2);
+                expect(settled).toBe(true);
+
+                // The retry was the cycle the user asked for: no second read follows it.
+                await vi.advanceTimersByTimeAsync(60_000);
+                await retry;
+                expect(command).toHaveBeenCalledTimes(2);
+            } finally {
+                randomSpy.mockRestore();
+            }
+        });
+    });
+
+    it('cuts only a running backoff: an idle queue reads nothing, an automatic invalidation keeps its backoff', async () => {
+        await withFakeTimers(async () => {
+            const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(1);
+            try {
+                const idle = vi.fn(async () => {});
+                const idleSync = new InvalidateSync(idle);
+                expect(idleSync.cutBackoff()).toBe(false);
+                await vi.advanceTimersByTimeAsync(0);
+                expect(idle).not.toHaveBeenCalled();
+
+                const command = vi.fn(async () => { throw new RetryableServerResponseError(503, 'temporarily unavailable'); });
+                const sync = new InvalidateSync(command, { backoff: { minDelayMs: 30_000, maxDelayMs: 30_000, maxFailureCount: 'infinite' } });
+                sync.invalidate();
+                await vi.advanceTimersByTimeAsync(0);
+                sync.invalidate();
+                await vi.advanceTimersByTimeAsync(10_000);
+                expect(command).toHaveBeenCalledTimes(1);
+                expect(sync.cutBackoff()).toBe(true);
+                await vi.advanceTimersByTimeAsync(0);
+                expect(command).toHaveBeenCalledTimes(2);
+                sync.stop();
+            } finally {
+                randomSpy.mockRestore();
+            }
+        });
+    });
+});
+
 describe('InvalidateSync retry failure reporting', () => {
     it('reports retryable failures before sleeping for the next retry', async () => {
         await withFakeTimers(async () => {

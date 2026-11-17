@@ -52,6 +52,8 @@ export class InvalidateSync {
         maxFailureCount: number | 'infinite';
     };
     private _shouldRetry: (e: any, failuresCount: number) => boolean;
+    /** Ends the current retry backoff early; set only while the queue sleeps between failed attempts. */
+    private _endBackoff: (() => void) | null = null;
 
     constructor(
         command: () => Promise<void>,
@@ -115,6 +117,29 @@ export class InvalidateSync {
         this._invalidated = true;
         this._invalidatedDouble = false;
         this._doSync();
+    }
+
+    /**
+     * A user-initiated recovery (Retry) for a queue that is failing: when it sleeps out a retry backoff,
+     * its next attempt starts now. An idle or running queue is left alone. Returns whether a backoff ended.
+     * Automatic invalidations never end a backoff: only an explicit user action does.
+     */
+    cutBackoff(): boolean {
+        const end = this._endBackoff;
+        if (!end) return false;
+        this._endBackoff = null;
+        end();
+        return true;
+    }
+
+    /**
+     * A user-initiated read (pull to refresh, Retry): it starts at once even while the queue sleeps out
+     * a retry backoff, and resolves with that attempt's cycle.
+     */
+    retryNow(opts?: { signal?: AbortSignal }): Promise<void> {
+        const pending = this.invalidateAndAwait(opts);
+        this.cutBackoff();
+        return pending;
     }
 
     async invalidateAndAwait(opts: { timeoutMs: number; signal?: AbortSignal }): Promise<SyncQueueWaitOutcome>;
@@ -319,7 +344,19 @@ export class InvalidateSync {
                 const retryInfo = { failuresCount, nextDelayMs, nextRetryAt: Date.now() + nextDelayMs };
                 this._onRetryFailure?.(e, retryInfo);
                 this._onRetry?.(retryInfo);
-                await delay(nextDelayMs);
+                let timer: ReturnType<typeof setTimeout> | null = null;
+                const cut = await new Promise<boolean>((resolve) => {
+                    timer = setTimeout(() => resolve(false), nextDelayMs);
+                    this._endBackoff = () => resolve(true);
+                });
+                this._endBackoff = null;
+                if (timer) clearTimeout(timer);
+                if (cut) {
+                    // The user's attempt starts after every invalidation made so far, so it is
+                    // also the next cycle they asked for: no trailing second read follows it.
+                    this._invalidatedDouble = false;
+                    this._promoteNextCyclePendings();
+                }
             }
         }
     };

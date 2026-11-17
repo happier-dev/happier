@@ -8312,6 +8312,17 @@ class Sync {
         if (!await this.refreshAttachedMachineInventory(params?.serverId)) throw new Error('machine_inventory_unavailable');
     }
 
+      /** Every recovery queue this engine owns; Retry ends their failure backoffs. */
+      private ownedSyncUnits(): InvalidateSync[] {
+          return [
+              this.settingsSync, this.profileSync, this.sessionsSync, this.machinesSync, this.artifactsSync,
+              this.pluginAvailabilitySync, this.automationsSync, this.teamLabelEnvelopeSync, this.purchasesSync,
+              this.nativeUpdateSync, this.friendsSync, this.feedSync, this.todosSync, this.accountPetsSync,
+              ...this.messagesSync.values(),
+              ...(this.sessionDraftFlushSync ? [this.sessionDraftFlushSync] : []),
+          ];
+      }
+
       public retryNow = () => {
           if (isEmbedWindowContext() && !this.embedSessionScope) return;
           this.manualResumeGeneration += 1;
@@ -8320,6 +8331,8 @@ class Sync {
           const supersededResume = this.resumeInFlight;
           this.resumeWaitController?.abort();
           abortServerFetches('manual-retry', { readOnly: true });
+          // Aborted reads retry at once; a queue sleeping out its failure backoff must not hold Retry either.
+          for (const unit of this.ownedSyncUnits()) unit.cutBackoff();
           let reconnectSocket = false;
           try {
               storage.getState().clearSyncError();
