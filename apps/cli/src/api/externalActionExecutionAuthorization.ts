@@ -1214,7 +1214,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
         }));
       } catch { return fail(input.signal?.aborted ? 'cancelled' : 'requester_credential_disclosure_declined'); }
       if (confirmed !== true) return fail('requester_credential_disclosure_declined');
-      return await isCurrent() ? null : fail(input.signal?.aborted ? 'cancelled' : 'target_unavailable');
+      return await isCurrent() ? null : fail(input.signal?.aborted ? 'cancelled' : 'target_unavailable', 'dispatch.requester_disclosure.currentness');
     };
     let authorization = minted.authorization;
     try {
