@@ -325,6 +325,7 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
                 createdAt: timestamp,
                 updatedAt: timestamp,
                 origin: validated.request.origin,
+                ...(validated.opaqueBounds ? { opaqueBounds: validated.opaqueBounds } : {}),
             };
 
             return await withCreateLock(params.accountId, async () => {

@@ -1,8 +1,10 @@
 import type { Prisma } from "@prisma/client";
+import { z } from "zod/mini";
 
 import { AccountPetOriginV1Schema, PetAssetMediaTypeV1Schema, type AccountPetLibraryEntryV1 } from '@happier-dev/protocol/pets/accountLibrary';
 import { PET_PACKAGE_FORMAT_CODEX_ATLAS_V1 } from '@happier-dev/protocol/pets/constants';
 import { PetPackageManifestV1Schema } from '@happier-dev/protocol/pets/manifest';
+import { PetCellBoundsV1Schema } from '@happier-dev/protocol/pets/atlasPixelInspection';
 
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
@@ -72,6 +74,12 @@ type AccountPetPackageRow = Readonly<{
     assets: AccountPetAssetRow[];
 }>;
 
+// The manifest JSON column retains server-measured metadata without changing the
+// imported package manifest or requiring a second pixel scan on library reads.
+const StoredAccountPetManifestV1Schema = z.extend(PetPackageManifestV1Schema, {
+    opaqueBounds: z.optional(PetCellBoundsV1Schema),
+});
+
 function toPrismaJson(value: unknown): Prisma.InputJsonValue {
     return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
@@ -95,7 +103,7 @@ function mapAccountPetRow(row: AccountPetPackageRow): PersistedAccountPet {
     }
 
     const mediaType = PetAssetMediaTypeV1Schema.safeParse(asset.mediaType);
-    const manifest = PetPackageManifestV1Schema.safeParse(row.manifest);
+    const manifest = StoredAccountPetManifestV1Schema.safeParse(row.manifest);
     const origin = AccountPetOriginV1Schema.safeParse(row.origin);
     if (!mediaType.success || !manifest.success || !origin.success) {
         return {
@@ -107,6 +115,7 @@ function mapAccountPetRow(row: AccountPetPackageRow): PersistedAccountPet {
         };
     }
 
+    const { opaqueBounds, ...packageManifest } = manifest.data;
     return {
         accountId: row.accountId,
         accountPetId: row.id,
@@ -114,7 +123,8 @@ function mapAccountPetRow(row: AccountPetPackageRow): PersistedAccountPet {
         entry: {
             accountPetId: row.id,
             packageFormat: PET_PACKAGE_FORMAT_CODEX_ATLAS_V1,
-            manifest: manifest.data,
+            manifest: packageManifest,
+            ...(opaqueBounds ? { opaqueBounds } : {}),
             spritesheetAssetRef: {
                 assetId: asset.id,
                 mediaType: mediaType.data,
@@ -199,7 +209,10 @@ export function createPrismaAccountPetLibraryPersistence(
                             accountId: params.accountId,
                             packageFormat: params.entry.packageFormat,
                             contentMode: "plain",
-                            manifest: toPrismaJson(params.entry.manifest),
+                            manifest: toPrismaJson({
+                                ...params.entry.manifest,
+                                ...(params.entry.opaqueBounds ? { opaqueBounds: params.entry.opaqueBounds } : {}),
+                            }),
                             digest: params.entry.digest,
                             sizeBytes: params.entry.sizeBytes,
                             origin: toPrismaJson(params.entry.origin),

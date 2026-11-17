@@ -4,7 +4,7 @@ export { BotTemplateVersionV1Schema, type BotTemplateVersionV1 } from './templat
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ArtifactCreateIdV1Schema } from '../../artifacts/artifactIdV1.js';
 import { ArtifactRevisionV1Schema } from '../../artifacts/artifactRevisionV1.js';
-import { SessionBotFaceV1Schema, SessionBotFaceV1AuthoringSchema } from '../../sessions/identity/sessionBotFaceV1.js';
+import { SessionBotFaceV1Schema, SessionBotFaceV1AuthoringSchema, type SessionBotFaceV1 } from '../../sessions/identity/sessionBotFaceV1.js';
 import { MachineRecipeReferenceV1Schema } from '../../machines/setup/machineRecipeReferenceV1.js';
 import { RegistryItemPointerV1Schema } from '../../registries/registryContentRefV1.js';
 import { PromptBundleActionEntryV1Schema, validatePromptBundleBodyV1AgainstSchemaId } from '../../prompts/library/promptBundleSchemas.js';
@@ -44,9 +44,18 @@ export const BotTemplateContentV1Schema = lazyZodSchema(() => z.strictObject({
   value.needs.connectedAccounts, value.needs.mcpServers].every(uniqueKeys), 'Template item keys must be unique within their section')));
 export type BotTemplateContentV1 = z.infer<typeof BotTemplateContentV1Schema>;
 /** Admission for draft/release authors; Artifact and preview reads remain structural. */
+const BotTemplateFaceV1AuthoringSchema = lazyZodSchema(() => SessionBotFaceV1AuthoringSchema.check(z.refine(
+  face => face.pet?.kind !== 'accountPet', 'Templates use built-in pets only')));
 export const BotTemplateContentV1AuthoringSchema = lazyZodSchema(() => z.safeExtend(BotTemplateContentV1Schema, {
-  identity: z.safeExtend(identity, { face: z.optional(SessionBotFaceV1AuthoringSchema) }),
+  identity: z.safeExtend(identity, { face: z.optional(BotTemplateFaceV1AuthoringSchema) }),
 }));
+
+/** A reusable copy carries the source Bot's fallback face when its pet is private. */
+export function projectBotTemplateFaceV1(face: SessionBotFaceV1): SessionBotFaceV1 {
+  if (face.pet?.kind !== 'accountPet') return face;
+  const { pet: _pet, ...fallback } = face;
+  return fallback;
+}
 
 export const BotTemplateCandidatesV1Schema = lazyZodSchema(() => z.strictObject({
   memoryRules: z.array(z.strictObject({ ...BotTemplateMemoryRuleV1Schema.shape,
@@ -110,7 +119,9 @@ export function projectBotTemplateContentV1(draft: BotTemplateDraftV1): BotTempl
     skills.set(candidate.key, { key: candidate.key, title: selected.title,
       bundleSchemaId: candidate.bundleSchemaId, entries: selected.entries });
   }
-  return { ...draft.content, memoryRules: [...memory.values()], skills: [...skills.values()] };
+  const face = draft.content.identity.face;
+  return { ...draft.content, identity: face ? { ...draft.content.identity, face: projectBotTemplateFaceV1(face) } : draft.content.identity,
+    memoryRules: [...memory.values()], skills: [...skills.values()] };
 }
 
 export function projectBotTemplateReleaseV1(draft: BotTemplateDraftV1,

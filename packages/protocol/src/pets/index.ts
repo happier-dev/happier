@@ -22,6 +22,8 @@ export {
 } from './constants.js';
 export {
   inspectPetAtlasRgbaPixelsV1,
+  PetCellBoundsV1Schema,
+  type PetCellBoundsV1,
   type PetAtlasRgbaPixelInspectionV1,
 } from './atlasPixelInspection.js';
 export {

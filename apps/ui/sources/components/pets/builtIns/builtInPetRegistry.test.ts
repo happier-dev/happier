@@ -2,6 +2,8 @@ import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { PET_ATLAS_V1, PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
+import { inspectPetAtlasRgbaPixelsV1 } from '@happier-dev/protocol/pets/atlasPixelInspection';
+import sharp from 'sharp';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -59,5 +61,16 @@ describe('builtInPetRegistry', () => {
 
     it('falls back to Blink for unknown built-in ids without mutating settings', () => {
         expect(resolveBuiltInPetPackage('newer-client-pet')).toBe(resolveBuiltInPetPackage('blink'));
+    });
+
+    it('stores the measured union of opaque pixels for every bundled atlas', async () => {
+        for (const petId of BUILT_IN_PET_IDS) {
+            const petPackage = resolveBuiltInPetPackage(petId);
+            const { data, info } = await sharp(resolve(process.cwd(), 'sources/assets/pets', petId, petPackage.manifest.spritesheetPath))
+                .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+            const inspection = inspectPetAtlasRgbaPixelsV1({ data, width: info.width, height: info.height, channels: info.channels });
+            expect(petPackage.opaqueBounds).toBeDefined();
+            expect(petPackage.opaqueBounds).toEqual(inspection.opaqueBounds);
+        }
     });
 });

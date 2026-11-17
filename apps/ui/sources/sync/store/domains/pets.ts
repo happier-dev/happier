@@ -1,4 +1,4 @@
-import type { AccountPetMetadata } from "@/sync/domains/pets/accountPetLibraryTypes";
+import type { AccountPetMetadata, AccountPetLibraryStatus } from "@/sync/domains/pets/accountPetLibraryTypes";
 import type { LocalPetSourceMetadata } from "@/sync/domains/pets/localPetSourceTypes";
 import { normalizeAccountPetsById } from "@/sync/domains/pets/normalizeAccountPetLibrary";
 import {
@@ -10,6 +10,8 @@ import type { StoreGet, StoreSet } from "./_shared";
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 export type PetsDomain = {
+    accountPetsStatus: AccountPetLibraryStatus;
+    setAccountPetsStatus: (status: AccountPetLibraryStatus) => void;
     accountPetsById: Record<string, AccountPetMetadata>;
     localPetSourcesBySourceKey: Record<string, LocalPetSourceMetadata>;
     applyAccountPets: (pets: AccountPetMetadata[]) => void;
@@ -28,15 +30,17 @@ export function createPetsDomain<S extends PetsDomain>({
     const localPetSourcesBySourceKey = loadLocalPetSourcesBySourceKey();
 
     return {
+        accountPetsStatus: 'pending',
+        setAccountPetsStatus: (accountPetsStatus) => set((state) => state.accountPetsStatus === accountPetsStatus ? state : ({ ...state, accountPetsStatus })),
         accountPetsById: {},
         localPetSourcesBySourceKey,
         applyAccountPets: (pets) =>
             set((state) => {
                 const incoming = normalizeAccountPetsById(pets);
-                if (sameStrictJsonValue(state.accountPetsById, incoming)) return state;
+                if (sameStrictJsonValue(state.accountPetsById, incoming)) return state.accountPetsStatus === 'ready' ? state : { ...state, accountPetsStatus: 'ready' as const };
                 const accountPetsById = Object.fromEntries(Object.entries(incoming).map(([id, pet]) => [id,
                     sameStrictJsonValue(state.accountPetsById[id], pet) ? state.accountPetsById[id]! : pet]));
-                return { ...state, accountPetsById };
+                return { ...state, accountPetsById, accountPetsStatus: 'ready' as const };
             }),
         upsertAccountPet: (pet) =>
             set((state) => sameStrictJsonValue(state.accountPetsById[pet.accountPetId], pet) ? state : ({

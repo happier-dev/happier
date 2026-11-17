@@ -19,6 +19,7 @@ import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { resetRuntimeFetch, setRuntimeFetch, type RuntimeFetch } from '@/utils/system/runtimeFetch';
 import type { LocalPetSourceMetadata } from '@/sync/domains/pets/localPetSourceTypes';
 import { createReducer } from "@happier-dev/session-core/reducer";
@@ -113,6 +114,7 @@ type TestDesktopPetOverlayWindowStatePayload = Readonly<{
 }>;
 const runtimeFetchMock = vi.hoisted(() => vi.fn<RuntimeFetch>());
 const getCredentialsMock = vi.hoisted(() => vi.fn());
+const petPreviewCredentials = { token: createAccountTokenForTests('pet-overlay-account') };
 const currentnessResponse = vi.hoisted(() => ({ current: null as Response | null }));
 const assetResponseMock = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
@@ -208,14 +210,13 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
 }));
 
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
-    return {
-        ...actual,
-        TokenStorage: {
-            ...actual.TokenStorage,
+    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
+    return createTokenStorageModuleMock({ importOriginal,
+        tokenStorage: {
             getCredentials: getCredentialsMock,
+            getCredentialsForServerUrl: getCredentialsMock,
         },
-    };
+    });
 });
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
@@ -433,7 +434,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
         await upsertAndActivateServer({ serverUrl: 'https://server-pets', scope: 'tab' });
         vi.useFakeTimers();
         vi.setSystemTime(12_000);
-        getCredentialsMock.mockResolvedValue({ token: 'pet-token' });
+        getCredentialsMock.mockResolvedValue(petPreviewCredentials);
         currentnessResponse.current = Response.json(createPlainAccountEncryptionCurrentnessFixture());
         runtimeFetchMock.mockImplementation(async (input) => {
             const path = new URL(String(input)).pathname;
@@ -2409,11 +2410,11 @@ describe('DesktopPetOverlayRoute selectors', () => {
         const assetRequest = runtimeFetchMock.mock.calls.find(([input]) =>
             new URL(String(input)).pathname === `/v1/account/pets/${accountPet.accountPetId}/spritesheet`);
         expect(assetRequest).toBeDefined();
-        expect(new Headers(assetRequest?.[1]?.headers).get('Authorization')).toBe('Bearer pet-token');
+        expect(new Headers(assetRequest?.[1]?.headers).get('Authorization')).toBe(`Bearer ${petPreviewCredentials.token}`);
         const currentnessRequest = runtimeFetchMock.mock.calls.find(([input]) =>
             new URL(String(input)).pathname === '/v1/account/encryption/currentness');
         expect(currentnessRequest).toBeDefined();
-        expect(new Headers(currentnessRequest?.[1]?.headers).get('Authorization')).toBe('Bearer pet-token');
+        expect(new Headers(currentnessRequest?.[1]?.headers).get('Authorization')).toBe(`Bearer ${petPreviewCredentials.token}`);
         expect(screen.root.findAllByType('Image')[0]?.props.source).toBe('data:image/webp;base64,AQID');
     });
 
@@ -2440,7 +2441,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
         const currentnessRequest = runtimeFetchMock.mock.calls.find(([input]) =>
             new URL(String(input)).pathname === '/v1/account/encryption/currentness');
         expect(currentnessRequest).toBeDefined();
-        expect(new Headers(currentnessRequest?.[1]?.headers).get('Authorization')).toBe('Bearer pet-token');
+        expect(new Headers(currentnessRequest?.[1]?.headers).get('Authorization')).toBe(`Bearer ${petPreviewCredentials.token}`);
         expect(assetResponseMock).not.toHaveBeenCalled();
         expect(screen.root.findAllByType('Image')[0]?.props.source).toBe(
             resolveBuiltInPetPackage('blink').spritesheetSource,
@@ -2522,6 +2523,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
             machineId: 'machine-pets',
             serverId: 'server-pets',
+            accountId: 'pet-overlay-account',
             method: PET_DAEMON_RPC_METHODS.READ_PREVIEW_ASSET,
             payload: { sourceKey: 'managed:blink' },
             signal: expect.any(AbortSignal),

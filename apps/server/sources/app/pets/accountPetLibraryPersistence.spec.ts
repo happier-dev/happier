@@ -1,4 +1,5 @@
 import { signAccountContentKeyBindingV1 } from "@happier-dev/protocol";
+import type { AccountPetLibraryEntryV1 } from "@happier-dev/protocol/pets/accountLibrary";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import tweetnacl from "tweetnacl";
 
@@ -59,6 +60,54 @@ describe("accountPetLibraryPersistence", () => {
             () => db.accountPetPackage.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it("roundtrips optional opaque bounds without adding them to package manifests", async () => {
+        await db.account.create({
+            data: { id: "account-1", publicKey: null, encryptionMode: "plain" },
+        });
+        const manifest = {
+            id: "blink",
+            displayName: "Blink",
+            description: "Happier companion pet",
+            spritesheetPath: "spritesheet.webp" as const,
+        };
+        const entries: AccountPetLibraryEntryV1[] = [];
+        const bounds = { x: 15, y: 20, width: 130, height: 170 };
+        for (const [index, opaqueBounds] of [bounds, undefined].entries()) {
+            const entry: AccountPetLibraryEntryV1 = {
+                accountPetId: `pet-${index}`,
+                packageFormat: "codex-compatible-atlas-v1",
+                manifest,
+                spritesheetAssetRef: {
+                    assetId: `asset-${index}`,
+                    mediaType: "image/webp",
+                    digest: `sha256:asset-${index}`,
+                    sizeBytes: 123,
+                },
+                digest: `sha256:pet-${index}`,
+                sizeBytes: 123,
+                createdAt: 1,
+                updatedAt: 1,
+                origin: { kind: "manualImport" },
+                ...(opaqueBounds ? { opaqueBounds } : {}),
+            };
+            await expect(createPrismaAccountPetLibraryPersistence().persistAccountPet({
+                accountId: "account-1",
+                entry,
+                objectKey: `private/accounts/account-1/pets/${entry.accountPetId}/sheet.webp`,
+                quotaLimits: { maxImportedPetsPerAccount: 10, maxImportedPetBytesPerAccount: 1_000 },
+            })).resolves.toEqual({ ok: true });
+            const row = await db.accountPetPackage.findUniqueOrThrow({ where: { id: entry.accountPetId } });
+            expect(row.manifest).toEqual({ ...manifest, ...(opaqueBounds ? { opaqueBounds } : {}) });
+            const read = await createPrismaAccountPetLibraryPersistence().readAccountPet("account-1", entry.accountPetId);
+            expect(read?.entry).toEqual(entry);
+            expect(read?.entry?.manifest).toEqual(manifest);
+            entries.push(entry);
+        }
+        const listed = await createPrismaAccountPetLibraryPersistence().listAccountPets("account-1");
+        expect(listed.map((pet) => pet.entry).sort((a, b) => (a?.accountPetId ?? "").localeCompare(b?.accountPetId ?? "")))
+            .toEqual(entries);
     });
 
     it("rejects an asset whose account does not match the owning package account", async () => {

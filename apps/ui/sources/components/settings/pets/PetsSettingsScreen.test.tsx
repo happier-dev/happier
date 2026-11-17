@@ -15,10 +15,12 @@ import {
 import {
     type AccountPetLibraryEntryV1} from '@happier-dev/protocol/pets/accountLibrary';
 import type { StoreApi, UseBoundStore } from 'zustand';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import type { LocalPetSourceMetadata } from '@/sync/domains/pets/localPetSourceTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -52,6 +54,7 @@ const localSettingsState = vi.hoisted(() => ({
 const applySettingsSpy = vi.hoisted(() => vi.fn());
 const applyLocalSettingsSpy = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
+const petPreviewCredentials = vi.hoisted(() => ({ accountId: '', token: '' }));
 const accountPetsState = vi.hoisted(() => ({
     current: {} as Record<string, AccountPetLibraryEntryV1>,
 }));
@@ -364,6 +367,13 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
 }));
 
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
+    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
+    return createTokenStorageModuleMock({ importOriginal, tokenStorage: {
+        getCredentialsForServerUrl: async () => ({ token: petPreviewCredentials.token }),
+    } });
+});
+
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => createPassThroughModule(['DropdownMenu']));
 
 // Compile the full screen graph during collection; request-lifetime tests measure the running screen.
@@ -439,6 +449,13 @@ async function pressRowAction(screen: RenderScreenResult, rowTestID: string, act
 }
 
 describe('PetsSettingsScreen', () => {
+    beforeEach(async ({ task }) => {
+        // Each test owns a separate credential scope, including completed preview assets.
+        petPreviewCredentials.accountId = `pet-settings-${task.id}`;
+        petPreviewCredentials.token = createAccountTokenForTests(petPreviewCredentials.accountId);
+        await upsertServerProfile({ serverUrl: 'https://server-pets' });
+    });
+
     afterEach(async () => {
         standardCleanup();
         featureState.companionEnabled = true;
@@ -974,7 +991,7 @@ describe('PetsSettingsScreen', () => {
     });
 
     it('replaces stale detected pets with the latest daemon refresh state', async () => {
-        machineRpcWithServerScopeMock
+        const discovery = vi.fn()
             .mockResolvedValueOnce({
                 ok: true,
                 pets: [detectedPet],
@@ -983,6 +1000,17 @@ describe('PetsSettingsScreen', () => {
                 new Error('RPC method not available'),
                 { errorCode: 'RPC_METHOD_NOT_AVAILABLE' },
             ));
+        machineRpcWithServerScopeMock.mockImplementation(({ method }: { method: string }) => {
+            if (method === PET_DAEMON_RPC_METHODS.DISCOVER_PACKAGES) return discovery();
+            if (method === PET_DAEMON_RPC_METHODS.READ_PREVIEW_ASSET) return Promise.resolve({
+                sourceKey: detectedPet.sourceKey,
+                mediaType: detectedPet.mediaType,
+                digest: detectedPet.digest,
+                dataBase64: 'AQID',
+                sizeBytes: 3,
+            });
+            return Promise.reject(new Error(`Unexpected RPC method ${method}`));
+        });
 
         const { PetsSettingsScreen } = await import('./PetsSettingsScreen');
         const screen = await renderScreen(<PetsSettingsScreen />);
@@ -1284,6 +1312,7 @@ describe('PetsSettingsScreen', () => {
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
             machineId: 'machine-pets',
             serverId: 'server-pets',
+            accountId: petPreviewCredentials.accountId,
             method: PET_DAEMON_RPC_METHODS.READ_PREVIEW_ASSET,
             payload: { sourceKey: importedLocalPetMetadata.sourceKey },
             signal: expect.any(AbortSignal),

@@ -63,7 +63,7 @@ describe('usePetAnimatedFrame', () => {
         expect(hook.getCurrent()).toMatchObject({ state: 'idle', row: 0, frame: 0 });
     });
 
-    it('uses the requested state first frame when reduced motion is enabled', async () => {
+    it('uses the canonical failed still frame when reduced motion is enabled (R11)', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(0);
 
@@ -75,7 +75,7 @@ describe('usePetAnimatedFrame', () => {
         await act(async () => {
             vi.advanceTimersByTime(10_000);
         });
-        expect(hook.getCurrent()).toMatchObject({ state: 'failed', row: 5, frame: 0 });
+        expect(hook.getCurrent()).toMatchObject({ state: 'failed', row: 5, frame: 7 });
     });
 
     it('does not tick animation frames while inactive', async () => {

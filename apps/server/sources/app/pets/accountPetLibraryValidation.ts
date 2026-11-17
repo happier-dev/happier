@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
 import { AccountPetCreateRequestV1Schema, type AccountPetCreateRequestV1, type PetAssetMediaTypeV1 } from '@happier-dev/protocol/pets/accountLibrary';
-import { inspectPetAtlasRgbaPixelsV1 } from '@happier-dev/protocol/pets/atlasPixelInspection';
+import { inspectPetAtlasRgbaPixelsV1, type PetCellBoundsV1 } from '@happier-dev/protocol/pets/atlasPixelInspection';
 import { PET_ATLAS_V1, PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
 import { loadSharp } from "@/storage/blob/sharpRuntime";
 
@@ -14,6 +14,7 @@ export type PetAtlasInspection = Readonly<{
     hasTransparentBackground?: boolean;
     hasVisibleUsedCells?: boolean;
     hasTransparentUnusedCells?: boolean;
+    opaqueBounds?: PetCellBoundsV1 | null;
 }>;
 
 export type AccountPetCreateValidationOptions = Readonly<{
@@ -28,6 +29,7 @@ export type AccountPetCreateValidationResult =
         ok: true;
         request: AccountPetCreateRequestV1;
         spritesheetBytes: Uint8Array;
+        opaqueBounds?: PetCellBoundsV1;
     }>
     | Readonly<{
         ok: false;
@@ -211,11 +213,13 @@ export async function validateAccountPetCreateRequest(
     }
 
     const inspectAtlas = options.inspectAtlas ?? inspectPetAtlasWithSharp;
+    let opaqueBounds: PetCellBoundsV1 | undefined;
     try {
         const inspection = await inspectAtlas(bytes, spritesheet.mediaType);
         if (!hasExpectedAtlasContract(inspection)) {
             return INVALID_RESULT;
         }
+        opaqueBounds = inspection.opaqueBounds ?? undefined;
     } catch {
         return INVALID_RESULT;
     }
@@ -224,5 +228,6 @@ export async function validateAccountPetCreateRequest(
         ok: true,
         request: parsed.data,
         spritesheetBytes: bytes,
+        ...(opaqueBounds ? { opaqueBounds } : {}),
     };
 }

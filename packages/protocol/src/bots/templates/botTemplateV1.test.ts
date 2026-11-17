@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BotTemplateArtifactV1Schema, BotTemplateContentV1Schema, BotTemplateReleaseV1Schema,
+import { BotTemplateArtifactV1Schema, BotTemplateContentV1Schema, BotTemplateContentV1AuthoringSchema, BotTemplateReleaseV1Schema,
   projectBotTemplateArtifactHeaderV1, projectBotTemplateReleaseV1, readBotTemplateArtifactV1, readBotTemplateReleaseV1 } from './botTemplateV1.js';
 import { withArtifactExcerptV1 } from '../../artifacts/artifactExcerptV1.js';
 import { botTemplateArtifactSharingAdapterV1 } from './botTemplateArtifactSharingV1.js';
@@ -21,6 +21,19 @@ const draft = () => BotTemplateArtifactV1Schema.parse({ v: 1, state: 'draft',
 const metadata = { version: '1.0.0', releasedAtMs: 100, changelog: 'First release' };
 
 describe('Bot template release boundary', () => {
+  it('admits built-in pet faces but removes private account pets when projecting a reusable copy', () => {
+    const source = draft();
+    if (source.state !== 'draft') throw new Error('fixture must be a draft');
+    const fallback = { style: 'solid', body: 'cat', palette: 'lagoon', seed: 'source-face' } as const;
+    source.content.identity.face = { ...fallback, pet: { kind: 'builtIn', petId: 'blink' } };
+    expect(BotTemplateContentV1AuthoringSchema.parse(source.content).identity.face).toEqual(source.content.identity.face);
+    expect(projectBotTemplateReleaseV1(source, metadata).content.identity.face).toEqual(source.content.identity.face);
+    source.content.identity.face = { ...fallback, pet: { kind: 'accountPet', accountPetId: 'private-pet' } };
+    expect(BotTemplateContentV1AuthoringSchema.safeParse(source.content).success).toBe(false);
+    expect(projectBotTemplateReleaseV1(source, metadata).content.identity.face).toEqual(fallback);
+    expect(source.content.identity.face.pet).toEqual({ kind: 'accountPet', accountPetId: 'private-pet' });
+  });
+
   it('admits retained draft art when publishing without changing the stored draft reader', () => {
     const source = draft();
     if (source.state !== 'draft') throw new Error('fixture must be a draft');

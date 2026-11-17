@@ -1,3 +1,6 @@
+/** Initial hydration and settled read outcomes are distinct from library contents. */
+export type AccountPetLibraryStatus = 'pending' | 'ready' | 'unavailable';
+
 export {
     AccountPetAssetRefV1Schema as AccountPetAssetRefSchema,
     AccountPetLibraryEntryV1Schema as AccountPetMetadataSchema,

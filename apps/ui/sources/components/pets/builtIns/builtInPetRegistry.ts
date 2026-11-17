@@ -1,5 +1,6 @@
 import { BUILT_IN_PET_IDS_V1, PET_ATLAS_V1 } from '@happier-dev/protocol/pets/constants';
 import type { PetPackageManifestV1 } from '@happier-dev/protocol/pets/manifest';
+import type { PetCellBoundsV1 } from '@happier-dev/protocol/pets/atlasPixelInspection';
 import type { ImageProps } from 'expo-image';
 
 export type BuiltInPetId = typeof BUILT_IN_PET_IDS_V1[number];
@@ -8,6 +9,7 @@ export type BuiltInPetPackage = Readonly<{
     id: BuiltInPetId;
     manifest: PetPackageManifestV1;
     atlas: typeof PET_ATLAS_V1;
+    opaqueBounds: PetCellBoundsV1;
     spritesheetSource: ImageProps['source'];
     provenance: Readonly<{
         kind: 'localUserProvidedCodexPetPackage';
@@ -24,6 +26,10 @@ const titiSpritesheetSource = require('@/assets/pets/titi/spritesheet.webp') as 
 
 export const DEFAULT_BUILT_IN_PET_ID = 'blink' satisfies BuiltInPetId;
 
+// Measured once from the bundled atlases by inspectPetAtlasRgbaPixelsV1.
+// The registry test checks these constants against every actual spritesheet.
+const BUILT_IN_OPAQUE_BOUNDS = { x: 5, y: 5, width: 182, height: 198 } as const satisfies PetCellBoundsV1;
+
 export const BUILT_IN_PET_PACKAGES: Readonly<Record<BuiltInPetId, BuiltInPetPackage>> = {
     blink: {
         id: 'blink',
@@ -34,6 +40,7 @@ export const BUILT_IN_PET_PACKAGES: Readonly<Record<BuiltInPetId, BuiltInPetPack
             spritesheetPath: 'spritesheet.webp',
         },
         atlas: PET_ATLAS_V1,
+        opaqueBounds: BUILT_IN_OPAQUE_BOUNDS,
         spritesheetSource: blinkSpritesheetSource,
         provenance: {
             kind: 'localUserProvidedCodexPetPackage',
@@ -50,6 +57,7 @@ export const BUILT_IN_PET_PACKAGES: Readonly<Record<BuiltInPetId, BuiltInPetPack
             spritesheetPath: 'spritesheet.webp',
         },
         atlas: PET_ATLAS_V1,
+        opaqueBounds: BUILT_IN_OPAQUE_BOUNDS,
         spritesheetSource: furySpritesheetSource,
         provenance: {
             kind: 'localUserProvidedCodexPetPackage',
@@ -66,6 +74,7 @@ export const BUILT_IN_PET_PACKAGES: Readonly<Record<BuiltInPetId, BuiltInPetPack
             spritesheetPath: 'spritesheet.webp',
         },
         atlas: PET_ATLAS_V1,
+        opaqueBounds: BUILT_IN_OPAQUE_BOUNDS,
         spritesheetSource: miloSpritesheetSource,
         provenance: {
             kind: 'localUserProvidedCodexPetPackage',
@@ -82,6 +91,7 @@ export const BUILT_IN_PET_PACKAGES: Readonly<Record<BuiltInPetId, BuiltInPetPack
             spritesheetPath: 'spritesheet.webp',
         },
         atlas: PET_ATLAS_V1,
+        opaqueBounds: BUILT_IN_OPAQUE_BOUNDS,
         spritesheetSource: oliSpritesheetSource,
         provenance: {
             kind: 'localUserProvidedCodexPetPackage',
@@ -98,6 +108,7 @@ export const BUILT_IN_PET_PACKAGES: Readonly<Record<BuiltInPetId, BuiltInPetPack
             spritesheetPath: 'spritesheet.webp',
         },
         atlas: PET_ATLAS_V1,
+        opaqueBounds: BUILT_IN_OPAQUE_BOUNDS,
         spritesheetSource: titiSpritesheetSource,
         provenance: {
             kind: 'localUserProvidedCodexPetPackage',

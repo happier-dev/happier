@@ -6,6 +6,7 @@ import { SessionIdSchema } from '../idsV1.js';
 import { EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES } from '../../actions/externalActionLimits.js';
 import { BOT_FACE_SHAPE_GEOMETRY_GUIDANCE, normaliseAndValidateBotFaceShape } from './botFaceShapeValidation.js';
 import { generateBotFaceShape } from './botFaceShapeGenerator.js';
+import { PetAccountReferenceV1Schema, type PetAccountReferenceV1 } from '../../pets/selection.js';
 export * from './botFaceGeometry.js';
 export { normaliseAndValidateBotFaceShape } from './botFaceShapeValidation.js';
 export { generateBotFaceShape, BOT_FACE_SHAPE_PARTS, type BotFaceShapeParts, type BotFaceShapeGeneratorOptions } from './botFaceShapeGenerator.js';
@@ -43,13 +44,20 @@ export const SessionBotFaceV1Schema = lazyZodSchema(() => z.strictObject({
   palette: z.optional(BotFacePaletteSchema),
   seed: z.optional(z.string().check(z.minLength(1))),
   shape: z.optional(BotFaceShapeV1Schema),
+  pet: z.optional(PetAccountReferenceV1Schema),
 }));
 export type SessionBotFaceV1 = z.infer<typeof SessionBotFaceV1Schema>;
 export function areSessionBotFacesEqual(left: SessionBotFaceV1 | null | undefined, right: SessionBotFaceV1 | null | undefined): boolean {
   return left === right || (left == null && right == null) || Boolean(left && right
     && left.style === right.style && left.body === right.body
     && left.palette === right.palette && left.seed === right.seed
-    && areBotFaceShapesEqual(left.shape, right.shape));
+    && areBotFaceShapesEqual(left.shape, right.shape)
+    && areBotFacePetsEqual(left.pet, right.pet));
+}
+function areBotFacePetsEqual(left: PetAccountReferenceV1 | undefined, right: PetAccountReferenceV1 | undefined): boolean {
+  return left === right || Boolean(left && right && (left.kind === 'builtIn'
+    ? right.kind === 'builtIn' && left.petId === right.petId
+    : right.kind === 'accountPet' && left.accountPetId === right.accountPetId));
 }
 function areBotFaceShapesEqual(left: BotFaceShapeV1 | undefined, right: BotFaceShapeV1 | undefined): boolean {
   return left === right || Boolean(left && right && left.v === right.v && left.origin === right.origin

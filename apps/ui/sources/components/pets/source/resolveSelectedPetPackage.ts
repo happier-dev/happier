@@ -1,3 +1,4 @@
+import { resolvePetPackage } from './resolvePetPackage';
 import type { FeatureDecision} from '@happier-dev/protocol/features/decision';
 import type { PetAssetMediaTypeV1} from '@happier-dev/protocol/pets/accountLibrary';
 import type { PetPackageSourceV1 } from '@happier-dev/protocol/pets/source';
@@ -64,17 +65,6 @@ function builtInFallbackSource(petId: string): SelectedPetPackageSource {
     return { kind: 'builtIn', petId };
 }
 
-function resolveBuiltInSource(
-    petId: string,
-    builtInPetIds: readonly string[],
-    builtInFallbackPetId: string,
-): SelectedPetPackageSource {
-    if (builtInPetIds.includes(petId)) {
-        return { kind: 'builtIn', petId };
-    }
-    return builtInFallbackSource(builtInFallbackPetId);
-}
-
 export function resolveSelectedPetPackage(input: ResolveSelectedPetPackageInput): ResolveSelectedPetPackageResult {
     if (input.companionDecision?.state !== 'enabled') {
         return {
@@ -129,36 +119,22 @@ export function resolveSelectedPetPackage(input: ResolveSelectedPetPackageInput)
     }
 
     const accountRef = input.accountSettings.petsSelectedPetRef;
-    if (accountRef.kind === 'builtIn') {
-        return {
-            enabled: true,
-            source: resolveBuiltInSource(
-                accountRef.petId,
-                input.sources.builtInPetIds,
-                input.sources.builtInFallbackPetId,
-            ),
-            fallback: null,
-        };
-    }
-
-    if (input.syncDecision?.state !== 'enabled') {
-        return {
-            enabled: true,
-            source: builtInFallbackSource(input.sources.builtInFallbackPetId),
-            fallback: {
-                reason: 'account_pet_sync_unavailable',
-                originalRef: accountRef,
-                shouldPersist: false,
-            },
-        };
-    }
-
-    const accountSource = input.sources.accountPetsById.get(accountRef.accountPetId) ?? null;
-    return accountSource
-        ? { enabled: true, source: accountSource, fallback: null }
-        : {
-            enabled: true,
-            source: builtInFallbackSource(input.sources.builtInFallbackPetId),
-            fallback: { reason: 'unknown_pet_source', originalRef: accountRef, shouldPersist: false },
-        };
+    const lookup = resolvePetPackage({
+        ref: accountRef,
+        petsEnabled: true,
+        syncEnabled: input.syncDecision?.state === 'enabled',
+        accountPetsStatus: 'ready',
+        accountPetsById: input.sources.accountPetsById,
+        builtInPetIds: input.sources.builtInPetIds,
+    });
+    if (lookup.status === 'ready') return { enabled: true, source: lookup.source, fallback: null };
+    return {
+        enabled: true,
+        source: builtInFallbackSource(input.sources.builtInFallbackPetId),
+        fallback: accountRef.kind === 'builtIn' ? null : {
+            reason: input.syncDecision?.state !== 'enabled' ? 'account_pet_sync_unavailable' : 'unknown_pet_source',
+            originalRef: accountRef,
+            shouldPersist: false,
+        },
+    };
 }

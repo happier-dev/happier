@@ -595,7 +595,7 @@ import { readPluginEventAutomationEditSeed, type PluginEventAutomationEditSeed }
 import { applyTodoSocketUpdates as applyTodoSocketUpdatesEngine, fetchTodos as fetchTodosEngine } from './engine/todos/syncTodos';
 import { fetchAndApplyAccountPets } from './domains/pets/syncAccountPets';
 import { placeSessionListRows } from './domains/session/listing/sessionListRowPlacement';
-import type { AccountPetMetadata } from './domains/pets/accountPetLibraryTypes';
+import type { AccountPetMetadata, AccountPetLibraryStatus } from './domains/pets/accountPetLibraryTypes';
 import {
     planSyncActionsFromChanges,
     plannedChangesAffectSessionListQuery,
@@ -10145,6 +10145,7 @@ class Sync {
             request: this.createAppliedTransportRequest(appliedTransportTarget),
             shouldContinue,
             applyAccountPets: (pets: AccountPetMetadata[]) => storage.getState().applyAccountPets(pets),
+            setAccountPetsStatus: (status: Exclude<AccountPetLibraryStatus, 'pending'>) => storage.getState().setAccountPetsStatus(status),
         };
         await fetchAndApplyAccountPets(serverId ? { ...params, serverId } : params);
     }

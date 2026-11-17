@@ -7,6 +7,7 @@ import {
 } from './assetFormats.js';
 import { PET_PACKAGE_FORMAT_CODEX_ATLAS_V1 } from './constants.js';
 import { PetPackageManifestV1Schema } from './manifest.js';
+import { PetCellBoundsV1Schema } from './atlasPixelInspection.js';
 
 export const PetAssetMediaTypeV1Schema = PetCanonicalSpritesheetMediaTypeV1Schema;
 export type PetAssetMediaTypeV1 = z.infer<typeof PetAssetMediaTypeV1Schema>;
@@ -38,6 +39,7 @@ export const AccountPetLibraryEntryV1Schema = lazyZodSchema(() => z.looseObject(
     createdAt: z.number().check(z.int(), z.minimum(0)),
     updatedAt: z.number().check(z.int(), z.minimum(0)),
     origin: AccountPetOriginV1Schema,
+    opaqueBounds: z.optional(PetCellBoundsV1Schema),
   }).check(z.superRefine((value, ctx) => {
     appendCanonicalPetSpritesheetMediaTypeIssueV1({
       ctx,

@@ -49,7 +49,7 @@ describe('resolvePetAnimationFrame', () => {
         });
     });
 
-    it('freezes animation on the requested state frame zero when reduced motion is enabled', () => {
+    it('uses the canonical running still frame when reduced motion is enabled (R11)', () => {
         expect(resolvePetAnimationFrame({
             state: 'running',
             elapsedMs: 10_000,
@@ -57,7 +57,7 @@ describe('resolvePetAnimationFrame', () => {
         })).toMatchObject({
             state: 'running',
             row: 7,
-            frame: 0,
+            frame: 1,
         });
     });
 });

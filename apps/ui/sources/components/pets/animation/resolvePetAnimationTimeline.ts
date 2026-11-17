@@ -23,6 +23,26 @@ export type ResolvePetAnimationTimelineInput = Readonly<{
     reducedMotion: boolean;
 }>;
 
+export type PetStatePlayback = Readonly<{
+    row: number;
+    frames: readonly Readonly<{ frame: number; durationMs: number }>[];
+    stillFrame: number;
+    repeat: 'loop' | 'once';
+}>;
+
+/** Row timing and resting poses belong here for both the companion and Bot faces. */
+export function resolvePetStatePlayback(state: PetAnimationStateV1): PetStatePlayback {
+    const row = resolveAnimationRow(state);
+    return {
+        row: row.row,
+        frames: row.durationsMs.map((durationMs, frame) => ({ frame, durationMs })),
+        stillFrame: row.state === 'running' || row.state === 'waving' ? 1
+            : row.state === 'failed' ? row.frames - 1 : 0,
+        repeat: row.state === 'running' || row.state === 'running-left' || row.state === 'running-right' || row.state === 'waiting'
+            ? 'loop' : 'once',
+    };
+}
+
 function resolveAnimationRow(state: PetAnimationStateV1) {
     return PET_ANIMATION_ROWS_V1.find((row) => row.state === state) ?? PET_ANIMATION_ROWS_V1[0];
 }
@@ -65,7 +85,7 @@ export function resolvePetAnimationTimeline(input: ResolvePetAnimationTimelineIn
     const elapsedMs = normalizeElapsedMs(input.elapsedMs);
     const requestedRow = resolveAnimationRow(input.state);
     if (input.reducedMotion) {
-        return withAtlasFrame(requestedRow.state, requestedRow.row, 0);
+        return withAtlasFrame(requestedRow.state, requestedRow.row, resolvePetStatePlayback(requestedRow.state).stillFrame);
     }
 
     if (requestedRow.state === 'idle') {

@@ -5,6 +5,20 @@ import { projectSessionDisplayV1 } from '../metadata/sessionDisplayProjectionV1.
 import { EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES } from '../../actions/externalActionLimits.js';
 
 describe('shared Bot face', () => {
+  it('retains built-in and account pets alongside the saved fallback face across shared metadata', () => {
+    for (const pet of [{ kind: 'builtIn', petId: 'blink' }, { kind: 'accountPet', accountPetId: 'my-pet' }] as const) {
+      const face = { style: 'solid', body: 'cat', palette: 'lagoon', seed: 'saved', pet } as const;
+      expect(BotFaceSetInputSchema.parse({ sessionId: 'bot-pet', face }).face).toEqual(face);
+      expect(readSessionBotFaceV1(face)).toEqual(face);
+      expect(projectSessionSharedMetadataV1({ metadata: { botFace: face } })).toMatchObject({ botFace: face });
+      expect(areSessionBotFacesEqual(face, { ...face, pet: { ...pet } })).toBe(true);
+      expect(areSessionBotFacesEqual(face, { ...face, pet: { kind: 'builtIn', petId: 'oli' } })).toBe(false);
+      expect(areSessionBotFacesEqual(face, { ...face, pet: { kind: 'accountPet', accountPetId: 'other-pet' } })).toBe(false);
+      expect(areSessionBotFacesEqual(face, { style: 'solid', body: 'cat', palette: 'lagoon', seed: 'saved' })).toBe(false);
+    }
+    expect(BotFaceSetInputSchema.safeParse({ sessionId: 'bot-pet', face: { pet: { kind: 'happierManagedLocal', sourceKey: 'local' } } }).success).toBe(false);
+  });
+
   it('resolves a seeded Surprise me request to a concrete shared outline while preserving the other choices', () => {
     const request = { sessionId: 'bot-surprise', face: { style: 'solid', palette: 'sand', seed: 'identity-seed',
       shape: { generate: 'surprise', seed: 17 } } };

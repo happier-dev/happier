@@ -41,8 +41,8 @@ describe('pet protocol contract', () => {
     data[((atlas.cellHeight + 190) * atlas.width + atlas.cellWidth + 170) * 4 + 3] = 255;
     data[(2 * atlas.width + 2) * 4 + 3] = 24;
 
-    const unusedFrameX = 6 * atlas.cellWidth + Math.floor(atlas.cellWidth / 2);
-    const unusedFrameY = Math.floor(atlas.cellHeight / 2);
+    const unusedFrameX = 6 * atlas.cellWidth + 1;
+    const unusedFrameY = 1;
     data[(unusedFrameY * atlas.width + unusedFrameX) * 4 + 3] = 255;
     expect(pets.inspectPetAtlasRgbaPixelsV1({
       data,

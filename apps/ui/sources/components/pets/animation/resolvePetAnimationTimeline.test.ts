@@ -6,7 +6,7 @@ import {
     PET_ACTION_LOOP_COUNT,
     PET_IDLE_DURATION_MULTIPLIER,
 } from './petAnimationPlaybackConfig';
-import { resolvePetAnimationTimeline } from './resolvePetAnimationTimeline';
+import { resolvePetAnimationTimeline, resolvePetStatePlayback } from './resolvePetAnimationTimeline';
 
 function rowTotalDurationMs(state: string): number {
     const row = PET_ANIMATION_ROWS_V1.find((entry) => entry.state === state);
@@ -48,11 +48,23 @@ describe('resolvePetAnimationTimeline', () => {
         })).toMatchObject({ state: 'idle', row: 0, frame: 0 });
     });
 
-    it('keeps reduced motion on the requested state still frame', () => {
+    // R11 review: a state has the same resting frame on a face and the companion.
+    it('keeps reduced motion on the canonical requested state still frame', () => {
         expect(resolvePetAnimationTimeline({
             state: 'failed',
             elapsedMs: 20_000,
             reducedMotion: true,
-        })).toMatchObject({ state: 'failed', row: 5, frame: 0 });
+        })).toMatchObject({ state: 'failed', row: 5, frame: 7 });
+    });
+
+    it('gives hosts one row timing and resting-frame contract for loops and one-shots', () => {
+        for (const [state, stillFrame] of [['running', 1], ['waiting', 0], ['failed', 7], ['waving', 1], ['jumping', 0], ['idle', 0]] as const) {
+            const playback = resolvePetStatePlayback(state);
+            const row = PET_ANIMATION_ROWS_V1.find(entry => entry.state === state)!;
+            expect(playback.frames.map(entry => entry.durationMs)).toEqual(row.durationsMs);
+            expect(playback).toMatchObject({ row: row.row, stillFrame, repeat: ['running', 'waiting'].includes(state) ? 'loop' : 'once' });
+            expect(resolvePetAnimationTimeline({ state, elapsedMs: 0, reducedMotion: true })).toMatchObject({ state, frame: playback.stillFrame });
+            expect(playback.frames.map(entry => entry.frame)).toEqual(Array.from({ length: row.frames }, (_, index) => index));
+        }
     });
 });

@@ -31,7 +31,7 @@ afterEach(async () => {
     resetScopedMachineTransportCacheForTests();
 });
 
-it('cancels unanswered pet previews on source replacement and unmount, then loads a fresh preview', async () => {
+it('shares cold previews across faces and equal sources, cancels only the last borrower, and permits retry', async () => {
     const http = createServer(async (request, response) => {
         response.setHeader('content-type', 'application/json');
         if (request.url === '/health' || request.url === '/v1/auth/ping') response.end('{}');
@@ -39,10 +39,10 @@ it('cancels unanswered pet previews on source replacement and unmount, then load
             const chunks: Buffer[] = [];
             for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
             response.end(await createMachineReadBatchResponseFixture(Buffer.concat(chunks).toString('utf8'),
-                id => id === 'pet-machine' ? createPlainMachineRowFixture({ id, accountId: 'pet-preview-account' }) : null).text());
+                id => id === 'pet-machine' || id === 'pet-machine-other' ? createPlainMachineRowFixture({ id, accountId: 'pet-preview-account' }) : null).text());
         }
-        else if (request.url === '/v1/machines/pet-machine') response.end(JSON.stringify({ machine: {
-            id: 'pet-machine', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+        else if (request.url === '/v1/machines/pet-machine' || request.url === '/v1/machines/pet-machine-other') response.end(JSON.stringify({ machine: {
+            id: request.url.slice('/v1/machines/'.length), dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
         } }));
         else if (request.url === '/v1/account/encryption') response.end(JSON.stringify({ mode: 'plain', updatedAt: 1 }));
         else { response.statusCode = 404; response.end('{}'); }
@@ -55,10 +55,10 @@ it('cancels unanswered pet previews on source replacement and unmount, then load
         socket.on(SOCKET_RPC_EVENTS.CALL, async (packet: SocketRpcRequestPayload, ack: (value: unknown) => void) => {
             calls.push(packet);
             const decoded = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, packet.params, packet.method);
-            if (calls.length !== 3) return; // Connected handler deliberately never answers the first two reads.
+            if (calls.length < 3) return; // Connected handler deliberately never answers the first two reads.
             const { sourceKey } = DaemonPetReadPreviewAssetRequestV1Schema.parse(decoded.params);
             ack({ ok: true, result: await socketRpcCodec.encodeResponse({ mode: 'plain' }, {
-                sourceKey, mediaType: 'image/webp', digest: 'sha256:recovered-preview', dataBase64: 'AQID', sizeBytes: 3,
+                sourceKey, mediaType: 'image/webp', digest: 'sha256:recovered-preview', dataBase64: calls.length === 3 ? 'AQID' : 'BAUG', sizeBytes: 3,
             }, decoded.callId) });
         });
     });
@@ -73,6 +73,13 @@ it('cancels unanswered pet previews on source replacement and unmount, then load
         });
         const hook = await renderHook(usePetSpritesheetSourceResult, { initialProps: source('pet:first') });
         await vi.waitFor(() => expect(calls).toHaveLength(1));
+        const second = await renderHook(usePetSpritesheetSourceResult, { initialProps: source('pet:first') });
+        const third = await renderHook(usePetSpritesheetSourceResult, { initialProps: source('pet:first') });
+        await hook.rerender(source('pet:first'));
+        expect(calls).toHaveLength(1);
+        await second.unmount();
+        await third.unmount();
+        expect(cancelled).toHaveLength(0);
         expect(calls[0]?.requestId).toEqual(expect.any(String));
         expect(hook.getCurrent().status).toBe('loading');
         await hook.rerender(source('pet:second'));
@@ -85,6 +92,17 @@ it('cancels unanswered pet previews on source replacement and unmount, then load
         await vi.waitFor(() => expect(recovered.getCurrent()).toEqual({ status: 'ready', source: 'data:image/webp;base64,AQID' }));
         expect(calls).toHaveLength(3);
         await recovered.unmount();
+        const cachedSource = { ...source('pet:first'), digest: 'sha256:recovered-preview' };
+        const cached = await renderHook(usePetSpritesheetSourceResult, { initialProps: cachedSource });
+        await vi.waitFor(() => expect(cached.getCurrent().source).toBe('data:image/webp;base64,AQID'));
+        expect(calls).toHaveLength(3);
+        const otherMachine = await renderHook(usePetSpritesheetSourceResult, { initialProps: {
+            ...cachedSource, daemonTarget: { machineId: 'pet-machine-other', serverId: home.id },
+        } });
+        await vi.waitFor(() => expect(otherMachine.getCurrent().source).toBe('data:image/webp;base64,BAUG'));
+        expect(calls).toHaveLength(4);
+        await cached.unmount();
+        await otherMachine.unmount();
     } finally {
         await serverScopedRpcSocketPool.stopAll();
         http.closeAllConnections();

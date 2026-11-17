@@ -6,6 +6,7 @@ import type { ServerFetch } from "@/sync/http/client";
 import type {
     AccountPetMetadata,
     AccountPetsListResponse,
+    AccountPetLibraryStatus,
 } from "./accountPetLibraryTypes";
 import { resolveAccountPetReadAdmission } from "./resolveAccountPetReadAdmission";
 
@@ -33,6 +34,7 @@ export type FetchAndApplyAccountPetsParams = Readonly<{
     resolvePetsSyncEnabled?: (params: AccountPetsSyncDecisionParams) => Promise<boolean>;
     listPets?: (credentials: AuthCredentials) => Promise<AccountPetsListResponse>;
     applyAccountPets: (pets: AccountPetMetadata[]) => void;
+    setAccountPetsStatus?: (status: Exclude<AccountPetLibraryStatus, 'pending'>) => void;
 }>;
 
 function buildDecisionParams(params: FetchAndApplyAccountPetsParams): AccountPetsSyncDecisionParams {
@@ -55,7 +57,7 @@ async function resolveDefaultPetsSyncEnabled(params: AccountPetsSyncDecisionPara
     return decision.state === "enabled";
 }
 
-export async function fetchAndApplyAccountPets(
+async function fetchAndApplyAccountPetsInternal(
     params: FetchAndApplyAccountPetsParams,
 ): Promise<FetchAndApplyAccountPetsResult> {
     const shouldContinue = params.shouldContinue ?? (() => true);
@@ -95,4 +97,18 @@ export async function fetchAndApplyAccountPets(
 
     params.applyAccountPets(result.pets);
     return { status: "applied", count: result.pets.length };
+}
+
+/** Publish settling status from the same read that owns the library contents. */
+export async function fetchAndApplyAccountPets(params: FetchAndApplyAccountPetsParams): Promise<FetchAndApplyAccountPetsResult> {
+    try {
+        const result = await fetchAndApplyAccountPetsInternal(params);
+        if (result.status !== 'cancelled') {
+            params.setAccountPetsStatus?.(result.status === 'unavailable' ? 'unavailable' : 'ready');
+        }
+        return result;
+    } catch (error) {
+        if (params.shouldContinue?.() !== false) params.setAccountPetsStatus?.('unavailable');
+        throw error;
+    }
 }

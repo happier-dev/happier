@@ -672,6 +672,7 @@ describe("account pet library services", () => {
                 width: 1536,
                 height: 1872,
                 hasAlpha: true,
+                opaqueBounds: { x: 15, y: 20, width: 130, height: 170 },
             }),
         });
 
@@ -681,6 +682,9 @@ describe("account pet library services", () => {
         });
         expect(created.ok).toBe(true);
         if (!created.ok) throw new Error("expected account pet creation to succeed");
+
+        expect(created.pet.opaqueBounds).toEqual({ x: 15, y: 20, width: 130, height: 170 });
+        expect(created.pet.manifest).toEqual(requestFor(WEBP_BYTES).manifest);
 
         const secondServices = createAccountPetLibraryServices({
             privateFiles,
