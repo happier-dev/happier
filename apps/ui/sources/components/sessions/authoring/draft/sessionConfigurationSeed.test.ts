@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { SessionSkillSelectionV1Schema } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { readActionAudiencePolicy, setActionAudiencePolicy } from '@happier-dev/protocol/actions/actionAudiencePolicy';
+import { resolveProfiledActionsSettingsV1 } from '@happier-dev/protocol/actions/approvalProfiles';
+import { resolveManagedSessionDefaults, type ManagedSessionDefaultsContext } from '@happier-dev/protocol/teams/managedDefaults';
 
 import {
     LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
@@ -10,6 +14,58 @@ import { buildNewSessionConfigurationDraft, buildNewSessionTempDataFromSessionCo
 import { buildNewSessionAuthoringDraftFromPersistedDraft, buildNewSessionTempDataFromAuthoringDraft } from './sessionAuthoringDraftAdapters';
 
 describe('sessionConfigurationSeed', () => {
+    it.each((['team', 'group', 'project'] as const).flatMap(layer =>
+        [true, false].map(inherited => ({ layer, inherited }))))(
+        'keeps copied $layer approval policy tighten-only (source inherited: $inherited)', ({ layer, inherited }) => {
+        const actionId = 'session.stop';
+        const account = setActionAudiencePolicy(normalizeActionsSettingsV1({ v: 1 }), actionId, 'agent', 'ask_first');
+        const profile = { id: 'shared-profile', name: 'Team default',
+            approvalWaivedSurfaces: { [actionId]: ['agent' as const] } };
+        const seed = buildNewSessionTempDataFromSessionConfiguration({
+            session: { id: 'shared-source', encryptionMode: 'plain', metadata: {
+                path: '/workspace/source', host: 'dev-host', flavor: 'codex',
+                approvalProfileId: profile.id, approvalProfileTeamOrGroupDerived: inherited,
+            } },
+            machineId: 'machine-source',
+            approvalProfile: { access: 'view' },
+        });
+        const persisted = buildNewSessionConfigurationDraft(seed);
+        const reopened = buildNewSessionTempDataFromAuthoringDraft({
+            draft: buildNewSessionAuthoringDraftFromPersistedDraft(persisted), machineId: 'machine-source',
+        });
+        const context: ManagedSessionDefaultsContext = layer === 'project'
+            ? { projectDefaults: { approvalProfileId: profile.id } }
+            : { teamDefaults: { team: layer === 'team' ? { approvalProfileId: profile.id } : {},
+                groups: layer === 'group' ? { reviewers: { approvalProfileId: profile.id } } : {} }, groupIds: ['reviewers'] };
+        for (const copied of [seed, persisted, reopened]) {
+            const defaults = resolveManagedSessionDefaults({
+                agentTargetKey: 'agent:happier.agent.codex/codex',
+                ...context,
+                explicitChoices: copied.approvalProfileId === undefined ? {} : { approvalProfileId: copied.approvalProfileId },
+            });
+            const resolved = resolveProfiledActionsSettingsV1(account, defaults.approvalProfileId.value, {
+                boundProfile: { profile, resolution: { status: 'available', requestedId: profile.id } },
+                approvalProfileTeamOrGroupDerived: defaults.approvalProfileId.teamOrGroupDerived,
+            });
+            expect(readActionAudiencePolicy(resolved.settings, actionId, 'agent').mode)
+                .toBe('ask_first');
+        }
+        // A fresh same-id pick or explicit detach goes through the ordinary authoring owner.
+        for (const approvalProfileId of [profile.id, null]) {
+            const explicit = buildNewSessionConfigurationDraft({ ...seed, approvalProfileId });
+            const defaults = resolveManagedSessionDefaults({ ...context,
+                agentTargetKey: 'agent:happier.agent.codex/codex', explicitChoices: { approvalProfileId: explicit.approvalProfileId } });
+            const resolved = resolveProfiledActionsSettingsV1(account, defaults.approvalProfileId.value, {
+                boundProfile: approvalProfileId === null ? null
+                    : { profile, resolution: { status: 'available', requestedId: profile.id } },
+                approvalProfileTeamOrGroupDerived: defaults.approvalProfileId.teamOrGroupDerived,
+            });
+            expect(defaults.approvalProfileId.teamOrGroupDerived).toBe(false);
+            expect(readActionAudiencePolicy(resolved.settings, actionId, 'agent').mode)
+                .toBe(approvalProfileId === null ? 'ask_first' : 'allowed');
+        }
+    });
+
     it.each(['custom:99753341-1e37-47e2-b284-9dc8b9bd1ad7', null, undefined])(
         'preserves the nullable approval-profile reference through the same-setup and configured-fork draft round trip (%s)',
         (approvalProfileId) => {
@@ -25,6 +81,7 @@ describe('sessionConfigurationSeed', () => {
                     },
                 },
                 machineId: 'machine-source',
+                approvalProfile: { access: 'owner' },
             });
             const persisted = buildNewSessionConfigurationDraft(seed);
             const reopened = buildNewSessionTempDataFromAuthoringDraft({

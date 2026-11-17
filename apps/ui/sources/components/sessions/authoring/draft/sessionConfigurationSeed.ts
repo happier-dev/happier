@@ -16,6 +16,7 @@ import {
     normalizeOptionalString,
 } from '@/sync/domains/sessionAuthoring/sessionAuthoringNormalization';
 import type { NewSessionData } from '@/utils/sessions/tempDataStore';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 import type { ExistingSessionAuthoringSnapshotSession } from './sessionAuthoringDraftAdapters';
@@ -72,6 +73,7 @@ export function buildNewSessionTempDataFromSessionConfiguration(params: Readonly
     session: ExistingSessionAuthoringSnapshotSession;
     machineId: string | null;
     directoryOverride?: string | null;
+    approvalProfile?: Pick<DecryptedArtifact, 'access'> | null;
 }>): NewSessionData {
     const snapshot = deriveSessionAuthoringSnapshot({
         session: params.session,
@@ -92,7 +94,10 @@ export function buildNewSessionTempDataFromSessionConfiguration(params: Readonly
         agentTarget: snapshot.agentTarget,
         transcriptStorage: snapshot.transcriptStorage,
         profileId: snapshot.profileId,
-        approvalProfileId: snapshot.approvalProfileId,
+        // Acceptance belongs to the source subject. Only own profile IDs remain explicit on a copy.
+        approvalProfileId: typeof snapshot.approvalProfileId === 'string'
+            && (metadata?.approvalProfileTeamOrGroupDerived === true || params.approvalProfile?.access !== 'owner')
+            ? undefined : snapshot.approvalProfileId,
         environmentVariables: null,
         resumeSessionId: null,
         permissionMode: snapshot.permissionMode,

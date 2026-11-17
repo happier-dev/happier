@@ -2,6 +2,7 @@ import { buildNewSessionAuthoringDraftFromTempData, buildNewSessionTempDataFromA
 import type { SessionAuthoringPresentation } from '@/components/sessions/new/newSessionSeedNavigation';
 import type { SessionAuthoringOpenResultV1 } from '@happier-dev/protocol/plugins/ui';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { resolveSessionApprovalProfileReferenceV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { openOrdinaryNewSessionSeed } from '@/components/sessions/new/newSessionSeedNavigation';
@@ -53,9 +54,12 @@ async function openSourceSessionDraft({ input, context }: AuthoringOpenArgs,
         const target = resolveMachineControlTargetForSessionFromState({ ...getStorage().getState(),
             sessions: { [session.id]: session }, sessionListRowsByServerId: {},
         }, { ...account.accountLifetime.scope, sessionId: session.id });
+        const approvalProfileId = resolveSessionApprovalProfileReferenceV1(metadata);
+        const approvalProfile = approvalProfileId && metadata.approvalProfileTeamOrGroupDerived !== true
+            ? await account.readArtifactHeader(approvalProfileId, { signal: context.signal }) : null;
         let configuration = buildNewSessionTempDataFromSessionConfiguration({ session,
             machineId: target?.machineId ?? metadata.machineId ?? null,
-            directoryOverride: target?.basePath ?? metadata.path ?? null });
+            directoryOverride: target?.basePath ?? metadata.path ?? null, approvalProfile });
         if (input.seed?.directoryIntent?.kind === 'managed') {
             configuration = { ...configuration, directory: '', directoryKind: 'managed' };
         }

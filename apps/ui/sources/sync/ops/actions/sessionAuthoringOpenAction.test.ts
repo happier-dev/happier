@@ -7,6 +7,7 @@ import { resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/se
 import { openSessionAuthoringDraft } from './sessionAuthoringOpenAction';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
 import { SessionAuthoringOpenResultV1Schema } from '@happier-dev/protocol/plugins/ui';
 
@@ -30,6 +31,32 @@ afterEach(async () => {
 });
 
 describe('source Session authoring Action', () => {
+    it.each(['owner', 'view', 'admin', 'missing'] as const)(
+        'copies only an owned approval-profile ID from an accepted source (%s)', async access => {
+            const approvalProfileId = 'source-approval-profile';
+            if (access !== 'missing') {
+                const artifacts = homes.artifacts(scope.serverId);
+                artifacts.replaceStoredRow(createPlainArtifactHttpFixture({
+                    id: approvalProfileId, title: 'Approval profile',
+                    header: { title: 'Approval profile', kind: 'approval_profile' },
+                    isDecrypted: true, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+                }, access === 'owner' ? scope.accountId : 'other-account'));
+                if (access !== 'owner') artifacts.seedAccountGrant(approvalProfileId, scope.accountId, access);
+            }
+            storage.getState().applySessions([createSessionFixture({ id: 'accepted-source', serverId: scope.serverId,
+                metadata: { path: '/repo', host: 'dev', machineId: 'machine', flavor: 'codex',
+                    approvalProfileId, approvalProfileTeamOrGroupDerived: false } })]);
+            const opened = await openSessionAuthoringDraft({
+                input: { sourceSession: { serverId: scope.serverId, sessionId: 'accepted-source' } },
+                context: { surface: 'ui', serverId: scope.serverId, runtimeAccountId: scope.accountId },
+            });
+            expect(opened.kind).toBe('opened');
+            if (opened.kind !== 'opened') throw new Error('Source draft did not open');
+            expect(readNewSessionDraftFromRepository({ scope, draftId: opened.draftId })?.approvalProfileId)
+                .toBe(access === 'owner' ? approvalProfileId : undefined);
+        },
+    );
+
     it('does not seed when the requesting surface retires during Action admission', async () => {
         const { openSessionAuthoringSeed } = await import('./openSessionAuthoringSeed');
         let current = true;
