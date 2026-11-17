@@ -88,8 +88,12 @@ export const runSessionInputDestinationV1: {
         signal?: AbortSignal,
     ): Promise<SessionInputDestinationResultV1<TResult>>;
 } = /* @__PURE__ */ projectProtocolValue(canonicalDestination);
-export const sendSessionInputHandoffV1: (input: Parameters<SessionInputHandoffDepsV1['send']>[0], deps: Pick<SessionInputHandoffDepsV1, 'send'>,
-    signal?: AbortSignal) => Promise<Extract<SessionInputHandoffResultV1, { kind: 'sendResult' | 'failed' | 'approvalPending' }>> = /* @__PURE__ */ projectProtocolValue(canonicalSend);
+export const sendSessionInputHandoffV1: <TSession extends Readonly<{ sessionId: string; serverId?: string }>>(
+    input: Readonly<{ session: TSession; input: SessionInputHandoffContentV1; idempotencyKey: string }>,
+    deps: Readonly<{ send(value: typeof input, signal?: AbortSignal): Promise<SessionInputHandoffEffectV1<PluginActionResultById['session.message.send']>> }>,
+    signal?: AbortSignal,
+) => Promise<Readonly<{ kind: 'sendResult'; session: TSession; result: PluginActionResultById['session.message.send'] }>
+    | Extract<SessionInputHandoffResultV1, { kind: 'failed' | 'approvalPending' }>> = /* @__PURE__ */ projectProtocolValue(canonicalSend);
 export const composeSessionInputHandoffV1: (session: ActionSessionAddressV1, input: SessionInputHandoffContentV1,
     compose: NonNullable<SessionInputHandoffDepsV1['compose']>, signal?: AbortSignal) => Promise<Extract<SessionInputHandoffResultV1, { kind: 'composed' | 'unavailable' | 'failed' | 'approvalPending' }>> = /* @__PURE__ */ projectProtocolValue(canonicalCompose);
 export const resolveSessionInputHandoffDeliveryV1: {
