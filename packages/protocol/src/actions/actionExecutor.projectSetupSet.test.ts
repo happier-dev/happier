@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorContext, type ActionExecutorDeps } from './actionExecutor.js';
+import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
+import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
+import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from './actionExecutionResult.js';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { ArtifactActionInputSchemasV1, type ArtifactDocumentV1Schema } from '../artifacts/artifactActionsV1.js';
 import { ProjectAccountOrganizationV1Schema } from '../projects/projectAccountRowsV1.js';
@@ -8,7 +11,7 @@ import { ProjectDefinitionInspectOutputSchema } from './projectDefinitionActionF
 import type { z } from 'zod/mini';
 
 describe('setup decision protected Artifact children', () => {
-  it('creates and reopens accepted detail through the real setup owner while ordinary authoring stays refused', async () => {
+  it.each(['cli', 'ui'] as const)('creates and reopens accepted detail under one reviewed %s setup decision', async surface => {
     let organization = ProjectAccountOrganizationV1Schema.parse({});
     let revision = -1;
     let ownerRead = true;
@@ -37,7 +40,24 @@ describe('setup decision protected Artifact children', () => {
       }
       throw new Error('Unexpected Artifact operation');
     };
+    const deferredApprovals: string[] = [];
+    let stored: ApprovalRequestV2 | null = null;
     const executor = createActionExecutor({ artifactAction,
+      approvalsCreate: async ({ request }) => {
+        deferredApprovals.push(request.actionId);
+        stored = ApprovalRequestV2Schema.parse(structuredClone(request));
+        return { artifactId: 'setup-review' };
+      },
+      approvalsGet: async () => structuredClone(stored),
+      approvalsUpdate: async ({ request, expectedStatus }) => {
+        if (!stored) throw new Error('Missing setup approval');
+        const next = ApprovalRequestV2Schema.parse(request);
+        const transition = decideApprovalRequestTransition(stored, next, { expectedStatus });
+        if (!transition.ok) return transition;
+        stored = structuredClone(next);
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: async () => true,
       readActionsSettings: context => context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 }),
       projectDefinitionAction: async () => ProjectDefinitionInspectOutputSchema.parse({
         definition: { basis: { kind: 'absent' }, document: null },
@@ -53,23 +73,39 @@ describe('setup decision protected Artifact children', () => {
         },
       }, input, context),
     });
-    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', runtimeAccountId: 'owner',
-      expectedAccountId: 'owner', actionCaller: { kind: 'host' }, actionsSettings: normalizeActionsSettingsV1({ v: 1,
-        approvalWaivedSurfaces: { 'projects.setup.set': ['ui'], 'artifact.create': ['ui'] } }) };
+    const context: ActionExecutorContext = { surface, authority: 'present_user', runtimeAccountId: 'owner',
+      expectedAccountId: 'owner', serverId: 'home', serverIdentityId: 'home', actionRequestId: 'setup-request',
+      actionCaller: { kind: 'host' }, presentUserConfirmation: { actionId: 'projects.setup.set' },
+      actionsSettings: normalizeActionsSettingsV1({ v: 1 }) };
     const controlId = '33333333-3333-4333-8333-333333333333';
-    expect(await executor.execute('artifact.create', { artifactId: controlId, header: { title: 'Control' }, body: 'ordinary' }, context))
+    expect(await executor.execute('artifact.create', { artifactId: controlId, header: { title: 'Control' }, body: 'ordinary' },
+      { ...context, presentUserConfirmation: { actionId: 'artifact.create' } }))
       .toMatchObject({ ok: true, result: { artifactId: controlId } });
     expect(documents.get(controlId)?.body).toBe('ordinary');
     const root: ProjectSetupSetInputV1 = { projectRef: { serverId: 'home', projectKey: 'project' },
       workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'checkout', rootPath: '/repo' },
       expectedRevision: 'absent', intent: { kind: 'personal', setupOverrides: { version: 1,
         workspace: { setup: [{ kind: 'command', command: 'echo first' }] } } } };
-    const first = await executor.execute('projects.setup.set', root, context);
-    expect(first, JSON.stringify(first)).toMatchObject({ ok: true,
+    const executeSetup = async (input: ProjectSetupSetInputV1): Promise<ActionExecuteResult> => {
+      const result = await executor.execute('projects.setup.set', input, context);
+      const pending = result.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(result.result) : null;
+      if (!pending?.success) return result;
+      expect(pending.data.actionId).toBe('projects.setup.set');
+      const decided = await executor.execute('approval.request.decide', {
+        artifactId: pending.data.artifactId, decision: 'approve',
+      }, { ...context, surface: 'ui', presentUserConfirmation: { actionId: 'approval.request.decide' } });
+      expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: { execution: { ok: true } } });
+      const execution = ApprovalRequestV2Schema.parse(stored).execution;
+      if (!execution || !execution.ok) throw new Error('Setup approval did not execute');
+      return { ok: true, result: execution.result };
+    };
+    const first = await executeSetup(root);
+    expect(first, JSON.stringify({ first, deferredApprovals })).toMatchObject({ ok: true,
       result: { ok: true, revision: 0, row: { setupContent: { artifactId: ids[0] } } } });
-    expect(await executor.execute('projects.setup.set', { ...root, expectedRevision: 0,
-      intent: { kind: 'personal', setupOverrides: { version: 1, workspace: { setup: [{ kind: 'command', command: 'echo changed' }] } } } }, context))
+    expect(await executeSetup({ ...root, expectedRevision: 0,
+      intent: { kind: 'personal', setupOverrides: { version: 1, workspace: { setup: [{ kind: 'command', command: 'echo changed' }] } } } }))
       .toMatchObject({ ok: true, result: { ok: true, revision: 1, row: { setupContent: { artifactId: ids[1] } } } });
+    expect(deferredApprovals).toEqual(surface === 'cli' ? ['projects.setup.set', 'projects.setup.set'] : []);
     expect(acceptedIds).toEqual(ids);
     expect(documents.size).toBe(3);
     const changedBody = documents.get(ids[1])?.body;
@@ -78,7 +114,7 @@ describe('setup decision protected Artifact children', () => {
     const acceptedInput = { header: { kind: 'project_setup.v1' },
       body: JSON.stringify({ kind: 'project_setup.v1', setupOverrides: { version: 1 } }) };
     // A caller-supplied decoded root cannot manufacture host-child authority.
-    expect(await executor.execute('artifact.create', acceptedInput, { ...context, projectSetupSetRootInput: root }))
+    expect(await executor.execute('artifact.create', acceptedInput, { ...context, presentUserConfirmation: { actionId: 'artifact.create' }, projectSetupSetRootInput: root }))
       .toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
     expect(await executor.execute('artifact.get', { artifactId: ids[0] }, context))
       .toMatchObject({ ok: true, result: { artifact: { artifactId: ids[0], access: 'owner' } } });

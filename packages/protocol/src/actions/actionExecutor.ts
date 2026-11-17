@@ -3835,6 +3835,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
       if (prepareExecutionContext) ctx = await prepareExecutionContext(ctx);
       ctx = withHostReviewedChildAction(ctx);
+      // Capture the admitted setup root before its reviewed-child port captures context.
+      if (actionId === PROJECT_SETUP_SET_ACTION_ID_V1) ctx = { ...ctx,
+        projectSetupSetRootInput: admittedInput as AdmittedActionInputById[typeof PROJECT_SETUP_SET_ACTION_ID_V1] };
       const retainedChildPort = existingAdmission?.context.hostReviewedChild ?? ctx.hostReviewedChild;
       const retainedChildParent = readHostAdmittedReviewedParentV1(retainedChildPort);
       // Admitted nested children retain their original sibling plan. A new

@@ -5,7 +5,8 @@ import { ProjectContextUpdateInputV1Schema, ProjectContextUpdateOutputV1Schema }
 import { ProjectVisibilitySetInputV1Schema, ProjectVisibilitySetOutputV1Schema } from '../../projects/projectVisibilityV1.js';
 import { ProjectOrganizationUpdateInputV1Schema, ProjectOrganizationUpdateOutputV1Schema } from '../../projects/projectOrganizationV1.js';
 import { ProjectSetupSetInputV1Schema, ProjectSetupSetOutputV1Schema } from '../../projects/projectSetupSetV1.js';
-import { PROJECT_SETUP_SET_ACTION_ID_V1 } from '../projectActionIdsV1.js';
+import { PROJECT_SETUP_ARTIFACT_KIND_V1 } from '../../projects/projectSetupV1.js';
+import { PROJECT_SETUP_SET_ACTION_ID_V1, PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1 } from '../projectActionIdsV1.js';
 import { ProjectWorkspaceUpdateInputV1Schema, ProjectWorkspaceUpdateOutputV1Schema, ProjectWorkspaceForgetInputV1Schema, ProjectWorkspaceForgetOutputV1Schema } from '../../projects/projectWorkspaceActionsV1.js';
 import { ProjectServicesPinInputV1Schema, ProjectServicesPinOutputV1Schema } from '../../projects/projectServicesActionsV1.js';
 import { z } from '../../zodRuntimePolicy.js';
@@ -44,6 +45,10 @@ function createProjectContextActionSpecs() {
   return Object.freeze([
   {
     id: PROJECT_SETUP_SET_ACTION_ID_V1, approval: { result: 'required' }, title: 'Change Project setup',
+    // The protected copy is part of this decision; its policy joins the parent's one review.
+    hostReviewedChildren: [{ action: PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.artifactCreate,
+      role: PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.artifactCreate,
+      scopeInput: { header: { kind: PROJECT_SETUP_ARTIFACT_KIND_V1 } } }],
     description: 'Accept or detach one reviewed Shared setup, or edit private setup overrides. Preserves personal bindings and never grants execution consent.',
     safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
     approvalScope: { subjectKinds: ['project'], project: (input) => ({ subjects: [{ kind: 'project', ...ProjectSetupSetInputV1Schema.parse(input).projectRef }] }) },

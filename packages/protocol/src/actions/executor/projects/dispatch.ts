@@ -34,12 +34,19 @@ export async function dispatchProjectsDispatch1(inv: Pick<CoreInvocation, 'actio
   if (actionId === PROJECT_SETUP_SET_ACTION_ID_V1) {
     if (!deps.projectsSetupSet) return clientActionUnavailable(actionId);
     const input = parsed.data as AdmittedActionInputById[typeof PROJECT_SETUP_SET_ACTION_ID_V1];
-    const childContext = { ...ctx, projectSetupSetRootInput: input };
     return { ok: true, result: await deps.projectsSetupSet({ input,
-      context: ctx, executeCanonicalAction: (childId, childInput) => isProjectSetupSetChildInputV1(input, childId, childInput, ctx.serverIdentityId ?? undefined)
-        ? executeHostChild(childId, childInput, childId === PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.inspect
-          ? { ...childContext, externalActionTarget: { kind: 'machine', machineId: input.workspace.machineId } } : childContext)
-        : Promise.resolve({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' }) }) };
+      context: ctx, executeCanonicalAction: (childId, childInput) => {
+        if (!isProjectSetupSetChildInputV1(input, childId, childInput, ctx.serverIdentityId ?? undefined)) {
+          return Promise.resolve({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' });
+        }
+        if (childId === PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.artifactCreate) {
+          return ctx.hostReviewedChild?.invoke({ action: childId, role: childId,
+            input: projectNativeJsonValueForTransport(childInput) })
+            ?? Promise.resolve({ ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' });
+        }
+        return executeHostChild(childId, childInput, childId === PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.inspect
+          ? { ...ctx, externalActionTarget: { kind: 'machine', machineId: input.workspace.machineId } } : ctx);
+      } }) };
   }
   if (actionId === PROJECT_STARTER_CREATE_ACTION_ID_V1) {
     const input = parsed.data as AdmittedActionInputById[typeof PROJECT_STARTER_CREATE_ACTION_ID_V1];
