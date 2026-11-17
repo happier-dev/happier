@@ -102,6 +102,12 @@ export async function releasePendingSourceSelection({ stackBaseDir }) {
   }, { lockPath: `${markerPath}.lock` });
 }
 
+function activationInProgressError(pid) {
+  return Object.assign(new Error(`[reload] the previous reload's replacement is still activating (pid=${pid ?? 'unknown'}); `
+    + 'its incumbent is already retired, so this preparation leaves it running. Retry once it settles, or stop the Stack.'),
+  { code: 'ESOURCEACTIVATIONINPROGRESS', pid: pid ?? null });
+}
+
 export function supersededError() {
   const error = new Error('Source Stack start superseded by a newer start for this stack');
   error.name = 'AbortError';
@@ -128,9 +134,12 @@ export async function retainPendingSourcePreparation({ stackBaseDir, requestId, 
 /** Only pending source preparation is replaceable. Publication and replacement
  * share the existing file-lock primitive so an old start cannot publish after a
  * successor claims this stack. No process is signalled by this owner.
+ * `activation`: this start launches a reload's already-selected replacement after
+ * its restart owner retired the incumbent, so it is the Stack's runtime. A newer
+ * preparation is refused while it lives; only a newer activation replaces it.
  */
 export async function beginPendingSourceStart({ stackBaseDir, onPhase, requestId: inheritedRequestId, replacePending = !inheritedRequestId,
-  env = process.env, repoDir = getRepoDir(fileURLToPath(new URL('../../../../../', import.meta.url)), env) }) {
+  activation = false, env = process.env, repoDir = getRepoDir(fileURLToPath(new URL('../../../../../', import.meta.url)), env) }) {
   const directory = join(stackBaseDir, 'source-runtime');
   const markerPath = join(directory, 'start.pending.json');
   const lockPath = `${markerPath}.lock`;
@@ -148,8 +157,12 @@ export async function beginPendingSourceStart({ stackBaseDir, onPhase, requestId
     if (sameRequest && ownerStatus === 'alive') return;
     if (inheritedRequestId && current && !replacePending
       && ownerStatus !== 'dead') throw supersededError();
+    if (!activation && !sameRequest && current?.activation === true && ownerStatus !== 'dead') {
+      throw activationInProgressError(current.pid);
+    }
     // A dead worker's retry takes custody of the same request and its pins.
-    await writeJsonAtomic(markerPath, { ...(sameRequest ? current : {}), requestId, pid: process.pid, phase: 'preparing' });
+    await writeJsonAtomic(markerPath, { ...(sameRequest ? current : {}), requestId, pid: process.pid, phase: 'preparing',
+      ...(activation ? { activation: true } : {}) });
     ownsMarker = true;
   }, { lockPath });
   let closed = false;

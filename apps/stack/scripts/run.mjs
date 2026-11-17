@@ -213,6 +213,7 @@ async function main() {
   const pendingSourceStart = !json && resolveStackRuntimeMode({ argv, env: process.env }).mode === 'source-snapshot'
     ? await beginPendingSourceStart({ stackBaseDir: autostart.baseDir,
       requestId: kv.get('--source-start-request-id'),
+      activation: process.env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD === '1',
       onPhase: process.env.HAPPIER_DEV_TARGET_EXECUTION === '1' ? emitSourcePreparationPhase : undefined }) : null;
   try {
   const cleanupEnv = { ...process.env };

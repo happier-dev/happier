@@ -323,6 +323,34 @@ test('a delegated process shares its parent start without superseding or retirin
   await successor.publish(async () => {});
 });
 
+test('a newer reload preparation refuses, never cancels, a live activation of the previous reload', async (t) => {
+  // 2026-11-17 agent-qa-usage-insights: reload 202's preparation superseded reload 201's
+  // activation a minute after its replacement server began serving; the Stack had no server.
+  const fixture = await createTempFixture(t, { prefix: 'hstack-pending-source-activation-', registerCleanup: false });
+  const activation = await beginPendingSourceStart({ stackBaseDir: fixture.root, activation: true });
+  const started = [];
+  t.after(async () => {
+    await activation.dispose();
+    for (const start of started) await start.dispose();
+    await fixture.cleanup();
+  });
+  const begin = async options => { const start = await beginPendingSourceStart(options); started.push(start); return start; };
+  // Execution-host preparation (inherited request) and controller preparation (fresh request).
+  await assert.rejects(begin({ stackBaseDir: fixture.root, requestId: 'next-reload', replacePending: true }),
+    { code: 'ESOURCEACTIVATIONINPROGRESS' });
+  await assert.rejects(begin({ stackBaseDir: fixture.root }), { code: 'ESOURCEACTIVATIONINPROGRESS' });
+  assert.equal(activation.signal.aborted, false, 'the activating replacement keeps starting');
+  await activation.publish(async () => {});
+  const next = await begin({ stackBaseDir: fixture.root });
+  await next.publish(async () => writeFile(fixture.path('next-published'), 'yes'));
+  assert.equal(await readFile(fixture.path('next-published'), 'utf8'), 'yes');
+  // An activation whose owner died retired nothing it still serves: preparation proceeds.
+  await writeFile(fixture.path('source-runtime/start.pending.json'),
+    JSON.stringify({ requestId: 'dead-activation', pid: 2 ** 22 + 7, phase: 'preparing', activation: true }));
+  const afterDead = await begin({ stackBaseDir: fixture.root });
+  await afterDead.publish(async () => {});
+});
+
 test('a delegated remote start replaces abandoned preparation and keeps its retry in the same request', async (t) => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-pending-source-abandoned-', registerCleanup: false });
   const moduleUrl = new URL('./pending_source_start.mjs', import.meta.url).href;
