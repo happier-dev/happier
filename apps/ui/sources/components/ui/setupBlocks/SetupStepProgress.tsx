@@ -15,7 +15,7 @@ export type SetupStepProgressStep = Readonly<{ key: string; label: string }>;
  * account's settings, then sign in): one numbered marker and label per step along a rule, the current
  * step leading and finished steps ticked, with an optional hint for the current step. It names which
  * step the person is on and that more follow; the flow's own forms stay the steps' content. Ordered
- * progress that reports each step's state (a system task, an import) is `SetupSteps`.
+ * progress that reports each step's state (a system task, an import) is `PlanChecklistCard`.
  */
 export function SetupStepProgress(props: Readonly<{
     steps: readonly SetupStepProgressStep[];

@@ -45,13 +45,7 @@ export function setupStepTestID(
   return `${prefix}-${state}-${encodeSetupStepKeyForTestId(key)}`;
 }
 
-/**
- * The one numbered-step anatomy of a set-up block (Home's "Add your phone", Connected services'
- * sign-in flows) and of ordered progress (a system task, an import, a machine being created): a marker
- * per step, the step in words, its detail, and what it asks for beneath. `plain` is a list of
- * instructions (sentences, no step titles), as the pairing panel reads. `checklist` paints reported
- * progress as one glyph row per step; `compact` is one quiet line per step, for a popover or a card's corner.
- */
+/** Numbered instructions and quiet flow cues. Reported run progress uses PlanChecklistCard. */
 export function SetupSteps(
   props: Readonly<{
     steps: readonly SetupStep[];

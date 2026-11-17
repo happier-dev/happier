@@ -137,11 +137,10 @@ Setup tiles use the existing host paper and action controls. The grid owns
 in-place opening/closing and mounts its panel only for that lifecycle.
 `SetupSteps` is the ordered composition of the shared `HappierStep` marker;
 authors supply each step's title, detail, body and current/done/upcoming state.
-For progress your plugin reports (a machine being acquired, an install), steps
-also take `running`, `waiting` (it needs the reader), `failed` and `cancelled`
-and an optional `meta` fact at the row's end; `variant="checklist"` paints one
-glyph row per step and `variant="compact"` one quiet line per step for a
-popover.
+`variant="compact"` paints one quiet line per step with an optional `meta` fact
+for a popover. In 0.3 development source, reported run progress uses
+`PlanChecklistCard`: pass the owning operation's items, selected IDs and execution
+states to the existing host checklist renderer.
 Hosts without these presentation bindings use your explicit `fallback`.
 The ordinary `SelectionTiles` wrapper also forwards bare `mark`, translated
 `badge`, per-option `testID`, option footers, density, tile sizing, column bounds,

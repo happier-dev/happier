@@ -125,13 +125,8 @@ async function stepsOf(agent: MachineAgent) {
     />,
   );
   const ids = screen.root
-    .findAll(
-      (node) =>
-        typeof node.props.testID === 'string' &&
-        node.props.testID.startsWith('setup.steps-') &&
-        typeof node.type === 'string',
-    )
-    .map((node) => String(node.props.testID).slice('setup.steps-'.length));
+    .findAll((node) => node.props.item?.id && node.props.execution?.status)
+    .map((node) => `${node.props.execution.status}-${String(node.props.item.id).toLowerCase()}`);
   return { screen, steps: [...new Set(ids)] };
 }
 
@@ -267,9 +262,9 @@ describe('agent setup steps', () => {
   it('drives one step list from the plan through the job into sign-in', async () => {
     const plan = await stepsOf(pi({}));
     expect(plan.steps).toEqual([
-      'upcoming-agent',
-      'upcoming-check',
-      'upcoming-signin',
+      'queued-agent',
+      'queued-check',
+      'queued-signin',
     ]);
     expect(plan.screen.findByTestId('setup.install')).not.toBeNull();
     await plan.screen.unmount();
@@ -277,9 +272,9 @@ describe('agent setup steps', () => {
     // Admitted, before the daemon reported a step: the same rows, not an empty list.
     const admitted = await stepsOf(pi({ job: job([]) }));
     expect(admitted.steps).toEqual([
-      'upcoming-agent',
-      'upcoming-check',
-      'upcoming-signin',
+      'queued-agent',
+      'queued-check',
+      'queued-signin',
     ]);
     await admitted.screen.unmount();
 
@@ -288,8 +283,8 @@ describe('agent setup steps', () => {
     );
     expect(installing.steps).toEqual([
       'running-agent',
-      'upcoming-check',
-      'upcoming-signin',
+      'queued-check',
+      'queued-signin',
     ]);
     await installing.screen.unmount();
 
@@ -304,7 +299,7 @@ describe('agent setup steps', () => {
     expect(checking.steps).toEqual([
       'done-agent',
       'running-check',
-      'upcoming-signin',
+      'queued-signin',
     ]);
     await checking.screen.unmount();
 
@@ -331,7 +326,7 @@ describe('agent setup steps', () => {
     expect(signIn.steps).toEqual([
       'done-agent',
       'done-check',
-      'current-signin',
+      'queued-signin',
     ]);
     expect(signIn.screen.findByTestId('setup.openTerminal')).not.toBeNull();
     await signIn.screen.unmount();
@@ -349,9 +344,9 @@ describe('agent setup steps', () => {
       }),
     );
     expect(failed.steps).toEqual([
-      'failed-agent',
-      'upcoming-check',
-      'upcoming-signin',
+      'error-agent',
+      'queued-check',
+      'queued-signin',
     ]);
     expect(failed.screen.findByTestId('setup.retry')).not.toBeNull();
   });

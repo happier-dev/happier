@@ -13,9 +13,10 @@ import { FieldLayout } from '@/components/ui/lists/FieldRow';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import {
-  SetupSteps,
   type SetupStep,
 } from '@/components/ui/setupBlocks/SetupSteps';
+import { PlanChecklistCard } from '@/components/systemTasks/planChecklist/PlanChecklistCard';
+import { projectReportedSteps } from '@/components/systemTasks/planChecklist/projectReportedSteps';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import type { InteractionTransientQuestionV1 } from '@happier-dev/protocol/plugins/interactions/transientV1';
@@ -97,6 +98,7 @@ export function NewAppAutoStep(
 ) {
   const { theme } = useUnistyles();
   const { view } = props;
+  const checklist = React.useMemo(() => view.kind === 'working' ? projectReportedSteps(view.steps) : null, [view]);
 
   if (view.kind === 'recommendations') {
     return (
@@ -204,15 +206,15 @@ export function NewAppAutoStep(
           </View>
         </ItemGroup>
       ) : null}
-      {view.kind === 'working' ? (
+      {view.kind === 'working' && checklist ? (
         <ItemGroup
           title={t('newApp.auto.workingTitle')}
           testID="newApp.auto.steps"
         >
           <View style={styles.steps}>
-            <SetupSteps
-              variant="checklist"
-              steps={view.steps}
+            <PlanChecklistCard
+              phase="execute"
+              {...checklist}
               testID="newApp.auto.progress"
             />
           </View>

@@ -7,7 +7,9 @@ import type { SelectionListOption } from '@/components/ui/selectionList';
 import { buildNewSessionConnectedServicesSelectionListModel, createConnectServiceOptionId } from '@/components/sessions/new/components/buildNewSessionConnectedServicesSelectionListModel';
 
 import type { MachineAgent, MachineAgentSignInSession } from '@/agents/machineAgents/machineAgentTypes';
-import { SetupSteps, setupStepTestID, type SetupStep, type SetupStepState } from '@/components/ui/setupBlocks/SetupSteps';
+import type { SetupStep, SetupStepState } from '@/components/ui/setupBlocks/SetupSteps';
+import { PlanChecklistCard } from '@/components/systemTasks/planChecklist/PlanChecklistCard';
+import { projectReportedSteps } from '@/components/systemTasks/planChecklist/projectReportedSteps';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -118,7 +120,7 @@ function bytesDetail(step: JobStep | undefined): string | null {
  * their states live (its CLI step, its dependency steps, its verify step), and `signIn` says where the
  * last row stands.
  */
-function buildSetupSteps(agent: MachineAgent, signIn: SetupStepState, testIDPrefix: string): SetupStep[] {
+function buildSetupSteps(agent: MachineAgent, signIn: SetupStepState): SetupStep[] {
     const job = agent.job?.intent === 'install' ? agent.job : null;
     const succeeded = job?.outcome?.kind === 'succeeded';
     const cliStepId = buildAgentInstallJobCliStepId(agent);
@@ -127,7 +129,7 @@ function buildSetupSteps(agent: MachineAgent, signIn: SetupStepState, testIDPref
     const dependencySteps = job?.steps.filter((step) => step !== cliStep && step !== verifyStep) ?? [];
     const plannedDependencies = agent.dependencies.filter((dependency) => !dependency.installed);
     const row = (key: string, title: string, state: SetupStepState, detail?: string | null): SetupStep => ({
-        key, title, state, ...(detail ? { detail } : {}), testID: setupStepTestID(testIDPrefix, key, state),
+        key, title, state, ...(detail ? { detail } : {}),
     });
     const dependencyRows = plannedDependencies.length > 0
         ? plannedDependencies.map((dependency) => row(dependency.key, dependency.title,
@@ -143,9 +145,11 @@ function buildSetupSteps(agent: MachineAgent, signIn: SetupStepState, testIDPref
 
 /** The steps in their bordered block. */
 function Steps(props: Readonly<{ agent: MachineAgent; signIn: SetupStepState; testID: string }>) {
+    const checklist = React.useMemo(() => projectReportedSteps(buildSetupSteps(props.agent, props.signIn)),
+        [props.agent, props.signIn]);
     return (
         <View style={styles.plan}>
-            <SetupSteps variant="checklist" steps={buildSetupSteps(props.agent, props.signIn, `${props.testID}.steps`)} />
+            <PlanChecklistCard testID={`${props.testID}.steps`} phase="execute" {...checklist} />
         </View>
     );
 }

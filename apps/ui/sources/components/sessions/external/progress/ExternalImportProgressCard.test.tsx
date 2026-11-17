@@ -371,11 +371,9 @@ describe('ExternalImportProgressCard', () => {
             onCancel,
         }));
 
-        // The operation's phases paint as the shared ordered steps; the paused phase waits for the reader.
-        const stepIds = screen.findAll((node) => typeof node.props.testID === 'string'
-            && node.props.testID.startsWith('external-session-operation-step-')
-            && typeof node.type === 'string').map((node) => node.props.testID as string);
-        expect(stepIds.some((id) => id.startsWith('external-session-operation-step-waiting-'))).toBe(true);
+        // Paused work keeps its reported phase visible and asks the reader to resume.
+        expect(screen.getTextContent()).toContain('settings.machineSetupTaskWaitingForInput');
+        expect(screen.findByTestId('external-session-operation-step-row-importing')).not.toBeNull();
         expect(onResume).not.toHaveBeenCalled();
         expect(onCancel).not.toHaveBeenCalled();
 

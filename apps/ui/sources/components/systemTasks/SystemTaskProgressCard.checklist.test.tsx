@@ -106,10 +106,12 @@ function createSnapshot(overrides: Partial<SystemTaskRunState> = {}): SystemTask
     };
 }
 
+// Load the real graph during collection, after boundary installation, rather than inside a test's action budget.
+const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
+
 describe('SystemTaskProgressCard checklist rendering', () => {
     it('renders checklist rows for observed steps and tags earlier ones as done', async () => {
         isDesktopHostMock.mockReturnValue(false);
-        const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
 
         const events: readonly SystemTaskEvent[] = [
             {
@@ -140,7 +142,7 @@ describe('SystemTaskProgressCard checklist rendering', () => {
             }),
         );
 
-        const prepareRow = screen.findByTestId('system-task-progress-checklist-step-done-prepare');
+        const prepareRow = screen.findByTestId('system-task-progress-checklist-step-row-prepare');
         expect(prepareRow).not.toBeNull();
         if (!prepareRow) {
             throw new Error('Missing prepare checklist row');
@@ -148,7 +150,7 @@ describe('SystemTaskProgressCard checklist rendering', () => {
         expect(textUnder(prepareRow)).toContain('settings.systemTaskStepPrepare');
         expect(textUnder(prepareRow)).toContain('Preparing task');
 
-        const installRow = screen.findByTestId('system-task-progress-checklist-step-running-install-runtime');
+        const installRow = screen.findByTestId('system-task-progress-checklist-step-row-install.runtime');
         expect(installRow).not.toBeNull();
         if (!installRow) {
             throw new Error('Missing install checklist row');
@@ -159,7 +161,6 @@ describe('SystemTaskProgressCard checklist rendering', () => {
 
     it('supports a checklist-only variant without the verbose status rows', async () => {
         isDesktopHostMock.mockReturnValue(false);
-        const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
 
         const events: readonly SystemTaskEvent[] = [
             {
@@ -191,13 +192,12 @@ describe('SystemTaskProgressCard checklist rendering', () => {
         expect(screen.findByTestId('system-task-step-label')).toBeNull();
         expect(screen.findByTestId('system-task-message')).toBeNull();
 
-        const checklistRow = screen.findByTestId('system-task-progress-checklist-step-running-install-runtime');
+        const checklistRow = screen.findByTestId('system-task-progress-checklist-step-row-install.runtime');
         expect(checklistRow).not.toBeNull();
     });
 
     it('falls back to the raw step id when no translation key is registered', async () => {
         isDesktopHostMock.mockReturnValue(false);
-        const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
 
         const events: readonly SystemTaskEvent[] = [
             {
@@ -221,7 +221,7 @@ describe('SystemTaskProgressCard checklist rendering', () => {
             }),
         );
 
-        const row = screen.findByTestId('system-task-progress-checklist-step-running-unknown-step-id');
+        const row = screen.findByTestId('system-task-progress-checklist-step-row-unknown.step.id');
         expect(row).not.toBeNull();
         if (!row) {
             throw new Error('Missing unknown step checklist row');
@@ -233,7 +233,6 @@ describe('SystemTaskProgressCard checklist rendering', () => {
         await home.addHome({ name: 'Signed-out native draft', serverUrl: 'https://checklist-logs.fixture.test', accountId: null });
         isDesktopHostMock.mockReturnValue(true);
         invokeDesktopHostMock.mockResolvedValueOnce(undefined);
-        const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
         const screen = await renderScreen(React.createElement(SystemTaskProgressCard, { snapshot: createSnapshot() }));
 
         await waitForHomeGovernance(() => expect(screen.findAllByTestId('system-task-progress-open-logs').some(node => node.props.disabled === false)).toBe(true));
@@ -246,7 +245,6 @@ describe('SystemTaskProgressCard checklist rendering', () => {
 
     it('allows the caller to omit the group title by passing title=null', async () => {
         isDesktopHostMock.mockReturnValue(false);
-        const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
 
         const screen = await renderScreen(React.createElement(SystemTaskProgressCard, { snapshot: createSnapshot(), title: null }));
         const group = screen.tree.findByType('ItemGroup' as any);
@@ -263,7 +261,6 @@ describe('SystemTaskProgressCard checklist rendering', () => {
         const previousSettings = storage.getState().settings;
         storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
             actions: { 'links.openExternal': { enabled: false } } }) } }));
-        const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
 
         const screen = await renderScreen(React.createElement(SystemTaskProgressCard, {
             snapshot: createSnapshot({
@@ -308,7 +305,6 @@ describe('SystemTaskProgressCard checklist rendering', () => {
         const previousSettings = storage.getState().settings;
         storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
             actions: { 'links.openExternal': { enabled: false } } }) } }));
-        const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
         const screen = await renderScreen(<SystemTaskProgressCard snapshot={createSnapshot({ awaitingInput: true,
             events: [{ protocolVersion: 1, taskId: 'task_1', tsMs: 100, type: 'prompt',
                 data: { kind: 'needsUserAction.openUrl', url: 'tailscale://login' } }] })} />);
@@ -324,7 +320,6 @@ describe('SystemTaskProgressCard checklist rendering', () => {
 
     it('uses the tailscale-specific install label for install prompts', async () => {
         isDesktopHostMock.mockReturnValue(false);
-        const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
 
         const screen = await renderScreen(React.createElement(SystemTaskProgressCard, {
             snapshot: createSnapshot({

@@ -3,6 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import {
     HAPPIER_TONE_COLOR_TOKEN,
     HappierProgress,
+    happierPageTextMetrics,
 } from '@happier-dev/plugin-ui/presentation';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -11,10 +12,13 @@ import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemePro
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
-import { SetupSteps, setupStepTestID, type SetupStep } from '@/components/ui/setupBlocks/SetupSteps';
+import { setupStepTestID } from '@/components/ui/setupBlocks/SetupSteps';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { Typography } from '@/constants/Typography';
 
 import {
     resolvePluginTranscriptActivityCanDismiss,
@@ -48,12 +52,6 @@ export const PluginTranscriptActivityCard = React.memo(
             () => resolvePluginTranscriptActivityPresentation(props.activity),
             [props.activity],
         );
-        const checklistSteps = React.useMemo(() => presentation.checklistSteps.map((step): SetupStep => ({
-            key: step.stepId,
-            state: step.state,
-            title: step.title,
-            testID: setupStepTestID('plugin-transcript-activity-checklist-step', step.stepId, step.state),
-        })), [presentation.checklistSteps]);
         if (props.activity.aggregateHiddenCount !== undefined) {
             return (
                 <View testID="plugin-transcript-activity-overflow">
@@ -105,9 +103,36 @@ export const PluginTranscriptActivityCard = React.memo(
                         showChevron={false}
                         accessibilityLabel={presentation.accessibilityLabel}
                     />
-                    {checklistSteps.length > 0 ? (
+                    {presentation.checklistSteps.length > 0 ? (
                         <SectionContentRow testID="plugin-transcript-activity-checklist">
-                            <SetupSteps variant="checklist" steps={checklistSteps} />
+                            <View accessibilityRole="list">
+                                {presentation.checklistSteps.map((step, index) => (
+                                    <View
+                                        key={step.stepId}
+                                        testID={setupStepTestID('plugin-transcript-activity-checklist-step', step.stepId, step.state)}
+                                        {...(step.state === 'running' ? { 'aria-busy': true } : {})}
+                                        style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s10,
+                                            minHeight: 38, paddingVertical: theme.space.s8,
+                                            ...(index > 0 ? { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border.default } : {}) }}
+                                    >
+                                        <View aria-hidden style={{ width: 16, height: 16, alignItems: 'center', justifyContent: 'center' }}>
+                                            {step.state === 'running' ? <ActivitySpinner size={16} color={theme.colors.text.primary} />
+                                                : step.state === 'done' || step.state === 'failed'
+                                                    ? <Icon name={step.state === 'done' ? 'check' : 'x'} size={16}
+                                                        color={step.state === 'done' ? theme.colors.state.success.foreground : theme.colors.state.danger.foreground} />
+                                                    : <View style={{ width: 12, height: 12, borderRadius: 6, borderWidth: 1.5,
+                                                        borderColor: theme.colors.text.tertiary }} />}
+                                        </View>
+                                        <View style={{ flex: 1, minWidth: 0 }}>
+                                            <Text style={[happierPageTextMetrics('rowDescription'),
+                                                step.state === 'running' ? Typography.default('medium') : Typography.default(),
+                                                { color: step.state === 'upcoming' ? theme.colors.text.tertiary : theme.colors.text.primary }]}>
+                                                {step.title}
+                                            </Text>
+                                        </View>
+                                    </View>
+                                ))}
+                            </View>
                         </SectionContentRow>
                     ) : null}
                     {props.activity.actions.map((action) => (

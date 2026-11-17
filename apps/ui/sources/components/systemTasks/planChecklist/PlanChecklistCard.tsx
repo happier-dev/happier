@@ -129,6 +129,7 @@ export const PlanChecklistCard = React.memo(function PlanChecklistCard(props: Pl
     return (
         <View
             testID={props.testID}
+            accessibilityRole="list"
             style={[
                 styles.card,
                 props.variant === 'onboarding' ? styles.cardOnboarding : null,

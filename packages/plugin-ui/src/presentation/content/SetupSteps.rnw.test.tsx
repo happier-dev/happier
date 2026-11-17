@@ -143,33 +143,6 @@ describe('setup steps as ordered progress', () => {
     );
   });
 
-  it('paints reported progress as one glyph row per step, with the detail beneath and the fact at the end', () => {
-    const theme = createSurfaceContext().theme;
-    const view = mountThroughReactNativeWeb(
-      <HappierSetupSteps
-        testID="steps"
-        variant="checklist"
-        theme={theme}
-        renderStateGlyph={renderStateGlyph}
-        steps={[
-          ...STEPS,
-          { key: 'verify', title: 'Verify', state: 'failed', detail: 'Disk full', testID: 'step:verify' },
-          { key: 'cleanup', title: 'Clean up', state: 'cancelled', testID: 'step:cleanup' },
-        ]}
-      />,
-    );
-    expect(query(view, 'steps')?.getAttribute('role')).toBe('list');
-    expect(query(view, 'step:create')?.querySelector('[data-testid="glyph:done:success"]')).not.toBeNull();
-    expect(query(view, 'step:create')?.textContent).toBe('doneCreate VM42 s');
-    expect(query(view, 'step:install')?.getAttribute('aria-busy')).toBe('true');
-    expect(query(view, 'step:sign-in')?.querySelector('[data-testid="glyph:waiting:attention"]')).not.toBeNull();
-    // No numbers on a checklist: a step still ahead is an empty ring.
-    expect(query(view, 'step:join')?.textContent).toBe('Join Personal Home');
-    expect(query(view, 'step:verify')?.querySelector('[data-testid="glyph:failed:danger"]')).not.toBeNull();
-    expect(query(view, 'step:verify')?.textContent).toContain('Disk full');
-    expect(query(view, 'step:cleanup')?.querySelector('[data-testid^="glyph:"]')).toBeNull();
-  });
-
   it('places a step\'s one operation at the end of the step, beside its words, apart from the content beneath', () => {
     const theme = createSurfaceContext().theme;
     const view = mountThroughReactNativeWeb(

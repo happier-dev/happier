@@ -227,7 +227,9 @@ describe('PlanChecklistCard', () => {
             }),
         );
 
-        expect(screen.findByTestId('plan-checklist')).toBeTruthy();
+        expect.soft(screen.findHostByTestId('plan-checklist')?.props.accessibilityRole).toBe('list');
+        expect.soft(screen.findHostByTestId('plan-checklist-row-install_cli')?.props.accessibilityState).toMatchObject({ busy: true });
+        expect.soft(screen.findHostByTestId('plan-checklist-row-install_daemon')?.props.accessibilityState).toMatchObject({ busy: false });
         expect(screen.findByTestId('plan-checklist-row-install_cli-details')).toBeTruthy();
         expect(screen.findByTestId('plan-checklist-row-install_daemon-details')).toBeTruthy();
 

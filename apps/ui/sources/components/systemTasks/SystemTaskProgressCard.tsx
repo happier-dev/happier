@@ -6,7 +6,9 @@ import { Linking, View } from 'react-native';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
-import { SetupSteps, setupStepTestID, type SetupStep, type SetupStepState } from '@/components/ui/setupBlocks/SetupSteps';
+import type { SetupStepState } from '@/components/ui/setupBlocks/SetupSteps';
+import { PlanChecklistCard } from './planChecklist/PlanChecklistCard';
+import { projectReportedSteps } from './planChecklist/projectReportedSteps';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { isDesktopHost, invokeDesktopHost } from '@/utils/platform/desktopHost';
@@ -228,7 +230,7 @@ export const SystemTaskProgressCard = React.memo(function SystemTaskProgressCard
         ? resolveSystemTaskFailureMessage(props.snapshot.result.error) ?? props.snapshot.latestMessage
         : acquisition?.status ?? props.snapshot.latestMessage;
     const checklistSteps = React.useMemo(() => buildChecklistSteps(props.snapshot), [props.snapshot]);
-    const presentedChecklistSteps = React.useMemo<readonly SetupStep[]>(() => (
+    const presentedChecklistSteps = React.useMemo(() => projectReportedSteps(
         checklistSteps.map((step) => {
             const message = showStepMessages ? step.message?.trim() : undefined;
             return {
@@ -236,7 +238,6 @@ export const SystemTaskProgressCard = React.memo(function SystemTaskProgressCard
                 state: step.state,
                 title: renderValue(resolveSystemTaskStepLabel(step.stepId)),
                 ...(message ? { detail: message } : {}),
-                testID: setupStepTestID('system-task-progress-checklist-step', step.stepId, step.state),
             };
         })
     ), [checklistSteps, showStepMessages]);
@@ -299,9 +300,9 @@ export const SystemTaskProgressCard = React.memo(function SystemTaskProgressCard
                         mode="info"
                     />
                 ) : null}
-                {presentedChecklistSteps.length > 0 ? (
+                {presentedChecklistSteps.items.length > 0 ? (
                     <SectionContentRow testID="system-task-progress-checklist">
-                        <SetupSteps variant="checklist" steps={presentedChecklistSteps} />
+                        <PlanChecklistCard testID="system-task-progress-checklist-step" phase="execute" {...presentedChecklistSteps} />
                     </SectionContentRow>
                 ) : null}
                 {canOpenLogs ? <DesktopSystemTaskLogsControl /> : null}

@@ -13,7 +13,8 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { InlineStatus } from '@/components/ui/status/InlineStatus';
 import { StatusDot } from '@/components/ui/status/StatusDot';
-import { SetupSteps, setupStepTestID, type SetupStep } from '@/components/ui/setupBlocks/SetupSteps';
+import { PlanChecklistCard } from '@/components/systemTasks/planChecklist/PlanChecklistCard';
+import { projectReportedSteps } from '@/components/systemTasks/planChecklist/projectReportedSteps';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { hapticsSuccess } from '@/components/ui/theme/haptics';
@@ -114,16 +115,15 @@ export const MachineAddStepList = React.memo(function MachineAddStepList(props: 
     identity?: Readonly<{ title: string; subtitle: string }> | null;
     hold?: string | null;
 }>) {
-    const steps = React.useMemo(() => props.steps.map((step): SetupStep => {
+    const steps = React.useMemo(() => projectReportedSteps(props.steps.map((step) => {
         const state = step.state === 'pending' ? 'upcoming' : step.state;
         return {
             key: step.id,
             title: step.label,
             state,
             ...(step.elapsedMs !== null && step.state !== 'pending' ? { meta: formatElapsed(step.elapsedMs) } : {}),
-            testID: setupStepTestID(props.testID, step.id, state),
         };
-    }), [props.steps, props.testID]);
+    })), [props.steps]);
     const styles = stylesheet;
     const { theme } = useUnistyles();
     return (
@@ -137,7 +137,7 @@ export const MachineAddStepList = React.memo(function MachineAddStepList(props: 
                     </View>
                 </View>
             ) : null}
-            <SetupSteps variant="checklist" steps={steps} />
+            <PlanChecklistCard testID={props.testID} phase="execute" {...steps} />
             {props.hold ? (
                 <View testID={`${props.testID}.hold`} style={styles.hold}>
                     <Icon name="device-mobile" size={16} color={theme.colors.text.secondary} />

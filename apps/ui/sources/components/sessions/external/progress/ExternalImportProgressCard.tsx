@@ -6,7 +6,8 @@ import type { ExternalSessionOperationProgressV1 } from '@happier-dev/protocol/s
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
-import { SetupSteps, setupStepTestID, type SetupStep } from '@/components/ui/setupBlocks/SetupSteps';
+import { PlanChecklistCard } from '@/components/systemTasks/planChecklist/PlanChecklistCard';
+import { projectReportedSteps } from '@/components/systemTasks/planChecklist/projectReportedSteps';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
@@ -58,12 +59,11 @@ export const ExternalImportProgressCard = React.memo(function ExternalImportProg
         operationId: props.progress.operationId,
         revision: props.progress.revision,
     }), [props.progress.operationId, props.progress.revision]);
-    const checklistSteps = React.useMemo(() => presentation.steps.map((step): SetupStep => ({
+    const checklistSteps = React.useMemo(() => projectReportedSteps(presentation.steps.map((step) => ({
         key: step.stepId,
         state: step.state,
         title: t(step.titleKey),
-        testID: setupStepTestID('external-session-operation-step', step.stepId, step.state),
-    })), [presentation.steps]);
+    }))), [presentation.steps]);
 
     const availableHandlers: Readonly<Partial<Record<
         Exclude<ExternalSessionOperationActionKind, 'dismiss'>,
@@ -159,9 +159,9 @@ export const ExternalImportProgressCard = React.memo(function ExternalImportProg
                         ? `${t(presentation.summaryKey)}. ${detail}`
                         : t(presentation.summaryKey)}
                 />
-                {checklistSteps.length > 0 ? (
+                {checklistSteps.items.length > 0 ? (
                     <SectionContentRow testID="external-session-operation-steps">
-                        <SetupSteps variant="checklist" steps={checklistSteps} />
+                        <PlanChecklistCard testID="external-session-operation-step" phase="execute" {...checklistSteps} />
                     </SectionContentRow>
                 ) : null}
                 {importProgress && importProgressLabel ? (
