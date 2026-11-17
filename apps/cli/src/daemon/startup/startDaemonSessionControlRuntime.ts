@@ -15813,18 +15813,6 @@ export async function startDaemonSessionControlRuntime(
           tracked.reportMarkerCustody?.retiring !== true,
         loadTerminalHostAdapters: async () =>
           (await params.loadTerminalHostAdapters?.()) ?? {},
-        probeSessionServiceability: async (sessionId) =>
-          await probeSessionRunnerServiceability({
-            sessionId,
-            trackedSessions: params.trackedSessionsByKey.values(),
-            probeCapability: async () =>
-              await probeAlreadyRunningExistingSessionServiceability({
-                sessionId,
-                credentials: params.credentials,
-                abortSignal: shutdownCancellationDomains.daemonWorkSignal,
-                isShuttingDown: isRuntimePublicationQuiescing,
-              }),
-          }),
         retireExactTerminalControlServiceability: async ({
           sessionId,
           attachmentInfo,

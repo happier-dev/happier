@@ -126,13 +126,17 @@ export async function resolveTrackedSessionTerminalHostExitCandidate(input: Read
   };
 }
 
-/** Observe the optional frontend using the existing heartbeat, not Session lifetime. */
+/**
+ * Observe the optional frontend using the existing heartbeat, not Session lifetime.
+ * The heartbeat calls this only while the runner is alive, and a runner exit reaches the
+ * exit-candidate path (which probes serviceability), so a live host here needs no Session call:
+ * only a positively dead host is retired.
+ */
 export async function superviseTrackedOptionalTerminalPresentation(input: Readonly<{
   tracked: TrackedSession;
   isCurrent: () => boolean;
   happyHomeDir: string;
   loadTerminalHostAdapters: () => Promise<TerminalHostAdapters>;
-  probeSessionServiceability: NonNullable<Parameters<typeof superviseDisconnectedTerminalHostCandidate>[0]['probeSessionServiceability']>;
   retireExactTerminalControlServiceability: NonNullable<Parameters<typeof superviseDisconnectedTerminalHostCandidate>[0]['retireExactTerminalControlServiceability']>;
 }>): Promise<void> {
   const sessionId = input.tracked.happySessionId;
@@ -175,7 +179,6 @@ export async function superviseTrackedOptionalTerminalPresentation(input: Readon
     terminalHostAdapters: adapters,
     isCurrent: input.isCurrent,
     removeSessionMarker: async () => {},
-    probeSessionServiceability: input.probeSessionServiceability,
     retireExactTerminalControlServiceability: async (fact) => {
       if (!input.isCurrent()) throw new Error('Optional terminal presentation owner changed');
       return await input.retireExactTerminalControlServiceability(fact);

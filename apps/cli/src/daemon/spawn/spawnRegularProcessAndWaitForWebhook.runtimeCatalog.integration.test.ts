@@ -582,9 +582,6 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                     onTrackedSessionHealthy: (current: TrackedSession) => superviseTrackedOptionalTerminalPresentation({
                       tracked: current, isCurrent: () => trackedSessionsByKey.get(tracked.trackingKey) === current, happyHomeDir: homeDir,
                       loadTerminalHostAdapters: async () => ({ herdr: hostAdapter }),
-                      probeSessionServiceability: (sessionId) => probeSessionRunnerServiceability({ sessionId,
-                        trackedSessions: trackedSessionsByKey.values(),
-                        probeCapability: async () => { throw new Error('Positive-dead presenter retirement does not call native control'); } }),
                       retireExactTerminalControlServiceability: (fact) => retireExactTerminalControlServiceability({
                         credentials: { token: 'fixture-token', encryption: null }, sessionId: fact.sessionId,
                         attachmentId: fact.attachmentInfo.attachmentId, terminalMode: fact.terminalMode }),

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import type { TerminalHostAdapter, TerminalHostHandle } from '@happier-dev/agents';
 import axios, { AxiosHeaders } from 'axios';
@@ -13,6 +13,9 @@ import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecyc
 import { readTerminalHostAttachmentInfo, writeTerminalHostAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { retireExactTerminalControlServiceability } from './retireTerminalControlServiceability';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { createDaemonPluginDevelopmentRootsOwner } from '@/plugins/daemon/developmentRoots';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 
 import {
   resolveDisconnectedTerminalMode,
@@ -43,6 +46,8 @@ function attachment() {
 }
 
 describe('disconnected terminal-host supervision', () => {
+  // The real singleton's shutdown is terminal, not a per-case reset.
+  afterAll(async () => { await pluginReloadController.shutdown(); });
   it.each(['absent', 'unreadable', 'replacement'] as const)('distinguishes missing final-exit attachment from unresolved custody: %s', async state => {
     await withConfiguredDaemonTestHome({ prefix: 'final-host-exit-' }, async ({ homeDir }) => {
       const tracked = { trackingKey: legacyPidSessionTrackingKey(999_123_456), pid: 999_123_456, startedBy: 'daemon' as const, happySessionId: 'session-live-1',
@@ -103,7 +108,6 @@ describe('disconnected terminal-host supervision', () => {
             tracked: { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, startedBy: 'daemon', happySessionId: sessionId },
             happyHomeDir: homeDir, isCurrent: () => true,
             loadTerminalHostAdapters: async () => { throw new Error('Borrowed client retirement must not dispose the shell'); },
-            probeSessionServiceability: async () => { throw new Error('Native death is not controller death'); },
             retireExactTerminalControlServiceability: fact => retireExactTerminalControlServiceability({
               credentials: { token: 'test-token', encryption: null }, sessionId: fact.sessionId,
               attachmentId: fact.attachmentInfo.attachmentId, terminalMode: fact.terminalMode }),
@@ -126,6 +130,37 @@ describe('disconnected terminal-host supervision', () => {
           get.mockRestore(); patch.mockRestore();
         }
       });
+    });
+  });
+  it('costs no Session call per heartbeat for a live provider-attach host whose runner is a healthy tracked child', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'optional-presentation-idle-' }, async ({ homeDir }) => {
+      const developmentRoots = createDaemonPluginDevelopmentRootsOwner({ happyHomeDir: homeDir,
+        submitObservation: async () => { throw new Error('This case observes no development sources'); } });
+      const registry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir: homeDir, generation: 1,
+        resolveDevelopmentSourceAuthority: developmentRoots.resolveDevelopmentSourceAuthority });
+      const adoption = await pluginReloadController.adoptPreparedRuntimeRegistry({ registry, changedPluginIds: [],
+        durableRevision: 1, runningSessionDisposition: 'retainRunningSessions' });
+      if (!adoption.ok) throw new Error('The daemon runtime registry was not adopted');
+      const sessionId = 'session-live-1';
+      await writeTerminalHostAttachmentInfo({ happyHomeDir: homeDir, sessionId, handle });
+      const host = adapter({ paneAlive: true, observedAt: 1 });
+      const sessionCalls = vi.fn(async () => ({ state: 'runner_present' as const, control: { state: 'servable' as const } }));
+      const tracked = { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, startedBy: 'daemon' as const,
+        happySessionId: sessionId, spawnOptions: { directory: homeDir,
+          backendTarget: { kind: 'backend' as const, sourceKind: 'built_in' as const, backendId: 'codex' as const },
+          runtimeDescriptorV1: { v: 1 as const, agentId: 'codex', agent: { backendMode: 'appServer' } } } };
+      for (let tick = 0; tick < 10; tick += 1) {
+        await superviseTrackedOptionalTerminalPresentation({
+          tracked, happyHomeDir: homeDir, isCurrent: () => true,
+          loadTerminalHostAdapters: async () => ({ tmux: host }),
+          // Supplied anyway: a live host must not reach a Session call even when one is offered.
+          probeSessionServiceability: sessionCalls,
+          retireExactTerminalControlServiceability: async () => { throw new Error('A live host is not retired'); },
+        } as Parameters<typeof superviseTrackedOptionalTerminalPresentation>[0]);
+      }
+      expect(host.evaluateLiveness).toHaveBeenCalledTimes(10);
+      expect(sessionCalls.mock.calls.length).toBe(0);
+      expect(await readTerminalHostAttachmentInfo({ happyHomeDir: homeDir, sessionId })).toMatchObject({ version: 2 });
     });
   });
   it('derives the terminal mode from exact host identity without duplicating platform rules', () => {
