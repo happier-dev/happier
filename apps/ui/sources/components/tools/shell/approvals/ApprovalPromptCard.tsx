@@ -59,6 +59,8 @@ import { SessionBoardItemReferenceOccurrence } from '@/components/sessions/trans
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { SavedSkillResult } from '@/components/tools/renderers/system/SavedSkillResult';
 import { readApprovedSavedSkillResult } from '@/components/tools/renderers/system/savedSkillResultModel';
+import { useApprovalAutomaticChecksPresentation } from '@/components/approvals/useApprovalAutomaticChecksPresentation';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
 
 type ApprovalPromptCardArtifact = Pick<DecryptedArtifact, 'id' | 'header'>;
@@ -82,6 +84,19 @@ function isTargetActionApproval(
     approval: ApprovalRequest | TargetActionApprovalRequestV1,
 ): approval is TargetActionApprovalRequestV1 {
     return 'kind' in approval && approval.kind === 'plugin_target_action';
+}
+
+function usePromptAutomaticChecksPresentation(
+    approval: ApprovalRequest | TargetActionApprovalRequestV1,
+    artifactId: string,
+    serverId: string | null,
+    unavailable: boolean,
+) {
+    const { binding } = useServerCredentialAccountScopeBinding(serverId);
+    return useApprovalAutomaticChecksPresentation({
+        request: isTargetActionApproval(approval) || approval.v === 2 ? approval : null,
+        serverId, artifactId, unavailable, scope: binding?.isCurrent() ? binding.scope : null,
+    });
 }
 
 function useRequesterDecisionPresentation(
@@ -135,6 +150,8 @@ function TargetActionApprovalPromptCard(props: ApprovalPromptCardProps<TargetAct
     const approvalRouteUnavailable = isApprovalReplayRouteUnavailable(props.approval);
     const accessDisabled = !canApprove || Boolean(approvalDisabledReason);
     const decisionDisabled = accessDisabled || approvalRouteUnavailable || requesterDecision.withheld;
+    const automaticChecksPresentation = usePromptAutomaticChecksPresentation(props.approval, props.artifact.id,
+        approvalHome.serverId, decisionDisabled);
     const actionFields = React.useMemo(() => describeApprovalRequestFields(props.approval), [props.approval]);
     const automaticChecks = props.approval.automaticChecks ?? null;
     const checks = useApprovalAutomaticChecksControls({ checks: automaticChecks, decide, unavailable: decisionDisabled,
@@ -188,6 +205,7 @@ function TargetActionApprovalPromptCard(props: ApprovalPromptCardProps<TargetAct
         >
             {automaticChecks ? (
                 <ApprovalAutomaticChecks checks={automaticChecks} actionTitle={props.approval.summary} serverId={approvalHome.serverId}
+                    {...automaticChecksPresentation}
                     onOpenRoute={openChecksRoute} testID="approval-prompt-automatic-checks" />
             ) : null}
             {actionFields.rows.length > 0 ? (
@@ -298,6 +316,8 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
     const accessDisabled = !canApprove || Boolean(approvalDisabledReason);
     const decisionDisabled = accessDisabled || approvalRouteUnavailable || requesterDecision.withheld;
     const canOpenToolRoute = transcriptSource.navigate !== null && canOpenPermissionToolCallRoute(props.location ?? null);
+    const automaticChecksPresentation = usePromptAutomaticChecksPresentation(props.approval, props.artifact.id,
+        approvalHome.serverId, decisionDisabled);
 
     // Before checks hold this Action (05 S6/S8/S9): the footer answers a shared check's consent, cancels a running
     // check, or approves anyway after a failed one; the body says which check and why.
@@ -466,6 +486,7 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
         >
             {automaticChecks ? (
                 <ApprovalAutomaticChecks checks={automaticChecks} actionTitle={actionTitle} serverId={approvalHome.serverId}
+                    {...automaticChecksPresentation}
                     onOpenRoute={openChecksRoute} testID="approval-prompt-automatic-checks" />
             ) : null}
             {!computerAction && previewSummary && previewSummary !== cardSubtitle?.trim() && !sameWords(previewSummary, cardTitle)

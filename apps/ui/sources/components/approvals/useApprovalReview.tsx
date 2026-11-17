@@ -118,6 +118,9 @@ export function useApprovalReview(props: ApprovalReviewInput) {
     artifact,
     serverId: artifactServerId,
     accessGrants,
+    canAllow,
+    automaticCheckSkips,
+    automaticChecksExecutionAccountName,
     isLoading,
     homeUnavailable,
     error: loadError,
@@ -760,6 +763,11 @@ export function useApprovalReview(props: ApprovalReviewInput) {
     /** Automatic-check progress and Run references belong to this existing request. */
     automaticChecks: parsed.kind === 'target' || parsed.kind === 'built_in' && parsed.request.v === 2
       ? parsed.request.automaticChecks ?? null : null,
+    /** Viewer-local consent permission from the existing exact-Home reader. */
+    canAllow,
+    /** Shared-check recovery facts from the held Artifact, preserving unknown producer notices. */
+    automaticCheckSkips,
+    automaticChecksExecutionAccountName,
     /** The status the page names (an answer recorded here counts) and, when its effect failed, why. */
     displayStatus, executionFailure,
     /** Its Approve control is shown and enabled right now: the same reading that enables the button. */

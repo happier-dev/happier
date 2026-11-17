@@ -17,6 +17,7 @@ import { createWorkflowDefinitionRoute, createWorkflowRunRoute } from '@/sync/do
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { alertApprovalFailure, type ApprovalDecisionOptions } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
+import type { ApprovalAutomaticChecksPresentation } from './useApprovalAutomaticChecksPresentation';
 
 /**
  * Which decision the card offers while an Action's before checks hold it (05 S6/S8/S9): a shared check waiting for
@@ -108,7 +109,7 @@ const stylesheet = StyleSheet.create((theme) => ({
  */
 export const ApprovalAutomaticChecks = React.memo(
   function ApprovalAutomaticChecks(
-    props: Readonly<{
+    props: Readonly<Partial<ApprovalAutomaticChecksPresentation> & {
       checks: ApprovalAutomaticChecksV1;
       actionTitle: string;
       serverId: string | null;

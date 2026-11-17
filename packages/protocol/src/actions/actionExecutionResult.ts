@@ -33,6 +33,19 @@ export const ActionAutomationNoticeV1Schema = lazyZodSchema(() => z.union([
 export type ActionAutomationNoticeV1 = Readonly<z.infer<typeof ActionAutomationNoticeV1Schema>>;
 const ActionAutomationNoticesV1Schema = lazyZodSchema(() => z.array(ActionAutomationNoticeV1Schema));
 
+/** Known shared-check recovery reasons; other producers' notices retain their original reason. */
+export function readActionAutomationSkipReasonV1(
+  notice: Extract<ActionAutomationNoticeV1, { code: 'action_automation_skipped' }>,
+): 'machineRequired' | 'actorConsentUnavailableForRequester' | null {
+  switch (notice.reason) {
+    case 'machineRequired':
+    case 'actorConsentUnavailableForRequester':
+      return notice.reason;
+    default:
+      return null;
+  }
+}
+
 export function withActionAutomationNoticesV1(result: ActionExecuteResult,
   notices: readonly ActionAutomationNoticeV1[] | void): ActionExecuteResult {
   if (!notices?.length) return result;

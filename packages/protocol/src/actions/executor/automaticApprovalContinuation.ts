@@ -35,6 +35,14 @@ export function canAuthorApprovalAutomaticConsentV1(request: Readonly<{
       || context.runtimeAccountId === actor.accountId));
 }
 
+/** Viewer-local presentation; never persisted on the shared approval Artifact. */
+export function readApprovalAutomaticConsentCanAllowV1(
+  request: Parameters<typeof canAuthorApprovalAutomaticConsentV1>[0], context: ActionExecutorContext,
+): boolean {
+  return request?.automaticChecks?.consents.some(row => row.decision === 'pending') === true
+    && canAuthorApprovalAutomaticConsentV1(request, context, 'approval.request.get');
+}
+
 /** Both Artifact families answer the same admitted trigger, retaining the saved actor row. */
 export async function answerApprovalAutomaticConsentV1(args: Readonly<{
   artifactId: string; checks: ApprovalAutomaticChecksV1;

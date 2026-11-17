@@ -5,8 +5,10 @@ import {
     ApprovalRequestV2Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
 import {
     buildApprovalRequestArtifactHeaderV1,
+    buildTargetActionApprovalArtifactHeaderV1,
     type ApprovalArtifactHeaderV1,
 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 
 // Imported from their owning testkit modules, never the `@/dev/testkit` barrel:
 // the harness installs its network boundaries with `vi.doMock`, which only
@@ -21,6 +23,7 @@ import {
 } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { buildDiscussionRequesterApprovalArtifact } from '@/sync/domains/artifacts/approvalArtifacts.discussionRequester.testkit';
 
 /**
  * The exact-Home approval reader over real saved Homes and their stateful
@@ -176,6 +179,79 @@ describe('useApprovalArtifact', () => {
     });
 
     afterEach(() => standardCleanup());
+
+    it('exposes typed shared-check skips and the Bot holder from its existing Artifact read', async () => {
+        const serverId = await addHome(HOME_IDENTITY);
+        // Account labels consume the Home the runtime actually applied, not a saved selection alone.
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const stored = buildDiscussionRequesterApprovalArtifact({ serverId, serverIdentityId: HOME_IDENTITY,
+            executionAccountId: 'bot-holder', requesterAccountId: ACCOUNT_ID,
+            settle: request => ({ ...request, automaticChecks: { phase: 'consent', humanApprovalRequired: true,
+                subjects: [], selectionStatus: 'ready', selected: [], consents: [], runs: [], results: [],
+                notices: ['machineRequired', 'actorConsentUnavailableForRequester', 'futureReason'].map((reason, index) => ({
+                    code: 'action_automation_skipped', reason, automationId: 'shared', triggerId: `check-${index}`, workflowId: 'workflow',
+                })),
+            } }),
+        });
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.getState().applyUsers({ 'bot-holder': {
+            id: 'bot-holder', name: 'Release owner', firstName: null, lastName: null,
+            username: 'release-owner', bio: null, avatar: null, badges: [], status: 'friend', publicKey: null,
+        } });
+        if (typeof stored.body !== 'string') throw new Error('Expected the fixture approval body');
+        const request = ApprovalRequestV2Schema.parse(JSON.parse(stored.body));
+        const artifactId = await storeApproval(serverId, buildApprovalRequestArtifactHeaderV1(request), request);
+        const hook = await renderReader(artifactId, serverId);
+        try {
+            await settle(hook, artifactId, state => expect(state.artifact?.id).toBe(artifactId));
+            expect(hook.getCurrent().automaticCheckSkips).toMatchObject([
+                { reason: 'machineRequired', notice: { triggerId: 'check-0' } },
+                { reason: 'actorConsentUnavailableForRequester', notice: { triggerId: 'check-1' } },
+                { reason: null, notice: { reason: 'futureReason', triggerId: 'check-2' } },
+            ]);
+            expect(hook.getCurrent().automaticChecksExecutionAccountName).toBe('Release owner');
+            expect(hook.getCurrent().canAllow).toBe(false);
+            expect(harness.requestsFor(`/v1/artifacts/${artifactId}`)).toHaveLength(1);
+        } finally { await hook.unmount(); }
+    });
+
+    it.each([
+        { family: 'built_in', accountId: ACCOUNT_ID, decision: 'pending', expected: true },
+        { family: 'built_in', accountId: 'another-account', decision: 'pending', expected: false },
+        { family: 'built_in', accountId: ACCOUNT_ID, decision: 'skip', expected: false },
+        { family: 'target_action', accountId: ACCOUNT_ID, decision: 'pending', expected: true },
+    ] as const)('projects automatic consent Allow for its current Account ($family, $accountId, $decision)', async ({ family, accountId, decision, expected }) => {
+        const serverId = await addHome(HOME_IDENTITY);
+        const base = homeSignedRequest(serverId, HOME_IDENTITY);
+        const request = ApprovalRequestV2Schema.parse({ ...base,
+            executionOriginV1: { ...base.executionOriginV1, accountId },
+            automaticChecks: { phase: 'consent', humanApprovalRequired: false,
+                subjects: [], selectionStatus: 'ready', notices: [], runs: [], results: [],
+                selected: [{ automationId: 'shared', triggerId: 'check', triggerRevision: 1,
+                    ownerAccountId: 'author', workflowId: 'workflow', workflowRevision: 1,
+                    actionIds: [family === 'target_action' ? 'action.invoke' : 'session.title.set'],
+                    phase: 'before', mode: 'wait', onFailure: 'ask' }],
+                consents: [{ automationId: 'shared', triggerId: 'check', decision }],
+            },
+        });
+        const target = family === 'target_action' ? TargetActionApprovalRequestV1Schema.parse({
+            v: 1, kind: 'plugin_target_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'cli' }, requestedSurface: 'cli', qualifiedActionId: 'acme.check/actions/run',
+            input: {}, sourceCustody: { kind: 'development', registeredRootId: 'source' },
+            policyFingerprint: 'b'.repeat(64), subjectFingerprint: 'a'.repeat(64), summary: 'Run check',
+            executionOriginV1: { ...request.executionOriginV1, actionId: 'action.invoke' }, automaticChecks: request.automaticChecks,
+        }) : null;
+        const artifactId = await storeApproval(serverId, target ? buildTargetActionApprovalArtifactHeaderV1(target)
+            : buildApprovalRequestArtifactHeaderV1(request), target ?? request);
+        const hook = await renderReader(artifactId, serverId);
+        try {
+            await settle(hook, artifactId, state => expect(state.artifact?.id).toBe(artifactId));
+            expect(hook.getCurrent().canAllow).toBe(expected);
+            expect(harness.requestsFor(`/v1/artifacts/${artifactId}`)).toHaveLength(1);
+        } finally { await hook.unmount(); }
+    });
 
     it.each([true, false])('observes an unfocused approval only for a pending Action (%s)', async (observeWhileUnfocused) => {
         const serverId = await addHome(HOME_IDENTITY);

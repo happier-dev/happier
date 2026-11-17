@@ -18,6 +18,7 @@ import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAcc
 import { useFailureExplainedByUnreachableHome } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { createArtifactAccessApi } from '@/sync/api/artifacts/apiArtifacts';
 import { useDestinationFocusSignal } from '@/components/appShell/workspace/destinationInstanceContext';
+import { useApprovalAutomaticChecksPresentation } from './useApprovalAutomaticChecksPresentation';
 
 function hasCompatibleApprovalArtifact(
     artifact: DecryptedArtifact | null,
@@ -181,6 +182,12 @@ export function useApprovalArtifact(input: Readonly<{
     const artifact = !scopeMatches ? null : compatibleFetched && localMatches && compatibleLocal && (localRevisionIsNewer || localTimestampIsNewer)
         ? compatibleLocal
         : compatibleFetched ?? (localMatches ? compatibleLocal : null);
+    const automaticConsentRequest = React.useMemo(() => {
+        const matched = artifact?.isDecrypted !== false && typeof artifact?.body === 'string'
+            ? approvalArtifactBodyMatchesHeaderV1(artifact.header ?? {}, artifact.body) : null;
+        return matched?.family === 'target_action' ? matched.request
+            : matched?.family === 'built_in' && matched.request.v === 2 ? matched.request : null;
+    }, [artifact]);
     // A store row may legitimately be header-only while the encrypted body is
     // still loading. Only a completed exact-Home fetch can classify an Artifact
     // as structurally incompatible; absence and transport failure stay retryable.
@@ -276,10 +283,14 @@ export function useApprovalArtifact(input: Readonly<{
     }, [artifactId, observing, refresh, resolution, serverId]);
     const homeUnavailable = Boolean(artifactId) && (homeUnreachable || unresolvedServer || !scopeMatches
         || Boolean(serverId && resolution.kind !== 'bound' && resolution.kind !== 'resolving'));
+    const automaticChecksPresentation = useApprovalAutomaticChecksPresentation({ request: automaticConsentRequest,
+        serverId, artifactId: artifactId ?? '', accessGrants, unavailable: homeUnavailable,
+        scope: resolution.kind === 'bound' ? resolution.scope : null });
     return {
         artifact,
         serverId,
         accessGrants,
+        ...automaticChecksPresentation,
         isLoading: observing && !homeUnavailable && !artifact && Boolean(artifactId) && (loading || (serverId !== null && resolution.kind === 'resolving')),
         homeUnavailable,
         error: Boolean(artifactId) && (error || (homeUnreachable && !artifact) || unresolvedServer || !scopeMatches

@@ -5,13 +5,14 @@ import type { TranscriptAccountActor } from '@happier-dev/session-core/messages'
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { useKnownAccountActor } from '@/components/account/useKnownAccountActor';
-import { resolveAccountActorPresentation, resolveUnknownAccountActorName } from '@/sync/domains/account/accountActorPresentation';
+import { resolveUnknownAccountActorName } from '@/sync/domains/account/accountActorPresentation';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { t } from '@/text';
 
 import { ApprovalOperationActorLine } from './ApprovalOperationActorLine';
+import { useApprovalAccountLabel } from './useApprovalAccountLabel';
+export { useApprovalAccountLabel } from './useApprovalAccountLabel';
 
 /**
  * Whether the viewer is the one person who may decide a shared Bot's requester-bound request. An
@@ -36,31 +37,6 @@ export function useApprovalRequesterViewer(
   );
   const viewerScope = binding?.isCurrent() ? binding.scope : null;
   return isApprovalRequesterViewer(subject, viewerScope);
-}
-
-/** One Account named as this viewer may see it: You, a known name, or a generic person. Never guessed. */
-export function useApprovalAccountLabel(
-  serverId: string | null,
-  accountId: string | undefined,
-  /** The viewer named inside a sentence ("confirmed by you") instead of as a row value ("You"). */
-  form: 'value' | 'sentence' = 'value',
-  /** The resource owner's relationship-qualified actor wins over an unrelated profile-cache miss. */
-  resourceAccountActor?: TranscriptAccountActor | null,
-): string | null {
-  const { viewerScope, actor } = useKnownAccountActor(serverId, accountId);
-  if (!accountId) return null;
-  if (viewerScope?.accountId === accountId) {
-    return form === 'sentence' ? t('session.collaboration.discussion.attribution.you') : t('message.accountActorYou');
-  }
-  const resourceActor = resourceAccountActor?.accountId === accountId
-    ? resourceAccountActor
-    : null;
-  const effectiveActor = resourceActor
-    ? { ...resourceActor, profile: resourceActor.profile ?? actor?.profile ?? null }
-    : actor;
-  return effectiveActor
-    ? resolveAccountActorPresentation(effectiveActor, viewerScope).name
-    : null;
 }
 
 /**
