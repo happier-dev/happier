@@ -263,11 +263,19 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     // A complete When joins the draft; an incomplete one stays on screen until it is.
     const editRow = (row: WorkflowTriggerRowModel, when: TriggerWhenValue) => {
         const next = commitWorkflowTriggerWhen({ draft: props.draft, row: rowRef(row), when, enabled: row.enabled });
+        if (next === null && row.kind === 'new') {
+            // A previously complete add must leave the save draft while its replacement is incomplete.
+            setPending(current => [...current, { clientId: row.clientId, when, enabled: row.enabled }]);
+            change(removeWorkflowTriggerRow(props.draft, rowRef(row)));
+            return;
+        }
         setEdits(({ [row.key]: _previous, ...rest }) => next === null ? { ...rest, [row.key]: when } : rest);
         if (next !== null) change(next);
+        else if (row.kind === 'saved') change(editWorkflowTriggerDraft(props.draft, { kind: 'discardWhen', triggerId: row.triggerId }));
     };
     const editPending = (clientId: string, when: TriggerWhenValue) => {
-        const next = commitWorkflowTriggerWhen({ draft: props.draft, row: { kind: 'new', clientId }, when, enabled: true });
+        const enabled = pending.find(item => item.clientId === clientId)?.enabled ?? true;
+        const next = commitWorkflowTriggerWhen({ draft: props.draft, row: { kind: 'new', clientId }, when, enabled });
         setPending(current => next === null
             ? current.some(item => item.clientId === clientId)
                 ? current.map(item => item.clientId === clientId
@@ -339,7 +347,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
         }),
         ...pending.map((item) => (
             <WorkflowTriggerBlock key={`new:${item.clientId}`} testID={`${props.testIDPrefix}-trigger:new:${item.clientId}`}
-                title={startTitle(item.when)} when={item.when} enabled incomplete startOptions={startOptions}
+                title={startTitle(item.when)} when={item.when} enabled={item.enabled ?? true} incomplete startOptions={startOptions}
                 initialEventSeed={item.eventSeed}
                 onStartsOpenChange={demandCatalog}
                 onSelectStart={(id) => selectStart(item.when, id, (next) => editPending(item.clientId, next))}
@@ -380,7 +388,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     renderRows: () => blocks[index] };
             }),
             ...pending.map((item, index): WorkflowTriggerSentenceLine => ({ key: `new:${item.clientId}`,
-                startId: readWorkflowTriggerStartId(item.when), startTitle: startTitle(item.when), detail: null, enabled: true, incomplete: true,
+                startId: readWorkflowTriggerStartId(item.when), startTitle: startTitle(item.when), detail: null, enabled: item.enabled ?? true, incomplete: true,
                 onSelectStart: (id) => selectStart(item.when, id, (next) => editPending(item.clientId, next)),
                 onRemove: () => setPending(current => current.filter(candidate => candidate.clientId !== item.clientId)),
                 renderRows: () => blocks[rows.length + index] })),

@@ -192,7 +192,7 @@ export function createWorkflowTriggerStartWhen(id: string, previous?: TriggerWhe
  * card and the Sentence view show the same ones.
  */
 export type WorkflowTriggerIncomplete = Readonly<{
-    pending: readonly Readonly<{ clientId: string; when: TriggerWhenValue; eventSeed?: PluginUiOpenAutomationEventRequestV1 }>[];
+    pending: readonly Readonly<{ clientId: string; when: TriggerWhenValue; enabled?: boolean; eventSeed?: PluginUiOpenAutomationEventRequestV1 }>[];
     edits: Readonly<Record<string, TriggerWhenValue>>;
 }>;
 export const EMPTY_WORKFLOW_TRIGGER_INCOMPLETE: WorkflowTriggerIncomplete = Object.freeze({ pending: Object.freeze([]), edits: Object.freeze({}) });

@@ -402,6 +402,70 @@ describe('Run a workflow trigger inputs', () => {
         expect(change.mock.calls[0]?.[0].adds).toMatchObject([{ trigger: { kind: 'schedule', enabled: true,
             schedule: { kind: 'cron', scheduleExpr: '0 9 * * *' } } }]);
     });
+    it.each([true, false])('keeps an invalid new Once out of the save draft and restores the same trigger when completed (enabled=%s)', async (enabled) => {
+        const { EMPTY_WORKFLOW_TRIGGER_INCOMPLETE } = await import('./workflowTriggerStarts');
+        let current: React.ComponentProps<typeof WorkflowTriggerSection>['draft'] = { adds: [], updates: {}, removes: [] };
+        function Editor() {
+            const [draft, setDraft] = React.useState(current);
+            const [incomplete, setIncomplete] = React.useState(EMPTY_WORKFLOW_TRIGGER_INCOMPLETE);
+            current = draft;
+            return <WorkflowTriggerSection testIDPrefix="once-workflow" set={null} draft={draft} onChangeDraft={setDraft}
+                incomplete={{ state: incomplete, onChange: setIncomplete }} status="ready" onRetry={() => {}}
+                stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />;
+        }
+        const screen = await renderScreen(<Editor />);
+        await addTrigger(screen, 'once-workflow', 'schedule');
+        expect(current.adds).toMatchObject([{ trigger: { kind: 'schedule', enabled: true,
+            schedule: { kind: 'cron', scheduleExpr: '0 9 * * *' } } }]);
+        const clientId = current.adds[0]!.clientId;
+        const prefix = `once-workflow-trigger:new:${clientId}`;
+        if (!enabled) await toggleTrigger(screen, prefix);
+        await screen.pressByTestIdAsync(`${prefix}-repeat:once`);
+        const relative = () => screen.findAll(node => node.props.testID === `${prefix}-relative`
+            && typeof node.props.onChangeText === 'function')[0]!;
+        await act(async () => { relative().props.onChangeText('2m'); });
+        await act(async () => { relative().props.onBlur(); });
+        expect(screen.findByTestId(`${prefix}-incomplete`)).not.toBeNull();
+        expect(current.adds).toEqual([]);
+        expect(relative().props.value).toBe('2m');
+        await act(async () => { relative().props.onChangeText('in 2 min'); });
+        const before = Date.now();
+        await act(async () => { relative().props.onBlur(); });
+        expect(current.adds).toHaveLength(1);
+        expect(current.adds[0]).toMatchObject({ clientId, trigger: { kind: 'schedule', enabled,
+            schedule: { kind: 'once', scheduledAt: expect.any(Number) } } });
+        const schedule = current.adds[0]!.trigger;
+        if (schedule.kind !== 'schedule' || schedule.schedule.kind !== 'once') throw new Error('Expected Once');
+        expect(schedule.schedule.scheduledAt).toBeGreaterThanOrEqual(before + 120_000);
+        expect(screen.findByTestId(`${prefix}-incomplete`)).toBeNull();
+        await screen.unmount();
+    });
+    it('does not save a prior complete schedule edit while the saved trigger has an incomplete Once', async () => {
+        const { WorkflowTriggerSetV1Schema } = await import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1');
+        const set = WorkflowTriggerSetV1Schema.parse({ automationId: 'once-set', revision: 1, enabled: true, health: 'available',
+            triggers: [{ ...DAILY_TRIGGER, id: 'daily-row', revision: 1, createdAt: 1, updatedAt: 1,
+                nextRunAt: null, triggerDefinitionEnvelope: null }] });
+        let current: React.ComponentProps<typeof WorkflowTriggerSection>['draft'] = { adds: [], updates: {}, removes: [] };
+        function Editor() {
+            const [draft, setDraft] = React.useState(current);
+            current = draft;
+            return <WorkflowTriggerSection testIDPrefix="saved-once" set={set} draft={draft} onChangeDraft={setDraft}
+                status="ready" onRetry={() => {}} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />;
+        }
+        const screen = await renderScreen(<Editor />);
+        const prefix = 'saved-once-trigger:saved:daily-row';
+        const time = () => screen.findAll(node => node.props.testID === `${prefix}-at`
+            && typeof node.props.onChangeText === 'function')[0]!;
+        await act(async () => { time().props.onChangeText('10:00'); });
+        await act(async () => { time().props.onBlur(); });
+        expect(current.updates['daily-row']?.trigger).toMatchObject({ kind: 'schedule', schedule: { scheduleExpr: '0 10 * * *' } });
+        await screen.pressByTestIdAsync(`${prefix}-repeat:once`);
+        expect(screen.findByTestId(`${prefix}-incomplete`)).not.toBeNull();
+        expect(current.updates['daily-row']?.trigger).toBeUndefined();
+        expect(current.removes).toEqual([]);
+        expect(set.triggers[0]).toMatchObject(DAILY_TRIGGER);
+        await screen.unmount();
+    });
     it('the Sentence view\'s "or…" writes exactly what the card\'s Add a trigger writes, and both show the same incomplete trigger', async () => {
         const { EMPTY_WORKFLOW_TRIGGER_INCOMPLETE } = await import('./workflowTriggerStarts');
         const card = vi.fn();

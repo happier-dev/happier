@@ -156,6 +156,7 @@ export type WorkflowTriggerDraftEdit =
     | Readonly<{ kind: 'update'; triggerId: AutomationTriggerId; trigger?: AutomationTriggerDefinition; enabled?: boolean; payloadSchema?: PluginJsonSchemaV2 | null }>
     | Readonly<{ kind: 'remove'; triggerId: AutomationTriggerId }>
     | Readonly<{ kind: 'discardAdd'; clientId: string }>
+    | Readonly<{ kind: 'discardWhen'; triggerId: AutomationTriggerId }>
     | Readonly<{ kind: 'setContext'; context: WorkflowTriggerSetContextDraft }>;
 
 export function editWorkflowTriggerDraft(draft: WorkflowTriggerDraft, edit: WorkflowTriggerDraftEdit): WorkflowTriggerDraft {
@@ -176,6 +177,13 @@ export function editWorkflowTriggerDraft(draft: WorkflowTriggerDraft, edit: Work
         }
         case 'discardAdd':
             return { ...draft, adds: draft.adds.filter((add) => add.clientId !== edit.clientId) };
+        case 'discardWhen': {
+            const previous = draft.updates[edit.triggerId];
+            if (!previous) return draft;
+            const { [edit.triggerId]: _dropped, ...updates } = draft.updates;
+            return { ...draft, updates: previous.enabled === undefined ? updates
+                : { ...updates, [edit.triggerId]: { enabled: previous.enabled } } };
+        }
         case 'setContext':
             return { ...draft, context: { ...draft.context, ...edit.context } };
         case 'update': {
