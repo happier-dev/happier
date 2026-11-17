@@ -97,6 +97,7 @@ export const themeSurfaces = {
     faceFailed: ({ face }: { face: string }) => `无法添加${face}。`,
     retryFaces: "重试",
     factIncludes: "包含",
+    includesCount: ({ count }: { count: number }) => `${count} 个主题`,
     factChanges: "更改",
     colorsOnly: "仅颜色",
     colors: "颜色",

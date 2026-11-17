@@ -97,6 +97,7 @@ export const themeSurfaces = {
     faceFailed: ({ face }: { face: string }) => `${face}を追加できませんでした。`,
     retryFaces: "再試行",
     factIncludes: "含まれるもの",
+    includesCount: ({ count }: { count: number }) => `${count}件のテーマ`,
     factChanges: "変更点",
     colorsOnly: "色のみ",
     colors: "色",

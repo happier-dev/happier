@@ -10,11 +10,18 @@ import { getThemeRegistryLifecycle } from '@/theme/profiles/themeTryOnRuntime';
 import { projectThemeLibraryEntry } from '@/theme/profiles/themeProfilePresentation';
 import type { AcquiredRegistryTheme } from '@/registries/themeRegistryInstall';
 
-import { ThemeMiniaturePreview } from '@/components/settings/appearance/ThemeModePreview';
+import { THEME_MINIATURE_CARD_MIN_WIDTH, ThemeMiniaturePreview } from '@/components/settings/appearance/ThemeModePreview';
 import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import { t } from '@/text';
 
 import type { StoreThemeCardView } from './storeThemeViewTypes';
+
+/**
+ * The narrowest Store theme card on a wide page (lab C1/C2): three across the wide column, two beside the open
+ * listing. A card carries its name and source under the miniature, so it stands half again as wide as the library's
+ * bare miniature tile; a phone keeps that tile's width (two across).
+ */
+export const STORE_THEME_CARD_MIN_WIDTH = THEME_MINIATURE_CARD_MIN_WIDTH * 1.5;
 
 /**
  * Store → Themes cards (lab C1): the shared Collection grid's preview card. The preview band is the theme

@@ -70,7 +70,7 @@ export function StorePluginThemeListingController(props: Readonly<{ reference: S
     const coverageFacts = coverage ? projectStoreThemeCoverageFacts(coverage) : null;
     const apply = () => matching ? run('install', THEME_ACTION_IDS.keep, { previewRef: matching.previewRef })
         : entry ? run('install', THEME_ACTION_IDS.apply, { ref: props.reference, mode: entry.mode }) : undefined;
-    return props.children({ name: entry?.name ?? '', kicker: [t('settingsAppearance.theme'), entry ? describeStoreThemeModes([entry.mode]) : ''].filter(Boolean).join(' · '),
+    return props.children({ name: entry?.name ?? '', kicker: entry ? describeStoreThemeModes([entry.mode]) : '',
         meta: [plugin?.pluginName, plugin?.pluginVersion].filter(Boolean).join(' · '), description: null,
         faces: entry && document.document ? [{ id: contributionId, name: entry.name, mode: entry.mode, miniature: entry.miniature }] : null,
         facesState: document.state === 'ready' ? 'ready' : document.state === 'loading' ? 'loading' : 'error',
@@ -78,7 +78,7 @@ export function StorePluginThemeListingController(props: Readonly<{ reference: S
         tryingFaceId: matching ? contributionId : null, preferredFaceId: entry ? contributionId : null, here, installed,
         installLabel: t('common.apply'), installedLabel: t('themeCard.applied', { here }),
         decisionHelp: matching ? t('themeCard.trying', { here }) : installed ? t('themeCard.applied', { here }) : t('themeStore.tryHelp', { here }),
-        facts: [{ key: 'includes', value: entry?.name ?? t('common.unknown') },
+        facts: [{ key: 'includes', value: entry ? t('themeStore.includesCount', { count: 1 }) : t('common.unknown') },
             { key: 'changes', value: coverageFacts?.changes ?? t('common.unknown') },
             { key: 'worksOn', ...(coverageFacts?.worksOn ?? { value: t('common.unknown') }) },
             { key: 'licence', value: t('common.unknown') }], busy,

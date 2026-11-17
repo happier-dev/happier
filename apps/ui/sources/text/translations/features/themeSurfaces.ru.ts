@@ -97,6 +97,7 @@ export const themeSurfaces = {
     faceFailed: ({ face }: { face: string }) => `Не удалось добавить ${face}.`,
     retryFaces: "Повторить попытку",
     factIncludes: "Содержит",
+    includesCount: ({ count }: { count: number }) => `Тем: ${count}`,
     factChanges: "Меняет",
     colorsOnly: "Только цвета",
     colors: "Цвета",

@@ -62,7 +62,7 @@ import { StoreDirectoryUnavailable } from './StoreDirectoryUnavailable';
 import { kindCopy } from './catalog/storeKindCopy';
 export { kindCopy } from './catalog/storeKindCopy';
 import { projectStoreThemeCard, storeThemeSummary, themeSummaryMatchesMode, type StoreThemeItem } from './catalog/storeThemes';
-import { useStoreThemeCardAnatomy } from './storeThemeCardAnatomy';
+import { STORE_THEME_CARD_MIN_WIDTH, useStoreThemeCardAnatomy } from './storeThemeCardAnatomy';
 import type { StoreThemeCardView } from './storeThemeViewTypes';
 import type { ThemeProfileMode } from '@/theme/profiles/themeProfileTypes';
 import type { RegistryCuration } from '@/registries/useRegistrySuggestions';
@@ -170,6 +170,8 @@ function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: bool
   const themeItems = React.useMemo(() => state.lists.theme?.items.filter(item => visible.has(item)) ?? EMPTY_CURATED,
     [state.lists.theme?.items, visible]);
   const browsing = !state.query.trim() && Object.keys(filter.filters).length === 0;
+  // Which modes a theme covers narrows the Themes page from its filter row, beside the catalog (lab C1).
+  const [themeMode, setThemeMode] = React.useState<ThemeProfileMode | null>(null);
   const frame = (body: React.ReactNode) => (
     <StoreRegistryIdentityProvider items={registryItems}>
     <StoreKindFrame
@@ -180,6 +182,7 @@ function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: bool
       onSourceChange={setSourceId}
       presented={props.presented}
       filter={filter}
+      {...(props.kind === 'theme' ? { condition: <ThemeModeFilter mode={themeMode} onModeChange={setThemeMode} /> } : {})}
     >
       {body}
     </StoreKindFrame>
@@ -214,7 +217,8 @@ function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: bool
         items: state.lists.app.items.filter(item => visible.has(item)) }} query={state.query} browsing={browsing} onSeeSource={setSourceId} />);
       break;
     case 'theme':
-      if (state.lists.theme) return frame(<ThemeDirectory list={{ ...state.lists.theme, items: themeItems }} query={state.query} />);
+      if (state.lists.theme) return frame(<ThemeDirectory list={{ ...state.lists.theme, items: themeItems }} query={state.query}
+        mode={themeMode} onModeChange={setThemeMode} />);
       break;
     case 'pet':
       if (state.lists.pet) return frame(<PetDirectory list={{ ...state.lists.pet, curation: [...props.curation, ...state.lists.pet.curation],
@@ -262,6 +266,8 @@ export function StoreKindFrame(
     onSourceChange?: (sourceId: string | null) => void;
     /** A kind whose condition is not a catalog (Software reads one Machine) supplies its own control; `fill` is true where it stacks under the search (a phone). */
     accessory?: React.ReactNode;
+    /** The kind's one either-or (Themes' Any | Light | Dark): it ends the filter row on a wide page and takes its own row on a phone. */
+    condition?: React.ReactNode;
     presented: boolean;
     filter?: StoreSearchState['filter'];
     children: React.ReactNode;
@@ -309,9 +315,17 @@ export function StoreKindFrame(
             testID: `store.kind.${props.kind}.search`,
             ...(props.filter?.filterButton ? { trailing: props.filter.filterButton } : {}),
           }}
-          band={stacked || accessory || props.filter?.tokenRow ? <>
-            {stacked ? <View style={styles.phoneScope}>{scoped ? scopeChip : null}{accessory}{createEntry}</View>
-              : accessory ? <View style={styles.phoneScope}>{accessory}</View> : null}
+          band={stacked || accessory || props.condition || props.filter?.tokenRow ? <>
+            {stacked ? <>
+              <View style={styles.phoneScope}>{scoped ? scopeChip : null}{accessory}{createEntry}</View>
+              {props.condition ?? null}
+            </> : accessory || props.condition ? (
+              // One filter row: what narrows the page by catalog leads, the kind's either-or ends it, on one line.
+              <View style={styles.filterRow}>
+                {accessory}
+                {props.condition ? <View style={styles.filterRowEnd}>{props.condition}</View> : null}
+              </View>
+            ) : null}
             {props.filter?.tokenRow ?? null}
           </> : undefined}
         />
@@ -417,8 +431,9 @@ export function useStoreThemeRows(list: Readonly<{ items: readonly StoreThemeIte
 }
 
 /** The shared directory owns selection, source failures and pagination; UI-B supplies the card anatomy. */
-function ThemeDirectory(props: Readonly<{ list: StoreKindList<'theme'>; query: string }>) {
-  const [mode, setMode] = React.useState<ThemeProfileMode | null>(null);
+function ThemeDirectory(props: Readonly<{ list: StoreKindList<'theme'>; query: string; mode: ThemeProfileMode | null;
+  onModeChange: (mode: ThemeProfileMode | null) => void }>) {
+  const { mode, onModeChange: setMode } = props;
   const phone = useDeviceType() === 'phone';
   const open = useOpenRegistryItem();
   const sourceTitle = useSourceTitle();
@@ -437,23 +452,23 @@ function ThemeDirectory(props: Readonly<{ list: StoreKindList<'theme'>; query: s
     columnTitles: cardAnatomy.columnTitles,
   }), [cardAnatomy]);
   const modeLabel = mode === null ? t('themeStore.anyMode') : mode === 'light' ? t('themeCard.light') : t('themeCard.dark');
-  return <>
-    {/* Which modes a theme covers is a 2–4 option either-or: the one segmented control (finding 3), kept on phones. */}
-    <View style={[styles.themeModes, phone ? styles.themeModesPhone : null]}>
-      <SegmentedTabBar<'any' | ThemeProfileMode> role="radiogroup" segmentSizing={phone ? 'equal' : 'content'}
-        accessibilityLabel={t('themeStore.modeFilter')} testID="store.theme.modes" activeTabId={mode ?? 'any'}
-        onSelectTab={id => setMode(id === 'any' ? null : id)}
-        tabs={[{ id: 'any', label: t('themeStore.anyMode'), testID: 'store.theme.modes.any' },
-          { id: 'light', label: t('themeCard.light'), testID: 'store.theme.modes.light' },
-          { id: 'dark', label: t('themeCard.dark'), testID: 'store.theme.modes.dark' }]} />
-    </View>
-    <Directory kind="theme" rows={rows} groups={registry.groups} list={props.list} sourceTitle={sourceTitle}
-      query={props.query || (mode === null ? '' : modeLabel)}
-      {...(!props.query && mode !== null ? { onClear: () => setMode(null) } : {})}
-      anatomy={anatomy} presentation="grid"
-      // Phones keep two miniatures across (lab C1P); wider pages keep the Store's three-across default.
-      {...(phone ? { minCardWidth: THEME_MINIATURE_CARD_MIN_WIDTH } : {})} />
-  </>;
+  return <Directory kind="theme" rows={rows} groups={registry.groups} list={props.list} sourceTitle={sourceTitle}
+    query={props.query || (mode === null ? '' : modeLabel)}
+    {...(!props.query && mode !== null ? { onClear: () => setMode(null) } : {})}
+    anatomy={anatomy} presentation="grid"
+    // Phones keep two miniatures across (lab C1P); wider pages three across, two beside the open listing (C2).
+    minCardWidth={phone ? THEME_MINIATURE_CARD_MIN_WIDTH : STORE_THEME_CARD_MIN_WIDTH} />;
+}
+
+/** Which modes a theme covers is a 2–4 option either-or: the one segmented control (finding 3), kept on phones. */
+function ThemeModeFilter(props: Readonly<{ mode: ThemeProfileMode | null; onModeChange: (mode: ThemeProfileMode | null) => void }>) {
+  const phone = useDeviceType() === 'phone';
+  return <SegmentedTabBar<'any' | ThemeProfileMode> role="radiogroup" segmentSizing={phone ? 'equal' : 'content'}
+    accessibilityLabel={t('themeStore.modeFilter')} testID="store.theme.modes" activeTabId={props.mode ?? 'any'}
+    onSelectTab={id => props.onModeChange(id === 'any' ? null : id)}
+    tabs={[{ id: 'any', label: t('themeStore.anyMode'), testID: 'store.theme.modes.any' },
+      { id: 'light', label: t('themeCard.light'), testID: 'store.theme.modes.light' },
+      { id: 'dark', label: t('themeCard.dark'), testID: 'store.theme.modes.dark' }]} />;
 }
 
 type PetDirectoryRow = DirectoryRow & Readonly<{ card: StorePetCardView }>;
@@ -1188,14 +1203,9 @@ export function Directory<Row extends DirectoryRow = DirectoryRow>(
 }
 
 const styles = StyleSheet.create((theme) => ({
-  // The mode choice ends the band under the search on wide pages and takes the row on phones.
-  themeModes: {
-    alignSelf: 'flex-end',
-    marginBottom: theme.space.s12,
-  },
-  themeModesPhone: {
-    alignSelf: 'stretch',
-  },
+  // The band's one filter row on a wide page: the catalog leads, the kind's either-or ends it, centred on one line.
+  filterRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8 },
+  filterRowEnd: { marginLeft: 'auto' },
   body: { gap: theme.space.s16 },
   pageStatus: { paddingTop: theme.space.s12 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },

@@ -134,14 +134,14 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
         : run('install', THEME_ACTION_IDS.install, { listing: { sourceId, itemId } });
     const update = () => run('update', THEME_ACTION_IDS.install, { listing: { sourceId, itemId } });
     return props.children({
-        name: opened?.listing.summary.title ?? '', kicker: [t('settingsAppearance.theme'), describeStoreThemeModes(faces?.map(face => face.mode) ?? [])].filter(Boolean).join(' · '),
+        name: opened?.listing.summary.title ?? '', kicker: describeStoreThemeModes(faces?.map(face => face.mode) ?? []),
         meta: opened ? [opened.listing.summary.publisher?.name, source?.title,
             opened.listing.pointer.version].filter(Boolean).join(' · ') : '',
         description: opened?.listing.summary.description ?? null,
         faces, facesState: opened ? 'ready' : failed ? 'error' : 'loading', facesError: failed, tryingFaceId,
         preferredFaceId: preferred?.id ?? null, here: t('themeDevices.here'), installed,
         facts: [
-            { key: 'includes', value: opened?.listing.metadata.includes.map(face => face.label).join(' · ') ?? t('common.unknown') },
+            { key: 'includes', value: opened ? t('themeStore.includesCount', { count: opened.listing.metadata.includes.length }) : t('common.unknown') },
             { key: 'changes', value: coverageFacts?.changes ?? t('common.unknown') },
             { key: 'worksOn', ...(coverageFacts?.worksOn ?? { value: t('common.unknown') }) },
             { key: 'licence', value: opened?.listing.metadata.license ?? t('common.unknown') },

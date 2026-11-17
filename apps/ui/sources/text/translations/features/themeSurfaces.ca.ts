@@ -97,6 +97,7 @@ export const themeSurfaces = {
     faceFailed: ({ face }: { face: string }) => `No s’ha pogut afegir ${face}.`,
     retryFaces: "Torna-ho a provar",
     factIncludes: "Inclou",
+    includesCount: ({ count }: { count: number }) => count === 1 ? '1 tema' : `${count} temes`,
     factChanges: "Canvia",
     colorsOnly: "Només colors",
     colors: "Colors",

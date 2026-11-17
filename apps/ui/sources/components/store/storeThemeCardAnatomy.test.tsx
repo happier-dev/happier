@@ -108,3 +108,15 @@ it('acquires only measured near-viewport packages and reuses them across scroll-
     await flushHookEffects();
     expect(reads.sort(), 'revisiting an unavailable package does not retry its failed gallery read').toEqual(['failed', 'far', 'near-a', 'near-b']);
 });
+
+it('keeps three Store theme cards across the wide column and two beside the open listing (lab C1/C2)', async () => {
+    const { STORE_THEME_CARD_MIN_WIDTH } = await import('./storeThemeCardAnatomy');
+    const { HAPPIER_PAGE_METRICS } = await import('@happier-dev/plugin-ui/presentation');
+    // The Collection grid's column rule: as many minimum-width cards as fit its stage between the sheet gutters.
+    const columns = (stage: number) => Math.max(1, Math.floor((stage - 2 * HAPPIER_PAGE_METRICS.sheetInsetPx + HAPPIER_PAGE_METRICS.cardGapPx)
+        / (STORE_THEME_CARD_MIN_WIDTH + HAPPIER_PAGE_METRICS.cardGapPx)));
+    expect(columns(HAPPIER_PAGE_METRICS.columnMaxWidthPx.wide)).toBe(3);
+    // Beside the open listing: 1440 with the default pane leaves 504 (observed live), a 1512 laptop about 576.
+    expect(columns(504)).toBe(2);
+    expect(columns(576)).toBe(2);
+});

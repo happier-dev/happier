@@ -10,6 +10,8 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { PANE_TEXT_INSET_PX } from '@/components/ui/layout/headerBand';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { WordCrossFade } from '@/components/ui/motion/WordCrossFade';
 import { Text } from '@/components/ui/text/Text';
@@ -49,9 +51,7 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
 
   return (
     <ItemList testID={props.testID} presentation="grouped">
-    <View
-      style={[styles.root, phone ? styles.rootPhone : null]}
-    >
+    <View style={styles.root}>
       <View style={styles.identity}>
         <Text variant="meta" style={styles.kicker}>
           {props.kicker}
@@ -207,11 +207,14 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
       </View>
 
       {props.facts.length > 0 ? (
-        <ItemGroup testID={id('facts')}>
-          {props.facts.map((fact) => (
-            <FactRow key={fact.key} fact={fact} />
-          ))}
-        </ItemGroup>
+        // The facts card stands on the listing's edges like everything above it: a contained scope adds no second inset.
+        <ListPresentationProvider value="page" pageInsets="contained">
+          <ItemGroup testID={id('facts')} header="none">
+            {props.facts.map((fact) => (
+              <FactRow key={fact.key} fact={fact} />
+            ))}
+          </ItemGroup>
+        </ListPresentationProvider>
       ) : null}
     </View>
     </ItemList>
@@ -258,13 +261,12 @@ function FactRow(props: Readonly<{ fact: StoreThemeListingFact }>) {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  // One frame: every block starts on the pane's text edge, where the pane header's title starts, and ends where its
+  // close glyph ends; the blocks share one step between them.
   root: {
-    paddingHorizontal: theme.space.s24,
+    paddingHorizontal: PANE_TEXT_INSET_PX,
     paddingVertical: theme.space.s16,
     gap: theme.space.s16,
-  },
-  rootPhone: {
-    paddingHorizontal: theme.space.s16,
   },
   identity: {
     gap: theme.space.s2,
