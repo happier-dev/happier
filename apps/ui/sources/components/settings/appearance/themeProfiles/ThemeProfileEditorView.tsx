@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ThemeRadiusScaleName } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { Collection, type CollectionAnatomy, useHappierCollection } from '@happier-dev/plugin-ui';
 
 import {
   ThemeMiniaturePreview,
@@ -23,6 +24,7 @@ import { PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -50,6 +52,7 @@ const RADIUS_TITLE_KEYS = {
 } as const satisfies Record<ThemeRadiusScaleName, string>;
 /** The live preview beside the controls: a small window; on a phone a short strip (the app itself previews). */
 const PREVIEW_ASPECT = { wide: 1.45, phone: 2 } as const;
+const passThroughScroller = (children: React.ReactNode) => children;
 
 /**
  * The theme editor (lab D1–D4): the theme's identity and one primary (Save and use) in the header,
@@ -611,18 +614,7 @@ function CssView(props: ThemeProfileEditorViewProps) {
         </View>
       ) : null}
       {whichOpen && css.webOnlyRules?.length ? (
-        <View testID="settings-theme-profile-css-web-only" style={stylesheet.webOnlyList}>
-          {css.webOnlyRules.map((rule) => (
-            <TextLinkButton
-              key={`${rule.line}:${rule.selector}`}
-              size="meta"
-              tone="quiet"
-              label={t('settingsAppearance.themeProfiles.cssWebOnlyRule', { line: rule.line, selector: rule.selector })}
-              onPress={() => css.onRevealLine?.(rule.line)}
-              disabled={!css.onRevealLine}
-            />
-          ))}
-        </View>
+        <WebOnlyRules rules={css.webOnlyRules} onRevealLine={css.onRevealLine} />
       ) : null}
       <SectionContentRow>
         <View style={stylesheet.code}>
@@ -640,6 +632,32 @@ function CssView(props: ThemeProfileEditorViewProps) {
       </SectionContentRow>
     </ItemGroup>
   );
+}
+
+type WebOnlyRule = NonNullable<ThemeProfileEditorViewProps['css']['webOnlyRules']>[number] & Readonly<{ key: string }>;
+const webOnlyRuleKey = (rule: WebOnlyRule) => rule.key;
+function WebOnlyRules(props: Readonly<{
+  rules: NonNullable<ThemeProfileEditorViewProps['css']['webOnlyRules']>;
+  onRevealLine: ThemeProfileEditorViewProps['css']['onRevealLine'];
+}>) {
+  const rows = React.useMemo(() => props.rules.map((rule, index) => ({ ...rule, key: String(index) })), [props.rules]);
+  const onOpenChange = React.useCallback((key: string | null) => {
+    const rule = rows.find(row => row.key === key);
+    if (rule) props.onRevealLine?.(rule.line);
+  }, [rows, props.onRevealLine]);
+  const model = useHappierCollection({ items: rows, keyOf: webOnlyRuleKey, openKey: null, onOpenChange });
+  const anatomy = React.useMemo<CollectionAnatomy<WebOnlyRule>>(() => ({
+    glyph: () => null,
+    title: rule => t('settingsAppearance.themeProfiles.cssWebOnlyRule', { line: rule.line, selector: rule.selector }),
+    accessibilityLabel: rule => t('settingsAppearance.themeProfiles.cssWebOnlyRule', { line: rule.line, selector: rule.selector }),
+    columnTitles: { title: t('settingsAppearance.themeProfiles.cssTitle') },
+  }), []);
+  return <CoreCollectionScope renderPageScroller={passThroughScroller}>
+    <Collection model={model} anatomy={anatomy} presentation="list" detail="none" scroll="page"
+      minListWidth={280} minDetailWidth={280} preferredListRatio={1}
+      selection={{ isItemActivatable: () => Boolean(props.onRevealLine) }}
+      testID="settings-theme-profile-css-web-only" accessibilityLabel={t('settingsAppearance.themeProfiles.cssTitle')} />
+  </CoreCollectionScope>;
 }
 
 /** Surfaces you can style: the stable names CSS addresses, and their parts. */
@@ -743,11 +761,6 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   mono: {
     ...Typography.mono(),
-  },
-  webOnlyList: {
-    alignItems: 'flex-start',
-    gap: theme.space.s4,
-    paddingBottom: theme.space.s8,
   },
   coverage: {
     flexDirection: 'row',

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, renderSettingsView, standardCleanup } from '@/dev/testkit';
 import { measureMountedCollections } from '@/dev/testkit/render/renderInCollectionLayout';
+import { prepareThemeCss } from '@/theme/css/prepareThemeCss';
 
 // The browser editor's platform boundary has no DOM node in the React renderer.
 beforeEach(() => vi.stubGlobal('window', { innerWidth: 1440 }));
@@ -13,6 +14,8 @@ vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createT
 vi.mock('reanimated-color-picker', async () => (await import('@/dev/testkit/mocks/reanimatedColorPicker')).createReanimatedColorPickerMock());
 afterEach(standardCleanup);
 const { StoreThemeListing } = await import('@/components/store/StoreThemeListing');
+const { ThemeProfileEditorView } = await import('./ThemeProfileEditorView');
+const { ThemeLibrarySpecimen } = await import('@/components/dev/themes/ThemeLibrarySpecimen');
 
 async function measure(screen: Awaited<ReturnType<typeof renderSettingsView>>, rootId: string) {
     await act(async () => {
@@ -42,4 +45,27 @@ it('windows 200 partial-install face failures through the Store page scroll owne
     expect(mounted.length).toBeLessThan(200);
     await screen.pressByTestIdAsync('store-diagnostics:retryFaces');
     expect(retry).toHaveBeenCalledOnce();
+});
+
+it('windows authored web-only CSS rules and still reveals their source line', async () => {
+    const specimen = await renderSettingsView(<ThemeLibrarySpecimen scene="D4" />);
+    const basis = specimen.findAllByType(ThemeProfileEditorView)[0]!.props;
+    await specimen.unmount();
+    const source = Array.from({ length: 200 }, (_, index) => `.rule-${index} { filter: blur(2px); }`).join('\n');
+    const rules = prepareThemeCss(source).detailedCoverage.rules.filter(rule => !rule.native)
+        .map(rule => ({ line: rule.range.line, selector: rule.selector }));
+    expect(rules).toHaveLength(200);
+    const reveal = vi.fn();
+    const screen = await renderSettingsView(<ThemeProfileEditorView {...basis} view="css" css={{ ...basis.css, value: source,
+        coverage: { total: 200, native: 0, webOnly: 200 }, webOnlyRules: rules, onRevealLine: reveal }} />);
+    await screen.pressByTestIdAsync('settings-theme-profile-css-which');
+    await measure(screen, 'settings-theme-profile-editor');
+    const mounted = diagnosticTexts(screen, '.rule-');
+    expect(mounted.length).toBeGreaterThan(0);
+    expect(mounted.length).toBeLessThan(200);
+    const first = screen.tree.findAll(node => typeof node.type === 'string' && typeof node.props.onPress === 'function'
+        && String(node.props.accessibilityLabel ?? node.props['aria-label']).includes('.rule-0'))[0];
+    expect(first).toBeDefined();
+    await act(async () => first!.props.onPress());
+    expect(reveal).toHaveBeenCalledExactlyOnceWith(1);
 });
