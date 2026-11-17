@@ -1307,7 +1307,7 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const providerTeardown = scenario.startsWith('provider teardown');
@@ -1829,7 +1829,8 @@ describe('installed deployment storage and target composition', () => {
                 const context: ActionExecutorContext = { ...ownerContext, surface: 'cli', authority: 'present_user',
                     serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'owner', actionRequestId: 'provider-delete-request',
                     actionCaller: { kind: 'host' }, interactivePresentation: 'unavailable',
-                    actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'deployments.teardown': ['cli'] },
+                    actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'deployments.teardown': ['cli'],
+                        ...(scenario === 'provider teardown queued observation' ? { 'deployments.receipts.observe': ['cli'] as const } : {}) },
                         ...(scenario === 'provider teardown review' ? { actions: {
                             [formatQualifiedPluginActionId({ pluginId, localId: 'teardown' })]: { approvalRequiredSurfaces: ['cli'] } } } : {}) }) };
                 if (scenario === 'provider teardown changed identity') {
@@ -1837,7 +1838,13 @@ describe('installed deployment storage and target composition', () => {
                     row.content = { ...linked, providerIdentity: { ...linked.providerIdentity, providerResourceId: 'different-project' } };
                     put(row.targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, row.content);
                 }
-                const result = await executor.execute('deployments.teardown', input, context);
+                // COR6-171's loaded queued teardown has no providerDeploymentId: observe
+                // must reach the provider absence check without serializing undefined.
+                const result = scenario === 'provider teardown queued observation'
+                    ? await executor.execute('deployments.receipts.observe', {
+                        serverId: intent.serverId, environmentId: intent.environmentId, deploymentId: receipt.id,
+                    }, context)
+                    : await executor.execute('deployments.teardown', input, context);
                 if (scenario === 'provider teardown changed identity') {
                     expect(result).toMatchObject({ ok: false, errorCode: 'deployment_access_denied', effectAttempted: false });
                     expect(states.at(-1)).toBe('failed');

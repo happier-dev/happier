@@ -365,7 +365,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                     deploymentId: receipt.deployment.id, expectedDeploymentRevision: receipt.deployment.revision,
                     actionOperationId: receipt.deployment.actionOperationId,
                     operation: receipt.deployment.operation,
-                    providerDeploymentId: content.platform.observation.providerDeploymentId });
+                    ...(content.platform.observation.providerDeploymentId
+                        ? { providerDeploymentId: content.platform.observation.providerDeploymentId } : {}) });
                 await scope.admit(input, 'execution', receipt);
                 return { children: [{ action: scope.action, role: 'observe', input: normalizeStrictJsonValue(input) }],
                     executeAdmittedAction: async ({ context }) => {
