@@ -31,6 +31,8 @@ import {
 } from './themeProfileRuntime';
 import { getBuiltInThemeProfileDefinition } from './builtInThemeProfiles';
 import type { ThemeProfilesLocalStateV1 } from './themeProfileTypes';
+import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
+import type { ThemeTryOnSnapshot } from './themeTryOn';
 
 const profileState: ThemeProfilesLocalStateV1 = {
     activeProfileIds: { light: 'ocean', dark: 'ocean' },
@@ -82,6 +84,42 @@ const pairedProfileState = {
 } as unknown as ThemeProfilesLocalStateV1;
 
 describe('theme profile runtime', () => {
+    it('renders one retained preview mode and restores the latest saved selection when it clears', () => {
+        platformRuntime.setStatusBarStyle.mockClear();
+        const parsed = parseThemeProfileDocument({ ...profileState.profiles[0],
+            overrides: { light: { 'background.canvas': '#abc123' }, dark: { 'background.canvas': '#123abc' } },
+            style: { radius: 'round' } });
+        if (!parsed.ok) throw new Error('Invalid preview fixture');
+        const preview: ThemeTryOnSnapshot = { document: parsed.document, mode: 'light', origin: { kind: 'editor' }, previewRef: 'preview' };
+        const registered: Record<'light' | 'dark', Theme> = { light: lightTheme, dark: darkTheme };
+        const updateTheme = vi.fn((mode: 'light' | 'dark', updater: (theme: Theme) => Theme) => { registered[mode] = updater(registered[mode]); });
+        const input = {
+            themePreference: 'dark' as const, themeProfiles: profileState, platform: 'ios', systemTheme: 'dark' as const,
+            unistylesRuntime: { getTheme: (mode: 'light' | 'dark') => registered[mode], updateTheme,
+                setAdaptiveThemes: vi.fn(), setTheme: vi.fn(), setRootViewBackgroundColor: vi.fn() },
+            setSystemBackgroundColor: vi.fn(), recordBreadcrumb: vi.fn(), style: null,
+        };
+        const tried = applyThemeRuntimeSelection({ ...input, preview });
+        expect(tried.light.colors.background.canvas).toBe('#abc123');
+        expect(tried.dark.colors.background.canvas).toBe('#0a0a0a');
+        expect(tried.light.borderRadius.xl).toBeGreaterThan(lightTheme.borderRadius.xl);
+        expect(input.unistylesRuntime.setTheme).toHaveBeenLastCalledWith('light');
+        expect(platformRuntime.setStatusBarStyle).toHaveBeenLastCalledWith('dark', true);
+        expect(updateTheme).toHaveBeenCalledTimes(1);
+        updateTheme.mockClear();
+        applyThemeRuntimeSelection({ ...input, preview });
+        expect(updateTheme).not.toHaveBeenCalled();
+        const base: ThemeTryOnSnapshot = { document: null, selection: null, mode: 'light', origin: { kind: 'editor' }, previewRef: 'base' };
+        expect(applyThemeRuntimeSelection({ ...input, preview: base }).light).toBe(lightTheme);
+        const latest = { ...profileState, profiles: [{ ...profileState.profiles[0], overrides: {
+            light: {}, dark: { 'background.canvas': '#334455' },
+        } }] };
+        const restored = applyThemeRuntimeSelection({ ...input, themeProfiles: latest, preview: null });
+        expect(restored.dark.colors.background.canvas).toBe('#334455');
+        expect(input.unistylesRuntime.setTheme).toHaveBeenLastCalledWith('dark');
+        expect(platformRuntime.setStatusBarStyle).toHaveBeenLastCalledWith('light', true);
+    });
+
     it('stores only the device selection when activating a profile through the default persistence path', async () => {
         const previous = loadLocalSettings();
         onTestFinished(() => saveLocalSettings(previous));

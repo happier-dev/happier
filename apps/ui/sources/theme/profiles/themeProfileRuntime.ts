@@ -36,6 +36,7 @@ import { prepareThemeProfileCss } from '../css/prepareThemeCss';
 import type { ThemeSurfaceStyleTable } from '../css/types';
 import { applyThemeStyleScales, resolveThemeStyleScales, themeStyleSelectionFromSurfaceFinish, type ThemeStyleSelection } from '../themeStyleScales';
 import type { ThemeProfileMode, ThemeProfileSelectionByMode, ThemeProfilesLocalStateV1 } from './themeProfileTypes';
+import type { ThemeTryOnSnapshot } from './themeTryOn';
 
 type AppThemeName = 'light' | 'dark';
 
@@ -56,7 +57,8 @@ type ApplyThemeRuntimeSelectionInput = Readonly<{
     platform?: string;
     unistylesRuntime?: ThemeRuntimeUnistylesAdapter;
     setSystemBackgroundColor?: (color: string) => Promise<unknown> | void;
-    resolveThemes?: (themeProfiles: ThemeProfilesLocalStateV1) => ThemeRuntimeThemes;
+    resolveThemes?: (themeProfiles: ThemeProfilesLocalStateV1, preview?: ThemeTryOnSnapshot | null) => ThemeRuntimeThemes;
+    preview?: ThemeTryOnSnapshot | null;
     recordBreadcrumb?: (breadcrumb: ThemeRuntimeBreadcrumb) => void;
     /**
      * Shared scales for both themes. Absent uses the device's finish; explicit `null` uses the
@@ -146,10 +148,14 @@ const warnThemeRuntimeFallback = (error: unknown): void => {
 
 const runtimeThemeResolver = createThemeProfileResolver();
 
-export const resolveThemeRuntimeThemes = (themeProfiles: ThemeProfilesLocalStateV1): ThemeRuntimeThemes => {
+function readRuntimeProfile(profiles: ThemeProfilesLocalStateV1, mode: AppThemeName, preview?: ThemeTryOnSnapshot | null) {
+    return preview?.mode === mode ? preview.document?.profile ?? null : findActiveThemeProfileForMode(profiles, mode);
+}
+
+export const resolveThemeRuntimeThemes = (themeProfiles: ThemeProfilesLocalStateV1, preview?: ThemeTryOnSnapshot | null): ThemeRuntimeThemes => {
     return {
-        light: runtimeThemeResolver.resolve({ mode: 'light', profile: findActiveThemeProfileForMode(themeProfiles, 'light') }),
-        dark: runtimeThemeResolver.resolve({ mode: 'dark', profile: findActiveThemeProfileForMode(themeProfiles, 'dark') }),
+        light: runtimeThemeResolver.resolve({ mode: 'light', profile: readRuntimeProfile(themeProfiles, 'light', preview) }),
+        dark: runtimeThemeResolver.resolve({ mode: 'dark', profile: readRuntimeProfile(themeProfiles, 'dark', preview) }),
     };
 };
 
@@ -185,9 +191,10 @@ const composeRuntimeThemeStyles = (
     themes: ThemeRuntimeThemes,
     profiles: ThemeProfilesLocalStateV1,
     style: ThemeStyleSelection | null,
+    preview?: ThemeTryOnSnapshot | null,
 ): ThemeRuntimeThemes => {
     const compose = (mode: AppThemeName): Theme => applyThemeStyleScales(themes[mode], resolveThemeStyleScales({
-        ...findActiveThemeProfileForMode(profiles, mode)?.style,
+        ...readRuntimeProfile(profiles, mode, preview)?.style,
         ...style,
     }));
     return { light: compose('light'), dark: compose('dark') };
@@ -199,9 +206,10 @@ function composeNativeCss(
     profiles: ThemeProfilesLocalStateV1,
     mode: AppThemeName,
     platform: string,
+    preview?: ThemeTryOnSnapshot | null,
 ): ThemeRuntimeThemes {
     if (platform === 'web') return themes;
-    const profile = findActiveThemeProfileForMode(profiles, mode);
+    const profile = readRuntimeProfile(profiles, mode, preview);
     if (!profile?.css) return themes;
     const prepared = prepareThemeProfileCss(profile);
     const surfaces = prepared[mode];
@@ -268,7 +276,6 @@ function observeSystemTheme(): void {
         if (!current || current.input.themePreference !== 'adaptive') return;
         const systemTheme = colorScheme === 'dark' ? 'dark' : 'light';
         applyThemeRuntimeSelection({ ...current.input, systemTheme });
-        setStatusBarStyle(resolveStatusBarStyleForThemePreference('adaptive', systemTheme), true);
     });
 }
 
@@ -315,7 +322,7 @@ const applyThemesToUnistyles = (
     const visualTheme = resolveThemeRuntimeVisualTheme(input.themePreference, systemTheme);
 
     if (platform === 'web') {
-        const source = findActiveThemeProfileForMode(input.themeProfiles, visualTheme)?.css;
+        const source = readRuntimeProfile(input.themeProfiles, visualTheme, input.preview)?.css;
         // The sheet owner parses before attachment and retains last-good on failure.
         applyThemeStylesheet(source ? { source } : null, visualTheme);
     }
@@ -351,6 +358,7 @@ const applyThemesToUnistyles = (
     runtime.setAdaptiveThemes(false);
     recordThemeRuntimeBreadcrumb(input, { phase: 'set-theme', platform, systemTheme, visualTheme, themeName: visualTheme });
     runtime.setTheme(visualTheme);
+    setStatusBarStyle(resolveStatusBarStyleForThemePreference(input.themePreference, systemTheme), true);
 
     // Mounted web roots subscribe to the actual theme and resolved material presentation.
     // Imperative web writes here would race that owner and flatten native glass backing.
@@ -371,18 +379,19 @@ const applyThemesToUnistyles = (
     }
 };
 
-export const applyThemeRuntimeSelection = (input: ApplyThemeRuntimeSelectionInput): ThemeRuntimeThemes => {
+export const applyThemeRuntimeSelection = (requested: ApplyThemeRuntimeSelectionInput): ThemeRuntimeThemes => {
+    const input = requested.preview ? { ...requested, themePreference: requested.preview.mode } : requested;
     const resolveThemes = input.resolveThemes ?? resolveThemeRuntimeThemes;
 
     const style = input.style === undefined
         ? themeStyleSelectionFromSurfaceFinish(defaultLoadLocalSettings()) : input.style;
     let themes: ThemeRuntimeThemes;
     try {
-        const profileThemes = resolveThemes(input.themeProfiles);
+        const profileThemes = resolveThemes(input.themeProfiles, input.preview);
         themes = composeNativeCss(
-            composeRuntimeThemeStyles(profileThemes, input.themeProfiles, style),
+            composeRuntimeThemeStyles(profileThemes, input.themeProfiles, style, input.preview),
             input.themeProfiles, resolveThemeRuntimeVisualTheme(input.themePreference, input.systemTheme ?? readSystemTheme()),
-            resolveRuntimePlatform(input),
+            resolveRuntimePlatform(input), input.preview,
         );
     } catch (error) {
         warnThemeRuntimeFallback(error);
@@ -417,15 +426,6 @@ const applyResolvedThemeRuntimeSelection = (
     systemTheme: AppThemeName,
 ): void => {
     applyThemeRuntimeSelection({ ...selection, systemTheme });
-    setStatusBarStyle(resolveStatusBarStyleForThemePreference(selection.themePreference, systemTheme), true);
-};
-
-/** Apply an unconfirmed selection to the running app without storing it. */
-export const previewThemeSelection = (
-    themePreference: ThemePreference,
-    themeProfiles: ThemeProfilesLocalStateV1,
-): void => {
-    applyResolvedThemeRuntimeSelection({ themePreference, themeProfiles }, readSystemTheme());
 };
 
 /** The single selection mutation, transition, runtime and status-bar owner. */

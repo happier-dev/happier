@@ -4675,6 +4675,7 @@
     "sources/theme/profiles/pluginThemeCatalog.ts",
     "sources/theme/profiles/themeProfileArtifactAdapter.ts",
     "sources/theme/profiles/themeProfileRuntime.ts",
+    "sources/theme/profiles/themeTryOnRuntime.ts",
     "sources/theme/profiles/usePluginThemeList.ts",
     "sources/track/index.ts",
     "sources/track/settingsAnalytics/buildFeatureAnalyticsSnapshot.ts",

@@ -941,6 +941,7 @@
     "sources/components/onboarding/personalize/PersonalizeStage.test.tsx",
     "sources/components/onboarding/personalize/personalizeFlowController.test.ts",
     "sources/components/onboarding/personalize/personalizeFlowModel.test.ts",
+    "sources/components/onboarding/personalize/usePersonalizeFlow.preview.test.tsx",
     "sources/components/onboarding/personalize/usePersonalizeFlow.test.tsx",
     "sources/components/onboarding/preAuth/PreAuthOnboardingWizardEntry.accountServiceEntry.test.tsx",
     "sources/components/onboarding/preAuth/PreAuthOnboardingWizardEntry.integration.test.tsx",

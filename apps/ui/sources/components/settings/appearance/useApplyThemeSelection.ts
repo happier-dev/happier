@@ -7,7 +7,7 @@ import type { ThemeProfilesLocalStateV1 } from '@/theme/profiles/themeProfileTyp
 import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
 import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 
-export { commitThemeSelection, previewThemeSelection } from '@/theme/profiles/themeProfileRuntime';
+export { commitThemeSelection } from '@/theme/profiles/themeProfileRuntime';
 
 /** Admit the complete selection; its existing local owner applies storage, transition and runtime. */
 export function useApplyThemeSelection(beforeCommit?: () => void): (

@@ -1,6 +1,11 @@
 import * as React from 'react';
 
-import { previewThemeSelection, useApplyThemeSelection } from '@/components/settings/appearance/useApplyThemeSelection';
+import { useApplyThemeSelection } from '@/components/settings/appearance/useApplyThemeSelection';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { getThemeTryOnOwner } from '@/theme/profiles/themeTryOnRuntime';
+import { readSystemTheme, resolveThemeRuntimeVisualTheme } from '@/theme/profiles/themeProfileRuntime';
+import { readThemeProfileReferenceSelection } from '@/theme/profiles/themeProfilePersistence';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { useHomeSetupDismissals } from '@/components/hub/layout/useHomeSetupDismissals';
 import { storage } from '@/sync/domains/state/storage';
 import { personalizeProgressState, readPersonalizeProgress, useStoredPersonalizeProgress } from '@/sync/domains/state/onboardingUiState';
@@ -68,7 +73,8 @@ export function usePersonalizeFlow(params: Readonly<{ initialPage?: PersonalizeP
     const [launchingScope] = React.useState(scope);
     const retired = React.useRef(false);
     const saving = React.useRef(false);
-    const previewingTheme = React.useRef(false);
+    const previewReceipt = React.useRef<string | null>(null);
+    const previewRead = React.useRef<AbortController | null>(null);
     const isCurrent = React.useCallback(() => {
         const current = storage.getState().settingsScope;
         return !retired.current && (current === launchingScope || areAccountSettingsScopesEqual(current, launchingScope));
@@ -91,10 +97,13 @@ export function usePersonalizeFlow(params: Readonly<{ initialPage?: PersonalizeP
     onExitRef.current = params.onExit;
 
     const restoreThemePreview = React.useCallback(() => {
-        if (!previewingTheme.current) return;
-        previewingTheme.current = false;
-        const local = storage.getState().localSettings;
-        previewThemeSelection(local.themePreference, readThemeProfilesSnapshot().themeProfiles);
+        previewRead.current?.abort();
+        previewRead.current = null;
+        const receipt = previewReceipt.current;
+        previewReceipt.current = null;
+        if (!receipt) return;
+        try { getThemeTryOnOwner().revert(receipt); }
+        catch (error) { if (readActionErrorCodeV1(error) !== 'theme_preview_stale') throw error; }
     }, []);
     React.useEffect(() => {
         if (isCurrent()) return;
@@ -129,9 +138,26 @@ export function usePersonalizeFlow(params: Readonly<{ initialPage?: PersonalizeP
     const selectTheme = React.useCallback((theme: ThemeModeChoice) => {
         if (!isCurrent() || saving.current) return;
         update({ theme });
-        previewingTheme.current = true;
-        previewThemeSelection(theme, readThemeProfilesSnapshot().themeProfiles);
-    }, [isCurrent, update]);
+        previewRead.current?.abort();
+        previewRead.current = null;
+        const mode = resolveThemeRuntimeVisualTheme(theme, readSystemTheme());
+        const reference = readThemeProfileReferenceSelection(storage.getState().localSettings.themeProfileSelection)[mode];
+        const owner = getThemeTryOnOwner();
+        if (!reference) {
+            previewReceipt.current = owner.begin({ document: null, selection: null, mode, origin: { kind: 'editor' } }).previewRef;
+            return;
+        }
+        const controller = new AbortController();
+        previewRead.current = controller;
+        void getSyncSingleton().withThemeProfileLibrary(async library => {
+            const document = await library.get(reference);
+            if (controller.signal.aborted) return;
+            if (!document) throw new Error('Theme not found');
+            previewReceipt.current = owner.begin({ document, selection: reference, mode, origin: { kind: 'editor' } }).previewRef;
+        }, { expectedScope: launchingScope, signal: controller.signal }).catch(() => {
+            if (!controller.signal.aborted && isCurrent()) setStatus('failed');
+        });
+    }, [isCurrent, launchingScope, update]);
 
     /** Next: saves the page's step and moves on. False when the save failed (the page stays). */
     const next = React.useCallback(async (): Promise<boolean> => {

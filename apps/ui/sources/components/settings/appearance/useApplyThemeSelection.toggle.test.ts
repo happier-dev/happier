@@ -45,7 +45,7 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOrigina
 });
 installDisconnectedServerSocketBoundary();
 
-const { useToggleThemeMode, useApplyThemeSelection, previewThemeSelection } = await import('./useApplyThemeSelection');
+const { useToggleThemeMode, useApplyThemeSelection } = await import('./useApplyThemeSelection');
 
 const CUSTOM_PROFILES = { activeProfileIds: { light: null, dark: 'nightDark' }, profiles: [] };
 
@@ -71,13 +71,6 @@ afterEach(async () => {
 });
 
 describe('useToggleThemeMode', () => {
-    it('previews the runtime mode and status bar without storing the selection', () => {
-        storage.getState().applyLocalSettings({ themePreference: 'light', themeProfiles: CUSTOM_PROFILES });
-        previewThemeSelection('dark', CUSTOM_PROFILES);
-        expect(shared.setTheme).toHaveBeenLastCalledWith('dark');
-        expect(shared.setStatusBarStyle).toHaveBeenLastCalledWith('light', true);
-        expect(storage.getState().localSettings).toMatchObject({ themePreference: 'light', themeProfiles: CUSTOM_PROFILES });
-    });
     it('returns the commit Promise and propagates a refused settings write', async () => {
         storage.getState().applyLocalSettings({ themePreference: 'light', themeProfiles: CUSTOM_PROFILES });
         const failure = new Error('settings scope changed');

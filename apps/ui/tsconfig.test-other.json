@@ -2950,6 +2950,7 @@
     "sources/theme/profiles/themeProfileRuntime.test.ts",
     "sources/theme/profiles/themeProfileTokenRegistry.test.ts",
     "sources/theme/profiles/themeTryOn.test.ts",
+    "sources/theme/profiles/themeTryOnRuntime.test.ts",
     "sources/theme/raisedEdge.test.ts",
     "sources/theme/themeColorParserBoundary.web.test.tsx",
     "sources/theme/themeContrast.test.ts",
