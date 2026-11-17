@@ -5,7 +5,12 @@ import { EventEmitter } from 'node:events';
 import { Console } from 'node:console';
 import { createServer } from 'node:http';
 import axios from 'axios';
-import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
+import { decodeBase64, decrypt, encodeBase64, encrypt, encryptWithDataKey } from '@/api/encryption';
+import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
+import { ApprovalProfileArtifactV1Schema, buildApprovalProfileArtifactHeaderV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
+import { artifactListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
 import { requestSessionStop } from './requestSessionStop';
 import { cleanupForkChildBestEffort } from '@/session/actions/lifecycle/fork/forkChildSessionRecovery';
@@ -222,6 +227,7 @@ describe('requestSessionStop machine transport', () => {
   });
 
   afterEach(() => {
+    resetActiveAccountSettingsSnapshotForTests();
     vi.restoreAllMocks();
     vi.useRealTimers();
   });
@@ -624,9 +630,44 @@ describe('requestSessionStop machine transport', () => {
           : { kind: 'session' as const, sessionId: callerId, starterDepth: 0, turnDepth: 1 },
         ...(caller !== 'automatic' && caller !== 'misbound-child' ? { agentStartContext } : {}),
       };
+      // The caller has its own Session identity and an encrypted profile Artifact.
+      // Only Account preferences are held; the real catalog opens the profile over HTTP.
+      setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: resolveAccountSettingsScopeKey(credentials),
+        settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1, loadedAtMs: 1,
+        settingsSecretsReadKeys: [] });
+      const profileId = 'stop-lead-profile';
+      const profile = ApprovalProfileArtifactV1Schema.parse({ kind: 'approval-profile.v1',
+        profile: { name: 'Lead Session cleanup', approvalWaivedSurfaces: { 'session.stop': ['agent'] } } });
+      const key = await createResourceDataKey({ credentials, mode: 'e2ee' });
+      if (key.mode !== 'e2ee') throw new Error('Expected encrypted profile fixture');
+      const profileRow = { id: profileId, ownerAccountId: 'stop-owner', access: 'owner', encryptionMode: 'e2ee',
+        header: encodeBase64(encryptWithDataKey(buildApprovalProfileArtifactHeaderV1(profile), key.dataKey)),
+        body: encodeBase64(encryptWithDataKey({ body: JSON.stringify(profile) }, key.dataKey)),
+        dataEncryptionKey: key.dataEncryptionKey, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+      const get = vi.mocked(axios.get).getMockImplementation()!;
+      vi.mocked(axios.get).mockImplementation(async (...args) => {
+        const url = String(args[0]);
+        const path = new URL(url, 'http://stop.test').pathname;
+        if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
+        if (path === '/v1/artifacts') return { status: 200, data: artifactListResponse(url, [{ ...profileRow, body: undefined }]) };
+        if (callerId !== sessionId && path.endsWith(`/sessions/${callerId}`)) return { status: 200, data: { session: {
+          id: callerId, seq: 0, createdAt: 0, updatedAt: 0, active: true, activeAt: 0,
+          metadataVersion: 1, agentState: null, agentStateVersion: 0, dataEncryptionKey: null,
+          encryptionMode: 'plain', metadataLayoutVersion: 1, metadata: JSON.stringify({ v: 1 }), share: null,
+          machineId: 'owning-machine', ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({
+            material: { type: 'legacy', secret }, ownerMetadata: { v: 1,
+              workspace: { machineId: 'owning-machine' }, runtime: { approvalProfileId: profileId } },
+            randomBytes: length => new Uint8Array(length).fill(19),
+          }),
+        } } };
+        return get(...args);
+      });
       // Home membership, metadata HTTP and Socket.IO are the boundaries. The real
-      // Action scope guard, Stop service, provenance write and physical port run.
+      // Action scope guard, profile catalog, Stop service and physical port run.
       vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+        if (new URL(String(url), 'http://stop.test').pathname === '/v1/artifacts/read') {
+          return artifactReadResponse(body, id => id === profileId ? profileRow : null);
+        }
         expect(String(url)).toContain('/v2/sessions/read-batch');
         if (!body || typeof body !== 'object' || !('underSessionId' in body)
           || !('sessionIds' in body) || !Array.isArray(body.sessionIds)
@@ -638,8 +679,7 @@ describe('requestSessionStop machine transport', () => {
         })) } };
       });
       const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null });
-      const executor = createActionExecutor({
-    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.stop": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps });
+      const executor = createActionExecutor(deps);
       const result = caller === 'automatic' ? await requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId, actionContext })
         : await executor.execute('session.stop', { sessionId }, actionContext);
       expect(result, JSON.stringify(result)).toMatchObject(refused ? { ok: false } : caller === 'automatic'
