@@ -5,8 +5,10 @@ import type {
     ExternalSessionOperationSharedPresentationV1,
 } from '@happier-dev/protocol/sessions/external/operationV1';
 
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { t } from '@/text';
 
 import type {
@@ -46,6 +48,9 @@ export const ExternalSessionOperationSharedCard = React.memo(
         const readFailedSubtitle = onCheckAgain
             ? t('externalSessions.operationStatusOwnerReadFailed')
             : null;
+        const phaseTitle = presentation.phaseKey ? t(presentation.phaseKey) : null;
+        // The status row says where the operation stands and, when Check again is offered, why.
+        const statusSubtitle = readFailedSubtitle ?? phaseTitle;
         // This card deliberately keeps no card-local focus-return owner: its two
         // actions are owned by the transcript row host, which arms the focus
         // transition on activation and settles it (viewport return on the exact
@@ -55,7 +60,7 @@ export const ExternalSessionOperationSharedCard = React.memo(
         const accessibilityAnnouncement = [
             t(presentation.titleKey),
             t(presentation.statusKey),
-            t(presentation.phaseKey),
+            phaseTitle,
             readFailedSubtitle,
             checkAgainTitle,
             dismissTitle,
@@ -78,50 +83,57 @@ export const ExternalSessionOperationSharedCard = React.memo(
                     <Item
                         testID={`external-session-operation-shared-status-${props.presentation.status}`}
                         title={t(presentation.statusKey)}
-                        subtitle={t(presentation.phaseKey)}
+                        subtitle={statusSubtitle ?? undefined}
                         mode="info"
                         showChevron={false}
-                        accessibilityLabel={[
-                            t(presentation.statusKey),
-                            t(presentation.phaseKey),
-                        ].join('. ')}
+                        accessibilityLabel={statusSubtitle
+                            ? `${t(presentation.statusKey)}. ${statusSubtitle}`
+                            : t(presentation.statusKey)}
                     />
-                    {onCheckAgain && checkAgainTitle && readFailedSubtitle ? (
-                        <Item
-                            testID="external-session-operation-action-check-again"
-                            title={checkAgainTitle}
-                            subtitle={readFailedSubtitle}
-                            onPress={() => {
-                                // The transcript row host owns this activation's focus
-                                // transition (arm, settle, and disarm on a settled attempt
-                                // that leaves the control in place). Arming a second,
-                                // card-local transition here would create duplicate focus
-                                // ownership for one activation.
-                                props.onTranscriptOperationActionTransition?.('check_again');
-                                onCheckAgain();
-                            }}
-                            showChevron={false}
-                            accessibilityRole="button"
-                            accessibilityLabel={[checkAgainTitle, readFailedSubtitle].join('. ')}
-                        />
-                    ) : null}
-                    {canDismiss && dismissTitle ? (
-                        <Item
-                            testID="external-session-operation-action-dismiss"
-                            title={dismissTitle}
-                            onPress={() => {
-                                props.onTranscriptOperationActionTransition?.('dismiss');
-                                props.onDismiss?.({
-                                    operationId: props.presentation.operationId,
-                                    revision: props.presentation.revision,
-                                });
-                            }}
-                            showChevron={false}
-                            accessibilityRole="button"
-                            accessibilityLabel={dismissTitle}
-                        />
-                    ) : null}
                 </ItemGroup>
+                {(onCheckAgain && checkAgainTitle) || (canDismiss && dismissTitle) ? (
+                    // Same decisions row as the progress card: the recovery that moves the operation forward is
+                    // the primary, Dismiss is secondary.
+                    <ItemGroup surface="none">
+                        <SectionButtonRow testID="external-session-operation-actions">
+                            {onCheckAgain && checkAgainTitle ? (
+                                <RoundButton
+                                    testID="external-session-operation-action-check-again"
+                                    size="small"
+                                    title={checkAgainTitle}
+                                    onPress={() => {
+                                        // The transcript row host owns this activation's focus
+                                        // transition (arm, settle, and disarm on a settled attempt
+                                        // that leaves the control in place). Arming a second,
+                                        // card-local transition here would create duplicate focus
+                                        // ownership for one activation.
+                                        props.onTranscriptOperationActionTransition?.('check_again');
+                                        onCheckAgain();
+                                    }}
+                                    accessibilityLabel={readFailedSubtitle
+                                        ? [checkAgainTitle, readFailedSubtitle].join('. ')
+                                        : checkAgainTitle}
+                                />
+                            ) : null}
+                            {canDismiss && dismissTitle ? (
+                                <RoundButton
+                                    testID="external-session-operation-action-dismiss"
+                                    size="small"
+                                    display="secondary"
+                                    title={dismissTitle}
+                                    onPress={() => {
+                                        props.onTranscriptOperationActionTransition?.('dismiss');
+                                        props.onDismiss?.({
+                                            operationId: props.presentation.operationId,
+                                            revision: props.presentation.revision,
+                                        });
+                                    }}
+                                    accessibilityLabel={dismissTitle}
+                                />
+                            ) : null}
+                        </SectionButtonRow>
+                    </ItemGroup>
+                ) : null}
             </View>
         );
     },

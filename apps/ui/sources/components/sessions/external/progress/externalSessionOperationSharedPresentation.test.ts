@@ -22,4 +22,21 @@ describe('presentExternalSessionOperationShared', () => {
             phaseKey: 'externalSessions.operationPhaseImporting',
         });
     });
+
+    // A finished operation has no current phase: "Complete · Publishing imported session" read as still publishing.
+    it('names no phase once the operation is complete', () => {
+        const presentation = ExternalSessionOperationSharedPresentationV1Schema.parse({
+            v: 1,
+            operationId: 'operation-1',
+            revision: 4,
+            kind: 'materialize',
+            status: 'completed',
+            phase: 'publishing',
+        });
+
+        expect(presentExternalSessionOperationShared(presentation)).toMatchObject({
+            statusKey: 'externalSessions.operationStatusCompleted',
+            phaseKey: null,
+        });
+    });
 });

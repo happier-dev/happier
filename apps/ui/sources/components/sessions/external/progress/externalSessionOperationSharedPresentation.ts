@@ -39,7 +39,8 @@ export function presentExternalSessionOperationShared(
     presentation: ExternalSessionOperationSharedPresentationV1,
 ) {
     return {
-        phaseKey: PHASE_KEYS[presentation.phase],
+        // A completed operation's last phase is history, not something still happening, so it names none.
+        phaseKey: presentation.status === 'completed' ? null : PHASE_KEYS[presentation.phase],
         statusKey: STATUS_KEYS[presentation.status],
         titleKey: presentation.kind === 'materialize'
             ? 'externalSessions.operationTitleMaterialize'

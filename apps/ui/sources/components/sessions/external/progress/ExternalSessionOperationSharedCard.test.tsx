@@ -53,6 +53,24 @@ vi.mock('@/components/ui/lists/Item', () => ({
     },
 }));
 
+vi.mock('@/components/ui/buttons/RoundButton', () => ({
+    // Test boundary, as for Item above: the card's decisions are RoundButtons whose `controlRef` is the focus
+    // handle; the host element keeps the props the card passed (a real button role).
+    RoundButton: ({ controlRef, ...props }: Record<string, unknown> & { controlRef?: unknown; testID?: string }) => {
+        const testID = props.testID ?? '';
+        const node = itemFocusNodes.get(testID) ?? { focus: vi.fn() };
+        itemFocusNodes.set(testID, node);
+        React.useEffect(() => {
+            if (typeof controlRef === 'function') {
+                (controlRef as (value: unknown) => void)(node);
+                return () => (controlRef as (value: unknown) => void)(null);
+            }
+            return undefined;
+        });
+        return React.createElement('RoundButton', { accessibilityRole: 'button', ...props });
+    },
+}));
+
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: (
         props: Record<string, unknown> & { children?: React.ReactNode },
@@ -79,6 +97,31 @@ function createPresentation(overrides: Record<string, unknown> = {}) {
 }
 
 describe('ExternalSessionOperationSharedCard accessibility', () => {
+    it('draws its decisions as buttons: Check again moves it forward, Dismiss is secondary', async () => {
+        accessibilityPlatform.os = 'web';
+        const { ExternalSessionOperationSharedCard } = await import(
+            './ExternalSessionOperationSharedCard'
+        );
+        const screen = await renderScreen(
+            <ExternalSessionOperationSharedCard
+                presentation={createPresentation({ status: 'completed', phase: 'publishing' })}
+                onDismiss={vi.fn()}
+                onCheckAgain={vi.fn()}
+            />,
+        );
+
+        const checkAgain = screen.findByTestId('external-session-operation-action-check-again');
+        const dismiss = screen.findByTestId('external-session-operation-action-dismiss');
+        expect(checkAgain?.type).toBe('RoundButton');
+        expect(checkAgain?.props.display).toBeUndefined();
+        expect(dismiss?.type).toBe('RoundButton');
+        expect(dismiss?.props.display).toBe('secondary');
+        // Why Check again is offered stays on the status it explains.
+        expect(
+            screen.findByTestId('external-session-operation-shared-status-completed')?.props.subtitle,
+        ).toBe('externalSessions.operationStatusOwnerReadFailed');
+    });
+
     it('offers local Dismiss for a terminal shared presentation with the exact identity', async () => {
         accessibilityPlatform.os = 'web';
         const onDismiss = vi.fn();
@@ -254,7 +297,7 @@ describe('ExternalSessionOperationSharedCard accessibility', () => {
         expect(finalAnnouncement).toContain(
             'externalSessions.operationStatusCompleted',
         );
-        expect(finalAnnouncement).toContain(
+        expect(finalAnnouncement).not.toContain(
             'externalSessions.operationPhasePublishing',
         );
         expect(finalAnnouncement).not.toContain('private-operation-id');
