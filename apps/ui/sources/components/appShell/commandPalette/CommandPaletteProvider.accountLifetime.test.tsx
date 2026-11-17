@@ -34,6 +34,9 @@ it('opens Home Search Actions on their individual selected origins when the cata
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Flower Home must be current');
     const pluginIds = ['qa.flowers', 'qa.notes'];
+    storage.setState({ machineListByServerId: { [serverId]: pluginIds.map((_, index) => createMachineFixture({
+        id: `palette-machine-${index}`, isShared: false,
+    })) } });
     const members = pluginIds.map((pluginId, index) => {
         const machineId = `palette-machine-${index}`;
         const sourceCustody = { kind: 'development' as const, registeredRootId: `root-${index}` };
@@ -216,7 +219,7 @@ it('keeps a routed Session Action form on its Home through focused Account rotat
     publishAppliedActiveServerSnapshot({ serverId: focusedHome, serverUrl: 'https://palette-focused.test', generation: 1 });
     const focusedLifetime = captureActiveServerAccountScopeLifetime();
     expect(focusedLifetime?.scope.accountId).toBe('account-a');
-    const machine = createMachineFixture({ id: 'palette-machine-b', active: true, activeAt: Date.now() });
+    const machine = createMachineFixture({ id: 'palette-machine-b', active: true, activeAt: Date.now(), isShared: false });
     const session = createSessionFixture({ id: 'palette-session-b', serverId: routedHome, active: true,
         metadata: { machineId: machine.id, path: '/workspace/b', host: 'machine-b' } });
     storage.setState({ sessions: { [session.id]: session },
