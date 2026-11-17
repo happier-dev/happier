@@ -1909,7 +1909,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       const clientAction = spec.cli !== undefined && (!settingsAction || settingsInput?.success)
         && executionPlacement === 'client';
       const declaredDaemonIngress = hasDeclaredActionDaemonIngress(spec, 'cli');
-      const selectedOriginalMachine = (requireDaemonIngress || params.externalActionClient || managedMachineDaemonIngress
+      const allowsDaemonIngress = spec.originalExecution?.daemonIngressSurfaces === undefined || declaredDaemonIngress;
+      const selectedOriginalMachine = (requireDaemonIngress || params.externalActionClient && allowsDaemonIngress || managedMachineDaemonIngress
         || spec.id === 'session.spawn_new' && requiresOriginalAccountMachineActionProof(spec.id, admittedInput, context)
         || declaredDaemonIngress)
         && (executionPlacement === 'machine' || controlControllerTarget !== null) && originalCliCaller
@@ -1939,7 +1940,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       const sessionTarget = sessionPlaced && reconciliation.kind === 'ready' && reconciliation.target?.kind === 'session'
         ? reconciliation.target.sessionId : null;
       if (sessionTarget && originalCliCaller && !machineAdmissionTransport
-        && (spec.originalExecution?.daemonIngressSurfaces === undefined || declaredDaemonIngress)
+        && allowsDaemonIngress
         && hasStoredSessionCredentialProvenance(credentials)) {
         const signal = combineInvocationSignals(invocationSignal, context.signal);
         const transport = await resolveSessionTransportContext({
@@ -2001,7 +2002,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       }
       // A semantic Machine selector needs the same admitted delivery as an
       // outer CLI selector, even for Machine-placed friendly commands.
-      const usesDaemonIngress = params.externalActionClient || managedMachineDaemonIngress || Boolean(boundWorkflowStart) || requiresSessionDaemonAdmission
+      const usesDaemonIngress = params.externalActionClient && allowsDaemonIngress || managedMachineDaemonIngress || Boolean(boundWorkflowStart) || requiresSessionDaemonAdmission
         || selectedOriginalMachine?.kind === 'ready' || workspaceMachineId !== undefined || liveResultCustody || requireDaemonIngress || declaredDaemonIngress;
       const originalDaemonTarget = usesDaemonIngress && originalCliCaller
         ? await (await import('@/daemon/multiDaemon')).resolveLiveDaemonControlTargetForServer(

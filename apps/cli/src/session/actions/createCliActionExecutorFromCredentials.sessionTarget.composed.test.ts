@@ -15,8 +15,11 @@ import { createCliActionExecutorFromCredentials } from './createCliActionExecuto
 
 describe('original CLI Session Action delivery', () => {
     afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-    it.each(['session.status.get', 'session.activity.get'] as const)(
-        'reads archived shared Session status without the owner publisher metadata or worker (%s)', async actionId => {
+    it.each([
+        ['session.status.get', false], ['session.activity.get', false],
+        ['session.status.get', true], ['session.activity.get', true],
+    ] as const)(
+        'reads archived shared Session status without the owner publisher metadata or worker (%s, external client %s)', async (actionId, externalActionClient) => {
         await withConfiguredDaemonTestHome({ prefix: 'happier-cli-shared-status-' }, async () => {
             const token = `header.${Buffer.from(JSON.stringify({ sub: 'recipient', tokenEpoch: 4,
                 provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
@@ -37,7 +40,7 @@ describe('original CLI Session Action delivery', () => {
                 throw new Error(`Unexpected Home read: ${url}`);
             });
             const dispatch = vi.spyOn(axios, 'post').mockRejectedValue(new Error('unexpected worker admission'));
-            const executor = createCliActionExecutorFromCredentials({ credentials, serverId: configuration.activeServerId,
+            const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient, serverId: configuration.activeServerId,
                 serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
                 actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
             const input = actionId === 'session.status.get' ? { sessionId, live: false } : { sessionId, view: 'awareness' };
