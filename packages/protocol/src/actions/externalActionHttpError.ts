@@ -239,6 +239,7 @@ export function projectExternalActionHttpError(
   phase?: ExternalActionTargetRefusalPhase,
   machineAvailabilityDiagnostic?: MachineAvailabilityDiagnosticV1,
   failureCause?: ActionFailureCauseV1,
+  origin: 'home' | 'daemon' = 'home',
 ): Readonly<{
   statusCode: 400 | 401 | 403 | 409 | 413 | 500 | 503;
   payload: ExternalActionHttpError;
@@ -254,6 +255,16 @@ export function projectExternalActionHttpError(
   }
   if (credentialScopeDiagnostic !== undefined && code !== 'credential_scope_denied') {
     throw new TypeError('Credential scope diagnostic requires credential scope denial');
+  }
+  // Home has already authenticated and admitted the requester before relay.
+  // A target's refusal cannot describe that requester's Home credential or grant.
+  const statusCode = externalActionHttpErrorStatus(code);
+  if (origin === 'daemon' && (statusCode === 401 || statusCode === 403)) {
+    return { statusCode: 400, payload: ExternalActionInvalidRequestHttpErrorSchema.parse({
+      error: 'invalid_request', code,
+      ...(requestId === undefined ? {} : { requestId }),
+      ...(failureCause === undefined ? {} : { failureCause }),
+    }) };
   }
   if (code === 'target_unavailable') return { statusCode: 409, payload: ExternalActionTargetUnavailableHttpErrorSchema.parse({
     error: 'invalid_request', code, ...(requestId === undefined ? {} : { requestId }),

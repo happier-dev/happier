@@ -28,7 +28,7 @@ afterAll(async () => { if (harness) await harness.close(); });
 
 it.each([
     ['invalid_token', 400, { error: 'invalid_request', code: 'invalid_token' }],
-    ['credential_scope_denied', 403, { error: 'credential_scope_denied' }],
+    ['credential_scope_denied', 400, { error: 'invalid_request', code: 'credential_scope_denied' }],
     ['invalid_envelope', 400, { error: 'invalid_request', code: 'invalid_envelope' }],
 ] as const)('keeps a daemon %s refusal separate from the requester credential', async (errorCode, status, payload) => {
     const account = await db.account.create({ data: { encryptionMode: 'plain' } });

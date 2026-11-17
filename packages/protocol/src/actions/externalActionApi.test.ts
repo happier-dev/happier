@@ -912,6 +912,17 @@ describe('External Action API envelope v1', () => {
     });
   });
 
+  it.each(['invalid_token', 'credential_scope_denied', 'source_access_denied', 'present_user_required'] as const)(
+    'keeps a daemon %s refusal separate from Home authentication and permission', (code) => {
+      const failureCause = { phase: 'daemon.authorization', errorClass: 'Error' as const, errorCode: code, httpStatus: null };
+      const projected = projectExternalActionHttpError(code, 'daemon-request', undefined, undefined,
+        undefined, undefined, failureCause, 'daemon');
+      expect(projected.statusCode).toBe(400);
+      expect(externalActionApi.projectExternalActionHttpFailureV1(ExternalActionHttpErrorSchema.parse(projected.payload)))
+        .toMatchObject({ ok: false, errorCode: code, requestId: 'daemon-request', failureCause });
+    },
+  );
+
   it('projects one strict redacted pre-open error vocabulary with safe correlation', () => {
     const placement = projectExternalActionHttpError('target_required', 'request-placement');
     expect(placement).toEqual({

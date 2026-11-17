@@ -1116,10 +1116,13 @@ introduced.
 The reserved daemon relay accepts the existing `invalid_token` pre-open refusal
 from signed-root verification. The CLI already emits it before effects; retaining
 it prevents Home from treating a known refusal as an unknown Action outcome.
-Home projects a daemon's refusal as HTTP 400 with
-`{ error: 'invalid_request', code: 'invalid_token' }`, preserving request
-correlation and failure cause. HTTP 401 remains reserved for the requester's own
-credential failing at Home; verification remains required.
+The shared Protocol HTTP mapper projects a daemon's authentication or permission
+refusal as HTTP 400 with `{ error: 'invalid_request', code }`, preserving request
+correlation and failure cause. Home marks this origin once when projecting the
+relay result; `invalid_token`, `credential_scope_denied`, `source_access_denied`
+and `present_user_required` keep their typed codes. HTTP 401/403 remain reserved
+for the requester's own credential or permission failing at Home; verification
+remains required.
 Matching development Protocol, Home and CLI readers must reload together because
 older strict relay readers reject this code. This adds no error code, persisted
 format or released adapter; the scoped-clean `../0.2` frontier inspected at
