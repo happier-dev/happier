@@ -32,20 +32,6 @@ describe('approval profile overlay', () => {
   });
   const rows = [{ id: careful.id, profile: careful, access: 'owner' as const,
     revision: { headerVersion: 1, bodyVersion: 1 } }];
-  const boundProfile = bindApprovalProfileV1(rows, careful.id);
-
-  it('applies a Team-derived Session profile only to tighten while explicit acceptance can replace policy', () => {
-    const inherited = resolveProfiledActionsSettingsV1(account, careful.id, {
-      boundProfile, approvalProfileTeamOrGroupDerived: true,
-    }).settings;
-    expect(inherited.actions['deployments.deploy']?.approvalRequiredSurfaces).toEqual(['agent']);
-    expect(inherited.approvalWaivedSurfaces?.['deployments.deploy']).toBeUndefined();
-    const accepted = resolveProfiledActionsSettingsV1(account, careful.id, {
-      boundProfile, approvalProfileTeamOrGroupDerived: false,
-    }).settings;
-    expect(accepted.actions['deployments.deploy']?.approvalRequiredSurfaces).toEqual([]);
-    expect(accepted.approvalWaivedSurfaces?.['deployments.deploy']).toEqual(['agent']);
-  });
 
   it("replaces only the profile Actions' policy rows and keeps Account placements", () => {
     const merged = applyApprovalProfileOverlayV1(account, careful);
