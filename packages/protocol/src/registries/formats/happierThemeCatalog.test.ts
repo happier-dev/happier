@@ -34,6 +34,29 @@ it('discovers catalog summaries without opening bodies and preserves selected fu
   expect(calls).toEqual([url, url, url, 'https://catalog.example.test/sample.json']);
 });
 
+it('settles malformed selected catalog faces as invalid source without retrying another transport', async () => {
+  const url = 'https://catalog.example.test/index.json';
+  const source: RegistrySourceDescriptorV1 = { id: deriveMarketplaceSourceId(url), title: 'Themes', url,
+    format: 'happier-catalog', kinds: ['theme'], enabled: true, addedAt: 0, origin: { kind: 'user' }, removable: true };
+  const profile = { schemaVersion: 1, id: 'sample_theme', name: 'Sample', createdAt: '2026-11-16', updatedAt: '2026-11-16',
+    base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} } };
+  const catalog = { source: { id: source.id, title: source.title, sourceUrl: url, kind: 'user' },
+    freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], picks: [], diagnostics: [],
+    themes: [{ itemId: 'sample', title: 'Sample', version: '1.0.0',
+      listing: { includes: [{ key: 'night', label: 'Night', mode: 'dark' }] },
+      themes: [{ key: 'other', label: 'Night', mode: 'dark', document: profile }] }] };
+  let sourceReads = 0;
+  let daemonReads = 0;
+  const host = createRegistryHostV1({ host: 'web', readSources: async () => [source], http: {
+    async getJson() { sourceReads++; return { ok: true, fetchedAt: 1, value: catalog }; },
+    async getText() { throw new Error('unexpected text'); }, async getBytes() { throw new Error('unexpected package'); },
+  }, daemonFetch: async () => { daemonReads++; throw new Error('unexpected retry'); } });
+  await expect(host.fetchRequest({ op: 'read', sourceId: source.id, kind: 'theme', itemId: 'sample', themeContent: true }))
+    .resolves.toEqual({ op: 'error', status: { state: 'invalid_source' } });
+  expect(sourceReads).toBe(1);
+  expect(daemonReads).toBe(0);
+});
+
 it('keeps curated theme picks metadata-only until selected content follows daemon placement', async () => {
   const url = DEFAULT_CURATED_MARKETPLACE_SOURCE_URL;
   const source: RegistrySourceDescriptorV1 = { id: deriveMarketplaceSourceId(url), title: 'Themes', url,

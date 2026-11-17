@@ -58,6 +58,11 @@ function adapterFor(source:Pick<RegistrySourceV1,'format'>):RegistryFormatAdapte
   if(!adapter) throw new RegistryFetchErrorV1({state:'newer_format',found:source.format});
   return adapter;
 }
+function parseRegistryItemV1(value: unknown): RegistryItemV1 {
+  const parsed = RegistryItemV1Schema.safeParse(value);
+  if (!parsed.success) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
+  return parsed.data;
+}
 /** An optional picks kind disappears only after a successful empty answer, never an outage. */
 function isConfirmedEmptyPicksPage(page: RegistryListPageV1): boolean {
   return page.sourceId === HAPPIER_PICKS_SOURCE_ID && page.status.state === 'ok' && page.items.length === 0;
@@ -174,7 +179,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       for (const [index, placement] of placements.entries()) {
         try {
           if (placement === 'direct') return applyRegistryAppTemplateHintsV1(
-            RegistryItemV1Schema.parse(await targetAdapter.read({ ...operationCtx, appTemplateHints }, target)), appTemplateHints);
+            parseRegistryItemV1(await targetAdapter.read({ ...operationCtx, appTemplateHints }, target)), appTemplateHints);
           // Only the selected catalog pointer reaches its target's transport.
           const response = RegistryFetchResponseV1Schema.parse(await viaDaemon({ op: 'read', sourceId: source.id,
             kind: request.kind, itemId: request.itemId, ...(request.version === undefined ? {} : { version: request.version }),
@@ -194,7 +199,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       }
       throw new RegistryFetchErrorV1({ state: 'unreachable' });
     } };
-    const item=RegistryItemV1Schema.parse(await adapter.read(formatCtx,{...request,source}));
+    const item=parseRegistryItemV1(await adapter.read(formatCtx,{...request,source}));
     if(request.op==='read') return {op:'read',item};
     if(item.payload.kind!=='skill') throw new RegistryFetchErrorV1({state:'invalid_source'});
     if(item.summary.problem) throw new RegistryFetchErrorV1({state:'invalid_source'});
