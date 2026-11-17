@@ -1363,6 +1363,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           || (context.serverIdentityId ?? context.serverId) !== (origin.serverIdentityId ?? origin.serverId)) {
           return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
         }
+        const publication = await deps.approvalRequestOutcomePublication?.({ artifactId, request, context });
+        if (publication != null) {
+          const outcome = readApprovalReplayResult(publication);
+          return outcome.ok ? null : outcome;
+        }
         if (!deps.sessionSendMessage) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.message.send' };
         const observed = buildApprovalDecisionResult(request);
         if (!observed.ok) return observed;

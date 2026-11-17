@@ -30,6 +30,7 @@ import { repoRootDir } from '../../src/testkit/paths';
 import { waitForSessionActive } from '../../src/testkit/providers/scenarios/sessionRuntime';
 import { waitFor } from '../../src/testkit/timing';
 import { initGitRepo } from '../../src/testkit/uiE2e/gitRepoFixtures';
+import { runCliJson } from '../../src/testkit/uiE2e/cliJson';
 
 const run = createRunDirs({ runLabel: 'core' });
 let fixture: StartedConnectedServicesClaudeDaemonFixture | undefined;
@@ -210,7 +211,16 @@ it('starts selected-auth work once and delivers approved Project output to the o
     happierProvenanceV1: { v: 1, kind: 'host', producer: 'happierMcp' },
     happierInputRequestV1: { v: 1, producer: 'happierMcp' },
   } });
-  // Rejoining a terminal approval must preserve its immutable input and not rerun the Script.
+  // The ordinary paired terminal can rejoin the completed Ask without claiming
+  // the person's input attribution or re-executing the reviewed Script.
+  const terminalOutcome = await runCliJson({ testDir, cliHomeDir: fixture.daemonHomeDir,
+    serverUrl: fixture.serverBaseUrl, webappUrl: fixture.serverBaseUrl,
+    env: { ...process.env, NODE_OPTIONS: sourceNodeOptions }, label: 'terminal-approval-outcome',
+    launchOptions: { preferSourceEntrypoint: true, skipSharedDepsBuild: true },
+    args: ['actions', 'invoke', 'approval.request.decide', '--input-json',
+      JSON.stringify({ artifactId, decision: 'approve' }), '--json'] });
+  expect(terminalOutcome).toMatchObject({ ok: true, data: { status: 'executed' } });
+  // Rejoining through the app must preserve the same immutable input too.
   expect(await ui.execute('approval.request.decide', { artifactId, decision: 'approve' }, context))
     .toMatchObject({ ok: true, result: { status: 'executed' } });
   expect(await readFile(resolve(fixture.workspaceDir, 'keeper-result.txt'), 'utf8')).toBe('completed\n');

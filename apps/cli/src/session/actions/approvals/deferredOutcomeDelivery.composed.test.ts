@@ -20,6 +20,10 @@ import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requ
 import { SessionMessageContentSchema, UserMessageSchema } from '@/api/types';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { configuration } from '@/configuration';
+import { createCliActionExecutorFromCredentials } from '../createCliActionExecutorFromCredentials';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { socketRpcCodec } from '@happier-dev/sync-client';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -32,6 +36,7 @@ it.each([
     projectSourceId: 'source', templateRef: { sourceId: 'data-services', itemId: 'redis', version: '0.0.0' } }, failed: false, restrictedCredential: false },
   { actionId: 'deployments.domains.add', actionArgs: { environmentId: 'environment', domainId: 'app.invalid',
     expectedRevision: 2, requestKey: 'domain', content: { hostname: 'app.invalid', target: { service: 'web', containerPort: 80 } } }, failed: true, restrictedCredential: false },
+  { actionId: 'projects.sources.update', actionArgs: { sourceId: 'source', expectedRevision: 1, patch: { name: 'Edited' } }, failed: false, restrictedCredential: false, terminalCredential: true },
   { actionId: 'projects.sources.update', actionArgs: { sourceId: 'source', expectedRevision: 1, patch: { name: 'Edited' } }, failed: false, restrictedCredential: false },
   { actionId: 'deployments.teardown', actionArgs: { environmentId: 'environment', requestKey: 'teardown', removeEnvironment: true }, failed: false, restrictedCredential: false },
   { actionId: 'deployments.environments.create', actionArgs: { requestKey: 'restricted-create', contentArtifactId: 'definition',
@@ -43,10 +48,11 @@ it.each([
     HAPPIER_ACCOUNT_SETTINGS_MODE: 'auto', HAPPIER_ACTIONS_SETTINGS_V1: undefined,
   } }, async () => {
   const { actionId, actionArgs, failed } = scenario;
+  const authenticationKind = 'terminalCredential' in scenario ? 'terminal' as const : 'account' as const;
   const canRelay = !scenario.restrictedCredential;
   const accountId = 'owner', serverId = configuration.activeServerId, machineId = 'machine', sessionId = 'cmv3approvaldeliveryaaaa';
   const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 0,
-    provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+    provenance: { v: 1, kind: authenticationKind, authority: authenticationKind === 'terminal' ? 'account_automation' : 'present_user' } })).toString('base64url')}.signature`;
   const credentials = { token, encryption: null, credentialProvenance: canRelay ? 'stored_session' as const : 'api_token' as const };
   const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
   const currentness = await createRequesterCurrentnessSocketHarness();
@@ -86,7 +92,7 @@ it.each([
     if (envelope.v !== 1) throw new Error('Plain Account fixture');
     if (url.endsWith('/execution-authorization')) return { status: 200, data: { v: 1, token: 'home-admission', binding: {
       serverIdentityId: serverId, accountId, custodianAccountId: accountId,
-      authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+      authentication: { kind: authenticationKind, tokenEpoch: 0 }, accountEncryptionMode: 'plain',
       machineId, installationId: 'installation', actionId: 'session.message.send',
       requestId: envelope.requestId, target: envelope.target,
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
@@ -95,7 +101,7 @@ it.each([
     // Only network boundaries are replaced. The receiving external Action,
     // installation-private requester custody and Session input author stay real.
     const received = await executeExternalAction({ actionId: 'session.message.send', envelope,
-      principal: { accountId, authority: 'present_user', authentication: { kind: 'account', tokenEpoch: 0 } },
+      principal: { accountId, authority: 'present_user', authentication: { kind: authenticationKind, tokenEpoch: 0 } },
       ...(carrier.success ? { executionAuthorization: carrier.data.executionAuthorization } : {}),
       currentMachineId: machineId, currentAccountId: accountId, currentServerId: serverId,
       ...(envelope.target?.kind === 'session' ? { currentSessionId: sessionId } : {}),
@@ -158,7 +164,22 @@ it.each([
     },
   }));
   const receivingExecute = vi.spyOn(receiver, 'execute');
-  const executor = createActionExecutor(deps);
+  currentness.server.on('connection', socket => socket.on('rpc-call', async (
+    packet: { method: string; params: unknown }, acknowledge: (value: unknown) => void,
+  ) => {
+    const content = { mode: 'plain' } as const;
+    const decoded = await socketRpcCodec.decodeRequestParams(content, packet.params, packet.method);
+    expect(packet.method).toBe(`${machineId}:${RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED}`);
+    expect(decoded.params).toEqual({ artifactId: 'approval' });
+    const outcome = await receiver.replayApprovedApprovalRequest({ artifactId: 'approval',
+      currentAccount: { accountId, serverId, serverIdentityId: serverId }, callerAuthority: 'account_automation' });
+    acknowledge({ ok: true, result: await socketRpcCodec.encodeResponse(content, outcome, decoded.callId) });
+  }));
+  const executor = authenticationKind === 'terminal'
+    ? createCliActionExecutorFromCredentials({ credentials, serverId, serverIdentityId: serverId,
+      serverApiUrl: 'https://approval-home.test',
+      actionsSettingsProvider: createActionSettingsProvider({ accountSettings: AccountSettingsSchema.parse({}) }) })
+    : createActionExecutor(deps);
   if (canRelay) {
     // The hosting origin has its authenticated Machine transport. Settle its
     // already-recorded outcome before the standalone deciding CLI rejoins it.

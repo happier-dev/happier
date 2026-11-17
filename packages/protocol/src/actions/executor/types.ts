@@ -2146,6 +2146,12 @@ export type ActionExecutorDeps = Readonly<{
         result: Extract<SessionSpawnNewResultV1, Readonly<{ type: 'error' }>>;
       }>
   >;
+  /** Rejoin a terminal outcome at its original publisher; null uses this host's input transport. */
+  approvalRequestOutcomePublication?: (args: Readonly<{
+    artifactId: string;
+    request: ApprovalRequestV2;
+    context: ActionExecutorContext;
+  }>) => Promise<ActionExecuteResult | null>;
   /**
    * Host transport for replay that must run on an exact daemon. The canonical
    * executor calls this after a local decision, or with `decision` to route a

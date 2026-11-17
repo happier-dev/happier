@@ -290,6 +290,10 @@ admitted Run and invocation without admitting the original principal again.
 Ordinary origins still require the root request ID, and protected original
 envelopes retain exact digest, target and runtime-demand binding.
 A forwarded child keeps its receiving Machine's proof.
+A terminal rejoining a deferred Agent approval's recorded outcome uses the original
+daemon's approved-replay RPC to publish through its authenticated Machine input.
+It does not mint a new Session input carrying the originating person's attribution;
+terminal credentials retain their automation authority and fresh consent restrictions.
 
 The unreleased Files & Editor work adds workspace replace preview/apply and SCM
 blame intents through this same catalog. Preview and blame are safe reads;

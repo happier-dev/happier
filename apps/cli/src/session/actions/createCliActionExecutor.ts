@@ -72,6 +72,7 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
     /** Exact daemon replay for API target-action approvals. */
     targetActionApprovalReplay?: ActionExecutorDeps['targetActionApprovalReplay'];
     executionRunHostActionApprovalReplay?: ActionExecutorDeps['executionRunHostActionApprovalReplay'];
+    approvalRequestOutcomePublication?: ActionExecutorDeps['approvalRequestOutcomePublication'];
     approvalRequestApprovedReplay?: ActionExecutorDeps['approvalRequestApprovedReplay'];
     approvalRequestApproveRefusal?: ActionExecutorDeps['approvalRequestApproveRefusal'];
     /** Current authority/credential/target proof for durable core Action replay. */
@@ -238,6 +239,9 @@ export function createCliActionExecutor(
         : {}),
       ...(params.executionRunHostActionApprovalReplay
         ? { executionRunHostActionApprovalReplay: params.executionRunHostActionApprovalReplay }
+        : {}),
+      ...(params.approvalRequestOutcomePublication
+        ? { approvalRequestOutcomePublication: params.approvalRequestOutcomePublication }
         : {}),
       ...(params.approvalRequestApprovedReplay
         ? { approvalRequestApprovedReplay: params.approvalRequestApprovedReplay }
