@@ -463,6 +463,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
   })),
   homeDomainActionRow({
     id: 'teams.list', approval: {result: 'required'},
+    mcp: true,
     title: 'List Teams',
     description: 'List visible Team names and IDs in this Home for the authenticated Account; resolve a Team by name before listing or changing its Groups.',
     safety: 'safe',
@@ -478,6 +479,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
   }),
   homeDomainActionRow({
     id: 'teams.get', approval: {result: 'required'},
+    mcp: true,
     title: 'Get Team',
     description: 'Read one Team as the authenticated Account sees it.',
     safety: 'safe',
@@ -946,6 +948,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
   }), requiredAuthority: 'present_user' as const },
   homeDomainActionRow({
     id: 'teams.invitations.preview', approval: {result: 'required'},
+    mcp: true,
     title: 'Preview Team invitation',
     description: 'Read the bounded public preview for an invitation bearer.',
     safety: 'safe',
@@ -975,6 +978,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
   },
   homeDomainActionRow({
     id: 'teams.invitations.accept', approval: {result: 'required',flow: 'deferred'},
+    mcp: true,
     approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Accept Team invitation',
     description: 'Redeem an invitation bearer and join the Team as the authenticated Account.',

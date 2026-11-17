@@ -20,6 +20,19 @@ import { deriveActionInputHints } from './schemaInputHints.js';
 import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 
 describe('Home runtime Action parity', () => {
+  it('exposes invitation admission and Team selection to MCP while retaining dangerous Ask', () => {
+    for (const id of ['teams.invitations.preview', 'teams.invitations.accept', 'teams.get', 'teams.list'] as const) {
+      expect(getActionSpec(id).surfaces.mcp, id).toBe(true);
+    }
+    const id = 'teams.invitations.accept';
+    const spec = getActionSpec(id);
+    expect(spec.safety).toBe('danger');
+    expect(resolveActionApprovalRouting({ actionId: id, spec, input: {},
+      context: { surface: 'mcp', authority: 'account_automation' } }).required).toBe(true);
+    const observation = JSON.stringify(spec.projectObservationInput?.({ token: 'private-bearer', continuation: { reference: 'private-continuation' } }));
+    expect(observation).not.toContain('private-bearer');
+    expect(observation).not.toContain('private-continuation');
+  });
   it('admits the canonical reference-only relay selection without a second provider identity', () => {
     const spec = getActionSpec('relay.access.configure');
     const config = { provider: { kind: 'builtin', id: 'lan' }, config: { url: 'https://relay.example.test' }, credentialRefs: [] };
@@ -450,7 +463,8 @@ describe('Home and Teams Action family', () => {
 
   it('exposes the consumed Team lifecycle and invitation intents on MCP', () => {
     const mcpActions = new Set(['teams.create', 'teams.archive', 'teams.restore', 'teams.members.add',
-      'teams.invitations.create', 'teams.invitations.reissue']);
+      'teams.invitations.create', 'teams.invitations.reissue', 'teams.invitations.preview',
+      'teams.invitations.accept', 'teams.get', 'teams.list']);
     for (const actionId of LANE_01_ACTION_IDS) {
       expect(getActionSpec(actionId).surfaces.mcp, actionId).toBe(mcpActions.has(actionId));
     }
