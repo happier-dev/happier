@@ -241,6 +241,8 @@ export function createTerminalRuntimeProcessService(deps?: Readonly<{
                 assertNotAborted(signal);
                 assertTerminalPreambleTransport(launch.stdinPreamble, request.stdio !== 'inherit');
                 child = spawnSessionProcess(launch.command, [...launch.args], {
+                    ...(launch.requiredFiles ? { requiredFiles: launch.requiredFiles } : {}),
+                    targetLaunchSignal: signal,
                     cwd: launch.launcherCwd ?? launch.cwd,
                     env: withHostProcessOwnerEnvironment(launch.env, launch.processOwnerTag),
                     stdio: request.stdio ?? 'pipe',

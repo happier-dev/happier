@@ -10,7 +10,7 @@ export const AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH = 'native-home';
 const magic = Buffer.from('HAPAGT1\n', 'ascii');
 const nonNullString = z.string().refine((value) => !value.includes('\0'));
 const absolutePath = nonNullString.refine(isAbsolute);
-const relativeMaterialPath = nonNullString.refine((value) => value.length > 0
+export const relativeMaterialPath = nonNullString.refine((value) => value.length > 0
   && !isAbsolute(value) && !value.includes('\\')
   && value.split('/').every((part) => part !== '' && part !== '.' && part !== '..'));
 const base64Bytes = z.string().refine((value) => Buffer.from(value, 'base64').toString('base64') === value);

@@ -2558,6 +2558,18 @@ spawn when its producer or native root is missing. The shim owns publication
 and native cleanup; the plugin retains its host-file lifecycle. Ordinary host
 launches keep their existing file lifecycle.
 
+Managed Session targets consume the same required-file selector. Exec carries
+the declaration through the supervisor and holder to awaitable target launch
+preparation, including workspace PTYs. The target publisher rebases generated
+files into launch-specific directories under the Session's existing private
+guest directory, with POSIX destination paths independent of the runner OS.
+It uses the existing managed channel file transport and verifies delivered
+bytes before starting the Agent; carrier closure alone is not publication.
+Files remain mode 0600 and existing Session cleanup owns their removal. Only
+the target launch environment reaches the Agent; host environment values are
+used for path projection and never forwarded. Source and publication failures
+retain `agent_launch_required_file_unavailable` with their materialization reason.
+
 Claude declares its generated MCP configuration and startup-instruction files
 through that same `requiredFiles` contract for SDK queries, unified terminal
 hosts and SDK-to-terminal presentation. Terminal plans carry the declaration

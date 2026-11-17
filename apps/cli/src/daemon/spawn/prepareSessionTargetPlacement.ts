@@ -5,6 +5,7 @@ import { createReadStream } from 'node:fs';
 import { readdir, readFile, realpath } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, posix, relative, sep } from 'node:path';
 import type { ManagedSessionTarget, ManagedSessionTargetRequest } from '@/machines/managed/acquire';
+import { writeManagedChannelFile } from '@/machines/managed/channelFileDelivery';
 import { installAgentCliForTarget, planAgentCliInstallForRuntime, type AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 import { REMOTE_SHA256_FILE_FUNCTION, safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import { readExecutablePlatform } from '@happier-dev/cli-common/process';
@@ -434,7 +435,7 @@ export async function deliverSessionTargetLaunch(input: Readonly<{
             ? await placeAgentCliRelease({ target: input.target, sessionKey: input.sessionKey, release, run, signal })
             : await installAgentCliInTarget({ target: input.target, runtime, env, signal });
     }
-    return { executables, env, workspace, lockPath: posix.join(base, '.live'), lockExecutable: input.target.helperPath };
+    return { executables, env, workspace, runtimeHome: base, lockPath: posix.join(base, '.live'), lockExecutable: input.target.helperPath };
 }
 
 type AgentCliRelease = Readonly<{ root: string; files: ReadonlyArray<string>; command: string }>;
@@ -492,13 +493,8 @@ async function placeAgentCliRelease(input: Readonly<{
     await input.run(`umask 077; rm -rf ${q(staged)} && mkdir -p ${[...new Set(paths.map(path => posix.dirname(path)))].map(q).join(' ')}`);
     for (const [index, file] of release.files.entries()) {
         // Too large for one provider file put: stream it through the channel, then verify in the guest.
-        const channel = input.target.openChannel(['sh', '-c', 'umask 077 && cat > "$1"', 'sh', paths[index]!], input.signal);
-        await new Promise<void>((resolve, reject) => {
-            channel.once('error', reject);
-            channel.once('close', () => resolve());
-            channel.resume();
-            createReadStream(join(release.root, ...file.split('/'))).once('error', reject).pipe(channel);
-        });
+        await writeManagedChannelFile({ path: paths[index]!, bytes: createReadStream(join(release.root, ...file.split('/'))),
+            signal: input.signal, openChannel: argv => input.target.openChannel(argv, input.signal) });
     }
     // A directory at the digest that does not verify is replaced; a concurrent Session's completed copy is kept.
     const promoted = await input.run(`if ${verifies(staged)}; then chmod 700 ${paths.map(q).join(' ')} && `

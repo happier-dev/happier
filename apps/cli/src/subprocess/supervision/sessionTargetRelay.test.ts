@@ -17,6 +17,11 @@ import { probeAcpAgentCapabilities } from '@/capabilities/probes/acpProbe';
 import { registerBashHandler } from '@/rpc/handlers/bash';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { resolveProcessCustodySupportExecutable } from './processCustody';
+import { createClaudeNativeSdkQueryContext } from '../../../../../packages/plugins/claude/src/agent/sdk/nativeExec';
+import { queryWithContext } from '../../../../../packages/plugins/claude/src/agent/sdk/query';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
+import { resolveHappierMcpServerConfig } from '@/agent/runtime/createHappierMcpBridge';
+import { buildPiRpcLaunch } from '../../../../../packages/plugins/pi/src/agent/runtime/rpc/args';
 
 import { SESSION_HOLDER_ADOPT_ENV_KEY, resolveAgentSessionHolderLaunch, type SessionHolderChild } from './sessionHolder';
 import { SESSION_TARGET_PLACEMENT_ENV_KEY, assertSessionTargetWorkspaceUnambiguous, connectSessionTarget,
@@ -130,6 +135,203 @@ describe.skipIf(process.platform === 'win32' || !holderExecutable)('Session targ
             await handle?.dispose();
             await handle?.wait().catch(() => undefined);
             session.abort();
+            delete sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY];
+        }
+    });
+
+    it('publishes Claude SDK generated files before the placed Agent reads its remapped argv', async () => {
+        const session = new AbortController();
+        const channels: ChildProcess[] = [];
+        let hostSources: readonly string[] = [];
+        const operations = shellOperations(channels);
+        const { socketPath } = await serveSessionTargetRelay({ operations: { ...operations,
+            exec: async (command, signal) => {
+                // Separate host/guest filesystems at the real Agent spawn boundary:
+                // only target-published copies can remain readable by the Agent.
+                if (command.includes('nohup')) await Promise.all(hostSources.map(path => rm(path, { force: true })));
+                return operations.exec(command, signal);
+            } }, lifetime: session.signal,
+            readTrustedCallerPid: () => process.pid, socketPath: join(directory, 'required-files.sock') });
+        const targetRoot = join(directory, 'required-workspace');
+        const runtimeHome = join(directory, 'required-session');
+        await mkdir(targetRoot);
+        sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({
+            id: 'managed:required-files', holderPath: holderExecutable, socketDirectory: directory, relaySocketPath: socketPath,
+            launch: { executables: { [process.execPath]: process.execPath }, runtimeHome,
+                env: { HAPPIER_TEST_AGENT_HOME: '/target/required-home' }, workspace: { hostRoot: directory, targetRoot } } });
+        // Model/process boundary: the real native SDK launch reaches this target Agent, which reads its actual argv files.
+        const agent = String.raw`
+const { readFileSync, statSync } = require('node:fs');
+const { createInterface } = require('node:readline');
+createInterface({ input: process.stdin }).once('line', () => {
+  const args = process.argv.slice(1);
+  const files = ['--mcp-config', '--append-system-prompt-file'].map(flag => {
+    const path = args[args.indexOf(flag) + 1];
+    return { flag, path, contents: readFileSync(path, 'utf8'), mode: statSync(path).mode & 0o777 };
+  });
+  const text = JSON.stringify({ files, cwd: process.cwd(), home: process.env.HAPPIER_TEST_AGENT_HOME,
+    leaked: process.env.HAPPIER_TEST_HOST_ONLY ?? null });
+  process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } }) + '\n');
+  process.exit(0);
+});`;
+        const exec = createStablePluginExecService({ signal: session.signal, isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => directory,
+            environment: { HAPPIER_TEST_HOST_ONLY: 'must-stay-on-host' },
+            systemTools: { resolve: async () => ({ executablePath: process.execPath,
+                launch: { executablePath: process.execPath, args: ['-e', agent, '--'] } }) } });
+        // Observe the public process input while retaining the entire real Exec implementation.
+        const observedExec: ExecService = { ...exec, clients: { ...exec.clients, spawn: (spec, options) => {
+            hostSources = spec.launch.requiredFiles ?? [];
+            return exec.clients.spawn(spec, options);
+        } } };
+        const mcpServers = { happier: resolveHappierMcpServerConfig({
+            localContext: { v: 1, socketPath: '/host/private-mcp.sock', bearerToken: 'b'.repeat(43) },
+            contextFilePath: '/host/private-context.json' }) };
+        expect(mcpServers.happier).toMatchObject({ command: holderExecutable, args: ['mcp-relay'] });
+        expect(Object.keys(mcpServers.happier.env ?? {})).toEqual(['HAPPIER_SESSION_MCP_REGISTRATION_ID']);
+        const instructions = 'Private startup text for a placed Agent.';
+        const running = queryWithContext(createClaudeNativeSdkQueryContext(observedExec), { prompt: (async function* () {
+            yield { type: 'user' as const, message: { role: 'user' as const, content: 'fixture' } };
+        })(), options: { extraArgs: ['--mcp-config', JSON.stringify({ mcpServers })],
+            appendSystemPrompt: instructions, appendSystemPromptFile: true } });
+        try {
+            const first = await running[Symbol.asyncIterator]().next();
+            expect(first.done).toBe(false);
+            expect(first.value).toMatchObject({ type: 'assistant' });
+            const message = first.value as { message: { content: { text: string }[] } };
+            const report = JSON.parse(message.message.content[0]!.text);
+            expect(report).toMatchObject({ cwd: targetRoot, home: '/target/required-home', leaked: null });
+            expect(report.files.map((file: { contents: string }) => file.contents))
+                .toEqual([JSON.stringify({ mcpServers }), instructions]);
+            for (const file of report.files) {
+                expect(file.path.startsWith(`${runtimeHome}/`)).toBe(true);
+                expect(file.mode).toBe(0o600);
+            }
+        } finally {
+            await running.dispose(); session.abort();
+            delete sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY];
+        }
+    });
+
+    it('refuses a missing placed launch file before starting an Agent', async () => {
+        const session = new AbortController();
+        const channels: ChildProcess[] = [];
+        const { socketPath } = await serveSessionTargetRelay({ operations: shellOperations(channels), lifetime: session.signal,
+            readTrustedCallerPid: () => process.pid, socketPath: join(directory, 'missing-required.sock') });
+        sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({
+            id: 'managed:missing-required', holderPath: holderExecutable, socketDirectory: directory, relaySocketPath: socketPath,
+            launch: { executables: { [process.execPath]: process.execPath }, env: {}, runtimeHome: join(directory, 'missing-session') } });
+        const exec = createStablePluginExecService({ signal: session.signal, isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => directory });
+        const source = join(directory, 'missing-config.json');
+        let handle: Awaited<ReturnType<typeof exec.spawn>> | undefined;
+        try {
+            handle = await exec.spawn({ executable: { kind: 'systemTool', id: 'fixture.node' },
+                args: ['-e', 'process.exit(0)', source], requiredFiles: [source] });
+            await expect(handle.wait()).resolves.toMatchObject({ termination: { observed: {
+                kind: 'failed', diagnostic: { details: { errorCode: 'agent_launch_required_file_unavailable' } },
+            } } });
+            expect(channels).toHaveLength(0);
+        } finally {
+            await handle?.dispose(); session.abort();
+            delete sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY];
+        }
+    });
+
+    it('refuses a declared backslash traversal before writing files in the target', async () => {
+        const session = new AbortController();
+        const channels: ChildProcess[] = [];
+        const { socketPath } = await serveSessionTargetRelay({ operations: shellOperations(channels), lifetime: session.signal,
+            readTrustedCallerPid: () => process.pid, socketPath: join(directory, 'traversal-required.sock') });
+        const source = join(directory, String.raw`..\..\..\home\guest\.bashrc`);
+        await writeFile(source, 'must not be published');
+        sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({
+            id: 'managed:traversal-required', holderPath: holderExecutable, socketDirectory: directory, relaySocketPath: socketPath,
+            launch: { executables: { [process.execPath]: process.execPath }, runtimeHome: join(directory, 'traversal-session') } });
+        const exec = createStablePluginExecService({ signal: session.signal, isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => directory });
+        let handle: Awaited<ReturnType<typeof exec.spawn>> | undefined;
+        try {
+            handle = await exec.spawn({ executable: { kind: 'systemTool', id: 'fixture.node' },
+                args: ['-e', 'process.exit(0)', source], requiredFiles: [source] });
+            await expect(handle.wait()).resolves.toMatchObject({ termination: { observed: {
+                kind: 'failed', diagnostic: { details: { errorCode: 'agent_launch_required_file_unavailable' } },
+            } } });
+            expect(channels).toHaveLength(0);
+        } finally {
+            await handle?.dispose(); session.abort();
+            delete sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY];
+        }
+    });
+
+    it('delivers Pi model files through the admitted target environment root', async () => {
+        const session = new AbortController();
+        const channels: ChildProcess[] = [];
+        const sourceHome = join(directory, 'pi-host-home');
+        const runtimeHome = join(directory, 'pi-target-session');
+        const targetHome = join(runtimeHome, 'agent-home');
+        await mkdir(sourceHome);
+        const selection = buildPiRpcLaunch({ providerModelId: 'fixture-model', env: { PI_CODING_AGENT_DIR: sourceHome } });
+        expect(selection.requiredFiles).toHaveLength(1);
+        const source = selection.requiredFiles[0]!;
+        await writeFile(source, 'private model fixture');
+        const operations = shellOperations(channels);
+        const { socketPath } = await serveSessionTargetRelay({ operations: { ...operations,
+            exec: async (command, signal) => {
+                if (command.includes('nohup')) await rm(source, { force: true });
+                return operations.exec(command, signal);
+            } }, lifetime: session.signal, readTrustedCallerPid: () => process.pid, socketPath: join(directory, 'pi-required.sock') });
+        sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({
+            id: 'managed:pi-required', holderPath: holderExecutable, socketDirectory: directory, relaySocketPath: socketPath,
+            launch: { executables: { [process.execPath]: process.execPath }, runtimeHome,
+                env: { PI_CODING_AGENT_DIR: targetHome } } });
+        const exec = createStablePluginExecService({ signal: session.signal, isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => directory });
+        let handle: Awaited<ReturnType<typeof exec.spawn>> | undefined;
+        try {
+            const filename = source.slice(sourceHome.length + 1);
+            handle = await exec.spawn({ executable: { kind: 'systemTool', id: 'fixture.node' },
+                args: ['-e', 'process.stdout.write(require("node:fs").readFileSync(require("node:path").join(process.env.PI_CODING_AGENT_DIR,process.argv[1]),"utf8"))',
+                    filename, '--', ...selection.args], requiredFiles: selection.requiredFiles,
+                env: { PI_CODING_AGENT_DIR: sourceHome, HAPPIER_TEST_HOST_ONLY: 'must-stay-on-host' } });
+            await expect(handle.wait()).resolves.toMatchObject({ termination: { observed: { kind: 'exit', exitCode: 0 } } });
+            expect(Buffer.from((await handle.wait()).stdout).toString()).toBe('private model fixture');
+        } finally {
+            await handle?.dispose(); session.abort();
+            delete sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY];
+        }
+    });
+
+    it('refuses truncated target file delivery even when the carrier closes normally', async () => {
+        const session = new AbortController();
+        const channels: ChildProcess[] = [];
+        const operations = shellOperations(channels);
+        let agentStarted = false;
+        const { socketPath } = await serveSessionTargetRelay({ operations: {
+            exec: (command, signal) => {
+                if (command.includes('nohup')) agentStarted = true;
+                return operations.exec(command, signal);
+            },
+            // Genuine carrier/process fault: consume only one byte, then close successfully.
+            openChannel: (argv, signal) => operations.openChannel(argv.map(part => part.replace('cat > ', 'head -c 1 > ')), signal),
+        }, lifetime: session.signal, readTrustedCallerPid: () => process.pid, socketPath: join(directory, 'truncated-required.sock') });
+        sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({
+            id: 'managed:truncated-required', holderPath: holderExecutable, socketDirectory: directory, relaySocketPath: socketPath,
+            launch: { executables: { [process.execPath]: process.execPath }, env: {}, runtimeHome: join(directory, 'truncated-session') } });
+        const exec = createStablePluginExecService({ signal: session.signal, isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => directory });
+        const source = join(directory, 'binary-config.bin');
+        await writeFile(source, Buffer.from([0, 255, 128, 13, 10]));
+        let handle: Awaited<ReturnType<typeof exec.spawn>> | undefined;
+        try {
+            handle = await exec.spawn({ executable: { kind: 'systemTool', id: 'fixture.node' },
+                args: ['-e', 'process.exit(0)', source], requiredFiles: [source] });
+            await expect(handle.wait()).resolves.toMatchObject({ termination: { observed: {
+                kind: 'failed', diagnostic: { details: { errorCode: 'agent_launch_required_file_unavailable' } },
+            } } });
+            expect(agentStarted).toBe(false);
+        } finally {
+            await handle?.dispose(); session.abort();
             delete sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY];
         }
     });

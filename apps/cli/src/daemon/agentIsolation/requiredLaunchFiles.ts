@@ -1,12 +1,12 @@
 import { readFile } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, relative } from 'node:path';
+import { basename, dirname, isAbsolute, join, posix, relative, sep } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import type { AgentLaunchSelectedMaterial } from './agentLaunchFrame';
 
-/** Select only declared launch dependencies. The native shim remains their sole
- * publisher; the plugin still owns disposal of its host-side generated files. */
+/** Select only declared launch dependencies for the native publisher. The plugin
+ * still owns disposal of its host-side generated files. */
 export async function selectRequiredAgentLaunchFiles(input: Readonly<{
   runtimeHome: string;
   args: readonly string[];
@@ -15,18 +15,26 @@ export async function selectRequiredAgentLaunchFiles(input: Readonly<{
   selectedMaterials: readonly AgentLaunchSelectedMaterial[];
   requiredFiles?: readonly string[];
   signal: AbortSignal;
+  /** Managed guests use POSIX paths independently of the runner's host OS. */
+  targetPathStyle?: 'posix';
+  /** A launch-owned directory when several Agents share one target Session. */
+  requiredFilesDirectory?: string;
 }>): Promise<Readonly<{
   args: readonly string[];
   environment: Readonly<Record<string, string>>;
   selectedMaterials: readonly AgentLaunchSelectedMaterial[];
   requiredFiles: readonly string[];
 }>> {
-  const selected = new Map(input.selectedMaterials.map(file => [join(input.runtimeHome, file.relativePath), file]));
+  const targetPath = input.targetPathStyle === 'posix' ? posix : { join, relative };
+  const withinTarget = (path: string) => isCanonicalAbsolutePathInsideRoot(input.runtimeHome, path,
+    input.targetPathStyle === 'posix' ? { platform: 'linux' } : {});
+  const mapSource = (target: string, source: string, path: string) => targetPath.join(target, ...relative(source, path).split(sep));
+  const selected = new Map(input.selectedMaterials.map(file => [targetPath.join(input.runtimeHome, file.relativePath), file]));
   // Consume the materializer's admitted native roots, never infer a new home.
   const roots = Object.entries(input.nativeEnvironment ?? {}).flatMap(([key, target]) => {
     const source = input.environment[key];
     return source && isAbsolute(source) && isAbsolute(target) && source !== target
-      && isCanonicalAbsolutePathInsideRoot(input.runtimeHome, target) ? [{ source, target }] : [];
+      && withinTarget(target) ? [{ source, target }] : [];
   }).sort((a, b) => b.source.length - a.source.length);
   const generatedRoots = new Map<string, string>();
   const paths = new Map<string, string>();
@@ -34,13 +42,13 @@ export async function selectRequiredAgentLaunchFiles(input: Readonly<{
     input.signal.throwIfAborted();
     // An already-native path must be supplied by its incumbent materializer.
     // Do not read a member's native home back through the daemon identity.
-    if (selected.has(source) || !isAbsolute(source) || isCanonicalAbsolutePathInsideRoot(input.runtimeHome, source)) {
+    if (selected.has(source) || !isAbsolute(source) || withinTarget(source)) {
       paths.set(source, source);
       continue;
     }
     const root = roots.find(root => isCanonicalAbsolutePathInsideRoot(root.source, source));
     let target: string;
-    if (root) target = join(root.target, relative(root.source, source));
+    if (root) target = mapSource(root.target, root.source, source);
     else if (!input.args.includes(source) && !Object.values(input.environment).includes(source)) {
       // A directory-based dependency requires the incumbent native-root
       // projection; copying its leaf alone cannot establish native discovery.
@@ -50,10 +58,10 @@ export async function selectRequiredAgentLaunchFiles(input: Readonly<{
       const parent = dirname(source);
       let targetParent = generatedRoots.get(parent);
       if (!targetParent) {
-        targetParent = join(input.runtimeHome, 'files', 'required', String(generatedRoots.size));
+        targetParent = targetPath.join(input.requiredFilesDirectory ?? targetPath.join(input.runtimeHome, 'files', 'required'), String(generatedRoots.size));
         generatedRoots.set(parent, targetParent);
       }
-      target = join(targetParent, basename(source));
+      target = targetPath.join(targetParent, basename(source));
     }
     paths.set(source, target);
     if (selected.has(target)) continue;
@@ -68,7 +76,9 @@ export async function selectRequiredAgentLaunchFiles(input: Readonly<{
         details: { phase: 'materialization', reason: 'unreadable',
           ...(causeCode ? { causeCode } : {}) } });
     }
-    selected.set(target, { relativePath: relative(input.runtimeHome, target).split('\\').join('/'), contentBase64: bytes.toString('base64') });
+    const relativePath = targetPath.relative(input.runtimeHome, target);
+    selected.set(target, { relativePath: input.targetPathStyle === 'posix' ? relativePath : relativePath.split('\\').join('/'),
+      contentBase64: bytes.toString('base64') });
   }
   const rewrites = [...roots, ...[...generatedRoots].map(([source, target]) => ({ source, target }))]
     .sort((a, b) => b.source.length - a.source.length);
@@ -77,7 +87,7 @@ export async function selectRequiredAgentLaunchFiles(input: Readonly<{
     if (exact) return exact;
     if (!isAbsolute(value)) return value;
     const root = rewrites.find(root => isCanonicalAbsolutePathInsideRoot(root.source, value));
-    return root ? join(root.target, relative(root.source, value)) : value;
+    return root ? mapSource(root.target, root.source, value) : value;
   };
   const rewriteJson = (value: unknown): unknown => {
     if (typeof value === 'string') return rewritePath(value);

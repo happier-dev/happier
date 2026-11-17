@@ -1,4 +1,4 @@
-import { finished } from 'node:stream/promises';
+import { writeManagedChannelFile } from './channelFileDelivery';
 import { openOpenSshRemoteChannel, runOpenSshRemoteCommand, safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import type { ManagedNativeBootstrapIO } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
@@ -23,12 +23,11 @@ export function createManagedSshSessionTransport(input: Readonly<{
             input: request.input, signal: signalFor(request.signal), timeoutMs: request.timeoutMs,
             onStdoutChunk: request.onStdoutChunk, rejectOnNonZero: false, includeStdoutInError: false }),
         putFile: async request => {
-            const channel = openChannel(['sh', '-c', `umask 077; cat > ${safeBashSingleQuote(request.path)}`], request.signal);
-            channel.resume();
-            const drained = finished(channel);
-            channel.end(Buffer.from(request.bytes));
-            const [completion] = await Promise.all([channel.completion, drained]);
-            if (completion.status !== 0) throw new SystemTaskExecutionError('remote_command_failed', 'SSH guest file transfer failed.');
+            await writeManagedChannelFile({ ...request, openChannel: argv => openChannel(argv, request.signal),
+                waitForCompletion: async channel => {
+                    const completion = await channel.completion;
+                    if (completion.status !== 0) throw new SystemTaskExecutionError('remote_command_failed', 'SSH guest file transfer failed.');
+                } });
         },
     };
     return { io, openChannel };

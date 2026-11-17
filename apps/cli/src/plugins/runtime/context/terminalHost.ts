@@ -412,6 +412,7 @@ function createPluginTerminalHostOwner(params: CreatePluginTerminalHostServicePa
                     // terminal server nor the runner's ambient env may revive them.
                     unsetEnvKeys: [], isolatedEnv: true,
                     ...(nativeLaunch.stdinPreamble?.byteLength ? { stdinPreamble: nativeLaunch.stdinPreamble } : {}),
+                    ...(nativeLaunch.requiredFiles?.length ? { requiredFiles: nativeLaunch.requiredFiles } : {}),
                     ...(nativeLaunch.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
                 };
             } catch (error) {

@@ -172,9 +172,12 @@ export type SessionHolderTarget = Readonly<{
     /**
      * The target launch preparation: this Machine's command/cwd mapped into the
      * target and the Agent's target environment (`launch.env` never crosses).
-     * Throws a typed refusal for anything the launch step did not place there.
+     * Awaits declared-file publication before launch; throws a typed refusal
+     * for anything the launch step did not place there.
      */
-    prepareLaunch?(launch: Readonly<{ command: string; args: readonly string[]; cwd?: string }>): Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<Record<string, string>> }>;
+    prepareLaunch?(launch: Readonly<{ command: string; args: readonly string[]; cwd?: string; env?: NodeJS.ProcessEnv;
+        requiredFiles?: readonly string[]; signal?: AbortSignal }>): Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<Record<string, string>> }>
+        | Promise<Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<Record<string, string>> }>>;
 }>;
 
 export type AgentSessionHolderLaunch =
@@ -188,6 +191,8 @@ export type SessionHolderLaunch = Readonly<{
     args: readonly string[];
     cwd?: string;
     env?: NodeJS.ProcessEnv;
+    requiredFiles?: readonly string[];
+    signal?: AbortSignal;
     /** Windows: the args are a rendered command-line tail, appended unquoted. */
     windowsVerbatimArguments?: boolean;
     /** Placement: the holder and the Agent run in this target, not on this Machine. */
@@ -242,9 +247,10 @@ export type SessionProcessPtyTarget = Readonly<{
     rootPath: string;
     openHolder(): SessionHolderChild;
     /** Agent PTYs use the same executable/credential mapping as other Agent launches. */
-    prepareAgentLaunch(request: Readonly<{ command: string; args: readonly string[]; cwd?: string }>): Readonly<{
+    prepareAgentLaunch(request: Readonly<{ command: string; args: readonly string[]; cwd?: string; env?: NodeJS.ProcessEnv;
+        requiredFiles?: readonly string[]; signal?: AbortSignal }>): Readonly<{
         argv: readonly string[]; cwd?: string; env: Readonly<Record<string, string>>;
-    }>;
+    }> | Promise<Readonly<{ argv: readonly string[]; cwd?: string; env: Readonly<Record<string, string>> }>>;
 }>;
 
 /** Workspace PTYs attach beside the Session Agent, under the same admitted placement. */
@@ -260,26 +266,28 @@ export function resolveSessionProcessPtyTarget(): SessionProcessPtyTarget | null
     const target = connectSessionTarget(placement);
     return { rootPath: workspace.hostRoot,
         openHolder: () => openSessionHolderWorkspaceClient(socketPath, target),
-        prepareAgentLaunch: request => {
-            const launch = target.prepareLaunch!(request);
+        prepareAgentLaunch: async request => {
+            const launch = await target.prepareLaunch!(request);
             return { argv: [launch.command, ...launch.args], env: launch.env,
                 ...(launch.cwd === undefined ? {} : { cwd: posix.relative(workspace.targetRoot, launch.cwd) }) };
         } };
 }
 
 /** Native process adapters share Exec's placement decision; the OS spawn is only for unplaced work. */
-export function spawnSessionProcess(command: string, args: readonly string[], options: SpawnOptions,
+export function spawnSessionProcess(command: string, args: readonly string[], options: SpawnOptions & Readonly<{ requiredFiles?: readonly string[]; targetLaunchSignal?: AbortSignal }>,
     localSpawn: (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess = spawn): ChildProcess {
     return spawnPlacedSessionProcess(command, args, options) ?? localSpawn(command, args, options);
 }
 
 /** The deadline/output owner can retain its local execFile path when placement is absent. */
-export function spawnPlacedSessionProcess(command: string, args: readonly string[], options: SpawnOptions): ChildProcess | null {
+export function spawnPlacedSessionProcess(command: string, args: readonly string[], options: SpawnOptions & Readonly<{ requiredFiles?: readonly string[]; targetLaunchSignal?: AbortSignal }>): ChildProcess | null {
     const holder = resolveSessionProcessHolderLaunch();
     if (!holder || holder.kind !== 'spawn') return null;
     const child = spawnSessionHolderChild({ ...holder, command, args,
         ...(typeof options.cwd === 'string' ? { cwd: options.cwd } : {}),
         ...(options.env ? { env: options.env } : {}),
+        ...(options.requiredFiles ? { requiredFiles: options.requiredFiles } : {}),
+        ...(options.targetLaunchSignal ?? options.signal ? { signal: options.targetLaunchSignal ?? options.signal } : {}),
         ...(options.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) });
     if (options.stdio === 'inherit') {
         process.stdin.pipe(child.stdin);
@@ -1068,24 +1076,24 @@ function spawnTargetSessionHolderChild(launch: SessionHolderLaunch & Readonly<{ 
         child.emit('error', error);
     };
     const q = safeBashSingleQuote;
-    let prepared: Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<Record<string, string>> }>;
-    try {
-        prepared = target.prepareLaunch
-            ? target.prepareLaunch({ command: launch.command, args: launch.args, ...(launch.cwd !== undefined ? { cwd: launch.cwd } : {}) })
+    const prepare = async () => {
+        const prepared = target.prepareLaunch
+            ? await target.prepareLaunch({ command: launch.command, args: launch.args, ...(launch.cwd !== undefined ? { cwd: launch.cwd } : {}),
+                ...(launch.env ? { env: launch.env } : {}), ...(launch.requiredFiles ? { requiredFiles: launch.requiredFiles } : {}),
+                ...(launch.signal ? { signal: launch.signal } : {}) })
             : { command: launch.command, args: launch.args, ...(launch.cwd !== undefined ? { cwd: launch.cwd } : {}), env: {} };
-    } catch (error) {
-        process.nextTick(() => fail(error instanceof Error ? error : new Error(String(error))));
-        return child;
-    }
-    const environment = Object.entries(prepared.env).map(([name, value]) => `${name}=${value}`);
-    const argv = [...(environment.length ? ['env', ...environment] : []), prepared.command, ...prepared.args];
-    const ready = `${launch.socketPath}.ready`;
-    const command = ['umask 077', `rm -f ${q(ready)}`, `mkfifo ${q(ready)}`,
-        ...(prepared.cwd ? [`cd ${q(prepared.cwd)}`] : []),
-        // Every held Agent's Session MCP relays reach this Machine through its own holder (`--session-mcp`).
-        `nohup ${q(target.holderPath)} serve --socket ${q(launch.socketPath)} --session-mcp -- ${argv.map(q).join(' ')} >${q(ready)} 2>/dev/null </dev/null &`,
-        `head -n 1 ${q(ready)}`, `rm -f ${q(ready)}`].join('\n');
-    void target.exec(command).then((result) => {
+        const environment = Object.entries(prepared.env).map(([name, value]) => `${name}=${value}`);
+        const argv = [...(environment.length ? ['env', ...environment] : []), prepared.command, ...prepared.args];
+        const ready = `${launch.socketPath}.ready`;
+        const command = ['umask 077', `rm -f ${q(ready)}`, `mkfifo ${q(ready)}`,
+            ...(prepared.cwd ? [`cd ${q(prepared.cwd)}`] : []),
+            // Every held Agent's Session MCP relays reach this Machine through its own holder (`--session-mcp`).
+            `nohup ${q(target.holderPath)} serve --socket ${q(launch.socketPath)} --session-mcp -- ${argv.map(q).join(' ')} >${q(ready)} 2>/dev/null </dev/null &`,
+            `head -n 1 ${q(ready)}`, `rm -f ${q(ready)}`].join('\n');
+        launch.signal?.throwIfAborted();
+        return target.exec(command);
+    };
+    void prepare().then((result) => {
         const line = result.stdout.split('\n')[0] ?? '';
         let readiness: { ready?: boolean; agentPid?: number; holderPid?: number; code?: string; kind?: string; errno?: number | null; message?: string };
         try { readiness = JSON.parse(line); } catch {

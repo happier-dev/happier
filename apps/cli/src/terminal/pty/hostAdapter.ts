@@ -318,7 +318,8 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
       const screen = createVirtualTerminalScreen({ cols, rows });
       let pty: PtyProcess;
       if (sessionTarget) {
-        const launch = sessionTarget.prepareAgentLaunch({ command, args: opts.spawnArgv.slice(1), cwd: opts.workingDirectory });
+        const launch = await sessionTarget.prepareAgentLaunch({ command, args: opts.spawnArgv.slice(1), cwd: opts.workingDirectory,
+          env: spawnEnv, ...(opts.requiredFiles ? { requiredFiles: opts.requiredFiles } : {}) });
         const holder = sessionTarget.openHolder();
         pty = await spawnHolderPtyProcess(holder, { ...launch, cols, rows }, () => holder.detach());
       } else {

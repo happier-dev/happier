@@ -15,6 +15,7 @@ export type TerminalHostNativeLaunch = Readonly<{
   isolatedEnv: boolean;
   windowsVerbatimArguments?: boolean;
   stdinPreamble?: Uint8Array;
+  requiredFiles?: readonly string[];
 }>;
 
 export type TerminalHostProcessObservation = Readonly<{ pid: number; argv: readonly string[] }>;
@@ -30,6 +31,7 @@ export type TerminalHostAdapter = Omit<AgentTerminalHostAdapter, 'createOrAttach
     /** Host-only final authorization, invoked only when a new process is required. */
     prepareLaunch?(): Promise<TerminalHostNativeLaunch>;
     windowsVerbatimArguments?: boolean;
+    requiredFiles?: readonly string[];
   }>): ReturnType<AgentTerminalHostAdapter['createOrAttachHost']>;
 }>;
 

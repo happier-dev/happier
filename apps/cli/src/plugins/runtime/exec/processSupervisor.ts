@@ -133,6 +133,7 @@ type SpawnSupervisedPluginProcessInput = Readonly<{
     cwd?: string;
     env?: NodeJS.ProcessEnv;
     stdin?: Uint8Array;
+    requiredFiles?: readonly string[];
     /** Host-owned binary stdout is consumed directly, never decoded or retained. */
     pipeStdout?: true;
     /** Host-private launch frame, ordered before all provider input. */
@@ -249,6 +250,8 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
         : holder?.kind === 'spawn' ? spawnSessionHolderChild({ executablePath: holder.executablePath, socketPath: holder.socketPath,
             ...('role' in holder ? { role: holder.role } : {}),
             command: input.command, args: input.args, ...(input.cwd ? { cwd: input.cwd } : {}), ...(input.env ? { env: input.env } : {}),
+            ...(input.requiredFiles ? { requiredFiles: input.requiredFiles } : {}),
+            ...(input.signals?.length ? { signal: AbortSignal.any(input.signals) } : {}),
             ...(input.spawnOptions?.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
             ...('target' in holder && holder.target ? { target: holder.target } : {}) })
         : spawn(input.command, [...input.args], {

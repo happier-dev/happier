@@ -535,6 +535,7 @@ export function spawnAuthorizedHostExecLaunchForHost(
             ...((launch.launcherCwd ?? launch.cwd) ? { cwd: launch.launcherCwd ?? launch.cwd } : {}),
             env: scopedLaunch?.env ?? environment,
             ...(launch.stdin ? { stdin: launch.stdin } : {}),
+            ...(launch.requiredFiles ? { requiredFiles: launch.requiredFiles } : {}),
             ...(launch.stdinPreamble ? { stdinPreamble: launch.stdinPreamble } : {}),
             ...(launch.timeoutMs === undefined ? {} : { timeoutMs: launch.timeoutMs }),
             ...(launch.maxStdoutBytes === undefined ? {} : { maxStdoutBytes: launch.maxStdoutBytes }),

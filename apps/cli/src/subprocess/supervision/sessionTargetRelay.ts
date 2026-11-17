@@ -9,6 +9,7 @@ import { getPathRemainderWithinBase, resolveSessionHandoffWorkspaceSessionPath }
 
 import { observeLocalIpcPeerIdentity, resolveProcessCustodyPeerIdentityExecutable, type ProcessCustodyPeerIdentity } from './processCustody';
 import type { SessionHolderTarget } from './sessionHolder';
+import { prepareSessionTargetLaunchFiles } from './sessionTargetLaunchFiles';
 
 /**
  * The daemon→runner relay for a Session placed in a target (no daemon inside
@@ -34,6 +35,8 @@ export type SessionTargetOperations = Readonly<{
  * into the target (its delivered credential home), and the workspace root.
  */
 export type SessionTargetLaunch = Readonly<{
+    /** The existing Session-private guest directory, removed by Session cleanup. */
+    runtimeHome?: string;
     executables: Readonly<Record<string, string>>;
     env: Readonly<Record<string, string>>;
     workspace?: Readonly<{ hostRoot: string; targetRoot: string }>;
@@ -166,7 +169,8 @@ export function assertSessionTargetWorkspaceUnambiguous(workspace: SessionTarget
 
 /** Maps one Agent launch on this Machine to its launch in the target; refuses anything not placed there. */
 export function prepareTargetAgentLaunch(launch: SessionTargetLaunch | undefined,
-    request: Readonly<{ command: string; args: readonly string[]; cwd?: string }>): Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<Record<string, string>> }> {
+    request: Readonly<{ command: string; args: readonly string[]; cwd?: string }>,
+    environmentProjection?: Readonly<Record<string, string>>): Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<Record<string, string>> }> {
     const command = launch?.executables[request.command];
     if (!command) throw targetLaunchError('agent_cli_target_unavailable', 'This Agent CLI was not placed in the Session target');
     const hostCwd = request.cwd === undefined ? undefined
@@ -175,8 +179,12 @@ export function prepareTargetAgentLaunch(launch: SessionTargetLaunch | undefined
     const locked = launch?.lockPath ? launch.lockExecutable
         ? { command: launch.lockExecutable, args: ['file-lock', '-s', launch.lockPath, '--', command, ...request.args] }
         : { command: 'flock', args: ['-s', launch.lockPath, command, ...request.args] } : { command, args: request.args };
+    // This owner admits target environment keys. Required-file projection can
+    // rewrite their paths, but cannot promote any host-only entry.
+    const env = launch?.env ?? {};
     return { ...locked,
-        ...(cwd !== undefined ? { cwd } : {}), env: launch?.env ?? {} };
+        ...(cwd !== undefined ? { cwd } : {}), env: environmentProjection
+            ? Object.fromEntries(Object.keys(env).map(key => [key, environmentProjection[key]!])) : env };
 }
 
 export const SESSION_TARGET_PLACEMENT_ENV_KEY = 'HAPPIER_SESSION_TARGET_PLACEMENT';
@@ -272,7 +280,9 @@ export async function serveSessionTargetRelay(input: Readonly<{
             socket.once('close', () => channel.destroy());
         }, () => socket.destroy());
     };
-    const server: Server = createServer(socket => {
+    // A file channel closes stdin before guest publication completes. Keep its
+    // stdout half alive until the provider closes it, as for every duplex channel.
+    const server: Server = createServer({ allowHalfOpen: true }, socket => {
         live.add(socket);
         socket.once('close', () => live.delete(socket));
         socket.pause();
@@ -302,12 +312,16 @@ export function connectSessionTarget(placement: SessionTargetPlacement): Session
         socket.write(`${JSON.stringify(request)}\n`);
         return socket;
     };
-    return Object.freeze({
+    const target: SessionHolderTarget = {
         id: placement.id,
         holderPath: placement.holderPath,
         socketDirectory: placement.socketDirectory,
-        prepareLaunch: request => prepareTargetAgentLaunch(placement.launch, request),
-        exec: command => new Promise((resolve, reject) => {
+        prepareLaunch: async (request: Parameters<NonNullable<SessionHolderTarget['prepareLaunch']>>[0]) => {
+            const selected = await prepareSessionTargetLaunchFiles({ launch: placement.launch, request,
+                exec: command => target.exec(command), openChannel: argv => target.openChannel(argv) });
+            return prepareTargetAgentLaunch(placement.launch, { ...request, args: selected.args }, selected.environment);
+        },
+        exec: (command: string): ReturnType<SessionHolderTarget['exec']> => new Promise((resolve, reject) => {
             const socket = open({ op: 'exec', command });
             const chunks: Buffer[] = [];
             socket.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -323,8 +337,9 @@ export function connectSessionTarget(placement: SessionTargetPlacement): Session
                 }
             });
         }),
-        openChannel: argv => open({ op: 'channel', argv }),
-    });
+        openChannel: (argv: readonly string[]) => open({ op: 'channel', argv }),
+    };
+    return Object.freeze(target);
 }
 
 /** A holder socket path inside the target's private socket directory. */
