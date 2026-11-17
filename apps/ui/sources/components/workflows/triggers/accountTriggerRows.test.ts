@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { normalizeWorkflowIngress} from '@happier-dev/protocol/workflows/workflowValidationV1';
 import { WorkflowTriggerSetV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { AutomationActionTriggerSchema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 
 vi.mock('@/text', async () => {
@@ -29,6 +30,15 @@ function set(automationId: string, overrides: Record<string, unknown>): Workflow
 }
 
 describe('projectAccountTriggerRows', () => {
+    it('projects a saved Action attachment through the ordinary trigger row owner', () => {
+        const trigger = AutomationActionTriggerSchema.parse({ kind: 'action', phase: 'before', mode: 'wait', onFailure: 'ask',
+            actionIds: ['machines.command.run'] });
+        const rows = projectAccountTriggerRows({ resolveWorkflowTitle: () => 'Shared check', sets: [
+            set('action-check', { target: { kind: 'workflow', ref: '00000000-0000-4000-8000-000000000001' },
+                triggers: [{ ...trigger, id: 'action-trigger', revision: 1, enabled: true, createdAt: 1, updatedAt: 1 }] }),
+        ] });
+        expect(rows).toMatchObject([{ automationId: 'action-check', triggerId: 'action-trigger', subtitle: 'Shared check', off: false }]);
+    });
     it('names an inline document with declared inputs without flattening it to a form preset', () => {
         const base = inline([{ kind: 'step', id: 'digest', name: 'Morning digest',
             document: { text: 'Summarize project activity and include open issues.', references: [], attachments: [] },
