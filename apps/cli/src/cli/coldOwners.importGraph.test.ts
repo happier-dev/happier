@@ -25,10 +25,7 @@ const CLAUDE_RUNTIME_COLD = [
   // Unified terminal runtime: only when that terminal runtime is selected.
   'claude/src/agent/runtime/terminal/unified/nativeSession.ts',
 ] as const;
-const DAEMON_COLD = [
-  // Deployment Action dependencies: only a service-export binding or a deployment child RPC.
-  'src/deployments/createDaemonDeploymentActionDeps.ts',
-] as const;
+// The daemon's cold owners are pinned on the single CLI graph in `daemonStartGraph.test.ts`.
 
 async function readEagerGraph(entryPoints: readonly string[], owners: readonly string[]): Promise<readonly string[]> {
   const { metafile } = await build({
@@ -54,15 +51,10 @@ async function readEagerGraph(entryPoints: readonly string[], owners: readonly s
   return [...eager].map((path) => path.replaceAll('\\', '/'));
 }
 
-describe('owners that the daemon and session host never run at start', () => {
+describe('owners that the session host and the Claude plugin runtime never run at start', () => {
   it('stay out of the session host start graph', async () => {
     const eager = await readEagerGraph(['src/agent/runtime/session/loop/runHostSessionRuntime.ts'], HOST_COLD);
     expect(HOST_COLD.filter((owner) => eager.some((path) => path.endsWith(owner)))).toEqual([]);
-  }, 240_000);
-
-  it('stay out of the daemon start graph', async () => {
-    const eager = await readEagerGraph(['src/daemon/startDaemon.ts', 'src/api/apiMachine.ts'], DAEMON_COLD);
-    expect(DAEMON_COLD.filter((owner) => eager.some((path) => path.endsWith(owner)))).toEqual([]);
   }, 240_000);
 
   it('stay out of the Claude plugin runtime start graph', async () => {
