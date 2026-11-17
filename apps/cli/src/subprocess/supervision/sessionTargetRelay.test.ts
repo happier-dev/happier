@@ -177,8 +177,9 @@ createInterface({ input: process.stdin }).once('line', () => {
         const exec = createStablePluginExecService({ signal: session.signal, isOccurrenceCurrent: () => true,
             resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => directory,
             environment: { HAPPIER_TEST_HOST_ONLY: 'must-stay-on-host' },
-            systemTools: { resolve: async () => ({ executablePath: process.execPath,
-                launch: { executablePath: process.execPath, args: ['-e', agent, '--'] } }) } });
+            systemTools: { resolve: async request => ({ grantId: 'required-files-agent', toolId: request.toolId,
+                displayName: 'Required files fixture Agent', source: 'system', executablePath: process.execPath,
+                launch: { kind: 'binary', executablePath: process.execPath, args: ['-e', agent, '--'] } }) } });
         // Observe the public process input while retaining the entire real Exec implementation.
         const observedExec: ExecService = { ...exec, clients: { ...exec.clients, spawn: (spec, options) => {
             hostSources = spec.launch.requiredFiles ?? [];

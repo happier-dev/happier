@@ -251,7 +251,7 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
             ...('role' in holder ? { role: holder.role } : {}),
             command: input.command, args: input.args, ...(input.cwd ? { cwd: input.cwd } : {}), ...(input.env ? { env: input.env } : {}),
             ...(input.requiredFiles ? { requiredFiles: input.requiredFiles } : {}),
-            ...(input.signals?.length ? { signal: AbortSignal.any(input.signals) } : {}),
+            ...(input.signals?.length ? { signal: AbortSignal.any([...input.signals]) } : {}),
             ...(input.spawnOptions?.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
             ...('target' in holder && holder.target ? { target: holder.target } : {}) })
         : spawn(input.command, [...input.args], {

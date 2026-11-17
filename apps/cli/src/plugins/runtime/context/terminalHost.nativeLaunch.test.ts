@@ -73,7 +73,9 @@ describe('terminal host final native launch', () => {
             const ptyAdapter = createPtyTerminalHostAdapter({ sessionTarget: null, ptyProvider: { spawn: physical } });
             const tmuxCreate = vi.fn(async (input: Parameters<TerminalHostAdapter['createOrAttachHost']>[0]) => {
                 await input.prepareLaunch?.();
-                return { kind: 'tmux' as const, sessionName: input.sessionName, paneId: 'fixture-pane' };
+                return { kind: 'tmux', sessionName: input.sessionName, paneId: 'fixture-pane', attachMetadata: {
+                    attachStrategy: 'terminal_host', topology: 'shared', locality: 'same_machine', liveProbe: 'required',
+                } } satisfies Awaited<ReturnType<TerminalHostAdapter['createOrAttachHost']>>;
             });
             const { nativePreambleTransport: _nativePreambleTransport, ...tmuxBaseAdapter } = ptyAdapter;
             const adapter: TerminalHostAdapter = transport === 'pty' ? ptyAdapter

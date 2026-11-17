@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import { SessionInputMachineTargetV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
@@ -25,8 +26,8 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createDaemonServerWorkBudget, createDaemonServerWorkScheduler } from '../serverWork';
 
 const attribution = { serverId: 'local-bob-home-profile', accountId: 'bob', machineId: 'alice-machine', installationId: 'alice-installation' };
-const target = { homeId: 'srv_requester_home', accountId: attribution.accountId, machineId: attribution.machineId,
-  installationId: attribution.installationId, sessionId: 'bob-session' };
+const target = SessionInputMachineTargetV1Schema.parse({ homeId: 'srv_requester_home', accountId: attribution.accountId, machineId: attribution.machineId,
+  installationId: attribution.installationId, sessionId: 'bob-session' });
 const origin = 'http://bob-home.test';
 let app: FastifyInstance | undefined;
 let directory: string | undefined;
