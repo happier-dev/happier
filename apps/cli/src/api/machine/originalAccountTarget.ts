@@ -1,5 +1,6 @@
 import type { ActionExecuteResult, ActionExecutorContext } from '@happier-dev/protocol';
 import type { StoredCredentials } from '@/persistence';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { CurrentAccountMachineInventoryItem } from './resolveCurrentAccountMachineTarget';
 
 /** Classify the already-read requester inventory before disclosing or dispatching an Action. */
@@ -20,7 +21,8 @@ export async function resolveOriginalAccountMachineTarget(input: Readonly<{
 > {
   const refuse = (errorCode: string, details?: Readonly<{ machineId: string }>) => ({
     kind: 'refused' as const,
-    execution: { ok: false as const, errorCode, error: errorCode, ...(details ? { details } : {}) },
+    execution: { ok: false as const, errorCode, error: errorCode, ...(details ? { details } : {}),
+      failureCause: projectActionFailureCauseV1({ code: errorCode }, 'dispatch.machine_selection') },
   });
   if (!input.machines) return refuse('machine_inventory_unavailable');
   const machine = input.machines.find(row => row.id === input.machineId);

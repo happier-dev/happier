@@ -815,7 +815,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   const provenance = readAuthTokenProvenance(claims, { allowLegacyHome: input.installedWorkflow !== undefined });
   const publisherAccountId = readAccountIdFromToken(input.credentials.token);
   const homeUrl = normalizeServerHttpBaseUrl(input.serverHttpBaseUrl);
-  if (input.target.kind === 'session' && input.actionId !== SESSION_MESSAGE_SEND_ACTION_ID_V1) return fail('target_unavailable');
+  if (input.target.kind === 'session' && input.actionId !== SESSION_MESSAGE_SEND_ACTION_ID_V1) return fail('target_unavailable', 'dispatch.target_kind');
   const requiresMachineProof = input.invocation?.caller.kind === 'plugin'
     || requiresOriginalAccountInvocationMachineProofV1(input.actionId) && input.invocation !== undefined
     || input.managedContinuation !== undefined
@@ -870,7 +870,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       (retainedRequester.isCustodyCurrent ?? retainedRequester.isCurrent)()))
     && (!spawnRequester || input.isCurrent === spawnRequester.isCurrent || await phase('spawn_custody', () => spawnRequester.isCurrent()))
     && (!input.isCurrent || await phase('currentness', () => input.isCurrent!()));
-  if (!await isCurrent()) return fail('target_unavailable');
+  if (!await isCurrent()) return fail('target_unavailable', 'dispatch.currentness');
   // This branch only chooses the incumbent own-account path. Home still owns
   // authentication and the destination owns its Action admission.
   let machines: Awaited<ReturnType<typeof listCurrentAccountMachines>> | undefined;
@@ -910,12 +910,12 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       || !await isCurrent())) return fail('controller_retired');
   }
   if (input.foreignTargetOnly && !workflow && !scopedController && !workflowPlacementRequested) {
-    if (input.target.kind !== 'machine') return fail('target_unavailable');
+    if (input.target.kind !== 'machine') return fail('target_unavailable', 'dispatch.foreign_target_kind');
     const machineId = input.target.machineId;
     machines = await phase('machine_inventory', () => listCurrentAccountMachines({ token: input.credentials.token,
       credentials: input.credentials, machineIds: [machineId], projection: 'hostFacts', serverHttpBaseUrl: homeUrl,
       ...(input.signal ? { signal: input.signal } : {}) }));
-    if (!await isCurrent()) return fail('target_unavailable');
+    if (!await isCurrent()) return fail('target_unavailable', 'dispatch.machine_inventory.currentness');
     const own = machines.find(row => row.id === machineId);
     const ordinary = readAuthTokenProvenance(claims, { allowLegacyHome: true });
     // A native approval has already committed consent in the CLI owner. Its
@@ -1136,7 +1136,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
           : sealExternalActionRequesterAccountContextV1({ authorization: minted.authorization,
           credentials: { ...encodeStoredCredentials(input.credentials), token: input.credentials.token },
           purpose: { kind: 'external_action' }, installationPublicKey: decodeBase64(installed.installationPublicKey), randomBytes });
-        if (!await isCurrent()) return fail('target_unavailable');
+        if (!await isCurrent()) return fail('target_unavailable', 'dispatch.workflow_authorization.currentness');
         body = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1,
           machineId: root.machineId, envelope, executionAuthorization: authorization });
       } catch { return fail('content_unavailable'); }
@@ -1263,11 +1263,12 @@ export async function deliverExternalActionRequest(input: Readonly<{
   headers: Readonly<Record<string, string>>; material?: Extract<AccountScopedCryptoMaterial, { type: 'dataKey' }>;
   binding?: ExternalActionEncryptionBindingV2; signal?: AbortSignal; isCurrent(): Promise<boolean>;
 }>): Promise<ActionExecuteResult> {
-  const fail = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
+  const fail = (errorCode: string, issuerPhase?: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode,
+    ...(issuerPhase ? { failureCause: projectActionFailureCauseV1({ code: errorCode }, issuerPhase) } : {}) });
   const isCurrent = input.isCurrent;
   const phase = <T>(name: string, read: () => T | Promise<T>) => runTracedExternalActionInnerStage(`dispatch.${name}`, read);
   input.signal?.throwIfAborted();
-  if (!await isCurrent()) return fail('target_unavailable');
+  if (!await isCurrent()) return fail('target_unavailable', 'dispatch.delivery.currentness');
   try {
     const response = await phase('delivery', () => axios.post<unknown>(`${input.serverHttpBaseUrl}${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${input.actionId}`, input.body, {
       headers: input.headers, ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true,
