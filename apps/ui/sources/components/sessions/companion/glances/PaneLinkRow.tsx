@@ -8,6 +8,7 @@ import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneSco
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { useSessionWorkSources } from '@/components/sessions/work/sessionWorkSources';
+import { readWorkSummaryPresentation } from '@/components/sessions/work/workProjection';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { resolveGitTabBadge } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
 import { Text } from '@/components/ui/text/Text';
@@ -91,13 +92,13 @@ export function sessionCompanionPaneLabel(paneId: string): string {
 
 /**
  * The one fact the pane's rail badge carries, read from the same owners the rail reads: the Git
- * badge model (count or diff, per the person's badge setting) and the Work projection's outstanding
- * count for Agents. Other panes carry no badge, so their row carries no fact.
+ * badge model (count or diff, per the person's badge setting) and the Work projection's summary
+ * presentation. Other panes carry no badge, so their row carries no fact.
  */
 function usePaneRailFact(paneId: string, sessionId: string, serverId: string | null): string | null {
     const scmStatus = useSessionProjectScmStatus(paneId === 'git' ? sessionId : null, serverId);
     const mode = useSetting('tabBarGitBadgeMode');
-    const outstanding = useSessionWorkSources()?.projection.summary.outstanding ?? 0;
+    const workSummary = useSessionWorkSources()?.projection.summary;
     if (paneId === 'git') {
         const badge = resolveGitTabBadge(mode, scmStatus);
         if (!badge) return null;
@@ -105,7 +106,13 @@ function usePaneRailFact(paneId: string, sessionId: string, serverId: string | n
             ? t('widgetGlances.changedCount', { count: badge.value })
             : `+${badge.added} −${badge.removed}`;
     }
-    if (paneId === 'agents' && outstanding > 0) return t('widgetGlances.runningCount', { count: outstanding });
+    if (paneId === 'agents' && workSummary) {
+        const { bucket, count } = readWorkSummaryPresentation(workSummary);
+        if (count === 0) return null;
+        if (bucket === 'needs_you') return t('sessionWork.strip.needsYou', { count });
+        if (bucket === 'working') return t('sessionWork.strip.stillWorking', { count });
+        return `${count} · ${t('status.offline')}`;
+    }
     return null;
 }
 

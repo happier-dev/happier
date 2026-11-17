@@ -49,6 +49,9 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { useAppLocalServicesGlance } from './useAppLocalServicesGlance';
 import type { DaemonLocalServiceInventoryWatchResponseV1 } from '@happier-dev/protocol/local/services/inventory/v1';
 import type { LocalServiceInventoryRow } from '@/sync/domains/local/services/inventory/store';
+import { SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY, SessionAgentActivityHeadlineV1Schema } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineV1';
+import { useSessionAgentActivity } from '@/hooks/session/useSessionAgentActivity';
+import { SessionWorkSourcesProvider, useSessionWorkSourcesOwner } from '@/components/sessions/work/sessionWorkSources';
 
 const boundary = vi.hoisted(() => ({
     projection: vi.fn(),
@@ -184,6 +187,49 @@ function homeServicesFixture(descriptor = readWidgetDescriptor(null, homeService
 }
 
 describe('Companion glance consumed owners', () => {
+    it.each([
+        { statuses: ['waiting'], fact: 'sessionWork.strip.needsYou(count=1)' },
+        { statuses: ['running'], fact: 'sessionWork.strip.stillWorking(count=1)' },
+        { statuses: ['waiting', 'running', 'running'], fact: 'sessionWork.strip.needsYou(count=1)' },
+        { statuses: [], fact: null },
+    ] as const)('uses the Work owner summary for its pane link with $statuses', async ({ statuses, fact }) => {
+        session = createSessionFixture({ ...session, active: true, activeAt: Date.now(), metadata: { ...session.metadata!,
+            [SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY]: SessionAgentActivityHeadlineV1Schema.parse({
+                v: 1, backendId: 'claude', updatedAt: Date.now(),
+                activeEntries: statuses.map((status, index) => ({
+                    entryId: `workflow_run:run-${index}`, kind: 'workflow_run', runId: `run-${index}`,
+                    title: `Run ${index}`, status, updatedAt: Date.now(),
+                })),
+            }),
+        } });
+        storage.getState().applySessions([session]);
+        function WorkGlance() {
+            const agentActivity = useSessionAgentActivity({ sessionId: session.id, serverId: runtime.serverId, session });
+            const sources = useSessionWorkSourcesOwner({ sessionId: session.id, serverId: runtime.serverId,
+                ownerMetadata: session.metadata, agentActivity });
+            return <SessionWorkSourcesProvider value={sources}>
+                {React.createElement('WorkSummaryProbe', { summary: sources.projection.summary })}
+                <SessionCompanionGlance
+                entry={{ kind: 'pane', ref: { kind: 'pane', paneId: 'agents' } }}
+                session={session} sessionId={session.id} serverId={runtime.serverId}
+                frameStyle="plain" measurementOnly={false} headerAccessory={null} testID="work-pane" />
+            </SessionWorkSourcesProvider>;
+        }
+        const screen = await renderScreen(<GlanceFixture><WorkGlance /></GlanceFixture>);
+        await flushHookEffects();
+        expect(screen.tree.root.findByType('WorkSummaryProbe').props.summary).toMatchObject({
+            outstanding: statuses.length, needsYou: statuses.filter(status => status === 'waiting').length, stalled: 0,
+        });
+        const label = screen.findByTestId('work-pane.open')!.props.accessibilityLabel;
+        if (fact) {
+            expect(screen.getTextContent()).toContain(fact);
+            expect(label).toContain(fact);
+        } else {
+            expect(label).toBe('widgetGlances.paneLinkA11y(pane=sessionWork.title)');
+        }
+        await screen.unmount();
+    });
+
     it('keeps the services row as the count and the way into the pane, puts no services count in the header, and reads no feed', async () => {
         const { RunningGlance } = await import('./RunningGlance');
         const machine = createMachineFixture({ id: 'machine-1', activeAt: Date.now(),
