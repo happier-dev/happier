@@ -1,3 +1,5 @@
+import { ApprovalProfileV1Schema } from '@happier-dev/protocol/actions/approvalProfiles';
+import { bindApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import { createTestWorkflowCoordinator as createWorkflowCoordinator } from './workflowCoordinator.testkit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installVitestRnShim } from '../../../../ui/sources/dev/vitestRnShim';
@@ -215,6 +217,10 @@ it.each(['manual', 'schedule', 'event', 'channel'] as const)('retains the trigge
       resolveServerFeaturesSnapshot: async () => ({ status: 'ready', provenance: 'authenticated',
         features: FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_home' } } }) }),
     }),
+    readApprovalProfile: id => bindApprovalProfileV1([{ id: 'reviewed-machines',
+      profile: ApprovalProfileV1Schema.parse({ id: 'reviewed-machines', name: 'Reviewed Machine listing',
+        actions: { 'machines.list': { approvalRequiredSurfaces: ['agent'] } } }),
+      access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 } }], id),
     machinesList: async () => { effects++; return { items: [] }; },
     approvalsCreate: async ({ request }) => { approval = ApprovalRequestV2Schema.parse(request); return { artifactId: 'contained-approval' }; },
     approvalsGet: async () => approval ?? null,
@@ -253,7 +259,7 @@ it.each(['manual', 'schedule', 'event', 'channel'] as const)('retains the trigge
     causeWorkDepth: 0, accountCurrentness: { mode: 'plain' as const, version: 1, contentKeyFingerprint: null },
     definitionEnvelope: JSON.stringify({ t: 'plain', v: { inlineDefinition: { version: 1, inputs: [], defaults: {},
       blocks: [{ kind: 'action', id: 'list', actionId: 'machines.list', input: {} }] },
-      approvalProfileId: 'builtin:read-propose', workspace: { directory }, executionTarget: { kind: 'session' } } }) };
+      approvalProfileId: 'reviewed-machines', workspace: { directory }, executionTarget: { kind: 'session' } } }) };
   expect(await coordinate()(claim)).toMatchObject({ state: 'paused', reason: 'approval_required' });
   expect(storage.rows().some(row => row.index.lifecycle === 'waiting_for_approval')).toBe(true);
   expect(approval).toMatchObject({ status: 'open', executionOriginV1: { caller: { kind: 'workflowRun', authenticatedStarterV1: {
