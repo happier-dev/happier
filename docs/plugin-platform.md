@@ -13151,6 +13151,11 @@ validators. The SDK's readonly target declaration derives from that same contrib
 Deployment outcomes use the Machine-services generic `deployment-failed` and
 `deployment-succeeded` Events for every target, including Cloudflare. Runtime
 target declarations do not select a separate failure-transition Event or payload.
+In unreleased 0.3, a receipt Event source can select a whole Home or one
+Environment. Home adoption pages the existing receipt reader without enumerating
+Environments; later invalidations name exact receipts. Each Event retains the
+receipt's actual Environment and controller context. Targeted observation and
+preview-child sources still require their Environment.
 The platform's finite `deployments.receipts.observe` Action dispatches the target's
 declared observe Action; provider-specific notice enrichment stays in the host
 platform adapter.

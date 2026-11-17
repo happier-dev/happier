@@ -39,7 +39,7 @@ const outcomes = {
 type EventId = keyof typeof outcomes;
 const isEventId = (id: string): id is EventId => Object.hasOwn(outcomes, id);
 const sourceId = (config: DeploymentReceiptEventSourceConfigV1, event: EventId) =>
-    `deployment:${computeCanonicalDomainSeparatedDigest('happier.deployment.event-source.v1', [config.serverId, config.environmentId, event, String(config.observingSince),
+    `deployment:${computeCanonicalDomainSeparatedDigest('happier.deployment.event-source.v1', [config.serverId, config.environmentId ?? '', event, String(config.observingSince),
         ...(config.targetLinkId ? [config.targetLinkId] : []), ...(config.previewChildren ? ['previewChildren'] : [])])}`;
 
 const setupAction = (event: EventId) => ({
@@ -51,7 +51,7 @@ const setupAction = (event: EventId) => ({
         const scope = setupSchema.parse(input);
         if (scope.previewChildren && event !== changedEvent) throw new PluginError({ code: 'deployment_target_unavailable' });
         let credentialPrincipal: DeploymentReceiptEventSourceConfigV1['credentialPrincipal'];
-        if (scope.targetLinkId) {
+        if (scope.targetLinkId && scope.environmentId !== undefined) {
             const read = await context.services.actions.execute('deployments.observation.get', {
                 serverId: scope.serverId, environmentId: scope.environmentId, targetLinkId: scope.targetLinkId,
             }, { signal: context.signal });
@@ -61,7 +61,7 @@ const setupAction = (event: EventId) => ({
                 throw new PluginError({ code: 'deployment_target_unavailable' });
             }
             credentialPrincipal = read.credentialPrincipal;
-        } else {
+        } else if (scope.environmentId !== undefined) {
             const read = await context.services.actions.execute('deployments.environments.get', {
                 serverId: scope.serverId, environmentId: scope.environmentId,
             }, { signal: context.signal });
@@ -72,7 +72,7 @@ const setupAction = (event: EventId) => ({
         const config = configSchema.parse({ ...scope, observingSince: context.invokedAtMs,
             ...(credentialPrincipal ? { credentialPrincipal } : {}) });
         return { v: 1 as const, sourceInstanceId: sourceId(config, event), sourceContractVersion: 1,
-            sourceConfig: config, displayLabel: config.environmentId };
+            sourceConfig: config, displayLabel: config.environmentId ?? 'Deployments' };
     },
 });
 export const deploymentEventActions = Object.fromEntries((Object.keys(outcomes) as EventId[])
@@ -143,7 +143,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                 if (!change || change.deploymentId || change.activityChanged) continue;
                 const entries = new Map<string, PendingReceipt>();
                 for (const [id, state] of states) {
-                    if (state.event !== changedEvent || !state.config.previewChildren && state.config.environmentId !== change.environmentId) continue;
+                    if (state.event !== changedEvent || state.config.environmentId !== undefined && !state.config.previewChildren && state.config.environmentId !== change.environmentId) continue;
                     const entry: PendingReceipt = entries.get(state.config.serverId) ?? { environmentId: change.environmentId, latest: true };
                     entries.set(state.config.serverId, entry);
                     state.pending.set(`environment:${change.environmentId}`, entry);
@@ -180,8 +180,8 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                 const receipts: Receipt[] = [];
                 if (state.fullRead) {
                     const retained: Receipt[] = [];
-                    const environmentIds: string[] = [];
-                    if (source.previewChildren) {
+                    const environmentIds: (string | undefined)[] = [];
+                    if (source.previewChildren && source.environmentId !== undefined) {
                         const template = await context.services.actions.execute('deployments.environments.get', {
                             serverId: source.serverId, environmentId: source.environmentId,
                         }, { signal: context.signal });
@@ -201,11 +201,11 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                         let cursor: string | undefined;
                         do {
                             const page = await context.services.actions.execute('deployments.receipts.list', {
-                                serverId: source.serverId, environmentId, ...(event === changedEvent ? { limit: 1 } : {}),
+                                serverId: source.serverId, ...(environmentId !== undefined ? { environmentId } : {}), ...(event === changedEvent && environmentId !== undefined ? { limit: 1 } : {}),
                                 ...(cursor ? { cursor } : {}),
                             }, { signal: context.signal });
                             if (!('ok' in page) || !page.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'ok' in page ? page.error : 'deployment_unavailable', message: 'Deployment receipts are unavailable.' }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: page });
-                            retained.push(...page.items); cursor = event === changedEvent ? undefined : page.nextCursor ?? undefined;
+                            retained.push(...page.items); cursor = event === changedEvent && environmentId !== undefined ? undefined : page.nextCursor ?? undefined;
                         } while (cursor);
                     }
                     // The adapter belongs to one authenticated Account. Share the
@@ -229,6 +229,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                 const domainFacts = new Map<string, string>();
                 for (const [pendingId, entry] of pending) {
                     const environmentId = entry.environmentId ?? source.environmentId;
+                    if (environmentId === undefined) throw new PluginError({ code: 'deployment_unavailable', message: 'Receipt Environment is unavailable.' });
                     if (source.previewChildren && entry.templateEnvironmentId === undefined) {
                         const child = await context.services.actions.execute('deployments.environments.get', {
                             serverId: source.serverId, environmentId,
@@ -276,7 +277,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                 }
                 // Only the failed source drives finite platform observation. Its
                 // sibling outcome sources consume the receipt owner's invalidation.
-                if (source.targetLinkId && event === DEPLOYMENT_FAILED_EVENT) {
+                if (source.targetLinkId && source.environmentId !== undefined && event === DEPLOYMENT_FAILED_EVENT) {
                     for (const [index, receipt] of receipts.entries()) {
                         if (receipt.environmentId !== source.environmentId || receipt.targetLinkId !== source.targetLinkId
                             || receipt.operation === 'teardown' || !inProgressStates.has(receipt.state)) {
@@ -302,7 +303,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                 const observations: PluginEventObservationV1[] = [];
                 for (const receipt of receipts) {
                     const outcome = outcomes[event];
-                    if (!source.previewChildren && receipt.environmentId !== source.environmentId
+                    if (!source.previewChildren && source.environmentId !== undefined && receipt.environmentId !== source.environmentId
                         || source.targetLinkId && (receipt.targetLinkId !== source.targetLinkId || receipt.operation === 'teardown')
                         || event === DEPLOYMENT_RECEIPT_EVENT_REFS_V1.succeeded.localId && receipt.operation === 'teardown'
                         || event !== changedEvent && (receipt.settledAtMs === undefined || receipt.settledAtMs < source.observingSince
@@ -386,7 +387,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                 } catch (error) { completionError = error; }
                 const entries = new Map<string, PendingReceipt>();
                 for (const [id, state] of states) if (state.config.serverId === event.payload.serverId
-                    && (state.config.environmentId === event.payload.environmentId || state.config.previewChildren)) {
+                    && (state.config.environmentId === undefined || state.config.environmentId === event.payload.environmentId || state.config.previewChildren)) {
                     const entry = entries.get(state.config.serverId) ?? { environmentId: event.payload.environmentId,
                         ...(nativeReceipt ? { receipt: nativeReceipt } : {}) };
                     entries.set(state.config.serverId, entry);

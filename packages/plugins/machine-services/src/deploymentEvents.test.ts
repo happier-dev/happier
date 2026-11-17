@@ -14,14 +14,16 @@ const config = { v: 1, serverId: 'home', environmentId: 'environment-a', targetL
 // Redacted COR4-164/receipts-1.json (#164): deploy/running revision 2 while
 // continuation-provider-deployments.json is READY. Identifiers and times are fixture-local.
 const receipt = { v: 1, id: 'receipt-a', environmentId: config.environmentId, targetLinkId: config.targetLinkId,
+    projectSourceId: 'source-a', acceptedExecution: { v: 1, controller: { machineId: 'machine-a', installationId: 'installation-a' } },
     revision: 2, operation: 'deploy', state: 'running', requestKey: 'request-a', requestedByAccountId: 'owner',
     actionOperationId: 'operation-a', contentArtifactId: 'artifact-a', contentHeaderVersion: 1, contentBodyVersion: 1,
     requestedAtMs: 1000, startedAtMs: 1001 } as const;
 
-function fixture(periodMs?: number, eventId = 'deployment-failed') {
-    let current: Omit<typeof receipt, 'state' | 'revision' | 'operation' | 'targetLinkId'> & {
+function fixture(periodMs?: number, eventId = 'deployment-failed', kindWide = false) {
+    let current: Omit<typeof receipt, 'id' | 'state' | 'revision' | 'operation' | 'targetLinkId' | 'environmentId'> & {
+        id: string;
         state: 'running' | 'failed' | 'succeeded' | 'cancelled' | 'outcome_unknown'; revision: number; settledAtMs?: number;
-        operation: 'deploy' | 'rollback' | 'promote' | 'teardown'; targetLinkId: string } = { ...receipt };
+        operation: 'deploy' | 'rollback' | 'promote' | 'teardown'; targetLinkId: string; environmentId: string } = { ...receipt };
     const environment = { id: config.environmentId, runtimeTargetLinkId: config.targetLinkId as string };
     const targetLink = { id: config.targetLinkId, role: 'runtime',
         source: { kind: 'plugin', contribution: { pluginId: 'happier.platform.test', localId: 'runtime' } } };
@@ -36,7 +38,8 @@ function fixture(periodMs?: number, eventId = 'deployment-failed') {
     const definition: PluginCheckpointedEventSourceDefinitionV1 = { automationId: '11111111-1111-4111-8111-111111111111',
         triggerId: 'watch', triggerRevision: 1, sourceSelectorId: '22222222-2222-4222-8222-222222222222',
         eventRef: { pluginId, localId: eventId }, sourceInstanceId: 'deployment:source', sourceContractVersion: 1,
-        sourceConfig: { ...config, ...(periodMs === undefined ? {} : { periodMs }) },
+        sourceConfig: { ...(kindWide ? { v: 1, serverId: config.serverId, observingSince: 1000 } : config),
+            ...(periodMs === undefined ? {} : { periodMs }) },
         observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: materialization },
         filter: null, maximumObservationAgeMs: null };
     const execute = vi.fn(async (id: string, input: Record<string, unknown>) => {
@@ -84,7 +87,14 @@ function fixture(periodMs?: number, eventId = 'deployment-failed') {
     return { context, controller, execute, admissions, reads, settle, environment,
         setReceipt(overrides: Partial<typeof current>) { current = { ...current, ...overrides }; },
         receiptChanged(environmentId = config.environmentId, deploymentId = current.id) {
-            return emit.each(['failed', 'succeeded', 'cancelled', 'outcome_unknown'] as const)(
+            return emit('@happier/deployment/receipt-invalidated', { serverId: config.serverId, environmentId, deploymentId });
+        },
+        reconnect() { return emit('@happier/automation/event-sources-invalidated', { reason: 'reconnect', definitionsChanged: false }); },
+        settleOnNextObserve(state: 'failed' | 'succeeded' | 'cancelled' | 'outcome_unknown' = 'failed') { settleNextObserve = state; }, deferNextObserve() { pendingNextObserve = true; },
+        failNextObservation() { failNextObserve = true; }, setSafe(value: boolean) { safe = value; } };
+}
+
+it.each(['failed', 'succeeded', 'cancelled', 'outcome_unknown'] as const)(
     'delivers native deployment %s completion without a configured Event trigger', async state => {
         const h = fixture();
         const adapter = createDeploymentReceiptEventSourceAdapter(h.context.services.events.host, () => 1200, h.context);
@@ -106,12 +116,33 @@ function fixture(periodMs?: number, eventId = 'deployment-failed') {
     },
 );
 
-it('@happier/deployment/receipt-invalidated', { serverId: config.serverId, environmentId, deploymentId });
-        },
-        reconnect() { return emit('@happier/automation/event-sources-invalidated', { reason: 'reconnect', definitionsChanged: false }); },
-        settleOnNextObserve(state: 'failed' | 'succeeded' | 'cancelled' | 'outcome_unknown' = 'failed') { settleNextObserve = state; }, deferNextObserve() { pendingNextObserve = true; },
-        failNextObservation() { failNextObserve = true; }, setSafe(value: boolean) { safe = value; } };
-}
+it('sets up any deployment kind without a resource census and follows addressed remote receipts', async () => {
+    const h = fixture(undefined, 'deployment-failed', true); h.settle();
+    const setup = await deploymentEventActions['deployment-failed/setup']!.run({ v: 1, serverId: config.serverId }, h.context);
+    expect(setup.sourceConfig).toEqual({ v: 1, serverId: config.serverId, observingSince: 1000 });
+    expect(h.execute).not.toHaveBeenCalled();
+    const running = runCheckpointedPluginEventObserverV1({ context: h.context,
+        source: createDeploymentReceiptEventSourceAdapter(h.context.services.events.host, () => 1200), now: () => 1200 });
+    try {
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(h.admissions).toHaveLength(1);
+        expect(h.admissions[0]).toMatchObject({ subjectContexts: [
+            { role: 'operand', subject: { kind: 'environment', serverId: config.serverId, environmentId: config.environmentId } },
+            { role: 'context', subject: { kind: 'app', serverId: config.serverId, projectSourceId: 'source-a' } },
+            { role: 'context', subject: { kind: 'machine', serverId: config.serverId, machineId: 'machine-a' } },
+        ] });
+        expect(h.execute.mock.calls.filter(([id]) => id === 'deployments.environments.get')).toHaveLength(0);
+        expect(h.execute.mock.calls.find(([id]) => id === 'deployments.receipts.list')?.[1]).toEqual({ serverId: config.serverId });
+        h.setReceipt({ id: 'receipt-remote', environmentId: 'remote-environment' });
+        h.reads.length = 0;
+        await h.receiptChanged('remote-environment');
+        expect(new Set(h.reads)).toEqual(new Set(['receipt-remote']));
+        expect(h.admissions).toHaveLength(2);
+        expect(h.admissions[1]).toMatchObject({ subjectContexts: expect.arrayContaining([
+            { role: 'operand', subject: { kind: 'environment', serverId: config.serverId, environmentId: 'remote-environment' } },
+        ]) });
+    } finally { h.controller.abort(); await running; }
+});
 
 it.each(['running', 'pending', 'unavailable'] as const)('settles a %s observation on the saved period, then does zero idle work', async outcome => {
     const periodMs = 7300;

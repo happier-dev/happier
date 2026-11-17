@@ -116,15 +116,17 @@ export const DEPLOYMENT_RECEIPT_EVENT_REFS_V1 = {
 export const DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1 = {
   pluginId: 'happier.machine.services', localId: 'deployment-receipt-changed',
 } as const;
-const sourceAddress = { v: z.literal(1), serverId: id, environmentId: id };
+const sourceAddress = { v: z.literal(1), serverId: id, environmentId: z.optional(id) };
 const periodMs = lazyZodSchema(() => z.number().check(z.int(), z.positive(), z.maximum(Number.MAX_SAFE_INTEGER)));
 export const DeploymentReceiptEventSetupV1Schema = lazyZodSchema(() => z.strictObject({
   ...sourceAddress, targetLinkId: z.optional(id), periodMs: z.optional(periodMs), previewChildren: z.optional(z.literal(true)),
-}));
+}).check(z.refine(input => input.environmentId !== undefined || input.targetLinkId === undefined && input.previewChildren === undefined,
+  'Targeted observation requires an Environment')));
 export const DeploymentReceiptEventSourceConfigV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ...sourceAddress, observingSince: timestamp, periodMs: z.optional(periodMs),
-    targetLinkId: z.optional(z.never()), credentialPrincipal: z.optional(z.never()), previewChildren: z.optional(z.literal(true)) }),
-  z.strictObject({ ...sourceAddress, observingSince: timestamp, periodMs: z.optional(periodMs),
+    targetLinkId: z.optional(z.never()), credentialPrincipal: z.optional(z.never()), previewChildren: z.optional(z.literal(true))
+  }).check(z.refine(input => input.environmentId !== undefined || input.previewChildren === undefined, 'Preview observation requires an Environment')),
+  z.strictObject({ ...sourceAddress, environmentId: id, observingSince: timestamp, periodMs: z.optional(periodMs),
     targetLinkId: id, credentialPrincipal: DeploymentTargetCredentialPrincipalV1Schema, previewChildren: z.optional(z.never()) }),
 ]));
 export type DeploymentReceiptEventSetupV1 = z.infer<typeof DeploymentReceiptEventSetupV1Schema>;
@@ -137,7 +139,8 @@ export function isDeploymentReceiptEventSourceV1(source: Pick<AutomationPluginEv
 /** A receipt Event's saved source names its subject; this is no execution or lifecycle binding. */
 export function readDeploymentReceiptEventSubjectV1(sourceConfig: unknown): HealthCheckSubjectV1 | null {
   const source = DeploymentReceiptEventSourceConfigV1Schema.safeParse(sourceConfig);
-  return source.success ? { kind: 'environment', environmentId: source.data.environmentId } : null;
+  return source.success && source.data.environmentId !== undefined
+    ? { kind: 'environment', environmentId: source.data.environmentId } : null;
 }
 export const DeploymentReceiptEventPendingObservationV1Schema = lazyZodSchema(() => z.strictObject({
   periodMs: z.nullable(periodMs),
