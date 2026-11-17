@@ -11,7 +11,7 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { brokerAddress, createAdmissionBroker, readAdmissionMemorySample } from './admission_broker.mjs';
-import { connectAdmissionBroker, requestAdmissionSample, runAdmittedTask, runAdmissionCommand, watchAdmissionSamples } from './admission_client.mjs';
+import { connectAdmissionBroker, requestAdmissionSample, runAdmittedTask, runAdmissionClient, runAdmissionCommand, watchAdmissionSamples } from './admission_client.mjs';
 import { slotAddress } from './admission_socket.mjs';
 import { tryWorkspaceBuildResources } from './workspace_build_admission.mjs';
 import { createWorkspaceBundleLockPriorityScope } from '../../../../../packages/cli-common/workspaceBundleLock.mjs';
@@ -876,6 +876,29 @@ test('an unrecorded identity starts from its command family or package set, not 
     'an unknown command on a recorded package set takes that package set\'s maximum');
   assert.equal(await reserved({ entry: 'node other-checker.mjs', projects: ['apps/website'] }), 40 * gib,
     'with no related record the class kernel maximum still applies');
+});
+
+test('a routed command is identified by its own argv, not the remote wrapper script', linux, async t => {
+  // P03-QUEUE-AUDIT 1.3: routed validation reserved 3.5-6.5 GiB p50 against
+  // recorded peaks of 1.1-1.7 GiB. Its admitted payload is the dispatcher's
+  // \`bash -c <wrapper>\`, whose text embeds the file list, so the identity never
+  // repeated and every run took a related or class maximum.
+  const gib = 1024 * 1024;
+  const { root } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }),
+    admitDisk: () => ({ admitted: true }) });
+  await writeFile(join(root, 'identity-kernel-peaks.json'), JSON.stringify({
+    [JSON.stringify(['validation', 'apps/ui', 'pnpm exec vitest', ['.']])]: 1.5 * gib,
+    [JSON.stringify(['validation', '.', 'node other.mjs', ['.']])]: 9 * gib }));
+  const floorFile = join(root, 'floor.txt');
+  const wrapper = `set -euo pipefail; cd -- apps/ui; node -e 'require("node:fs").writeFileSync(${JSON.stringify(floorFile)}, process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB)' x.test.ts`;
+  const previous = process.exitCode;
+  await runAdmissionClient(['--run', `--root=${root}`, '--class=validation', `--floor-kib=${2 * gib}`, '--machine=fixture',
+    '--projects=.', `--repo=${root}`, '--identity-cwd=apps/ui',
+    ...['pnpm', 'exec', 'vitest', 'run', 'sources/a.test.ts'].map(arg => `--identity-arg=${arg}`),
+    '--', 'bash', '-c', wrapper]);
+  assert.equal(process.exitCode, 0);
+  process.exitCode = previous;
+  assert.equal(Number(await readFile(floorFile, 'utf8')), 1.5 * gib, 'the run reserves its own recorded identity peak');
 });
 
 test('succession re-sizes a recovered slot to max(its scope memory.current, its identity kernel peak)', linux, async t => {

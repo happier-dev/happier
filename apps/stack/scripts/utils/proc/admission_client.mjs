@@ -438,13 +438,19 @@ export async function runAdmissionClient(argv = process.argv.slice(2)) {
     return;
   }
   if (!options.includes('--run') || delimiter < 0 || !argv[delimiter + 1]) throw new Error('admission requires a command');
-  process.exitCode = await runAdmissionCommand({ root, className: value('class'),
+  // A routed dispatch admits its \`bash -c\` wrapper; the dispatcher forwards the
+  // command's own argv and cwd so the identity is the command's, not the wrapper's.
+  const identityArgs = options.filter(item => item.startsWith('--identity-arg=')).map(item => item.slice('--identity-arg='.length));
+  const repoDir = value('repo') ?? process.cwd();
+  const identity = identityArgs.length ? admissionCommandIdentity({ repoDir,
+    cwd: resolve(repoDir, value('identity-cwd') ?? '.'), command: identityArgs[0], args: identityArgs.slice(1) }) : {};
+  process.exitCode = await runAdmissionCommand({ ...identity, root, className: value('class'),
     floorKiB: Number(value('floor-kib')), machine: value('machine'),
     projects: value('projects')?.split('\n').filter(Boolean),
     exportMode: value('export-mode'), exportWorkers: Number(value('export-workers')),
     requestedCpuCores: value('cpu-cores') === undefined ? undefined
       : value('cpu-cores') === 'host' ? 'host' : Number(value('cpu-cores')),
-    repoDir: value('repo') ?? process.cwd(), locks: JSON.parse(value('workspace-locks') ?? '[]'),
+    repoDir, locks: JSON.parse(value('workspace-locks') ?? '[]'),
     noWait: options.includes('--no-wait'), requireInherited: options.includes('--require-inherited'),
     failureId: value('failure-id'), command: argv[delimiter + 1], args: argv.slice(delimiter + 2) });
 }

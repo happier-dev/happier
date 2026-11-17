@@ -265,6 +265,7 @@ if [ "${1-}" = --heavyweight-admission ] || [ "${1-}" = --heavyweight-admission-
   heavyweight_failure_id=
   heavyweight_workspace_locks=
   heavyweight_admission_projects=
+  heavyweight_identity_options=
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --admission-root=*) heavyweight_admission_root=${1#--admission-root=} ;;
@@ -276,6 +277,10 @@ if [ "${1-}" = --heavyweight-admission ] || [ "${1-}" = --heavyweight-admission-
       # The admission identity's project set (newline-separated), e.g. the owner
       # programs a commit compiler checks; the broker sizes each set by its own peak.
       --projects=*) heavyweight_admission_projects=${1#--projects=} ;;
+      # A routed command's own argv and cwd, so admission identifies the command
+      # rather than the dispatcher's bash wrapper (forwarded to admission_client).
+      --identity-arg=*|--identity-cwd=*)
+        heavyweight_identity_options="${heavyweight_identity_options-} '$(printf '%s' "$1" | sed "s/'/'\"'\"'/g")'" ;;
       --required-tools=*)
         # The generated policy owns declaration validation and stable unions;
         # ordinary admission invocations do no additional classification.
@@ -1894,8 +1899,12 @@ EOF
         # queued Linux worker) while its run queue fits its cores and its free
         # memory still holds this floor beside one floor per active dispatch.
         candidate_native_preference=$((candidate_base_preference + 4))
-        case "$command_class:$policy_kind" in
-          targeted-validation:runtime|full-validation:runtime|validation:runtime)
+        # Tests only: the placement class must be the validation class or a
+        # focused test class; package builds and compilers stay on Linux.
+        mac_test_class=0
+        { [ "$heavyweight_placement_class" = validation ] || heavyweight_focused_test_class "$heavyweight_placement_class"; } && mac_test_class=1
+        case "$mac_test_class:$command_class:$policy_kind" in
+          1:targeted-validation:runtime|1:full-validation:runtime|1:validation:runtime)
             if awk -v floor="$minimum_memory_capacity_kib" -v active="$candidate_active" \
               '{memory=($17 ~ /^[0-9]+$/ ? $17 : $7); exit !($2 < $1 && memory - active * floor >= floor)}' \
               "$cache_dir/$candidate_name.telemetry" 2>/dev/null; then
@@ -2258,9 +2267,11 @@ append_remote_command_argument() {
   remote_command_arguments="$remote_command_arguments $(quote_remote "$1")"
 }
 argument_position=0
+remote_identity_options=
 for argument in "$@"; do
   argument_position=$((argument_position + 1))
   append_remote_command_argument "$argument"
+  remote_identity_options="$remote_identity_options $(quote_remote "--identity-arg=$argument")"
   if [ "$argument_position" -eq 1 ]; then
     if [ "$governor_inject_rg_threads" -eq 1 ]; then
       append_remote_command_argument "--threads=$resource_governor_workers"
@@ -2301,7 +2312,7 @@ if [ "$heavyweight_admission_required" -eq 1 ] && [ "${policy_selfPublisher-0}" 
   # The same native launcher owns local and target admission. The target's
   # POSIX account home is machine-local rather than target-config-local, so
   # independently routed jobs contend even when their CLI homes differ.
-  heavyweight_admission_prefix=" cd -- $(quote_remote "$remote_repo"); $(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --heavyweight-admission $(quote_remote "--class=$heavyweight_remote_class") $(quote_remote "--machine=$selected_name") $(quote_remote "--cpu-cores=$heavyweight_requested_cpu") $(quote_remote "--failure-id=$admission_failure_id") --"
+  heavyweight_admission_prefix=" cd -- $(quote_remote "$remote_repo"); $(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --heavyweight-admission $(quote_remote "--class=$heavyweight_remote_class") $(quote_remote "--machine=$selected_name") $(quote_remote "--cpu-cores=$heavyweight_requested_cpu") $(quote_remote "--failure-id=$admission_failure_id") $(quote_remote "--identity-cwd=$relative_cwd")$remote_identity_options --"
   if [ -n "$remote_workspace_lock_argument" ]; then
     heavyweight_admission_prefix="${heavyweight_admission_prefix% --}$remote_workspace_lock_argument --"
   fi

@@ -2188,6 +2188,10 @@ test('AUTO sends test overflow to a Mac only while every Linux worker would queu
   const compiler = spawnSync('/bin/sh', [launcher, '--', 'node', 'scripts/workspaces/runTypeScriptCli.mjs', '--noEmit', '-p', 'apps/ui/tsconfig.json'], fixture.invocation);
   assert.equal(compiler.status, 0, compiler.stderr);
   assert.equal(compiler.stdout, 'remote:nl1\n', 'compilers are not Mac overflow');
+  // 2026-11-17 live: a test run whose placement needs a package build is a build.
+  const build = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'apps/stack/scripts/utils/dev_targets/config.test.mjs'], fixture.invocation);
+  assert.equal(build.status, 0, build.stderr);
+  assert.equal(build.stdout, 'remote:nl1\n', 'package builds are not Mac overflow');
   const fitting = await placementFleet(t, {
     nl1: placementSample({ achievableKiB: gibKiB(16), ceilingKiB: gibKiB(100), unreservedKiB: gibKiB(8), expectedStartMs: 0 }), 'mac-host': mac });
   const linux = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], fitting.invocation);

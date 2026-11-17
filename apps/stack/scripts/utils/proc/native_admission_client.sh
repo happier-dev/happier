@@ -134,6 +134,7 @@ run_heavyweight_admission() {
   if [ "$heavyweight_admission_class" = source-web-export ]; then
     set -- "--export-mode=$heavyweight_export_worker_mode" "--export-workers=$heavyweight_export_requested_workers" "$@"
   fi
+  [ -z "${heavyweight_identity_options-}" ] || eval "set -- $heavyweight_identity_options \"\$@\""
   # The client's own dispatch scope makes its payload's kernel peak readable at
   # completion, which sizes this identity's next reservation (native_process_priority.sh).
   exec_in_jobs_scope node "$admission_client" --run "--root=$heavyweight_admission_root" "--class=$heavyweight_admission_class" \

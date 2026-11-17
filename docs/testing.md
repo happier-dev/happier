@@ -895,8 +895,12 @@ from related records in its class: the smallest recorded peak of the same comman
 over a superset of its projects, else that command's maximum, else the maximum over
 runs of its exact project set. Only with no related record does it reserve the
 class's maximum kernel peak. Its first completion records its own peak, which sizes
-every later run. A class without kernel history keeps the client's floor, as do
-dynamic export floors. Maxima live in the broker root's
+every later run. A routed dispatch admits its `bash -c` wrapper on the worker, so the
+dispatcher forwards the command's own argv and cwd (`--identity-arg=`/`--identity-cwd=`)
+and the identity is the command's (for example `apps/ui` + `pnpm exec vitest`), not
+the wrapper text, which embedded the file list and never repeated (2026-11-17: routed
+validation reserved 3.5-6.5 GiB p50 against recorded peaks of 1.1-1.7 GiB). A class
+without kernel history keeps the client's floor, as do dynamic export floors. Maxima live in the broker root's
 `identity-kernel-peaks.json`. At succession each recovered slot reserves
 max(its job scope's `memory.current`, its identity kernel peak) instead of its old
 floor; the identity peak applies when the live client re-advertises its identity on
