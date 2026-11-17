@@ -17,6 +17,7 @@ import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
   Button,
   CodeBlock,
+  CountedDisclosureItem,
   EmptyState,
   ErrorState,
   FreshnessLine,
@@ -94,6 +95,17 @@ function occurrenceLine(occurrence: ExceptionOccurrenceV1): string {
       (part): part is string => typeof part === 'string' && part.length > 0,
     )
     .join(' · ');
+}
+
+/** An occurrence's time: the clock alone today, with its day otherwise. */
+function occurrenceWhen(locale: string, atMs: number, nowMs: number): string {
+  const sameDay = new Date(atMs).toDateString() === new Date(nowMs).toDateString();
+  return new Intl.DateTimeFormat(locale, {
+    ...(sameDay ? {} : { month: 'short', day: 'numeric' }),
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(atMs);
 }
 
 /** The lifecycle sentence under the exception: what changed, never a second copy of the frame's state word. */
@@ -242,7 +254,11 @@ function OverviewPanel({
     if (active) demand?.();
   }, [active, demand]);
   const { trend, requestsAffected } = trendOf(controller, text);
-  const sentence = lifecycleSentence(data, text, locale, nowMs);
+  // The Resolved-in tile states a named fix; the sentence speaks only when there is no version to name.
+  const sentence =
+    data.resolution?.version === undefined
+      ? lifecycleSentence(data, text, locale, nowMs)
+      : null;
   const entries: MetadataEntry[] = [
     ...(data.serviceName
       ? [
@@ -271,10 +287,6 @@ function OverviewPanel({
           },
         ]
       : []),
-    {
-      label: text('plugins.telemetry.exceptions.countsAsOf', 'Counts as of'),
-      value: formatTimestamp(locale, data.asOfMs, 'relative', nowMs),
-    },
   ];
   const spread = (
     <TriageDetailSpread
@@ -432,14 +444,67 @@ function OccurrencesPanel({
         const line = occurrenceLine(occurrence);
         return (
           <Item
-            title={formatTimestamp(locale, occurrence.at, 'absolute', nowMs)}
+            title={occurrenceWhen(locale, occurrence.at, nowMs)}
             {...(line.length === 0 ? {} : { subtitle: line })}
-            detail={formatTimestamp(locale, occurrence.at, 'relative', nowMs)}
             accessibilityRole="option"
           />
         );
       }}
     />
+  );
+}
+
+type StackFrameV1 = Readonly<{ name: string; location: string | null; library: boolean }>;
+
+/** `at name (file:line:col)` / `at file:line:col` lines of a redacted JS stack; anything else stays text. */
+function parseStackFrames(stacktrace: string): readonly StackFrameV1[] | null {
+  const lines = stacktrace.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+  const frames: StackFrameV1[] = [];
+  for (const line of lines) {
+    if (!line.startsWith('at ')) continue;
+    const body = line.slice(3);
+    const named = /^(.*?) \((.*)\)$/u.exec(body);
+    const name = named ? named[1]! : body;
+    const location = named ? named[2]! : null;
+    const where = location ?? body;
+    frames.push({
+      name,
+      location,
+      library: where.includes('node_modules') || where.startsWith('node:'),
+    });
+  }
+  return frames.length === 0 ? null : frames;
+}
+
+function StackFrames({ stacktrace }: Readonly<{ stacktrace: string }>): React.ReactElement {
+  const text = usePluginTranslation();
+  const frames = React.useMemo(() => parseStackFrames(stacktrace), [stacktrace]);
+  if (frames === null) return <CodeBlock code={stacktrace} selectable />;
+  const own = frames.filter((frame) => !frame.library);
+  const library = frames.filter((frame) => frame.library);
+  const row = (frame: StackFrameV1, index: number) => (
+    <Item
+      key={`${index}:${frame.name}:${frame.location ?? ''}`}
+      title={frame.name}
+      titleNumberOfLines={1}
+      {...(frame.location === null ? {} : { detail: frame.location })}
+    />
+  );
+  return (
+    <>
+      {(own.length > 0 ? own : library).map(row)}
+      {own.length > 0 && library.length > 0 ? (
+        <CountedDisclosureItem
+          title={text(
+            'plugins.telemetry.exceptions.libraryFrames',
+            'Frames from libraries and Node',
+          )}
+          count={library.length}
+        >
+          {library.map(row)}
+        </CountedDisclosureItem>
+      ) : null}
+    </>
   );
 }
 
@@ -500,11 +565,6 @@ function StackTracePanel({
   const newest = state.kind === 'ready' && state.items[0]?.id === selected.id;
   const when = formatTimestamp(locale, selected.at, 'absolute', nowMs);
   const line = occurrenceLine(selected);
-  const exception = [selected.type, selected.message]
-    .filter(
-      (part): part is string => typeof part === 'string' && part.length > 0,
-    )
-    .join(': ');
   const recorded = (newest
     ? text(
         'plugins.telemetry.exceptions.newestOccurrence',
@@ -515,40 +575,30 @@ function StackTracePanel({
         'Selected occurrence, recorded {when}',
       )
   ).replace('{when}', line.length === 0 ? when : `${when} · ${line}`);
-  // One section anatomy for the exception, its request and its logs: titles share the section inset.
+  const grouped = data.topFrame
+    ? text(
+        'plugins.telemetry.exceptions.groupedBy',
+        'Grouped by type, message and top frame {frame}',
+      ).replace('{frame}', data.topFrame)
+    : null;
+  // The frame header already names the exception; the panel opens on its frames.
   return (
     <Stack gap="large">
       <ItemGroup
-        title={
-          exception.length === 0
-            ? text('plugins.telemetry.exceptions.stackTitle', 'Stack trace')
-            : exception
-        }
-        description={recorded}
-        surface="none"
+        description={grouped === null ? recorded : `${recorded}\n${grouped}`}
+        surface="sheet"
+        accessibilityLabel={text('plugins.telemetry.exceptions.stackTitle', 'Stack trace')}
       >
-        <Stack gap="small">
-          {data.topFrame ? (
-            <Text
-              variant="meta"
-              tone="neutral"
-              value={text(
-                'plugins.telemetry.exceptions.groupedBy',
-                'Grouped by type, message and top frame {frame}',
-              ).replace('{frame}', data.topFrame)}
-            />
-          ) : null}
-          {stack.stacktrace === null ? (
-            <EmptyState
-              title="No stack recorded"
-              titleKey="plugins.telemetry.exceptions.noStackRecorded"
-              description="This occurrence arrived without a stack trace."
-              descriptionKey="plugins.telemetry.exceptions.noStackRecorded.description"
-            />
-          ) : (
-            <CodeBlock code={stack.stacktrace} selectable />
-          )}
-        </Stack>
+        {stack.stacktrace === null ? (
+          <EmptyState
+            title="No stack recorded"
+            titleKey="plugins.telemetry.exceptions.noStackRecorded"
+            description="This occurrence arrived without a stack trace."
+            descriptionKey="plugins.telemetry.exceptions.noStackRecorded.description"
+          />
+        ) : (
+          <StackFrames stacktrace={stack.stacktrace} />
+        )}
       </ItemGroup>
       <OccurrenceRequest
         source={{

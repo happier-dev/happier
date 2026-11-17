@@ -85,11 +85,10 @@ function severityWord(severity: number | null | undefined): string {
 
 function clockOf(locale: string, at: number): string {
   return new Intl.DateTimeFormat(locale, {
-    hour: '2-digit',
+    hour: 'numeric',
     minute: '2-digit',
     second: '2-digit',
     fractionalSecondDigits: 3,
-    hourCycle: 'h23',
   }).format(at);
 }
 

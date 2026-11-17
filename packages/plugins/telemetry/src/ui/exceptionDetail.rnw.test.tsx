@@ -122,8 +122,12 @@ const OCCURRENCES = [
     serviceVersion: 'v1.43',
   },
 ];
-// One line: the shared CodeBlock owns how a multi-line body is laid out.
-const STACK = 'TypeError: Cannot read properties of undefined at formatTotal (lib/billing/totals.ts:42:18)';
+const STACK = [
+  'TypeError: Cannot read properties of undefined',
+  '    at formatTotal (lib/billing/totals.ts:42:18)',
+  '    at buildReceipt (lib/billing/receipt.ts:18:9)',
+  '    at Layer.handle (node_modules/express/lib/router/layer.js:95:5)',
+].join('\n');
 
 type Call = Readonly<{ localId: string; input: JsonValue }>;
 
@@ -280,14 +284,17 @@ describe('the Happier exception detail', () => {
     await vi.waitFor(() => {
       expect(calls.filter((call) => call.localId === 'capture/exceptions/occurrences/read')).toHaveLength(2);
     });
+    // The stack opens on its frames (the frame header already names the exception).
     await vi.waitFor(async () => {
-      await expect(page.getByText(STACK)).resolves.toBeDefined();
+      await expect(page.getByText('formatTotal')).resolves.toBeDefined();
     });
-    await expect(
-      page.getByText(
-        `Grouped by type, message and top frame ${record.topFrame}`,
-      ),
-    ).resolves.toBeDefined();
+    await expect(page.getByText('lib/billing/totals.ts:42:18')).resolves.toBeDefined();
+    expect(document.body.textContent).toContain(
+      `Grouped by type, message and top frame ${record.topFrame}`,
+    );
+    // Library frames fold under one counted row.
+    await expect(page.getByText('Frames from libraries and Node')).resolves.toBeDefined();
+    await expect(page.queryByText('Layer.handle')).resolves.toBeUndefined();
     expect(
       calls
         .filter((call) => call.localId === 'capture/exceptions/occurrences/read')
