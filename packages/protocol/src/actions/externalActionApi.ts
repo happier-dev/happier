@@ -879,6 +879,8 @@ export const ExternalActionRequestEnvelopeV1Schema = lazyZodSchema(() => z.stric
   workflowPreparation: z.optional(ExternalActionWorkflowPreparationV1Schema),
   resourceContinuation: z.optional(MachineServiceLogsResourceContinuationV1Schema),
   machineServiceLogsGeneration: z.optional(MachineServiceLogsGenerationV1Schema),
+  /** Private requester read operand; ordinary registry Action input remains metadata-only. */
+  registryThemeContent: z.optional(z.literal(true)),
   pluginInvocation: z.optional(DaemonPluginMountedInvocationV1Schema),
   managedAdmission: z.optional(ExternalActionManagedAdmissionV1Schema),
   managedCreationCodec: z.optional(SessionRequesterInstallationSealedBootstrapV1Schema),
@@ -891,8 +893,6 @@ export const ExternalActionRequestEnvelopeV1Schema = lazyZodSchema(() => z.stric
       context.addIssue({ code: 'custom', path: ['workflowPreparation'], message: 'Workflow preparation target mismatch' });
     }
   }
-  /** Private requester read operand; ordinary registry Action input remains metadata-only. */
-  registryThemeContent: z.optional(z.literal(true)),
   if (value.pluginInvocation && !value.requestId) {
     context.addIssue({ code: "custom", path: ['requestId'], message: 'Mounted plugin invocation requires requestId' });
   }
