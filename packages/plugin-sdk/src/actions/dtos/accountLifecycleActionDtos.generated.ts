@@ -32,6 +32,10 @@ export type AccountLifecycleActionResultById = {
         status: 'cancelled' | 'forgotten';
     };
     readonly "account.delete": {
-        status: 'cancelled' | 'deleted' | 'deleted_cleanup_pending';
+        status: 'cancelled' | 'deleted_cleanup_pending';
+    } | {
+        status: 'deleted';
+    } | {
+        status: 'disabled_pending_completion';
     };
 };

@@ -478,6 +478,26 @@ export type LocalServicesActionsActionResultById = {
             title: string;
             createdAt: number;
             cancellation: 'supported' | 'unsupported';
+            actor?: null | undefined | {
+                actorKind: 'agent';
+                sessionId: string;
+                onBehalfOf?: undefined | {
+                    serverId: string;
+                    accountId: string;
+                };
+            } | {
+                actorKind: 'person';
+                accountId: string;
+            } | {
+                actorKind: 'workflow';
+                runId: string;
+                automationId?: string | undefined;
+                onBehalfOf?: undefined | {
+                    serverId: string;
+                    accountId: string;
+                };
+            };
+            originRunId?: string | undefined;
             requestId?: string | undefined;
             startedAt?: number | undefined;
             settledAt?: number | undefined;
@@ -539,6 +559,7 @@ export type LocalServicesActionsActionResultById = {
             error?: undefined | {
                 errorCode: string;
                 error: string;
+                requestId?: string | undefined;
                 effectAttempted?: boolean | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
                 details?: undefined | {
@@ -720,6 +741,261 @@ export type LocalServicesActionsActionResultById = {
                     kind: 'managedAgentStart';
                     machineId: string;
                     agentId: string;
+                    failure?: undefined | {
+                        organizationPlacement: {
+                            sectionId: null | string;
+                            tagIds: string[];
+                        };
+                        type: 'success';
+                        disposition: 'created' | 'rejoined';
+                        sessionId: string;
+                        executionTarget: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        initialInput: {
+                            status: 'accepted';
+                            localId: string;
+                        } | {
+                            status: 'alreadyAccepted';
+                            localId: string;
+                        } | {
+                            status: 'notRequested';
+                        } | {
+                            status: 'outcomeUnknown';
+                            localId: string;
+                            code: string;
+                        } | {
+                            status: 'rejected';
+                            code: 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion';
+                        };
+                        attestedContext?: undefined | {
+                            externalPrincipalId: string;
+                            sourceMessageId: string;
+                        };
+                        filesNotCopied?: undefined | {
+                            reason: 'cross_machine';
+                        };
+                        sourceKeyPreparation?: undefined | {
+                            kind: 'not_needed';
+                        } | {
+                            kind: 'prepared';
+                        } | {
+                            kind: 'waiting';
+                            reason: 'runner_key_unavailable' | 'runner_unreachable' | 'source_key_unavailable' | 'unsupported';
+                            cause?: 'action_context_unavailable' | 'credentials_unavailable' | 'destination_machine_exception' | 'destination_machine_missing' | 'destination_machine_unresolved' | 'destination_transport_exception' | 'destination_transport_unavailable' | 'home_identity_unavailable' | 'machine_content_key_unavailable' | 'machine_content_mode_mismatch' | 'machine_rpc_failed' | 'machine_rpc_invalid_response' | 'machine_target_not_current' | 'preparation_exception' | 'rpc_method_unavailable' | 'server_features_exception' | 'source_key_exception' | 'source_key_unavailable' | 'source_transport_exception' | 'source_transport_unavailable' | undefined;
+                        };
+                        agentUpdate?: undefined | {
+                            agentId: string;
+                            status: 'failed' | 'pending';
+                            requestId?: string | undefined;
+                        };
+                    } | {
+                        type: 'error';
+                        code: 'agent_cli_missing' | 'agent_cli_not_ready' | 'agent_signed_out' | 'cancelled' | 'creation_conflict' | 'data_key_not_required' | 'incompatible_target' | 'invalid_cursor' | 'invalid_input' | 'invalid_request' | 'machine_offline' | 'organization_invalid' | 'organization_unavailable' | 'permission_denied' | 'recipient_envelope_required' | 'recipient_key_unavailable' | 'session_access_authentication_required' | 'session_access_authentication_unavailable' | 'session_access_external_sharing_disabled' | 'session_access_external_sharing_requires_team_admin' | 'session_access_forbidden' | 'session_access_invalid_recipient_envelope' | 'session_access_owner_grant_invalid' | 'session_access_permission_delegation_forbidden' | 'session_access_permission_delegation_requires_edit' | 'session_access_request_failed' | 'session_access_self_grant_invalid' | 'session_access_session_not_found' | 'session_access_sharing_unavailable' | 'session_access_subject_ineligible' | 'session_access_subject_not_found' | 'session_access_team_policy_required' | 'session_data_key_unavailable' | 'session_initial_access_creator_mismatch' | 'session_responsibility_assignee_unavailable' | 'spawn_failed' | 'target_required' | 'target_unavailable';
+                        retryable: boolean;
+                        failureCause?: ActionFailureCauseV1 | undefined;
+                        effectAttempted?: boolean | undefined;
+                        agentId?: string | undefined;
+                        providerError?: undefined | {
+                            v: 1;
+                            code: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'model_selection_required' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported';
+                            retryable: boolean;
+                            action: 'add_secret' | 'choose_connection' | 'choose_model' | 'enable_connection' | 'enable_on_machine' | 'load_model' | 'reduce_provider_settings' | 'replace_secret' | 'restart_probe' | 'restore_plugin' | 'retry' | 'review_account_grant' | 'review_and_restart' | 'review_compatibility' | 'review_connection' | 'review_credential_transport' | 'review_current_state' | 'review_features' | 'review_machine_grant' | 'review_profile_migration';
+                            requestId?: string | undefined;
+                            failureCause?: ActionFailureCauseV1 | undefined;
+                            connectionId?: (string) | undefined;
+                            connectedAccountTarget?: undefined | {
+                                kind: 'account';
+                                account: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            } | {
+                                kind: 'group';
+                                service: {
+                                    pluginId: 'happier';
+                                    localId: 'mcp-sign-in';
+                                } | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                groupId: string;
+                            };
+                            machineId?: string | undefined;
+                            sourceProfileId?: string | undefined;
+                            retryAfterMs?: number | undefined;
+                            reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
+                            savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                        };
+                        terminalHostError?: undefined | {
+                            kind: 'terminal_host_unavailable';
+                            host: 'herdr' | 'zellij';
+                            reason: 'installation_unavailable' | 'server_version_unsupported';
+                        };
+                        incompatibleTarget?: undefined | {
+                            reason: 'checkout_unavailable' | 'context_memory_protocol_unavailable' | 'creation_lookup_unavailable' | 'creation_settlement_unavailable' | 'daemon_rpc_unavailable' | 'initial_access_unsupported' | 'initial_trigger_protocol_unavailable' | 'requester_credentials_unavailable' | 'session_spawn_protocol_unavailable' | 'spawn_rpc_unavailable' | 'target_preparation_invalid_result' | 'target_preparation_rpc_unavailable' | 'terminal_host_unavailable';
+                        };
+                        launchError?: undefined | {
+                            kind: 'launch_error';
+                            code: string;
+                            message: string;
+                            subtype?: 'check_failed' | 'closure_changed' | 'no_closure' | 'writer_active' | undefined;
+                            rpcErrorCode?: 'MACHINE_RPC_TIMEOUT' | 'RPC_OUTCOME_UNKNOWN' | 'RPC_TRANSPORT_UNAVAILABLE' | undefined;
+                            connectionPhase?: 'reachability-start' | 'reachability-wait' | 'socket-connect' | undefined;
+                            currentnessFailure?: undefined | {
+                                reason: 'http_error' | 'invalid_response' | 'network' | 'timeout';
+                                retryable: boolean;
+                                statusCode?: number | undefined;
+                            };
+                            childExit?: undefined | {
+                                code: null | number;
+                                signal: null | string;
+                                stderrHead?: string | undefined;
+                                cause?: undefined | {
+                                    kind: 'module_not_found';
+                                    specifierBasename: string;
+                                };
+                            };
+                            spawnFailure?: undefined | {
+                                reason: 'no_ptys' | 'other' | 'out_of_memory' | 'process_limit' | 'too_many_open_files';
+                                errno?: string | undefined;
+                                nativeErrno?: number | undefined;
+                                cwd?: string | undefined;
+                            };
+                            failureCause?: undefined | {
+                                phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_invalid' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'session_configuration_invalid' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                actionCause?: ActionFailureCauseV1 | undefined;
+                                code?: string | undefined;
+                                retryable?: boolean | undefined;
+                                requestId?: string | undefined;
+                                preparationCause?: undefined | {
+                                    code: string;
+                                    stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                    requestId?: string | undefined;
+                                };
+                                carrierFailure?: undefined | {
+                                    closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                    closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
+                                };
+                                connectedServicesDefault?: undefined | {
+                                    v: 1;
+                                    source: 'account_default';
+                                    reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                    phase: 'purpose_binding';
+                                    catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                };
+                                reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                providerErrorCode?: number | string | undefined;
+                                httpStatus?: number | undefined;
+                                providerErrorMessage?: string | undefined;
+                            };
+                            pluginCodeRefusal?: undefined | {
+                                remedy: {
+                                    kind: 'ask_machine_manager';
+                                } | {
+                                    kind: 'open_machine_security';
+                                    target: {
+                                        serverId: string;
+                                        machineId: string;
+                                    };
+                                };
+                            };
+                            agentIsolationRefusal?: undefined | {
+                                reason: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'member_setup_required' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready';
+                                phase: 'native_execution_preparation' | 'native_identity_binding';
+                                reasonCode?: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported' | undefined;
+                                nativeFailure?: undefined | {
+                                    kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                                    reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                                    phase?: 'apply' | 'check' | undefined;
+                                };
+                                probeFailure?: undefined | {
+                                    exitCode: number;
+                                    check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                                    identity: {
+                                        username: string;
+                                        uid: number;
+                                        gid: number;
+                                        home: string;
+                                        cwd: string;
+                                    };
+                                } | {
+                                    transportError: 'execution_failed' | 'signalled' | 'spawn_failed';
+                                    check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                                    identity: {
+                                        username: string;
+                                        uid: number;
+                                        gid: number;
+                                        home: string;
+                                        cwd: string;
+                                    };
+                                };
+                                readinessCode?: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready' | undefined;
+                                operationErrorCode?: 'machine_setup_operation_unavailable' | undefined;
+                                remedy?: undefined | {
+                                    kind: 'ask_machine_manager';
+                                } | {
+                                    kind: 'open_machine_security';
+                                    target: {
+                                        serverId: string;
+                                        machineId: string;
+                                    };
+                                };
+                            };
+                            profileRefusal?: undefined | {
+                                profileId: string;
+                                reason: 'profile_catalog_unavailable' | 'profile_overlay_mismatch' | 'profile_resume_unavailable' | 'profile_target_incompatible';
+                                catalogStatus?: 'loading' | 'partial' | 'unavailable' | undefined;
+                            };
+                            uxDiagnostic?: undefined | {
+                                code: 'connected_service_credential_mode_unsupported' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_credential_scope_missing' | 'connected_service_materialization_identity_missing' | 'connected_service_native_auth_materialization_failed' | 'continuity_unsupported' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                                failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                                source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                                retryable: boolean;
+                                suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                                serviceId?: string | undefined;
+                                agentId?: string | undefined;
+                                profileId?: string | undefined;
+                                groupId?: string | undefined;
+                                diagnostics?: (Record<string, boolean | null | number | string> & {
+                                    reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                                }) | undefined;
+                            };
+                            connectedAccountPool?: undefined | {
+                                serviceId: string;
+                                excluded: {
+                                    profileId: string;
+                                    reason: 'auth_invalid' | 'capacity_limited' | 'cooldown' | 'credential_unavailable' | 'current_active' | 'disabled' | 'not_meaningfully_better' | 'plan_unavailable' | 'policy_wait_until_reset' | 'quota_evidence_unavailable' | 'quota_exhausted' | 'quota_probe_deferred' | 'validation_blocked';
+                                    retryAtMs?: null | number | undefined;
+                                }[];
+                            };
+                        };
+                    } | {
+                        type: 'error';
+                        code: 'update_required';
+                        retryable: false;
+                        details: {
+                            kind: 'update_required';
+                            operation: string;
+                            component: 'client' | 'daemon' | 'server';
+                            reason: string;
+                        };
+                    } | {
+                        type: 'pending';
+                        retryWithSameCreationKey: true;
+                        outcome: 'accepted' | 'unknown';
+                        operation?: undefined | {
+                            serverId: string;
+                            machineId: string;
+                            operationId: string;
+                        };
+                        sessionId?: string | undefined;
+                    };
                 } | {
                     kind: 'managedBootstrap';
                     phase: 'apply' | 'check';
@@ -739,6 +1015,14 @@ export type LocalServicesActionsActionResultById = {
                     kind: 'managedGuestHome';
                     homeOrigin: string;
                     reason?: 'authored_network' | undefined;
+                    carrierFailure?: undefined | {
+                        attemptedCarrier: 'https' | 'iroh' | 'none';
+                        reason: 'cancelled' | 'endpoint_config_conflict' | 'endpoint_identity_invalid' | 'endpoint_key_unavailable' | 'home_unreachable' | 'identity_mismatch' | 'invalid_descriptor' | 'invalid_preamble' | 'invalid_preference' | 'loopback_bind_failed' | 'relay_auth_failed' | 'resource_limit' | 'transport' | 'transport_closed' | 'transport_timeout' | 'unavailable' | 'unknown' | 'unsupported_alpn';
+                        irohAttempt?: undefined | {
+                            outcome: 'unavailable';
+                            reason: 'cancelled' | 'endpoint_config_conflict' | 'endpoint_identity_invalid' | 'endpoint_key_unavailable' | 'home_unreachable' | 'identity_mismatch' | 'invalid_descriptor' | 'invalid_preamble' | 'invalid_preference' | 'loopback_bind_failed' | 'relay_auth_failed' | 'resource_limit' | 'transport' | 'transport_closed' | 'transport_timeout' | 'unavailable' | 'unknown' | 'unsupported_alpn';
+                        };
+                    };
                 } | {
                     kind: 'managedNative';
                     nativeCause: {
@@ -749,7 +1033,7 @@ export type LocalServicesActionsActionResultById = {
                         fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                     } | {
                         localCause: 'native_command_failed';
-                        command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                        command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
@@ -870,6 +1154,7 @@ export type LocalServicesActionsActionResultById = {
                             isCrossRepository?: boolean | undefined;
                             headSha?: null | string | undefined;
                             baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
                             createdAtMs?: number | undefined;
                             closedAtMs?: number | undefined;
                             mergedAtMs?: number | undefined;
@@ -915,6 +1200,7 @@ export type LocalServicesActionsActionResultById = {
                             isCrossRepository?: boolean | undefined;
                             headSha?: null | string | undefined;
                             baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
                             createdAtMs?: number | undefined;
                             closedAtMs?: number | undefined;
                             mergedAtMs?: number | undefined;
@@ -1073,7 +1359,7 @@ export type LocalServicesActionsActionResultById = {
                             } | {
                                 source: {
                                     kind: 'deploymentFact';
-                                    fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                    fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                                 } | {
                                     kind: 'deploymentFact';
                                     fact: 'domainUrl';
@@ -1099,6 +1385,8 @@ export type LocalServicesActionsActionResultById = {
                                 name: string;
                                 phase: 'build' | 'runtime';
                                 grantRef?: string | undefined;
+                                managedBy?: 'telemetry' | undefined;
+                                valueFormat?: 'otelAuthorizationHeader' | undefined;
                             } | {
                                 source: {
                                     kind: 'secret';
@@ -1134,7 +1422,7 @@ export type LocalServicesActionsActionResultById = {
                                 };
                                 service: string;
                                 purpose: 'dataRole';
-                                role: 'readOnlyPassword';
+                                role: 'readOnlyPassword' | 'write';
                             } | {
                                 source: {
                                     kind: 'secret';
@@ -1146,7 +1434,7 @@ export type LocalServicesActionsActionResultById = {
                                 };
                                 targetLinkId: string;
                                 purpose: 'dataRole';
-                                role: 'readOnlyPassword';
+                                role: 'readOnlyPassword' | 'write';
                             })[];
                             remove: ({
                                 purpose: 'backupDestination';
@@ -1167,15 +1455,21 @@ export type LocalServicesActionsActionResultById = {
                             } | {
                                 service: string;
                                 purpose: 'dataRole';
-                                role: 'readOnlyPassword';
+                                role: 'readOnlyPassword' | 'write';
                             } | {
                                 targetLinkId: string;
                                 purpose: 'dataRole';
-                                role: 'readOnlyPassword';
+                                role: 'readOnlyPassword' | 'write';
                             })[];
                             serverId: string;
                             environmentId: string;
                             expectedRevision: number;
+                            telemetryMachineId?: null | string | undefined;
+                            telemetry?: undefined | {
+                                metrics?: boolean | undefined;
+                                appLlmCost?: boolean | undefined;
+                                exceptions?: boolean | undefined;
+                            };
                             providerVariables?: undefined | {
                                 useOurs: string[];
                                 keepTheirs: string[];
@@ -1205,10 +1499,17 @@ export type LocalServicesActionsActionResultById = {
                                     teamId: string;
                                 };
                             };
-                            deployerPrincipals?: undefined | {
-                                principalKind: 'account' | 'teamGroup';
-                                principalId: string;
-                            }[];
+                            deployerPrincipals?: ({
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'group';
+                                teamId: string;
+                                groupId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            })[] | undefined;
                             buildMachineId?: string | undefined;
                             managedRetention?: 'keep' | 'until-delete' | undefined;
                             preview?: undefined | {
@@ -1259,11 +1560,11 @@ export type LocalServicesActionsActionResultById = {
                                         } | {
                                             service: string;
                                             purpose: 'dataRole';
-                                            role: 'readOnlyPassword';
+                                            role: 'readOnlyPassword' | 'write';
                                         } | {
                                             targetLinkId: string;
                                             purpose: 'dataRole';
-                                            role: 'readOnlyPassword';
+                                            role: 'readOnlyPassword' | 'write';
                                         };
                                     } | {
                                         kind: 'rebind';
@@ -1291,11 +1592,11 @@ export type LocalServicesActionsActionResultById = {
                                         } | {
                                             service: string;
                                             purpose: 'dataRole';
-                                            role: 'readOnlyPassword';
+                                            role: 'readOnlyPassword' | 'write';
                                         } | {
                                             targetLinkId: string;
                                             purpose: 'dataRole';
-                                            role: 'readOnlyPassword';
+                                            role: 'readOnlyPassword' | 'write';
                                         };
                                     } | {
                                         kind: 'useSameReference';
@@ -1318,11 +1619,11 @@ export type LocalServicesActionsActionResultById = {
                                         } | {
                                             service: string;
                                             purpose: 'dataRole';
-                                            role: 'readOnlyPassword';
+                                            role: 'readOnlyPassword' | 'write';
                                         } | {
                                             targetLinkId: string;
                                             purpose: 'dataRole';
-                                            role: 'readOnlyPassword';
+                                            role: 'readOnlyPassword' | 'write';
                                         };
                                     })[];
                                     values: ({
@@ -1346,11 +1647,11 @@ export type LocalServicesActionsActionResultById = {
                                         } | {
                                             service: string;
                                             purpose: 'dataRole';
-                                            role: 'readOnlyPassword';
+                                            role: 'readOnlyPassword' | 'write';
                                         } | {
                                             targetLinkId: string;
                                             purpose: 'dataRole';
-                                            role: 'readOnlyPassword';
+                                            role: 'readOnlyPassword' | 'write';
                                         };
                                     } | {
                                         kind: 'omit';
@@ -1373,17 +1674,17 @@ export type LocalServicesActionsActionResultById = {
                                         } | {
                                             service: string;
                                             purpose: 'dataRole';
-                                            role: 'readOnlyPassword';
+                                            role: 'readOnlyPassword' | 'write';
                                         } | {
                                             targetLinkId: string;
                                             purpose: 'dataRole';
-                                            role: 'readOnlyPassword';
+                                            role: 'readOnlyPassword' | 'write';
                                         };
                                     } | {
                                         kind: 'remap';
                                         source: {
                                             kind: 'deploymentFact';
-                                            fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                            fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                                         } | {
                                             kind: 'deploymentFact';
                                             fact: 'domainUrl';
@@ -1417,11 +1718,11 @@ export type LocalServicesActionsActionResultById = {
                                         } | {
                                             service: string;
                                             purpose: 'dataRole';
-                                            role: 'readOnlyPassword';
+                                            role: 'readOnlyPassword' | 'write';
                                         } | {
                                             targetLinkId: string;
                                             purpose: 'dataRole';
-                                            role: 'readOnlyPassword';
+                                            role: 'readOnlyPassword' | 'write';
                                         };
                                     })[];
                                     data: ({
@@ -1462,11 +1763,11 @@ export type LocalServicesActionsActionResultById = {
                                         } | {
                                             service: string;
                                             purpose: 'dataRole';
-                                            role: 'readOnlyPassword';
+                                            role: 'readOnlyPassword' | 'write';
                                         } | {
                                             targetLinkId: string;
                                             purpose: 'dataRole';
-                                            role: 'readOnlyPassword';
+                                            role: 'readOnlyPassword' | 'write';
                                         })[] | undefined;
                                     })[];
                                     retainPreviousDeployments?: 'copy' | 'default' | undefined;
@@ -1486,7 +1787,7 @@ export type LocalServicesActionsActionResultById = {
                                 } | {
                                     source: {
                                         kind: 'deploymentFact';
-                                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                                     } | {
                                         kind: 'deploymentFact';
                                         fact: 'domainUrl';
@@ -1509,6 +1810,8 @@ export type LocalServicesActionsActionResultById = {
                                     name: string;
                                     phase: 'build' | 'runtime';
                                     grantRef?: string | undefined;
+                                    managedBy?: 'telemetry' | undefined;
+                                    valueFormat?: 'otelAuthorizationHeader' | undefined;
                                 } | {
                                     source: {
                                         ref: string;
@@ -1535,7 +1838,7 @@ export type LocalServicesActionsActionResultById = {
                                     };
                                     service: string;
                                     purpose: 'dataRole';
-                                    role: 'readOnlyPassword';
+                                    role: 'readOnlyPassword' | 'write';
                                 } | {
                                     source: {
                                         ref: string;
@@ -1544,7 +1847,7 @@ export type LocalServicesActionsActionResultById = {
                                     };
                                     targetLinkId: string;
                                     purpose: 'dataRole';
-                                    role: 'readOnlyPassword';
+                                    role: 'readOnlyPassword' | 'write';
                                 })[];
                                 sourceRuntimeTargetLinkId?: string | undefined;
                                 data?: undefined | {
@@ -1781,6 +2084,55 @@ export type LocalServicesActionsActionResultById = {
                         url?: string | undefined;
                     };
                 } | {
+                    organizationPlacement: {
+                        sectionId: null | string;
+                        tagIds: string[];
+                    };
+                    type: 'success';
+                    disposition: 'created' | 'rejoined';
+                    sessionId: string;
+                    executionTarget: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                    initialInput: {
+                        status: 'accepted';
+                        localId: string;
+                    } | {
+                        status: 'alreadyAccepted';
+                        localId: string;
+                    } | {
+                        status: 'notRequested';
+                    } | {
+                        status: 'outcomeUnknown';
+                        localId: string;
+                        code: string;
+                    } | {
+                        status: 'rejected';
+                        code: 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion';
+                    };
+                    attestedContext?: undefined | {
+                        externalPrincipalId: string;
+                        sourceMessageId: string;
+                    };
+                    filesNotCopied?: undefined | {
+                        reason: 'cross_machine';
+                    };
+                    sourceKeyPreparation?: undefined | {
+                        kind: 'not_needed';
+                    } | {
+                        kind: 'prepared';
+                    } | {
+                        kind: 'waiting';
+                        reason: 'runner_key_unavailable' | 'runner_unreachable' | 'source_key_unavailable' | 'unsupported';
+                        cause?: 'action_context_unavailable' | 'credentials_unavailable' | 'destination_machine_exception' | 'destination_machine_missing' | 'destination_machine_unresolved' | 'destination_transport_exception' | 'destination_transport_unavailable' | 'home_identity_unavailable' | 'machine_content_key_unavailable' | 'machine_content_mode_mismatch' | 'machine_rpc_failed' | 'machine_rpc_invalid_response' | 'machine_target_not_current' | 'preparation_exception' | 'rpc_method_unavailable' | 'server_features_exception' | 'source_key_exception' | 'source_key_unavailable' | 'source_transport_exception' | 'source_transport_unavailable' | undefined;
+                    };
+                    agentUpdate?: undefined | {
+                        agentId: string;
+                        status: 'failed' | 'pending';
+                        requestId?: string | undefined;
+                    };
+                } | {
                     reason: 'account_changed' | 'account_unavailable' | 'automation_run_changed' | 'credential_changed' | 'credential_expired' | 'currentness_owner_unavailable' | 'currentness_read_failed' | 'directory_approval_missing' | 'directory_changed' | 'home_changed' | 'home_unavailable' | 'live_invocation_unavailable' | 'machine_changed' | 'origin_action_changed' | 'origin_invalid' | 'origin_not_current' | 'origin_version' | 'permission_changed' | 'plugin_source_changed' | 'requester_account_unavailable' | 'run_occurrence_changed' | 'session_changed' | 'spawn_policy_changed' | 'spawn_policy_unavailable' | 'target_unavailable' | 'workflow_authorization_changed' | 'workflow_authorization_unavailable';
                 } | {
                     reason: 'machine_installation_missing';
@@ -1997,6 +2349,211 @@ export type LocalServicesActionsActionResultById = {
                         failureCause?: ActionFailureCauseV1 | undefined;
                         effectAttempted?: boolean | undefined;
                     };
+                } | {
+                    type: 'error';
+                    code: 'agent_cli_missing' | 'agent_cli_not_ready' | 'agent_signed_out' | 'cancelled' | 'creation_conflict' | 'data_key_not_required' | 'incompatible_target' | 'invalid_cursor' | 'invalid_input' | 'invalid_request' | 'machine_offline' | 'organization_invalid' | 'organization_unavailable' | 'permission_denied' | 'recipient_envelope_required' | 'recipient_key_unavailable' | 'session_access_authentication_required' | 'session_access_authentication_unavailable' | 'session_access_external_sharing_disabled' | 'session_access_external_sharing_requires_team_admin' | 'session_access_forbidden' | 'session_access_invalid_recipient_envelope' | 'session_access_owner_grant_invalid' | 'session_access_permission_delegation_forbidden' | 'session_access_permission_delegation_requires_edit' | 'session_access_request_failed' | 'session_access_self_grant_invalid' | 'session_access_session_not_found' | 'session_access_sharing_unavailable' | 'session_access_subject_ineligible' | 'session_access_subject_not_found' | 'session_access_team_policy_required' | 'session_data_key_unavailable' | 'session_initial_access_creator_mismatch' | 'session_responsibility_assignee_unavailable' | 'spawn_failed' | 'target_required' | 'target_unavailable';
+                    retryable: boolean;
+                    failureCause?: ActionFailureCauseV1 | undefined;
+                    effectAttempted?: boolean | undefined;
+                    agentId?: string | undefined;
+                    providerError?: undefined | {
+                        v: 1;
+                        code: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'model_selection_required' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported';
+                        retryable: boolean;
+                        action: 'add_secret' | 'choose_connection' | 'choose_model' | 'enable_connection' | 'enable_on_machine' | 'load_model' | 'reduce_provider_settings' | 'replace_secret' | 'restart_probe' | 'restore_plugin' | 'retry' | 'review_account_grant' | 'review_and_restart' | 'review_compatibility' | 'review_connection' | 'review_credential_transport' | 'review_current_state' | 'review_features' | 'review_machine_grant' | 'review_profile_migration';
+                        requestId?: string | undefined;
+                        failureCause?: ActionFailureCauseV1 | undefined;
+                        connectionId?: (string) | undefined;
+                        connectedAccountTarget?: undefined | {
+                            kind: 'account';
+                            account: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            kind: 'group';
+                            service: {
+                                pluginId: 'happier';
+                                localId: 'mcp-sign-in';
+                            } | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            groupId: string;
+                        };
+                        machineId?: string | undefined;
+                        sourceProfileId?: string | undefined;
+                        retryAfterMs?: number | undefined;
+                        reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
+                        savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    };
+                    terminalHostError?: undefined | {
+                        kind: 'terminal_host_unavailable';
+                        host: 'herdr' | 'zellij';
+                        reason: 'installation_unavailable' | 'server_version_unsupported';
+                    };
+                    incompatibleTarget?: undefined | {
+                        reason: 'checkout_unavailable' | 'context_memory_protocol_unavailable' | 'creation_lookup_unavailable' | 'creation_settlement_unavailable' | 'daemon_rpc_unavailable' | 'initial_access_unsupported' | 'initial_trigger_protocol_unavailable' | 'requester_credentials_unavailable' | 'session_spawn_protocol_unavailable' | 'spawn_rpc_unavailable' | 'target_preparation_invalid_result' | 'target_preparation_rpc_unavailable' | 'terminal_host_unavailable';
+                    };
+                    launchError?: undefined | {
+                        kind: 'launch_error';
+                        code: string;
+                        message: string;
+                        subtype?: 'check_failed' | 'closure_changed' | 'no_closure' | 'writer_active' | undefined;
+                        rpcErrorCode?: 'MACHINE_RPC_TIMEOUT' | 'RPC_OUTCOME_UNKNOWN' | 'RPC_TRANSPORT_UNAVAILABLE' | undefined;
+                        connectionPhase?: 'reachability-start' | 'reachability-wait' | 'socket-connect' | undefined;
+                        currentnessFailure?: undefined | {
+                            reason: 'http_error' | 'invalid_response' | 'network' | 'timeout';
+                            retryable: boolean;
+                            statusCode?: number | undefined;
+                        };
+                        childExit?: undefined | {
+                            code: null | number;
+                            signal: null | string;
+                            stderrHead?: string | undefined;
+                            cause?: undefined | {
+                                kind: 'module_not_found';
+                                specifierBasename: string;
+                            };
+                        };
+                        spawnFailure?: undefined | {
+                            reason: 'no_ptys' | 'other' | 'out_of_memory' | 'process_limit' | 'too_many_open_files';
+                            errno?: string | undefined;
+                            nativeErrno?: number | undefined;
+                            cwd?: string | undefined;
+                        };
+                        failureCause?: undefined | {
+                            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                            failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_invalid' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'session_configuration_invalid' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                            actionCause?: ActionFailureCauseV1 | undefined;
+                            code?: string | undefined;
+                            retryable?: boolean | undefined;
+                            requestId?: string | undefined;
+                            preparationCause?: undefined | {
+                                code: string;
+                                stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                requestId?: string | undefined;
+                            };
+                            carrierFailure?: undefined | {
+                                closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
+                                closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
+                            };
+                            connectedServicesDefault?: undefined | {
+                                v: 1;
+                                source: 'account_default';
+                                reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                phase: 'purpose_binding';
+                                catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                            };
+                            reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                            providerErrorCode?: number | string | undefined;
+                            httpStatus?: number | undefined;
+                            providerErrorMessage?: string | undefined;
+                        };
+                        pluginCodeRefusal?: undefined | {
+                            remedy: {
+                                kind: 'ask_machine_manager';
+                            } | {
+                                kind: 'open_machine_security';
+                                target: {
+                                    serverId: string;
+                                    machineId: string;
+                                };
+                            };
+                        };
+                        agentIsolationRefusal?: undefined | {
+                            reason: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'member_setup_required' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready';
+                            phase: 'native_execution_preparation' | 'native_identity_binding';
+                            reasonCode?: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported' | undefined;
+                            nativeFailure?: undefined | {
+                                kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                                reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                                phase?: 'apply' | 'check' | undefined;
+                            };
+                            probeFailure?: undefined | {
+                                exitCode: number;
+                                check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                                identity: {
+                                    username: string;
+                                    uid: number;
+                                    gid: number;
+                                    home: string;
+                                    cwd: string;
+                                };
+                            } | {
+                                transportError: 'execution_failed' | 'signalled' | 'spawn_failed';
+                                check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                                identity: {
+                                    username: string;
+                                    uid: number;
+                                    gid: number;
+                                    home: string;
+                                    cwd: string;
+                                };
+                            };
+                            readinessCode?: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready' | undefined;
+                            operationErrorCode?: 'machine_setup_operation_unavailable' | undefined;
+                            remedy?: undefined | {
+                                kind: 'ask_machine_manager';
+                            } | {
+                                kind: 'open_machine_security';
+                                target: {
+                                    serverId: string;
+                                    machineId: string;
+                                };
+                            };
+                        };
+                        profileRefusal?: undefined | {
+                            profileId: string;
+                            reason: 'profile_catalog_unavailable' | 'profile_overlay_mismatch' | 'profile_resume_unavailable' | 'profile_target_incompatible';
+                            catalogStatus?: 'loading' | 'partial' | 'unavailable' | undefined;
+                        };
+                        uxDiagnostic?: undefined | {
+                            code: 'connected_service_credential_mode_unsupported' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_credential_scope_missing' | 'connected_service_materialization_identity_missing' | 'connected_service_native_auth_materialization_failed' | 'continuity_unsupported' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                            failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                            source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                            retryable: boolean;
+                            suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                            serviceId?: string | undefined;
+                            agentId?: string | undefined;
+                            profileId?: string | undefined;
+                            groupId?: string | undefined;
+                            diagnostics?: (Record<string, boolean | null | number | string> & {
+                                reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                            }) | undefined;
+                        };
+                        connectedAccountPool?: undefined | {
+                            serviceId: string;
+                            excluded: {
+                                profileId: string;
+                                reason: 'auth_invalid' | 'capacity_limited' | 'cooldown' | 'credential_unavailable' | 'current_active' | 'disabled' | 'not_meaningfully_better' | 'plan_unavailable' | 'policy_wait_until_reset' | 'quota_evidence_unavailable' | 'quota_exhausted' | 'quota_probe_deferred' | 'validation_blocked';
+                                retryAtMs?: null | number | undefined;
+                            }[];
+                        };
+                    };
+                } | {
+                    type: 'error';
+                    code: 'update_required';
+                    retryable: false;
+                    details: {
+                        kind: 'update_required';
+                        operation: string;
+                        component: 'client' | 'daemon' | 'server';
+                        reason: string;
+                    };
+                } | {
+                    type: 'pending';
+                    retryWithSameCreationKey: true;
+                    outcome: 'accepted' | 'unknown';
+                    operation?: undefined | {
+                        serverId: string;
+                        machineId: string;
+                        operationId: string;
+                    };
+                    sessionId?: string | undefined;
                 };
             };
             domainRef?: undefined | {
@@ -2087,6 +2644,7 @@ export type LocalServicesActionsActionResultById = {
                     };
                     state: 'cancelled' | 'failed' | 'pending' | 'running' | 'succeeded';
                     failureCause?: string | undefined;
+                    terminalId?: string | undefined;
                 }[];
                 setupTask?: undefined | {
                     id: string;
@@ -2174,6 +2732,31 @@ export type LocalServicesActionsActionResultById = {
                     machineId: string;
                     rootPath: string;
                 };
+                steps?: undefined | {
+                    index: number;
+                    source: {
+                        kind: 'command';
+                        command: string;
+                        cwd?: string | undefined;
+                        platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                    } | {
+                        kind: 'native';
+                        tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                        file: string;
+                        target: string;
+                    } | {
+                        kind: 'pluginNative';
+                        adapter: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        file: string;
+                        target: string;
+                    };
+                    state: 'cancelled' | 'failed' | 'outcome_uncertain' | 'pending' | 'running' | 'succeeded';
+                    terminalId?: string | undefined;
+                    exitCode?: number | undefined;
+                }[];
                 script?: undefined | {
                     source: {
                         kind: 'command';
@@ -2202,6 +2785,9 @@ export type LocalServicesActionsActionResultById = {
                     serverId: string;
                     runId: string;
                 };
+            } | {
+                kind: 'projectOpen';
+                sourceId: string;
             } | {
                 kind: 'projectService';
                 purpose: 'relocation' | 'start';
@@ -2282,6 +2868,25 @@ export type LocalServicesActionsActionResultById = {
                 kind: 'systemTask';
                 id: string;
                 taskKind: 'remote.ssh.bootstrapMachine.v1';
+                prompt?: undefined | {
+                    kind: 'administrator.establish';
+                    promptId: string;
+                    administratorUsername: string;
+                    message: string;
+                } | {
+                    kind: 'auth.approveRemoteProvisioning';
+                    message: string;
+                } | {
+                    kind: 'daemon.replaceRemoteBackgroundServices';
+                    message: string;
+                } | {
+                    kind: 'ssh.replaceHostKey' | 'ssh.trustHost';
+                    message: string;
+                    host: string;
+                    keyType: null | string;
+                    fingerprint: string;
+                    existingFingerprint: null | string;
+                };
             };
             observation?: undefined | {
                 kind: 'outcome_uncertain' | 'stop_unconfirmed';
@@ -2436,7 +3041,7 @@ export type LocalServicesActionsActionResultById = {
                         fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                     } | {
                         localCause: 'native_command_failed';
-                        command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                        command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
@@ -2476,7 +3081,7 @@ export type LocalServicesActionsActionResultById = {
                         fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                     } | {
                         localCause: 'native_command_failed';
-                        command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                        command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
@@ -2516,7 +3121,7 @@ export type LocalServicesActionsActionResultById = {
                         fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                     } | {
                         localCause: 'native_command_failed';
-                        command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                        command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;

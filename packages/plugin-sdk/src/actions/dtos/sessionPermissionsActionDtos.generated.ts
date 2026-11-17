@@ -169,7 +169,7 @@ export type SessionPermissionsActionResultById = {
             nativeChoices?: undefined | {
                 requirementId: string;
                 source: string;
-                choices: {
+                choices: readonly Readonly<{
                     id: string;
                     label: string;
                     decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -192,7 +192,7 @@ export type SessionPermissionsActionResultById = {
                         actionId: string;
                         input: JsonValue;
                     };
-                }[];
+                }>[];
                 origin?: undefined | {
                     sessionId: string;
                     subagentId?: string | undefined;
@@ -317,5 +317,7 @@ export type SessionPermissionsActionResultById = {
     readonly "session.control.switch": {
         switched: true;
     };
-    readonly "session.mode.set": JsonValue;
+    readonly "session.mode.set": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
 };

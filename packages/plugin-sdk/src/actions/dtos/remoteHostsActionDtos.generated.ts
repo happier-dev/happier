@@ -5,7 +5,9 @@ import type { JsonValue } from '../../identity.js';
 import type { SystemTaskJsonValue } from './pluginActionDtoSupport.generated.js';
 
 export type RemoteHostsActionInputById = {
-    readonly "remote_hosts.list": Record<string, never>;
+    readonly "remote_hosts.list": {
+        [x: string]: never;
+    };
     readonly "remote_hosts.read": {
         hostId: string;
     };
@@ -84,6 +86,11 @@ export type RemoteHostsActionInputById = {
                         account: string;
                         reference: string;
                         metadata?: undefined | {
+                            field: {
+                                id: string;
+                                title: string;
+                                kind: string;
+                            };
                             vault: {
                                 id: string;
                                 name: string;
@@ -91,11 +98,6 @@ export type RemoteHostsActionInputById = {
                             item: {
                                 id: string;
                                 title: string;
-                            };
-                            field: {
-                                id: string;
-                                title: string;
-                                kind: string;
                             };
                         };
                     };

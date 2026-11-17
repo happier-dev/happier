@@ -85,6 +85,7 @@ export type MachineStorageActionInputById = {
         }[];
         goalBytes?: number | undefined;
         emptyAfter?: boolean | undefined;
+        skipCleanup?: boolean | undefined;
         retry?: undefined | {
             sessionId: string;
         };
@@ -113,6 +114,7 @@ export type MachineStorageActionInputById = {
             expect: string;
         }[];
         machineId: string;
+        skipCleanup?: boolean | undefined;
         serverId?: string | undefined;
     };
     readonly "machines.storage.docker.prune": Readonly<{

@@ -433,6 +433,14 @@ export type MachineReachabilityActionInputById = {
                         operationId: string;
                         admittedInputDigest: string;
                     } | {
+                        kind: 'boundSetup';
+                        managedId: string;
+                        sessionId: string;
+                        operationId: string;
+                    } | {
+                        kind: 'preparation';
+                        operationId: string;
+                    } | {
                         kind: 'reboot';
                         machineId: string;
                         operationId: string;
@@ -2148,6 +2156,14 @@ export type MachineReachabilityActionResultById = {
                             managedId: string;
                             operationId: string;
                             admittedInputDigest: string;
+                        } | {
+                            kind: 'boundSetup';
+                            managedId: string;
+                            sessionId: string;
+                            operationId: string;
+                        } | {
+                            kind: 'preparation';
+                            operationId: string;
                         } | {
                             kind: 'reboot';
                             machineId: string;

@@ -710,6 +710,7 @@ export type MachineProcessesActionResultById = {
                         startedAtMs?: number | undefined;
                         startedByAccountId?: string | undefined;
                         endpointKind?: 'http' | 'native' | 'none' | undefined;
+                        portSource?: 'assigned' | 'fixed' | undefined;
                         subtitle?: string | undefined;
                         kind?: string | undefined;
                         commandPreview?: string | undefined;
@@ -808,8 +809,39 @@ export type MachineProcessesActionResultById = {
                             };
                             sourceId?: string | undefined;
                         };
+                        terminalView?: undefined | {
+                            kind: 'terminal_view';
+                            machineId: string;
+                            terminalId: string;
+                            terminalKey: string;
+                            cwd: string;
+                            workspace?: undefined | {
+                                serverId: string;
+                                workspaceId: string;
+                                machineId: string;
+                                rootPath: string;
+                            };
+                            sessionId?: string | undefined;
+                            interactive?: true | undefined;
+                        };
                     }[];
                     sessionId?: string | undefined;
+                    worktreePorts?: undefined | {
+                        rootPath: string;
+                        result: {
+                            kind: 'ready';
+                            assignment: {
+                                ports: number[];
+                                listenerPorts: Record<string, number>;
+                            };
+                        } | {
+                            kind: 'unavailable';
+                            code: 'cancelled' | 'project_worktree_ports_active' | 'project_worktree_ports_unavailable';
+                            reason: 'active' | 'activity_unavailable' | 'cancelled' | 'port_selection_failed' | 'root_unavailable' | 'state_corrupt' | 'state_read_failed' | 'state_write_failed';
+                            causeCode?: string | undefined;
+                        };
+                        declaredSlots?: number | undefined;
+                    };
                 };
                 reasonCode?: string | undefined;
                 prerequisite?: undefined | {
@@ -818,7 +850,9 @@ export type MachineProcessesActionResultById = {
                     cause: 'not_installed' | 'not_running' | 'permission_denied' | 'unavailable';
                 };
                 establishmentFailure?: undefined | {
-                    cause: 'port_in_use' | 'process_exited';
+                    cause: 'port_in_use' | 'process_exited' | 'runtime_unavailable';
+                    reason?: 'active' | 'activity_unavailable' | 'cancelled' | 'port_selection_failed' | 'root_unavailable' | 'state_corrupt' | 'state_read_failed' | 'state_write_failed' | undefined;
+                    causeCode?: string | undefined;
                     exitCode?: number | undefined;
                     signal?: string | undefined;
                     lastStderrLine?: string | undefined;
@@ -857,6 +891,21 @@ export type MachineProcessesActionResultById = {
                             };
                         };
                     };
+                };
+                terminalView?: undefined | {
+                    kind: 'terminal_view';
+                    machineId: string;
+                    terminalId: string;
+                    terminalKey: string;
+                    cwd: string;
+                    workspace?: undefined | {
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                    };
+                    sessionId?: string | undefined;
+                    interactive?: true | undefined;
                 };
             };
         };

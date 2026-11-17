@@ -460,6 +460,7 @@ export type ConnectedServicesConfigurationActionInputById = {
     };
     readonly "connectedServices.pools.patch": {
         groupId: string;
+        expectedGeneration: number;
         service: {
             pluginId: 'happier';
             localId: 'mcp-sign-in';
@@ -467,7 +468,6 @@ export type ConnectedServicesConfigurationActionInputById = {
             pluginId: string;
             localId: string;
         };
-        expectedGeneration: number;
         policy?: undefined | {
             strategy?: 'expiry_first' | 'least_limited' | 'manual' | 'priority' | undefined;
             autoSwitch?: boolean | undefined;
@@ -528,8 +528,8 @@ export type ConnectedServicesConfigurationActionInputById = {
             };
             groupId: string;
         };
-        connectedAccountId: string;
         expectedGeneration: number;
+        connectedAccountId: string;
         priority?: number | undefined;
         enabled?: boolean | undefined;
         expectedIncarnation?: string | undefined;
@@ -546,8 +546,8 @@ export type ConnectedServicesConfigurationActionInputById = {
             };
             groupId: string;
         };
-        connectedAccountId: string;
         expectedGeneration: number;
+        connectedAccountId: string;
         priority?: number | undefined;
         enabled?: boolean | undefined;
         expectedIncarnation?: string | undefined;
@@ -1162,6 +1162,35 @@ export type ConnectedServicesConfigurationActionResultById = {
                                 fallback: string;
                                 params?: Record<string, number | string> | undefined;
                             };
+                        };
+                        machineSetup?: undefined | {
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            recipe: {
+                                pluginId: string;
+                                recipeId: string;
+                                revision: string;
+                            };
+                            afterApply: {
+                                modeId: string;
+                                configurationFromInputs: Record<string, string>;
+                            };
+                            inputPrefill?: undefined | {
+                                path: string;
+                                source: {
+                                    kind: 'privateNetworkHttps';
+                                    provider: {
+                                        kind: 'builtin';
+                                        id: string;
+                                    } | {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                };
+                            }[];
                         };
                         configuration?: undefined | {
                             scope: 'account' | 'service';
@@ -3777,6 +3806,35 @@ export type ConnectedServicesConfigurationActionResultById = {
                     params?: Record<string, number | string> | undefined;
                 };
             };
+            machineSetup?: undefined | {
+                title: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, number | string> | undefined;
+                };
+                recipe: {
+                    pluginId: string;
+                    recipeId: string;
+                    revision: string;
+                };
+                afterApply: {
+                    modeId: string;
+                    configurationFromInputs: Record<string, string>;
+                };
+                inputPrefill?: undefined | {
+                    path: string;
+                    source: {
+                        kind: 'privateNetworkHttps';
+                        provider: {
+                            kind: 'builtin';
+                            id: string;
+                        } | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    };
+                }[];
+            };
             configuration?: undefined | {
                 scope: 'account' | 'service';
                 changeBehavior: 'reconnect' | 'refresh';
@@ -5243,8 +5301,8 @@ export type ConnectedServicesConfigurationActionResultById = {
                 };
             }[];
             unboundEntries?: undefined | {
-                localId: string;
                 sessionId: string;
+                localId: string;
                 authorityCurrent: boolean;
             }[];
         } | {
@@ -5401,10 +5459,10 @@ export type ConnectedServicesConfigurationActionResultById = {
             };
             encoding: 'meter_readings_runs_v1';
             bases: {
-                v: 1;
                 source: 'cached' | 'connectedServiceProbe' | 'manual' | 'providerHttp' | 'proxy' | 'runtimeSignal' | 'unknown';
-                providerId: string;
+                v: 1;
                 state: 'error_last_known_good' | 'loaded_data' | 'loaded_empty' | 'not_loaded' | 'stale_data';
+                providerId: string;
                 confidence: 'confirmed' | 'estimated' | 'unknown';
                 recordId: string;
                 staleAfterMs: number;
@@ -5472,8 +5530,8 @@ export type ConnectedServicesConfigurationActionResultById = {
                 meterId: string;
                 source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
                 scope?: 'daily' | 'five_hour' | 'model' | 'monthly' | 'primary' | 'requests' | 'rolling' | 'secondary' | 'session' | 'seven_day' | 'tokens' | 'unknown' | 'weekly' | undefined;
-                modelId?: null | string | undefined;
                 providerLimitId?: string | undefined;
+                modelId?: null | string | undefined;
                 confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
                 currency?: string | undefined;
                 windowDurationMs?: number | undefined;
@@ -5995,6 +6053,10 @@ export type ConnectedServicesConfigurationActionResultById = {
                         usedBeforeReset: null | number;
                     }[];
                 }[];
+                observedAtRange?: undefined | {
+                    startAtMs: number;
+                    endAtMs: number;
+                };
             }[];
         };
         unusedCapacity?: undefined | {
@@ -6243,7 +6305,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                     fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                 } | {
                     localCause: 'native_command_failed';
-                    command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                    command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                     exitCode: null | number;
                     stderr?: string | undefined;
                     stderrTruncated?: true | undefined;
@@ -6271,6 +6333,14 @@ export type ConnectedServicesConfigurationActionResultById = {
                     resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
                 } | {
                     sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+                };
+                carrierFailure?: undefined | {
+                    attemptedCarrier: 'https' | 'iroh' | 'none';
+                    reason: 'cancelled' | 'endpoint_config_conflict' | 'endpoint_identity_invalid' | 'endpoint_key_unavailable' | 'home_unreachable' | 'identity_mismatch' | 'invalid_descriptor' | 'invalid_preamble' | 'invalid_preference' | 'loopback_bind_failed' | 'relay_auth_failed' | 'resource_limit' | 'transport' | 'transport_closed' | 'transport_timeout' | 'unavailable' | 'unknown' | 'unsupported_alpn';
+                    irohAttempt?: undefined | {
+                        outcome: 'unavailable';
+                        reason: 'cancelled' | 'endpoint_config_conflict' | 'endpoint_identity_invalid' | 'endpoint_key_unavailable' | 'home_unreachable' | 'identity_mismatch' | 'invalid_descriptor' | 'invalid_preamble' | 'invalid_preference' | 'loopback_bind_failed' | 'relay_auth_failed' | 'resource_limit' | 'transport' | 'transport_closed' | 'transport_timeout' | 'unavailable' | 'unknown' | 'unsupported_alpn';
+                    };
                 };
                 power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
                 storage?: 'lost' | 'retained' | 'unknown' | undefined;

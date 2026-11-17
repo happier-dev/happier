@@ -91,6 +91,32 @@ export type AppShellActionInputById = {
                 agentTargetKey: string;
                 providerConnectionId: string;
                 modelId: string;
+            } | {
+                source: 'account_provider_connection';
+                agentTargetKey: string;
+                providerConnectionId: string;
+                modelId: string;
+            } | {
+                source: 'native';
+                agentTargetKey: string;
+                modelId: string;
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                teamId: string;
+                expectedResourceRevision: number;
+                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                agentTargetKey: string;
+                modelId: string;
+                nativeDelivery?: undefined | {
+                    managedId: string;
+                    controllerInstallationId: string;
+                    guestInstallationId: string;
+                    bindingKey: string;
+                    placeholderRef: string;
+                    sourceRevision: string;
+                    providerTicket: string;
+                };
             };
         } | {
             kind: 'team';
@@ -171,6 +197,44 @@ export type AppShellActionInputById = {
                 sessionModeId: null | string;
                 configOverrides: Record<string, string>;
                 modelSelection?: null | undefined | {
+                    ref: {
+                        source: 'account_provider_connection';
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    v: 2;
+                    updatedAt: number;
+                } | {
+                    ref: {
+                        source: 'native';
+                        agentTargetKey: string;
+                        modelId: string;
+                    };
+                    v: 2;
+                    updatedAt: number;
+                } | {
+                    ref: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        teamId: string;
+                        expectedResourceRevision: number;
+                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                        agentTargetKey: string;
+                        modelId: string;
+                        nativeDelivery?: undefined | {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        };
+                    };
+                    v: 2;
+                    updatedAt: number;
+                } | {
                     v: 1;
                     ref: {
                         agentTargetKey: string;

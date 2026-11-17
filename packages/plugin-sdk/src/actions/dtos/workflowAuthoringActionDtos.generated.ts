@@ -47,6 +47,44 @@ export type WorkflowAuthoringActionInputById = {
                 definitionId?: string | undefined;
             };
             modelSelection?: null | undefined | {
+                ref: {
+                    source: 'account_provider_connection';
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                v: 2;
+                updatedAt: number;
+            } | {
+                ref: {
+                    source: 'native';
+                    agentTargetKey: string;
+                    modelId: string;
+                };
+                v: 2;
+                updatedAt: number;
+            } | {
+                ref: {
+                    source: 'team_resource';
+                    resourceId: string;
+                    teamId: string;
+                    expectedResourceRevision: number;
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                    agentTargetKey: string;
+                    modelId: string;
+                    nativeDelivery?: undefined | {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
+                };
+                v: 2;
+                updatedAt: number;
+            } | {
                 v: 1;
                 ref: {
                     agentTargetKey: string;
@@ -186,7 +224,16 @@ export type WorkflowAuthoringActionInputById = {
                 folderId: null | string;
                 tagIds: string[];
             };
-            memoryEnabled?: boolean | undefined;
+            projectContext?: undefined | {
+                projectRef?: undefined | {
+                    serverId: string;
+                    projectKey: string;
+                };
+                sourceRef?: undefined | {
+                    serverId: string;
+                    sourceId: string;
+                };
+            };
             secretReferenceOverlay?: undefined | {
                 v: 1;
                 bindings: Record<string, {
@@ -194,6 +241,7 @@ export type WorkflowAuthoringActionInputById = {
                     revision?: number | undefined;
                 }>;
             };
+            memoryEnabled?: boolean | undefined;
             teamCredentialBindings?: ({
                 v: 1;
                 slot: {
@@ -343,6 +391,44 @@ export type WorkflowAuthoringActionInputById = {
                 definitionId?: string | undefined;
             };
             modelSelection?: null | undefined | {
+                ref: {
+                    source: 'account_provider_connection';
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                v: 2;
+                updatedAt: number;
+            } | {
+                ref: {
+                    source: 'native';
+                    agentTargetKey: string;
+                    modelId: string;
+                };
+                v: 2;
+                updatedAt: number;
+            } | {
+                ref: {
+                    source: 'team_resource';
+                    resourceId: string;
+                    teamId: string;
+                    expectedResourceRevision: number;
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                    agentTargetKey: string;
+                    modelId: string;
+                    nativeDelivery?: undefined | {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
+                };
+                v: 2;
+                updatedAt: number;
+            } | {
                 v: 1;
                 ref: {
                     agentTargetKey: string;
@@ -482,7 +568,16 @@ export type WorkflowAuthoringActionInputById = {
                 folderId: null | string;
                 tagIds: string[];
             };
-            memoryEnabled?: boolean | undefined;
+            projectContext?: undefined | {
+                projectRef?: undefined | {
+                    serverId: string;
+                    projectKey: string;
+                };
+                sourceRef?: undefined | {
+                    serverId: string;
+                    sourceId: string;
+                };
+            };
             secretReferenceOverlay?: undefined | {
                 v: 1;
                 bindings: Record<string, {
@@ -490,6 +585,7 @@ export type WorkflowAuthoringActionInputById = {
                     revision?: number | undefined;
                 }>;
             };
+            memoryEnabled?: boolean | undefined;
             teamCredentialBindings?: ({
                 v: 1;
                 slot: {
@@ -976,6 +1072,59 @@ export type WorkflowAuthoringActionInputById = {
                         triggerId?: string | undefined;
                     };
                     trigger: null | {
+                        enabled: boolean;
+                        kind: 'sessionLifecycle';
+                        events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'parentTurnStarted' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+                        policy: {
+                            kind: 'currentTurn';
+                            sourceTurnId: string;
+                        } | {
+                            kind: 'everyMatch';
+                        } | {
+                            kind: 'firstMatch';
+                        } | {
+                            kind: 'nextMatches';
+                            count: number;
+                        };
+                        subject?: undefined | {
+                            kind: 'session';
+                            serverId: string;
+                            sessionId: string;
+                        } | {
+                            serverId: string;
+                            machineId: string;
+                            kind: 'machine';
+                        } | {
+                            serverId: string;
+                            projectKey: string;
+                            kind: 'project';
+                        };
+                    } | {
+                        enabled: boolean;
+                        triggerDefinitionEnvelope: {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: unknown;
+                        };
+                        kind: 'sessionLifecycle';
+                        events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'parentTurnStarted' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+                        policy: {
+                            kind: 'currentTurn';
+                            sourceTurnId: string;
+                        } | {
+                            kind: 'everyMatch';
+                        } | {
+                            kind: 'firstMatch';
+                        } | {
+                            kind: 'nextMatches';
+                            count: number;
+                        };
+                        subjectKind?: 'machine' | 'project' | 'session' | undefined;
+                        sourceSessionId?: string | undefined;
+                        subjectKey?: string | undefined;
+                    } | {
                         kind: 'action';
                         consentFor: {
                             automationId: string;
@@ -1013,6 +1162,11 @@ export type WorkflowAuthoringActionInputById = {
                                 environmentId: string;
                                 service: string;
                                 database: string;
+                            } | {
+                                kind: 'managed_deployment';
+                                environmentId: string;
+                                targetLinkId: string;
+                                databaseName: string;
                             } | {
                                 savedSecretId: string;
                                 accountId: string;
@@ -1098,6 +1252,22 @@ export type WorkflowAuthoringActionInputById = {
                             projectKey: string;
                             kind: 'project';
                         };
+                        filter?: null | undefined | {
+                            v: 1;
+                            all: ({
+                                op: 'eq';
+                                field: string;
+                                value: boolean | null | number | string;
+                            } | {
+                                op: 'gt' | 'gte' | 'lt' | 'lte';
+                                field: string;
+                                value: number | string;
+                            } | {
+                                op: 'in';
+                                field: string;
+                                values: (boolean | null | number | string)[];
+                            })[];
+                        };
                         mode?: 'notify' | 'wait' | undefined;
                         onFailure?: 'ask' | 'refuse' | undefined;
                     } | {
@@ -1166,6 +1336,10 @@ export type WorkflowAuthoringActionInputById = {
                                 field: string;
                                 value: boolean | null | number | string;
                             } | {
+                                op: 'gt' | 'gte' | 'lt' | 'lte';
+                                field: string;
+                                value: number | string;
+                            } | {
                                 op: 'in';
                                 field: string;
                                 values: (boolean | null | number | string)[];
@@ -1202,6 +1376,11 @@ export type WorkflowAuthoringActionInputById = {
                                 environmentId: string;
                                 service: string;
                                 database: string;
+                            } | {
+                                kind: 'managed_deployment';
+                                environmentId: string;
+                                targetLinkId: string;
+                                databaseName: string;
                             } | {
                                 savedSecretId: string;
                                 accountId: string;
@@ -1378,22 +1557,6 @@ export type WorkflowAuthoringActionInputById = {
                         };
                         condition: 'needs_attention' | 'terminal';
                         kind: 'runLifecycle';
-                        enabled: boolean;
-                    } | {
-                        sourceSessionId: string;
-                        events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
-                        policy: {
-                            kind: 'currentTurn';
-                            sourceTurnId: string;
-                        } | {
-                            kind: 'everyMatch';
-                        } | {
-                            kind: 'firstMatch';
-                        } | {
-                            kind: 'nextMatches';
-                            count: number;
-                        };
-                        kind: 'sessionLifecycle';
                         enabled: boolean;
                     } | {
                         triggerDefinitionEnvelope: {
@@ -1931,6 +2094,59 @@ export type WorkflowAuthoringActionResultById = {
                             triggerId?: (string) | undefined;
                         };
                         trigger: null | {
+                            enabled: boolean;
+                            kind: 'sessionLifecycle';
+                            events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'parentTurnStarted' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+                            policy: {
+                                kind: 'currentTurn';
+                                sourceTurnId: string;
+                            } | {
+                                kind: 'everyMatch';
+                            } | {
+                                kind: 'firstMatch';
+                            } | {
+                                kind: 'nextMatches';
+                                count: number;
+                            };
+                            subject?: undefined | {
+                                kind: 'session';
+                                serverId: string;
+                                sessionId: string;
+                            } | {
+                                serverId: string;
+                                machineId: string;
+                                kind: 'machine';
+                            } | {
+                                serverId: string;
+                                projectKey: string;
+                                kind: 'project';
+                            };
+                        } | {
+                            enabled: boolean;
+                            triggerDefinitionEnvelope: {
+                                t: 'encrypted';
+                                c: string;
+                            } | {
+                                t: 'plain';
+                                v: PluginJsonValueV2;
+                            };
+                            kind: 'sessionLifecycle';
+                            events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'parentTurnStarted' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+                            policy: {
+                                kind: 'currentTurn';
+                                sourceTurnId: string;
+                            } | {
+                                kind: 'everyMatch';
+                            } | {
+                                kind: 'firstMatch';
+                            } | {
+                                kind: 'nextMatches';
+                                count: number;
+                            };
+                            subjectKind?: 'machine' | 'project' | 'session' | undefined;
+                            sourceSessionId?: string | undefined;
+                            subjectKey?: string | undefined;
+                        } | {
                             kind: 'action';
                             consentFor: {
                                 automationId: string;
@@ -1968,6 +2184,11 @@ export type WorkflowAuthoringActionResultById = {
                                     environmentId: string;
                                     service: string;
                                     database: string;
+                                } | {
+                                    kind: 'managed_deployment';
+                                    environmentId: string;
+                                    targetLinkId: string;
+                                    databaseName: string;
                                 } | {
                                     savedSecretId: string;
                                     accountId: string;
@@ -2053,6 +2274,22 @@ export type WorkflowAuthoringActionResultById = {
                                 projectKey: string;
                                 kind: 'project';
                             };
+                            filter?: null | undefined | {
+                                v: 1;
+                                all: ({
+                                    op: 'eq';
+                                    field: string;
+                                    value: boolean | null | number | string;
+                                } | {
+                                    op: 'gt' | 'gte' | 'lt' | 'lte';
+                                    field: string;
+                                    value: number | string;
+                                } | {
+                                    op: 'in';
+                                    field: string;
+                                    values: (boolean | null | number | string)[];
+                                })[];
+                            };
                             mode?: 'notify' | 'wait' | undefined;
                             onFailure?: 'ask' | 'refuse' | undefined;
                         } | {
@@ -2121,6 +2358,10 @@ export type WorkflowAuthoringActionResultById = {
                                     field: string;
                                     value: boolean | null | number | string;
                                 } | {
+                                    op: 'gt' | 'gte' | 'lt' | 'lte';
+                                    field: string;
+                                    value: number | string;
+                                } | {
                                     op: 'in';
                                     field: string;
                                     values: (boolean | null | number | string)[];
@@ -2157,6 +2398,11 @@ export type WorkflowAuthoringActionResultById = {
                                     environmentId: string;
                                     service: string;
                                     database: string;
+                                } | {
+                                    kind: 'managed_deployment';
+                                    environmentId: string;
+                                    targetLinkId: string;
+                                    databaseName: string;
                                 } | {
                                     savedSecretId: string;
                                     accountId: string;
@@ -2333,22 +2579,6 @@ export type WorkflowAuthoringActionResultById = {
                             };
                             condition: 'needs_attention' | 'terminal';
                             kind: 'runLifecycle';
-                            enabled: boolean;
-                        } | {
-                            sourceSessionId: string;
-                            events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
-                            policy: {
-                                kind: 'currentTurn';
-                                sourceTurnId: string;
-                            } | {
-                                kind: 'everyMatch';
-                            } | {
-                                kind: 'firstMatch';
-                            } | {
-                                kind: 'nextMatches';
-                                count: number;
-                            };
-                            kind: 'sessionLifecycle';
                             enabled: boolean;
                         } | {
                             triggerDefinitionEnvelope: {

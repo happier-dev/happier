@@ -6,6 +6,17 @@
 export type ArtifactAccessActionInputById = {
     readonly "artifact.access.grants.list": {
         artifactId: string;
+        requestedAudience?: ({
+            kind: 'account';
+            accountId: string;
+        } | {
+            kind: 'group';
+            teamId: string;
+            groupId: string;
+        } | {
+            kind: 'team';
+            teamId: string;
+        })[] | undefined;
     };
     readonly "artifact.access.grants.set": {
         artifactId: string;
@@ -86,6 +97,17 @@ export type ArtifactAccessActionResultById = {
                 reportedAt: number;
             }[];
         }[];
+        missingAudience?: ({
+            kind: 'account';
+            accountId: string;
+        } | {
+            kind: 'group';
+            teamId: string;
+            groupId: string;
+        } | {
+            kind: 'team';
+            teamId: string;
+        })[] | undefined;
     };
     readonly "artifact.access.grants.set": {
         artifactId: string;

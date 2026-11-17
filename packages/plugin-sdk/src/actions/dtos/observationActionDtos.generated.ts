@@ -4,7 +4,7 @@
 import type { JsonValue } from '../../identity.js';
 
 export type ObservationActionInputById = {
-    readonly wait: {
+    readonly "wait": {
         target: {
             kind: 'action_operation';
             serverId: string;
@@ -46,7 +46,7 @@ export type ObservationActionInputById = {
     };
 };
 export type ObservationActionResultById = {
-    readonly wait: {
+    readonly "wait": {
         target: {
             kind: 'action_operation';
             serverId: string;

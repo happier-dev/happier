@@ -278,5 +278,7 @@ export type PromptLibraryActionResultById = {
             bodyVersion: number;
         };
     };
-    readonly "prompt_registry.install": JsonValue;
+    readonly "prompt_registry.install": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
 };

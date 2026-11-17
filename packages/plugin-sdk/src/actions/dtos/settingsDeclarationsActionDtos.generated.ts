@@ -174,6 +174,70 @@ export type SettingsDeclarationsActionInputById = {
             localId: string;
         } | {
             kind: 'collection_space';
+            entityKind: 'deploymentEnvironment';
+            mutation: {
+                op: 'create';
+                space: {
+                    id: string;
+                    name: string;
+                    icon: {
+                        kind: 'icon';
+                        name: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow';
+                    } | {
+                        kind: 'project';
+                        project: {
+                            serverId: string;
+                            projectKey: string;
+                        };
+                    };
+                    filter: {
+                        projects?: unknown;
+                        states?: undefined | {
+                            include: ('deployed' | 'deploying' | 'needsYou' | 'notDeployed')[];
+                            exclude: ('deployed' | 'deploying' | 'needsYou' | 'notDeployed')[];
+                        };
+                        machines?: unknown;
+                    };
+                    includeNeedsYouEverywhere: boolean;
+                    entityKind: 'deploymentEnvironment';
+                };
+            } | {
+                op: 'delete';
+                spaceId: string;
+            } | {
+                op: 'edit';
+                spaceId: string;
+                changes: {
+                    name?: string | undefined;
+                    icon?: undefined | {
+                        kind: 'icon';
+                        name: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow';
+                    } | {
+                        kind: 'project';
+                        project: {
+                            serverId: string;
+                            projectKey: string;
+                        };
+                    };
+                    filter?: undefined | {
+                        projects?: unknown;
+                        states?: undefined | {
+                            include: ('deployed' | 'deploying' | 'needsYou' | 'notDeployed')[];
+                            exclude: ('deployed' | 'deploying' | 'needsYou' | 'notDeployed')[];
+                        };
+                        machines?: unknown;
+                    };
+                    includeNeedsYouEverywhere?: boolean | undefined;
+                };
+            } | {
+                op: 'reorder';
+                spaceId: string;
+                beforeSpaceId: null | string;
+            } | {
+                op: 'resetDefault';
+            };
+        } | {
+            kind: 'collection_space';
             entityKind: 'discussion';
             mutation: {
                 op: 'create';
@@ -755,16 +819,35 @@ export type SettingsDeclarationsActionInputById = {
         actionId: string;
     } | {
         profileChange: {
+            kind: 'create';
+            profile: {
+                name: string;
+                actions?: Record<string, {
+                    enabled?: boolean | undefined;
+                    disabledSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
+                    approvalRequiredSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
+                }> | undefined;
+                approvalWaivedSurfaces?: Record<string, ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[]> | undefined;
+            };
+        } | {
             kind: 'delete';
             id: string;
+            expectedRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
         } | {
             kind: 'machine_default';
             machineId: string;
             id: null | string;
         } | {
-            kind: 'upsert';
+            kind: 'update';
+            id: string;
+            expectedRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
             profile: {
-                id: string;
                 name: string;
                 actions?: Record<string, {
                     enabled?: boolean | undefined;
@@ -937,13 +1020,23 @@ export type SettingsDeclarationsActionResultById = {
     } | {
         profiles: {
             id: string;
-            name: string;
-            actions?: Record<string, {
-                enabled?: boolean | undefined;
-                disabledSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
-                approvalRequiredSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
-            }> | undefined;
-            approvalWaivedSurfaces?: Record<string, ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[]> | undefined;
+            profile: {
+                id: string;
+                name: string;
+                actions?: Record<string, {
+                    enabled?: boolean | undefined;
+                    disabledSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
+                    approvalRequiredSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
+                }> | undefined;
+                approvalWaivedSurfaces?: Record<string, ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[]> | undefined;
+            };
+            access: 'admin' | 'edit' | 'owner' | 'view';
+            revision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+            ownerAccountId?: string | undefined;
+            ownerDisplayName?: null | string | undefined;
         }[];
     };
     readonly "actions.policy.set": {
@@ -1002,24 +1095,16 @@ export type SettingsDeclarationsActionResultById = {
         };
     } | {
         profileChange: {
-            kind: 'delete';
+            kind: 'create' | 'delete' | 'update';
             id: string;
+            revision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
         } | {
             kind: 'machine_default';
             machineId: string;
             id: null | string;
-        } | {
-            kind: 'upsert';
-            profile: {
-                id: string;
-                name: string;
-                actions?: Record<string, {
-                    enabled?: boolean | undefined;
-                    disabledSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
-                    approvalRequiredSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
-                }> | undefined;
-                approvalWaivedSurfaces?: Record<string, ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[]> | undefined;
-            };
         };
     };
     readonly "actions.policy.reset": {

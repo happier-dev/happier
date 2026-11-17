@@ -4,7 +4,9 @@
 import type { PluginDeclarativeNodeV2, WidgetDefinitionBodyV1Input } from './pluginActionDtoSupport.generated.js';
 
 export type AccountProfileActionInputById = {
-    readonly "account.profile.get": Record<string, never>;
+    readonly "account.profile.get": {
+        [x: string]: never;
+    };
     readonly "account.name.set": {
         name: null | string;
     };
@@ -14,8 +16,12 @@ export type AccountProfileActionInputById = {
     readonly "account.username.check": {
         username: string;
     };
-    readonly "account.username.release": Record<string, never>;
-    readonly "account.public_profile.get": Record<string, never>;
+    readonly "account.username.release": {
+        [x: string]: never;
+    };
+    readonly "account.public_profile.get": {
+        [x: string]: never;
+    };
     readonly "account.public_profile.preview": {
         policy: {
             fields: Record<'activeDays' | 'agentActiveDays' | 'agentMix' | 'agentTime' | 'avatar' | 'bestStreak' | 'bio' | 'calendar' | 'currentStreak' | 'dayNightActivity' | 'footprint' | 'highlights' | 'links' | 'machineKinds' | 'mergedPrs' | 'name' | 'peakParallel' | 'projects' | 'punch' | 'sessionDurations' | 'since' | 'sourceSplit' | 'tokens' | 'weeklyAgentMix' | 'weeklyPeakParallel', boolean>;
@@ -53,6 +59,7 @@ export type AccountProfileActionInputById = {
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
+            includePriceCatalog?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
             includeLeaders?: boolean | undefined;
@@ -81,6 +88,7 @@ export type AccountProfileActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuotaExactHistory?: boolean | undefined;
             includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
             includeCoach?: boolean | undefined;
@@ -627,30 +635,30 @@ export type AccountProfileActionInputById = {
                             note?: string | undefined;
                         };
                         kind: 'painting' | 'photo';
-                        title: string;
                         dark: 'dusk' | 'night';
+                        title: string;
                         horizon: {
                             src?: number | undefined;
                             at?: number | undefined;
                         };
-                        hour: number;
                         focus: {
                             x?: number | undefined;
                             y?: number | undefined;
                             zoom?: number | undefined;
                         };
+                        hour: number;
                         grades: {
                             light: number;
                             dusk: number;
                             night: number;
                         };
+                        themes?: ('dark' | 'light')[] | undefined;
                         adjust?: undefined | {
                             exposure?: number | undefined;
                             contrast?: number | undefined;
                             saturation?: number | undefined;
                             temperature?: number | undefined;
                         };
-                        themes?: ('dark' | 'light')[] | undefined;
                     };
                 };
             } | {
@@ -702,6 +710,7 @@ export type AccountProfileActionInputById = {
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
+            includePriceCatalog?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
             includeLeaders?: boolean | undefined;
@@ -730,6 +739,7 @@ export type AccountProfileActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuotaExactHistory?: boolean | undefined;
             includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
             includeCoach?: boolean | undefined;
@@ -1276,30 +1286,30 @@ export type AccountProfileActionInputById = {
                             note?: string | undefined;
                         };
                         kind: 'painting' | 'photo';
-                        title: string;
                         dark: 'dusk' | 'night';
+                        title: string;
                         horizon: {
                             src?: number | undefined;
                             at?: number | undefined;
                         };
-                        hour: number;
                         focus: {
                             x?: number | undefined;
                             y?: number | undefined;
                             zoom?: number | undefined;
                         };
+                        hour: number;
                         grades: {
                             light: number;
                             dusk: number;
                             night: number;
                         };
+                        themes?: ('dark' | 'light')[] | undefined;
                         adjust?: undefined | {
                             exposure?: number | undefined;
                             contrast?: number | undefined;
                             saturation?: number | undefined;
                             temperature?: number | undefined;
                         };
-                        themes?: ('dark' | 'light')[] | undefined;
                     };
                 };
             } | {
@@ -1313,7 +1323,9 @@ export type AccountProfileActionInputById = {
             theme: 'auto' | 'dark' | 'light';
         };
     };
-    readonly "account.public_profile.resume": Record<string, never>;
+    readonly "account.public_profile.resume": {
+        [x: string]: never;
+    };
     readonly "account.public_profile.update": {
         policy?: undefined | {
             fields: Record<'activeDays' | 'agentActiveDays' | 'agentMix' | 'agentTime' | 'avatar' | 'bestStreak' | 'bio' | 'calendar' | 'currentStreak' | 'dayNightActivity' | 'footprint' | 'highlights' | 'links' | 'machineKinds' | 'mergedPrs' | 'name' | 'peakParallel' | 'projects' | 'punch' | 'sessionDurations' | 'since' | 'sourceSplit' | 'tokens' | 'weeklyAgentMix' | 'weeklyPeakParallel', boolean>;
@@ -1351,6 +1363,7 @@ export type AccountProfileActionInputById = {
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
+            includePriceCatalog?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
             includeLeaders?: boolean | undefined;
@@ -1379,6 +1392,7 @@ export type AccountProfileActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuotaExactHistory?: boolean | undefined;
             includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
             includeCoach?: boolean | undefined;
@@ -1925,30 +1939,30 @@ export type AccountProfileActionInputById = {
                             note?: string | undefined;
                         };
                         kind: 'painting' | 'photo';
-                        title: string;
                         dark: 'dusk' | 'night';
+                        title: string;
                         horizon: {
                             src?: number | undefined;
                             at?: number | undefined;
                         };
-                        hour: number;
                         focus: {
                             x?: number | undefined;
                             y?: number | undefined;
                             zoom?: number | undefined;
                         };
+                        hour: number;
                         grades: {
                             light: number;
                             dusk: number;
                             night: number;
                         };
+                        themes?: ('dark' | 'light')[] | undefined;
                         adjust?: undefined | {
                             exposure?: number | undefined;
                             contrast?: number | undefined;
                             saturation?: number | undefined;
                             temperature?: number | undefined;
                         };
-                        themes?: ('dark' | 'light')[] | undefined;
                     };
                 };
             } | {
@@ -1962,9 +1976,15 @@ export type AccountProfileActionInputById = {
             theme: 'auto' | 'dark' | 'light';
         };
     };
-    readonly "account.public_profile.refresh": Record<string, never>;
-    readonly "account.public_profile.pause": Record<string, never>;
-    readonly "account.public_profile.unpublish": Record<string, never>;
+    readonly "account.public_profile.refresh": {
+        [x: string]: never;
+    };
+    readonly "account.public_profile.pause": {
+        [x: string]: never;
+    };
+    readonly "account.public_profile.unpublish": {
+        [x: string]: never;
+    };
     readonly "account.public_profile.report.get": {
         handle: string;
     };
@@ -2117,6 +2137,7 @@ export type AccountProfileActionResultById = {
                 workspaceIds: string[];
                 backendModes: string[];
                 population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+                includePriceCatalog?: boolean | undefined;
                 includeInsights?: boolean | undefined;
                 includeActivity?: boolean | undefined;
                 includeLeaders?: boolean | undefined;
@@ -2124,6 +2145,7 @@ export type AccountProfileActionResultById = {
                 includeMessageStats?: boolean | undefined;
                 activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                 execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                includeQuotaExactHistory?: boolean | undefined;
                 includeQuota?: boolean | undefined;
                 includeCoach?: boolean | undefined;
             };
@@ -2528,30 +2550,30 @@ export type AccountProfileActionResultById = {
                                 note?: string | undefined;
                             };
                             kind: 'painting' | 'photo';
-                            title: string;
                             dark: 'dusk' | 'night';
+                            title: string;
                             horizon: {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
+                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
                                 night: number;
                             };
+                            themes?: ('dark' | 'light')[] | undefined;
                             adjust?: undefined | {
                                 exposure?: number | undefined;
                                 contrast?: number | undefined;
                                 saturation?: number | undefined;
                                 temperature?: number | undefined;
                             };
-                            themes?: ('dark' | 'light')[] | undefined;
                         };
                     };
                 } | {
@@ -2642,30 +2664,30 @@ export type AccountProfileActionResultById = {
                                 note?: string | undefined;
                             };
                             kind: 'painting' | 'photo';
-                            title: string;
                             dark: 'dusk' | 'night';
+                            title: string;
                             horizon: {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
+                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
                                 night: number;
                             };
+                            themes?: ('dark' | 'light')[] | undefined;
                             adjust?: undefined | {
                                 exposure?: number | undefined;
                                 contrast?: number | undefined;
                                 saturation?: number | undefined;
                                 temperature?: number | undefined;
                             };
-                            themes?: ('dark' | 'light')[] | undefined;
                         };
                     };
                 } | {
@@ -2678,30 +2700,8 @@ export type AccountProfileActionResultById = {
                 };
                 theme: 'auto' | 'dark' | 'light';
             };
-            identity: {
-                name?: string | undefined;
-                sinceMs?: number | undefined;
-                avatarUrl?: string | undefined;
-                avatar?: undefined | {
-                    kind: 'planet';
-                    reason: 'account_image_unavailable';
-                };
-            };
             v: 1;
-            metadata: {
-                bio?: string | undefined;
-                links?: undefined | {
-                    label: string;
-                    url: string;
-                }[];
-                projects?: undefined | {
-                    label: string;
-                    url: string;
-                }[];
-                avatar?: undefined | {
-                    kind: 'account' | 'planet';
-                };
-            };
+            state: 'published';
             snapshot: {
                 v: 1;
                 computedAtMs: number;
@@ -2916,7 +2916,15 @@ export type AccountProfileActionResultById = {
                     };
                 }[];
             };
-            state: 'published';
+            identity: {
+                name?: string | undefined;
+                sinceMs?: number | undefined;
+                avatarUrl?: string | undefined;
+                avatar?: undefined | {
+                    kind: 'planet';
+                    reason: 'account_image_unavailable';
+                };
+            };
             layout: {
                 v: 1;
                 items: ({
@@ -3073,6 +3081,20 @@ export type AccountProfileActionResultById = {
                     title?: string | undefined;
                 })[];
             };
+            metadata: {
+                bio?: string | undefined;
+                links?: undefined | {
+                    label: string;
+                    url: string;
+                }[];
+                projects?: undefined | {
+                    label: string;
+                    url: string;
+                }[];
+                avatar?: undefined | {
+                    kind: 'account' | 'planet';
+                };
+            };
             handle: string;
             indexable: boolean;
             relativePeriod?: '30days' | '7days' | '90days' | 'all' | 'today' | 'year' | undefined;
@@ -3158,6 +3180,7 @@ export type AccountProfileActionResultById = {
                 workspaceIds: string[];
                 backendModes: string[];
                 population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+                includePriceCatalog?: boolean | undefined;
                 includeInsights?: boolean | undefined;
                 includeActivity?: boolean | undefined;
                 includeLeaders?: boolean | undefined;
@@ -3165,6 +3188,7 @@ export type AccountProfileActionResultById = {
                 includeMessageStats?: boolean | undefined;
                 activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                 execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                includeQuotaExactHistory?: boolean | undefined;
                 includeQuota?: boolean | undefined;
                 includeCoach?: boolean | undefined;
             };
@@ -3569,30 +3593,30 @@ export type AccountProfileActionResultById = {
                                 note?: string | undefined;
                             };
                             kind: 'painting' | 'photo';
-                            title: string;
                             dark: 'dusk' | 'night';
+                            title: string;
                             horizon: {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
+                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
                                 night: number;
                             };
+                            themes?: ('dark' | 'light')[] | undefined;
                             adjust?: undefined | {
                                 exposure?: number | undefined;
                                 contrast?: number | undefined;
                                 saturation?: number | undefined;
                                 temperature?: number | undefined;
                             };
-                            themes?: ('dark' | 'light')[] | undefined;
                         };
                     };
                 } | {
@@ -3690,6 +3714,7 @@ export type AccountProfileActionResultById = {
                 workspaceIds: string[];
                 backendModes: string[];
                 population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+                includePriceCatalog?: boolean | undefined;
                 includeInsights?: boolean | undefined;
                 includeActivity?: boolean | undefined;
                 includeLeaders?: boolean | undefined;
@@ -3697,6 +3722,7 @@ export type AccountProfileActionResultById = {
                 includeMessageStats?: boolean | undefined;
                 activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                 execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                includeQuotaExactHistory?: boolean | undefined;
                 includeQuota?: boolean | undefined;
                 includeCoach?: boolean | undefined;
             };
@@ -4101,30 +4127,30 @@ export type AccountProfileActionResultById = {
                                 note?: string | undefined;
                             };
                             kind: 'painting' | 'photo';
-                            title: string;
                             dark: 'dusk' | 'night';
+                            title: string;
                             horizon: {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
+                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
                                 night: number;
                             };
+                            themes?: ('dark' | 'light')[] | undefined;
                             adjust?: undefined | {
                                 exposure?: number | undefined;
                                 contrast?: number | undefined;
                                 saturation?: number | undefined;
                                 temperature?: number | undefined;
                             };
-                            themes?: ('dark' | 'light')[] | undefined;
                         };
                     };
                 } | {
@@ -4221,6 +4247,7 @@ export type AccountProfileActionResultById = {
                 workspaceIds: string[];
                 backendModes: string[];
                 population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+                includePriceCatalog?: boolean | undefined;
                 includeInsights?: boolean | undefined;
                 includeActivity?: boolean | undefined;
                 includeLeaders?: boolean | undefined;
@@ -4228,6 +4255,7 @@ export type AccountProfileActionResultById = {
                 includeMessageStats?: boolean | undefined;
                 activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                 execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                includeQuotaExactHistory?: boolean | undefined;
                 includeQuota?: boolean | undefined;
                 includeCoach?: boolean | undefined;
             };
@@ -4632,30 +4660,30 @@ export type AccountProfileActionResultById = {
                                 note?: string | undefined;
                             };
                             kind: 'painting' | 'photo';
-                            title: string;
                             dark: 'dusk' | 'night';
+                            title: string;
                             horizon: {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
+                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
                                 night: number;
                             };
+                            themes?: ('dark' | 'light')[] | undefined;
                             adjust?: undefined | {
                                 exposure?: number | undefined;
                                 contrast?: number | undefined;
                                 saturation?: number | undefined;
                                 temperature?: number | undefined;
                             };
-                            themes?: ('dark' | 'light')[] | undefined;
                         };
                     };
                 } | {
@@ -4753,6 +4781,7 @@ export type AccountProfileActionResultById = {
                 workspaceIds: string[];
                 backendModes: string[];
                 population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+                includePriceCatalog?: boolean | undefined;
                 includeInsights?: boolean | undefined;
                 includeActivity?: boolean | undefined;
                 includeLeaders?: boolean | undefined;
@@ -4760,6 +4789,7 @@ export type AccountProfileActionResultById = {
                 includeMessageStats?: boolean | undefined;
                 activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                 execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                includeQuotaExactHistory?: boolean | undefined;
                 includeQuota?: boolean | undefined;
                 includeCoach?: boolean | undefined;
             };
@@ -5164,30 +5194,30 @@ export type AccountProfileActionResultById = {
                                 note?: string | undefined;
                             };
                             kind: 'painting' | 'photo';
-                            title: string;
                             dark: 'dusk' | 'night';
+                            title: string;
                             horizon: {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
+                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
                                 night: number;
                             };
+                            themes?: ('dark' | 'light')[] | undefined;
                             adjust?: undefined | {
                                 exposure?: number | undefined;
                                 contrast?: number | undefined;
                                 saturation?: number | undefined;
                                 temperature?: number | undefined;
                             };
-                            themes?: ('dark' | 'light')[] | undefined;
                         };
                     };
                 } | {
@@ -5284,6 +5314,7 @@ export type AccountProfileActionResultById = {
                 workspaceIds: string[];
                 backendModes: string[];
                 population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+                includePriceCatalog?: boolean | undefined;
                 includeInsights?: boolean | undefined;
                 includeActivity?: boolean | undefined;
                 includeLeaders?: boolean | undefined;
@@ -5291,6 +5322,7 @@ export type AccountProfileActionResultById = {
                 includeMessageStats?: boolean | undefined;
                 activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                 execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                includeQuotaExactHistory?: boolean | undefined;
                 includeQuota?: boolean | undefined;
                 includeCoach?: boolean | undefined;
             };
@@ -5695,30 +5727,30 @@ export type AccountProfileActionResultById = {
                                 note?: string | undefined;
                             };
                             kind: 'painting' | 'photo';
-                            title: string;
                             dark: 'dusk' | 'night';
+                            title: string;
                             horizon: {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
+                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
                                 night: number;
                             };
+                            themes?: ('dark' | 'light')[] | undefined;
                             adjust?: undefined | {
                                 exposure?: number | undefined;
                                 contrast?: number | undefined;
                                 saturation?: number | undefined;
                                 temperature?: number | undefined;
                             };
-                            themes?: ('dark' | 'light')[] | undefined;
                         };
                     };
                 } | {
@@ -5815,6 +5847,7 @@ export type AccountProfileActionResultById = {
                 workspaceIds: string[];
                 backendModes: string[];
                 population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+                includePriceCatalog?: boolean | undefined;
                 includeInsights?: boolean | undefined;
                 includeActivity?: boolean | undefined;
                 includeLeaders?: boolean | undefined;
@@ -5822,6 +5855,7 @@ export type AccountProfileActionResultById = {
                 includeMessageStats?: boolean | undefined;
                 activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                 execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                includeQuotaExactHistory?: boolean | undefined;
                 includeQuota?: boolean | undefined;
                 includeCoach?: boolean | undefined;
             };
@@ -6226,30 +6260,30 @@ export type AccountProfileActionResultById = {
                                 note?: string | undefined;
                             };
                             kind: 'painting' | 'photo';
-                            title: string;
                             dark: 'dusk' | 'night';
+                            title: string;
                             horizon: {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
+                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
                                 night: number;
                             };
+                            themes?: ('dark' | 'light')[] | undefined;
                             adjust?: undefined | {
                                 exposure?: number | undefined;
                                 contrast?: number | undefined;
                                 saturation?: number | undefined;
                                 temperature?: number | undefined;
                             };
-                            themes?: ('dark' | 'light')[] | undefined;
                         };
                     };
                 } | {

@@ -10,6 +10,7 @@ export type WorkflowEffectsActionInputById = {
     };
     readonly "machines.command.run": {
         command: string;
+        stdin?: unknown;
         env?: Record<string, string> | undefined;
     };
     readonly "workflow.discussion.round.project": {
@@ -64,8 +65,56 @@ export type WorkflowEffectsActionResultById = {
                     folderId: null | string;
                     tagIds: string[];
                 };
+                projectContext?: undefined | {
+                    projectRef?: undefined | {
+                        serverId: string;
+                        projectKey: string;
+                    };
+                    sourceRef?: undefined | {
+                        serverId: string;
+                        sourceId: string;
+                    };
+                };
                 roleId?: string | undefined;
                 modelSelection?: undefined | {
+                    ref: {
+                        source: 'account_provider_connection';
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    v: 2;
+                    updatedAt: number;
+                } | {
+                    ref: {
+                        source: 'native';
+                        agentTargetKey: string;
+                        modelId: string;
+                    };
+                    v: 2;
+                    updatedAt: number;
+                } | {
+                    ref: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        teamId: string;
+                        expectedResourceRevision: number;
+                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                        agentTargetKey: string;
+                        modelId: string;
+                        nativeDelivery?: undefined | {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        };
+                    };
+                    v: 2;
+                    updatedAt: number;
+                } | {
                     v: 1;
                     ref: {
                         agentTargetKey: string;
@@ -291,8 +340,56 @@ export type WorkflowEffectsActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    projectContext?: undefined | {
+                        projectRef?: undefined | {
+                            serverId: string;
+                            projectKey: string;
+                        };
+                        sourceRef?: undefined | {
+                            serverId: string;
+                            sourceId: string;
+                        };
+                    };
                     roleId?: string | undefined;
                     modelSelection?: undefined | {
+                        ref: {
+                            source: 'account_provider_connection';
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        v: 2;
+                        updatedAt: number;
+                    } | {
+                        ref: {
+                            source: 'native';
+                            agentTargetKey: string;
+                            modelId: string;
+                        };
+                        v: 2;
+                        updatedAt: number;
+                    } | {
+                        ref: {
+                            source: 'team_resource';
+                            resourceId: string;
+                            teamId: string;
+                            expectedResourceRevision: number;
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            agentTargetKey: string;
+                            modelId: string;
+                            nativeDelivery?: undefined | {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            };
+                        };
+                        v: 2;
+                        updatedAt: number;
+                    } | {
                         v: 1;
                         ref: {
                             agentTargetKey: string;

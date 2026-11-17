@@ -27,7 +27,7 @@ export type ThemesActionInputById = {
         clientId?: string | undefined;
     };
     readonly "appearance.themes.tryOn": {
-        document: {
+        document: null | {
             profile: unknown;
             raw: unknown;
             compatibility: {
@@ -134,6 +134,32 @@ export type ThemesActionInputById = {
     } & {
         clientId?: string | undefined;
     };
+    readonly "appearance.themes.store.get": {
+        listing: {
+            sourceId: string;
+            itemId: string;
+            version?: string | undefined;
+        };
+    } & {
+        clientId?: string | undefined;
+    };
+    readonly "appearance.themes.install": {
+        listing: {
+            sourceId: string;
+            itemId: string;
+        };
+        faceIds?: string[] | undefined;
+    } & {
+        clientId?: string | undefined;
+    };
+    readonly "appearance.themes.uninstall": {
+        listing: {
+            sourceId: string;
+            itemId: string;
+        };
+    } & {
+        clientId?: string | undefined;
+    };
     readonly "appearance.themes.import": {
         file: {
             name: string;
@@ -203,7 +229,7 @@ export type ThemesActionResultById = {
                 kind: 'store';
                 provenance: {
                     sourceId: string;
-                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -262,6 +288,17 @@ export type ThemesActionResultById = {
                 border: string;
                 radius: 'round' | 'sharp' | 'soft';
             };
+            modes?: ('dark' | 'light')[] | undefined;
+            miniatures?: Partial<Record<'dark' | 'light', {
+                mode: 'dark' | 'light';
+                canvas: string;
+                raised: string;
+                text: string;
+                mutedText: string;
+                accent: string;
+                border: string;
+                radius: 'round' | 'sharp' | 'soft';
+            }>> | undefined;
         }[];
         devices?: undefined | {
             id: string;
@@ -300,7 +337,7 @@ export type ThemesActionResultById = {
                 kind: 'store';
                 provenance: {
                     sourceId: string;
-                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -359,6 +396,17 @@ export type ThemesActionResultById = {
                 border: string;
                 radius: 'round' | 'sharp' | 'soft';
             };
+            modes?: ('dark' | 'light')[] | undefined;
+            miniatures?: Partial<Record<'dark' | 'light', {
+                mode: 'dark' | 'light';
+                canvas: string;
+                raised: string;
+                text: string;
+                mutedText: string;
+                accent: string;
+                border: string;
+                radius: 'round' | 'sharp' | 'soft';
+            }>> | undefined;
         };
         document?: Readonly<{
             profile: {
@@ -396,7 +444,7 @@ export type ThemesActionResultById = {
                     kind: 'store';
                     provenance: {
                         sourceId: string;
-                        format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'skills-sh';
+                        format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
                         sourceUrl: string;
                         itemId: string;
                         ref: {
@@ -586,7 +634,7 @@ export type ThemesActionResultById = {
         };
     };
     readonly "appearance.themes.keep": {
-        entry: {
+        entry: null | {
             id: string;
             reference: {
                 kind: 'artifact';
@@ -612,7 +660,7 @@ export type ThemesActionResultById = {
                 kind: 'store';
                 provenance: {
                     sourceId: string;
-                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -671,6 +719,17 @@ export type ThemesActionResultById = {
                 border: string;
                 radius: 'round' | 'sharp' | 'soft';
             };
+            modes?: ('dark' | 'light')[] | undefined;
+            miniatures?: Partial<Record<'dark' | 'light', {
+                mode: 'dark' | 'light';
+                canvas: string;
+                raised: string;
+                text: string;
+                mutedText: string;
+                accent: string;
+                border: string;
+                radius: 'round' | 'sharp' | 'soft';
+            }>> | undefined;
         };
         applied: {
             mode: 'dark' | 'light';
@@ -705,7 +764,7 @@ export type ThemesActionResultById = {
                 kind: 'store';
                 provenance: {
                     sourceId: string;
-                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -764,6 +823,17 @@ export type ThemesActionResultById = {
                 border: string;
                 radius: 'round' | 'sharp' | 'soft';
             };
+            modes?: ('dark' | 'light')[] | undefined;
+            miniatures?: Partial<Record<'dark' | 'light', {
+                mode: 'dark' | 'light';
+                canvas: string;
+                raised: string;
+                text: string;
+                mutedText: string;
+                accent: string;
+                border: string;
+                radius: 'round' | 'sharp' | 'soft';
+            }>> | undefined;
         };
         undoHandle?: string | undefined;
     };
@@ -794,7 +864,7 @@ export type ThemesActionResultById = {
                 kind: 'store';
                 provenance: {
                     sourceId: string;
-                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -853,6 +923,17 @@ export type ThemesActionResultById = {
                 border: string;
                 radius: 'round' | 'sharp' | 'soft';
             };
+            modes?: ('dark' | 'light')[] | undefined;
+            miniatures?: Partial<Record<'dark' | 'light', {
+                mode: 'dark' | 'light';
+                canvas: string;
+                raised: string;
+                text: string;
+                mutedText: string;
+                accent: string;
+                border: string;
+                radius: 'round' | 'sharp' | 'soft';
+            }>> | undefined;
         };
     };
     readonly "appearance.themes.apply": {
@@ -901,6 +982,438 @@ export type ThemesActionResultById = {
             contributionId: string;
         };
     };
+    readonly "appearance.themes.store.get": {
+        listing: {
+            pointer: {
+                sourceId: string;
+                itemId: string;
+                version: string;
+            };
+            summary: {
+                sourceId: string;
+                kind: 'agent' | 'app' | 'browserExtension' | 'mcpServer' | 'pet' | 'plugin' | 'skill' | 'starter' | 'theme';
+                itemId: string;
+                title: string;
+                description?: string | undefined;
+                version?: string | undefined;
+                iconUrl?: string | undefined;
+                iconDarkUrl?: string | undefined;
+                iconMonochrome?: true | undefined;
+                publisher?: undefined | {
+                    name: string;
+                    verification?: 'domain' | 'github-account' | 'happier-reviewed' | 'registry-checked' | undefined;
+                };
+                updatedAt?: number | undefined;
+                installs?: number | undefined;
+                license?: string | undefined;
+                links?: undefined | {
+                    repository?: string | undefined;
+                    website?: string | undefined;
+                };
+                flags?: undefined | {
+                    deprecated?: true | undefined;
+                    pick?: true | undefined;
+                };
+                problem?: undefined | {
+                    code: 'needs_review';
+                    diagnostics: {
+                        field: string;
+                        reason: string;
+                    }[];
+                } | {
+                    code: 'removed_from_source';
+                } | {
+                    code: 'too_large';
+                    limit: 'bytes' | 'files';
+                } | {
+                    code: 'unsupported_entry';
+                    reason: 'distribution' | 'package_type' | 'submodule' | 'symlink';
+                };
+                appMetadata?: undefined | {
+                    category?: string | undefined;
+                    tags?: string[] | undefined;
+                    upstreamIcon?: string | undefined;
+                    upstreamMinimumVersion?: string | undefined;
+                    containerPort?: number | undefined;
+                    architectures?: ('amd64' | 'arm64')[] | undefined;
+                };
+                agentDistribution?: undefined | {
+                    kind: 'archive';
+                    platforms: Partial<Record<'darwin-arm64' | 'darwin-x64' | 'linux-arm64' | 'linux-x64' | 'win32-arm64' | 'win32-x64', 'archive_type_unsupported' | 'supported'>>;
+                } | {
+                    kind: 'npm';
+                } | {
+                    kind: 'uv';
+                };
+                starterDeploy?: undefined | {
+                    framework: string;
+                    output: 'compose' | 'container' | 'native' | 'server' | 'static' | 'workers';
+                    data?: string[] | undefined;
+                    variables?: undefined | {
+                        key: string;
+                        secret: boolean;
+                        purpose?: string | undefined;
+                    }[];
+                };
+                pluginListing?: undefined | {
+                    pluginId: string;
+                    packageName: string;
+                    publisher: {
+                        id: string;
+                        displayName: string;
+                    };
+                    categories: string[];
+                    contributions: string[];
+                    executableRealms: ('client' | 'daemon' | 'hosted-web')[];
+                    platforms: ('android' | 'darwin' | 'ios' | 'linux' | 'web' | 'windows')[];
+                    review: {
+                        status: 'approved' | 'blocked' | 'unreviewed' | 'withdrawn';
+                        reviewedAt: null | string;
+                        reason?: null | string | undefined;
+                    };
+                    updatePolicy: 'allowed' | 'pinned';
+                    links: {
+                        homepage?: null | string | undefined;
+                        repository?: null | string | undefined;
+                        support?: null | string | undefined;
+                        universal?: null | string | undefined;
+                    };
+                };
+                themeMetadata?: undefined | {
+                    includes: {
+                        key: string;
+                        label: string;
+                        mode?: 'dark' | 'light' | undefined;
+                    }[];
+                    license?: string | undefined;
+                    preview?: undefined | {
+                        mode: 'dark' | 'light';
+                        canvas: string;
+                        raised: string;
+                        text: string;
+                        mutedText: string;
+                        accent: string;
+                        border: string;
+                        radius: 'round' | 'sharp' | 'soft';
+                    }[];
+                };
+                petMetadata?: undefined | {
+                    spritesheetUrl: string;
+                    reportUrl: string;
+                    termsUrl: string;
+                    spriteVersionNumber?: number | undefined;
+                };
+            };
+            metadata: {
+                includes: {
+                    key: string;
+                    label: string;
+                    mode?: 'dark' | 'light' | undefined;
+                }[];
+                license?: string | undefined;
+                preview?: undefined | {
+                    mode: 'dark' | 'light';
+                    canvas: string;
+                    raised: string;
+                    text: string;
+                    mutedText: string;
+                    accent: string;
+                    border: string;
+                    radius: 'round' | 'sharp' | 'soft';
+                }[];
+            };
+            provenance: {
+                sourceId: string;
+                format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
+                sourceUrl: string;
+                itemId: string;
+                ref: {
+                    kind: 'content';
+                    digest: string;
+                } | {
+                    kind: 'gitTree';
+                    repo: string;
+                    path: string;
+                    commit: string;
+                    treeSha: string;
+                } | {
+                    kind: 'version';
+                    version: string;
+                } | {
+                    kind: 'wellKnown';
+                    indexUrl: string;
+                    name: string;
+                    digest: string;
+                    publishedDigest?: string | undefined;
+                };
+                importedAt: number;
+            } | {
+                sourceId: string;
+                format: 'happier-catalog';
+                itemId: string;
+                ref: {
+                    digest: string;
+                    pluginId: string;
+                    pluginVersion: string;
+                    occurrenceId: string;
+                    path: string;
+                    kind: 'packageContent';
+                };
+                importedAt: number;
+                sourceUrl?: undefined;
+            };
+        };
+        faces: Readonly<{
+            profile: {
+                schemaVersion: 1;
+                id: string;
+                name: string;
+                createdAt: string;
+                updatedAt: string;
+                base: {
+                    light: 'light';
+                    dark: 'dark';
+                };
+                overrides: {
+                    light: Readonly<Record<string, string>>;
+                    dark: Readonly<Record<string, string>>;
+                };
+                assetAppearance?: 'dark' | 'light' | undefined;
+                seeds?: undefined | {
+                    canvas: string;
+                    accent: string;
+                };
+                style?: undefined | {
+                    radius?: 'round' | 'sharp' | 'soft' | undefined;
+                    fontFamily?: string | undefined;
+                };
+                css?: string | undefined;
+                source?: undefined | {
+                    kind: 'built-in';
+                    presetId: 'catppuccinFrappe' | 'catppuccinLatte' | 'catppuccinMacchiato' | 'catppuccinMocha' | 'classicDark' | 'darkModern' | 'githubDark' | 'githubLight' | 'graphiteDark' | 'monokaiPro' | 'nightDark' | 'oneDarkPro' | 'paperLight' | 'pitchDark' | 'premiumDark' | 'premiumLight' | 'sunsetDark' | 'tokyoNight';
+                } | {
+                    kind: 'plugin';
+                    pluginId: string;
+                    contributionId: string;
+                } | {
+                    kind: 'store';
+                    provenance: {
+                        sourceId: string;
+                        format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
+                        sourceUrl: string;
+                        itemId: string;
+                        ref: {
+                            kind: 'content';
+                            digest: string;
+                        } | {
+                            kind: 'gitTree';
+                            repo: string;
+                            path: string;
+                            commit: string;
+                            treeSha: string;
+                        } | {
+                            kind: 'version';
+                            version: string;
+                        } | {
+                            kind: 'wellKnown';
+                            indexUrl: string;
+                            name: string;
+                            digest: string;
+                            publishedDigest?: string | undefined;
+                        };
+                        importedAt: number;
+                    } | {
+                        sourceId: string;
+                        format: 'happier-catalog';
+                        itemId: string;
+                        ref: {
+                            digest: string;
+                            pluginId: string;
+                            pluginVersion: string;
+                            occurrenceId: string;
+                            path: string;
+                            kind: 'packageContent';
+                        };
+                        importedAt: number;
+                        sourceUrl?: undefined;
+                    };
+                    contributionId: string;
+                } | {
+                    kind: 'yours';
+                };
+                requiresAppVersion?: string | undefined;
+            };
+            raw: Readonly<Record<string, JsonValue>>;
+            compatibility: Readonly<{
+                status: 'partial' | 'supported';
+                requiresAppVersion?: string | undefined;
+                unsupportedPaths: readonly string[];
+            }>;
+        }>[];
+        coverage: {
+            faceId: string;
+            coverage: {
+                total: number;
+                native: number;
+                webOnly: number;
+                affectedSurfaces: {
+                    surface: string;
+                    part: string;
+                    state?: string | undefined;
+                }[];
+                hides: {
+                    address: {
+                        surface: string;
+                        part: string;
+                        state?: string | undefined;
+                    };
+                    range: {
+                        start: number;
+                        end: number;
+                        line: number;
+                        column: number;
+                    };
+                    mode: 'both' | 'dark' | 'light';
+                }[];
+            };
+        }[];
+    };
+    readonly "appearance.themes.install": {
+        faces: ({
+            faceId: string;
+            status: 'failed';
+            error: {
+                code: string;
+            };
+        } | {
+            faceId: string;
+            status: 'saved';
+            entry: {
+                id: string;
+                reference: {
+                    kind: 'artifact';
+                    id: string;
+                } | {
+                    kind: 'built-in';
+                    presetId: 'catppuccinFrappe' | 'catppuccinLatte' | 'catppuccinMacchiato' | 'catppuccinMocha' | 'classicDark' | 'darkModern' | 'githubDark' | 'githubLight' | 'graphiteDark' | 'monokaiPro' | 'nightDark' | 'oneDarkPro' | 'paperLight' | 'pitchDark' | 'premiumDark' | 'premiumLight' | 'sunsetDark' | 'tokyoNight';
+                } | {
+                    kind: 'plugin';
+                    pluginId: string;
+                    contributionId: string;
+                };
+                name: string;
+                mode: 'dark' | 'light';
+                source: {
+                    kind: 'built-in';
+                    presetId: 'catppuccinFrappe' | 'catppuccinLatte' | 'catppuccinMacchiato' | 'catppuccinMocha' | 'classicDark' | 'darkModern' | 'githubDark' | 'githubLight' | 'graphiteDark' | 'monokaiPro' | 'nightDark' | 'oneDarkPro' | 'paperLight' | 'pitchDark' | 'premiumDark' | 'premiumLight' | 'sunsetDark' | 'tokyoNight';
+                } | {
+                    kind: 'plugin';
+                    pluginId: string;
+                    contributionId: string;
+                } | {
+                    kind: 'store';
+                    provenance: {
+                        sourceId: string;
+                        format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
+                        sourceUrl: string;
+                        itemId: string;
+                        ref: {
+                            kind: 'content';
+                            digest: string;
+                        } | {
+                            kind: 'gitTree';
+                            repo: string;
+                            path: string;
+                            commit: string;
+                            treeSha: string;
+                        } | {
+                            kind: 'version';
+                            version: string;
+                        } | {
+                            kind: 'wellKnown';
+                            indexUrl: string;
+                            name: string;
+                            digest: string;
+                            publishedDigest?: string | undefined;
+                        };
+                        importedAt: number;
+                    } | {
+                        sourceId: string;
+                        format: 'happier-catalog';
+                        itemId: string;
+                        ref: {
+                            digest: string;
+                            pluginId: string;
+                            pluginVersion: string;
+                            occurrenceId: string;
+                            path: string;
+                            kind: 'packageContent';
+                        };
+                        importedAt: number;
+                        sourceUrl?: undefined;
+                    };
+                    contributionId: string;
+                } | {
+                    kind: 'yours';
+                };
+                editable: boolean;
+                deletable: boolean;
+                compatibility: {
+                    status: 'partial' | 'supported';
+                    unsupportedPaths: string[];
+                    requiresAppVersion?: string | undefined;
+                };
+                miniature: {
+                    mode: 'dark' | 'light';
+                    canvas: string;
+                    raised: string;
+                    text: string;
+                    mutedText: string;
+                    accent: string;
+                    border: string;
+                    radius: 'round' | 'sharp' | 'soft';
+                };
+                modes?: ('dark' | 'light')[] | undefined;
+                miniatures?: Partial<Record<'dark' | 'light', {
+                    mode: 'dark' | 'light';
+                    canvas: string;
+                    raised: string;
+                    text: string;
+                    mutedText: string;
+                    accent: string;
+                    border: string;
+                    radius: 'round' | 'sharp' | 'soft';
+                }>> | undefined;
+            };
+        })[];
+    };
+    readonly "appearance.themes.uninstall": {
+        removedFaces: string[];
+        selectionFallback?: undefined | {
+            light: null | {
+                kind: 'artifact';
+                id: string;
+            } | {
+                kind: 'built-in';
+                presetId: 'catppuccinFrappe' | 'catppuccinLatte' | 'catppuccinMacchiato' | 'catppuccinMocha' | 'classicDark' | 'darkModern' | 'githubDark' | 'githubLight' | 'graphiteDark' | 'monokaiPro' | 'nightDark' | 'oneDarkPro' | 'paperLight' | 'pitchDark' | 'premiumDark' | 'premiumLight' | 'sunsetDark' | 'tokyoNight';
+            } | {
+                kind: 'plugin';
+                pluginId: string;
+                contributionId: string;
+            };
+            dark: null | {
+                kind: 'artifact';
+                id: string;
+            } | {
+                kind: 'built-in';
+                presetId: 'catppuccinFrappe' | 'catppuccinLatte' | 'catppuccinMacchiato' | 'catppuccinMocha' | 'classicDark' | 'darkModern' | 'githubDark' | 'githubLight' | 'graphiteDark' | 'monokaiPro' | 'nightDark' | 'oneDarkPro' | 'paperLight' | 'pitchDark' | 'premiumDark' | 'premiumLight' | 'sunsetDark' | 'tokyoNight';
+            } | {
+                kind: 'plugin';
+                pluginId: string;
+                contributionId: string;
+            };
+        };
+    };
     readonly "appearance.themes.import": {
         entry: {
             id: string;
@@ -928,7 +1441,7 @@ export type ThemesActionResultById = {
                 kind: 'store';
                 provenance: {
                     sourceId: string;
-                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -987,6 +1500,17 @@ export type ThemesActionResultById = {
                 border: string;
                 radius: 'round' | 'sharp' | 'soft';
             };
+            modes?: ('dark' | 'light')[] | undefined;
+            miniatures?: Partial<Record<'dark' | 'light', {
+                mode: 'dark' | 'light';
+                canvas: string;
+                raised: string;
+                text: string;
+                mutedText: string;
+                accent: string;
+                border: string;
+                radius: 'round' | 'sharp' | 'soft';
+            }>> | undefined;
         };
     };
     readonly "appearance.themes.export": {

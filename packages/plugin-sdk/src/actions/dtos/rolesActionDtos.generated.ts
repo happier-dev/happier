@@ -69,7 +69,9 @@ export type RolesActionInputById = {
     readonly "session.roles.apply_to_reports": {
         sessionId: SessionTargetV1<true>;
     };
-    readonly "roles.list": Record<string, never>;
+    readonly "roles.list": {
+        [x: string]: never;
+    };
     readonly "roles.get": {
         roleId: string;
     };

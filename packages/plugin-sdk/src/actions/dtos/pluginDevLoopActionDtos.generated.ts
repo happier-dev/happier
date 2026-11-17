@@ -11,7 +11,86 @@ export type PluginDevLoopActionInputById = {
         name: string;
         machineId?: string | undefined;
         ui?: 'declarative' | 'hostedWeb' | 'reactNative' | undefined;
-        template?: 'session-agent' | undefined;
+        template?: 'session-agent' | 'themes' | undefined;
+        themes?: undefined | {
+            schemaVersion: 1;
+            id: string;
+            name: string;
+            createdAt: string;
+            updatedAt: string;
+            base: {
+                light: 'light';
+                dark: 'dark';
+            };
+            overrides: {
+                light: Record<string, string>;
+                dark: Record<string, string>;
+            };
+            assetAppearance?: 'dark' | 'light' | undefined;
+            seeds?: undefined | {
+                canvas: string;
+                accent: string;
+            };
+            style?: undefined | {
+                radius?: 'round' | 'sharp' | 'soft' | undefined;
+                fontFamily?: string | undefined;
+            };
+            css?: string | undefined;
+            source?: undefined | {
+                kind: 'built-in';
+                presetId: 'catppuccinFrappe' | 'catppuccinLatte' | 'catppuccinMacchiato' | 'catppuccinMocha' | 'classicDark' | 'darkModern' | 'githubDark' | 'githubLight' | 'graphiteDark' | 'monokaiPro' | 'nightDark' | 'oneDarkPro' | 'paperLight' | 'pitchDark' | 'premiumDark' | 'premiumLight' | 'sunsetDark' | 'tokyoNight';
+            } | {
+                kind: 'plugin';
+                pluginId: string;
+                contributionId: string;
+            } | {
+                kind: 'store';
+                provenance: {
+                    sourceId: string;
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
+                    sourceUrl: string;
+                    itemId: string;
+                    ref: {
+                        kind: 'content';
+                        digest: string;
+                    } | {
+                        kind: 'gitTree';
+                        repo: string;
+                        path: string;
+                        commit: string;
+                        treeSha: string;
+                    } | {
+                        kind: 'version';
+                        version: string;
+                    } | {
+                        kind: 'wellKnown';
+                        indexUrl: string;
+                        name: string;
+                        digest: string;
+                        publishedDigest?: string | undefined;
+                    };
+                    importedAt: number;
+                } | {
+                    sourceId: string;
+                    format: 'happier-catalog';
+                    itemId: string;
+                    ref: {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
+                    };
+                    importedAt: number;
+                    sourceUrl?: undefined;
+                };
+                contributionId: string;
+            } | {
+                kind: 'yours';
+            };
+            requiresAppVersion?: string | undefined;
+        }[];
     };
     readonly "plugins.install": {
         path: string;
@@ -354,6 +433,13 @@ export type PluginDevLoopActionInputById = {
                                 ] | string)[] | undefined;
                                 origin?: 'custom' | 'surprise' | undefined;
                             };
+                            pet?: undefined | {
+                                kind: 'accountPet';
+                                accountPetId: string;
+                            } | {
+                                kind: 'builtIn';
+                                petId: string;
+                            };
                         };
                     };
                     suggestedAgent?: undefined | {
@@ -550,6 +636,13 @@ export type PluginDevLoopActionInputById = {
                                     number
                                 ] | string)[] | undefined;
                                 origin?: 'custom' | 'surprise' | undefined;
+                            };
+                            pet?: undefined | {
+                                kind: 'accountPet';
+                                accountPetId: string;
+                            } | {
+                                kind: 'builtIn';
+                                petId: string;
                             };
                         };
                     };
@@ -797,6 +890,13 @@ export type PluginDevLoopActionInputById = {
                                 ] | string)[] | undefined;
                                 origin?: 'custom' | 'surprise' | undefined;
                             };
+                            pet?: undefined | {
+                                kind: 'accountPet';
+                                accountPetId: string;
+                            } | {
+                                kind: 'builtIn';
+                                petId: string;
+                            };
                         };
                     };
                     suggestedAgent?: undefined | {
@@ -822,6 +922,7 @@ export type PluginDevLoopActionInputById = {
     };
     readonly "plugins.pack": {
         locator: string;
+        machineId?: string | undefined;
         outPath?: string | undefined;
         sdkRegistryOrigin?: string | undefined;
     };

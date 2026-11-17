@@ -385,6 +385,15 @@ export type ScopeActionResultById = {
         selectedSpaceId: string;
         answeringClientId?: string | undefined;
         answeringClientIds?: string[] | undefined;
+        answeringClients?: undefined | {
+            id: string;
+            deviceLabel: null | string;
+            state?: undefined | {
+                computer: boolean;
+                focused: boolean;
+                lastFocusedAt?: number | undefined;
+            };
+        }[];
     };
     readonly "workflow.library.view.set": {
         ok: true;

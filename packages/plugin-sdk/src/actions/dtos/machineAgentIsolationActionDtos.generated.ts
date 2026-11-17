@@ -343,6 +343,11 @@ export type MachineAgentIsolationActionResultById = {
                 remedy: string;
             };
         };
+        workspaceFailure?: undefined | {
+            workspaceId: string;
+            path: string;
+            code: string;
+        };
         setup?: undefined | {
             outcome: 'not_applied';
             reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';

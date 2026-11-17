@@ -4371,11 +4371,11 @@ export type DiscoveryActionResultById = {
                             providerConnectionId: string;
                             modelId: string;
                         };
-                        descriptor: {
+                        descriptor: Readonly<{
                             id: string;
                             name: string;
                             costTier?: 'low' | 'premium' | 'standard' | undefined;
-                            aliases?: string[] | undefined;
+                            aliases?: readonly string[] | undefined;
                             description?: string | undefined;
                             contextWindowTokens?: number | undefined;
                             inlineCompletion?: undefined | {
@@ -4398,28 +4398,28 @@ export type DiscoveryActionResultById = {
                                 maxOutputTokens?: number | undefined;
                             };
                             extendedContextModelId?: string | undefined;
-                            modelOptions?: undefined | {
+                            modelOptions?: readonly Readonly<{
                                 id: string;
                                 name: string;
+                                description?: string | undefined;
                                 type: string;
                                 currentValue: string;
-                                description?: string | undefined;
-                                options?: undefined | {
+                                options?: readonly Readonly<{
                                     value: string;
                                     name: string;
                                     description?: string | undefined;
-                                }[];
-                                overridesWhenOn?: undefined | {
-                                    optionIds: string[];
+                                }>[] | undefined;
+                                overridesWhenOn?: Readonly<{
+                                    optionIds: readonly string[];
                                     forcedValue?: string | undefined;
-                                };
-                            }[];
-                            capabilities?: undefined | {
+                                }> | undefined;
+                            }>[] | undefined;
+                            capabilities?: Readonly<{
                                 toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                                 reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                                 structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                            };
-                        };
+                            }> | undefined;
+                        }>;
                         sources: {
                             manual: boolean;
                             static: boolean;
@@ -4588,11 +4588,11 @@ export type DiscoveryActionResultById = {
                             catalogSourceKey: string;
                         };
                         requestPolicySupport?: undefined | {
-                            descriptor: {
+                            descriptor: Readonly<{
                                 id: string;
                                 name: string;
                                 costTier?: 'low' | 'premium' | 'standard' | undefined;
-                                aliases?: string[] | undefined;
+                                aliases?: readonly string[] | undefined;
                                 description?: string | undefined;
                                 contextWindowTokens?: number | undefined;
                                 inlineCompletion?: undefined | {
@@ -4615,28 +4615,28 @@ export type DiscoveryActionResultById = {
                                     maxOutputTokens?: number | undefined;
                                 };
                                 extendedContextModelId?: string | undefined;
-                                modelOptions?: undefined | {
+                                modelOptions?: readonly Readonly<{
                                     id: string;
                                     name: string;
+                                    description?: string | undefined;
                                     type: string;
                                     currentValue: string;
-                                    description?: string | undefined;
-                                    options?: undefined | {
+                                    options?: readonly Readonly<{
                                         value: string;
                                         name: string;
                                         description?: string | undefined;
-                                    }[];
-                                    overridesWhenOn?: undefined | {
-                                        optionIds: string[];
+                                    }>[] | undefined;
+                                    overridesWhenOn?: Readonly<{
+                                        optionIds: readonly string[];
                                         forcedValue?: string | undefined;
-                                    };
-                                }[];
-                                capabilities?: undefined | {
+                                    }> | undefined;
+                                }>[] | undefined;
+                                capabilities?: Readonly<{
                                     toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                                     reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                                     structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                                };
-                            };
+                                }> | undefined;
+                            }>;
                             application: {
                                 implementationIdentity: {
                                     pluginId: string;
@@ -4864,11 +4864,11 @@ export type DiscoveryActionResultById = {
                                 providerTicket: string;
                             };
                         };
-                        descriptor: {
+                        descriptor: Readonly<{
                             id: string;
                             name: string;
                             costTier?: 'low' | 'premium' | 'standard' | undefined;
-                            aliases?: string[] | undefined;
+                            aliases?: readonly string[] | undefined;
                             description?: string | undefined;
                             contextWindowTokens?: number | undefined;
                             inlineCompletion?: undefined | {
@@ -4891,28 +4891,28 @@ export type DiscoveryActionResultById = {
                                 maxOutputTokens?: number | undefined;
                             };
                             extendedContextModelId?: string | undefined;
-                            modelOptions?: undefined | {
+                            modelOptions?: readonly Readonly<{
                                 id: string;
                                 name: string;
+                                description?: string | undefined;
                                 type: string;
                                 currentValue: string;
-                                description?: string | undefined;
-                                options?: undefined | {
+                                options?: readonly Readonly<{
                                     value: string;
                                     name: string;
                                     description?: string | undefined;
-                                }[];
-                                overridesWhenOn?: undefined | {
-                                    optionIds: string[];
+                                }>[] | undefined;
+                                overridesWhenOn?: Readonly<{
+                                    optionIds: readonly string[];
                                     forcedValue?: string | undefined;
-                                };
-                            }[];
-                            capabilities?: undefined | {
+                                }> | undefined;
+                            }>[] | undefined;
+                            capabilities?: Readonly<{
                                 toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                                 reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                                 structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                            };
-                        };
+                            }> | undefined;
+                        }>;
                         application: {
                             implementationIdentity: {
                                 pluginId: string;

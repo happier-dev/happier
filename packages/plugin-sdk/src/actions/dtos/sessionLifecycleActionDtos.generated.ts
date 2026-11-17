@@ -80,6 +80,44 @@ export type SessionLifecycleActionInputById = {
             permissionMode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             permissionModeUpdatedAt?: number | undefined;
             modelSelection?: undefined | {
+                ref: {
+                    source: 'account_provider_connection';
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                v: 2;
+                updatedAt: number;
+            } | {
+                ref: {
+                    source: 'native';
+                    agentTargetKey: string;
+                    modelId: string;
+                };
+                v: 2;
+                updatedAt: number;
+            } | {
+                ref: {
+                    source: 'team_resource';
+                    resourceId: string;
+                    teamId: string;
+                    expectedResourceRevision: number;
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                    agentTargetKey: string;
+                    modelId: string;
+                    nativeDelivery?: undefined | {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
+                };
+                v: 2;
+                updatedAt: number;
+            } | {
                 v: 1;
                 ref: {
                     agentTargetKey: string;
@@ -223,6 +261,44 @@ export type SessionLifecycleActionInputById = {
         permissionMode?: string | undefined;
         permissionModeUpdatedAt?: number | undefined;
         modelSelection?: undefined | {
+            ref: {
+                source: 'account_provider_connection';
+                agentTargetKey: string;
+                providerConnectionId: string;
+                modelId: string;
+            };
+            v: 2;
+            updatedAt: number;
+        } | {
+            ref: {
+                source: 'native';
+                agentTargetKey: string;
+                modelId: string;
+            };
+            v: 2;
+            updatedAt: number;
+        } | {
+            ref: {
+                source: 'team_resource';
+                resourceId: string;
+                teamId: string;
+                expectedResourceRevision: number;
+                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                agentTargetKey: string;
+                modelId: string;
+                nativeDelivery?: undefined | {
+                    managedId: string;
+                    controllerInstallationId: string;
+                    guestInstallationId: string;
+                    bindingKey: string;
+                    placeholderRef: string;
+                    sourceRevision: string;
+                    providerTicket: string;
+                };
+            };
+            v: 2;
+            updatedAt: number;
+        } | {
             v: 1;
             ref: {
                 agentTargetKey: string;
@@ -481,6 +557,68 @@ export type SessionLifecycleActionInputById = {
         managedTargetPlacement?: undefined | {
             managedId: string;
             workspaceRoot: string;
+            projectFiles?: undefined | {
+                kind: 'copy_once';
+                contentPolicy?: undefined | {
+                    v: 1;
+                    selection: 'all_files' | 'git_worktree';
+                    extraIgnorePatterns: readonly string[];
+                    extraIncludePatterns: readonly string[];
+                    policyDigest: string;
+                    contentOnly?: true | undefined;
+                };
+            } | {
+                kind: 'git_clone';
+                source: {
+                    provider: {
+                        id: string;
+                        kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                        displayName: string;
+                        baseUrl: string;
+                    };
+                    repository: {
+                        nameWithOwner: string;
+                        defaultBranch?: null | string | undefined;
+                        visibility?: 'internal' | 'private' | 'public' | undefined;
+                        webUrl?: string | undefined;
+                        cloneUrl?: string | undefined;
+                        sshUrl?: string | undefined;
+                    };
+                    protocol: 'auto' | 'https' | 'ssh';
+                };
+                branch: string;
+                gitAccount?: undefined | {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'sync';
+                mode: 'keep_both_in_sync' | 'keep_synced';
+                contentPolicy?: undefined | {
+                    v: 1;
+                    selection: 'all_files' | 'git_worktree';
+                    extraIgnorePatterns: readonly string[];
+                    extraIncludePatterns: readonly string[];
+                    policyDigest: string;
+                    contentOnly?: true | undefined;
+                };
+            };
+            projectFilesSource?: undefined | {
+                target: {
+                    serverId: string;
+                    machineId: string;
+                };
+                directory: string;
+            };
+            projectFilesSourceWorkspace?: undefined | {
+                serverId: string;
+                workspaceId: string;
+                machineId: string;
+                rootPath: string;
+            };
         };
         isolationOverride?: 'directly' | undefined;
         sessionPlacement?: undefined | {
@@ -687,7 +825,7 @@ export type SessionLifecycleActionInputById = {
                 machineId: string;
                 rootPath: string;
             };
-            page: 'changes' | 'code' | 'context' | 'overview' | 'scripts' | 'services';
+            page: 'changes' | 'code' | 'context' | 'defaults' | 'deployments' | 'memory' | 'overview' | 'scripts' | 'services';
             purpose?: 'session' | undefined;
             comparisonId?: string | undefined;
             layoutId?: string | undefined;
@@ -814,7 +952,7 @@ export type SessionLifecycleActionInputById = {
                 };
                 anchorSource?: 'diff' | 'file' | undefined;
             };
-            surface?: 'browse' | 'browser' | 'changes' | 'code' | 'context' | 'git' | 'overview' | 'scripts' | 'services' | 'tabs' | 'terminal' | undefined;
+            surface?: 'browse' | 'browser' | 'changes' | 'code' | 'context' | 'defaults' | 'deployments' | 'git' | 'memory' | 'overview' | 'scripts' | 'services' | 'tabs' | 'terminal' | undefined;
             companion?: 'browser' | 'files' | 'git' | 'scripts' | 'services' | 'terminal' | undefined | {
                 kind: 'plugin';
                 destination: {
@@ -850,6 +988,13 @@ export type SessionLifecycleActionInputById = {
                         number
                     ] | string)[] | undefined;
                     origin?: 'custom' | 'surprise' | undefined;
+                };
+                pet?: undefined | {
+                    kind: 'accountPet';
+                    accountPetId: string;
+                } | {
+                    kind: 'builtIn';
+                    petId: string;
                 };
             };
             createdAsBot?: true | undefined;
@@ -1431,7 +1576,7 @@ export type SessionLifecycleActionInputById = {
                         v: 1;
                         items: readonly {
                             source: {
-                                kind: 'alert' | 'entry' | 'hostedCi' | 'localTerminal' | 'pullRequest' | 'releaseNotes';
+                                kind: 'alert' | 'databaseFinding' | 'entry' | 'hostedCi' | 'localTerminal' | 'pullRequest' | 'releaseNotes';
                                 label: string;
                                 url?: string;
                             };
@@ -1748,6 +1893,10 @@ export type SessionLifecycleActionInputById = {
                         field: string;
                         value: boolean | null | number | string;
                     } | {
+                        op: 'gt' | 'gte' | 'lt' | 'lte';
+                        field: string;
+                        value: number | string;
+                    } | {
                         op: 'in';
                         field: string;
                         values: (boolean | null | number | string)[];
@@ -1784,6 +1933,11 @@ export type SessionLifecycleActionInputById = {
                         environmentId: string;
                         service: string;
                         database: string;
+                    } | {
+                        kind: 'managed_deployment';
+                        environmentId: string;
+                        targetLinkId: string;
+                        databaseName: string;
                     } | {
                         savedSecretId: string;
                         accountId: string;
@@ -1937,10 +2091,10 @@ export type SessionLifecycleActionInputById = {
                 };
                 enabled: boolean;
             } | {
-                kind: 'sessionLifecycle';
-                enabled: boolean;
-                events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
                 policy: {
+                    kind: 'currentTurn';
+                    sourceTurnId: string;
+                } | {
                     kind: 'everyMatch';
                 } | {
                     kind: 'firstMatch';
@@ -1948,6 +2102,9 @@ export type SessionLifecycleActionInputById = {
                     kind: 'nextMatches';
                     count: number;
                 };
+                kind: 'sessionLifecycle';
+                enabled: boolean;
+                events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'parentTurnStarted' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
             } | {
                 source: {
                     kind: 'execution_run';
@@ -2013,6 +2170,44 @@ export type SessionLifecycleActionInputById = {
                             definitionId?: string | undefined;
                         };
                         modelSelection?: null | undefined | {
+                            ref: {
+                                source: 'account_provider_connection';
+                                agentTargetKey: string;
+                                providerConnectionId: string;
+                                modelId: string;
+                            };
+                            v: 2;
+                            updatedAt: number;
+                        } | {
+                            ref: {
+                                source: 'native';
+                                agentTargetKey: string;
+                                modelId: string;
+                            };
+                            v: 2;
+                            updatedAt: number;
+                        } | {
+                            ref: {
+                                source: 'team_resource';
+                                resourceId: string;
+                                teamId: string;
+                                expectedResourceRevision: number;
+                                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                                agentTargetKey: string;
+                                modelId: string;
+                                nativeDelivery?: undefined | {
+                                    managedId: string;
+                                    controllerInstallationId: string;
+                                    guestInstallationId: string;
+                                    bindingKey: string;
+                                    placeholderRef: string;
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                };
+                            };
+                            v: 2;
+                            updatedAt: number;
+                        } | {
                             v: 1;
                             ref: {
                                 agentTargetKey: string;
@@ -2122,7 +2317,16 @@ export type SessionLifecycleActionInputById = {
                             folderId: null | string;
                             tagIds: string[];
                         };
-                        memoryEnabled?: boolean | undefined;
+                        projectContext?: undefined | {
+                            projectRef?: undefined | {
+                                serverId: string;
+                                projectKey: string;
+                            };
+                            sourceRef?: undefined | {
+                                serverId: string;
+                                sourceId: string;
+                            };
+                        };
                         secretReferenceOverlay?: undefined | {
                             v: 1;
                             bindings: Record<string, {
@@ -2130,6 +2334,7 @@ export type SessionLifecycleActionInputById = {
                                 revision?: number | undefined;
                             }>;
                         };
+                        memoryEnabled?: boolean | undefined;
                         teamCredentialBindings?: ({
                             v: 1;
                             slot: {
@@ -2444,8 +2649,56 @@ export type SessionLifecycleActionInputById = {
             kind: 'machine_pool';
             poolId: string;
         };
+        projectContext?: undefined | {
+            projectRef?: undefined | {
+                serverId: string;
+                projectKey: string;
+            };
+            sourceRef?: undefined | {
+                serverId: string;
+                sourceId: string;
+            };
+        };
         roleId?: string | undefined;
         modelSelection?: undefined | {
+            ref: {
+                source: 'account_provider_connection';
+                agentTargetKey: string;
+                providerConnectionId: string;
+                modelId: string;
+            };
+            v: 2;
+            updatedAt: number;
+        } | {
+            ref: {
+                source: 'native';
+                agentTargetKey: string;
+                modelId: string;
+            };
+            v: 2;
+            updatedAt: number;
+        } | {
+            ref: {
+                source: 'team_resource';
+                resourceId: string;
+                teamId: string;
+                expectedResourceRevision: number;
+                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                agentTargetKey: string;
+                modelId: string;
+                nativeDelivery?: undefined | {
+                    managedId: string;
+                    controllerInstallationId: string;
+                    guestInstallationId: string;
+                    bindingKey: string;
+                    placeholderRef: string;
+                    sourceRevision: string;
+                    providerTicket: string;
+                };
+            };
+            v: 2;
+            updatedAt: number;
+        } | {
             v: 1;
             ref: {
                 agentTargetKey: string;

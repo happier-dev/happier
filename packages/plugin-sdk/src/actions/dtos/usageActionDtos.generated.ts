@@ -11,6 +11,7 @@ export type UsageActionInputById = {
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
+            includePriceCatalog?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
             includeLeaders?: boolean | undefined;
@@ -39,6 +40,7 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuotaExactHistory?: boolean | undefined;
             includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
             includeCoach?: boolean | undefined;
@@ -71,6 +73,7 @@ export type UsageActionInputById = {
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
+            includePriceCatalog?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
             includeLeaders?: boolean | undefined;
@@ -99,6 +102,7 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuotaExactHistory?: boolean | undefined;
             includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
             includeCoach?: boolean | undefined;
@@ -130,6 +134,7 @@ export type UsageActionInputById = {
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
+            includePriceCatalog?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
             includeLeaders?: boolean | undefined;
@@ -158,6 +163,7 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuotaExactHistory?: boolean | undefined;
             includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
             includeCoach?: boolean | undefined;
@@ -206,6 +212,7 @@ export type UsageActionInputById = {
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
+            includePriceCatalog?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
             includeLeaders?: boolean | undefined;
@@ -234,6 +241,7 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuotaExactHistory?: boolean | undefined;
             includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
             includeCoach?: boolean | undefined;
@@ -266,6 +274,7 @@ export type UsageActionInputById = {
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
+            includePriceCatalog?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
             includeLeaders?: boolean | undefined;
@@ -294,6 +303,7 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuotaExactHistory?: boolean | undefined;
             includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
             includeCoach?: boolean | undefined;
@@ -316,6 +326,7 @@ export type UsageActionInputById = {
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
+            includePriceCatalog?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
             includeLeaders?: boolean | undefined;
@@ -344,6 +355,7 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuotaExactHistory?: boolean | undefined;
             includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
             includeCoach?: boolean | undefined;
@@ -362,6 +374,7 @@ export type UsageActionInputById = {
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
+            includePriceCatalog?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
             includeLeaders?: boolean | undefined;
@@ -390,6 +403,7 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuotaExactHistory?: boolean | undefined;
             includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
             includeCoach?: boolean | undefined;
@@ -410,6 +424,7 @@ export type UsageActionInputById = {
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
+            includePriceCatalog?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
             includeLeaders?: boolean | undefined;
@@ -438,6 +453,7 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuotaExactHistory?: boolean | undefined;
             includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
             includeCoach?: boolean | undefined;
@@ -459,6 +475,7 @@ export type UsageActionInputById = {
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
+            includePriceCatalog?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
             includeLeaders?: boolean | undefined;
@@ -487,6 +504,7 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuotaExactHistory?: boolean | undefined;
             includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
             includeCoach?: boolean | undefined;
@@ -654,6 +672,7 @@ export type UsageActionInputById = {
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
+            includePriceCatalog?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
             includeLeaders?: boolean | undefined;
@@ -682,6 +701,7 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuotaExactHistory?: boolean | undefined;
             includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
             includeCoach?: boolean | undefined;
@@ -704,6 +724,7 @@ export type UsageActionInputById = {
             granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
+            includePriceCatalog?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
             includeLeaders?: boolean | undefined;
@@ -732,6 +753,7 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuotaExactHistory?: boolean | undefined;
             includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
             includeCoach?: boolean | undefined;
@@ -6324,6 +6346,7 @@ export type UsageActionResultById = {
                 workspaceIds: string[];
                 backendModes: string[];
                 population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+                includePriceCatalog?: boolean | undefined;
                 includeInsights?: boolean | undefined;
                 includeActivity?: boolean | undefined;
                 includeLeaders?: boolean | undefined;
@@ -6331,6 +6354,7 @@ export type UsageActionResultById = {
                 includeMessageStats?: boolean | undefined;
                 activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                 execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                includeQuotaExactHistory?: boolean | undefined;
                 includeQuota?: boolean | undefined;
                 includeCoach?: boolean | undefined;
             };
@@ -6368,6 +6392,7 @@ export type UsageActionResultById = {
                 workspaceIds: string[];
                 backendModes: string[];
                 population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+                includePriceCatalog?: boolean | undefined;
                 includeInsights?: boolean | undefined;
                 includeActivity?: boolean | undefined;
                 includeLeaders?: boolean | undefined;
@@ -6375,6 +6400,7 @@ export type UsageActionResultById = {
                 includeMessageStats?: boolean | undefined;
                 activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                 execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                includeQuotaExactHistory?: boolean | undefined;
                 includeQuota?: boolean | undefined;
                 includeCoach?: boolean | undefined;
             };
@@ -10042,8 +10068,8 @@ export type UsageActionResultById = {
                         };
                     }[];
                     unboundEntries?: undefined | {
-                        localId: string;
                         sessionId: string;
+                        localId: string;
                         authorityCurrent: boolean;
                     }[];
                 } | {
@@ -10200,10 +10226,10 @@ export type UsageActionResultById = {
                     };
                     encoding: 'meter_readings_runs_v1';
                     bases: {
-                        v: 1;
                         source: 'cached' | 'connectedServiceProbe' | 'manual' | 'providerHttp' | 'proxy' | 'runtimeSignal' | 'unknown';
-                        providerId: string;
+                        v: 1;
                         state: 'error_last_known_good' | 'loaded_data' | 'loaded_empty' | 'not_loaded' | 'stale_data';
+                        providerId: string;
                         confidence: 'confirmed' | 'estimated' | 'unknown';
                         recordId: string;
                         staleAfterMs: number;
@@ -10271,8 +10297,8 @@ export type UsageActionResultById = {
                         meterId: string;
                         source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
                         scope?: 'daily' | 'five_hour' | 'model' | 'monthly' | 'primary' | 'requests' | 'rolling' | 'secondary' | 'session' | 'seven_day' | 'tokens' | 'unknown' | 'weekly' | undefined;
-                        modelId?: null | string | undefined;
                         providerLimitId?: string | undefined;
+                        modelId?: null | string | undefined;
                         confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
                         currency?: string | undefined;
                         windowDurationMs?: number | undefined;
@@ -10794,6 +10820,10 @@ export type UsageActionResultById = {
                                 usedBeforeReset: null | number;
                             }[];
                         }[];
+                        observedAtRange?: undefined | {
+                            startAtMs: number;
+                            endAtMs: number;
+                        };
                     }[];
                 };
                 unusedCapacity?: undefined | {
@@ -11099,6 +11129,7 @@ export type UsageActionResultById = {
                     workspaceIds: string[];
                     backendModes: string[];
                     population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+                    includePriceCatalog?: boolean | undefined;
                     includeInsights?: boolean | undefined;
                     includeActivity?: boolean | undefined;
                     includeLeaders?: boolean | undefined;
@@ -11106,6 +11137,7 @@ export type UsageActionResultById = {
                     includeMessageStats?: boolean | undefined;
                     activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                     execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                    includeQuotaExactHistory?: boolean | undefined;
                     includeQuota?: boolean | undefined;
                     includeCoach?: boolean | undefined;
                 };
@@ -14337,6 +14369,7 @@ export type UsageActionResultById = {
                             isCrossRepository?: boolean | undefined;
                             headSha?: null | string | undefined;
                             baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
                             createdAtMs?: number | undefined;
                             closedAtMs?: number | undefined;
                             mergedAtMs?: number | undefined;
@@ -14391,6 +14424,7 @@ export type UsageActionResultById = {
                             isCrossRepository?: boolean | undefined;
                             headSha?: null | string | undefined;
                             baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
                             createdAtMs?: number | undefined;
                             closedAtMs?: number | undefined;
                             mergedAtMs?: number | undefined;
@@ -14453,6 +14487,7 @@ export type UsageActionResultById = {
                         isCrossRepository?: boolean | undefined;
                         headSha?: null | string | undefined;
                         baseSha?: null | string | undefined;
+                        mergeCommitSha?: string | undefined;
                         createdAtMs?: number | undefined;
                         closedAtMs?: number | undefined;
                         mergedAtMs?: number | undefined;
@@ -16206,6 +16241,7 @@ export type UsageActionResultById = {
                         workspaceIds: string[];
                         backendModes: string[];
                         population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+                        includePriceCatalog?: boolean | undefined;
                         includeInsights?: boolean | undefined;
                         includeActivity?: boolean | undefined;
                         includeLeaders?: boolean | undefined;
@@ -16213,6 +16249,7 @@ export type UsageActionResultById = {
                         includeMessageStats?: boolean | undefined;
                         activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                         execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                        includeQuotaExactHistory?: boolean | undefined;
                         includeQuota?: boolean | undefined;
                         includeCoach?: boolean | undefined;
                     };
@@ -16261,6 +16298,44 @@ export type UsageActionResultById = {
                                     definitionId?: string | undefined;
                                 };
                                 modelSelection?: null | undefined | {
+                                    ref: {
+                                        source: 'account_provider_connection';
+                                        agentTargetKey: string;
+                                        providerConnectionId: string;
+                                        modelId: string;
+                                    };
+                                    v: 2;
+                                    updatedAt: number;
+                                } | {
+                                    ref: {
+                                        source: 'native';
+                                        agentTargetKey: string;
+                                        modelId: string;
+                                    };
+                                    v: 2;
+                                    updatedAt: number;
+                                } | {
+                                    ref: {
+                                        source: 'team_resource';
+                                        resourceId: string;
+                                        teamId: string;
+                                        expectedResourceRevision: number;
+                                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                                        agentTargetKey: string;
+                                        modelId: string;
+                                        nativeDelivery?: undefined | {
+                                            managedId: string;
+                                            controllerInstallationId: string;
+                                            guestInstallationId: string;
+                                            bindingKey: string;
+                                            placeholderRef: string;
+                                            sourceRevision: string;
+                                            providerTicket: string;
+                                        };
+                                    };
+                                    v: 2;
+                                    updatedAt: number;
+                                } | {
                                     v: 1;
                                     ref: {
                                         agentTargetKey: string;
@@ -16370,7 +16445,16 @@ export type UsageActionResultById = {
                                     folderId: null | string;
                                     tagIds: string[];
                                 };
-                                memoryEnabled?: boolean | undefined;
+                                projectContext?: undefined | {
+                                    projectRef?: undefined | {
+                                        serverId: string;
+                                        projectKey: string;
+                                    };
+                                    sourceRef?: undefined | {
+                                        serverId: string;
+                                        sourceId: string;
+                                    };
+                                };
                                 secretReferenceOverlay?: undefined | {
                                     v: 1;
                                     bindings: Record<string, {
@@ -16378,6 +16462,7 @@ export type UsageActionResultById = {
                                         revision?: number | undefined;
                                     }>;
                                 };
+                                memoryEnabled?: boolean | undefined;
                                 teamCredentialBindings?: ({
                                     v: 1;
                                     slot: {
@@ -16440,10 +16525,7 @@ export type UsageActionResultById = {
                                     };
                                 })[] | undefined;
                                 permissionModeUpdatedAt?: number | undefined;
-                                launchEnvironment?: undefined | {
-                                    values: Record<string, string>;
-                                    unset: string[];
-                                };
+                                environmentVariables?: Record<string, string> | undefined;
                                 providerSessionResume?: undefined | {
                                     kind: 'provider_session.v1';
                                     providerSessionId: string;
@@ -16520,29 +16602,6 @@ export type UsageActionResultById = {
                                 };
                                 roleId?: string | undefined;
                                 engine?: undefined | {
-                                    agentTarget: {
-                                        kind: 'agent';
-                                        identity: {
-                                            pluginId: string;
-                                            localId: string;
-                                        };
-                                        definitionId?: string | undefined;
-                                    };
-                                    modelSelection?: null | undefined | {
-                                        v: 1;
-                                        ref: {
-                                            agentTargetKey: string;
-                                            providerConnectionId: null;
-                                            modelId: string;
-                                        } | {
-                                            agentTargetKey: string;
-                                            providerConnectionId: string;
-                                            modelId: string;
-                                        };
-                                        updatedAt: number;
-                                    };
-                                    effort?: string | undefined;
-                                } | {
                                     kind: 'input';
                                     name: string;
                                     path?: (number | string)[] | undefined;
@@ -16550,8 +16609,6 @@ export type UsageActionResultById = {
                                     kind: 'item';
                                     field: 'value';
                                     path?: (number | string)[] | undefined;
-                                } | {
-                                    role: string;
                                 };
                                 participant?: undefined | {
                                     kind: 'input';

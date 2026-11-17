@@ -28,12 +28,15 @@ export type ScmRepositoryActionInputById = {
         protocol: 'auto' | 'https' | 'ssh';
         confirmed: true;
         authorizationToken: 'clone-repository';
+        authentication?: 'connected_account' | undefined;
         initialCheckout?: undefined | {
             branch: 'main' | null;
             commit: string;
         } | {
             branch: 'main';
             revision: 'latest-stable';
+        } | {
+            branch: string;
         };
     };
     readonly "scm.repository.init": {
@@ -764,6 +767,7 @@ export type ScmRepositoryActionResultById = {
                     isCrossRepository?: boolean | undefined;
                     headSha?: null | string | undefined;
                     baseSha?: null | string | undefined;
+                    mergeCommitSha?: string | undefined;
                     createdAtMs?: number | undefined;
                     closedAtMs?: number | undefined;
                     mergedAtMs?: number | undefined;
@@ -796,6 +800,7 @@ export type ScmRepositoryActionResultById = {
                 nextCursor: null | number;
             };
             detail?: 'facts' | 'summary' | undefined;
+            listRevision?: string | undefined;
             summary?: undefined | {
                 changedFiles: number;
                 includedAdded: number;
@@ -1719,6 +1724,7 @@ export type ScmRepositoryActionResultById = {
                     isCrossRepository?: boolean | undefined;
                     headSha?: null | string | undefined;
                     baseSha?: null | string | undefined;
+                    mergeCommitSha?: string | undefined;
                     createdAtMs?: number | undefined;
                     closedAtMs?: number | undefined;
                     mergedAtMs?: number | undefined;
@@ -1751,6 +1757,7 @@ export type ScmRepositoryActionResultById = {
                 nextCursor: null | number;
             };
             detail?: 'facts' | 'summary' | undefined;
+            listRevision?: string | undefined;
             summary?: undefined | {
                 changedFiles: number;
                 includedAdded: number;
@@ -2676,6 +2683,7 @@ export type ScmRepositoryActionResultById = {
                     isCrossRepository?: boolean | undefined;
                     headSha?: null | string | undefined;
                     baseSha?: null | string | undefined;
+                    mergeCommitSha?: string | undefined;
                     createdAtMs?: number | undefined;
                     closedAtMs?: number | undefined;
                     mergedAtMs?: number | undefined;
@@ -2708,6 +2716,7 @@ export type ScmRepositoryActionResultById = {
                 nextCursor: null | number;
             };
             detail?: 'facts' | 'summary' | undefined;
+            listRevision?: string | undefined;
             summary?: undefined | {
                 changedFiles: number;
                 includedAdded: number;
@@ -4123,6 +4132,7 @@ export type ScmRepositoryActionResultById = {
                     isCrossRepository?: boolean | undefined;
                     headSha?: null | string | undefined;
                     baseSha?: null | string | undefined;
+                    mergeCommitSha?: string | undefined;
                     createdAtMs?: number | undefined;
                     closedAtMs?: number | undefined;
                     mergedAtMs?: number | undefined;
@@ -4155,6 +4165,7 @@ export type ScmRepositoryActionResultById = {
                 nextCursor: null | number;
             };
             detail?: 'facts' | 'summary' | undefined;
+            listRevision?: string | undefined;
             summary?: undefined | {
                 changedFiles: number;
                 includedAdded: number;

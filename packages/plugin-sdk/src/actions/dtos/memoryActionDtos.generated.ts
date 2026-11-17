@@ -565,7 +565,7 @@ export type MemoryActionResultById = {
         };
         attachment?: 'attached' | 'conflict' | undefined;
         attachmentFailure?: undefined | {
-            errorCode: 'action_account_scope_changed' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'cancelled' | 'home_unreachable' | 'memory_target_unavailable' | 'outcome_unknown' | 'project_context_access_denied' | 'project_context_unavailable' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+            errorCode: 'action_account_scope_changed' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'cancelled' | 'home_unreachable' | 'managed_default_machine_not_member_usable' | 'memory_target_unavailable' | 'outcome_unknown' | 'project_context_access_denied' | 'project_context_unavailable' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
         };
     };
     readonly "memory.remember": {
@@ -623,7 +623,7 @@ export type MemoryActionResultById = {
         };
         attachment?: 'attached' | 'conflict' | undefined;
         attachmentFailure?: undefined | {
-            errorCode: 'action_account_scope_changed' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'cancelled' | 'home_unreachable' | 'memory_target_unavailable' | 'outcome_unknown' | 'project_context_access_denied' | 'project_context_unavailable' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+            errorCode: 'action_account_scope_changed' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'cancelled' | 'home_unreachable' | 'managed_default_machine_not_member_usable' | 'memory_target_unavailable' | 'outcome_unknown' | 'project_context_access_denied' | 'project_context_unavailable' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
         };
     };
     readonly "memory.update": {
@@ -681,7 +681,7 @@ export type MemoryActionResultById = {
         };
         attachment?: 'attached' | 'conflict' | undefined;
         attachmentFailure?: undefined | {
-            errorCode: 'action_account_scope_changed' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'cancelled' | 'home_unreachable' | 'memory_target_unavailable' | 'outcome_unknown' | 'project_context_access_denied' | 'project_context_unavailable' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+            errorCode: 'action_account_scope_changed' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'cancelled' | 'home_unreachable' | 'managed_default_machine_not_member_usable' | 'memory_target_unavailable' | 'outcome_unknown' | 'project_context_access_denied' | 'project_context_unavailable' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
         };
     };
     readonly "memory.forget": {
@@ -699,7 +699,7 @@ export type MemoryActionResultById = {
         };
         attachment?: 'attached' | 'conflict' | undefined;
         attachmentFailure?: undefined | {
-            errorCode: 'action_account_scope_changed' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'cancelled' | 'home_unreachable' | 'memory_target_unavailable' | 'outcome_unknown' | 'project_context_access_denied' | 'project_context_unavailable' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+            errorCode: 'action_account_scope_changed' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'cancelled' | 'home_unreachable' | 'managed_default_machine_not_member_usable' | 'memory_target_unavailable' | 'outcome_unknown' | 'project_context_access_denied' | 'project_context_unavailable' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
         };
     };
     readonly "memory.read": {
@@ -929,9 +929,74 @@ export type MemoryActionResultById = {
         hints: {
             [x: string]: unknown;
             enabled: boolean;
-            summarizerBackendId: string;
-            summarizerModelId: string;
-            summarizerPermissionMode: 'no_tools' | 'read_only';
+            summarizerRunner: {
+                v: 1;
+                mode: 'auto';
+                sessionConfigOptionOverrides?: undefined | {
+                    [x: string]: unknown;
+                    v: 1;
+                    updatedAt: number;
+                    overrides: Record<string, {
+                        [x: string]: unknown;
+                        updatedAt: number;
+                        value: boolean | null | number | string;
+                    }>;
+                };
+                permissionMode?: 'full' | 'no_tools' | 'read_only' | 'workspace_write' | undefined;
+            } | {
+                v: 1;
+                modelSelection: {
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                connectedServices?: null | undefined | {
+                    v: 2;
+                    bindingsByServiceId: Record<string, {
+                        source: 'connected';
+                        selection: 'group';
+                        groupId: string;
+                        profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
+                    } | {
+                        source: 'connected';
+                        selection: 'profile';
+                        profileId: string;
+                    } | {
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    }>;
+                };
+                sessionConfigOptionOverrides?: undefined | {
+                    [x: string]: unknown;
+                    v: 1;
+                    updatedAt: number;
+                    overrides: Record<string, {
+                        [x: string]: unknown;
+                        updatedAt: number;
+                        value: boolean | null | number | string;
+                    }>;
+                };
+                permissionMode?: 'full' | 'no_tools' | 'read_only' | 'workspace_write' | undefined;
+            };
             windowSizeMessages: number;
             targetShardMessages: number;
             minShardMessages: number;
@@ -1060,9 +1125,74 @@ export type MemoryActionResultById = {
         hints: {
             [x: string]: unknown;
             enabled: boolean;
-            summarizerBackendId: string;
-            summarizerModelId: string;
-            summarizerPermissionMode: 'no_tools' | 'read_only';
+            summarizerRunner: {
+                v: 1;
+                mode: 'auto';
+                sessionConfigOptionOverrides?: undefined | {
+                    [x: string]: unknown;
+                    v: 1;
+                    updatedAt: number;
+                    overrides: Record<string, {
+                        [x: string]: unknown;
+                        updatedAt: number;
+                        value: boolean | null | number | string;
+                    }>;
+                };
+                permissionMode?: 'full' | 'no_tools' | 'read_only' | 'workspace_write' | undefined;
+            } | {
+                v: 1;
+                modelSelection: {
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                connectedServices?: null | undefined | {
+                    v: 2;
+                    bindingsByServiceId: Record<string, {
+                        source: 'connected';
+                        selection: 'group';
+                        groupId: string;
+                        profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
+                    } | {
+                        source: 'connected';
+                        selection: 'profile';
+                        profileId: string;
+                    } | {
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    }>;
+                };
+                sessionConfigOptionOverrides?: undefined | {
+                    [x: string]: unknown;
+                    v: 1;
+                    updatedAt: number;
+                    overrides: Record<string, {
+                        [x: string]: unknown;
+                        updatedAt: number;
+                        value: boolean | null | number | string;
+                    }>;
+                };
+                permissionMode?: 'full' | 'no_tools' | 'read_only' | 'workspace_write' | undefined;
+            };
             windowSizeMessages: number;
             targetShardMessages: number;
             minShardMessages: number;

@@ -5212,6 +5212,10 @@ export type VoiceControlsActionResultById = {
     readonly "ui.voice_global.history.clear": {
         cleared: boolean;
     };
-    readonly "ui.voice_global.reset": JsonValue;
-    readonly "ui.voice_agent.teleport": JsonValue;
+    readonly "ui.voice_global.reset": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "ui.voice_agent.teleport": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
 };

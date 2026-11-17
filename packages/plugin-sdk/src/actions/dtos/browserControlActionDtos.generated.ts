@@ -145,7 +145,7 @@ export type BrowserControlActionInputById = {
         expectedVersion?: string | undefined;
         provenance?: undefined | {
             sourceId: string;
-            format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+            format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
             sourceUrl: string;
             itemId: string;
             ref: {
@@ -1296,7 +1296,7 @@ export type BrowserControlActionResultById = {
                 optionsPage?: string | undefined;
                 provenance?: undefined | {
                     sourceId: string;
-                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -1418,7 +1418,7 @@ export type BrowserControlActionResultById = {
                 optionsPage?: string | undefined;
                 provenance?: undefined | {
                     sourceId: string;
-                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -1533,7 +1533,7 @@ export type BrowserControlActionResultById = {
                 optionsPage?: string | undefined;
                 provenance?: undefined | {
                     sourceId: string;
-                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -1648,7 +1648,7 @@ export type BrowserControlActionResultById = {
                 optionsPage?: string | undefined;
                 provenance?: undefined | {
                     sourceId: string;
-                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -1763,7 +1763,7 @@ export type BrowserControlActionResultById = {
                 optionsPage?: string | undefined;
                 provenance?: undefined | {
                     sourceId: string;
-                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -1878,7 +1878,7 @@ export type BrowserControlActionResultById = {
                 optionsPage?: string | undefined;
                 provenance?: undefined | {
                     sourceId: string;
-                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -3719,6 +3719,7 @@ export type BrowserControlActionResultById = {
                 currentUrlExpiresAt?: number | undefined;
                 openerViewId?: string | undefined;
             })[];
+            sourceOccurrenceId?: string | undefined;
             captureSource?: undefined | {
                 [x: string]: unknown;
                 v: 1;

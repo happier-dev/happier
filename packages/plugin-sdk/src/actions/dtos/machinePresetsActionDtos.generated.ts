@@ -38,6 +38,8 @@ export type MachinePresetsActionInputById = {
             kind: 'team';
             teamId: string;
         };
+        homeId: string;
+        contentEncryptionMode: 'e2ee' | 'plain';
         recipients: {
             accountId: string;
             envelope: {
@@ -45,8 +47,6 @@ export type MachinePresetsActionInputById = {
                 recipientContentPublicKeyFingerprint: string;
             };
         }[];
-        homeId: string;
-        contentEncryptionMode: 'e2ee' | 'plain';
         retention?: undefined | {
             afterMs: number;
             kind: 'unused';

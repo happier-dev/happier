@@ -4,6 +4,102 @@
 import type { JSONType } from './pluginActionDtoSupport.generated.js';
 
 export type DevicesSimulatorActionInputById = {
+    readonly "devices.simulator.accessibility.snapshot": {
+        operation: 'accessibility_snapshot';
+        platform: 'android' | 'ios';
+        deviceId: string;
+    };
+    readonly "devices.simulator.accessibility.press": {
+        operation: 'accessibility_press';
+        identifier: string;
+        platform: 'android' | 'ios';
+        deviceId: string;
+    };
+    readonly "devices.simulator.device.boot": {
+        operation: 'boot';
+        platform: 'android' | 'ios';
+        deviceId: string;
+    };
+    readonly "devices.simulator.device.powerOff": {
+        operation: 'power_off';
+        platform: 'android' | 'ios';
+        deviceId: string;
+    };
+    readonly "devices.simulator.app.launch": {
+        operation: 'app_launch';
+        appId: string;
+        platform: 'android' | 'ios';
+        deviceId: string;
+    };
+    readonly "devices.simulator.app.terminate": {
+        operation: 'app_terminate';
+        appId: string;
+        platform: 'android' | 'ios';
+        deviceId: string;
+    };
+    readonly "devices.simulator.url.open": {
+        operation: 'open_url';
+        url: string;
+        platform: 'android' | 'ios';
+        deviceId: string;
+    };
+    readonly "devices.simulator.screenshot.capture": {
+        operation: 'screenshot';
+        sessionId: string;
+        platform: 'android' | 'ios';
+        deviceId: string;
+    };
+    readonly "devices.simulator.appearance.set": {
+        operation: 'appearance_set';
+        appearance: 'dark' | 'light';
+        platform: 'android' | 'ios';
+        deviceId: string;
+    };
+    readonly "devices.simulator.textSize.set": {
+        operation: 'text_size_set';
+        size: string;
+        platform: 'android' | 'ios';
+        deviceId: string;
+    };
+    readonly "devices.simulator.location.set": {
+        operation: 'location_set';
+        latitude: number;
+        longitude: number;
+        platform: 'android' | 'ios';
+        deviceId: string;
+    };
+    readonly "devices.simulator.location.clear": {
+        operation: 'location_clear';
+        platform: 'android' | 'ios';
+        deviceId: string;
+    };
+    readonly "devices.simulator.permission.set": {
+        operation: 'permission_set';
+        appId: string;
+        permission: string;
+        value: 'grant' | 'reset' | 'revoke';
+        platform: 'android' | 'ios';
+        deviceId: string;
+    };
+    readonly "devices.simulator.push.send": {
+        platform: 'ios';
+        operation: 'push';
+        appId: string;
+        payload: Record<string, unknown>;
+        deviceId: string;
+    };
+    readonly "devices.simulator.hardware.button": {
+        operation: 'hardware';
+        button: 'back' | 'home' | 'recents';
+        platform: 'android' | 'ios';
+        deviceId: string;
+    };
+    readonly "devices.simulator.rotation.set": {
+        operation: 'rotate';
+        orientation: 'landscape_left' | 'landscape_right' | 'portrait' | 'portrait_upside_down';
+        platform: 'android' | 'ios';
+        deviceId: string;
+    };
     readonly "devices.simulator.list": {
         type: 'simulator.devices.list';
     } & {
@@ -2379,104 +2475,1084 @@ export type DevicesSimulatorActionInputById = {
         [x: string]: unknown;
         type: 'simulator.sideband.request';
     };
-    readonly "devices.simulator.accessibility.snapshot": {
-        operation: 'accessibility_snapshot';
-        platform: 'android' | 'ios';
-        deviceId: string;
-    };
-    readonly "devices.simulator.accessibility.press": {
-        operation: 'accessibility_press';
-        identifier: string;
-        platform: 'android' | 'ios';
-        deviceId: string;
-    };
-    readonly "devices.simulator.device.boot": {
-        operation: 'boot';
-        platform: 'android' | 'ios';
-        deviceId: string;
-    };
-    readonly "devices.simulator.device.powerOff": {
-        operation: 'power_off';
-        platform: 'android' | 'ios';
-        deviceId: string;
-    };
-    readonly "devices.simulator.app.launch": {
-        operation: 'app_launch';
-        appId: string;
-        platform: 'android' | 'ios';
-        deviceId: string;
-    };
-    readonly "devices.simulator.app.terminate": {
-        operation: 'app_terminate';
-        appId: string;
-        platform: 'android' | 'ios';
-        deviceId: string;
-    };
-    readonly "devices.simulator.url.open": {
-        operation: 'open_url';
-        url: string;
-        platform: 'android' | 'ios';
-        deviceId: string;
-    };
-    readonly "devices.simulator.screenshot.capture": {
-        operation: 'screenshot';
-        sessionId: string;
-        platform: 'android' | 'ios';
-        deviceId: string;
-    };
-    readonly "devices.simulator.appearance.set": {
-        operation: 'appearance_set';
-        appearance: 'dark' | 'light';
-        platform: 'android' | 'ios';
-        deviceId: string;
-    };
-    readonly "devices.simulator.textSize.set": {
-        operation: 'text_size_set';
-        size: string;
-        platform: 'android' | 'ios';
-        deviceId: string;
-    };
-    readonly "devices.simulator.location.set": {
-        operation: 'location_set';
-        latitude: number;
-        longitude: number;
-        platform: 'android' | 'ios';
-        deviceId: string;
-    };
-    readonly "devices.simulator.location.clear": {
-        operation: 'location_clear';
-        platform: 'android' | 'ios';
-        deviceId: string;
-    };
-    readonly "devices.simulator.permission.set": {
-        operation: 'permission_set';
-        appId: string;
-        permission: string;
-        value: 'grant' | 'reset' | 'revoke';
-        platform: 'android' | 'ios';
-        deviceId: string;
-    };
-    readonly "devices.simulator.push.send": {
-        platform: 'ios';
-        operation: 'push';
-        appId: string;
-        payload: Record<string, unknown>;
-        deviceId: string;
-    };
-    readonly "devices.simulator.hardware.button": {
-        operation: 'hardware';
-        button: 'back' | 'home' | 'recents';
-        platform: 'android' | 'ios';
-        deviceId: string;
-    };
-    readonly "devices.simulator.rotation.set": {
-        operation: 'rotate';
-        orientation: 'landscape_left' | 'landscape_right' | 'portrait' | 'portrait_upside_down';
-        platform: 'android' | 'ios';
-        deviceId: string;
-    };
 };
 export type DevicesSimulatorActionResultById = {
+    readonly "devices.simulator.accessibility.snapshot": {
+        ok: false;
+        errorCode: string;
+        step: string;
+        exitCode?: number | undefined;
+    } | {
+        ok: true;
+        snapshot: {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+    };
+    readonly "devices.simulator.accessibility.press": {
+        ok: false;
+        errorCode: string;
+        step: string;
+        exitCode?: number | undefined;
+    } | {
+        ok: true;
+        pressedIdentifier: string;
+    };
+    readonly "devices.simulator.device.boot": {
+        ok: false;
+        errorCode: string;
+        step: string;
+        exitCode?: number | undefined;
+    } | {
+        ok: true;
+        device?: undefined | {
+            v: 1;
+            simulatorId: string;
+            platform: 'android' | 'ios';
+            deviceId: string;
+            displayName: string;
+            capture: {
+                status: 'available';
+                sourceId: string;
+                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
+                inputMode: 'exclusive' | 'none' | 'shared';
+                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
+                streamControls?: undefined | {
+                    requestKeyframe: boolean;
+                    snapshot: boolean;
+                    setQuality: boolean;
+                    setFps: boolean;
+                    setScale: boolean;
+                };
+            } | {
+                status: 'unavailable';
+                reasonCode: string;
+                sourceId?: string | undefined;
+            };
+            state?: 'running' | 'stopped' | 'unavailable' | undefined;
+            runtimeId?: string | undefined;
+            avdName?: string | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
+            appId?: string | undefined;
+            unavailableReason?: string | undefined;
+        };
+        media?: undefined | {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
+    };
+    readonly "devices.simulator.device.powerOff": {
+        ok: false;
+        errorCode: string;
+        step: string;
+        exitCode?: number | undefined;
+    } | {
+        ok: true;
+        device?: undefined | {
+            v: 1;
+            simulatorId: string;
+            platform: 'android' | 'ios';
+            deviceId: string;
+            displayName: string;
+            capture: {
+                status: 'available';
+                sourceId: string;
+                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
+                inputMode: 'exclusive' | 'none' | 'shared';
+                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
+                streamControls?: undefined | {
+                    requestKeyframe: boolean;
+                    snapshot: boolean;
+                    setQuality: boolean;
+                    setFps: boolean;
+                    setScale: boolean;
+                };
+            } | {
+                status: 'unavailable';
+                reasonCode: string;
+                sourceId?: string | undefined;
+            };
+            state?: 'running' | 'stopped' | 'unavailable' | undefined;
+            runtimeId?: string | undefined;
+            avdName?: string | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
+            appId?: string | undefined;
+            unavailableReason?: string | undefined;
+        };
+        media?: undefined | {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
+    };
+    readonly "devices.simulator.app.launch": {
+        ok: false;
+        errorCode: string;
+        step: string;
+        exitCode?: number | undefined;
+    } | {
+        ok: true;
+        device?: undefined | {
+            v: 1;
+            simulatorId: string;
+            platform: 'android' | 'ios';
+            deviceId: string;
+            displayName: string;
+            capture: {
+                status: 'available';
+                sourceId: string;
+                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
+                inputMode: 'exclusive' | 'none' | 'shared';
+                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
+                streamControls?: undefined | {
+                    requestKeyframe: boolean;
+                    snapshot: boolean;
+                    setQuality: boolean;
+                    setFps: boolean;
+                    setScale: boolean;
+                };
+            } | {
+                status: 'unavailable';
+                reasonCode: string;
+                sourceId?: string | undefined;
+            };
+            state?: 'running' | 'stopped' | 'unavailable' | undefined;
+            runtimeId?: string | undefined;
+            avdName?: string | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
+            appId?: string | undefined;
+            unavailableReason?: string | undefined;
+        };
+        media?: undefined | {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
+    };
+    readonly "devices.simulator.app.terminate": {
+        ok: false;
+        errorCode: string;
+        step: string;
+        exitCode?: number | undefined;
+    } | {
+        ok: true;
+        device?: undefined | {
+            v: 1;
+            simulatorId: string;
+            platform: 'android' | 'ios';
+            deviceId: string;
+            displayName: string;
+            capture: {
+                status: 'available';
+                sourceId: string;
+                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
+                inputMode: 'exclusive' | 'none' | 'shared';
+                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
+                streamControls?: undefined | {
+                    requestKeyframe: boolean;
+                    snapshot: boolean;
+                    setQuality: boolean;
+                    setFps: boolean;
+                    setScale: boolean;
+                };
+            } | {
+                status: 'unavailable';
+                reasonCode: string;
+                sourceId?: string | undefined;
+            };
+            state?: 'running' | 'stopped' | 'unavailable' | undefined;
+            runtimeId?: string | undefined;
+            avdName?: string | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
+            appId?: string | undefined;
+            unavailableReason?: string | undefined;
+        };
+        media?: undefined | {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
+    };
+    readonly "devices.simulator.url.open": {
+        ok: false;
+        errorCode: string;
+        step: string;
+        exitCode?: number | undefined;
+    } | {
+        ok: true;
+        device?: undefined | {
+            v: 1;
+            simulatorId: string;
+            platform: 'android' | 'ios';
+            deviceId: string;
+            displayName: string;
+            capture: {
+                status: 'available';
+                sourceId: string;
+                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
+                inputMode: 'exclusive' | 'none' | 'shared';
+                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
+                streamControls?: undefined | {
+                    requestKeyframe: boolean;
+                    snapshot: boolean;
+                    setQuality: boolean;
+                    setFps: boolean;
+                    setScale: boolean;
+                };
+            } | {
+                status: 'unavailable';
+                reasonCode: string;
+                sourceId?: string | undefined;
+            };
+            state?: 'running' | 'stopped' | 'unavailable' | undefined;
+            runtimeId?: string | undefined;
+            avdName?: string | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
+            appId?: string | undefined;
+            unavailableReason?: string | undefined;
+        };
+        media?: undefined | {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
+    };
+    readonly "devices.simulator.screenshot.capture": {
+        ok: false;
+        errorCode: string;
+        step: string;
+        exitCode?: number | undefined;
+    } | {
+        ok: true;
+        media: {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+    };
+    readonly "devices.simulator.appearance.set": {
+        ok: false;
+        errorCode: string;
+        step: string;
+        exitCode?: number | undefined;
+    } | {
+        ok: true;
+        device?: undefined | {
+            v: 1;
+            simulatorId: string;
+            platform: 'android' | 'ios';
+            deviceId: string;
+            displayName: string;
+            capture: {
+                status: 'available';
+                sourceId: string;
+                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
+                inputMode: 'exclusive' | 'none' | 'shared';
+                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
+                streamControls?: undefined | {
+                    requestKeyframe: boolean;
+                    snapshot: boolean;
+                    setQuality: boolean;
+                    setFps: boolean;
+                    setScale: boolean;
+                };
+            } | {
+                status: 'unavailable';
+                reasonCode: string;
+                sourceId?: string | undefined;
+            };
+            state?: 'running' | 'stopped' | 'unavailable' | undefined;
+            runtimeId?: string | undefined;
+            avdName?: string | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
+            appId?: string | undefined;
+            unavailableReason?: string | undefined;
+        };
+        media?: undefined | {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
+    };
+    readonly "devices.simulator.textSize.set": {
+        ok: false;
+        errorCode: string;
+        step: string;
+        exitCode?: number | undefined;
+    } | {
+        ok: true;
+        device?: undefined | {
+            v: 1;
+            simulatorId: string;
+            platform: 'android' | 'ios';
+            deviceId: string;
+            displayName: string;
+            capture: {
+                status: 'available';
+                sourceId: string;
+                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
+                inputMode: 'exclusive' | 'none' | 'shared';
+                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
+                streamControls?: undefined | {
+                    requestKeyframe: boolean;
+                    snapshot: boolean;
+                    setQuality: boolean;
+                    setFps: boolean;
+                    setScale: boolean;
+                };
+            } | {
+                status: 'unavailable';
+                reasonCode: string;
+                sourceId?: string | undefined;
+            };
+            state?: 'running' | 'stopped' | 'unavailable' | undefined;
+            runtimeId?: string | undefined;
+            avdName?: string | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
+            appId?: string | undefined;
+            unavailableReason?: string | undefined;
+        };
+        media?: undefined | {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
+    };
+    readonly "devices.simulator.location.set": {
+        ok: false;
+        errorCode: string;
+        step: string;
+        exitCode?: number | undefined;
+    } | {
+        ok: true;
+        device?: undefined | {
+            v: 1;
+            simulatorId: string;
+            platform: 'android' | 'ios';
+            deviceId: string;
+            displayName: string;
+            capture: {
+                status: 'available';
+                sourceId: string;
+                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
+                inputMode: 'exclusive' | 'none' | 'shared';
+                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
+                streamControls?: undefined | {
+                    requestKeyframe: boolean;
+                    snapshot: boolean;
+                    setQuality: boolean;
+                    setFps: boolean;
+                    setScale: boolean;
+                };
+            } | {
+                status: 'unavailable';
+                reasonCode: string;
+                sourceId?: string | undefined;
+            };
+            state?: 'running' | 'stopped' | 'unavailable' | undefined;
+            runtimeId?: string | undefined;
+            avdName?: string | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
+            appId?: string | undefined;
+            unavailableReason?: string | undefined;
+        };
+        media?: undefined | {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
+    };
+    readonly "devices.simulator.location.clear": {
+        ok: false;
+        errorCode: string;
+        step: string;
+        exitCode?: number | undefined;
+    } | {
+        ok: true;
+        device?: undefined | {
+            v: 1;
+            simulatorId: string;
+            platform: 'android' | 'ios';
+            deviceId: string;
+            displayName: string;
+            capture: {
+                status: 'available';
+                sourceId: string;
+                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
+                inputMode: 'exclusive' | 'none' | 'shared';
+                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
+                streamControls?: undefined | {
+                    requestKeyframe: boolean;
+                    snapshot: boolean;
+                    setQuality: boolean;
+                    setFps: boolean;
+                    setScale: boolean;
+                };
+            } | {
+                status: 'unavailable';
+                reasonCode: string;
+                sourceId?: string | undefined;
+            };
+            state?: 'running' | 'stopped' | 'unavailable' | undefined;
+            runtimeId?: string | undefined;
+            avdName?: string | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
+            appId?: string | undefined;
+            unavailableReason?: string | undefined;
+        };
+        media?: undefined | {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
+    };
+    readonly "devices.simulator.permission.set": {
+        ok: false;
+        errorCode: string;
+        step: string;
+        exitCode?: number | undefined;
+    } | {
+        ok: true;
+        device?: undefined | {
+            v: 1;
+            simulatorId: string;
+            platform: 'android' | 'ios';
+            deviceId: string;
+            displayName: string;
+            capture: {
+                status: 'available';
+                sourceId: string;
+                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
+                inputMode: 'exclusive' | 'none' | 'shared';
+                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
+                streamControls?: undefined | {
+                    requestKeyframe: boolean;
+                    snapshot: boolean;
+                    setQuality: boolean;
+                    setFps: boolean;
+                    setScale: boolean;
+                };
+            } | {
+                status: 'unavailable';
+                reasonCode: string;
+                sourceId?: string | undefined;
+            };
+            state?: 'running' | 'stopped' | 'unavailable' | undefined;
+            runtimeId?: string | undefined;
+            avdName?: string | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
+            appId?: string | undefined;
+            unavailableReason?: string | undefined;
+        };
+        media?: undefined | {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
+    };
+    readonly "devices.simulator.push.send": {
+        ok: false;
+        errorCode: string;
+        step: string;
+        exitCode?: number | undefined;
+    } | {
+        ok: true;
+        device?: undefined | {
+            v: 1;
+            simulatorId: string;
+            platform: 'android' | 'ios';
+            deviceId: string;
+            displayName: string;
+            capture: {
+                status: 'available';
+                sourceId: string;
+                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
+                inputMode: 'exclusive' | 'none' | 'shared';
+                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
+                streamControls?: undefined | {
+                    requestKeyframe: boolean;
+                    snapshot: boolean;
+                    setQuality: boolean;
+                    setFps: boolean;
+                    setScale: boolean;
+                };
+            } | {
+                status: 'unavailable';
+                reasonCode: string;
+                sourceId?: string | undefined;
+            };
+            state?: 'running' | 'stopped' | 'unavailable' | undefined;
+            runtimeId?: string | undefined;
+            avdName?: string | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
+            appId?: string | undefined;
+            unavailableReason?: string | undefined;
+        };
+        media?: undefined | {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
+    };
+    readonly "devices.simulator.hardware.button": {
+        ok: false;
+        errorCode: string;
+        step: string;
+        exitCode?: number | undefined;
+    } | {
+        ok: true;
+        device?: undefined | {
+            v: 1;
+            simulatorId: string;
+            platform: 'android' | 'ios';
+            deviceId: string;
+            displayName: string;
+            capture: {
+                status: 'available';
+                sourceId: string;
+                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
+                inputMode: 'exclusive' | 'none' | 'shared';
+                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
+                streamControls?: undefined | {
+                    requestKeyframe: boolean;
+                    snapshot: boolean;
+                    setQuality: boolean;
+                    setFps: boolean;
+                    setScale: boolean;
+                };
+            } | {
+                status: 'unavailable';
+                reasonCode: string;
+                sourceId?: string | undefined;
+            };
+            state?: 'running' | 'stopped' | 'unavailable' | undefined;
+            runtimeId?: string | undefined;
+            avdName?: string | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
+            appId?: string | undefined;
+            unavailableReason?: string | undefined;
+        };
+        media?: undefined | {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
+    };
+    readonly "devices.simulator.rotation.set": {
+        ok: false;
+        errorCode: string;
+        step: string;
+        exitCode?: number | undefined;
+    } | {
+        ok: true;
+        device?: undefined | {
+            v: 1;
+            simulatorId: string;
+            platform: 'android' | 'ios';
+            deviceId: string;
+            displayName: string;
+            capture: {
+                status: 'available';
+                sourceId: string;
+                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
+                inputMode: 'exclusive' | 'none' | 'shared';
+                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
+                streamControls?: undefined | {
+                    requestKeyframe: boolean;
+                    snapshot: boolean;
+                    setQuality: boolean;
+                    setFps: boolean;
+                    setScale: boolean;
+                };
+            } | {
+                status: 'unavailable';
+                reasonCode: string;
+                sourceId?: string | undefined;
+            };
+            state?: 'running' | 'stopped' | 'unavailable' | undefined;
+            runtimeId?: string | undefined;
+            avdName?: string | undefined;
+            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
+            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
+            appId?: string | undefined;
+            unavailableReason?: string | undefined;
+        };
+        media?: undefined | {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        snapshot?: undefined | {
+            nodes: {
+                index: number;
+                type: string;
+                parentIndex?: number | undefined;
+                identifier?: string | undefined;
+                label?: string | undefined;
+                value?: number | string | undefined;
+                frame?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                enabled?: boolean | undefined;
+            }[];
+            truncated: boolean;
+            viewport?: undefined | {
+                width: number;
+                height: number;
+            };
+            appBundleId?: string | undefined;
+        };
+        pressedIdentifier?: string | undefined;
+    };
     readonly "devices.simulator.list": {
         v: 1;
         machineId: string;
@@ -3797,1081 +4873,5 @@ export type DevicesSimulatorActionResultById = {
         diagnostics: Record<string, unknown>[];
         status: 'unavailable';
         reasonCode: string;
-    };
-    readonly "devices.simulator.accessibility.snapshot": {
-        ok: false;
-        errorCode: string;
-        step: string;
-        exitCode?: number | undefined;
-    } | {
-        ok: true;
-        snapshot: {
-            nodes: {
-                index: number;
-                type: string;
-                parentIndex?: number | undefined;
-                identifier?: string | undefined;
-                label?: string | undefined;
-                value?: number | string | undefined;
-                frame?: undefined | {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                enabled?: boolean | undefined;
-            }[];
-            truncated: boolean;
-            viewport?: undefined | {
-                width: number;
-                height: number;
-            };
-            appBundleId?: string | undefined;
-        };
-    };
-    readonly "devices.simulator.accessibility.press": {
-        ok: false;
-        errorCode: string;
-        step: string;
-        exitCode?: number | undefined;
-    } | {
-        ok: true;
-        pressedIdentifier: string;
-    };
-    readonly "devices.simulator.device.boot": {
-        ok: false;
-        errorCode: string;
-        step: string;
-        exitCode?: number | undefined;
-    } | {
-        ok: true;
-        device?: undefined | {
-            v: 1;
-            simulatorId: string;
-            platform: 'android' | 'ios';
-            deviceId: string;
-            displayName: string;
-            capture: {
-                status: 'available';
-                sourceId: string;
-                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
-                inputMode: 'exclusive' | 'none' | 'shared';
-                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
-                streamControls?: undefined | {
-                    requestKeyframe: boolean;
-                    snapshot: boolean;
-                    setQuality: boolean;
-                    setFps: boolean;
-                    setScale: boolean;
-                };
-            } | {
-                status: 'unavailable';
-                reasonCode: string;
-                sourceId?: string | undefined;
-            };
-            state?: 'running' | 'stopped' | 'unavailable' | undefined;
-            runtimeId?: string | undefined;
-            avdName?: string | undefined;
-            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
-            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
-            appId?: string | undefined;
-            unavailableReason?: string | undefined;
-        };
-        media?: undefined | {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: undefined | {
-                sessionId: string;
-                storage: 'daemon' | 'session';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            };
-        };
-        snapshot?: undefined | {
-            nodes: {
-                index: number;
-                type: string;
-                parentIndex?: number | undefined;
-                identifier?: string | undefined;
-                label?: string | undefined;
-                value?: number | string | undefined;
-                frame?: undefined | {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                enabled?: boolean | undefined;
-            }[];
-            truncated: boolean;
-            viewport?: undefined | {
-                width: number;
-                height: number;
-            };
-            appBundleId?: string | undefined;
-        };
-        pressedIdentifier?: string | undefined;
-    };
-    readonly "devices.simulator.device.powerOff": {
-        ok: false;
-        errorCode: string;
-        step: string;
-        exitCode?: number | undefined;
-    } | {
-        ok: true;
-        device?: undefined | {
-            v: 1;
-            simulatorId: string;
-            platform: 'android' | 'ios';
-            deviceId: string;
-            displayName: string;
-            capture: {
-                status: 'available';
-                sourceId: string;
-                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
-                inputMode: 'exclusive' | 'none' | 'shared';
-                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
-                streamControls?: undefined | {
-                    requestKeyframe: boolean;
-                    snapshot: boolean;
-                    setQuality: boolean;
-                    setFps: boolean;
-                    setScale: boolean;
-                };
-            } | {
-                status: 'unavailable';
-                reasonCode: string;
-                sourceId?: string | undefined;
-            };
-            state?: 'running' | 'stopped' | 'unavailable' | undefined;
-            runtimeId?: string | undefined;
-            avdName?: string | undefined;
-            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
-            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
-            appId?: string | undefined;
-            unavailableReason?: string | undefined;
-        };
-        media?: undefined | {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: undefined | {
-                sessionId: string;
-                storage: 'daemon' | 'session';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            };
-        };
-        snapshot?: undefined | {
-            nodes: {
-                index: number;
-                type: string;
-                parentIndex?: number | undefined;
-                identifier?: string | undefined;
-                label?: string | undefined;
-                value?: number | string | undefined;
-                frame?: undefined | {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                enabled?: boolean | undefined;
-            }[];
-            truncated: boolean;
-            viewport?: undefined | {
-                width: number;
-                height: number;
-            };
-            appBundleId?: string | undefined;
-        };
-        pressedIdentifier?: string | undefined;
-    };
-    readonly "devices.simulator.app.launch": {
-        ok: false;
-        errorCode: string;
-        step: string;
-        exitCode?: number | undefined;
-    } | {
-        ok: true;
-        device?: undefined | {
-            v: 1;
-            simulatorId: string;
-            platform: 'android' | 'ios';
-            deviceId: string;
-            displayName: string;
-            capture: {
-                status: 'available';
-                sourceId: string;
-                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
-                inputMode: 'exclusive' | 'none' | 'shared';
-                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
-                streamControls?: undefined | {
-                    requestKeyframe: boolean;
-                    snapshot: boolean;
-                    setQuality: boolean;
-                    setFps: boolean;
-                    setScale: boolean;
-                };
-            } | {
-                status: 'unavailable';
-                reasonCode: string;
-                sourceId?: string | undefined;
-            };
-            state?: 'running' | 'stopped' | 'unavailable' | undefined;
-            runtimeId?: string | undefined;
-            avdName?: string | undefined;
-            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
-            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
-            appId?: string | undefined;
-            unavailableReason?: string | undefined;
-        };
-        media?: undefined | {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: undefined | {
-                sessionId: string;
-                storage: 'daemon' | 'session';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            };
-        };
-        snapshot?: undefined | {
-            nodes: {
-                index: number;
-                type: string;
-                parentIndex?: number | undefined;
-                identifier?: string | undefined;
-                label?: string | undefined;
-                value?: number | string | undefined;
-                frame?: undefined | {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                enabled?: boolean | undefined;
-            }[];
-            truncated: boolean;
-            viewport?: undefined | {
-                width: number;
-                height: number;
-            };
-            appBundleId?: string | undefined;
-        };
-        pressedIdentifier?: string | undefined;
-    };
-    readonly "devices.simulator.app.terminate": {
-        ok: false;
-        errorCode: string;
-        step: string;
-        exitCode?: number | undefined;
-    } | {
-        ok: true;
-        device?: undefined | {
-            v: 1;
-            simulatorId: string;
-            platform: 'android' | 'ios';
-            deviceId: string;
-            displayName: string;
-            capture: {
-                status: 'available';
-                sourceId: string;
-                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
-                inputMode: 'exclusive' | 'none' | 'shared';
-                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
-                streamControls?: undefined | {
-                    requestKeyframe: boolean;
-                    snapshot: boolean;
-                    setQuality: boolean;
-                    setFps: boolean;
-                    setScale: boolean;
-                };
-            } | {
-                status: 'unavailable';
-                reasonCode: string;
-                sourceId?: string | undefined;
-            };
-            state?: 'running' | 'stopped' | 'unavailable' | undefined;
-            runtimeId?: string | undefined;
-            avdName?: string | undefined;
-            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
-            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
-            appId?: string | undefined;
-            unavailableReason?: string | undefined;
-        };
-        media?: undefined | {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: undefined | {
-                sessionId: string;
-                storage: 'daemon' | 'session';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            };
-        };
-        snapshot?: undefined | {
-            nodes: {
-                index: number;
-                type: string;
-                parentIndex?: number | undefined;
-                identifier?: string | undefined;
-                label?: string | undefined;
-                value?: number | string | undefined;
-                frame?: undefined | {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                enabled?: boolean | undefined;
-            }[];
-            truncated: boolean;
-            viewport?: undefined | {
-                width: number;
-                height: number;
-            };
-            appBundleId?: string | undefined;
-        };
-        pressedIdentifier?: string | undefined;
-    };
-    readonly "devices.simulator.url.open": {
-        ok: false;
-        errorCode: string;
-        step: string;
-        exitCode?: number | undefined;
-    } | {
-        ok: true;
-        device?: undefined | {
-            v: 1;
-            simulatorId: string;
-            platform: 'android' | 'ios';
-            deviceId: string;
-            displayName: string;
-            capture: {
-                status: 'available';
-                sourceId: string;
-                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
-                inputMode: 'exclusive' | 'none' | 'shared';
-                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
-                streamControls?: undefined | {
-                    requestKeyframe: boolean;
-                    snapshot: boolean;
-                    setQuality: boolean;
-                    setFps: boolean;
-                    setScale: boolean;
-                };
-            } | {
-                status: 'unavailable';
-                reasonCode: string;
-                sourceId?: string | undefined;
-            };
-            state?: 'running' | 'stopped' | 'unavailable' | undefined;
-            runtimeId?: string | undefined;
-            avdName?: string | undefined;
-            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
-            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
-            appId?: string | undefined;
-            unavailableReason?: string | undefined;
-        };
-        media?: undefined | {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: undefined | {
-                sessionId: string;
-                storage: 'daemon' | 'session';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            };
-        };
-        snapshot?: undefined | {
-            nodes: {
-                index: number;
-                type: string;
-                parentIndex?: number | undefined;
-                identifier?: string | undefined;
-                label?: string | undefined;
-                value?: number | string | undefined;
-                frame?: undefined | {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                enabled?: boolean | undefined;
-            }[];
-            truncated: boolean;
-            viewport?: undefined | {
-                width: number;
-                height: number;
-            };
-            appBundleId?: string | undefined;
-        };
-        pressedIdentifier?: string | undefined;
-    };
-    readonly "devices.simulator.screenshot.capture": {
-        ok: false;
-        errorCode: string;
-        step: string;
-        exitCode?: number | undefined;
-    } | {
-        ok: true;
-        media: {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: undefined | {
-                sessionId: string;
-                storage: 'daemon' | 'session';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            };
-        };
-    };
-    readonly "devices.simulator.appearance.set": {
-        ok: false;
-        errorCode: string;
-        step: string;
-        exitCode?: number | undefined;
-    } | {
-        ok: true;
-        device?: undefined | {
-            v: 1;
-            simulatorId: string;
-            platform: 'android' | 'ios';
-            deviceId: string;
-            displayName: string;
-            capture: {
-                status: 'available';
-                sourceId: string;
-                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
-                inputMode: 'exclusive' | 'none' | 'shared';
-                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
-                streamControls?: undefined | {
-                    requestKeyframe: boolean;
-                    snapshot: boolean;
-                    setQuality: boolean;
-                    setFps: boolean;
-                    setScale: boolean;
-                };
-            } | {
-                status: 'unavailable';
-                reasonCode: string;
-                sourceId?: string | undefined;
-            };
-            state?: 'running' | 'stopped' | 'unavailable' | undefined;
-            runtimeId?: string | undefined;
-            avdName?: string | undefined;
-            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
-            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
-            appId?: string | undefined;
-            unavailableReason?: string | undefined;
-        };
-        media?: undefined | {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: undefined | {
-                sessionId: string;
-                storage: 'daemon' | 'session';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            };
-        };
-        snapshot?: undefined | {
-            nodes: {
-                index: number;
-                type: string;
-                parentIndex?: number | undefined;
-                identifier?: string | undefined;
-                label?: string | undefined;
-                value?: number | string | undefined;
-                frame?: undefined | {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                enabled?: boolean | undefined;
-            }[];
-            truncated: boolean;
-            viewport?: undefined | {
-                width: number;
-                height: number;
-            };
-            appBundleId?: string | undefined;
-        };
-        pressedIdentifier?: string | undefined;
-    };
-    readonly "devices.simulator.textSize.set": {
-        ok: false;
-        errorCode: string;
-        step: string;
-        exitCode?: number | undefined;
-    } | {
-        ok: true;
-        device?: undefined | {
-            v: 1;
-            simulatorId: string;
-            platform: 'android' | 'ios';
-            deviceId: string;
-            displayName: string;
-            capture: {
-                status: 'available';
-                sourceId: string;
-                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
-                inputMode: 'exclusive' | 'none' | 'shared';
-                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
-                streamControls?: undefined | {
-                    requestKeyframe: boolean;
-                    snapshot: boolean;
-                    setQuality: boolean;
-                    setFps: boolean;
-                    setScale: boolean;
-                };
-            } | {
-                status: 'unavailable';
-                reasonCode: string;
-                sourceId?: string | undefined;
-            };
-            state?: 'running' | 'stopped' | 'unavailable' | undefined;
-            runtimeId?: string | undefined;
-            avdName?: string | undefined;
-            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
-            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
-            appId?: string | undefined;
-            unavailableReason?: string | undefined;
-        };
-        media?: undefined | {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: undefined | {
-                sessionId: string;
-                storage: 'daemon' | 'session';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            };
-        };
-        snapshot?: undefined | {
-            nodes: {
-                index: number;
-                type: string;
-                parentIndex?: number | undefined;
-                identifier?: string | undefined;
-                label?: string | undefined;
-                value?: number | string | undefined;
-                frame?: undefined | {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                enabled?: boolean | undefined;
-            }[];
-            truncated: boolean;
-            viewport?: undefined | {
-                width: number;
-                height: number;
-            };
-            appBundleId?: string | undefined;
-        };
-        pressedIdentifier?: string | undefined;
-    };
-    readonly "devices.simulator.location.set": {
-        ok: false;
-        errorCode: string;
-        step: string;
-        exitCode?: number | undefined;
-    } | {
-        ok: true;
-        device?: undefined | {
-            v: 1;
-            simulatorId: string;
-            platform: 'android' | 'ios';
-            deviceId: string;
-            displayName: string;
-            capture: {
-                status: 'available';
-                sourceId: string;
-                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
-                inputMode: 'exclusive' | 'none' | 'shared';
-                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
-                streamControls?: undefined | {
-                    requestKeyframe: boolean;
-                    snapshot: boolean;
-                    setQuality: boolean;
-                    setFps: boolean;
-                    setScale: boolean;
-                };
-            } | {
-                status: 'unavailable';
-                reasonCode: string;
-                sourceId?: string | undefined;
-            };
-            state?: 'running' | 'stopped' | 'unavailable' | undefined;
-            runtimeId?: string | undefined;
-            avdName?: string | undefined;
-            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
-            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
-            appId?: string | undefined;
-            unavailableReason?: string | undefined;
-        };
-        media?: undefined | {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: undefined | {
-                sessionId: string;
-                storage: 'daemon' | 'session';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            };
-        };
-        snapshot?: undefined | {
-            nodes: {
-                index: number;
-                type: string;
-                parentIndex?: number | undefined;
-                identifier?: string | undefined;
-                label?: string | undefined;
-                value?: number | string | undefined;
-                frame?: undefined | {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                enabled?: boolean | undefined;
-            }[];
-            truncated: boolean;
-            viewport?: undefined | {
-                width: number;
-                height: number;
-            };
-            appBundleId?: string | undefined;
-        };
-        pressedIdentifier?: string | undefined;
-    };
-    readonly "devices.simulator.location.clear": {
-        ok: false;
-        errorCode: string;
-        step: string;
-        exitCode?: number | undefined;
-    } | {
-        ok: true;
-        device?: undefined | {
-            v: 1;
-            simulatorId: string;
-            platform: 'android' | 'ios';
-            deviceId: string;
-            displayName: string;
-            capture: {
-                status: 'available';
-                sourceId: string;
-                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
-                inputMode: 'exclusive' | 'none' | 'shared';
-                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
-                streamControls?: undefined | {
-                    requestKeyframe: boolean;
-                    snapshot: boolean;
-                    setQuality: boolean;
-                    setFps: boolean;
-                    setScale: boolean;
-                };
-            } | {
-                status: 'unavailable';
-                reasonCode: string;
-                sourceId?: string | undefined;
-            };
-            state?: 'running' | 'stopped' | 'unavailable' | undefined;
-            runtimeId?: string | undefined;
-            avdName?: string | undefined;
-            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
-            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
-            appId?: string | undefined;
-            unavailableReason?: string | undefined;
-        };
-        media?: undefined | {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: undefined | {
-                sessionId: string;
-                storage: 'daemon' | 'session';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            };
-        };
-        snapshot?: undefined | {
-            nodes: {
-                index: number;
-                type: string;
-                parentIndex?: number | undefined;
-                identifier?: string | undefined;
-                label?: string | undefined;
-                value?: number | string | undefined;
-                frame?: undefined | {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                enabled?: boolean | undefined;
-            }[];
-            truncated: boolean;
-            viewport?: undefined | {
-                width: number;
-                height: number;
-            };
-            appBundleId?: string | undefined;
-        };
-        pressedIdentifier?: string | undefined;
-    };
-    readonly "devices.simulator.permission.set": {
-        ok: false;
-        errorCode: string;
-        step: string;
-        exitCode?: number | undefined;
-    } | {
-        ok: true;
-        device?: undefined | {
-            v: 1;
-            simulatorId: string;
-            platform: 'android' | 'ios';
-            deviceId: string;
-            displayName: string;
-            capture: {
-                status: 'available';
-                sourceId: string;
-                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
-                inputMode: 'exclusive' | 'none' | 'shared';
-                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
-                streamControls?: undefined | {
-                    requestKeyframe: boolean;
-                    snapshot: boolean;
-                    setQuality: boolean;
-                    setFps: boolean;
-                    setScale: boolean;
-                };
-            } | {
-                status: 'unavailable';
-                reasonCode: string;
-                sourceId?: string | undefined;
-            };
-            state?: 'running' | 'stopped' | 'unavailable' | undefined;
-            runtimeId?: string | undefined;
-            avdName?: string | undefined;
-            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
-            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
-            appId?: string | undefined;
-            unavailableReason?: string | undefined;
-        };
-        media?: undefined | {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: undefined | {
-                sessionId: string;
-                storage: 'daemon' | 'session';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            };
-        };
-        snapshot?: undefined | {
-            nodes: {
-                index: number;
-                type: string;
-                parentIndex?: number | undefined;
-                identifier?: string | undefined;
-                label?: string | undefined;
-                value?: number | string | undefined;
-                frame?: undefined | {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                enabled?: boolean | undefined;
-            }[];
-            truncated: boolean;
-            viewport?: undefined | {
-                width: number;
-                height: number;
-            };
-            appBundleId?: string | undefined;
-        };
-        pressedIdentifier?: string | undefined;
-    };
-    readonly "devices.simulator.push.send": {
-        ok: false;
-        errorCode: string;
-        step: string;
-        exitCode?: number | undefined;
-    } | {
-        ok: true;
-        device?: undefined | {
-            v: 1;
-            simulatorId: string;
-            platform: 'android' | 'ios';
-            deviceId: string;
-            displayName: string;
-            capture: {
-                status: 'available';
-                sourceId: string;
-                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
-                inputMode: 'exclusive' | 'none' | 'shared';
-                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
-                streamControls?: undefined | {
-                    requestKeyframe: boolean;
-                    snapshot: boolean;
-                    setQuality: boolean;
-                    setFps: boolean;
-                    setScale: boolean;
-                };
-            } | {
-                status: 'unavailable';
-                reasonCode: string;
-                sourceId?: string | undefined;
-            };
-            state?: 'running' | 'stopped' | 'unavailable' | undefined;
-            runtimeId?: string | undefined;
-            avdName?: string | undefined;
-            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
-            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
-            appId?: string | undefined;
-            unavailableReason?: string | undefined;
-        };
-        media?: undefined | {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: undefined | {
-                sessionId: string;
-                storage: 'daemon' | 'session';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            };
-        };
-        snapshot?: undefined | {
-            nodes: {
-                index: number;
-                type: string;
-                parentIndex?: number | undefined;
-                identifier?: string | undefined;
-                label?: string | undefined;
-                value?: number | string | undefined;
-                frame?: undefined | {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                enabled?: boolean | undefined;
-            }[];
-            truncated: boolean;
-            viewport?: undefined | {
-                width: number;
-                height: number;
-            };
-            appBundleId?: string | undefined;
-        };
-        pressedIdentifier?: string | undefined;
-    };
-    readonly "devices.simulator.hardware.button": {
-        ok: false;
-        errorCode: string;
-        step: string;
-        exitCode?: number | undefined;
-    } | {
-        ok: true;
-        device?: undefined | {
-            v: 1;
-            simulatorId: string;
-            platform: 'android' | 'ios';
-            deviceId: string;
-            displayName: string;
-            capture: {
-                status: 'available';
-                sourceId: string;
-                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
-                inputMode: 'exclusive' | 'none' | 'shared';
-                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
-                streamControls?: undefined | {
-                    requestKeyframe: boolean;
-                    snapshot: boolean;
-                    setQuality: boolean;
-                    setFps: boolean;
-                    setScale: boolean;
-                };
-            } | {
-                status: 'unavailable';
-                reasonCode: string;
-                sourceId?: string | undefined;
-            };
-            state?: 'running' | 'stopped' | 'unavailable' | undefined;
-            runtimeId?: string | undefined;
-            avdName?: string | undefined;
-            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
-            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
-            appId?: string | undefined;
-            unavailableReason?: string | undefined;
-        };
-        media?: undefined | {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: undefined | {
-                sessionId: string;
-                storage: 'daemon' | 'session';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            };
-        };
-        snapshot?: undefined | {
-            nodes: {
-                index: number;
-                type: string;
-                parentIndex?: number | undefined;
-                identifier?: string | undefined;
-                label?: string | undefined;
-                value?: number | string | undefined;
-                frame?: undefined | {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                enabled?: boolean | undefined;
-            }[];
-            truncated: boolean;
-            viewport?: undefined | {
-                width: number;
-                height: number;
-            };
-            appBundleId?: string | undefined;
-        };
-        pressedIdentifier?: string | undefined;
-    };
-    readonly "devices.simulator.rotation.set": {
-        ok: false;
-        errorCode: string;
-        step: string;
-        exitCode?: number | undefined;
-    } | {
-        ok: true;
-        device?: undefined | {
-            v: 1;
-            simulatorId: string;
-            platform: 'android' | 'ios';
-            deviceId: string;
-            displayName: string;
-            capture: {
-                status: 'available';
-                sourceId: string;
-                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
-                inputMode: 'exclusive' | 'none' | 'shared';
-                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
-                streamControls?: undefined | {
-                    requestKeyframe: boolean;
-                    snapshot: boolean;
-                    setQuality: boolean;
-                    setFps: boolean;
-                    setScale: boolean;
-                };
-            } | {
-                status: 'unavailable';
-                reasonCode: string;
-                sourceId?: string | undefined;
-            };
-            state?: 'running' | 'stopped' | 'unavailable' | undefined;
-            runtimeId?: string | undefined;
-            avdName?: string | undefined;
-            supportedDeviceOperations?: ('accessibility_press' | 'accessibility_snapshot' | 'app_launch' | 'app_terminate' | 'appearance_set' | 'boot' | 'hardware' | 'location_clear' | 'location_set' | 'open_url' | 'permission_set' | 'power_off' | 'push' | 'rotate' | 'screenshot' | 'text_size_set')[] | undefined;
-            supportedHardwareButtons?: ('back' | 'home' | 'recents')[] | undefined;
-            appId?: string | undefined;
-            unavailableReason?: string | undefined;
-        };
-        media?: undefined | {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: undefined | {
-                sessionId: string;
-                storage: 'daemon' | 'session';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            };
-        };
-        snapshot?: undefined | {
-            nodes: {
-                index: number;
-                type: string;
-                parentIndex?: number | undefined;
-                identifier?: string | undefined;
-                label?: string | undefined;
-                value?: number | string | undefined;
-                frame?: undefined | {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                enabled?: boolean | undefined;
-            }[];
-            truncated: boolean;
-            viewport?: undefined | {
-                width: number;
-                height: number;
-            };
-            appBundleId?: string | undefined;
-        };
-        pressedIdentifier?: string | undefined;
     };
 };

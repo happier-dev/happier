@@ -23,7 +23,7 @@ export type AutomationOccurrencesActionResultById = {
             state: 'cancelled' | 'claimed' | 'dispatch_failed' | 'expired' | 'failed' | 'missed' | 'outcome_uncertain' | 'queued' | 'running' | 'skipped' | 'succeeded';
             cause: {
                 evidence: {
-                    event: 'parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed';
+                    event: 'parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'parentTurnStarted';
                     sourceSessionId: string;
                     sourceTurnId: string;
                     policy: {
@@ -94,6 +94,23 @@ export type AutomationOccurrencesActionResultById = {
             } | {
                 kind: 'manual';
                 invokedAt: number;
+            } | {
+                kind: 'trigger';
+                triggerId: string;
+                triggerRevision: number;
+                triggerKind: 'action';
+                occurrenceKey: string;
+                occurredAt: number;
+                evidence: {
+                    actionId: string;
+                    requestId: string;
+                    phase: 'after' | 'before';
+                    status?: 'failed' | 'succeeded' | undefined;
+                    outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
+                    errorCode?: string | undefined;
+                    machineId?: string | undefined;
+                    originRunId?: string | undefined;
+                };
             } | {
                 kind: 'trigger';
                 triggerId: string;
@@ -185,7 +202,7 @@ export type AutomationOccurrencesActionResultById = {
             state: 'cancelled' | 'claimed' | 'dispatch_failed' | 'expired' | 'failed' | 'missed' | 'outcome_uncertain' | 'queued' | 'running' | 'skipped' | 'succeeded';
             cause: {
                 evidence: {
-                    event: 'parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed';
+                    event: 'parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'parentTurnStarted';
                     sourceSessionId: string;
                     sourceTurnId: string;
                     policy: {
@@ -256,6 +273,23 @@ export type AutomationOccurrencesActionResultById = {
             } | {
                 kind: 'manual';
                 invokedAt: number;
+            } | {
+                kind: 'trigger';
+                triggerId: string;
+                triggerRevision: number;
+                triggerKind: 'action';
+                occurrenceKey: string;
+                occurredAt: number;
+                evidence: {
+                    actionId: string;
+                    requestId: string;
+                    phase: 'after' | 'before';
+                    status?: 'failed' | 'succeeded' | undefined;
+                    outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
+                    errorCode?: string | undefined;
+                    machineId?: string | undefined;
+                    originRunId?: string | undefined;
+                };
             } | {
                 kind: 'trigger';
                 triggerId: string;

@@ -41,7 +41,6 @@ export type HomeIdentityActionInputById = {
     };
     readonly "home.identity.connections.settings.update": {
         v: 1;
-        expectedRevision: number;
         settings: {
             v: 1;
             kind: 'github_app_identity';
@@ -58,31 +57,32 @@ export type HomeIdentityActionInputById = {
             kind: 'workos_sso';
         };
         connectionId: string;
+        expectedRevision: number;
     };
     readonly "home.identity.connections.enable": {
         v: 1;
-        expectedRevision: number;
         connectionId: string;
+        expectedRevision: number;
     };
     readonly "home.identity.connections.disable": {
         v: 1;
-        expectedRevision: number;
         connectionId: string;
+        expectedRevision: number;
     };
     readonly "home.identity.connections.remove.preview": {
         v: 1;
-        expectedRevision: number;
         connectionId: string;
+        expectedRevision: number;
     };
     readonly "home.identity.connections.remove": {
         v: 1;
-        expectedRevision: number;
         connectionId: string;
+        expectedRevision: number;
     };
     readonly "home.identity.connections.test.start": {
         v: 1;
-        expectedRevision: number;
         connectionId: string;
+        expectedRevision: number;
     };
     readonly "home.identity.connections.test.consume": {
         v: 1;
@@ -100,13 +100,13 @@ export type HomeIdentityActionInputById = {
     };
     readonly "home.identity.workos.reconcile": {
         v: 1;
-        expectedRevision: number;
         connectionId: string;
+        expectedRevision: number;
     };
     readonly "home.identity.workos.connection.set": {
         v: 1;
-        expectedRevision: number;
         connectionId: string;
+        expectedRevision: number;
         workosConnectionId: string;
     };
 };
@@ -607,6 +607,9 @@ export type HomeIdentityActionResultById = {
     };
     readonly "home.identity.connections.remove": {
         outcome: 'already_absent' | 'removed';
+    } | {
+        outcome: 'disabled_pending_completion';
+        reason?: 'home_forbidden' | 'identity_connection_conflict' | 'identity_connection_invalid' | 'identity_connection_not_found' | 'identity_connection_policy_in_use' | 'identity_connection_test_invalid' | 'identity_provider_in_use' | 'identity_provider_unavailable' | 'team_authentication_policy_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'team_forbidden' | 'team_identity_not_allowed' | 'team_not_found' | 'workos_connection_mismatch' | 'workos_organization_mismatch' | 'workos_platform_unavailable' | undefined;
     };
     readonly "home.identity.connections.test.start": {
         authorizeUrl: string;

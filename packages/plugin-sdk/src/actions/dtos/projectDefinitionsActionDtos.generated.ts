@@ -2,6 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
+import type { ActionFailureCauseV1 } from './pluginActionDtoSupport.generated.js';
 
 export type ProjectDefinitionsActionInputById = {
     readonly "projects.inspect": {
@@ -12,7 +13,7 @@ export type ProjectDefinitionsActionInputById = {
             rootPath: string;
         };
         read?: undefined | {
-            kind: 'applications' | 'create' | 'editor' | 'guidance' | 'imports' | 'placement' | 'scripts' | 'services' | 'setup' | 'tools';
+            kind: 'applications' | 'create' | 'guidance' | 'imports' | 'placement' | 'scripts' | 'services' | 'setup' | 'tools';
         } | {
             kind: 'detail';
             sources: {
@@ -33,6 +34,9 @@ export type ProjectDefinitionsActionInputById = {
                 usage: 'script' | 'service' | 'setup';
             }[];
         } | {
+            kind: 'editor';
+            target?: 'repository' | undefined;
+        } | {
             kind: 'execution';
             command?: undefined | {
                 usage: 'script' | 'service' | 'setup';
@@ -44,6 +48,9 @@ export type ProjectDefinitionsActionInputById = {
         };
         ifRevision?: string | undefined;
         reviewSetupConsent?: true | undefined;
+        reviewSharedSetup?: undefined | {
+            sourceId: string;
+        };
     };
     readonly "projects.manifest.update": {
         workspace: {
@@ -371,6 +378,558 @@ export type ProjectDefinitionsActionResultById = {
         }[];
         revision?: string | undefined;
         definitionScope?: 'statusOnly' | undefined;
+        effectiveDefinition?: undefined | {
+            effectiveManifest: null | {
+                version: 1;
+                $schema?: string | undefined;
+                toolchain?: undefined | {
+                    kind: 'host';
+                } | {
+                    kind: 'pluginToolchain';
+                    adapter: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    configPath?: string | undefined;
+                } | {
+                    kind: 'toolchain';
+                    tool: 'devbox' | 'devenv' | 'flox' | 'mise' | 'nix_flake';
+                    configPath?: string | undefined;
+                };
+                devcontainer?: undefined | {
+                    configPath?: string | undefined;
+                };
+                worktreePorts?: undefined | {
+                    enabled: false;
+                } | {
+                    enabled: true;
+                    slots: number;
+                };
+                environmentVariables?: undefined | {
+                    name: string;
+                    kind: 'config' | 'secret';
+                    required: boolean;
+                }[];
+                workspace?: undefined | {
+                    setup?: ({
+                        kind: 'command';
+                        command: string;
+                        cwd?: string | undefined;
+                        platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                    } | {
+                        kind: 'native';
+                        tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                        file: string;
+                        target: string;
+                    } | {
+                        kind: 'pluginNative';
+                        adapter: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        file: string;
+                        target: string;
+                    })[] | undefined;
+                    teardown?: ({
+                        kind: 'command';
+                        command: string;
+                        cwd?: string | undefined;
+                        platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                    } | {
+                        kind: 'native';
+                        tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                        file: string;
+                        target: string;
+                    } | {
+                        kind: 'pluginNative';
+                        adapter: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        file: string;
+                        target: string;
+                    })[] | undefined;
+                    setupInputs?: string[] | undefined;
+                    memoryDemand?: undefined | {
+                        bytes: number;
+                        basis: {
+                            kind: 'declared';
+                        } | {
+                            kind: 'measured';
+                            operation?: undefined | {
+                                serverId: string;
+                                machineId: string;
+                                operationId: string;
+                            };
+                        };
+                    };
+                };
+                scripts?: Record<string, {
+                    source: {
+                        kind: 'command';
+                        command: string;
+                        cwd?: string | undefined;
+                        platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                    } | {
+                        kind: 'native';
+                        tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                        file: string;
+                        target: string;
+                    } | {
+                        kind: 'pluginNative';
+                        adapter: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        file: string;
+                        target: string;
+                    };
+                    execution?: 'portable' | 'primary' | undefined;
+                    memoryDemand?: undefined | {
+                        bytes: number;
+                        basis: {
+                            kind: 'declared';
+                        } | {
+                            kind: 'measured';
+                            operation?: undefined | {
+                                serverId: string;
+                                machineId: string;
+                                operationId: string;
+                            };
+                        };
+                    };
+                }> | undefined;
+                services?: Record<string, {
+                    source: {
+                        kind: 'command';
+                        command: string;
+                        cwd?: string | undefined;
+                        platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                    } | {
+                        kind: 'native';
+                        tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                        file: string;
+                        target: string;
+                    } | {
+                        kind: 'pluginNative';
+                        adapter: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        file: string;
+                        target: string;
+                    };
+                    execution?: 'portable' | 'primary' | undefined;
+                    port?: number | undefined;
+                    runtime?: undefined | {
+                        portSlot?: number | undefined;
+                        primary?: boolean | undefined;
+                        terminal?: boolean | undefined;
+                        title?: string | undefined;
+                        autostart?: boolean | undefined;
+                    };
+                }> | undefined;
+            };
+            origins: {
+                path: string[];
+                layer: 'personal' | 'repository' | 'shared';
+                overridden: boolean;
+            }[];
+            sharedBasis?: undefined | {
+                sourceId: string;
+                contentRevision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
+                digest: string;
+            };
+        };
+        sharedSetupChange?: undefined | {
+            kind: 'changed';
+            selection: {
+                sourceId: string;
+                contentRevision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
+                digest: string;
+            };
+            before: {
+                effectiveManifest: null | {
+                    version: 1;
+                    $schema?: string | undefined;
+                    toolchain?: undefined | {
+                        kind: 'host';
+                    } | {
+                        kind: 'pluginToolchain';
+                        adapter: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        configPath?: string | undefined;
+                    } | {
+                        kind: 'toolchain';
+                        tool: 'devbox' | 'devenv' | 'flox' | 'mise' | 'nix_flake';
+                        configPath?: string | undefined;
+                    };
+                    devcontainer?: undefined | {
+                        configPath?: string | undefined;
+                    };
+                    worktreePorts?: undefined | {
+                        enabled: false;
+                    } | {
+                        enabled: true;
+                        slots: number;
+                    };
+                    environmentVariables?: undefined | {
+                        name: string;
+                        kind: 'config' | 'secret';
+                        required: boolean;
+                    }[];
+                    workspace?: undefined | {
+                        setup?: ({
+                            kind: 'command';
+                            command: string;
+                            cwd?: string | undefined;
+                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                        } | {
+                            kind: 'native';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                            file: string;
+                            target: string;
+                        } | {
+                            kind: 'pluginNative';
+                            adapter: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            file: string;
+                            target: string;
+                        })[] | undefined;
+                        teardown?: ({
+                            kind: 'command';
+                            command: string;
+                            cwd?: string | undefined;
+                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                        } | {
+                            kind: 'native';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                            file: string;
+                            target: string;
+                        } | {
+                            kind: 'pluginNative';
+                            adapter: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            file: string;
+                            target: string;
+                        })[] | undefined;
+                        setupInputs?: string[] | undefined;
+                        memoryDemand?: undefined | {
+                            bytes: number;
+                            basis: {
+                                kind: 'declared';
+                            } | {
+                                kind: 'measured';
+                                operation?: undefined | {
+                                    serverId: string;
+                                    machineId: string;
+                                    operationId: string;
+                                };
+                            };
+                        };
+                    };
+                    scripts?: Record<string, {
+                        source: {
+                            kind: 'command';
+                            command: string;
+                            cwd?: string | undefined;
+                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                        } | {
+                            kind: 'native';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                            file: string;
+                            target: string;
+                        } | {
+                            kind: 'pluginNative';
+                            adapter: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            file: string;
+                            target: string;
+                        };
+                        execution?: 'portable' | 'primary' | undefined;
+                        memoryDemand?: undefined | {
+                            bytes: number;
+                            basis: {
+                                kind: 'declared';
+                            } | {
+                                kind: 'measured';
+                                operation?: undefined | {
+                                    serverId: string;
+                                    machineId: string;
+                                    operationId: string;
+                                };
+                            };
+                        };
+                    }> | undefined;
+                    services?: Record<string, {
+                        source: {
+                            kind: 'command';
+                            command: string;
+                            cwd?: string | undefined;
+                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                        } | {
+                            kind: 'native';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                            file: string;
+                            target: string;
+                        } | {
+                            kind: 'pluginNative';
+                            adapter: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            file: string;
+                            target: string;
+                        };
+                        execution?: 'portable' | 'primary' | undefined;
+                        port?: number | undefined;
+                        runtime?: undefined | {
+                            portSlot?: number | undefined;
+                            primary?: boolean | undefined;
+                            terminal?: boolean | undefined;
+                            title?: string | undefined;
+                            autostart?: boolean | undefined;
+                        };
+                    }> | undefined;
+                };
+                origins: {
+                    path: string[];
+                    layer: 'personal' | 'repository' | 'shared';
+                    overridden: boolean;
+                }[];
+                sharedBasis?: undefined | {
+                    sourceId: string;
+                    contentRevision: {
+                        headerVersion: number;
+                        bodyVersion: number;
+                    };
+                    digest: string;
+                };
+            };
+            after: {
+                effectiveManifest: null | {
+                    version: 1;
+                    $schema?: string | undefined;
+                    toolchain?: undefined | {
+                        kind: 'host';
+                    } | {
+                        kind: 'pluginToolchain';
+                        adapter: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        configPath?: string | undefined;
+                    } | {
+                        kind: 'toolchain';
+                        tool: 'devbox' | 'devenv' | 'flox' | 'mise' | 'nix_flake';
+                        configPath?: string | undefined;
+                    };
+                    devcontainer?: undefined | {
+                        configPath?: string | undefined;
+                    };
+                    worktreePorts?: undefined | {
+                        enabled: false;
+                    } | {
+                        enabled: true;
+                        slots: number;
+                    };
+                    environmentVariables?: undefined | {
+                        name: string;
+                        kind: 'config' | 'secret';
+                        required: boolean;
+                    }[];
+                    workspace?: undefined | {
+                        setup?: ({
+                            kind: 'command';
+                            command: string;
+                            cwd?: string | undefined;
+                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                        } | {
+                            kind: 'native';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                            file: string;
+                            target: string;
+                        } | {
+                            kind: 'pluginNative';
+                            adapter: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            file: string;
+                            target: string;
+                        })[] | undefined;
+                        teardown?: ({
+                            kind: 'command';
+                            command: string;
+                            cwd?: string | undefined;
+                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                        } | {
+                            kind: 'native';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                            file: string;
+                            target: string;
+                        } | {
+                            kind: 'pluginNative';
+                            adapter: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            file: string;
+                            target: string;
+                        })[] | undefined;
+                        setupInputs?: string[] | undefined;
+                        memoryDemand?: undefined | {
+                            bytes: number;
+                            basis: {
+                                kind: 'declared';
+                            } | {
+                                kind: 'measured';
+                                operation?: undefined | {
+                                    serverId: string;
+                                    machineId: string;
+                                    operationId: string;
+                                };
+                            };
+                        };
+                    };
+                    scripts?: Record<string, {
+                        source: {
+                            kind: 'command';
+                            command: string;
+                            cwd?: string | undefined;
+                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                        } | {
+                            kind: 'native';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                            file: string;
+                            target: string;
+                        } | {
+                            kind: 'pluginNative';
+                            adapter: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            file: string;
+                            target: string;
+                        };
+                        execution?: 'portable' | 'primary' | undefined;
+                        memoryDemand?: undefined | {
+                            bytes: number;
+                            basis: {
+                                kind: 'declared';
+                            } | {
+                                kind: 'measured';
+                                operation?: undefined | {
+                                    serverId: string;
+                                    machineId: string;
+                                    operationId: string;
+                                };
+                            };
+                        };
+                    }> | undefined;
+                    services?: Record<string, {
+                        source: {
+                            kind: 'command';
+                            command: string;
+                            cwd?: string | undefined;
+                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                        } | {
+                            kind: 'native';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                            file: string;
+                            target: string;
+                        } | {
+                            kind: 'pluginNative';
+                            adapter: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            file: string;
+                            target: string;
+                        };
+                        execution?: 'portable' | 'primary' | undefined;
+                        port?: number | undefined;
+                        runtime?: undefined | {
+                            portSlot?: number | undefined;
+                            primary?: boolean | undefined;
+                            terminal?: boolean | undefined;
+                            title?: string | undefined;
+                            autostart?: boolean | undefined;
+                        };
+                    }> | undefined;
+                };
+                origins: {
+                    path: string[];
+                    layer: 'personal' | 'repository' | 'shared';
+                    overridden: boolean;
+                }[];
+                sharedBasis?: undefined | {
+                    sourceId: string;
+                    contentRevision: {
+                        headerVersion: number;
+                        bodyVersion: number;
+                    };
+                    digest: string;
+                };
+            };
+            setupReadiness: {
+                kind: 'current';
+                reviewedEffectDigest: string;
+                completedAtMs: number;
+            } | {
+                kind: 'needsReview';
+                code: string;
+            } | {
+                kind: 'notRequired';
+                reviewedEffectDigest: string;
+            } | {
+                kind: 'unknown';
+                code: string;
+            } | {
+                kind: 'unprepared';
+                reviewedEffectDigest: string;
+            };
+            sourceAudienceTeams?: undefined | {
+                teamId: string;
+                name: string;
+            }[];
+            setupReview?: undefined | {
+                reviewedEffect: JsonValue;
+                reviewedEffectDigest: string;
+            };
+        } | {
+            kind: 'current';
+            selection: {
+                sourceId: string;
+                contentRevision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
+                digest: string;
+            };
+            sourceAudienceTeams?: undefined | {
+                teamId: string;
+                name: string;
+            }[];
+        } | {
+            kind: 'upstreamUnavailable';
+            code: string;
+            failureCause?: ActionFailureCauseV1 | undefined;
+        };
         detectionSummary?: undefined | {
             total: number;
             scripts: number;
@@ -382,6 +941,19 @@ export type ProjectDefinitionsActionResultById = {
                 services: number;
             }[];
             sourceFiles?: string[] | undefined;
+        };
+        environmentImport?: undefined | {
+            kind: 'environment';
+            file: '.env.example';
+            requirements: {
+                name: string;
+                kind: 'config' | 'secret';
+                required: boolean;
+            }[];
+            diagnostics: {
+                code: 'malformed_dotenv' | 'outside_root' | 'unreadable_definition';
+                line?: number | undefined;
+            }[];
         };
         commands?: undefined | {
             name: string;
@@ -414,6 +986,10 @@ export type ProjectDefinitionsActionResultById = {
             }[];
         }[];
         toolchainExecutionInputs?: undefined | {
+            file: string;
+            hash: string;
+        }[];
+        commandExecutedFiles?: undefined | {
             file: string;
             hash: string;
         }[];

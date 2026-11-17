@@ -130,6 +130,7 @@ export type SessionTargetingActionResultById = {
                 [x: string]: unknown;
                 type: 'dataKey' | 'legacy';
             };
+            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
             manager?: undefined | {
                 sessionId: string;
             };
@@ -172,6 +173,13 @@ export type SessionTargetingActionResultById = {
                         number
                     ] | string)[] | undefined;
                     origin?: 'custom' | 'surprise' | undefined;
+                };
+                pet?: undefined | {
+                    kind: 'accountPet';
+                    accountPetId: string;
+                } | {
+                    kind: 'builtIn';
+                    petId: string;
                 };
             };
             path?: string | undefined;
@@ -661,8 +669,12 @@ export type SessionTargetingActionResultById = {
             workerSessionId?: string | undefined;
         };
     };
-    readonly "session.messages.recent.get": JsonValue;
-    readonly "session.target.primary.set": JsonValue;
+    readonly "session.messages.recent.get": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.target.primary.set": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
     readonly "session.target.tracked.set": {
         ok: false;
         status: 'ambiguous' | 'incomplete' | 'not_found' | 'unavailable';

@@ -10,7 +10,9 @@ export type HomeHubLayoutActionInputById = {
     } & {
         clientId?: string | undefined;
     };
-    readonly "home.hub.layout.get": Record<string, never>;
+    readonly "home.hub.layout.get": {
+        [x: string]: never;
+    };
     readonly "home.hub.layout.update": {
         intent: {
             kind: 'add';

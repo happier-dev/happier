@@ -93,7 +93,9 @@ export type InternalTasksActionInputById = {
                 url: string;
                 title?: string | undefined;
             }[];
+            dueAt?: number | undefined;
             notes?: string | undefined;
+            createdBy?: string | undefined;
             blockedBy?: (Readonly<{
                 source: Readonly<{
                     pluginId: string;
@@ -103,8 +105,6 @@ export type InternalTasksActionInputById = {
                 collisionScope: string;
                 entryId: string;
             }> | string)[] | undefined;
-            createdBy?: string | undefined;
-            dueAt?: number | undefined;
             parentId?: Readonly<{
                 source: Readonly<{
                     pluginId: string;

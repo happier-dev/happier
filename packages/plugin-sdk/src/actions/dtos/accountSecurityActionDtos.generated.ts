@@ -10,7 +10,9 @@ export type AccountSecurityActionInputById = {
     readonly "account.encryption.historicalKey.forget": Record<string, never> & {
         clientId?: string | undefined;
     };
-    readonly "account.security.get": Record<string, never>;
+    readonly "account.security.get": {
+        [x: string]: never;
+    };
     readonly "account.password.enroll": {
         v: 1;
         kind: 'e2ee';

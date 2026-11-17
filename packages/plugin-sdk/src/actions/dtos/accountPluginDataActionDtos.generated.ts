@@ -204,7 +204,7 @@ export type AccountPluginDataActionResultById = {
                         fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                     } | {
                         localCause: 'native_command_failed';
-                        command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                        command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
@@ -232,6 +232,14 @@ export type AccountPluginDataActionResultById = {
                         resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
                     } | {
                         sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+                    };
+                    carrierFailure?: undefined | {
+                        attemptedCarrier: 'https' | 'iroh' | 'none';
+                        reason: 'cancelled' | 'endpoint_config_conflict' | 'endpoint_identity_invalid' | 'endpoint_key_unavailable' | 'home_unreachable' | 'identity_mismatch' | 'invalid_descriptor' | 'invalid_preamble' | 'invalid_preference' | 'loopback_bind_failed' | 'relay_auth_failed' | 'resource_limit' | 'transport' | 'transport_closed' | 'transport_timeout' | 'unavailable' | 'unknown' | 'unsupported_alpn';
+                        irohAttempt?: undefined | {
+                            outcome: 'unavailable';
+                            reason: 'cancelled' | 'endpoint_config_conflict' | 'endpoint_identity_invalid' | 'endpoint_key_unavailable' | 'home_unreachable' | 'identity_mismatch' | 'invalid_descriptor' | 'invalid_preamble' | 'invalid_preference' | 'loopback_bind_failed' | 'relay_auth_failed' | 'resource_limit' | 'transport' | 'transport_closed' | 'transport_timeout' | 'unavailable' | 'unknown' | 'unsupported_alpn';
+                        };
                     };
                     power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
                     storage?: 'lost' | 'retained' | 'unknown' | undefined;
@@ -369,7 +377,7 @@ export type AccountPluginDataActionResultById = {
                     fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                 } | {
                     localCause: 'native_command_failed';
-                    command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                    command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                     exitCode: null | number;
                     stderr?: string | undefined;
                     stderrTruncated?: true | undefined;
@@ -397,6 +405,14 @@ export type AccountPluginDataActionResultById = {
                     resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
                 } | {
                     sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+                };
+                carrierFailure?: undefined | {
+                    attemptedCarrier: 'https' | 'iroh' | 'none';
+                    reason: 'cancelled' | 'endpoint_config_conflict' | 'endpoint_identity_invalid' | 'endpoint_key_unavailable' | 'home_unreachable' | 'identity_mismatch' | 'invalid_descriptor' | 'invalid_preamble' | 'invalid_preference' | 'loopback_bind_failed' | 'relay_auth_failed' | 'resource_limit' | 'transport' | 'transport_closed' | 'transport_timeout' | 'unavailable' | 'unknown' | 'unsupported_alpn';
+                    irohAttempt?: undefined | {
+                        outcome: 'unavailable';
+                        reason: 'cancelled' | 'endpoint_config_conflict' | 'endpoint_identity_invalid' | 'endpoint_key_unavailable' | 'home_unreachable' | 'identity_mismatch' | 'invalid_descriptor' | 'invalid_preamble' | 'invalid_preference' | 'loopback_bind_failed' | 'relay_auth_failed' | 'resource_limit' | 'transport' | 'transport_closed' | 'transport_timeout' | 'unavailable' | 'unknown' | 'unsupported_alpn';
+                    };
                 };
                 power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
                 storage?: 'lost' | 'retained' | 'unknown' | undefined;

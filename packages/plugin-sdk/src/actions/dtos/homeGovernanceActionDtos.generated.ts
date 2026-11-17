@@ -24,8 +24,12 @@ export type HomeGovernanceActionInputById = {
     readonly "home.governance.get": {
         projection?: 'session_defaults' | undefined;
     };
-    readonly "home.governance.eligibility.get": Record<string, never>;
-    readonly "home.emptiness.get": Record<string, never>;
+    readonly "home.governance.eligibility.get": {
+        [x: string]: never;
+    };
+    readonly "home.emptiness.get": {
+        [x: string]: never;
+    };
     readonly "home.governance.claim": {
         code: string;
     };
@@ -264,6 +268,7 @@ export type HomeGovernanceActionInputById = {
                     directory: string;
                 };
             };
+            approvalProfileId?: null | string | undefined;
             permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
             modelByAgentTargetKey?: Record<string, {
                 ref: {
@@ -374,7 +379,9 @@ export type HomeGovernanceActionInputById = {
         };
         confirmWidening?: true | undefined;
     };
-    readonly "home.settings.get": Record<string, never>;
+    readonly "home.settings.get": {
+        [x: string]: never;
+    };
     readonly "home.settings.set": {
         expectedRevision: number;
         values: Record<string, unknown>;
@@ -385,7 +392,9 @@ export type HomeGovernanceActionInputById = {
         }> | undefined;
         discardPendingRestart?: true | undefined;
     };
-    readonly "home.mailDelivery.get": Record<string, never>;
+    readonly "home.mailDelivery.get": {
+        [x: string]: never;
+    };
     readonly "home.mailDelivery.test": {
         to: string;
     };
@@ -394,11 +403,15 @@ export type HomeGovernanceActionInputById = {
         limit?: number | undefined;
         targetId?: string | undefined;
     };
-    readonly "home.reachability.get": Record<string, never>;
+    readonly "home.reachability.get": {
+        [x: string]: never;
+    };
     readonly "home.reachability.iroh.set": {
         mode: 'disabled' | 'enabled';
     };
-    readonly "home.retention.dryRun": Record<string, never>;
+    readonly "home.retention.dryRun": {
+        [x: string]: never;
+    };
 };
 export type HomeGovernanceActionResultById = {
     readonly "home.public_profiles.restrict": {
@@ -547,6 +560,7 @@ export type HomeGovernanceActionResultById = {
                     directory: string;
                 };
             };
+            approvalProfileId?: null | string | undefined;
             permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
             modelByAgentTargetKey?: Record<string, {
                 ref: {
@@ -844,6 +858,7 @@ export type HomeGovernanceActionResultById = {
                         directory: string;
                     };
                 };
+                approvalProfileId?: null | string | undefined;
                 permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                 modelByAgentTargetKey?: Record<string, {
                     ref: {
@@ -2277,6 +2292,7 @@ export type HomeGovernanceActionResultById = {
                     directory: string;
                 };
             };
+            approvalProfileId?: null | string | undefined;
             permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
             modelByAgentTargetKey?: Record<string, {
                 ref: {

@@ -4,7 +4,9 @@
 import type { JSONType } from './pluginActionDtoSupport.generated.js';
 
 export type SessionOrganizationResourcesActionInputById = {
-    readonly "session.sections.list": Record<string, never>;
+    readonly "session.sections.list": {
+        [x: string]: never;
+    };
     readonly "session.sections.create": {
         name: string;
         icon?: null | string | undefined;
@@ -24,7 +26,9 @@ export type SessionOrganizationResourcesActionInputById = {
     readonly "session.sections.archive": {
         sectionId: string;
     };
-    readonly "session.tags.list": Record<string, never>;
+    readonly "session.tags.list": {
+        [x: string]: never;
+    };
     readonly "session.tags.create": {
         tagKey: string;
         sortKey: null | string;

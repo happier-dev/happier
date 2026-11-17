@@ -533,7 +533,7 @@ export type SessionControlActionInputById = {
                     v: 1;
                     items: readonly {
                         source: {
-                            kind: 'alert' | 'entry' | 'hostedCi' | 'localTerminal' | 'pullRequest' | 'releaseNotes';
+                            kind: 'alert' | 'databaseFinding' | 'entry' | 'hostedCi' | 'localTerminal' | 'pullRequest' | 'releaseNotes';
                             label: string;
                             url?: string;
                         };
@@ -1038,6 +1038,13 @@ export type SessionControlActionInputById = {
             body?: 'antlers' | 'bag' | 'bean' | 'beetle' | 'bracelegs' | 'brackets' | 'cat' | 'crab' | 'cursor' | 'cursortail' | 'drip' | 'drone' | 'feet' | 'ghost' | 'hopper' | 'jelly' | 'loaf' | 'octopus' | 'puddle' | 'pup' | 'robot' | 'rocket' | 'semi' | 'specter' | 'spider' | 'squat' | 'squid' | 'stilts' | 'tagclaws' | 'tail' | 'tall' | 'termbody' | 'tower' | 'ufo' | 'walker' | undefined;
             palette?: 'aurora' | 'daybreak' | 'glacier' | 'indigo' | 'ink' | 'lagoon' | 'moss' | 'orchid' | 'sand' | undefined;
             seed?: string | undefined;
+            pet?: undefined | {
+                kind: 'accountPet';
+                accountPetId: string;
+            } | {
+                kind: 'builtIn';
+                petId: string;
+            };
         } | {
             style?: 'dither' | 'dots' | 'pixel' | 'planet' | 'solid' | undefined;
             body?: 'antlers' | 'bag' | 'bean' | 'beetle' | 'bracelegs' | 'brackets' | 'cat' | 'crab' | 'cursor' | 'cursortail' | 'drip' | 'drone' | 'feet' | 'ghost' | 'hopper' | 'jelly' | 'loaf' | 'octopus' | 'puddle' | 'pup' | 'robot' | 'rocket' | 'semi' | 'specter' | 'spider' | 'squat' | 'squid' | 'stilts' | 'tagclaws' | 'tail' | 'tall' | 'termbody' | 'tower' | 'ufo' | 'walker' | undefined;
@@ -1060,6 +1067,13 @@ export type SessionControlActionInputById = {
                     number
                 ] | string)[] | undefined;
                 origin?: 'custom' | 'surprise' | undefined;
+            };
+            pet?: undefined | {
+                kind: 'accountPet';
+                accountPetId: string;
+            } | {
+                kind: 'builtIn';
+                petId: string;
             };
         };
     };
@@ -1150,7 +1164,9 @@ export type SessionControlActionInputById = {
     readonly "session.permission_mode.set": {
         sessionId: string;
         permissionMode: unknown;
-        applyTiming?: 'immediate' | undefined;
+        applyTiming?: 'immediate' | 'next_prompt' | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.model.set": {
         [x: string]: unknown;
@@ -2028,7 +2044,7 @@ export type SessionControlActionResultById = {
                     v: 1;
                     items: readonly {
                         source: {
-                            kind: 'alert' | 'entry' | 'hostedCi' | 'localTerminal' | 'pullRequest' | 'releaseNotes';
+                            kind: 'alert' | 'databaseFinding' | 'entry' | 'hostedCi' | 'localTerminal' | 'pullRequest' | 'releaseNotes';
                             label: string;
                             url?: string;
                         };
@@ -2507,6 +2523,7 @@ export type SessionControlActionResultById = {
                 [x: string]: unknown;
                 type: 'dataKey' | 'legacy';
             };
+            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
             manager?: undefined | {
                 sessionId: string;
             };
@@ -2549,6 +2566,13 @@ export type SessionControlActionResultById = {
                         number
                     ] | string)[] | undefined;
                     origin?: 'custom' | 'surprise' | undefined;
+                };
+                pet?: undefined | {
+                    kind: 'accountPet';
+                    accountPetId: string;
+                } | {
+                    kind: 'builtIn';
+                    petId: string;
                 };
             };
             path?: string | undefined;
@@ -3116,10 +3140,11 @@ export type SessionControlActionResultById = {
             kind: 'permission' | 'user_action';
             tool: string;
             turnId?: string | undefined;
+            arguments?: unknown;
             nativeChoices?: undefined | {
                 requirementId: string;
                 source: string;
-                choices: {
+                choices: readonly Readonly<{
                     id: string;
                     label: string;
                     decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -3142,7 +3167,7 @@ export type SessionControlActionResultById = {
                         actionId: string;
                         input: JsonValue;
                     };
-                }[];
+                }>[];
                 origin?: undefined | {
                     sessionId: string;
                     subagentId?: string | undefined;
@@ -3204,6 +3229,7 @@ export type SessionControlActionResultById = {
                             [x: string]: unknown;
                             type: 'dataKey' | 'legacy';
                         };
+                        sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
                         manager?: undefined | {
                             sessionId: string;
                         };
@@ -3246,6 +3272,13 @@ export type SessionControlActionResultById = {
                                     number
                                 ] | string)[] | undefined;
                                 origin?: 'custom' | 'surprise' | undefined;
+                            };
+                            pet?: undefined | {
+                                kind: 'accountPet';
+                                accountPetId: string;
+                            } | {
+                                kind: 'builtIn';
+                                petId: string;
                             };
                         };
                         path?: string | undefined;
@@ -3813,10 +3846,11 @@ export type SessionControlActionResultById = {
                         kind: 'permission' | 'user_action';
                         tool: string;
                         turnId?: string | undefined;
+                        arguments?: unknown;
                         nativeChoices?: undefined | {
                             requirementId: string;
                             source: string;
-                            choices: {
+                            choices: readonly Readonly<{
                                 id: string;
                                 label: string;
                                 decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -3839,7 +3873,7 @@ export type SessionControlActionResultById = {
                                     actionId: string;
                                     input: JsonValue;
                                 };
-                            }[];
+                            }>[];
                             origin?: undefined | {
                                 sessionId: string;
                                 subagentId?: string | undefined;

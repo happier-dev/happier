@@ -225,6 +225,7 @@ export type ProjectWorkersActionInputById = {
         removeTargetCopy?: undefined | {
             workspaceRefId: string;
             rootFingerprint: string;
+            skipCleanup?: boolean | undefined;
         };
     };
     readonly "projects.service.placement.get": {
@@ -579,6 +580,7 @@ export type ProjectWorkersActionResultById = {
                 startedAtMs?: number | undefined;
                 startedByAccountId?: string | undefined;
                 endpointKind?: 'http' | 'native' | 'none' | undefined;
+                portSource?: 'assigned' | 'fixed' | undefined;
                 subtitle?: string | undefined;
                 kind?: string | undefined;
                 commandPreview?: string | undefined;
@@ -676,6 +678,21 @@ export type ProjectWorkersActionResultById = {
                         tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
                     };
                     sourceId?: string | undefined;
+                };
+                terminalView?: undefined | {
+                    kind: 'terminal_view';
+                    machineId: string;
+                    terminalId: string;
+                    terminalKey: string;
+                    cwd: string;
+                    workspace?: undefined | {
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                    };
+                    sessionId?: string | undefined;
+                    interactive?: true | undefined;
                 };
             }[];
         } | {
@@ -770,6 +787,7 @@ export type ProjectWorkersActionResultById = {
                 startedAtMs?: number | undefined;
                 startedByAccountId?: string | undefined;
                 endpointKind?: 'http' | 'native' | 'none' | undefined;
+                portSource?: 'assigned' | 'fixed' | undefined;
                 subtitle?: string | undefined;
                 kind?: string | undefined;
                 commandPreview?: string | undefined;
@@ -867,6 +885,21 @@ export type ProjectWorkersActionResultById = {
                         tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
                     };
                     sourceId?: string | undefined;
+                };
+                terminalView?: undefined | {
+                    kind: 'terminal_view';
+                    machineId: string;
+                    terminalId: string;
+                    terminalKey: string;
+                    cwd: string;
+                    workspace?: undefined | {
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                    };
+                    sessionId?: string | undefined;
+                    interactive?: true | undefined;
                 };
             };
         } | {

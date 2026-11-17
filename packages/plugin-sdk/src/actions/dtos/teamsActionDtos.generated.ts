@@ -530,6 +530,10 @@ export type TeamsActionInputById = {
         v: 1;
         teamId: string;
     };
+    readonly "teams.sharedResources.summary": {
+        v: 1;
+        teamId: string;
+    };
     readonly "teams.create": {
         v: 1;
         name: string;
@@ -715,6 +719,7 @@ export type TeamsActionInputById = {
                         directory: string;
                     };
                 };
+                approvalProfileId?: null | string | undefined;
                 permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                 modelByAgentTargetKey?: Record<string, {
                     ref: {
@@ -947,6 +952,7 @@ export type TeamsActionInputById = {
                         directory: string;
                     };
                 };
+                approvalProfileId?: null | string | undefined;
                 permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                 modelByAgentTargetKey?: Record<string, {
                     ref: {
@@ -1182,6 +1188,7 @@ export type TeamsActionInputById = {
                         directory: string;
                     };
                 };
+                approvalProfileId?: null | string | undefined;
                 permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                 modelByAgentTargetKey?: Record<string, {
                     ref: {
@@ -2058,11 +2065,11 @@ export type TeamsActionResultById = {
     readonly "teams.credentials.requestPolicySupport.get": {
         status: 'available';
         models: {
-            descriptor: {
+            descriptor: Readonly<{
                 id: string;
                 name: string;
                 costTier?: 'low' | 'premium' | 'standard' | undefined;
-                aliases?: string[] | undefined;
+                aliases?: readonly string[] | undefined;
                 description?: string | undefined;
                 contextWindowTokens?: number | undefined;
                 inlineCompletion?: undefined | {
@@ -2085,28 +2092,28 @@ export type TeamsActionResultById = {
                     maxOutputTokens?: number | undefined;
                 };
                 extendedContextModelId?: string | undefined;
-                modelOptions?: undefined | {
+                modelOptions?: readonly Readonly<{
                     id: string;
                     name: string;
+                    description?: string | undefined;
                     type: string;
                     currentValue: string;
-                    description?: string | undefined;
-                    options?: undefined | {
+                    options?: readonly Readonly<{
                         value: string;
                         name: string;
                         description?: string | undefined;
-                    }[];
-                    overridesWhenOn?: undefined | {
-                        optionIds: string[];
+                    }>[] | undefined;
+                    overridesWhenOn?: Readonly<{
+                        optionIds: readonly string[];
                         forcedValue?: string | undefined;
-                    };
-                }[];
-                capabilities?: undefined | {
+                    }> | undefined;
+                }>[] | undefined;
+                capabilities?: Readonly<{
                     toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                     reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                     structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                };
-            };
+                }> | undefined;
+            }>;
             application: {
                 implementationIdentity: {
                     pluginId: string;
@@ -2479,7 +2486,7 @@ export type TeamsActionResultById = {
             sourceOwnerDisplayName: null | string;
             id: string;
             teamId: string;
-            displayName: {
+            displayName: null | {
                 content: {
                     t: 'encrypted';
                     c: string;
@@ -2539,11 +2546,11 @@ export type TeamsActionResultById = {
                         providerTicket: string;
                     };
                 };
-                descriptor: {
+                descriptor: Readonly<{
                     id: string;
                     name: string;
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
-                    aliases?: string[] | undefined;
+                    aliases?: readonly string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
                     inlineCompletion?: undefined | {
@@ -2566,28 +2573,28 @@ export type TeamsActionResultById = {
                         maxOutputTokens?: number | undefined;
                     };
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: undefined | {
+                    modelOptions?: readonly Readonly<{
                         id: string;
                         name: string;
+                        description?: string | undefined;
                         type: string;
                         currentValue: string;
-                        description?: string | undefined;
-                        options?: undefined | {
+                        options?: readonly Readonly<{
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }[];
-                        overridesWhenOn?: undefined | {
-                            optionIds: string[];
+                        }>[] | undefined;
+                        overridesWhenOn?: Readonly<{
+                            optionIds: readonly string[];
                             forcedValue?: string | undefined;
-                        };
-                    }[];
-                    capabilities?: undefined | {
+                        }> | undefined;
+                    }>[] | undefined;
+                    capabilities?: Readonly<{
                         toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    };
-                };
+                    }> | undefined;
+                }>;
                 application: {
                     implementationIdentity: {
                         pluginId: string;
@@ -2760,6 +2767,7 @@ export type TeamsActionResultById = {
                     definitionRevision: 1;
                 };
             };
+            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
             deliveryPolicy?: undefined | {
                 preferredAllowedModes: ('brokered' | 'direct' | 'vendor-native')[];
             };
@@ -2788,7 +2796,7 @@ export type TeamsActionResultById = {
             sourceOwnerDisplayName: null | string;
             id: string;
             teamId: string;
-            displayName: {
+            displayName: null | {
                 content: {
                     t: 'encrypted';
                     c: string;
@@ -2848,11 +2856,11 @@ export type TeamsActionResultById = {
                         providerTicket: string;
                     };
                 };
-                descriptor: {
+                descriptor: Readonly<{
                     id: string;
                     name: string;
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
-                    aliases?: string[] | undefined;
+                    aliases?: readonly string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
                     inlineCompletion?: undefined | {
@@ -2875,28 +2883,28 @@ export type TeamsActionResultById = {
                         maxOutputTokens?: number | undefined;
                     };
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: undefined | {
+                    modelOptions?: readonly Readonly<{
                         id: string;
                         name: string;
+                        description?: string | undefined;
                         type: string;
                         currentValue: string;
-                        description?: string | undefined;
-                        options?: undefined | {
+                        options?: readonly Readonly<{
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }[];
-                        overridesWhenOn?: undefined | {
-                            optionIds: string[];
+                        }>[] | undefined;
+                        overridesWhenOn?: Readonly<{
+                            optionIds: readonly string[];
                             forcedValue?: string | undefined;
-                        };
-                    }[];
-                    capabilities?: undefined | {
+                        }> | undefined;
+                    }>[] | undefined;
+                    capabilities?: Readonly<{
                         toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
                         structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    };
-                };
+                    }> | undefined;
+                }>;
                 application: {
                     implementationIdentity: {
                         pluginId: string;
@@ -3069,6 +3077,7 @@ export type TeamsActionResultById = {
                     definitionRevision: 1;
                 };
             };
+            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
             deliveryPolicy?: undefined | {
                 preferredAllowedModes: ('brokered' | 'direct' | 'vendor-native')[];
             };
@@ -3902,6 +3911,7 @@ export type TeamsActionResultById = {
                                 directory: string;
                             };
                         };
+                        approvalProfileId?: null | string | undefined;
                         permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                         modelByAgentTargetKey?: Record<string, {
                             ref: {
@@ -4134,6 +4144,7 @@ export type TeamsActionResultById = {
                                 directory: string;
                             };
                         };
+                        approvalProfileId?: null | string | undefined;
                         permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                         modelByAgentTargetKey?: Record<string, {
                             ref: {
@@ -4368,6 +4379,7 @@ export type TeamsActionResultById = {
                             directory: string;
                         };
                     };
+                    approvalProfileId?: null | string | undefined;
                     permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                     modelByAgentTargetKey?: Record<string, {
                         ref: {
@@ -4675,6 +4687,7 @@ export type TeamsActionResultById = {
                             directory: string;
                         };
                     };
+                    approvalProfileId?: null | string | undefined;
                     permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                     modelByAgentTargetKey?: Record<string, {
                         ref: {
@@ -4907,6 +4920,7 @@ export type TeamsActionResultById = {
                             directory: string;
                         };
                     };
+                    approvalProfileId?: null | string | undefined;
                     permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                     modelByAgentTargetKey?: Record<string, {
                         ref: {
@@ -5141,6 +5155,7 @@ export type TeamsActionResultById = {
                         directory: string;
                     };
                 };
+                approvalProfileId?: null | string | undefined;
                 permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                 modelByAgentTargetKey?: Record<string, {
                     ref: {
@@ -5286,6 +5301,36 @@ export type TeamsActionResultById = {
             providerDisplayName: string;
             state: 'healthy' | 'needs_attention' | 'syncing';
         };
+    };
+    readonly "teams.sharedResources.summary": {
+        teamId: string;
+        kinds: ({
+            status: 'available';
+            count: number;
+            kind: 'accountCollections';
+            collection: {
+                pluginId: string;
+                collectionId: string;
+            };
+        } | {
+            status: 'available';
+            count: number;
+            kind: 'credentials' | 'discussions' | 'machinePools' | 'machinePresets' | 'machines' | 'otherArtifacts' | 'projectDocuments' | 'projectSources' | 'prompts' | 'savedSecrets' | 'sessions' | 'workflows';
+        } | {
+            status: 'unavailable';
+            count: null;
+            reason: string;
+            kind: 'accountCollections';
+            collection: {
+                pluginId: string;
+                collectionId: string;
+            };
+        } | {
+            status: 'unavailable';
+            count: null;
+            reason: string;
+            kind: 'credentials' | 'discussions' | 'machinePools' | 'machinePresets' | 'machines' | 'otherArtifacts' | 'projectDocuments' | 'projectSources' | 'prompts' | 'savedSecrets' | 'sessions' | 'workflows';
+        })[];
     };
     readonly "teams.create": {
         id: string;
@@ -5446,6 +5491,7 @@ export type TeamsActionResultById = {
                             directory: string;
                         };
                     };
+                    approvalProfileId?: null | string | undefined;
                     permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                     modelByAgentTargetKey?: Record<string, {
                         ref: {
@@ -5678,6 +5724,7 @@ export type TeamsActionResultById = {
                             directory: string;
                         };
                     };
+                    approvalProfileId?: null | string | undefined;
                     permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                     modelByAgentTargetKey?: Record<string, {
                         ref: {
@@ -5912,6 +5959,7 @@ export type TeamsActionResultById = {
                         directory: string;
                     };
                 };
+                approvalProfileId?: null | string | undefined;
                 permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                 modelByAgentTargetKey?: Record<string, {
                     ref: {
@@ -6217,6 +6265,7 @@ export type TeamsActionResultById = {
                             directory: string;
                         };
                     };
+                    approvalProfileId?: null | string | undefined;
                     permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                     modelByAgentTargetKey?: Record<string, {
                         ref: {
@@ -6449,6 +6498,7 @@ export type TeamsActionResultById = {
                             directory: string;
                         };
                     };
+                    approvalProfileId?: null | string | undefined;
                     permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                     modelByAgentTargetKey?: Record<string, {
                         ref: {
@@ -6683,6 +6733,7 @@ export type TeamsActionResultById = {
                         directory: string;
                     };
                 };
+                approvalProfileId?: null | string | undefined;
                 permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                 modelByAgentTargetKey?: Record<string, {
                     ref: {
@@ -6988,6 +7039,7 @@ export type TeamsActionResultById = {
                             directory: string;
                         };
                     };
+                    approvalProfileId?: null | string | undefined;
                     permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                     modelByAgentTargetKey?: Record<string, {
                         ref: {
@@ -7220,6 +7272,7 @@ export type TeamsActionResultById = {
                             directory: string;
                         };
                     };
+                    approvalProfileId?: null | string | undefined;
                     permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                     modelByAgentTargetKey?: Record<string, {
                         ref: {
@@ -7454,6 +7507,7 @@ export type TeamsActionResultById = {
                         directory: string;
                     };
                 };
+                approvalProfileId?: null | string | undefined;
                 permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                 modelByAgentTargetKey?: Record<string, {
                     ref: {
@@ -7759,6 +7813,7 @@ export type TeamsActionResultById = {
                             directory: string;
                         };
                     };
+                    approvalProfileId?: null | string | undefined;
                     permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                     modelByAgentTargetKey?: Record<string, {
                         ref: {
@@ -7991,6 +8046,7 @@ export type TeamsActionResultById = {
                             directory: string;
                         };
                     };
+                    approvalProfileId?: null | string | undefined;
                     permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                     modelByAgentTargetKey?: Record<string, {
                         ref: {
@@ -8225,6 +8281,7 @@ export type TeamsActionResultById = {
                         directory: string;
                     };
                 };
+                approvalProfileId?: null | string | undefined;
                 permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                 modelByAgentTargetKey?: Record<string, {
                     ref: {
@@ -8530,6 +8587,7 @@ export type TeamsActionResultById = {
                             directory: string;
                         };
                     };
+                    approvalProfileId?: null | string | undefined;
                     permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                     modelByAgentTargetKey?: Record<string, {
                         ref: {
@@ -8762,6 +8820,7 @@ export type TeamsActionResultById = {
                             directory: string;
                         };
                     };
+                    approvalProfileId?: null | string | undefined;
                     permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                     modelByAgentTargetKey?: Record<string, {
                         ref: {
@@ -8996,6 +9055,7 @@ export type TeamsActionResultById = {
                         directory: string;
                     };
                 };
+                approvalProfileId?: null | string | undefined;
                 permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                 modelByAgentTargetKey?: Record<string, {
                     ref: {
@@ -9301,6 +9361,7 @@ export type TeamsActionResultById = {
                             directory: string;
                         };
                     };
+                    approvalProfileId?: null | string | undefined;
                     permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                     modelByAgentTargetKey?: Record<string, {
                         ref: {
@@ -9533,6 +9594,7 @@ export type TeamsActionResultById = {
                             directory: string;
                         };
                     };
+                    approvalProfileId?: null | string | undefined;
                     permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                     modelByAgentTargetKey?: Record<string, {
                         ref: {
@@ -9767,6 +9829,7 @@ export type TeamsActionResultById = {
                         directory: string;
                     };
                 };
+                approvalProfileId?: null | string | undefined;
                 permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                 modelByAgentTargetKey?: Record<string, {
                     ref: {
@@ -10072,6 +10135,7 @@ export type TeamsActionResultById = {
                             directory: string;
                         };
                     };
+                    approvalProfileId?: null | string | undefined;
                     permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                     modelByAgentTargetKey?: Record<string, {
                         ref: {
@@ -10304,6 +10368,7 @@ export type TeamsActionResultById = {
                             directory: string;
                         };
                     };
+                    approvalProfileId?: null | string | undefined;
                     permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                     modelByAgentTargetKey?: Record<string, {
                         ref: {
@@ -10538,6 +10603,7 @@ export type TeamsActionResultById = {
                         directory: string;
                     };
                 };
+                approvalProfileId?: null | string | undefined;
                 permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                 modelByAgentTargetKey?: Record<string, {
                     ref: {
@@ -12352,6 +12418,9 @@ export type TeamsActionResultById = {
     };
     readonly "teams.identity.connections.remove": {
         outcome: 'already_absent' | 'removed';
+    } | {
+        outcome: 'disabled_pending_completion';
+        reason?: 'home_forbidden' | 'identity_connection_conflict' | 'identity_connection_invalid' | 'identity_connection_not_found' | 'identity_connection_policy_in_use' | 'identity_connection_test_invalid' | 'identity_provider_in_use' | 'identity_provider_unavailable' | 'team_authentication_policy_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'team_forbidden' | 'team_identity_not_allowed' | 'team_not_found' | 'workos_connection_mismatch' | 'workos_organization_mismatch' | 'workos_platform_unavailable' | undefined;
     };
     readonly "teams.identity.connections.test.start": {
         authorizeUrl: string;

@@ -9,8 +9,8 @@ export type MachineAgentInstallActionInputById = {
         machineId: string;
         intent: 'install' | 'update';
         definitionId?: string | undefined;
-        waitForTerminal?: boolean | undefined;
         force?: boolean | undefined;
+        waitForTerminal?: boolean | undefined;
         consent?: undefined | {
             vendorRecipe: boolean;
         };

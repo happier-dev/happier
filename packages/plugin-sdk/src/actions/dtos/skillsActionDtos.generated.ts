@@ -402,7 +402,7 @@ export type SkillsActionResultById = {
                 kind: 'registry';
                 registry: {
                     sourceId: string;
-                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -555,7 +555,7 @@ export type SkillsActionResultById = {
             kind: 'registry';
             registry: {
                 sourceId: string;
-                format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
                 sourceUrl: string;
                 itemId: string;
                 ref: {
@@ -836,7 +836,7 @@ export type SkillsActionResultById = {
                 kind: 'registry';
                 registry: {
                     sourceId: string;
-                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -998,7 +998,7 @@ export type SkillsActionResultById = {
             kind: 'registry';
             registry: {
                 sourceId: string;
-                format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
                 sourceUrl: string;
                 itemId: string;
                 ref: {

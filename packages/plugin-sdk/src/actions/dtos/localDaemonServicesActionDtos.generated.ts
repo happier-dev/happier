@@ -131,7 +131,6 @@ export type LocalDaemonServicesActionInputById = {
             deployerMode: 'chosen' | 'managers' | 'members';
             name: string;
             projectSourceId?: string | undefined;
-            buildMachineId?: string | undefined;
             newProject?: undefined | {
                 name: string;
                 requestKey: string;
@@ -143,10 +142,18 @@ export type LocalDaemonServicesActionInputById = {
                     teamId: string;
                 };
             };
-            deployerPrincipals?: undefined | {
-                principalKind: 'account' | 'teamGroup';
-                principalId: string;
-            }[];
+            deployerPrincipals?: ({
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            })[] | undefined;
+            buildMachineId?: string | undefined;
             managedRetention?: 'keep' | 'until-delete' | undefined;
             controllerMachineId?: string | undefined;
             retainPreviousDeployments?: number | undefined;
@@ -155,7 +162,7 @@ export type LocalDaemonServicesActionInputById = {
         bindings: {
             source: {
                 kind: 'deploymentFact';
-                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
             } | {
                 kind: 'deploymentFact';
                 fact: 'domainUrl';
@@ -178,6 +185,8 @@ export type LocalDaemonServicesActionInputById = {
             name: string;
             phase: 'build' | 'runtime';
             grantRef?: string | undefined;
+            managedBy?: 'telemetry' | undefined;
+            valueFormat?: 'otelAuthorizationHeader' | undefined;
         }[];
         serverId: string;
         machineId: string;
@@ -345,7 +354,7 @@ export type LocalDaemonServicesActionResultById = {
                 serviceId: string;
             };
             nameResolution?: 'unresolved_environment' | undefined;
-            unavailableReason?: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported' | undefined;
+            unavailableReason?: 'admission_unavailable' | 'cancelled' | 'denied' | 'follow_only' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported' | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             native?: undefined | {
                 phase: 'running' | 'stopped' | 'unknown';
@@ -401,7 +410,7 @@ export type LocalDaemonServicesActionResultById = {
         coverage?: 'managed_services' | undefined;
     } | {
         kind: 'unavailable';
-        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'follow_only' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
     };
     readonly "machines.services.discovery": {
         kind: 'snapshot';
@@ -446,7 +455,7 @@ export type LocalDaemonServicesActionResultById = {
         }[];
     } | {
         kind: 'unavailable';
-        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'follow_only' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
     };
     readonly "machines.services.detail": {
         kind: 'service';
@@ -480,7 +489,7 @@ export type LocalDaemonServicesActionResultById = {
                 serviceId: string;
             };
             nameResolution?: 'unresolved_environment' | undefined;
-            unavailableReason?: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported' | undefined;
+            unavailableReason?: 'admission_unavailable' | 'cancelled' | 'denied' | 'follow_only' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported' | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             native?: undefined | {
                 phase: 'running' | 'stopped' | 'unknown';
@@ -545,7 +554,7 @@ export type LocalDaemonServicesActionResultById = {
             }[];
         } | {
             kind: 'unavailable';
-            reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+            reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'follow_only' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
         };
         runtimeFacts?: undefined | {
             configuration: null | {
@@ -593,7 +602,7 @@ export type LocalDaemonServicesActionResultById = {
         };
     } | {
         kind: 'unavailable';
-        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'follow_only' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
     };
     readonly "machines.services.watch": {
         kind: 'applied' | 'conflict' | 'unchanged';
@@ -611,7 +620,7 @@ export type LocalDaemonServicesActionResultById = {
         };
     } | {
         kind: 'unavailable';
-        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'follow_only' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
     };
     readonly "machines.services.unwatch": {
         kind: 'applied' | 'conflict' | 'unchanged';
@@ -629,7 +638,7 @@ export type LocalDaemonServicesActionResultById = {
         };
     } | {
         kind: 'unavailable';
-        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'follow_only' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
     };
     readonly "machines.services.control": {
         kind: 'accepted';
@@ -651,7 +660,7 @@ export type LocalDaemonServicesActionResultById = {
         };
     } | {
         kind: 'unsupported';
-        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'follow_only' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
     };
     readonly "machines.services.logs.read": {
         kind: 'page';
@@ -671,7 +680,7 @@ export type LocalDaemonServicesActionResultById = {
         sourceRevision: string;
     } | {
         kind: 'unavailable';
-        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'follow_only' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
         recipeRemedy?: undefined | {
             pluginId: string;
             recipeId: string;
@@ -708,10 +717,17 @@ export type LocalDaemonServicesActionResultById = {
                     teamId: string;
                 };
             };
-            deployerPrincipals?: undefined | {
-                principalKind: 'account' | 'teamGroup';
-                principalId: string;
-            }[];
+            deployerPrincipals?: ({
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            })[] | undefined;
             buildMachineId?: string | undefined;
             managedRetention?: 'keep' | 'until-delete' | undefined;
             preview?: undefined | {
@@ -762,11 +778,11 @@ export type LocalDaemonServicesActionResultById = {
                         } | {
                             service: string;
                             purpose: 'dataRole';
-                            role: 'readOnlyPassword';
+                            role: 'readOnlyPassword' | 'write';
                         } | {
                             targetLinkId: string;
                             purpose: 'dataRole';
-                            role: 'readOnlyPassword';
+                            role: 'readOnlyPassword' | 'write';
                         };
                     } | {
                         kind: 'rebind';
@@ -794,11 +810,11 @@ export type LocalDaemonServicesActionResultById = {
                         } | {
                             service: string;
                             purpose: 'dataRole';
-                            role: 'readOnlyPassword';
+                            role: 'readOnlyPassword' | 'write';
                         } | {
                             targetLinkId: string;
                             purpose: 'dataRole';
-                            role: 'readOnlyPassword';
+                            role: 'readOnlyPassword' | 'write';
                         };
                     } | {
                         kind: 'useSameReference';
@@ -821,11 +837,11 @@ export type LocalDaemonServicesActionResultById = {
                         } | {
                             service: string;
                             purpose: 'dataRole';
-                            role: 'readOnlyPassword';
+                            role: 'readOnlyPassword' | 'write';
                         } | {
                             targetLinkId: string;
                             purpose: 'dataRole';
-                            role: 'readOnlyPassword';
+                            role: 'readOnlyPassword' | 'write';
                         };
                     })[];
                     values: ({
@@ -849,11 +865,11 @@ export type LocalDaemonServicesActionResultById = {
                         } | {
                             service: string;
                             purpose: 'dataRole';
-                            role: 'readOnlyPassword';
+                            role: 'readOnlyPassword' | 'write';
                         } | {
                             targetLinkId: string;
                             purpose: 'dataRole';
-                            role: 'readOnlyPassword';
+                            role: 'readOnlyPassword' | 'write';
                         };
                     } | {
                         kind: 'omit';
@@ -876,17 +892,17 @@ export type LocalDaemonServicesActionResultById = {
                         } | {
                             service: string;
                             purpose: 'dataRole';
-                            role: 'readOnlyPassword';
+                            role: 'readOnlyPassword' | 'write';
                         } | {
                             targetLinkId: string;
                             purpose: 'dataRole';
-                            role: 'readOnlyPassword';
+                            role: 'readOnlyPassword' | 'write';
                         };
                     } | {
                         kind: 'remap';
                         source: {
                             kind: 'deploymentFact';
-                            fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                            fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                         } | {
                             kind: 'deploymentFact';
                             fact: 'domainUrl';
@@ -920,11 +936,11 @@ export type LocalDaemonServicesActionResultById = {
                         } | {
                             service: string;
                             purpose: 'dataRole';
-                            role: 'readOnlyPassword';
+                            role: 'readOnlyPassword' | 'write';
                         } | {
                             targetLinkId: string;
                             purpose: 'dataRole';
-                            role: 'readOnlyPassword';
+                            role: 'readOnlyPassword' | 'write';
                         };
                     })[];
                     data: ({
@@ -965,11 +981,11 @@ export type LocalDaemonServicesActionResultById = {
                         } | {
                             service: string;
                             purpose: 'dataRole';
-                            role: 'readOnlyPassword';
+                            role: 'readOnlyPassword' | 'write';
                         } | {
                             targetLinkId: string;
                             purpose: 'dataRole';
-                            role: 'readOnlyPassword';
+                            role: 'readOnlyPassword' | 'write';
                         })[] | undefined;
                     })[];
                     retainPreviousDeployments?: 'copy' | 'default' | undefined;
@@ -989,7 +1005,7 @@ export type LocalDaemonServicesActionResultById = {
                 } | {
                     source: {
                         kind: 'deploymentFact';
-                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                     } | {
                         kind: 'deploymentFact';
                         fact: 'domainUrl';
@@ -1012,6 +1028,8 @@ export type LocalDaemonServicesActionResultById = {
                     name: string;
                     phase: 'build' | 'runtime';
                     grantRef?: string | undefined;
+                    managedBy?: 'telemetry' | undefined;
+                    valueFormat?: 'otelAuthorizationHeader' | undefined;
                 } | {
                     source: {
                         ref: string;
@@ -1038,7 +1056,7 @@ export type LocalDaemonServicesActionResultById = {
                     };
                     service: string;
                     purpose: 'dataRole';
-                    role: 'readOnlyPassword';
+                    role: 'readOnlyPassword' | 'write';
                 } | {
                     source: {
                         ref: string;
@@ -1047,7 +1065,7 @@ export type LocalDaemonServicesActionResultById = {
                     };
                     targetLinkId: string;
                     purpose: 'dataRole';
-                    role: 'readOnlyPassword';
+                    role: 'readOnlyPassword' | 'write';
                 })[];
                 sourceRuntimeTargetLinkId?: string | undefined;
                 data?: undefined | {

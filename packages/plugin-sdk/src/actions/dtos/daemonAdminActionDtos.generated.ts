@@ -24,7 +24,13 @@ export type DaemonAdminActionInputById = {
     };
 };
 export type DaemonAdminActionResultById = {
-    readonly "bugreport.collectDiagnostics": JsonValue;
-    readonly "bugreport.getLogTail": JsonValue;
-    readonly "bugreport.uploadArtifact": JsonValue;
+    readonly "bugreport.collectDiagnostics": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "bugreport.getLogTail": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "bugreport.uploadArtifact": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
 };

@@ -682,6 +682,10 @@ export type ProjectSourcesActionResultById = {
                     bodyVersion: number;
                 };
             })[] | undefined;
+            audienceTeams?: undefined | {
+                teamId: string;
+                name: string;
+            }[];
         };
         childOperations: {
             serverId: string;
@@ -820,6 +824,10 @@ export type ProjectSourcesActionResultById = {
                     bodyVersion: number;
                 };
             })[] | undefined;
+            audienceTeams?: undefined | {
+                teamId: string;
+                name: string;
+            }[];
             owner?: undefined | {
                 kind: 'account';
                 accountId: string;
@@ -957,6 +965,10 @@ export type ProjectSourcesActionResultById = {
                     bodyVersion: number;
                 };
             })[] | undefined;
+            audienceTeams?: undefined | {
+                teamId: string;
+                name: string;
+            }[];
             owner?: undefined | {
                 kind: 'account';
                 accountId: string;
@@ -1049,6 +1061,10 @@ export type ProjectSourcesActionResultById = {
                     bodyVersion: number;
                 };
             })[] | undefined;
+            audienceTeams?: undefined | {
+                teamId: string;
+                name: string;
+            }[];
             owner?: undefined | {
                 kind: 'account';
                 accountId: string;
@@ -1138,6 +1154,10 @@ export type ProjectSourcesActionResultById = {
                     bodyVersion: number;
                 };
             })[] | undefined;
+            audienceTeams?: undefined | {
+                teamId: string;
+                name: string;
+            }[];
             owner?: undefined | {
                 kind: 'account';
                 accountId: string;
@@ -1235,6 +1255,10 @@ export type ProjectSourcesActionResultById = {
                     bodyVersion: number;
                 };
             })[] | undefined;
+            audienceTeams?: undefined | {
+                teamId: string;
+                name: string;
+            }[];
             owner?: undefined | {
                 kind: 'account';
                 accountId: string;
@@ -1324,6 +1348,10 @@ export type ProjectSourcesActionResultById = {
                     bodyVersion: number;
                 };
             })[] | undefined;
+            audienceTeams?: undefined | {
+                teamId: string;
+                name: string;
+            }[];
             owner?: undefined | {
                 kind: 'account';
                 accountId: string;
@@ -1662,6 +1690,10 @@ export type ProjectSourcesActionResultById = {
                     bodyVersion: number;
                 };
             })[] | undefined;
+            audienceTeams?: undefined | {
+                teamId: string;
+                name: string;
+            }[];
             owner?: undefined | {
                 kind: 'account';
                 accountId: string;
@@ -1751,6 +1783,10 @@ export type ProjectSourcesActionResultById = {
                     bodyVersion: number;
                 };
             })[] | undefined;
+            audienceTeams?: undefined | {
+                teamId: string;
+                name: string;
+            }[];
             owner?: undefined | {
                 kind: 'account';
                 accountId: string;
@@ -2089,6 +2125,10 @@ export type ProjectSourcesActionResultById = {
                     bodyVersion: number;
                 };
             })[] | undefined;
+            audienceTeams?: undefined | {
+                teamId: string;
+                name: string;
+            }[];
             owner?: undefined | {
                 kind: 'account';
                 accountId: string;
@@ -2178,6 +2218,10 @@ export type ProjectSourcesActionResultById = {
                     bodyVersion: number;
                 };
             })[] | undefined;
+            audienceTeams?: undefined | {
+                teamId: string;
+                name: string;
+            }[];
             owner?: undefined | {
                 kind: 'account';
                 accountId: string;
@@ -2516,6 +2560,10 @@ export type ProjectSourcesActionResultById = {
                     bodyVersion: number;
                 };
             })[] | undefined;
+            audienceTeams?: undefined | {
+                teamId: string;
+                name: string;
+            }[];
             owner?: undefined | {
                 kind: 'account';
                 accountId: string;

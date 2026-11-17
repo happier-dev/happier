@@ -4,7 +4,11 @@
 import type { ProviderCatalogParserV1 } from './pluginActionDtoSupport.generated.js';
 
 export type SavedSecretSharingActionInputById = {
-    readonly "secrets.shared.list": Record<string, never>;
+    readonly "secrets.shared.list": {
+        sharedWithTeamId?: string | undefined;
+        cursor?: string | undefined;
+        limit?: unknown;
+    };
     readonly "secrets.shared.create": {
         resourceId: string;
         displayName: string;
@@ -49,6 +53,11 @@ export type SavedSecretSharingActionInputById = {
                     account: string;
                     reference: string;
                     metadata?: undefined | {
+                        field: {
+                            id: string;
+                            title: string;
+                            kind: string;
+                        };
                         vault: {
                             id: string;
                             name: string;
@@ -56,11 +65,6 @@ export type SavedSecretSharingActionInputById = {
                         item: {
                             id: string;
                             title: string;
-                        };
-                        field: {
-                            id: string;
-                            title: string;
-                            kind: string;
                         };
                     };
                 };
@@ -156,6 +160,11 @@ export type SavedSecretSharingActionInputById = {
                     account: string;
                     reference: string;
                     metadata?: undefined | {
+                        field: {
+                            id: string;
+                            title: string;
+                            kind: string;
+                        };
                         vault: {
                             id: string;
                             name: string;
@@ -163,11 +172,6 @@ export type SavedSecretSharingActionInputById = {
                         item: {
                             id: string;
                             title: string;
-                        };
-                        field: {
-                            id: string;
-                            title: string;
-                            kind: string;
                         };
                     };
                 };
@@ -632,7 +636,7 @@ export type SavedSecretSharingActionInputById = {
                                 kind: 'registry';
                                 provenance: {
                                     sourceId: string;
-                                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
                                     sourceUrl: string;
                                     itemId: string;
                                     ref: {
@@ -854,7 +858,7 @@ export type SavedSecretSharingActionInputById = {
                                 kind: 'registry';
                                 provenance: {
                                     sourceId: string;
-                                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                                    format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
                                     sourceUrl: string;
                                     itemId: string;
                                     ref: {
@@ -1026,14 +1030,6 @@ export type SavedSecretSharingActionInputById = {
                     t: 'plain';
                     v: {
                         v: 1;
-                        machineGrants: {
-                            v: 1;
-                            machineId: string;
-                            connectionId: string;
-                            endpointSetFingerprint: string;
-                            connectionSecurityFingerprint: string;
-                            confirmedAt: number;
-                        }[];
                         accountGrants: {
                             v: 1;
                             connectionId: string;
@@ -1175,6 +1171,14 @@ export type SavedSecretSharingActionInputById = {
                             contributionKey: null | string;
                             lastDisplayName: string;
                             deletedAt: number;
+                        }[];
+                        machineGrants: {
+                            v: 1;
+                            machineId: string;
+                            connectionId: string;
+                            endpointSetFingerprint: string;
+                            connectionSecurityFingerprint: string;
+                            confirmedAt: number;
                         }[];
                         secretBindingsByConnectionId: Record<string, {
                             account?: Record<string, string> | undefined;
@@ -1551,8 +1555,8 @@ export type SavedSecretSharingActionInputById = {
                             sources: {
                                 id: string;
                                 title: string;
-                                format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
-                                kinds: ('agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill' | 'starter')[];
+                                format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
+                                kinds: ('agent' | 'app' | 'browserExtension' | 'mcpServer' | 'pet' | 'plugin' | 'skill' | 'starter' | 'theme')[];
                                 url: string;
                                 enabled: boolean;
                                 addedAt: number;
@@ -1702,6 +1706,11 @@ export type SavedSecretSharingActionInputById = {
                         account: string;
                         reference: string;
                         metadata?: undefined | {
+                            field: {
+                                id: string;
+                                title: string;
+                                kind: string;
+                            };
                             vault: {
                                 id: string;
                                 name: string;
@@ -1709,11 +1718,6 @@ export type SavedSecretSharingActionInputById = {
                             item: {
                                 id: string;
                                 title: string;
-                            };
-                            field: {
-                                id: string;
-                                title: string;
-                                kind: string;
                             };
                         };
                     };
@@ -2050,6 +2054,11 @@ export type SavedSecretSharingActionInputById = {
                     account: string;
                     reference: string;
                     metadata?: undefined | {
+                        field: {
+                            id: string;
+                            title: string;
+                            kind: string;
+                        };
                         vault: {
                             id: string;
                             name: string;
@@ -2057,11 +2066,6 @@ export type SavedSecretSharingActionInputById = {
                         item: {
                             id: string;
                             title: string;
-                        };
-                        field: {
-                            id: string;
-                            title: string;
-                            kind: string;
                         };
                     };
                 };
@@ -2221,10 +2225,12 @@ export type SavedSecretSharingActionResultById = {
                 resourceId: string;
                 expectedRevision: number;
             };
+            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
         } | {
             materialStatus: 'resource_corrupt';
             relationship: 'recipient';
             repair: null;
+            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
         } | {
             ref: string;
             source: 'personal' | 'shared_resource';
@@ -2324,6 +2330,7 @@ export type SavedSecretSharingActionResultById = {
                 delete: boolean;
                 reveal?: boolean | undefined;
             };
+            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
             storage?: undefined | {
                 kind: 'external';
                 provider: {
@@ -2338,6 +2345,7 @@ export type SavedSecretSharingActionResultById = {
             };
             deploymentReferenceState?: 'referenced' | 'unavailable' | 'unreferenced' | undefined;
         })[];
+        nextCursor?: null | string | undefined;
     };
     readonly "secrets.shared.create": {
         resourceId: string;

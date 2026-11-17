@@ -33,6 +33,11 @@ export type PersonalSavedSecretsActionInputById = {
             account: string;
             reference: string;
             metadata?: undefined | {
+                field: {
+                    id: string;
+                    title: string;
+                    kind: string;
+                };
                 vault: {
                     id: string;
                     name: string;
@@ -40,11 +45,6 @@ export type PersonalSavedSecretsActionInputById = {
                 item: {
                     id: string;
                     title: string;
-                };
-                field: {
-                    id: string;
-                    title: string;
-                    kind: string;
                 };
             };
         } | {
@@ -84,6 +84,11 @@ export type PersonalSavedSecretsActionInputById = {
             account: string;
             reference: string;
             metadata?: undefined | {
+                field: {
+                    id: string;
+                    title: string;
+                    kind: string;
+                };
                 vault: {
                     id: string;
                     name: string;
@@ -92,17 +97,13 @@ export type PersonalSavedSecretsActionInputById = {
                     id: string;
                     title: string;
                 };
-                field: {
-                    id: string;
-                    title: string;
-                    kind: string;
-                };
             };
         };
     };
     readonly "secrets.delete": {
         secretId: string;
         expectedUpdatedAt: number;
+        confirmedUnreadableReferences?: boolean | undefined;
     };
     readonly "secrets.link": {
         source: {
@@ -150,6 +151,11 @@ export type PersonalSavedSecretsActionResultById = {
                 account: string;
                 reference: string;
                 metadata?: undefined | {
+                    field: {
+                        id: string;
+                        title: string;
+                        kind: string;
+                    };
                     vault: {
                         id: string;
                         name: string;
@@ -157,11 +163,6 @@ export type PersonalSavedSecretsActionResultById = {
                     item: {
                         id: string;
                         title: string;
-                    };
-                    field: {
-                        id: string;
-                        title: string;
-                        kind: string;
                     };
                 };
             };

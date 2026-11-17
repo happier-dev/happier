@@ -82,6 +82,15 @@ export type PluginExecutionOriginActionResultById = {
         }[];
         answeringClientId?: string | undefined;
         answeringClientIds?: string[] | undefined;
+        answeringClients?: undefined | {
+            id: string;
+            deviceLabel: null | string;
+            state?: undefined | {
+                computer: boolean;
+                focused: boolean;
+                lastFocusedAt?: number | undefined;
+            };
+        }[];
     } | {
         status: 'available';
         storedOrigin: null | {
@@ -208,6 +217,15 @@ export type PluginExecutionOriginActionResultById = {
         }[];
         answeringClientId?: string | undefined;
         answeringClientIds?: string[] | undefined;
+        answeringClients?: undefined | {
+            id: string;
+            deviceLabel: null | string;
+            state?: undefined | {
+                computer: boolean;
+                focused: boolean;
+                lastFocusedAt?: number | undefined;
+            };
+        }[];
         storedTarget?: null | undefined | {
             serverIdentityId: string;
             machineId: string;

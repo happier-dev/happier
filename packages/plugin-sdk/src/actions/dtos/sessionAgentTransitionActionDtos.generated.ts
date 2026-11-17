@@ -23,6 +23,25 @@ export type SessionAgentTransitionActionInputById = {
                 }>;
             };
         };
+    } | {
+        sessionId: string;
+        selections: {
+            v: 1;
+            agentId: string;
+            modelId?: string | undefined;
+            providerConnectionId?: null | string | undefined;
+            acpSessionModeId?: null | string | undefined;
+            sessionConfigOptionOverrides?: undefined | {
+                [x: string]: unknown;
+                v: 1;
+                updatedAt: number;
+                overrides: Record<string, {
+                    [x: string]: unknown;
+                    updatedAt: number;
+                    value: boolean | null | number | string;
+                }>;
+            };
+        }[];
     };
     readonly "session.agent.transition": {
         input: {
@@ -62,6 +81,21 @@ export type SessionAgentTransitionActionResultById = {
             type: 'unavailable';
             reason: 'operation_unavailable' | 'target_unavailable' | 'unsupported_session';
         };
+    } | {
+        status: 'batch';
+        inspections: ({
+            status: 'answered';
+            inspection: {
+                type: 'available';
+                protocolVersion: 1;
+                sameSessionTransition: boolean;
+            } | {
+                type: 'unavailable';
+                reason: 'operation_unavailable' | 'target_unavailable' | 'unsupported_session';
+            };
+        } | {
+            status: 'indeterminate';
+        })[];
     } | {
         status: 'indeterminate';
     };
@@ -190,7 +224,7 @@ export type SessionAgentTransitionActionResultById = {
                 catalogStatus?: 'loading' | 'partial' | 'unavailable' | undefined;
             };
             uxDiagnostic?: undefined | {
-                code: 'connected_service_credential_mode_unsupported' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_credential_scope_missing' | 'connected_service_materialization_identity_missing' | 'connected_service_native_auth_materialization_failed' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                code: 'connected_service_credential_mode_unsupported' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_credential_scope_missing' | 'connected_service_materialization_identity_missing' | 'connected_service_native_auth_materialization_failed' | 'continuity_unsupported' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
                 failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
                 source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
                 retryable: boolean;

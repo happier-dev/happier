@@ -5,7 +5,9 @@ import type { JsonValue } from '../../identity.js';
 import type { ExtensionSelectionV1, FollowPolicyV1, QualifiedAudienceSelection, SessionTargetV1, UpdatedSelectionV1 } from './pluginActionDtoSupport.generated.js';
 
 export type SessionFollowActionInputById = {
-    readonly "follow.preferences.get": Record<string, never>;
+    readonly "follow.preferences.get": {
+        [x: string]: never;
+    };
     readonly "follow.preferences.set": {
         assigned: boolean;
         direct: boolean;
@@ -264,7 +266,6 @@ export type SessionFollowActionInputById = {
             ruleId: string;
         };
         ruleDefinition: {
-            v: 1;
             filter: Readonly<{
                 show: 'both' | 'runs' | 'sessions';
                 startedBy: readonly ('agents' | 'triggers' | 'you')[];
@@ -334,6 +335,7 @@ export type SessionFollowActionInputById = {
                 }>[];
                 source: 'all' | 'direct' | 'persisted';
             }>;
+            v: 1;
             enabled: boolean;
         };
         policy: FollowPolicyV1<true>;
@@ -511,7 +513,7 @@ export type SessionFollowActionResultById = {
                         nativeChoices?: null | undefined | {
                             requirementId: string;
                             source: string;
-                            choices: {
+                            choices: readonly Readonly<{
                                 id: string;
                                 label: string;
                                 decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -534,7 +536,7 @@ export type SessionFollowActionResultById = {
                                     actionId: string;
                                     input: JsonValue;
                                 };
-                            }[];
+                            }>[];
                             origin?: undefined | {
                                 sessionId: string;
                                 subagentId?: string | undefined;
@@ -962,7 +964,7 @@ export type SessionFollowActionResultById = {
                         nativeChoices?: null | undefined | {
                             requirementId: string;
                             source: string;
-                            choices: {
+                            choices: readonly Readonly<{
                                 id: string;
                                 label: string;
                                 decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -985,7 +987,7 @@ export type SessionFollowActionResultById = {
                                     actionId: string;
                                     input: JsonValue;
                                 };
-                            }[];
+                            }>[];
                             origin?: undefined | {
                                 sessionId: string;
                                 subagentId?: string | undefined;
@@ -1293,7 +1295,7 @@ export type SessionFollowActionResultById = {
                         nativeChoices?: null | undefined | {
                             requirementId: string;
                             source: string;
-                            choices: {
+                            choices: readonly Readonly<{
                                 id: string;
                                 label: string;
                                 decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
@@ -1316,7 +1318,7 @@ export type SessionFollowActionResultById = {
                                     actionId: string;
                                     input: JsonValue;
                                 };
-                            }[];
+                            }>[];
                             origin?: undefined | {
                                 sessionId: string;
                                 subagentId?: string | undefined;

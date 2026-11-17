@@ -42,6 +42,7 @@ export type ScmGitActionInputById = {
             cursor?: number | undefined;
             path?: string | undefined;
         };
+        knownListRevision?: string | undefined;
         sessionId?: SessionTargetV1<true> | undefined;
     };
     readonly "scm.worktrees.enrichment": {
@@ -529,6 +530,7 @@ export type ScmGitActionInputById = {
             backendId: string;
         };
         outcomeVersion?: 1 | undefined;
+        skipCleanup?: boolean | undefined;
     };
     readonly "scm.worktree.prune": {
         cwd?: string | undefined;
@@ -767,6 +769,7 @@ export type ScmGitActionResultById = {
     };
     readonly "scm.status.snapshot": {
         success: boolean;
+        unchanged?: true | undefined;
         snapshot?: undefined | {
             projectKey: string;
             fetchedAt: number;
@@ -983,6 +986,7 @@ export type ScmGitActionResultById = {
                     isCrossRepository?: boolean | undefined;
                     headSha?: null | string | undefined;
                     baseSha?: null | string | undefined;
+                    mergeCommitSha?: string | undefined;
                     createdAtMs?: number | undefined;
                     closedAtMs?: number | undefined;
                     mergedAtMs?: number | undefined;
@@ -1015,6 +1019,7 @@ export type ScmGitActionResultById = {
                 nextCursor: null | number;
             };
             detail?: 'facts' | 'summary' | undefined;
+            listRevision?: string | undefined;
             summary?: undefined | {
                 changedFiles: number;
                 includedAdded: number;

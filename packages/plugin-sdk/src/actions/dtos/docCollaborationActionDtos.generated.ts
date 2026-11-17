@@ -202,10 +202,10 @@ export type DocCollaborationActionResultById = {
             createdAt: number;
             updatedAt: number;
             access: 'admin' | 'edit' | 'owner' | 'view';
-            artifactId: string;
             seq: number;
-            header: Record<string, JsonValue>;
+            artifactId: string;
             ownerAccountId: string;
+            header: Record<string, JsonValue>;
             publicAudience: 'none' | 'retained' | 'unknown';
             body: null | string | {
                 blobId: string;
@@ -217,11 +217,11 @@ export type DocCollaborationActionResultById = {
                 headerVersion: number;
                 bodyVersion: number;
             };
-            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
             availability?: undefined | {
                 kind: 'locked';
                 reason: 'encryption_material_unavailable';
             };
+            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
             provenance?: undefined | {
                 savedBy: {
                     kind: 'agent';

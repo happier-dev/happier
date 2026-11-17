@@ -44,10 +44,10 @@ export type FilesystemActionInputById = {
             sha256: string;
         } | {
             path: string;
+            sourceId: string;
             serverId: string;
             machineId: string;
             rootPath: string;
-            sourceId: string;
             sizeBytes: number;
             sha256: string;
             kind: 'entry_tree';
@@ -140,7 +140,9 @@ export type FilesystemActionInputById = {
         path: string;
         maxDepth: number;
     };
-    readonly "daemon.filesystem.listRoots": Record<string, never>;
+    readonly "daemon.filesystem.listRoots": {
+        [x: string]: never;
+    };
     readonly "daemon.filesystem.browseDirectory": {
         [x: string]: unknown;
         path: string;

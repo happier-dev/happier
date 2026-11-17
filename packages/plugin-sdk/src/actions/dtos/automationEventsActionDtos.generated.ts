@@ -84,6 +84,11 @@ export type AutomationEventsActionInputById = {
                     service: string;
                     database: string;
                 } | {
+                    kind: 'managed_deployment';
+                    environmentId: string;
+                    targetLinkId: string;
+                    databaseName: string;
+                } | {
                     savedSecretId: string;
                     accountId: string;
                     workspace: {
@@ -257,6 +262,10 @@ export type AutomationEventsActionResultById = {
                     field: string;
                     value: boolean | null | number | string;
                 } | {
+                    op: 'gt' | 'gte' | 'lt' | 'lte';
+                    field: string;
+                    value: number | string;
+                } | {
                     op: 'in';
                     field: string;
                     values: (boolean | null | number | string)[];
@@ -288,6 +297,11 @@ export type AutomationEventsActionResultById = {
                     environmentId: string;
                     service: string;
                     database: string;
+                } | {
+                    kind: 'managed_deployment';
+                    environmentId: string;
+                    targetLinkId: string;
+                    databaseName: string;
                 } | {
                     savedSecretId: string;
                     accountId: string;
