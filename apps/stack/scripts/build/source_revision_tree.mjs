@@ -275,9 +275,29 @@ async function prepareRevisionInstall({ repoDir, baseDir, treesRoot, workspaceDi
  * trees stay: the shadow's source links and workspace links are dropped, so an
  * installation shared by bases never points into one base's sources. */
 async function installRevisionDependencies({ baseDir, staging, workspaceDirs, env, signal }) {
-  await createDependencyGeneration(baseDir, { genRoot: staging });
+  const { projects } = await createDependencyGeneration(baseDir, { genRoot: staging });
   const { ensureUiPostinstallOutputs, installFrozenDependencies } = await import('../utils/proc/pm.mjs');
-  await installFrozenDependencies(staging, { env, signal });
+  // Lifecycle scripts (the CLI's unpack-tools) run from their real location in
+  // the base and load installed tools from there: lend the base this
+  // installation's trees while pnpm runs. A base's own physical entries (its
+  // generated server clients) are held aside and restored afterwards.
+  const lent = [];
+  try {
+    for (const dir of ['', ...projects]) {
+      const modules = join(baseDir, dir, 'node_modules');
+      const held = await lstat(modules).then(() => `${modules}.held-${randomUUID()}`, error => error.code === 'ENOENT' ? null : Promise.reject(error));
+      if (held) await rename(modules, held);
+      lent.push({ modules, held });
+      await mkdir(join(staging, dir, 'node_modules'), { recursive: true });
+      await symlink(join(staging, dir, 'node_modules'), modules, process.platform === 'win32' ? 'junction' : 'dir');
+    }
+    await installFrozenDependencies(staging, { env, signal });
+  } finally {
+    for (const { modules, held } of lent.toReversed()) {
+      if ((await lstat(modules).catch(() => null))?.isSymbolicLink()) await rm(modules, { force: true });
+      if (held && !existsSync(modules)) await rename(held, modules);
+    }
+  }
   const keepInstalledTrees = async dir => {
     for (const entry of await readdir(dir, { withFileTypes: true })) {
       const path = join(dir, entry.name);

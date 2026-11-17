@@ -49,7 +49,13 @@ async function createPnpmRevisionFixture(t) {
     exports: { '.': { 'happier-source': './sources/main.light.ts' } } });
   await write('apps/server/package.json', serverManifest('dep-one'));
   await write('apps/server/sources/main.light.ts', 'export { marker } from "@happier-dev/shared";');
-  await write('apps/cli/package.json', JSON.stringify({ name: '@happier-dev/cli', version: '0.0.0', type: 'module' }));
+  // A workspace lifecycle script that loads an installed tool from its own real
+  // location (as the CLI's unpack-tools postinstall does).
+  await write('vendor/fixture-tool/package.json', JSON.stringify({ name: 'fixture-tool', version: '1.0.0', main: 'index.js' }));
+  await write('vendor/fixture-tool/index.js', 'module.exports = "tool";');
+  await write('apps/cli/package.json', JSON.stringify({ name: '@happier-dev/cli', version: '0.0.0', type: 'module',
+    scripts: { postinstall: 'node scripts/unpack.cjs' }, dependencies: { 'fixture-tool': 'file:../../vendor/fixture-tool' } }));
+  await write('apps/cli/scripts/unpack.cjs', "require('fixture-tool');");
   await write('packages/shared/package.json', JSON.stringify({ name: '@happier-dev/shared', version: '0.0.0', type: 'module',
     exports: { '.': { 'happier-source': './src/index.ts' } } }));
   await write('packages/shared/src/index.ts', 'export const marker = "committed";');
