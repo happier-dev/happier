@@ -51,7 +51,6 @@
     "test:stress:relay-cluster:external-partition": "HAPPIER_STRESS_TARGET_MODE=full-compose HAPPIER_STRESS_COMPOSE_API_REPLICAS=2 HAPPIER_STRESS_COMPOSE_WORKER_REPLICAS=1 HAPPIER_STRESS_COMPOSE_METRICS_ENABLED=1 HAPPIER_STRESS_COMPOSE_IMAGE_BUILD_STRATEGY=always HAPPIER_STRESS_RELAY_CLUSTER_DISRUPTION=external-redis-partition node scripts/run-vitest-with-heartbeat.mjs --config vitest.stress.config.ts suites/stress/relay.clusterCompose.test.ts",
     "test:stress:long-idle-proxy": "HAPPIER_STRESS_TARGET_MODE=full-compose node scripts/run-vitest-with-heartbeat.mjs --config vitest.stress.config.ts suites/stress/proxy.longIdleTimeout.test.ts",
     "test:stress:duplicate-listener-policy": "HAPPIER_STRESS_TARGET_MODE=full-compose node scripts/run-vitest-with-heartbeat.mjs --config vitest.stress.config.ts suites/stress/rpc.duplicateListenerPolicy.test.ts",
-    "test:stress:presence-worker-crash": "HAPPIER_STRESS_TARGET_MODE=full-compose node scripts/run-vitest-with-heartbeat.mjs --config vitest.stress.config.ts suites/stress/presence.workerCrashReclaim.test.ts",
     "test:stress:mixed-realistic": "HAPPIER_STRESS_TARGET_MODE=full-compose node scripts/run-vitest-with-heartbeat.mjs --config vitest.stress.config.ts suites/stress/mixed.realistic.test.ts",
     "test:stress:mixed-connect-ceiling": "HAPPIER_STRESS_TARGET_MODE=full-compose node scripts/run-vitest-with-heartbeat.mjs --config vitest.stress.config.ts suites/stress/mixed.connectCeiling.test.ts",
     "stress:compose:up": "node scripts/runTsxEntrypoint.mjs src/testkit/stress/cli/stressComposeCli.ts up",

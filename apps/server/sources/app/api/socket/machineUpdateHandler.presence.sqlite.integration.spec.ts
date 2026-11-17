@@ -35,7 +35,7 @@ import { ScmDiffSummaryResultRevisionHintSchema } from '@happier-dev/protocol/sc
 import { evaluateAccountStoredContentSocketCompatibility, writeAccountStoredContentCompatibilityForSocket } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import * as logging from '@/utils/logging/log';
 import { resolveRedisAdapterValidationRedisUrl } from '../../../../scripts/resolveRedisAdapterValidationRedisUrl';
-import { publishMachineAlive, startPresenceRedisWorker } from '@/app/presence/presenceRedisQueue';
+import { startPresenceRedisWorker } from '@/app/presence/presenceRedisQueue';
 import { encodeAutomationRunCause } from '@/app/automations/automationRunCauseCodec';
 import { AutomationRunCauseSchema } from '@happier-dev/protocol';
 
@@ -621,28 +621,18 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
         }
     });
 
-    it('enrolls an already-running empty headless worker after the all producer consumes and ACKs recovery', async () => {
+    it('enrolls an already-running empty headless worker from the stream after the all producer is lost', async () => {
         const redis = await resolveRedisAdapterValidationRedisUrl({ env: {} });
         redisMemory = redis.redisMemory;
         harness.resetEnv({ SERVER_ROLE: 'all', HAPPIER_SOCKET_ADAPTER: 'redis-streams', REDIS_URL: redis.redisUrl });
         const producerRedis = redisClient = redisBoundary.client = new Redis(redis.redisUrl);
-        const producer = startPresenceRedisWorker({ consumerName: 'all-producer', readBlockMs: 1 });
+        const producer = startPresenceRedisWorker();
         const survivorRedis = new Redis(redis.redisUrl);
-        let releaseGroupRead!: () => void;
-        const groupGate = new Promise<void>(resolve => { releaseGroupRead = resolve; });
-        // Hold only this worker's group-read transport. Its broadcast reader
-        // must receive independently even when another consumer ACKs the wake.
-        const originalRead = survivorRedis.xreadgroup.bind(survivorRedis);
-        vi.spyOn(survivorRedis, 'xreadgroup').mockImplementation(async (...args) => {
-            await groupGate;
-            return originalRead(...args);
-        });
         redisBoundary.client = survivorRedis;
         const machines = createMachinePresenceDeadlineOwner();
         const sessions = createSessionPresenceDeadlineOwner();
         const enrolled: string[] = [];
-        const survivor = startPresenceRedisWorker({ consumerName: 'headless-survivor', readBlockMs: 1,
-            onDeadline: observation => {
+        const survivor = startPresenceRedisWorker({ onDeadline: observation => {
                 enrolled.push(observation.id);
                 if (observation.kind === 'machine') machines.schedule({ accountId: observation.accountId,
                     machineId: observation.id, lastActiveAt: new Date(observation.activeAt) });
@@ -673,11 +663,10 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
             expect(await createSessionPublisherPresence().registerPublisher({ socket: {},
                 binding: { accountId: owner.id, machineId: machine.id, sessionId: session.id },
                 completeActivitySnapshot: { state: 'idle', activeCount: 0 } })).toMatchObject({ status: 'registered' });
-            await vi.waitFor(async () => expect((await producerRedis.xpending('presence:alive:v1', 'presence-worker'))[0]).toBe(2));
+            await vi.waitFor(() => expect(enrolled).toEqual(expect.arrayContaining([machine.id, session.id])));
             await vi.advanceTimersByTimeAsync(5_000);
-            await vi.waitFor(async () => expect((await producerRedis.xpending('presence:alive:v1', 'presence-worker'))[0]).toBe(0));
             await producer.stop();
-            await stopLocalMachinePresenceTimeout(); // Producer loss after consuming/ACKing both wakes.
+            await stopLocalMachinePresenceTimeout(); // Producer loss after both wakes were written.
             await vi.advanceTimersByTimeAsync(55_000);
             await vi.waitFor(async () => expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).active).toBe(false));
             await vi.advanceTimersByTimeAsync(60_000);
@@ -687,158 +676,8 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
                 && (value?.type === 'machine-activity' || value?.type === 'activity') && value.active === false);
             expect(falsePackets.map(([, value]) => value.id).sort()).toEqual([machine.id, session.id].sort());
         } finally {
-            releaseGroupRead();
             await Promise.all([producer.stop(), survivor.stop(), machines.stop(), sessions.stop(), stopLocalMachinePresenceTimeout()]);
             survivorRedis.disconnect();
-            eventRouter.removeConnection(owner.id, connection);
-            vi.useRealTimers();
-        }
-    });
-
-    it('expires a released Redis producer observation through the deadline owner without a scan', async () => {
-        const redis = await resolveRedisAdapterValidationRedisUrl({ env: {} });
-        redisMemory = redis.redisMemory;
-        harness.resetEnv({ SERVER_ROLE: 'worker', HAPPIER_SOCKET_ADAPTER: 'redis-streams', REDIS_URL: redis.redisUrl });
-        redisClient = redisBoundary.client = new Redis(redis.redisUrl);
-        await redisClient.ping();
-        const owner = await db.account.create({ data: { publicKey: `legacy-deadline-${randomUUID()}`, encryptionMode: 'plain' } });
-        const machine = await createMachine(owner.id);
-        const base = Date.now();
-        const contentAt = new Date('2025-01-01T00:00:00.000Z');
-        await db.machine.update({ where: { id: machine.id }, data: {
-            active: false, lastActiveAt: new Date(base - 70_000), updatedAt: contentAt,
-        } });
-        const reader = createFakeSocket({ data: { clientType: 'user-scoped' } });
-        const connection: ClientConnection = { userId: owner.id, connectionType: 'user-scoped', socket: reader as unknown as Socket };
-        eventRouter.addConnection(owner.id, connection);
-        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
-        vi.setSystemTime(base);
-        // Keep the real blocking Redis connection responsive to ACKs in this
-        // fake-clock probe; persistence still uses the canonical 5 s cadence.
-        const worker = startPresenceRedisWorker({ readBlockMs: 1 });
-        const workerRedis = redisClient;
-        // A blocking worker read and an API producer are separate processes.
-        redisClient = redisBoundary.client = new Redis(redis.redisUrl);
-        try {
-            // A released API producer writes the existing stream shape, not a
-            // current process-local scheduling hook. The worker must own it.
-            await vi.waitFor(async () => expect(await redisClient!.xinfo('GROUPS', 'presence:alive:v1')).not.toEqual([]));
-            await publishMachineAlive({ accountId: owner.id, machineId: machine.id, timestamp: base });
-            await vi.waitFor(async () => {
-                const pending = await redisClient!.xpending('presence:alive:v1', 'presence-worker');
-                expect(Array.isArray(pending) ? pending[0] : null).toBe(1);
-            });
-            await vi.advanceTimersByTimeAsync(5_000);
-            await vi.waitFor(async () => expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
-                select: { active: true, lastActiveAt: true, updatedAt: true } }))
-                .toEqual({ active: true, lastActiveAt: new Date(base), updatedAt: contentAt }));
-            await vi.advanceTimersByTimeAsync(54_999);
-            expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).active).toBe(true);
-            await vi.advanceTimersByTimeAsync(1);
-            await vi.waitFor(async () => expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
-                select: { active: true, lastActiveAt: true, updatedAt: true } }))
-                .toEqual({ active: false, lastActiveAt: new Date(base), updatedAt: contentAt }));
-            expect(reader.emit.mock.calls.filter(([event, value]) => event === 'ephemeral'
-                && value?.type === 'machine-activity' && value.id === machine.id).map(([, value]) => value))
-                .toEqual([{ type: 'machine-activity', id: machine.id, active: false, activeAt: base }]);
-            await publishMachineAlive({ accountId: owner.id, machineId: machine.id, timestamp: base });
-            await vi.waitFor(async () => {
-                const pending = await redisClient!.xpending('presence:alive:v1', 'presence-worker');
-                expect(Array.isArray(pending) ? pending[0] : null).toBe(1);
-            });
-            await vi.advanceTimersByTimeAsync(5_000);
-            // A delayed released-producer entry is consumed, never a recovery.
-            await vi.waitFor(async () => {
-                const pending = await redisClient!.xpending('presence:alive:v1', 'presence-worker');
-                expect(Array.isArray(pending) ? pending[0] : null).toBe(0);
-            });
-            expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).active).toBe(false);
-            const offlineChange = await db.accountChange.findUniqueOrThrow({ where: {
-                accountId_kind_entityId: { accountId: owner.id, kind: 'machine', entityId: machine.id },
-            } });
-            // A fresh released observation recovers the same committed fact
-            // and must wake an already-running Event observer, not only cold reads.
-            const recoveredAt = Date.now();
-            await publishMachineAlive({ accountId: owner.id, machineId: machine.id, timestamp: recoveredAt });
-            await vi.waitFor(async () => expect((await redisClient!.xpending('presence:alive:v1', 'presence-worker'))[0]).toBe(1));
-            await vi.advanceTimersByTimeAsync(5_000);
-            await vi.waitFor(async () => expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).active).toBe(true));
-            const recovered = await db.machine.findUniqueOrThrow({ where: { id: machine.id } });
-            expect(JSON.parse(recovered.presenceTransitions!)).toMatchObject({ revision: 2,
-                online: { revision: 2 } });
-            const recoveredChange = await db.accountChange.findUniqueOrThrow({ where: {
-                accountId_kind_entityId: { accountId: owner.id, kind: 'machine', entityId: machine.id },
-            } });
-            expect(recoveredChange.cursor).toBeGreaterThan(offlineChange.cursor);
-        } finally {
-            await worker.stop();
-            workerRedis.disconnect();
-            eventRouter.removeConnection(owner.id, connection);
-            await stopLocalMachinePresenceTimeout();
-            vi.useRealTimers();
-        }
-    });
-
-    it('keeps released 40-second enqueue traffic online after a consumer crashes before its five-second flush', async () => {
-        const redis = await resolveRedisAdapterValidationRedisUrl({ env: {} });
-        redisMemory = redis.redisMemory;
-        harness.resetEnv({ SERVER_ROLE: 'worker', HAPPIER_SOCKET_ADAPTER: 'redis-streams', REDIS_URL: redis.redisUrl });
-        const control = redisClient = redisBoundary.client = new Redis(redis.redisUrl);
-        await control.xgroup('CREATE', 'presence:alive:v1', 'presence-worker', '0', 'MKSTREAM');
-        const crashedConsumer = new Redis(redis.redisUrl);
-        const survivorRedis = new Redis(redis.redisUrl);
-        let releaseRead!: () => void;
-        const gate = new Promise<void>(resolve => { releaseRead = resolve; });
-        const originalRead = survivorRedis.xreadgroup.bind(survivorRedis);
-        vi.spyOn(survivorRedis, 'xreadgroup').mockImplementation(async (...args) => { await gate; return originalRead(...args); });
-        redisBoundary.client = survivorRedis;
-        const survivor = startPresenceRedisWorker({ consumerName: 'legacy-survivor', readBlockMs: 1 });
-        await survivor.ready;
-        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
-        const machine = await createMachine(owner.id);
-        const base = Date.now();
-        await persistMachinePresence(db, { accountId: owner.id, machineId: machine.id, timestamp: base });
-        const reader = createFakeSocket({ data: { clientType: 'user-scoped' } });
-        const connection: ClientConnection = { userId: owner.id, connectionType: 'user-scoped', socket: reader as unknown as Socket };
-        eventRouter.addConnection(owner.id, connection);
-        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
-        vi.setSystemTime(base);
-        try {
-            await startLocalMachinePresenceTimeout();
-            await vi.advanceTimersByTimeAsync(40_000);
-            redisBoundary.client = control;
-            await publishMachineAlive({ accountId: owner.id, machineId: machine.id, timestamp: base + 40_000 });
-            // Exact Redis boundary state after the worker's XREADGROUP, before
-            // its first five-second SQL flush. Disconnect leaves real PEL custody.
-            const consumed = await crashedConsumer.xreadgroup('GROUP', 'presence-worker', 'crashed-before-flush',
-                'COUNT', 1, 'STREAMS', 'presence:alive:v1', '>') as [string, [string, string[]][]][];
-            const entryId = consumed[0][1][0][0];
-            crashedConsumer.disconnect();
-            releaseRead();
-            for (const elapsed of [45_000, 50_000, 55_000]) {
-                // Redis has a real clock while the deadline harness is virtual.
-                // Set only this disposable PEL entry's elapsed idle age to match.
-                await control.xclaim('presence:alive:v1', 'presence-worker', 'crashed-before-flush', 0,
-                    entryId, 'IDLE', elapsed - 40_000, 'JUSTID');
-                await vi.advanceTimersByTimeAsync(base + elapsed - Date.now());
-                await new Promise<void>(resolve => setImmediate(resolve));
-            }
-            // Let the real blocking Redis read settle inside the recovery
-            // window before advancing the virtual Machine deadline to 60 s.
-            await vi.waitFor(async () => expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).lastActiveAt)
-                .toEqual(new Date(base + 40_000)));
-            await vi.advanceTimersByTimeAsync(base + 60_000 - Date.now());
-            await vi.waitFor(async () => expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
-                select: { active: true, lastActiveAt: true } }))
-                .toEqual({ active: true, lastActiveAt: new Date(base + 40_000) }));
-            expect(reader.emit.mock.calls.filter(([event, value]) => event === 'ephemeral'
-                && value?.type === 'machine-activity' && value.active === false)).toEqual([]);
-        } finally {
-            releaseRead();
-            await survivor.stop();
-            survivorRedis.disconnect();
-            crashedConsumer.disconnect();
-            await stopLocalMachinePresenceTimeout();
             eventRouter.removeConnection(owner.id, connection);
             vi.useRealTimers();
         }

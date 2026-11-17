@@ -35,11 +35,6 @@ describe("monitoring/metrics/index", () => {
         expect(register.getSingleMetric("rpc_calls_total")).toBeTruthy();
         expect(register.getSingleMetric("rpc_target_lookup_duration_seconds")).toBeTruthy();
         expect(register.getSingleMetric("socket_cluster_fetch_sockets_total")).toBeTruthy();
-        expect(register.getSingleMetric("presence_stream_reads_total")).toBeTruthy();
-        expect(register.getSingleMetric("presence_stream_pending_entries")).toBeTruthy();
-        expect(register.getSingleMetric("presence_stream_redis_pending_entries")).toBeTruthy();
-        expect(register.getSingleMetric("presence_stream_redis_pending_refresh_failures_total")).toBeTruthy();
-        expect(register.getSingleMetric("presence_flush_retries_total")).toBeTruthy();
         expect(register.getSingleMetric("session_write_create_message_duration_seconds")).toBeTruthy();
         expect(register.getSingleMetric("session_message_role_mismatch_total")).toBeTruthy();
         expect(register.getSingleMetric("database_transaction_retries_total")).toBeTruthy();

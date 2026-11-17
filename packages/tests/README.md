@@ -334,7 +334,6 @@ These are intentionally slower and are meant for nightly/on-demand runs.
 - `suites/stress/reconnect.crossReplicaFailover.test.ts`: kills the connected API replica and verifies reconnect, re-auth, room rejoin, and resumed session-scoped RPC behavior on another replica.
 - `suites/stress/redis.interruption.test.ts`: interrupts Redis and validates RPC, reconnect, and transcript recovery after the backplane returns.
 - `suites/stress/proxy.longIdleTimeout.test.ts`: verifies an unsafe proxy idle timeout drops realtime connections while a safe timeout preserves them.
-- `suites/stress/presence.workerCrashReclaim.test.ts`: crashes the worker, injects dead-consumer pending presence entries, and verifies Redis `XAUTOCLAIM` reclaim plus backlog drain after restart.
 - `suites/stress/rollingRestart.test.ts`: restarts the configured service in the active topology and verifies reconnect/RPC convergence afterward.
 
 Focused full-compose entrypoints:
@@ -343,7 +342,6 @@ Focused full-compose entrypoints:
 - `pnpm --filter @happier-dev/tests run test:stress:redis-interruption`
 - `pnpm --filter @happier-dev/tests run test:stress:long-idle-proxy`
 - `pnpm --filter @happier-dev/tests run test:stress:duplicate-listener-policy`
-- `pnpm --filter @happier-dev/tests run test:stress:presence-worker-crash`
 - `pnpm --filter @happier-dev/tests run test:stress:mixed-realistic`
 
 Built-in capacity profiles:

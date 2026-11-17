@@ -6,13 +6,18 @@ const xadd = vi.fn(async () => "0-0");
 const getRedisClient = vi.fn(() => ({ xadd }));
 
 vi.mock("@/storage/redis/redis", () => ({ getRedisClient }));
+// The cluster broadcast is a separate transport; this spec covers the stream write.
+vi.mock("@/app/events/eventRouter", () => ({ eventRouter: { broadcastPresenceDeadline: vi.fn() } }));
 
 describe("presenceRedisQueue", () => {
-    const env = createEnvPatcher(["HAPPY_PRESENCE_STREAM_MAXLEN"]);
+    const env = createEnvPatcher(["HAPPY_PRESENCE_STREAM_MAXLEN", "HAPPIER_SOCKET_ADAPTER", "REDIS_URL", "SERVER_ROLE"]);
 
     beforeEach(() => {
         vi.clearAllMocks();
         env.restore();
+        env.set("HAPPIER_SOCKET_ADAPTER", "redis-streams");
+        env.set("REDIS_URL", "redis://127.0.0.1:6379");
+        env.set("SERVER_ROLE", "api");
     });
 
     afterEach(() => {
@@ -20,8 +25,8 @@ describe("presenceRedisQueue", () => {
     });
 
     it("adds MAXLEN trimming by default", async () => {
-        const { publishMachineAlive } = await import("./presenceRedisQueue");
-        await publishMachineAlive({ accountId: "u1", machineId: "m1", timestamp: 1 });
+        const { publishPresenceDeadline } = await import("./presenceRedisQueue");
+        await publishPresenceDeadline({ kind: "machine", accountId: "u1", id: "m1", activeAt: 1 });
 
         expect(getRedisClient).toHaveBeenCalled();
         expect(xadd).toHaveBeenCalledWith(
@@ -44,8 +49,8 @@ describe("presenceRedisQueue", () => {
     it("uses configured maxlen when provided", async () => {
         env.set("HAPPY_PRESENCE_STREAM_MAXLEN", "123");
 
-        const { publishMachineAlive } = await import("./presenceRedisQueue");
-        await publishMachineAlive({ accountId: "u1", machineId: "m1", timestamp: 9 });
+        const { publishPresenceDeadline } = await import("./presenceRedisQueue");
+        await publishPresenceDeadline({ kind: "machine", accountId: "u1", id: "m1", activeAt: 9 });
 
         expect(xadd).toHaveBeenCalledWith(
             "presence:alive:v1",
@@ -67,8 +72,8 @@ describe("presenceRedisQueue", () => {
     it("disables trimming when maxlen is 0", async () => {
         env.set("HAPPY_PRESENCE_STREAM_MAXLEN", "0");
 
-        const { publishMachineAlive } = await import("./presenceRedisQueue");
-        await publishMachineAlive({ accountId: "u1", machineId: "m1", timestamp: 1 });
+        const { publishPresenceDeadline } = await import("./presenceRedisQueue");
+        await publishPresenceDeadline({ kind: "machine", accountId: "u1", id: "m1", activeAt: 1 });
 
         expect(xadd).toHaveBeenCalledWith(
             "presence:alive:v1",

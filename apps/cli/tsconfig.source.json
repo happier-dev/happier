@@ -936,7 +936,6 @@
     "../server/sources/app/plugins/webhooks/routingKind.ts",
     "../server/sources/app/plugins/webhooks/verifiers/catalog.ts",
     "../server/sources/app/presence/persistMachinePresence.ts",
-    "../server/sources/app/presence/presenceBatcher.ts",
     "../server/sources/app/presence/presenceDeadlineNotification.ts",
     "../server/sources/app/presence/presenceMode.ts",
     "../server/sources/app/presence/presenceRecorder.ts",

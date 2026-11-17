@@ -73,7 +73,7 @@ It is designed for Docker and Dokploy-style deployments where:
 - The bundled Alertmanager config is safe by default: it accepts alerts but does not forward them anywhere until you add a real receiver.
 - Sticky sessions are still required for browser clients when polling fallback is enabled on the Happier server.
 - Reverse proxy idle timeout must be greater than `pingInterval + pingTimeout`. The current server defaults require more than `60s`; use a higher timeout such as several minutes.
-- The bundled dashboards and alerts prefer the canonical `websocket_connections_active` gauge and the Redis consumer-group backlog metric `presence_stream_redis_pending_entries`, while still preserving the legacy compatibility gauges in the server runtime.
+- The bundled dashboards and alerts prefer the canonical `websocket_connections_active` gauge, while still preserving the legacy compatibility gauges in the server runtime.
 - Prometheus/Grafana cover server metrics, Sentry remains the error/tracing surface, and PostHog remains the product analytics surface.
 
 ## Dokploy note

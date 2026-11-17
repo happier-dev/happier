@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-    DEFAULT_PRESENCE_REDIS_WORKER_DB_WRITE_CONCURRENCY,
-    DEFAULT_PRESENCE_REDIS_WORKER_FLUSH_INTERVAL_MS,
-    DEFAULT_PRESENCE_REDIS_WORKER_READ_BLOCK_MS,
     DEFAULT_PRESENCE_REDIS_WORKER_READ_COUNT,
-    DEFAULT_PRESENCE_REDIS_WORKER_RECLAIM_IDLE_MS,
     DEFAULT_PRESENCE_STREAM_MAX_LEN,
     readPresenceRedisWorkerConfigFromEnv,
     readPresenceStreamConfigFromEnv,
@@ -17,11 +13,7 @@ describe("config/presence", () => {
             streamMaxLen: DEFAULT_PRESENCE_STREAM_MAX_LEN,
         });
         expect(readPresenceRedisWorkerConfigFromEnv({})).toEqual({
-            dbWriteConcurrency: DEFAULT_PRESENCE_REDIS_WORKER_DB_WRITE_CONCURRENCY,
-            flushIntervalMs: DEFAULT_PRESENCE_REDIS_WORKER_FLUSH_INTERVAL_MS,
-            readBlockMs: DEFAULT_PRESENCE_REDIS_WORKER_READ_BLOCK_MS,
             readCount: DEFAULT_PRESENCE_REDIS_WORKER_READ_COUNT,
-            reclaimIdleMs: DEFAULT_PRESENCE_REDIS_WORKER_RECLAIM_IDLE_MS,
         });
     });
 
@@ -35,18 +27,10 @@ describe("config/presence", () => {
         });
         expect(
             readPresenceRedisWorkerConfigFromEnv({
-                HAPPIER_PRESENCE_WORKER_DB_WRITE_CONCURRENCY: "7",
-                HAPPIER_PRESENCE_WORKER_FLUSH_INTERVAL_MS: "123",
-                HAPPIER_PRESENCE_WORKER_READ_BLOCK_MS: "456",
                 HAPPIER_PRESENCE_WORKER_READ_COUNT: "789",
-                HAPPIER_PRESENCE_WORKER_RECLAIM_IDLE_MS: "999",
             }),
         ).toEqual({
-            dbWriteConcurrency: 7,
-            flushIntervalMs: 123,
-            readBlockMs: 456,
             readCount: 789,
-            reclaimIdleMs: 999,
         });
     });
 
@@ -58,16 +42,5 @@ describe("config/presence", () => {
         ).toEqual({
             streamMaxLen: null,
         });
-    });
-
-    it('keeps deferred work inside the Machine deadline after released 40-second enqueue spacing', () => {
-        const config = readPresenceRedisWorkerConfigFromEnv({ HAPPIER_PRESENCE_MACHINE_TIMEOUT_MS: '60000',
-            HAPPIER_PRESENCE_WORKER_FLUSH_INTERVAL_MS: '60000',
-            HAPPIER_PRESENCE_WORKER_RECLAIM_IDLE_MS: '60000',
-            HAPPIER_PRESENCE_WORKER_READ_BLOCK_MS: '60000' });
-        expect(config).toMatchObject({ flushIntervalMs: 5_000, reclaimIdleMs: 5_000, readBlockMs: 5_000 });
-        expect(readPresenceRedisWorkerConfigFromEnv({ HAPPIER_PRESENCE_MACHINE_TIMEOUT_MS: '80000' },
-            { flushIntervalMs: 60_000, reclaimIdleMs: 60_000, readBlockMs: 60_000 }))
-            .toMatchObject({ flushIntervalMs: 10_000, reclaimIdleMs: 10_000, readBlockMs: 10_000 });
     });
 });

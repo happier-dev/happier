@@ -12,8 +12,6 @@ import type { StressConfig } from '../config/stressScenarioSchema';
 import { finalizeStressScenario } from '../reporting/finalizeStressScenario';
 import type { StartedStressTarget } from '../targets/stressTargetTypes';
 import {
-  readScalarMetricValue,
-  readServiceMetricsViaNodeFetch,
   requireFullComposeAdmin,
   waitForRedisServiceHealthy,
 } from './fullComposeScenarioSupport';
@@ -33,7 +31,6 @@ export async function runRedisInterruptionScenario(params: {
   let latencies: number[] = [];
   let interruptionDurationMs = 0;
   let recoveryDurationMs = 0;
-  let pendingEntries = 0;
 
   if (!admin) {
     await finalizeStressScenario({
@@ -138,12 +135,7 @@ export async function runRedisInterruptionScenario(params: {
     await waitFor(
       async () => {
         const transcript = await fetchAllMessages(params.target.baseUrl, params.token, sessionId);
-        if (!transcript.some((row) => row.localId === localId)) {
-          return false;
-        }
-        const workerMetrics = await readServiceMetricsViaNodeFetch(params.target, 'worker');
-        pendingEntries = readScalarMetricValue(workerMetrics, 'presence_stream_pending_entries');
-        return pendingEntries <= 0;
+        return transcript.some((row) => row.localId === localId);
       },
       {
         timeoutMs: 30_000,
@@ -179,7 +171,6 @@ export async function runRedisInterruptionScenario(params: {
           redis: {
             interruptionDurationMs,
             recoveryDurationMs,
-            pendingEntries,
           },
         },
       },

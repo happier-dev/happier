@@ -81,27 +81,6 @@ groups:
 
   - name: happier-server-presence
     rules:
-      - alert: HappierPresenceReclaimSpike
-        expr: sum(rate(presence_stream_reclaims_total[10m])) > 0.1
-        for: 15m
-        labels:
-          severity: warning
-        annotations:
-          summary: Happier presence worker is reclaiming stuck entries
-          description: Presence reclaim activity suggests worker crashes, stalls, or long processing delays.
-
-      - alert: HappierPresenceNotDraining
-        expr: |
-          max(presence_stream_redis_pending_entries{job="happier-worker"}) > 1000
-          or
-          max(presence_stream_pending_entries{job="happier-worker"}) > 1000
-        for: 10m
-        labels:
-          severity: warning
-        annotations:
-          summary: Happier presence worker backlog is growing
-          description: Redis-backed or in-process pending presence backlog exceeded 1000 for at least 10 minutes.
-
       - alert: HappierWorkerMissing
         expr: sum(up{job="happier-worker"}) < 1
         for: 5m
