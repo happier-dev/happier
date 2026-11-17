@@ -15,7 +15,7 @@ import type { FoundSkillBundleV1 } from './foundSkillTransferV1.js';
 import { FIRST_PARTY_SKILLS_V1, buildFirstPartySkillSeedRuleV1 } from './firstPartySkillsV1.js';
 import { computePromptBundleDigestV1 } from '../promptLibraryDigests.js';
 import { readSkillInLibrary } from '../promptLibraryActionOperations.js';
-import { SkillReadResultV1Schema } from './skillReadV1.js';
+import { resolveSessionSkillByNameV1, SkillReadResultV1Schema } from './skillReadV1.js';
 import retainedFrontmatter from '../../../../fixtures/0.2-retained-skill-frontmatter.json';
 import { estimateTokensV1 } from '../../../capabilities/estimateTokensV1.js';
 import { readSkillLibraryCatalog } from './readSkillLibraryCatalog.js';
@@ -27,6 +27,15 @@ import { prepareArtifactHeaderForBodyV1, prepareArtifactHeaderForRevisionV1 } fr
 const markdown = '---\nname: sample\ndescription: A useful skill\n---\nInstructions';
 const files = [{ path: 'SKILL.md', contentBase64: encodeBase64(new TextEncoder().encode(markdown), 'base64'), contentKind: 'utf8' as const }];
 const included = { ok: true, state: 'on', previous: 'inherit', applyTiming: { t: 'next_turn' } } as const;
+
+it('resolves native Happier names while preferring an exact delivered identity', () => {
+  const named = { skillId: 'library-sample', name: 'sample', digest: 'sample-digest' };
+  const qualified = { skillId: 'happier:sample', name: 'other', digest: 'qualified-digest' };
+  expect(resolveSessionSkillByNameV1('happier:sample', [named])).toBe(named);
+  expect(resolveSessionSkillByNameV1('sample', [named])).toBe(named);
+  expect(resolveSessionSkillByNameV1('happier:sample', [named, qualified])).toBe(qualified);
+  expect(resolveSessionSkillByNameV1('foreign:sample', [named])).toBeUndefined();
+});
 type RegistryPorts = Pick<ReturnType<typeof createRegistryHostV1>, 'readRegistryItem' | 'readRegistrySource' | 'filesForPointer' | 'readLinkSkills' | 'fetchLinkSkillFiles'>;
 function gitRegistryHarness() {
   const initial = '1'.repeat(40), latest = '2'.repeat(40); let head = initial;

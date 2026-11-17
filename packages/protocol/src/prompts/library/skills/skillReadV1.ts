@@ -39,5 +39,6 @@ export type SessionSkillReadItemV1 = Readonly<{ skillId: string; name: string; d
 
 /** Native skill names may be the qualified identity advertised by their source. */
 export function resolveSessionSkillByNameV1(name: string | undefined, items: readonly SessionSkillReadItemV1[]): SessionSkillReadItemV1 | undefined {
-  return items.find(item => item.skillId === name) ?? items.find(item => item.name === name);
+  return items.find(item => item.skillId === name) ?? items.find(item => item.name === name)
+    ?? (name?.startsWith('happier:') ? items.find(item => item.name === name.slice('happier:'.length)) : undefined);
 }
