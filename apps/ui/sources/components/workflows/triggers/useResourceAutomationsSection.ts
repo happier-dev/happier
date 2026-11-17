@@ -112,10 +112,12 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
         enabled: demanded && subject !== null, accountLifetime });
     const eventCatalog = useWorkflowTriggerEventOptions({ machineId: actionCatalog.machineId, serverId: serverId ?? null,
         enabled: demanded && subject !== null && accountLifetime !== null, accountLifetime });
+    const eventsReady = eventCatalog.status === 'ready'
+        || (eventCatalog.status === 'idle' && actionCatalog.machineId === null);
     const whenStatus = !demanded || !subject || accountLifetime === null ? 'idle'
         : actionCatalog.phase === 'error' || actionCatalog.phase === 'unsupported' || eventCatalog.status === 'unavailable' ? 'unavailable'
-            : eventCatalog.status === 'idle' ? 'idle'
-                : actionCatalog.phase === 'ready' && eventCatalog.status === 'ready' ? 'ready' : 'loading';
+            : eventCatalog.status === 'idle' && !eventsReady ? 'idle'
+                : actionCatalog.phase === 'ready' && eventsReady ? 'ready' : 'loading';
     const whenOptions = React.useMemo(() => whenStatus === 'ready' && subject
         ? buildResourceWorkflowTriggerStartOptions({ subject, actions: actionCatalog.specs,
             events: eventCatalog.events, machineId: actionCatalog.machineId }) : EMPTY_WHEN_OPTIONS,

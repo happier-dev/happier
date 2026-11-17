@@ -474,7 +474,7 @@ describe('Account Workflow Library and settings', () => {
         expect(home.requests.filter(request => request.path.includes('/access/grants'))).toEqual([]);
         await hook.unmount();
     });
-    it('borrows the physical resource Account lifetime and keeps explicit null unavailable', async () => {
+    it('offers admitted Account Action starts without a monitoring Machine and keeps explicit null unavailable', async () => {
         const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
         const { useWorkflowActionCatalog } = await import('../presentation/useWorkflowActionCatalog');
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
@@ -482,8 +482,7 @@ describe('Account Workflow Library and settings', () => {
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
         const physicalAccount = captureActiveServerAccountScopeLifetime();
         if (!physicalAccount) throw new Error('Expected the admitted physical Account');
-        const subject = AutomationSubjectV1Schema.parse({ kind: 'plugin', serverId, pluginId: 'acme.tickets',
-            subjectKindId: 'ticket', identity: { id: 'issue-1' } });
+        const subject = AutomationSubjectV1Schema.parse({ kind: 'environment', serverId, environmentId: 'production' });
         home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
             automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0,
         }) });
@@ -491,7 +490,7 @@ describe('Account Workflow Library and settings', () => {
             const section = useResourceAutomationsSection({ subject, accountLifetime: props.accountLifetime });
             const catalog = useWorkflowActionCatalog({ kind: 'machine', machineId: null, serverId }, 'automation',
                 { accountLifetime: props.accountLifetime });
-            return { ...section, catalogPhase: catalog.phase };
+            return { ...section, catalogPhase: catalog.phase, catalogSpecs: catalog.specs };
         }, {
             initialProps: { accountLifetime: physicalAccount },
             wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider>,
@@ -499,9 +498,13 @@ describe('Account Workflow Library and settings', () => {
         await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('ready'));
         expect(hook.getCurrent().accountLifetime).toBe(physicalAccount);
         await waitForHomeGovernance(() => expect(hook.getCurrent().catalogPhase).toBe('ready'));
-        // A successful Action read cannot stand in for the Event catalog: this resource has no monitoring Machine.
-        expect(hook.getCurrent().link.whenStatus).toBe('idle');
-        expect(hook.getCurrent().link.whenOptions).toEqual([]);
+        expect(hook.getCurrent().project).toBeUndefined();
+        expect(hook.getCurrent().catalogSpecs).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'deployments.deploy' })]));
+        expect(hook.getCurrent().link.whenStatus).toBe('ready');
+        expect(hook.getCurrent().link.whenOptions).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'action:before:deployments.deploy', subject }),
+            expect.objectContaining({ id: 'action:after:deployments.deploy', subject }),
+        ]));
         const reads = listRequests().length;
         await hook.rerender({ accountLifetime: null });
         expect(hook.getCurrent().accountLifetime).toBeNull();
