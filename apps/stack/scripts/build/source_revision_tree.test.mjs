@@ -540,6 +540,35 @@ test('a restart onto a new tree keeps the tree it selected; stop releases only t
   assert.equal(await lstat(replacement.entrypoint).then(() => true, () => false), true);
 });
 
+// 2026-11-17 (P03-ACTIVATION-SWAP): the PostgreSQL and MySQL deploy scripts run only
+// when invoked as the process entry, so importing them from the tree's launcher
+// deployed nothing and exited 0. A bundle rewrites import.meta.url; a tree calls them.
+test('a source tree migration launcher runs the provider deploy, not only its import', { skip: process.platform === 'win32' }, async t => {
+  const { fixture, repoDir } = await createRevisionFixture(t);
+  const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
+  await gitIn('checkout', '--quiet', '--', '.');
+  await gitIn('clean', '-fdq');
+  const witness = fixture.path('deployed');
+  for (const [script, exported] of [['full', 'runPostgresMigrationDeploy'], ['mysql', 'runMysqlMigrationDeployMain']]) {
+    await writeFile(join(repoDir, `apps/server/scripts/migrate.${script}.deploy.ts`), `import { appendFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+export async function ${exported}() { appendFileSync(${JSON.stringify(witness)}, '${script}\\n'); }
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await ${exported}();
+`);
+  }
+  await gitIn('add', '-A');
+  await gitIn('commit', '--quiet', '-m', 'deploy scripts');
+  const stackBaseDir = fixture.path('stacks-root/qa');
+  for (const dbProvider of ['postgres', 'mysql']) {
+    const revision = await resolveSourceTreeRevision({ repoDir, treesRoot: sourceRevisionTreesRoot(stackBaseDir), rev: 'HEAD', overlay: [],
+      outputDir: fixture.path(`descriptors-${dbProvider}`) });
+    const { server } = await prepareSourceTreeRuntimeComponents({ repoDir, env: { ...process.env, HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: join(repoDir, 'manual-payload') }, stackBaseDir, descriptorPath: revision.descriptorPath,
+      components: [{ component: 'server', dbProvider }], logger: { error() {} } });
+    await promisify(execFile)(process.execPath, [server.migration.command], { cwd: server.migration.cwd });
+  }
+  assert.deepEqual((await readFile(witness, 'utf8')).trim().split('\n'), ['full', 'mysql']);
+});
+
 // nl3 2026-11-17 (P03-NL3-DISK): beds that are reloaded but rarely stopped kept every
 // refused reload's tree (pfc1113-bed: 5 of 7 trees, ~2.8 GiB each), and those trees
 // pinned their bases. The Stack's next preparation releases them; the selected tree stays.

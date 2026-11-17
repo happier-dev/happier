@@ -814,11 +814,15 @@ export async function prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir
       await writeOwnFile(entrypoint, sourceLauncher(t, `await import(${JSON.stringify(pathToFileURL(join(serverDir, 'sources',
         serverComponent === 'happier-server-light' ? 'main.light.ts' : 'main.ts')).href)});`));
       const provider = dbProvider ?? (serverComponent === 'happier-server-light' ? 'sqlite' : 'postgres');
-      const script = { postgres: 'full', mysql: 'mysql', pglite: 'light' }[provider];
       const migrate = join(serverDir, 'scripts/migrate.mjs');
-      await writeOwnFile(migrate, sourceLauncher(t, script
-        ? `await import(${JSON.stringify(pathToFileURL(join(serverDir, `scripts/migrate.${script}.deploy.ts`)).href)});`
-        : `const { runSqliteMigrationDeploy } = await import(${JSON.stringify(pathToFileURL(join(serverDir, 'scripts/migrate.sqlite.deploy.ts')).href)});
+      const deployScript = script => pathToFileURL(join(serverDir, `scripts/migrate.${script}.deploy.ts`)).href;
+      // The PostgreSQL and MySQL deploy scripts run only as the process entry
+      // (a bundle rewrites their import.meta.url); a launcher calls their export.
+      await writeOwnFile(migrate, sourceLauncher(t, {
+        postgres: `await (await import(${JSON.stringify(deployScript('full'))})).runPostgresMigrationDeploy();`,
+        mysql: `await (await import(${JSON.stringify(deployScript('mysql'))})).runMysqlMigrationDeployMain();`,
+        pglite: `await import(${JSON.stringify(deployScript('light'))});`,
+      }[provider] ?? `const { runSqliteMigrationDeploy } = await import(${JSON.stringify(deployScript('sqlite'))});
 await runSqliteMigrationDeploy({ serverRoot: ${JSON.stringify(serverDir)}, runSchemaSync: async () => {} });`));
       record = { identity, entrypoint, runtimeCommand: entrypoint, args: [], runtimeDir: serverDir, serverDir, serverComponent, dbProvider: provider,
         env: { HAPPIER_DB_PROVIDER: provider, ...(provider === 'sqlite' ? { HAPPIER_SQLITE_MIGRATIONS_DIR: join(serverDir, 'prisma/sqlite/migrations') } : {}) },
