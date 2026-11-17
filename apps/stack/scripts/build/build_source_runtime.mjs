@@ -1475,7 +1475,9 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
   // Its metafile inventories paths/byte counts, not the consumed content digest.
   // Linked external maps retain the captured TypeScript in sourcesContent.
   // Metafile outputs include them in the same retained code/identity inventory.
-  const build = options => esbuild.build({...options, sourcemap:'linked', sourcesContent:true,
+  // Native preparation helpers consume the same captured source exports as
+  // the main graph; captured workspaces need no installed dist products.
+  const build = options => esbuild.build({...options, conditions:[SOURCE_CONDITION], sourcemap:'linked', sourcesContent:true,
     plugins:[...(options.plugins ?? []), captureInputs]});
   const workspacePackages = await readWorkspacePackages(repoDir);
   phase('input-digests', 'entry-preparation');
