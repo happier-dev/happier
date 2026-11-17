@@ -970,7 +970,7 @@ it("lists a pool in the selector's own order and builds the why detail from its 
           selection: {
             status: 'available',
             machineId: 'witnessed-selector',
-            value: { group, observedAtMs: now, selection },
+            value: { group, observedAtMs: now, activeAccountRef: { service, accountId: 'personal' }, selection },
           },
         },
       ],
@@ -1008,6 +1008,8 @@ it("lists a pool in the selector's own order and builds the why detail from its 
     screen.findHostByTestId(`cap.usedFirst.pool.${id}`),
   );
   expect(queue.every(Boolean)).toBe(true);
+  expect(queue[0]!.props.accessibilityLabel).toContain(t('usage.board.plans.usedFirstInUse'));
+  expect(queue[1]!.props.accessibilityLabel).not.toContain(t('usage.board.plans.usedFirstInUse'));
   // The Account's own read order is work, personal: the queue follows the selector's order instead.
   const order = screen
     .findAll(

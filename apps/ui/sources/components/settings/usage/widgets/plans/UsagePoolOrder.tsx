@@ -59,6 +59,7 @@ export type UsagePoolMember = Readonly<{
   account: UsagePlanAccount | null;
   /** Place in the selector's eligible order, or null when it is not eligible. */
   rank: number | null;
+  /** The persisted active account, independent of the selector's proposed candidate. */
   selected: boolean;
   candidate: Trace['orderedEligibleCandidates'][number] | null;
   evidence: Trace['candidates'][number] | null;
@@ -73,6 +74,7 @@ export function readUsagePoolMembers(
   pool: UsagePlanPool,
   accounts: readonly UsagePlanAccount[],
   selection: Selection,
+  activeAccountRef: Extract<UsagePoolSelectionState, { selection: Selection }>['activeAccountRef'],
 ): UsagePoolMember[] {
   const trace = selection.decisionTrace;
   const accountOf = (accountId: string) =>
@@ -81,7 +83,7 @@ export function readUsagePoolMembers(
         pool.accountKeys.includes(account.key) &&
         account.accountId === accountId,
     ) ?? null;
-  const selectedId = selection.selected?.profileId ?? null;
+  const selectedId = activeAccountRef?.accountId ?? null;
   const ordered = trace.orderedEligibleCandidates.map(
     (candidate) => candidate.profileId,
   );
@@ -331,7 +333,7 @@ function PoolQueue(
   const selection = state.selection;
   const trace = selection.decisionTrace;
   const strategy = getPoolStrategyPresentation(trace.strategy);
-  const members = readUsagePoolMembers(props.pool, props.accounts, selection);
+  const members = readUsagePoolMembers(props.pool, props.accounts, selection, state.activeAccountRef);
   const nextRank = readUsagePoolQueueNextRank(members);
   return (
     <View testID={props.testID} style={styles.pool}>
@@ -492,6 +494,7 @@ export function UsagePoolSteps(props: PoolOrderProps) {
           pool,
           props.accounts,
           state.selection,
+          state.activeAccountRef,
         );
         if (state.memberStatus === 'none_known') {
           return <UsagePlanSectionHead key={pool.key} title={label} meta={!sharedCause && state.refreshError ? unreadText(state.refreshError) : null} />;
@@ -661,7 +664,7 @@ function PoolWhyPopover(
   const text = usePlanText();
   const trace = props.selection.decisionTrace;
   const strategy = getPoolStrategyPresentation(trace.strategy);
-  const selected = props.members.find((member) => member.selected) ?? null;
+  const selected = props.members.find((member) => member.accountId === props.selection.selected?.profileId) ?? null;
   const selectedName = selected?.account
     ? props.nameOf(selected.account).title
     : null;
@@ -798,7 +801,7 @@ function PoolComparison(props: WhyProps) {
       action={{ label: t('common.retry'), onPress: async () => { await controls.invoke('retry'); } }} /> : null}
     {asked ? !entry ? <Text style={[styles.quiet, text.detail]}>{t('usage.board.plans.usedFirstNoMachine')}</Text>
       : response && 'status' in response ? <Text style={[styles.quiet, text.detail]}>{t('usage.board.plans.usedFirstReadFailed')}</Text>
-      : response && 'group' in response ? <View accessibilityRole="list">{readUsagePoolMembers(props.pool, props.accounts, response.selection).map((member, index) =>
+      : response && 'group' in response ? <View accessibilityRole="list">{readUsagePoolMembers(props.pool, props.accounts, response.selection, response.activeAccountRef).map((member, index) =>
         <WhyRow key={member.accountId} member={member} first={index === 0} nameOf={props.nameOf} nowMs={moment} testID={`${id}.candidate.${member.accountId}`} />)}</View>
       : snapshot.error ? null : <Text style={[styles.quiet, text.detail]}>{t('usage.board.plans.hintLoading')}</Text> : null}
   </View>;
