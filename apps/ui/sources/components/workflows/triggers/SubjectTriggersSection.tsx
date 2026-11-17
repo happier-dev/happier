@@ -36,6 +36,8 @@ import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflo
 import { resolveUnknownAccountActorName } from '@/sync/domains/account/accountActorPresentation';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { useResourceAutomationsSection } from './useResourceAutomationsSection';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 
 const NO_STARTERS: readonly SubjectTriggerStarter[] = [];
 
@@ -73,6 +75,9 @@ export const SubjectTriggersSection = React.memo(
     props: Readonly<{
       /** A legacy page subject (Machine, Environment, service) keeps its starters; a canonical subject is read as itself. */
       subject: TriggerSubject | AutomationSubjectV1;
+      accountLifetime?: ServerAccountScopeLifetime | null;
+      contextSubjects?: readonly AutomationSubjectV1[];
+      executionContext?: Pick<WorkflowProjectTargetV1, 'machineId' | 'directory'>;
       serverId?: string;
       /** The page's own name for its subject, used in the agent's prompt and the read-back. */
       subjectName: string;
