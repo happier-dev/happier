@@ -550,11 +550,14 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                             secretHash: encodeBase64(deriveHomeQrRendezvousVerifierV2(qrSecret), 'base64url'),
                             pairId: link.invite.pairId,
                             expiresAtMs: link.invite.expiresAtMs,
-                        }, target, { signal: attempt.controller.signal });
+                        }, target, { signal: attempt.controller.signal }).finally(async () => {
+                            // A transport abort can hide a start that reached the Home.
+                            // Reuse the same best-effort cancellation of this known pair id.
+                            if (!isCurrentAttempt(attempt.id)) {
+                                await consumeReversePairingRow(link.invite.pairId, target);
+                            }
+                        });
                         if (!isCurrentAttempt(attempt.id)) {
-                            // Cancellation raced the in-flight start; the row may exist
-                            // server-side. Consume that exact row before leaving.
-                            await consumeReversePairingRow(link.invite.pairId, target);
                             return;
                         }
                         if (started.ok) break;
