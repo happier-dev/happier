@@ -43,6 +43,8 @@ export async function createIsolatedFakeClaudeControlShim(params: Readonly<{
   invocationId: string;
   captureEnvironmentKeys: readonly string[];
   logFullStdin: boolean;
+  /** Observe the native vendor's startup file before the runtime cleans it up. */
+  captureStartupInstructions?: boolean;
 }>): Promise<Readonly<{
   executablePath: string;
   logPath: string;
@@ -66,6 +68,11 @@ export async function createIsolatedFakeClaudeControlShim(params: Readonly<{
     ...Object.entries(controlledEnvironment).map(
       ([key, value]) => `process.env[${JSON.stringify(key)}] = ${JSON.stringify(value)};`,
     ),
+    ...(params.captureStartupInstructions ? [
+      "const { appendFileSync, readFileSync } = await import('node:fs');",
+      "const startupInstructionsIndex = process.argv.indexOf('--append-system-prompt-file');",
+      `if (startupInstructionsIndex >= 0) appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ type: 'startup_instructions', invocationId: ${JSON.stringify(params.invocationId)}, text: readFileSync(process.argv[startupInstructionsIndex + 1], 'utf8') }) + '\\n');`,
+    ] : []),
     `await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});`,
     '',
   ].join('\n');
