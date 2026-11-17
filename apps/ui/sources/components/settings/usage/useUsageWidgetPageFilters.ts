@@ -120,7 +120,8 @@ export function createUsageAppFilters(environments: readonly UsageAppEnvironment
     const write = (ids: readonly string[], callerContext?: ActionExecutorContext) =>
         setScope({ sources: ids.map(usageAppCallsSourceId) }, callerContext);
     const appLabel = (id: string) => apps.find(([key]) => key === id)?.[1] ?? id;
-    const sources: UsageWidgetPageFilter = { field: 'sources', title: t(FIELD_TITLE.sources), shown: 'apps', selected: shownApps,
+    // The chooser checks every shown app; the chip names them through valueLabel, so "all" needs no All row here.
+    const sources: UsageWidgetPageFilter = { field: 'sources', title: t(FIELD_TITLE.sources), shown: 'apps', selected: selectedApps,
         valueLabel: t('usage.board.page.sourcesAppsValue', { name: shownApps.length === 0 && apps.length > 1
             ? t('usage.board.page.filterAll') : shownApps.length === 1 || apps.length === 1 ? appLabel(shownApps[0] ?? appIds[0]!)
             : t('usage.board.page.filterCount', { count: shownApps.length }) }),
