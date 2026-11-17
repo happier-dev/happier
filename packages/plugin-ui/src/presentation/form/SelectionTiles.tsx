@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
+import { useCallback, useMemo, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import { I18nManager, Platform, Pressable, StyleSheet, View, useWindowDimensions, type ViewStyle } from 'react-native';
 
 import { resolveHappierTypeScale, type HappierTypeEmphasis, type HappierTypeRole } from '../text/typeScale.js';
@@ -18,6 +18,8 @@ import { resolveHappierTabKeySelection } from '../navigation/Tabs.js';
 import { HAPPIER_FIELD_BOX_METRICS } from './FieldBox.js';
 import { resolveHappierRadioMarkStyle } from './RadioMark.js';
 import { useHappierMaterialColorResolver } from '../layout/Surface.js';
+import { usePageWindow } from '../collection/pageCollectionVirtualizer.js';
+import { useOptionalPluginUiScrollActivityTracker, type PluginUiScrollActivityTracker } from '../../presentationHost/scrollActivity.js';
 
 /**
  * The one tile owner for Happier core and plugin surfaces: text choice tiles
@@ -233,6 +235,12 @@ type HappierChoiceTilesBaseProps<T extends string, I extends string> = HappierSe
    * chosen; touch devices, which have no hover, see it on the chosen tile.
    */
   renderOptionAccessory?: (params: Readonly<{ option: HappierSelectionTileOption<T, I>; selected: boolean; revealed: boolean }>) => ReactNode;
+  /**
+   * Visual variant. `page`: the picker scrolls with the page around it and its options scale with the person's data
+   * (a theme library), so it draws only the lines of tiles near the page's window, by the page Collection's one
+   * windowing rule. Absent, every tile is drawn.
+   */
+  scroll?: 'page';
 }>;
 
 export type HappierSingleSelectionTilesProps<T extends string, I extends string = string> =
@@ -436,9 +444,7 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
       }
       : props.previewAspectRatio ? { aspectRatio: props.previewAspectRatio, minHeight: 0 } : null;
   const showLabels = props.labels !== 'hidden';
-  return (
-    <View style={styles.visualGrid} onLayout={(event) => setGridWidth(event.nativeEvent.layout.width)} {...choiceGroupSemantics(props)}>
-      {props.options.map((option, index) => {
+  const renderTile = (option: HappierSelectionTileOption<T, I>, index: number, onHeight?: (key: string, height: number) => void): ReactElement => {
         const selected = isSelected(props, option.id);
         const disabled = option.disabled === true;
         const label = props.renderText({ role: 'visualLabel', text: option.title, selected, compact: false, numberOfLines: props.labelLines ?? 2 });
@@ -448,6 +454,7 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
           <Pressable
             key={option.id}
             {...tileKeyboardProps(index)}
+            {...(onHeight === undefined || accessory ? {} : { onLayout: (event: { nativeEvent: { layout: { height: number } } }) => onHeight(option.id, event.nativeEvent.layout.height) })}
             testID={option.testID ?? (props.testIdPrefix ? `${props.testIdPrefix}:${option.id}` : undefined)}
             accessibilityRole={selectionAccessibilityRole}
             accessibilityLabel={option.title}
@@ -489,11 +496,104 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
         if (!accessory) return tile;
         return (
           <VisualTileAccessoryFrame key={option.id} style={tileFrame} selected={selected}
+            {...(onHeight === undefined ? {} : { onHeight: (height: number) => onHeight(option.id, height) })}
             renderAccessory={(revealed) => accessory({ option, selected, revealed })}>
             {tile}
           </VisualTileAccessoryFrame>
         );
-      })}
+  };
+  const onGridLayout = (event: { nativeEvent: { layout: { width: number } } }) => setGridWidth(event.nativeEvent.layout.width);
+  const pageTracker = useOptionalPluginUiScrollActivityTracker();
+  if (props.scroll === 'page' && pageTracker !== null) {
+    const selectedIndex = props.options.findIndex((option) => isSelected(props, option.id));
+    // Before a tile is measured, a line stands at its preview, ring and two caption lines.
+    const estimate = (measuredPreview ? previewWidth / aspectRatio : VISUAL_PREVIEW_HEIGHT_PX)
+      + 2 * (VISUAL_RING_GAP_PX + VISUAL_RING_WIDTH_PX) + VISUAL_CAPTION_ESTIMATE_PX;
+    return (
+      <PageWindowedVisualTiles tracker={pageTracker} options={props.options} columns={columns} columnWidth={columnWidth}
+        estimate={estimate} pinnedIndex={selectedIndex} renderTile={renderTile} style={styles.visualGrid}
+        onGridLayout={onGridLayout} semantics={choiceGroupSemantics(props)} />
+    );
+  }
+  return (
+    <View style={styles.visualGrid} onLayout={onGridLayout} {...choiceGroupSemantics(props)}>
+      {props.options.map((option, index) => renderTile(option, index))}
+    </View>
+  );
+}
+
+const NO_TILE_HEIGHTS: ReadonlyMap<string, number> = new Map();
+
+/**
+ * A page-scrolled visual picker's tiles, wrapped into its columns and drawn only where their lines are near the page's
+ * window (`usePageWindow`, the page Collection's rule): each run of far lines stands as one full-width spacer of their
+ * exact height, so the page keeps its length and scroll position. Every drawn tile stays a child of this one wrapped
+ * row, so a re-flow never remounts it; the chosen tile's line (the group's tab stop) stays drawn wherever it is.
+ */
+function PageWindowedVisualTiles<T extends string, I extends string>(props: Readonly<{
+  tracker: PluginUiScrollActivityTracker;
+  options: readonly HappierSelectionTileOption<T, I>[];
+  columns: number;
+  /** A tile's measured height belongs to the column width it was drawn at. */
+  columnWidth: number;
+  estimate: number;
+  pinnedIndex: number;
+  renderTile: (option: HappierSelectionTileOption<T, I>, index: number, onHeight: (key: string, height: number) => void) => ReactElement;
+  style: ViewStyle;
+  onGridLayout: (event: { nativeEvent: { layout: { width: number } } }) => void;
+  semantics: ReturnType<typeof choiceGroupSemantics>;
+}>): ReactElement {
+  const { options, columns, columnWidth, estimate } = props;
+  const { root, measure, near } = usePageWindow(props.tracker);
+  const [measured, setMeasured] = useState<Readonly<{ columnWidth: number; heights: ReadonlyMap<string, number> }>>(
+    () => ({ columnWidth, heights: NO_TILE_HEIGHTS }),
+  );
+  const heights = measured.columnWidth === columnWidth ? measured.heights : NO_TILE_HEIGHTS;
+  const onHeight = useCallback((key: string, height: number) => {
+    setMeasured((current) => {
+      const base = current.columnWidth === columnWidth ? current.heights : NO_TILE_HEIGHTS;
+      if (height <= 0 || base.get(key) === height) return current;
+      return { columnWidth, heights: new Map(base).set(key, height) };
+    });
+  }, [columnWidth]);
+  const lines = useMemo(() => {
+    const perLine = Math.max(1, columns);
+    // A line not drawn yet stands at the tallest tile measured so far, else the estimate.
+    const fallback = heights.size > 0 ? Math.max(...heights.values()) : estimate;
+    const result: Array<Readonly<{ start: number; end: number; offset: number; height: number }>> = [];
+    let offset = 0;
+    for (let start = 0; start < options.length; start += perLine) {
+      const end = Math.min(options.length, start + perLine);
+      const height = Math.max(...options.slice(start, end).map((option) => heights.get(option.id) ?? fallback));
+      result.push({ start, end, offset, height });
+      offset += height + VISUAL_GRID_GAP_PX;
+    }
+    return result;
+  }, [columns, estimate, heights, options]);
+  const pinnedLine = props.pinnedIndex < 0 ? -1 : Math.floor(props.pinnedIndex / Math.max(1, columns));
+  const content: ReactNode[] = [];
+  let skipFrom = -1;
+  const flush = (end: number) => {
+    if (skipFrom < 0) return;
+    const first = lines[skipFrom]!;
+    const last = lines[end - 1]!;
+    content.push(
+      <View key={`gap:${options[first.start]!.id}`} aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+        style={{ width: '100%', height: last.offset + last.height - first.offset }} />,
+    );
+    skipFrom = -1;
+  };
+  lines.forEach((line, lineIndex) => {
+    if (near(line.offset, line.height) || lineIndex === pinnedLine) {
+      flush(lineIndex);
+      for (let index = line.start; index < line.end; index += 1) content.push(props.renderTile(options[index]!, index, onHeight));
+    } else if (skipFrom < 0) skipFrom = lineIndex;
+  });
+  flush(lines.length);
+  return (
+    <View ref={root} style={props.style} {...props.semantics}
+      onLayout={(event) => { props.onGridLayout(event); void measure(); }}>
+      {content}
     </View>
   );
 }
@@ -505,12 +605,15 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
 function VisualTileAccessoryFrame(props: Readonly<{
   style: ComponentProps<typeof View>['style'];
   selected: boolean;
+  /** A page-windowed picker reads the drawn tile's height. */
+  onHeight?: (height: number) => void;
   renderAccessory: (revealed: boolean) => ReactNode;
   children: ReactNode;
 }>) {
   const [hovered, setHovered] = useState(false);
   return (
     <Pressable accessible={false} focusable={false} style={props.style}
+      {...(props.onHeight === undefined ? {} : { onLayout: (event: { nativeEvent: { layout: { height: number } } }) => props.onHeight!(event.nativeEvent.layout.height) })}
       onHoverIn={() => setHovered(true)} onHoverOut={() => setHovered(false)}>
       {props.children}
       <View style={visualAccessoryStyles.slot} pointerEvents="box-none">
@@ -967,6 +1070,8 @@ const VISUAL_PREVIEW_RADIUS_PX = 10;
 const VISUAL_RING_GAP_PX = 2;
 const VISUAL_RING_WIDTH_PX = 1.5;
 const VISUAL_GRID_GAP_PX = 10;
+/** A visual tile's caption and sublabel lines, for a line of tiles not measured yet (the page window's estimate only). */
+const VISUAL_CAPTION_ESTIMATE_PX = 40;
 /** A filling tile keeps the proportions of a small app window rather than a fixed height. */
 const VISUAL_FILL_PREVIEW_ASPECT_RATIO = 2.2;
 /** A regular card's leading preview (`descriptionPlacement="below"`): a small app window. */

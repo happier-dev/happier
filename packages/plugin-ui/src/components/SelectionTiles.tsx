@@ -70,6 +70,8 @@ type SelectionTilesBaseProps<T extends string> = Readonly<{
   renderOptionFooter?: (input: Readonly<{ option: SelectionTilesOption<T>; selected: boolean; disabled: boolean }>) => ReactNode;
   /** Visual tiles: quiet operations beside the choice, revealed on hover or selection. */
   renderOptionAccessory?: (input: Readonly<{ option: SelectionTilesOption<T>; selected: boolean; revealed: boolean }>) => ReactNode;
+  /** Visual: `page` draws only the lines of tiles near the page's window, for options that scale with the person's data. */
+  scroll?: 'page';
   /** The group's accessible name: the setting it chooses. */
   accessibilityLabel: string;
   accessibilityLabelKey?: string;
@@ -189,6 +191,7 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>):
     descriptionPlacement: props.descriptionPlacement,
     renderOptionFooter: props.renderOptionFooter,
     renderOptionAccessory: props.renderOptionAccessory,
+    scroll: props.scroll,
     accessibilityLabel: resolveAuthorText(translate, props.accessibilityLabel, props.accessibilityLabelKey) ?? props.accessibilityLabel,
     ...(props.testID === undefined ? {} : { testIdPrefix: props.testID }),
     colors,

@@ -9,6 +9,7 @@ import { HappierSelectionTiles } from '../presentation/form/SelectionTiles.js';
 import { HappierPageSheet } from '../presentation/layout/PageSection.js';
 import { hitAreaClippingAncestors, readHitAreaReach } from '../presentation/interaction/hitArea.testSupport.js';
 import { HAPPIER_TYPE_SCALE, resolveHappierTypeScale, type HappierTypeRole } from '../presentation/text/typeScale.js';
+import { PluginUiScrollActivityProvider, type PluginUiScrollActivityTracker } from '../presentationHost/scrollActivity.js';
 
 const ACTION_OPTIONS = [
   { id: 'phone', title: 'Add your phone', subtitle: 'Show a QR code', testID: 'action:phone' },
@@ -20,6 +21,15 @@ const TILE_COLORS = {
   previewBackground: 'white', actionBackground: 'white', actionBorderHovered: 'black',
 };
 const SHEET_COLORS = { sheet: 'white', sheetBorder: 'gray', rowDivider: 'gray', groupDivider: 'gray' };
+
+/**
+ * The row hairlines a page sheet draws between its rows: decoration hidden from assistive technology since C77
+ * (23239f43e5a), never a `separator` a row may own. Read by their drawn shape, an empty hidden one-pixel rule.
+ */
+function rowRules(container: HTMLElement): HTMLElement[] {
+  expect(container.querySelector('[role="separator"]')).toBeNull();
+  return [...container.querySelectorAll<HTMLElement>('[aria-hidden="true"]:empty')].filter((node) => getComputedStyle(node).height === '1px');
+}
 
 function measureTiles(container: HTMLElement, width: number) {
   // jsdom has no ResizeObserver. Deliver real RNW layout events to the tile's
@@ -122,6 +132,38 @@ describe('SelectionTiles', () => {
     } finally { mount.unmount(); }
   });
 
+  it('draws a page-scrolled visual picker only near the page window, keeping the chosen tile', async () => {
+    // A theme library scales with the person's data: its tiles window like the page Collection's (finding 4 + G13).
+    const listeners = new Set<() => void>();
+    let window = { top: 0, bottom: 400 };
+    const tracker: PluginUiScrollActivityTracker = {
+      onScroll() {}, onLayout() {}, onContentSizeChange() {}, invalidateLayout() {},
+      getLayoutRevision: () => 0, getWindow: () => window,
+      subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      measureSpan: async () => ({ top: 0 }),
+    };
+    const options = Array.from({ length: 200 }, (_, index) => ({ id: `theme-${index}`, title: `Theme ${index}`, preview: <Text>{`Preview ${index}`}</Text> }));
+    const mount = mountTiles(<PluginUiScrollActivityProvider tracker={tracker}>
+      <SelectionTiles variant="visual" tileSizing="fill" scroll="page" maximumColumns={4} previewAspectRatio={1.6}
+        accessibilityLabel="Light mode" value="theme-150" onChange={() => undefined} options={options} />
+    </PluginUiScrollActivityProvider>);
+    try {
+      const drawn = () => radios(mount.container).map((radio) => radio.getAttribute('aria-label'));
+      await act(async () => {});
+      expect(drawn().length).toBeGreaterThan(0);
+      expect(drawn().length).toBeLessThan(40);
+      expect(drawn()).toContain('Theme 0');
+      // The chosen tile is the group's tab stop: it stays drawn wherever it is.
+      expect(drawn()).toContain('Theme 150');
+      window = { top: 2_000, bottom: 2_400 };
+      await act(async () => { listeners.forEach((listener) => listener()); });
+      expect(drawn()).not.toContain('Theme 0');
+      // Lines further down the page take the window's place; the chosen line (148–151) stays besides them.
+      expect(drawn().some((name) => !['Theme 148', 'Theme 149', 'Theme 150', 'Theme 151'].includes(name ?? ''))).toBe(true);
+      expect(drawn().length).toBeLessThan(40);
+    } finally { mount.unmount(); }
+  });
+
   it('hides visual captions without losing accessible names or keyboard selection', async () => {
     const onChange = vi.fn();
     const mount = mountTiles(<SelectionTiles variant="visual" tileSizing="fill" labels="hidden"
@@ -143,7 +185,7 @@ describe('SelectionTiles', () => {
           onPress={onPress} colors={TILE_COLORS} renderText={({ text }) => <span>{text}</span>} renderGlyph={() => null} />
       </HappierPageSheet>,
     );
-    const separators = () => mount.container.querySelectorAll('[role="separator"]');
+    const separators = () => rowRules(mount.container);
     try {
       expect(separators()).toHaveLength(0);
       measureTiles(mount.container, 358);
@@ -171,7 +213,7 @@ describe('SelectionTiles', () => {
       </HappierPageSheet>,
     );
     const option = () => mount.container.querySelector<HTMLElement>('[data-testid="action:home"]')!;
-    const separators = () => mount.container.querySelectorAll('[role="separator"]');
+    const separators = () => rowRules(mount.container);
     try {
       measureTiles(mount.container, 704);
       const control = option();
@@ -196,7 +238,7 @@ describe('SelectionTiles', () => {
     );
     try {
       measureTiles(mount.container, 358);
-      expect(mount.container.querySelectorAll('[role="separator"]')).toHaveLength(2);
+      expect(rowRules(mount.container)).toHaveLength(2);
       await act(async () => { mount.container.querySelector<HTMLElement>('[data-testid="action:phone"]')!.click(); });
       expect(onPress).toHaveBeenCalledWith('phone');
       expect(mount.container.querySelector('[role="radio"]')).toBeNull();
@@ -227,7 +269,7 @@ describe('SelectionTiles', () => {
       ? <HappierPageSheet surface="none" colors={SHEET_COLORS}>{tiles}</HappierPageSheet> : tiles);
     try {
       measureTiles(mount.container, 358);
-      expect(mount.container.querySelectorAll('[role="separator"]')).toHaveLength(0);
+      expect(rowRules(mount.container)).toHaveLength(0);
       if (context === 'footer') {
         expect(mount.container.textContent).toContain('home status');
         expect(mount.container.querySelector('[data-testid="action:home"]')?.getAttribute('role')).toBe('group');

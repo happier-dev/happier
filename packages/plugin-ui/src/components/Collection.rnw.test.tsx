@@ -1534,6 +1534,25 @@ describe('Collection table', () => {
     }
   });
 
+  it('marks a single-choice grid card by its ring alone, keeping the card own glyph', async () => {
+    // A visual picker's chosen card wears the ring; a radio beside it said the same fact twice (Themes library).
+    const view = mount({
+      presentation: 'grid',
+      grouped: false,
+      detail: 'none',
+      anatomy: { ...anatomy, glyph: (entry) => <Text testID={`glyph:${entry.id}`}>•</Text> },
+      selection: { single: { value: 'a', onValueChange() {} } },
+    });
+    try {
+      view.measure(700);
+      expect(view.query('glyph:a')).not.toBeNull();
+      expect(view.query('row:a:selected')).not.toBeNull();
+      expect(view.query('row:b:selected')).toBeNull();
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('keeps grid positions when a primary item is inactive', async () => {
     const view = mount({
       presentation: 'grid',

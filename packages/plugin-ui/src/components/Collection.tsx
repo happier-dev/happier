@@ -2135,13 +2135,16 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   const singleChoice = props.selection?.single;
   const theme = useHappierUiTheme();
   // A single choice leads each row with the one choice mark (lab `.fm-table`'s radio column) in the glyph
-  // column; the row itself owns the radio role, its checked state and the keyboard.
+  // column; the row itself owns the radio role, its checked state and the keyboard. A grid card already marks
+  // the chosen card with its ring (a visual picker's one mark), so it keeps its own glyph: a radio beside the
+  // ring says the same fact twice.
+  const ringMarksChoice = props.presentation === 'grid';
   const anatomy = useMemo<CollectionAnatomy<Item>>(() => singleChoice === undefined ? props.anatomy : {
     ...props.anatomy,
     destination: undefined,
-    glyph: () => <CollectionChoiceMark />,
+    ...(ringMarksChoice ? {} : { glyph: () => <CollectionChoiceMark /> }),
     reason: (item) => singleChoice.unavailableReason?.(item) ?? props.anatomy.reason?.(item),
-  }, [props.anatomy, singleChoice?.unavailableReason, singleChoice === undefined]);
+  }, [props.anatomy, ringMarksChoice, singleChoice?.unavailableReason, singleChoice === undefined]);
   const translate = usePluginTranslation();
   const accessibility = useHappierUiAccessibility();
   const platform = useOptionalHappierUiPlatform();
