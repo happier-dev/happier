@@ -265,6 +265,8 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
     child.once('spawn', () => logger.infoFile('[PluginExec] Process launched', {
         phase: 'launcher_spawn',
         pid: child.pid,
+        // `spawn`/`adopt`: held by the Session holder; `direct`: this process's own child.
+        holder: holder?.kind ?? 'direct',
         ...(processOwner ? { owner: processOwner } : {}),
         durationMs: Math.round(performance.now() - spawnStartedAt),
     }));

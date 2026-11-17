@@ -1974,6 +1974,11 @@ export function createStablePluginExecService(params: Readonly<{
         if (managedCustody && options?.descendantDisposition === 'preserve-on-success') {
             throw withExecLaunchNotStarted(new PluginError({ code: 'plugin_exec_managed_handoff_forbidden', message: 'Managed process custody cannot be handed to a native tool' }));
         }
+        const holderDecision: Readonly<{ role?: SessionHolderRole; notHeld?: string }> = !openAccess ? { notHeld: 'not_open_access' }
+            : options?.nativeLaunch === undefined ? { notHeld: 'no_native_launch' }
+            : managedCustody ? { notHeld: 'managed_custody' }
+            : options.descendantDisposition === 'preserve-on-success' ? { notHeld: 'native_tool_handoff' }
+            : { role: readAgentNativeLaunchHolderRoleForHost(options.nativeLaunch) };
         const lifetime = managedCustody?.lifetime;
         const preparationSignal = AbortSignal.any([lifetime?.signal ?? params.signal,
             ...(options?.signal ? [options.signal] : []),
@@ -2043,15 +2048,15 @@ export function createStablePluginExecService(params: Readonly<{
                 : {}),
             // Long-lived Agent processes (not finite runs, managed services or
             // native-tool handoffs) are held by the per-Session holder.
-            ...(openAccess && options?.nativeLaunch !== undefined && !managedCustody
-                && options.descendantDisposition !== 'preserve-on-success'
-                ? { sessionHolder: readAgentNativeLaunchHolderRoleForHost(options.nativeLaunch) } : {}),
+            ...(holderDecision.role ? { sessionHolder: holderDecision.role } : {}),
         });
         // A Session-owned managed process (an Agent server such as OpenCode's) launches that
         // Session's MCP relay as its own child; the Session MCP endpoint admits it by peer proof.
         if (managedCustody?.sessionOwned) trackSessionManagedProcess(supervised.child);
         logger.infoFile('[PluginExec] Launch preparation phase', {
             phase: 'spawn_requested', executableKind: request.executable.kind, pid: supervised.child.pid,
+            // Which holder role the launch asked for, or why it asked for none (never silent).
+            holder: holderDecision.role ?? holderDecision.notHeld,
             authorizationDurationMs: Math.round(authorizedAt - launchStartedAt),
             durationMs: Math.round(performance.now() - authorizedAt),
             elapsedMs: Math.round(performance.now() - launchStartedAt),
