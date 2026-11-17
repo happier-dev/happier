@@ -156,6 +156,13 @@ export type ConnectedAccountConfigurationFormProps = Readonly<{
     }>): Promise<boolean | void> | boolean | void;
 }>;
 
+/** The fields a person can see and fill; hidden ones are the runtime's own (a registered client, a deferred choice). */
+export function displayedConnectedAccountConfigurationFields<TField extends Readonly<{ presentation?: Readonly<{ hidden?: boolean }> }>>(
+    fields: readonly TField[],
+): readonly TField[] {
+    return fields.filter((field) => field.presentation?.hidden !== true);
+}
+
 export type ConnectedAccountConfigurationSubmission = Parameters<ConnectedAccountConfigurationFormProps['onSubmit']>[0];
 export type ConnectedAccountConfigurationFieldsProps = Pick<ConnectedAccountConfigurationFormProps,
     'embedded' | 'localize' | 'fields' | 'values' | 'configuredSecretFieldIds' | 'secretRefs' | 'accountLifetime' | 'saving'
@@ -176,9 +183,7 @@ export function useConnectedAccountConfigurationFields(
     const [selectedSecrets, setSelectedSecrets] = React.useState<ConnectedAccountConfigurationSecretSelections>({});
 
     const fields = React.useMemo(
-        () => [...props.fields]
-            .filter((field) => field.presentation?.hidden !== true)
-            .sort(compareFields),
+        () => [...displayedConnectedAccountConfigurationFields(props.fields)].sort(compareFields),
         [props.fields],
     );
     const updateDraft = React.useCallback((fieldId: string, value: unknown) => {

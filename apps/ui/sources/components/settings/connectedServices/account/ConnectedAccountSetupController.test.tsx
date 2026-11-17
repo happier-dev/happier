@@ -3048,6 +3048,49 @@ describe('ConnectedAccountSetupController real ownership', () => {
         expect(authenticationCommands).toContainEqual({ operation: 'continueConnect', attemptId: 'attempt-1', expectedConfigurationRevision: 'config-2' });
     });
 
+    it('continues a sign-in whose settings step has only the runtime’s own fields, without an empty step', async () => {
+        waiveConfigurationConfirmation();
+        // Supabase's sign-in (#172c): every Account field is written by its runtime (hidden), so the
+        // first settings step has nothing a person can fill.
+        const runtimeOnlyMode: PluginConnectedAccountAuthenticationModeV2 = { ...configuredMode, configuration: {
+            scope: 'account', changeBehavior: 'reconnect', fields: [
+                { id: 'oauthClientId', title: 'OAuth client', secret: false, required: false, presentation: { hidden: true }, schema: { type: 'string', minLength: 1 } },
+                { id: 'oauthClientSecret', title: 'OAuth client secret', secret: true, required: false, presentation: { hidden: true }, schema: { type: 'string', minLength: 1 } },
+            ] } };
+        const runtimeOnlyReply = { ...configurationReply, mode: runtimeOnlyMode,
+            configuration: { ...configurationReply.configuration, revision: null, values: {}, configuredSecretFieldIds: [] } };
+        installDescription({ ...described, descriptor: { ...described.descriptor, authentication: { defaultModeId: 'oauth', modes: [runtimeOnlyMode] } } });
+        handleControl = (command) => command.operation === 'listPendingAttempts'
+            ? { status: 'pendingAttempts', attempts: [] }
+            : command.operation === 'readConfiguration' ? runtimeOnlyReply
+                : command.operation === 'replaceConfiguration'
+                    ? { ...runtimeOnlyReply, status: 'configurationCommitted', configuration: { ...runtimeOnlyReply.configuration, status: 'ready', revision: 'config-2' } }
+                    : description;
+        handleAuthentication = (command) => command.operation === 'continueConnect'
+            ? { status: 'connected', attemptId: 'attempt-1', account: { service, accountId: 'new-account' } }
+            : { status: 'configurationRequired', attemptId: 'attempt-1', target: configurationTarget, missingFieldIds: [] };
+        await installNativeConfigurationAttemptBoundary();
+        const screen = await renderScreen(element());
+        await pressReadyAction(screen);
+        await vi.waitFor(() => expect(onConnected).toHaveBeenCalledWith({ service, accountId: 'new-account' }));
+        expect(screen.findHostByTestId('connected-account-configuration:save')).toBeNull();
+        expect(controlCommands).toContainEqual({ operation: 'replaceConfiguration', target: { kind: 'attempt', attemptId: 'attempt-1' },
+            expectedRevision: null, values: {}, secretValues: {} });
+        expect(authenticationCommands).toContainEqual({ operation: 'continueConnect', attemptId: 'attempt-1', expectedConfigurationRevision: 'config-2' });
+    });
+
+    it('leads a browser sign-in with where it goes, the primary repeating it', async () => {
+        installDescription({ ...described, descriptor: { ...described.descriptor, authentication: { defaultModeId: 'oauth', modes: [
+            { id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'http://127.0.0.1:4000/auth/callback', pkce: 'required', outcomeReconciliation: 'none' },
+        ] } } });
+        const screen = await renderScreen(element());
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-service-setup:browser-handoff')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('connectedServicesSettings.setupContinueOn');
+        expect(screen.getTextContent()).toContain('connectedServicesSettings.setupStartBrowser');
+        expect(authenticationCommands).toEqual([]);
+        await screen.unmount();
+    });
+
     it('reconnects and continues only the requested qualified account after its configuration commit', async () => {
         waiveConfigurationConfirmation();
         const ref = { service, accountId: 'account-1' };

@@ -8,6 +8,8 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
 
 export type ConnectedServiceSetupMethod = Readonly<{
@@ -108,7 +110,32 @@ export type ConnectedServiceSetupFlowAction = Readonly<{
     onPress: () => void;
     disabled?: boolean;
     loading?: boolean;
+    /** The action leaves Happier (a browser sign-in): the pill carries the open-outside mark. */
+    opensOutside?: boolean;
 }>;
+
+/**
+ * A browser sign-in's first step (lab journey-deploy A2b): the service's mark, where the person goes,
+ * what they do there and that they come back. The footer's primary carries the same words.
+ */
+export function ConnectedServiceBrowserHandoff(props: Readonly<{
+    mark: React.ReactNode;
+    title: string;
+    description: string;
+}>) {
+    return (
+        <ItemGroup header="none">
+            <Item
+                testID="connected-service-setup:browser-handoff"
+                icon={props.mark}
+                title={props.title}
+                subtitle={props.description}
+                subtitleLines={0}
+                showChevron={false}
+            />
+        </ItemGroup>
+    );
+}
 
 /**
  * A sign-in flow's footer in a setup panel: where what you enter is kept, last thing before you commit,
@@ -142,6 +169,8 @@ export function ConnectedServiceSetupFlowActions(props: Readonly<{
                 <RoundButton
                     testID={props.primary.testID}
                     size="small"
+                    leading={props.primary.opensOutside
+                        ? <Icon name="arrow-up-right" size={14} color={theme.colors.button.primary.tint} /> : undefined}
                     title={props.primary.label}
                     disabled={props.primary.disabled}
                     loading={props.primary.loading}

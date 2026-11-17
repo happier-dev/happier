@@ -1,4 +1,5 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { resolveConnectedAccountAccessMode } from '@/components/settings/connectedServices/model/resolveConnectedAccountAccessMode';
 import * as React from 'react';
 import { Redirect, useLocalSearchParams, useNavigation } from '@/components/appShell/workspace/destinationRoute';
 
@@ -89,7 +90,7 @@ import {
     resolveConnectedServiceSettingsErrorMessage,
     resolveConnectedServiceSettingsErrorRecovery,
 } from '../connectedServiceSettingsErrors';
-import { ConnectedAccountConfigurationForm, type ConnectedAccountConfigurationSubmission } from './ConnectedAccountConfigurationForm';
+import { ConnectedAccountConfigurationForm, displayedConnectedAccountConfigurationFields, type ConnectedAccountConfigurationSubmission } from './ConnectedAccountConfigurationForm';
 import { ConnectedAccountDeviceForm } from './ConnectedAccountDeviceForm';
 import { ConnectedAccountManualForm } from './ConnectedAccountManualForm';
 import { ConnectedAccountOAuthForm } from './ConnectedAccountOAuthForm';
@@ -110,7 +111,7 @@ import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/pro
 import { resolveAccountDirectSaveTarget } from './accountDirectSaveTarget';
 import { randomUUID } from '@/platform/randomUUID';
 import { rankConnectedAccountSetupModes, resolveConnectedAccountSetupMode } from '../setup/rankConnectedAccountSetupModes';
-import { ConnectedServiceSetupFlowActions, ConnectedServiceSetupFlowBody } from '../setup/ConnectedServiceSetupFlowBody';
+import { ConnectedServiceBrowserHandoff, ConnectedServiceSetupFlowActions, ConnectedServiceSetupFlowBody } from '../setup/ConnectedServiceSetupFlowBody';
 import { ConnectedAccountMachineInstallation } from '../setup/ConnectedAccountMachineInstallation';
 import type { PluginJsonValueV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import {
@@ -1208,7 +1209,8 @@ const ConnectedAccountServiceController = React.memo(
     const flowActive = Boolean(accountDirectMode || attempt || configuration || errorCode
         || panelIntent?.kind === 'add' && activeMode?.kind === 'manual');
 
-    const saveConfiguration = useEventCallback(async ({ values, secretValues, selectedSecrets }: ConnectedAccountConfigurationSubmission) => {
+    const saveConfiguration = useEventCallback(async ({ values, secretValues, selectedSecrets }: ConnectedAccountConfigurationSubmission,
+        options?: Readonly<{ settingsStep?: boolean }>) => {
         if (!configuration) return false;
         const accountOwned = configuration.target.kind === 'service';
         const isConfigurationCurrent = accountOwned ? isAccountControllerCurrent : isControllerCurrent;
@@ -1242,7 +1244,7 @@ const ConnectedAccountServiceController = React.memo(
             }
             const committed = CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.configuration.replace'].parse(replacement.result);
             setConfiguration(null);
-            if (pendingIntent || configurationContinuationAttemptId) setSettingsStepSaved(true);
+            if ((pendingIntent || configurationContinuationAttemptId) && options?.settingsStep !== false) setSettingsStepSaved(true);
             const revision = committed.revision;
             const changeBehavior =
                 configuration.mode.configuration?.changeBehavior;
@@ -1293,6 +1295,20 @@ const ConnectedAccountServiceController = React.memo(
             if (isConfigurationCurrent()) setBusy(false);
         }
     });
+
+    // A sign-in whose settings step has nothing to fill (every field is the runtime's own) continues
+    // on the press that started it: an empty step with a lone Continue is not a choice.
+    const configurationNeedsNoInput = configuration !== null && configuration.target.kind === 'attempt'
+        && configurationContinuationAttemptId !== null && configuration.mode.configuration !== undefined
+        && displayedConnectedAccountConfigurationFields(configuration.mode.configuration.fields).length === 0;
+    const continuedConfigurationRef = React.useRef<string | null>(null);
+    React.useEffect(() => {
+        if (!configurationNeedsNoInput || !configuration || configuration.target.kind !== 'attempt') return;
+        const key = `${configuration.target.attemptId}:${configuration.configuration.revision ?? 'new'}`;
+        if (continuedConfigurationRef.current === key) return;
+        continuedConfigurationRef.current = key;
+        void saveConfiguration({ values: configuration.configuration.values, secretValues: {} }, { settingsStep: false });
+    }, [configuration, configurationNeedsNoInput, saveConfiguration]);
 
     const continueSubmittedManualDraft = useEventCallback(() => {
         if (busy || !submittedManualDraftRef.current) return;
@@ -1690,7 +1706,7 @@ const ConnectedAccountServiceController = React.memo(
     // A known rejection ends its attempt; submitting again starts the same intent over (`retryDescription`).
     const restartsFailedAttempt = pendingIntent !== null && attempt !== null && isTerminalAttempt(attempt);
     // Settings then sign-in is one flow of two steps; a sign-in with no settings step carries no cue.
-    const setupStep: ConnectedAccountSetupStep | null = combinesManualConfiguration ? null
+    const setupStep: ConnectedAccountSetupStep | null = combinesManualConfiguration || configurationNeedsNoInput ? null
         : configuration && activeMode?.configuration && (pendingIntent || configurationContinuationAttemptId)
         ? 'settings'
         : settingsStepSaved && !configuration && attempt
@@ -1839,7 +1855,10 @@ const ConnectedAccountServiceController = React.memo(
                 />
             ) : null}
 
-            {configuration && activeMode?.configuration && !combinesManualConfiguration ? (
+            {configurationNeedsNoInput ? (
+                <SurfaceStateCard testID="connected-service-setup:preparing" size="line" kind="loading"
+                    title={t('connectedServices.deviceAuth.preparing')} />
+            ) : configuration && activeMode?.configuration && !combinesManualConfiguration ? (
                 <ConnectedAccountConfigurationForm
                     embedded={embedded}
                     key={`${JSON.stringify(configuration.target)}:${configuration.configuration.revision ?? 'new'}`}
@@ -1924,26 +1943,40 @@ const ConnectedAccountServiceController = React.memo(
         // The selected way to sign in shows its own first step: a code or browser sign-in is one primary
         // named for what it does. That press is the explicit choice (R8-9); nothing starts before it.
         const startableMode = !attempt && !configuration && !accountDirectMode ? activeMode : null;
-        const methodStart = service && startableMode
-            && (startableMode.kind === 'oauthDeviceCode' || startableMode.kind === 'oauthAuthorizationCode') ? (
+        const startPrimary = service && startableMode
+            && (startableMode.kind === 'oauthDeviceCode' || startableMode.kind === 'oauthAuthorizationCode') ? {
+            testID: startableMode.kind === 'oauthDeviceCode' ? 'connected-account-device:start' : 'connected-account-oauth:start',
+            loading: busy,
+            disabled: busy || (hasExplicitAuthenticationIntent && (!noPendingAttempt || !credentialWriteAllowed)) || (machineRequired && !machineId),
+            onPress: () => {
+                panelStartedRef.current = true;
+                panelRef.current?.onModeChange?.(startableMode.id);
+                void beginIntent({ kind: 'connect', service, modeId: startableMode.id });
+            },
+        } : null;
+        // A browser sign-in leads with where it goes (lab journey-deploy A2b): the service's mark and
+        // "Continue on <service>", whose words the primary repeats; a code sign-in keeps its one line.
+        const continueOn = t('connectedServicesSettings.setupContinueOn', { service: title });
+        const methodStart = startPrimary && startableMode ? startableMode.kind === 'oauthAuthorizationCode' ? (
+            <>
+                <ConnectedServiceBrowserHandoff
+                    mark={<ConnectedServiceMark legacyServiceId={legacyServiceId} service={service} size="row" />}
+                    title={continueOn}
+                    description={t(startableMode.allowRawAuthorizationCode === true
+                        ? 'connectedServicesSettings.setupStartBrowserPaste' : 'connectedServicesSettings.setupStartBrowser')}
+                />
+                <ConnectedServiceSetupFlowActions onCancel={panelCancel}
+                    primary={{ ...startPrimary, label: continueOn, opensOutside: true }} />
+            </>
+        ) : (
             <ConnectedServiceSetupFlowActions
                 onCancel={panelCancel}
-                description={t(startableMode.kind === 'oauthDeviceCode' ? 'connectedServicesSettings.setupStartDevice'
-                    : startableMode.allowRawAuthorizationCode === true ? 'connectedServicesSettings.setupStartBrowserPaste'
-                    : 'connectedServicesSettings.setupStartBrowser')}
-                primary={{
-                    testID: startableMode.kind === 'oauthDeviceCode' ? 'connected-account-device:start' : 'connected-account-oauth:start',
-                    label: resolveConnectedAccountModeTitle(startableMode, localizeServiceText),
-                    loading: busy,
-                    disabled: busy || (hasExplicitAuthenticationIntent && (!noPendingAttempt || !credentialWriteAllowed)) || (machineRequired && !machineId),
-                    onPress: () => {
-                        panelStartedRef.current = true;
-                        panelRef.current?.onModeChange?.(startableMode.id);
-                        void beginIntent({ kind: 'connect', service, modeId: startableMode.id });
-                    },
-                }}
+                description={t('connectedServicesSettings.setupStartDevice')}
+                primary={{ ...startPrimary, label: resolveConnectedAccountModeTitle(startableMode, localizeServiceText) }}
             />
         ) : null;
+        // Nothing else is under way and the chosen method signs in on a Machine that is not chosen yet.
+        const awaitsMachineChoice = machineRequired && !machineId && !flowActive && !choosingMethod;
         const installation = machineInstallationPending && machineSetupDeclaration ? (
             <ConnectedAccountMachineInstallation key={installationScope} declaration={machineSetupDeclaration}
                 serverId={serverId} machineId={selectedMachineId}
@@ -1956,7 +1989,10 @@ const ConnectedAccountServiceController = React.memo(
             <>
             <ConnectedAccountActionApprovalNotice execution={actionExecution} testID="connected-account-approval-pending" />
             <ConnectedServiceSetupFlowBody
-                state={installation || browserMachineUnavailableCode || choosingMethod || flowActive || hasAccountDirectSetup && !machineId ? 'ready' : description === null && !errorCode ? 'preparing' : 'ready'}
+                // A method that signs in on a Machine waits for one, not for a description it cannot load
+                // without one: until it is chosen the body says so, never an endless Preparing line.
+                state={installation || browserMachineUnavailableCode || choosingMethod || flowActive || awaitsMachineChoice
+                    || hasAccountDirectSetup && !machineId ? 'ready' : description === null && !errorCode ? 'preparing' : 'ready'}
                 methods={ranked.map((entry) => ({
                     id: entry.mode.id,
                     title: resolveConnectedAccountSetupMethodTitle(entry.mode, localizeServiceText),
@@ -1973,7 +2009,7 @@ const ConnectedAccountServiceController = React.memo(
                     setActiveModeId(modeId);
                     panelRef.current?.onModeChange?.(modeId);
                 }}
-                flow={installation ?? (browserMachineUnavailableCode ? machineRequirement : choosingMethod ? activeMode?.kind === 'manual' ? renderFlow(true) : methodStart : (hasAccountDirectSetup || hasPortableAuthenticationModes) && machineRequired && !machineId && !attempt && !configuration ? machineRequirement : flowActive ? renderFlow(true) : methodStart)}
+                flow={installation ?? (browserMachineUnavailableCode ? machineRequirement : choosingMethod ? activeMode?.kind === 'manual' ? renderFlow(true) : methodStart : (hasAccountDirectSetup || hasPortableAuthenticationModes) && machineRequired && !machineId && !attempt && !configuration ? machineRequirement : flowActive ? renderFlow(true) : awaitsMachineChoice ? machineRequirement : methodStart)}
             />
             </>
         );
@@ -2011,7 +2047,9 @@ const ConnectedAccountServiceController = React.memo(
                         <MachineScopedSection
                             embedded
                             selection={targetSelection}
-                            unselectedInvitation={t('connectedServicesSettings.accountMachineInvitation')}
+                            unselectedInvitation={resolveConnectedAccountAccessMode(focusedSavedAccount)?.kind === 'apiKey'
+                                ? t('connectedServicesSettings.accountMachineInvitationKey')
+                                : t('connectedServicesSettings.accountMachineInvitation')}
                             testIDPrefix="connected-account-target"
                         />
                     )}

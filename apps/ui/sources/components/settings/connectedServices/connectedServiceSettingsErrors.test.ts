@@ -587,4 +587,13 @@ describe('connected-service settings errors', () => {
     expect(message).toBe(t('connectedServices.errors.generic'));
     expect(message).not.toContain('token=never-render-this');
   });
+
+  it('keeps a host failure’s own message out of the headline and its code in Details', () => {
+    // Captured on agent-qa-servers-deploy #171e (2026-11-17): the daemon's plugin activation failure.
+    const message = "Plugin 'happier.deploy.supabase' activation is missing registration 'deploymentTargets/database'";
+    const error = { status: 'unavailable', code: 'connected_account_service_unavailable',
+      diagnostic: PluginDiagnosticDataV1Schema.parse({ code: 'connected_account_service_unavailable', severity: 'error', message }) };
+    expect(resolveConnectedServiceSettingsErrorMessage(error)).toBe(t('connectedServices.errors.accountServiceUnavailable'));
+    expect(readConnectedServiceSettingsErrorDetailsCode(error)).toBe('connected_account_service_unavailable');
+  });
 });

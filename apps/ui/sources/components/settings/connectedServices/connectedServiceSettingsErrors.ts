@@ -69,7 +69,7 @@ function formatResetAt(error: unknown): string {
 /**
  * A refused or unavailable sign-in's typed cause: its message, then its remediation when it carries one.
  * The authentication owner redacts these structured probe messages; transport Error.message stays outside
- * this display contract, and a message that only repeats its code stays in Details.
+ * this display contract, and a message that only repeats its code, or that the host itself wrote, stays in Details.
  */
 function readAuthenticationCauseMessage(errorLike: ErrorLike): string | null {
     if (errorLike.status !== 'rejected' && errorLike.status !== 'unavailable') return null;
@@ -77,6 +77,9 @@ function readAuthenticationCauseMessage(errorLike: ErrorLike): string | null {
     if (diagnostic === null || typeof diagnostic !== 'object' || !('message' in diagnostic) || typeof diagnostic.message !== 'string') return null;
     const message = diagnostic.message.trim();
     if (!message || 'code' in diagnostic && message === diagnostic.code) return null;
+    // The host's own failures use the connected_account_ namespace; their message is an internal
+    // detail (a plugin activation failure, a transport fault), so the typed copy for the code leads.
+    if ('code' in diagnostic && typeof diagnostic.code === 'string' && diagnostic.code.startsWith('connected_account_')) return null;
     // The wire carries the closed remediation union; one renderer owns its copy.
     const remediation = resolvePluginDiagnosticRemediationMessage(
         PluginDiagnosticRemediationV1Schema.safeParse('remediation' in diagnostic ? diagnostic.remediation : undefined).data);
