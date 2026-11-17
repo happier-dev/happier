@@ -1723,6 +1723,8 @@ describe('Happier SDK client', () => {
         run: {
           id: 'run-1', origin: { kind: 'automation', automationId: 'automation-1' },
           sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+          attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false,
+          attentionSeenFailureAt: null,
           state: 'queued', revision: 1, machineId: 'machine-1',
           workflowCustodyState: null, originDeliveryAckRevision: null,
           availability: {
@@ -1730,6 +1732,7 @@ describe('Happier SDK client', () => {
             cancel: false, inspectExecution: false, disabledReasons: [],
           },
           createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+          finishedAt: null,
         },
         admission: 'created',
       } },
