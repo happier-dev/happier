@@ -835,8 +835,8 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
     initialRegisteredSessionStateFieldMutations: [createInitialHostRuntimeActivityMutation({
       sessionId: 'admitted-session', agentRuntimeApplicability: 'not_applicable' })],
     metadataAuthority: { kind: 'owner', credentials, readCurrentCredentials: async () => credentials } });
-  let parentPermissionHandler: ReturnType<typeof createProviderEnforcedPermissionHandler> | undefined;
-  if (session) {
+  let parentPermissionHandler: import('@/agent/acp/permissions/acpPermissionHandler').AcpPermissionHandler | undefined;
+  if (session && !options?.parentRuntime) {
     // Ordinary host startup installs this real permission owner before child
     // admission. Explicit child selections need no fabricated parent model.
     const permissionHandler = createProviderEnforcedPermissionHandler({ session,
@@ -882,7 +882,9 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
     return { ...tool, data: Object.fromEntries(Object.entries(tool.data).filter(([key]) => key !== 'backends')) };
   };
   const workflowAbort = new AbortController();
-  const bridge = options?.directOwner && session && parentPermissionHandler ? new ExecutionRunHostBridge({
+  let bridge: ExecutionRunHostBridge | undefined;
+  const createDirectBridge = () => options?.directOwner && session && parentPermissionHandler ? new ExecutionRunHostBridge({
+    getPermissionRequestStore: () => session.getAgentStateRequestStore(),
     parentProvider: readAgentRoutingIdForContributionIdentity(indexAgentRoutingIdsByContributionIdentity(
       admittedFixture.registry.contributes.agents), agentIdentity)!,
     cwd: directory, machineId: attribution.machineId,
@@ -942,7 +944,12 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
         api: await ApiClient.create(credentials), machineId: attribution.machineId,
         snapshot: accountSettings, pluginRuntimeRegistryLease: admittedFixture.lease });
       stopParentRuntime = parent.stop;
+      // Bind the incumbent owner after startup has installed its request store
+      // and response RPC; an earlier handler would publish into a retired store.
+      parentPermissionHandler = parent.readControls()?.readPermissionHandler?.() ?? undefined;
+      if (!parentPermissionHandler) throw new Error('Missing started parent permission owner');
     }
+    bridge = createDirectBridge();
     if (options) {
       if (!session) throw new Error('The composed Session Run fixture requires a real Session');
       await options.run({ rpc, session, trackedSessions: tracked, directory, agentIdentity, nativeOpen, nativeDetachedOpen, daemonObservations, bridge, lifecycleEvents, activationDisposals,
