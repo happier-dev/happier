@@ -304,7 +304,7 @@ describe('SettingsView (native connect terminal)', () => {
         try {
             const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>, { flushOptions: { cycles: 0 } });
 
-            expect(screen.findByTestId('settings-overview-account')).toBeTruthy();
+            expect(screen.findByTestId('settings-overview-identity')).toBeTruthy();
             expect(screen.findByTestId('settings-overview-theme')).toBeTruthy();
             expect(Boolean(findItemByTitle(screen.tree, 'settingsAgents.title'))).toBe(false);
             expect(Boolean(findItemByTitle(screen.tree, 'settings.sessions'))).toBe(false);

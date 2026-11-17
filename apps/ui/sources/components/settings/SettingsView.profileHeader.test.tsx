@@ -214,13 +214,18 @@ describe('SettingsView profile header', () => {
         expect(screen.getTextContent()).toContain(expectedName);
     });
 
-    it('leads to the Account, and leaves the machine count to the Machines section', async () => {
+    it('leads to the Account beside the rail, and leaves the machine count to the Machines section', async () => {
         const machines = [createMachineFixture({ id: 'm1' }), createMachineFixture({ id: 'm2' })];
         storage.setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])) });
         const push = vi.fn();
         routerPush.spy = push;
-        const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
+        const [{ SettingsView }, { SettingsRailVisibilityContext }] = await Promise.all([
+            import('./SettingsView'),
+            import('./shell/settingsRailVisibility'),
+        ]);
+        const screen = await renderSettingsView(<SettingsRailVisibilityContext.Provider value>
+            <InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>
+        </SettingsRailVisibilityContext.Provider>);
 
         expect(screen.findByTestId('settings-overview-machines')).toBeNull();
         screen.pressByTestId('settings-overview-account');
@@ -243,10 +248,9 @@ describe('SettingsView profile header', () => {
         // The hub heads itself on a phone (owner 11-10): no bar above it to fold the Account action into.
         expect(navigationState.headerRight).toBeNull();
         expect(phone.findByTestId('settings-page-header')).toBeTruthy();
-        const push = vi.fn();
-        routerPush.spy = push;
-        phone.pressByTestId('settings-overview-account');
-        expect(push).toHaveBeenCalledWith('/settings/account');
+        // Without the rail the Settings pages lead right below, Account first: the header doesn't say it again.
+        expect(phone.findByTestId('settings-overview-account')).toBeNull();
+        expect(phone.findByTestId('settings-catalog-page-item.account')).toBeTruthy();
     });
 
     it('says where the person stands with the Home\'s account service, as the account popover does', async () => {

@@ -21,6 +21,7 @@ import { useHomeViewerRole } from '@/hooks/home/useHomeViewerRole';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { formatAccountDisplayName, resolveViewerAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
+import { useSettingsRailVisible } from '@/components/settings/shell/settingsRailVisibility';
 import { getAvatarUrl } from '@/sync/domains/profiles/profile';
 import { getActiveServerHomeCarrier, getServerProfileById, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { useProfile } from '@/sync/domains/state/storage';
@@ -71,12 +72,13 @@ function useHomeAccountServiceLine(profile: ServerProfile | null): string | null
 /**
  * Who is here: the person (their name, else "Your account") with their avatar, then the Home they
  * are in, their role there and where they stand with its account service, with the way to their
- * Account. Name, avatar and the account-service line come from the owners the account popover uses,
+ * Account where the rail leaves it out of the page. Name, avatar and the account-service line come from the owners the account popover uses,
  * so the two surfaces agree. The role appears once the Home's governance answers, so the header
  * never waits (an unreachable Home simply shows no role).
  */
 export const HubIdentityHeader = React.memo(function HubIdentityHeader() {
     const router = useRouter();
+    const railVisible = useSettingsRailVisible();
     const profile = useProfile();
     const displayName = resolveViewerAccountDisplayName(formatAccountDisplayName(profile));
     const activeServer = useActiveServerSnapshot();
@@ -108,14 +110,15 @@ export const HubIdentityHeader = React.memo(function HubIdentityHeader() {
                     thumbhash={profile.avatar?.thumbhash}
                 />
             )}
-            actions={(
+            // Without the rail the Settings pages lead right below, Account first, so the header doesn't repeat it.
+            actions={railVisible ? (
                 <RoundButton
                     testID="settings-overview-account"
                     display="secondary"
                     title={t('settings.account')}
                     onPress={() => router.push(SETTINGS_ROUTES.account as never)}
                 />
-            )}
+            ) : undefined}
         />
     );
 });
