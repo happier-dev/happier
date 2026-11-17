@@ -117,17 +117,17 @@ const stylesheet = StyleSheet.create((theme) => ({
 function ActionSettingsRowAccessory(props: Readonly<{
     entry: ActionSettingsEntry;
     testIDPrefix: string;
-    /**
-     * Absent in a profile (profiles turn surfaces off one by one, never the whole Action) and on a phone, where a row
-     * keeps one control: the Action's page holds the switch in its header and the status line says when it is off.
-     */
+    /** Absent in a profile: profiles turn surfaces off one by one, never the whole Action. */
     onEnabledChange: ((enabled: boolean) => void) | null;
 }>) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    // On a phone a row keeps one control: the Action's page holds the switch in its header and the status line says
+    // when it is off. The row reads the window itself, so a resize across the breakpoint updates a list row in place.
+    const narrowLayout = useActionSettingsNarrowLayout();
     return (
         <View style={styles.actionRightAccessory}>
-            {props.onEnabledChange ? (
+            {props.onEnabledChange && !narrowLayout ? (
                 <Switch
                     testID={`${props.testIDPrefix}:enabled`}
                     accessibilityLabel={props.entry.title}
@@ -273,7 +273,6 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView(props
             : `/settings/actions/${encodeURIComponent(actionId)}`);
     }, [router, target]);
 
-    const narrowLayout = useActionSettingsNarrowLayout();
     const renderEntryRow = React.useCallback((entry: ActionSettingsEntry) => {
         const actionTestIdPrefix = `settings-actions:action:${entry.actionId}`;
         const statusText = presentTargetStatus(getActionSettingsEntryStatusText(entry, settings, scmRemoteConfirmPolicy),
@@ -297,7 +296,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView(props
                     <ActionSettingsRowAccessory
                         entry={entry}
                         testIDPrefix={actionTestIdPrefix}
-                        onEnabledChange={target.kind === 'profile' || narrowLayout ? null
+                        onEnabledChange={target.kind === 'profile' ? null
                             : (nextValue) => handleActionEnabledChange(entry.actionId, nextValue)}
                     />
                 )}
@@ -306,7 +305,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView(props
                 onPress={() => openActionDetails(entry.actionId)}
             />
         );
-    }, [handleActionEnabledChange, narrowLayout, openActionDetails, profile, scmRemoteConfirmPolicy, settings, styles.actionStatusSubtitle, target]);
+    }, [handleActionEnabledChange, openActionDetails, profile, scmRemoteConfirmPolicy, settings, styles.actionStatusSubtitle, target]);
 
     const renderSegment = React.useCallback(({ item: segment }: Readonly<{ item: ActionSettingsVirtualizedSegment }>) => {
         const pluginId = segment.first && segment.items[0]?.entry.kind !== 'host'
