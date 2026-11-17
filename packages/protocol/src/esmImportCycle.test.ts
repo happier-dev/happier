@@ -26,6 +26,21 @@ async function importInFreshProcess(relativeEntryPath: string, afterImport = '',
 }
 
 describe('protocol ESM import safety', () => {
+  it('parses strict public-link creation with the public-share owner first under the native source runtime', async () => {
+    const artifacts = pathToFileURL(path.join(__dirname, 'artifacts/artifactActionsV1.ts')).href;
+    await importInFreshProcess('sharing/storedContentPublicShareV1.ts', `
+      const { strict: assert } = await import('node:assert');
+      const { ArtifactPublicLinkCreateInputV1Schema: schema } = await import(${JSON.stringify(artifacts)});
+      const anonymous = { artifactId: 'artifact-1', expiresAt: 1000, maxUses: 2, isConsentRequired: true, networkOff: true };
+      assert.deepEqual(schema.parse(anonymous), anonymous);
+      const signedIn = { artifactId: 'artifact-1', audience: 'signed_in', preserveExisting: true };
+      assert.deepEqual(schema.parse(signedIn), signedIn);
+      assert.equal(schema.safeParse({ ...signedIn, maxUses: 2 }).success, false);
+      assert.equal(schema.safeParse({ ...anonymous, preserveExisting: true }).success, false);
+      assert.equal(schema.safeParse({ ...anonymous, unknown: true }).success, false);
+    `, true);
+  }, MODULE_IMPORT_TIMEOUT_MS + 5_000);
+
   it.each([
     'machines/managed/providerFactsV1.ts',
     'plugins/contributions/machineProvisioners.ts',
