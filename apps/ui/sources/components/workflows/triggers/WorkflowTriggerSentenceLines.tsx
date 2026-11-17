@@ -13,6 +13,7 @@ import { t } from '@/text';
 
 import {
   WorkflowSentenceChip,
+  WorkflowSentenceRowsContext,
   WorkflowSentenceUnit,
   WorkflowSentenceWord,
 } from '../sentence/WorkflowSentenceChip';
@@ -69,6 +70,7 @@ export function WorkflowTriggerSentenceLines(
   }>,
 ): React.ReactElement {
   const { theme } = useUnistyles();
+  const rows = React.useContext(WorkflowSentenceRowsContext);
   const items = React.useCallback(
     (currentId: string | null): DropdownMenuItem[] =>
       props.startOptions.map((option) => ({
@@ -92,20 +94,27 @@ export function WorkflowTriggerSentenceLines(
     <>
       {props.lines.length === 0 ? (
         <View style={workflowSentenceStyles.line}>
-          <WorkflowSentenceWord>
-            {t('workflows.triggers.card.manualSentence')}
-          </WorkflowSentenceWord>
-          {props.editable ? (
-            <WorkflowSentenceStartMenu
-              testID={`${props.testIDPrefix}-sentence-add-trigger`}
-              label={t('workflows.sentence.orWhen')}
-              items={items(null)}
-              onSelect={props.onAdd}
-              onOpenChange={props.onStartsOpenChange}
-              footer={props.addFooter}
-              sheetTitle={t('workflows.triggers.card.add')}
-            />
-          ) : null}
+          {/* As labelled rows (the phone builder sheet) "Run now" sits on the When row like every other slot. */}
+          <WorkflowSentenceUnit rowLabel={t('workflows.sentence.rows.when')}>
+            <View style={workflowSentenceStyles.line}>
+              <WorkflowSentenceWord>
+                {rows
+                  ? t('workflows.editor.runNow')
+                  : t('workflows.triggers.card.manualSentence')}
+              </WorkflowSentenceWord>
+              {props.editable ? (
+                <WorkflowSentenceStartMenu
+                  testID={`${props.testIDPrefix}-sentence-add-trigger`}
+                  label={t('workflows.sentence.orWhen')}
+                  items={items(null)}
+                  onSelect={props.onAdd}
+                  onOpenChange={props.onStartsOpenChange}
+                  footer={props.addFooter}
+                  sheetTitle={t('workflows.triggers.card.add')}
+                />
+              ) : null}
+            </View>
+          </WorkflowSentenceUnit>
         </View>
       ) : (
         props.lines.map((line, index) => (
