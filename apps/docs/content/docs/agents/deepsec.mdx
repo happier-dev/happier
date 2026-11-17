@@ -11,13 +11,15 @@ not supported.
 
 - DeepSec CLI installed locally
 - `deepsec` available on `PATH`, or `HAPPIER_DEEPSEC_PATH` set to its absolute path
-- For an unbound native run, `AI_GATEWAY_API_KEY` in the environment the agent runs in
-- For a development Provider-bound run, a compatible Provider connection with an API key
+- For development Runs, a selected compatible Provider connection, Claude Connected
+  Account, or delivered `AI_GATEWAY_API_KEY`
 
 ## Install DeepSec
 
-Happier does not bundle an install recipe for DeepSec. Install it with whatever
-method the vendor documents, then confirm Happier can see it:
+In unreleased 0.3 development source, the Machine setup install action uses
+Happier's managed JavaScript package installer for `deepsec`. An existing system
+installation remains preferred. You can also use the vendor's installation
+instructions, then confirm Happier can see it:
 
 ```bash
 deepsec --version
@@ -48,8 +50,35 @@ other native harnesses.
 The selected key is passed only to the review process, not saved into shared
 native configuration. If you explicitly choose a conflicting harness, Happier
 refuses the Run with `deepsec_provider_harness_mismatch`; choose Codex or leave
-the harness automatic. An unbound Run keeps its existing native gateway path.
+the harness automatic. With no Provider selected, a selected Claude Connected
+Account takes precedence over an admitted gateway key. An unavailable selected
+account fails visibly instead of falling back to another account.
 Real Provider-key acceptance remains release validation.
+
+Development Runs blank competing credential and endpoint environment variables
+on every selected route, so repository dotenv files cannot replace the selected
+credentials. Native Machine-login selection still requires its admitted host
+selection to reach the adapter; the absence of a linked account does not grant
+access to the Machine owner's login.
+
+Gateway Runs use an available Claude or Codex harness and keep the selected
+Gateway route for that Run. Saved DeepSec model configuration cannot replace it
+with a native local login.
+
+The per-engine `thinkingLevel` option selects DeepSec's reasoning effort. The
+existing cost estimate must be accepted for each start that requires it;
+`confirmedCostWarning` is consent for that start, never a saved preference.
+
+For direct reviews, DeepSec exits with status 1 when it produces findings.
+Happier preserves those findings as completed only when the requested findings
+report was written. A failed scan, failed investigation, or cancellation remains
+unsuccessful.
+
+Repository audits scan and investigate the selected workspace, then export native
+JSON findings into the Run's temporary workspace for normalization. A missing or
+invalid export fails visibly; only an explicit valid empty result establishes
+zero findings. Standard investigation does not produce the direct-review Markdown
+report.
 
 ## What Happier can drive
 

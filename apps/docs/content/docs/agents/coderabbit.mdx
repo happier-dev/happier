@@ -1,17 +1,20 @@
 ---
 title: CodeRabbit (experimental)
-description: Configure the CodeRabbit review CLI in Happier, including install and API-key authentication.
+description: Run scoped CodeRabbit reviews and understand completion, findings, and recovery.
 ---
 
-**CodeRabbit** is a review CLI rather than a general coding agent. Happier runs
-it the same way it runs any local CLI-backed Agent, but it offers no model
-choice and no session resume, because the tool has neither.
+Use **CodeRabbit** to review changes in a Git worktree and receive findings in
+Happier. Each review is a single run; start another review to check new changes.
+
+The structured agent-mode integration described here is part of Happier 0.3
+development. It requires a CodeRabbit CLI with the current
+[agent output contract](https://docs.coderabbit.ai/cli/agent-mode).
 
 ## Requirements
 
 - CodeRabbit CLI installed locally
 - `coderabbit` available on `PATH`, or `HAPPIER_CODERABBIT_PATH` set to its absolute path
-- `CODERABBIT_API_KEY` in the environment the agent runs in
+- CodeRabbit authentication configured on the machine running the review
 
 ## Install CodeRabbit
 
@@ -24,10 +27,20 @@ coderabbit --version
 
 ## Authentication
 
-CodeRabbit has no login flow for Happier to launch. Happier reports it as
-signed in when `CODERABBIT_API_KEY` is present in the environment the agent
-runs in — nothing else is checked, and Happier cannot verify the key is valid,
-only that it is set.
+CodeRabbit supports native login and API-key authentication. Follow the vendor's
+[authentication instructions](https://docs.coderabbit.ai/cli/reference#auth)
+on the machine running the review. A native login does not require
+`CODERABBIT_API_KEY`.
+
+Check the CLI's status directly when troubleshooting:
+
+```bash
+coderabbit auth status
+```
+
+Account details printed by that command are private; avoid copying them into
+shared review comments or logs. An expired login can still cause a run to fail
+after the machine was shown as ready. Sign in again, then start another review.
 
 ## What Happier can drive
 
@@ -35,17 +48,37 @@ only that it is set.
 - **Resume**, **handoff**, **listing** and **forking** are not supported.
 - **Session modes** are not exposed to Happier.
 
-This is expected for a review CLI: a run reviews what you point it at and ends.
+Happier invokes CodeRabbit's structured agent mode and retains finding locations,
+severity, comments, and fix instructions. A successful review with zero findings
+is complete. Findings from an incomplete review remain visible with incomplete
+coverage; receiving findings alone does not establish that the review finished.
+
+If a selected severity gate blocks, the findings still come from a completed
+analysis. A reused result is identified as reused rather than a new analysis.
 
 CodeRabbit reviews the selected Git worktree change scope. Its current
 [CLI review options](https://docs.coderabbit.ai/cli/reference) do not include an
 exact-file selector. For a path-scoped review, Happier omits CodeRabbit from the
 available choices; choose another review Agent or use a worktree scope instead.
+Captured comparisons and exact revision ranges are also refused because the
+local CLI cannot pin both captured endpoints. Choose another review Agent for
+those scopes.
 
 ## Troubleshooting
+
+### CodeRabbit reports a rate limit
+
+Wait for the time CodeRabbit reports, then retry the review. Happier does not
+automatically retry or split the selected scope. If CodeRabbit rejects a scope
+with too many files, choose a narrower scope using its reported guidance.
 
 ### Status shows signed out with a key set
 
 Happier reads the environment of the process the agent runs in. If the key is
 exported in your shell but the daemon was started at login, the daemon does not
 see it. Set it where the service runs, then use **Check now**.
+
+## Related
+
+- [Agents](/agents)
+- [CodeRabbit command reference](https://docs.coderabbit.ai/cli/reference)
