@@ -229,8 +229,9 @@ it('renders the replay-72 native request_user_input as an answerable canonical q
                     options: question.options },
             ] } }));
         const pending = fixture.host.getAgentStateSnapshot()?.requests?.[requestId];
-        expect(events.canonicalEvents().filter(event => event.kind === 'tool-call' && event.toolCallId === requestId))
-            .toMatchObject([{ toolName: 'AskUserQuestion', input: pending?.arguments }]);
+        // Native requests can publish while earlier transcript notifications drain.
+        await vi.waitFor(() => expect(events.canonicalEvents().filter(event => event.kind === 'tool-call' && event.toolCallId === requestId))
+            .toMatchObject([{ toolName: 'AskUserQuestion', input: pending?.arguments }]));
         // Constructed from the native 500-character constraint: host accepts
         // the form, while the actual process boundary refuses its application.
         expect(await invokeHomeRpc(fixture, 'session.user_action.answer', { id: requestId, approved: true,
