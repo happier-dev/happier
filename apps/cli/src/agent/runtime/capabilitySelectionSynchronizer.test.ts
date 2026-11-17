@@ -8,6 +8,7 @@ import { once } from 'node:events';
 import { configuration } from '@/configuration';
 import { withConfiguredDaemonTestHome, writeDaemonStateFixture } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { installEmptyProjectAccountRowsHttpBoundary } from '@/testkit/http/projectAccountRows';
+import { FIRST_PARTY_SKILLS_V1 } from '@happier-dev/protocol/prompts/library/skills/firstPartySkillsV1';
 import type { AccountArtifact } from '@/api/artifacts/accountArtifactStore';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { RestartSessionRunnerRequestV1, RestartSessionRunnerResultV1 } from '@happier-dev/protocol';
@@ -360,7 +361,8 @@ describe('capability selection settled-turn apply', () => {
             contributes: { catalogEntriesById: { fixture: { skills: { delivery: 'session_dir', nativeDisable: 'supported', liveReload: 'supported' } } } },
             accountSnapshot: { source: 'network', settings: accountSettingsParse({}), settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
               promptLibraryCatalog: { status: 'ready', rows: [{ revision: 1, record: { key: 'skill-rules', value: { v: 1, rules: [
-                { id: 'core-off', skillId: 'happier:happier', target: { t: 'allMachines' }, enabled: false, createdAt: 1, updatedAt: 1 },
+                ...FIRST_PARTY_SKILLS_V1.map(skill => ({ id: `off-${skill.skillId}`, skillId: skill.skillId,
+                  target: { t: 'allMachines' as const }, enabled: false, createdAt: 1, updatedAt: 1 })),
               ] } } }], tombstones: [], diagnostics: [] } },
           }),
           runtime: { refreshSkills: async ({ skills }) => {
