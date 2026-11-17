@@ -44,6 +44,7 @@ import {
   isPidAlive,
   isStackRuntimeProcessTrusted,
   readStackRuntimeStateFile,
+  waitForStackRuntimeDependencies,
   withStackRuntimeStartClaim,
 } from '../utils/stack/runtime_state.mjs';
 import { normalizeStackRuntimeOwnerStartedAt } from '../utils/stack/runtime_owner_incarnation.mjs';
@@ -750,12 +751,30 @@ async function preflightRestartDevTargets({ rootDir, stackName, baseDir, scriptP
   { runCaptureResult: capture, runProcess }) {
   if (args.includes('--no-dev-targets')) return;
   const sourceDir = getRepoDir(rootDir, env);
+  const flushRequiredTargets = async (targets, requiredTargets) => {
+    if (!requiredTargets.length) return;
+    const sync = await ensureDevTargetSyncProject({ stackBaseDir: baseDir, sourceDir,
+      targets, requiredTargets, ownerId: process.pid,
+      allowIndependentBorrow: true, borrowOnly: true, env }, { runProcess });
+    // This borrows the producer's project: no session/config creation or repair.
+    // Use the existing native flush admission, not a new readiness/retry policy.
+    for (const target of requiredTargets) {
+      await flushDevTargetSync({ target, env: sync.env }, { runProcess });
+    }
+  };
   if (scriptPath === 'run.mjs') {
     if (runtimeMode?.mode !== 'source') {
       // Source preparation may have finished hours ago. Probe the same current
       // placement/sync owner as run.mjs, even for an already-prepared reload.
-      await resolveControlledRuntimePlacement({ stackName, stackBaseDir: baseDir, sourceDir, env },
+      const placement = await resolveControlledRuntimePlacement({ stackName, stackBaseDir: baseDir, sourceDir, env },
         { runCaptureResult: capture });
+      if (runtimeMode?.mode === 'source-snapshot') {
+        // The replacement's supervisor flushes these targets before it can
+        // start; do that wait while the incumbent still serves (reload 201
+        // waited ~10 min here after retirement). Its own flush then converges.
+        await flushRequiredTargets(placement.config?.targets ?? [], (placement.targetPlans ?? [])
+          .filter(plan => Object.values(plan.services ?? {}).some(Boolean)).map(plan => plan.target));
+      }
     }
     return;
   }
@@ -770,16 +789,8 @@ async function preflightRestartDevTargets({ rootDir, stackName, baseDir, scriptP
     requested: { server: connection.startServer,
       daemon: resolveStackDaemonStartRequested({ env, noDaemon: flags.has('--no-daemon') }),
       expo: !borrowedExpo && (!flags.has('--no-ui') || isMobileRequestedForDevScript({ args, env })) } });
-  const requiredTargets = plans.targets.filter(plan => Object.values(plan.services).some(Boolean)).map(plan => plan.target);
-  if (!requiredTargets.length) return;
-  const sync = await ensureDevTargetSyncProject({ stackBaseDir: baseDir, sourceDir,
-    targets: config.targets, requiredTargets, ownerId: process.pid,
-    allowIndependentBorrow: true, borrowOnly: true, env }, { runProcess });
-  // This borrows the producer's project: no session/config creation or repair.
-  // Use the existing native flush admission, not a new readiness/retry policy.
-  for (const target of requiredTargets) {
-    await flushDevTargetSync({ target, env: sync.env }, { runProcess });
-  }
+  await flushRequiredTargets(config.targets,
+    plans.targets.filter(plan => Object.values(plan.services).some(Boolean)).map(plan => plan.target));
 }
 
 export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPath, args, extraEnv = {}, background = false },
@@ -926,6 +937,10 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           if (isTrueRestart) {
             // A failed preflight must escape before either retirement path or
             // replacement publication can touch the incumbent lifecycle.
+            // Every wait the replacement start would make happens here, while
+            // the incumbent still serves; retirement is followed only by start
+            // and readiness (reload 201 waited ~10 min after retirement).
+            await waitForStackRuntimeDependencies(runtimeStatePath, { env });
             await preflightRestartDevTargets({ rootDir, stackName, baseDir, scriptPath, args, env,
               runtimeMode: runtimeLaunchContext.runtimeMode }, { runCaptureResult: capture, runProcess });
             const identityEndpoint = await resolveStackServerEndpoint({ env, stackName, runtimeState });

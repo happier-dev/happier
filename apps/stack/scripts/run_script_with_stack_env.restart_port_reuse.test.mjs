@@ -14,6 +14,7 @@ import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
 import { resolveDevTargetMutagenRuntime } from './utils/dev_targets/mutagen_runtime.mjs';
 import { pickNextFreeTcpPort } from './utils/net/ports.mjs';
 import { withJsonOwnerFileLock } from './utils/proc/jsonOwnerFileLock.mjs';
+import { markDependencyMutation, withDependencyRefreshLock } from './utils/proc/dependency_refresh.mjs';
 import { resolveStackCleanupExecutorLockTimeoutMs } from './utils/stack/stop.mjs';
 import { DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../packages/cli-common/fileChangeObserver.mjs';
 
@@ -475,54 +476,59 @@ for (const owned of [true, false]) {
   });
 }
 
+async function createRestartPreflightFixture(t, scriptPath) {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-restart-preflight-' });
+  const storageDir = fixture.path('stacks');
+  const rootDir = fixture.path('repo');
+  const stackName = 'restart-preflight';
+  const baseDir = join(storageDir, stackName);
+  const runtimeStatePath = join(baseDir, 'stack.runtime.json');
+  const markerPath = fixture.path('replacement-started');
+  withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_REPO_DIR: rootDir });
+  const env = {
+    HAPPIER_STACK_REPO_DIR: rootDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer',
+    HAPPIER_STACK_RUNTIME_MODE: 'source-snapshot',
+    HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light',
+    HAPPIER_STACK_DAEMON: '0',
+  };
+  const config = { version: 3,
+    targets: [{ name: 'remote', platform: 'posix', ssh: 'fixture.invalid',
+      repoDir: '/mirror', cliHomeDir: '/state' }],
+    runtimePlacement: { server: { mode: 'prefer-target', target: 'remote', fallback: 'local' },
+      daemon: { mode: 'local' } }, commandExecution: { mode: 'local' },
+  };
+  for (const path of [baseDir, join(storageDir, 'producer'), join(rootDir, 'scripts'),
+    ...['cli', 'server', 'ui'].map(app => join(rootDir, 'apps', app))]) await mkdir(path, { recursive: true });
+  await writeFile(join(rootDir, 'package.json'), '{"private":true}\n');
+  for (const app of ['cli', 'server', 'ui']) {
+    await writeFile(join(rootDir, 'apps', app, 'package.json'), '{"private":true}\n');
+  }
+  await writeFile(join(baseDir, 'env'), Object.entries(env).map(([key, value]) => `${key}=${value}`).join('\n'));
+  for (const name of [stackName, 'producer']) {
+    await writeFile(join(storageDir, name, 'dev-targets.json'), JSON.stringify(config));
+  }
+  // This is an inert runner fixture, not a stack/server. No fixture process
+  // needs signaling: a successful dispatch writes the marker and exits itself.
+  await writeFile(join(rootDir, 'scripts', scriptPath),
+    `import {writeFile} from 'node:fs/promises'; await writeFile(${JSON.stringify(markerPath)}, 'started');`);
+  const sync = resolveDevTargetMutagenRuntime({ stackBaseDir: baseDir, sourceDir: rootDir, env });
+  await mkdir(dirname(sync.projectFile), { recursive: true });
+  await writeFile(sync.projectFile, '# disposable existing producer project\n');
+  // A recorded port selects the real restart path without creating any live
+  // process to stop. Invalid owner identity deliberately forbids signals.
+  const incumbent = { version: 1, stackName, ownerPid: null,
+    startedAt: '2026-10-21T10:00:00.000Z', ports: { server: await pickNextFreeTcpPort(49191) },
+    sentinel: 'incumbent', processes: {} };
+  await writeFile(runtimeStatePath, JSON.stringify(incumbent));
+  return { rootDir, stackName, runtimeStatePath, markerPath, incumbent };
+}
+
 for (const scriptPath of ['run.mjs', 'dev.mjs']) {
   test(`${scriptPath} restart refuses unavailable placement/sync before replacing incumbent state`, async t => {
-    const fixture = await createTempFixture(t, { prefix: 'hstack-restart-preflight-' });
-    const storageDir = fixture.path('stacks');
-    const rootDir = fixture.path('repo');
-    const stackName = 'restart-preflight';
-    const baseDir = join(storageDir, stackName);
-    const runtimeStatePath = join(baseDir, 'stack.runtime.json');
-    const markerPath = fixture.path('replacement-started');
-    withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir,
-      HAPPIER_STACK_REPO_DIR: rootDir });
-    const env = {
-      HAPPIER_STACK_REPO_DIR: rootDir,
-      HAPPIER_STACK_STORAGE_DIR: storageDir,
-      HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer',
-      HAPPIER_STACK_RUNTIME_MODE: 'source-snapshot',
-      HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light',
-      HAPPIER_STACK_DAEMON: '0',
-    };
-    const config = { version: 3,
-      targets: [{ name: 'remote', platform: 'posix', ssh: 'fixture.invalid',
-        repoDir: '/mirror', cliHomeDir: '/state' }],
-      runtimePlacement: { server: { mode: 'prefer-target', target: 'remote', fallback: 'local' },
-        daemon: { mode: 'local' } }, commandExecution: { mode: 'local' },
-    };
-    for (const path of [baseDir, join(storageDir, 'producer'), join(rootDir, 'scripts'),
-      ...['cli', 'server', 'ui'].map(app => join(rootDir, 'apps', app))]) await mkdir(path, { recursive: true });
-    await writeFile(join(rootDir, 'package.json'), '{"private":true}\n');
-    for (const app of ['cli', 'server', 'ui']) {
-      await writeFile(join(rootDir, 'apps', app, 'package.json'), '{"private":true}\n');
-    }
-    await writeFile(join(baseDir, 'env'), Object.entries(env).map(([key, value]) => `${key}=${value}`).join('\n'));
-    for (const name of [stackName, 'producer']) {
-      await writeFile(join(storageDir, name, 'dev-targets.json'), JSON.stringify(config));
-    }
-    // This is an inert runner fixture, not a stack/server. No fixture process
-    // needs signaling: a successful dispatch writes the marker and exits itself.
-    await writeFile(join(rootDir, 'scripts', scriptPath),
-      `import {writeFile} from 'node:fs/promises'; await writeFile(${JSON.stringify(markerPath)}, 'started');`);
-    const sync = resolveDevTargetMutagenRuntime({ stackBaseDir: baseDir, sourceDir: rootDir, env });
-    await mkdir(dirname(sync.projectFile), { recursive: true });
-    await writeFile(sync.projectFile, '# disposable existing producer project\n');
-    // A recorded port selects the real restart path without creating any live
-    // process to stop. Invalid owner identity deliberately forbids signals.
-    const incumbent = { version: 1, stackName, ownerPid: null,
-      startedAt: '2026-10-21T10:00:00.000Z', ports: { server: await pickNextFreeTcpPort(49191) },
-      sentinel: 'incumbent', processes: {} };
-    await writeFile(runtimeStatePath, JSON.stringify(incumbent));
+    const { rootDir, stackName, runtimeStatePath, markerPath, incumbent } = await createRestartPreflightFixture(t, scriptPath);
     const probes = [];
     const observe = async kind => {
       probes.push(kind);
@@ -573,9 +579,56 @@ for (const scriptPath of ['run.mjs', 'dev.mjs']) {
       },
     });
     assert.equal(await readFile(markerPath, 'utf8'), 'started');
-    assert.deepEqual(probes, scriptPath === 'run.mjs' ? ['placement'] : ['sync:list', 'sync:list', 'sync:flush']);
+    // agent-qa-usage-insights reload 201: the replacement's ~10 min sync wait ran
+    // after retirement. A source reload flushes the placed target before retiring.
+    assert.deepEqual(probes, scriptPath === 'run.mjs'
+      ? ['placement', 'sync:list', 'sync:list', 'sync:flush'] : ['sync:list', 'sync:list', 'sync:flush']);
   });
 }
+
+test('a source reload waits for an active dependency refresh before any retirement step', async t => {
+  // agent-qa-usage-insights reload 201: the replacement waited ~6 min on the
+  // controller dependency-refresh lock after the incumbent had been retired.
+  const { rootDir, stackName, markerPath } = await createRestartPreflightFixture(t, 'run.mjs');
+  const env = { ...process.env, HAPPIER_DEV_TARGET_EXECUTION: '' };
+  let held;
+  const writerHeld = new Promise(resolve => { held = resolve; });
+  let releaseWriter;
+  const released = new Promise(resolve => { releaseWriter = resolve; });
+  const writer = withDependencyRefreshLock({ installDir: rootDir, env }, async () => {
+    await markDependencyMutation({ installDir: rootDir, env });
+    held();
+    await released;
+  });
+  await writerHeld;
+  const probes = [];
+  const restart = stackEnvRunner.runStackScriptWithStackEnv({
+    rootDir, stackName, scriptPath: 'run.mjs',
+    args: ['--restart', '--no-daemon', '--no-ui', '--no-browser'],
+    extraEnv: { HAPPIER_STACK_PREPARED_SOURCE_RELOAD: '1' },
+  }, {
+    runCaptureResult: async () => {
+      probes.push('placement');
+      return { ok: true, out: 'HSTACK_QA_HOST={"platform":"linux","arch":"x64","remote":true}\n', err: '' };
+    },
+    runProcess: async ({ args }) => {
+      probes.push(`sync:${args[1]}`);
+      return { code: 0, out: JSON.stringify([{ name: args[2], paused: false,
+        status: 'watching', successfulCycles: 1,
+        alpha: { connected: true, scanned: true }, beta: { connected: true, scanned: true } }]) };
+    },
+  });
+  try {
+    await new Promise(resolve => setTimeout(resolve, 2_000));
+    assert.deepEqual(probes, [], 'no placement, sync or retirement step runs while a dependency writer is active');
+  } finally {
+    releaseWriter();
+    await writer;
+  }
+  await restart;
+  assert.equal(await readFile(markerPath, 'utf8'), 'started');
+  assert.deepEqual(probes, ['placement', 'sync:list', 'sync:list', 'sync:flush']);
+});
 
 test('outer start publication records requested UI truth before the child runner starts', () => {
   const base = {

@@ -531,7 +531,9 @@ async function assertNoDifferentLiveRuntimeOwner(existing, { stackName, ownerPid
   }
 }
 
-async function waitForStackRuntimeDependencies(statePath, options) {
+/** A start records its runtime only after the Stack checkout's dependency
+ * writer has published; a restart awaits the same readiness before retiring. */
+export async function waitForStackRuntimeDependencies(statePath, options) {
   const env = options.env ?? process.env;
   const configuredRepoDir = await readEnvValueFromFile(join(dirname(statePath), 'env'), 'HAPPIER_STACK_REPO_DIR');
   const repoDir = getRepoDir(fileURLToPath(new URL('../../../../../', import.meta.url)),
