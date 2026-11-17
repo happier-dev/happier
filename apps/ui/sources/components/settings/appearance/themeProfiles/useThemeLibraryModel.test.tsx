@@ -16,6 +16,9 @@ import { createShareThemePlugin } from '@/theme/profiles/shareThemePlugin';
 import { mergeThemeProfileDocumentEdit, parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { standardCleanup } from '@/dev/testkit';
 
+vi.mock('@/modal', async () =>
+    (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
+
 afterEach(standardCleanup);
 
 describe('theme library controller', () => {

@@ -527,13 +527,18 @@ describe('Theme profile settings screen', () => {
         });
     });
 
-    it('deletes an owned theme through its tile Action and preserves immutable themes', async () => {
+    it('preserves an assigned theme on cancel and deletes it after confirmation', async () => {
         setThemeProfiles({ activeProfileIds: { light: 'ocean', dark: null }, profiles: [baseProfile('ocean')] });
         const screen = await renderProfilesScreen();
         const tileId = getThemePresetSourceReferenceId({ kind: 'artifact', id: 'ocean' });
         const remove = findTileMenuAction(screen, tileId, 'delete');
         expect(remove).toBeDefined();
         expect(findTileMenuAction(screen, 'premiumLight', 'delete')).toBeUndefined();
+        shared.modalConfirm.mockResolvedValueOnce(false);
+        await act(async () => { await remove!.onSelect(); });
+        expect(getThemeProfiles().profiles.map(profile => profile.id)).toEqual(['ocean']);
+        expect(getThemeProfiles().activeProfileIds.light).toBe('ocean');
+
         await act(async () => { await remove!.onSelect(); });
         await vi.waitFor(() => expect(getThemeProfiles().profiles).toEqual([]));
         expect(getThemeProfiles().activeProfileIds.light).toBeNull();

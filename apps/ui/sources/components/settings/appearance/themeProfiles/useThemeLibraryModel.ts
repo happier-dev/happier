@@ -14,7 +14,7 @@ import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveAc
 import { t } from '@/text';
 import { resolveCustomThemeSourceLabel, type ThemePresetSourceOption } from './themeProfilePresetOptions';
 import type { ThemeLibraryMenuItem, ThemeLibraryTile, ThemeLibrarySlot, ThemeLibraryViewProps } from './themeLibraryViewTypes';
-import type { ThemeUiActionExecute } from './useThemeActionExecution';
+import { confirmThemeProfileDelete, type ThemeUiActionExecute } from './useThemeActionExecution';
 
 /** Consumes MODEL's header options while its inventory migration is published atomically. */
 export type ThemeLibrarySourceOption = Omit<ThemePresetSourceOption, 'reference' | 'miniature' | 'entry'> & Readonly<{
@@ -89,13 +89,17 @@ export function useThemeLibraryModel(input: ThemeLibraryModelInput, execute: The
             setFailure({ key, error }); input.onFailure?.(error, THEME_ACTION_IDS.tryOn);
         });
     }, [input.options, input.onFailure, execute]);
-    const deleteTheme = React.useCallback((key: string, reference: ThemeReference) => {
-        setFailure(null);
-        void execute(THEME_ACTION_IDS.delete, { ref: reference }).catch((error: unknown) => {
-            setFailure({ key, error, retry: () => deleteTheme(key, reference) });
-            input.onFailure?.(error, THEME_ACTION_IDS.delete);
-        });
-    }, [execute, input.onFailure]);
+    const deleteTheme = React.useCallback(async (key: string, reference: ThemeReference) => {
+        if (!await confirmThemeProfileDelete(reference, input.selection)) return;
+        const deleteConfirmedTheme = () => {
+            setFailure(null);
+            return execute(THEME_ACTION_IDS.delete, { ref: reference }).catch((error: unknown) => {
+                setFailure({ key, error, retry: deleteConfirmedTheme });
+                input.onFailure?.(error, THEME_ACTION_IDS.delete);
+            });
+        };
+        await deleteConfirmedTheme();
+    }, [execute, input.onFailure, input.selection]);
     const openCreate = React.useCallback(() => input.onCreate(), [input.onCreate]);
     const addMenu = React.useMemo((): readonly ThemeLibraryMenuItem[] => [
         { id: 'create', title: t('settingsAppearance.themeProfiles.newTheme'),

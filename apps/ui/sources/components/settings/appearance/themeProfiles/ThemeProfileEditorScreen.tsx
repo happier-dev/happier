@@ -32,7 +32,7 @@ import type { ThemeRadiusScaleName, ThemeReference } from '@happier-dev/protocol
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useThemeProfileEditorCss } from './useThemeProfileEditorCss';
 import { ThemeProfileEditorView } from './ThemeProfileEditorView';
-import { useThemeActionExecution } from './useThemeActionExecution';
+import { confirmThemeProfileDelete, useThemeActionExecution } from './useThemeActionExecution';
 import { createThemeProfileEditorActions } from './themeProfileEditorActions';
 import { useThemeProfileEditorPreview } from './useThemeProfileEditorPreview';
 import { useThemePluginShare } from './useThemePluginShare';
@@ -330,20 +330,9 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
 
     const deleteProfile = React.useCallback(async () => {
         if (!draft || readonly) return;
-        // A theme a mode uses says which mode loses it; that mode returns to its default theme.
-        const assignedSlots = (['light', 'dark'] as const).filter((mode) => selection[mode]?.kind === 'artifact' && selection[mode]?.id === draft.id);
-        const slotNames = assignedSlots.map((mode) => t(mode === 'light'
-            ? 'settingsAppearance.themeProfiles.lightModeSection'
-            : 'settingsAppearance.themeProfiles.darkModeSection'));
-        const confirmed = await Modal.confirm(
-            t('settingsAppearance.themeProfiles.deleteProfile'),
-            assignedSlots.length > 0
-                ? t('settingsAppearance.themeProfiles.deleteAssignedThemeBody', { slots: slotNames.join(' · ') })
-                : t('settingsAppearance.themeProfiles.deleteProfileSubtitle'),
-            { confirmText: t('common.delete'), destructive: true },
-        );
-        if (!confirmed) return;
-        const result = await execute(THEME_ACTION_IDS.delete, { ref: { kind: 'artifact', id: draft.id } });
+        const reference = { kind: 'artifact', id: draft.id } as const;
+        if (!await confirmThemeProfileDelete(reference, selection)) return;
+        const result = await execute(THEME_ACTION_IDS.delete, { ref: reference });
         if (!result.ok) {
             alertActionFailure({ reason: resolveActionExecutionFailureMessage(result, t('common.requestFailed')) ?? t('common.requestFailed'),
                 code: result.errorCode, requestId: result.requestId });
