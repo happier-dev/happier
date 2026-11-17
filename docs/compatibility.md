@@ -9193,6 +9193,9 @@ mode retains its narrow missing-body/predecessor behavior. Older strict developm
 Homes reject the new request option; clients must not silently replace an
 unsupported summary read with a full-Year raw-history drain. The response
 container and its encryption envelope remain unchanged.
+For complete all-days coverage, omit `range` with `includeCoverage: true`; the
+server omits date filters for both stored envelopes and pending-day discovery.
+Other reads still require an explicit range. No artificial client ceiling is used.
 The same unreleased contract adds optional sealed day-summary `observedAtRange`
 (half-open provider-clock extrema), outer `clockBoundsVersion: 1`, and daemon
 request `requireClockBounds: true`. The existing daemon upgrades legacy summaries

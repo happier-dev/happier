@@ -61,35 +61,37 @@ async function readMissingCoverage(params: Readonly<{ accountId: string; recordI
 }
 
 /** Backfill legacy clock proofs by key, without loading completed ciphertext bodies. */
-async function readLegacyClockSummaryDays(params: Readonly<{ accountId: string; recordId: string; startAtMs: number; endAtMs: number }>, storage: SummaryStorage) {
+async function readLegacyClockSummaryDays(params: Readonly<{ accountId: string; recordId: string; range?: { startAtMs: number; endAtMs: number } }>, storage: SummaryStorage) {
     const provider = getDbProviderFromEnv(process.env, 'postgres');
     const payload = name('payload');
     const version = provider === 'sqlite' ? prismaRuntime.sql`CAST(json_extract(${payload}, '$.clockBoundsVersion') AS TEXT)`
         : provider === 'mysql' ? prismaRuntime.sql`JSON_UNQUOTE(JSON_EXTRACT(${payload}, '$.clockBoundsVersion'))`
             : prismaRuntime.sql`${payload} ->> 'clockBoundsVersion'`;
+    const range = params.range ? prismaRuntime.sql`AND ${name('dayStartAt')} >= ${timestamp(params.range.startAtMs)} AND ${name('dayStartAt')} < ${timestamp(params.range.endAtMs)}` : prismaRuntime.empty;
     const rows = await storage.$queryRaw<Array<{ dayStartAt: Date | number | bigint }>>(prismaRuntime.sql`
         SELECT ${name('dayStartAt')} FROM ${name('ProviderAccountUsageDaySummary')}
         WHERE ${name('accountId')} = ${params.accountId} AND ${name('recordId')} = ${params.recordId}
-            AND ${name('dayStartAt')} >= ${timestamp(params.startAtMs)} AND ${name('dayStartAt')} < ${timestamp(params.endAtMs)}
-            AND COALESCE(${version}, '') <> '1' ORDER BY ${name('dayStartAt')}`);
+            ${range} AND COALESCE(${version}, '') <> '1' ORDER BY ${name('dayStartAt')}`);
     return rows.map(row => atMs(row.dayStartAt));
 }
 
 /** Coverage readers retain stored prefixes and expose pending work; producers load only missing bodies and predecessors. */
 export async function readProviderAccountUsageDaySummaries(params: Readonly<{ accountId: string }> & Read,
     storage: SummaryStorage): Promise<Response> {
-    const startAtMs = Math.floor(params.range.startAtMs / PROVIDER_ACCOUNT_USAGE_DAY_MS) * PROVIDER_ACCOUNT_USAGE_DAY_MS;
-    const endAtMs = Math.ceil(params.range.endAtMs / PROVIDER_ACCOUNT_USAGE_DAY_MS) * PROVIDER_ACCOUNT_USAGE_DAY_MS;
+    const range = params.range ? {
+        startAtMs: Math.floor(params.range.startAtMs / PROVIDER_ACCOUNT_USAGE_DAY_MS) * PROVIDER_ACCOUNT_USAGE_DAY_MS,
+        endAtMs: Math.ceil(params.range.endAtMs / PROVIDER_ACCOUNT_USAGE_DAY_MS) * PROVIDER_ACCOUNT_USAGE_DAY_MS,
+    } : undefined;
     const where = { accountId: params.accountId, recordId: params.recordId,
-        dayStartAt: { gte: new Date(startAtMs), lt: new Date(endAtMs) } };
+        ...(range ? { dayStartAt: { gte: new Date(range.startAtMs), lt: new Date(range.endAtMs) } } : {}) };
     let missingDays: Response['missingDays'] = [];
     if (params.includeMissingDays || params.includeCoverage) {
         const pending = await readProviderAccountUsagePendingDays(params, storage)
-            ?? await readProviderAccountUsageLegacyPendingDays({ ...params, range: { startAtMs, endAtMs } }, storage);
+            ?? await readProviderAccountUsageLegacyPendingDays({ ...params, range }, storage);
         const legacy = params.includeMissingDays && params.requireClockBounds
-            ? await readLegacyClockSummaryDays({ ...params, startAtMs, endAtMs }, storage) : [];
+            ? await readLegacyClockSummaryDays({ ...params, range }, storage) : [];
         const days = legacy.length ? [...new Set([...pending, ...legacy])] : pending;
-        const intervals = days.filter(day => day >= startAtMs && day < endAtMs)
+        const intervals = days.filter(day => !range || day >= range.startAtMs && day < range.endAtMs)
             .map(day => ({ startAtMs: day, endAtMs: day + PROVIDER_ACCOUNT_USAGE_DAY_MS }));
         missingDays = await readMissingCoverage({ ...params, intervals }, storage);
         if (legacy.length) {

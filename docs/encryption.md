@@ -1339,6 +1339,9 @@ from one admitted read snapshot. Pending days explicitly mark missing or stale
 summary coverage, including a useful retained prefix. This does not open sealed
 content or initiate a foreground raw-history backfill. The daemon's separate
 `includeMissingDays: true` demand still fetches only missing bodies and predecessors.
+With `includeCoverage: true`, omitting `range` selects all admitted stored days
+and pending coverage without a timestamp filter. There is no client-chosen
+upper date or full-history foreground read.
 Daily summaries optionally retain `observedAtRange: { startAtMs, endAtMs }`,
 a half-open range of provider observation clocks, inside the existing sealed body.
 The key-holding daemon computes it from a complete read of the selected pending

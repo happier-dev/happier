@@ -210,6 +210,15 @@ describe('qualified usage day summaries', () => {
             const uncoveredRead = await app.inject({ method: 'GET', url: coverageUrl, headers });
             expect(uncoveredRead.statusCode, uncoveredRead.body).toBe(200);
             expect(uncoveredRead.json()).toMatchObject({ summaries: [], missingDays: [{ dayStartAtMs, coverage: { observationCount: 1 } }] });
+            const allDaysUrl = `/v4/connect/qualified/provider-account-usage/day-summaries?${new URLSearchParams({
+                query: JSON.stringify({ recordId: snapshot.recordId, includeCoverage: true }),
+            })}`;
+            const allUncovered = await app.inject({ method: 'GET', url: allDaysUrl, headers });
+            expect(allUncovered.statusCode, allUncovered.body).toBe(200);
+            expect(allUncovered.json()).toEqual(uncoveredRead.json());
+            const missingDemand = await app.inject({ method: 'GET', headers,
+                url: `/v4/connect/qualified/provider-account-usage/day-summaries?${new URLSearchParams({ query: JSON.stringify({ recordId: snapshot.recordId }) })}` });
+            expect(missingDemand.statusCode).toBe(400);
             const backfill = await app.inject({ method: 'GET', url: url(true), headers });
             expect(backfill.statusCode, backfill.body).toBe(200);
             expect(backfill.json()).toMatchObject({ summaries: [], missingDays: [{ dayStartAtMs, coverage: {
@@ -236,8 +245,24 @@ describe('qualified usage day summaries', () => {
                 .toEqual({ summaries: [{ dayStartAtMs, payload }], missingDays: [] });
             expect((await app.inject({ method: 'GET', url: coverageUrl, headers })).json())
                 .toEqual({ summaries: [{ dayStartAtMs, payload }], missingDays: [] });
+            // All-days coverage includes valid stored dates beyond the reader's
+            // wall clock, without a client-selected upper timestamp.
+            const futureDay = Date.UTC(2400, 0, 1);
+            const futureSnapshot = { ...snapshot, fetchedAtMs: futureDay + 1000, observedAtMs: futureDay + 1000 };
+            const futureSummary = buildProviderAccountUsageDaySummaryV1({ recordId: snapshot.recordId, dayStartAtMs: futureDay, snapshots: [futureSnapshot] });
+            const futurePayload = { v: 1, coverage: { observationCount: 0, frontier: null },
+                content: mode === 'plain' ? { t: 'plain', v: futureSummary }
+                    : sealProviderAccountUsageDaySummaryV1({ summary: futureSummary, material, randomBytes: length => new Uint8Array(length).fill(6) }) };
+            await db.providerAccountUsageDaySummary.create({ data: { accountId: account.id, recordId: snapshot.recordId,
+                dayStartAt: new Date(futureDay), payload: futurePayload } });
+            const allSealed = await app.inject({ method: 'GET', url: allDaysUrl, headers });
+            expect(allSealed.statusCode, allSealed.body).toBe(200);
+            expect(allSealed.json()).toEqual({ summaries: [{ dayStartAtMs, payload }, { dayStartAtMs: futureDay, payload: futurePayload }], missingDays: [] });
+            expect((await app.inject({ method: 'GET', url: coverageUrl, headers })).json())
+                .toEqual({ summaries: [{ dayStartAtMs, payload }], missingDays: [] });
             const stranger = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
             expect((await app.inject({ method: 'GET', url: coverageUrl, headers: { 'x-test-user-id': stranger.id } })).statusCode).toBe(404);
+            expect((await app.inject({ method: 'GET', url: allDaysUrl, headers: { 'x-test-user-id': stranger.id } })).statusCode).toBe(404);
             expect((await app.inject({ method: 'GET', url: url(), headers: { 'x-test-user-id': stranger.id } })).statusCode).toBe(404);
             expect((await write(payload, { 'x-test-user-id': stranger.id })).statusCode).toBe(404);
             const later = { ...snapshot, fetchedAtMs: snapshot.fetchedAtMs + 1000, observedAtMs: snapshot.observedAtMs + 1000, planLabel: 'changed plan' };

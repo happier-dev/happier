@@ -35,12 +35,13 @@ export const StoredProviderAccountUsageDaySummaryV1Schema = lazyZodSchema(() => 
 export type StoredProviderAccountUsageDaySummaryV1 = z.infer<typeof StoredProviderAccountUsageDaySummaryV1Schema>;
 export const ProviderAccountUsageDaySummaryReadV1Schema = lazyZodSchema(() => z.strictObject({
   recordId: ProviderAccountUsageRecordIdSchema,
-  range: z.strictObject({ startAtMs: Time, endAtMs: Time }).check(z.refine(value => value.endAtMs > value.startAtMs)),
+  /** Omit only for all-days coverage; no client-selected timestamp ceiling. */
+  range: z.optional(z.strictObject({ startAtMs: Time, endAtMs: Time }).check(z.refine(value => value.endAtMs > value.startAtMs))),
   includeMissingDays: z.optional(z.boolean()),
   /** Return all selected envelopes with pending coverage, without producer predecessor bodies. */
   includeCoverage: z.optional(z.boolean()),
   requireClockBounds: z.optional(z.boolean()),
-}));
+}).check(z.refine(value => value.range !== undefined || value.includeCoverage === true)));
 export const ProviderAccountUsageDaySummaryResponseV1Schema = lazyZodSchema(() => z.strictObject({
   summaries: z.array(z.strictObject({ dayStartAtMs: Day, payload: StoredProviderAccountUsageDaySummaryV1Schema })),
   missingDays: z.array(z.strictObject({ dayStartAtMs: Day, coverage: ProviderAccountUsageDaySummaryCoverageV1Schema,
