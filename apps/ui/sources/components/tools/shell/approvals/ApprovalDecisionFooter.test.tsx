@@ -22,6 +22,16 @@ describe('ApprovalDecisionFooter', () => {
     expect(screen.findByTestId('approval-prompt-dismiss')).toBeNull();
   });
 
+  // A shared check only its Account holder may allow: this viewer is offered Skip alone (05 S8, B2 canAllow).
+  it('offers only the other answer when this viewer cannot give the approving one', async () => {
+    const approve = vi.fn(); const reject = vi.fn();
+    const screen = await renderScreen(<ApprovalDecisionFooter isDeciding={false} approveHidden testIDPrefix="approval-prompt-consent"
+      onApprove={approve} onReject={reject} />);
+    expect(screen.findByTestId('approval-prompt-consent-approve')).toBeNull();
+    await screen.pressByTestIdAsync('approval-prompt-consent-reject');
+    expect(reject).toHaveBeenCalledOnce(); expect(approve).not.toHaveBeenCalled();
+  });
+
   it('offers dismissal alone on a settled failure, without any decision, even when answers are not permitted', async () => {
     const dismiss = vi.fn();
     const screen = await renderScreen(<ApprovalDecisionFooter isDeciding={false} disabled disabledReason="notGranted"

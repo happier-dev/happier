@@ -191,7 +191,8 @@ function TargetActionApprovalPromptCard(props: ApprovalPromptCardProps<TargetAct
             ) : (
                 <ApprovalDecisionFooter
                     {...(checks.decision?.kind === 'consent' ? { testIDPrefix: 'approval-prompt-consent',
-                        approveLabel: t('workflows.triggers.checks.allow'), rejectLabel: t('workflows.triggers.checks.skip') }
+                        approveLabel: t('workflows.triggers.checks.allow'), rejectLabel: t('workflows.triggers.checks.skip'),
+                        approveHidden: !automaticChecksPresentation.canAllow }
                         : checks.decision?.kind === 'override' ? { approveLabel: t('workflows.triggers.checks.approveAnyway'),
                             rejectLabel: t('workflows.triggers.checks.deny') } : {})}
                     disabled={accessDisabled}
@@ -458,6 +459,7 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
                     testIDPrefix="approval-prompt-consent"
                     approveLabel={t('workflows.triggers.checks.allow')}
                     rejectLabel={t('workflows.triggers.checks.skip')}
+                    approveHidden={!automaticChecksPresentation.canAllow}
                     disabled={accessDisabled}
                     decisionDisabled={approvalRouteUnavailable}
                     disabledReason={approvalDisabledReason}

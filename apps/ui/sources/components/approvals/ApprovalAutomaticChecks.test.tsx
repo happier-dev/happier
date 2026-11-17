@@ -204,4 +204,25 @@ describe('Action before checks on the approval card', () => {
     );
     await second.unmount();
   });
+
+  // R24 and the shared-Bot recovery: a typed skip says why; an unknown reason says only that it skipped.
+  it('says why a check was skipped from its typed reason, naming the Account holder for a shared Bot', async () => {
+    const notice = (reason: string) => ({ code: 'action_automation_skipped' as const, ...ref, workflowId: selected.workflowId, reason });
+    const machine = notice('machineRequired');
+    const holder = notice('actorConsentUnavailableForRequester');
+    const other = notice('some_future_reason');
+    const value = checks({ phase: 'passed', notices: [machine, holder, other] });
+    const screen = await renderScreen(
+      <ApprovalAutomaticChecks checks={value} actionTitle="Deploy" serverId={null} testID="checks"
+        automaticChecksExecutionAccountName="Ade"
+        automaticCheckSkips={[{ notice: machine, reason: 'machineRequired' },
+          { notice: holder, reason: 'actorConsentUnavailableForRequester' }, { notice: other, reason: null }]} />,
+    );
+    const text = screen.getTextContent();
+    expect(text).toContain('workflows.triggers.checks.skippedNeedsMachine');
+    expect(text).toContain('workflows.triggers.checks.skippedNotAllowedBy');
+    expect(text).toContain('Ade');
+    expect(text).toContain('workflows.triggers.checks.skippedUnavailable');
+    await screen.unmount();
+  });
 });

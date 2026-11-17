@@ -137,6 +137,8 @@ export const en = {
         passed: ({ workflow }: { workflow: string }) => `${workflow} passed`,
         skipped: ({ workflow }: { workflow: string }) => `Skipped ${workflow} · it asks again next time`,
         skippedUnavailable: ({ workflow }: { workflow: string }) => `Skipped ${workflow}`,
+        skippedNeedsMachine: ({ workflow }: { workflow: string }) => `Skipped ${workflow} · it needs a Machine to run`,
+        skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `Skipped ${workflow} · ${name} hasn’t allowed it on this Machine`,
         openRun: "Open run",
         cancel: "Cancel",
         aCheck: "a check",

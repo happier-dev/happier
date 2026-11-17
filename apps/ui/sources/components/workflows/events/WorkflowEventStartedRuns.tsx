@@ -15,6 +15,8 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { useWorkflowRun } from '@/sync/store/hooks';
 import { t } from '@/text';
+import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
+import { formatRelativeTimeShort, readRelativeTimeShortRefreshAtMs } from '@/utils/time/formatShortRelativeTime';
 import { useUnistyles } from 'react-native-unistyles';
 
 /**
@@ -71,11 +73,16 @@ const StartedRunRow = React.memo(function StartedRunRow(
       : null;
   const state = formatWorkflowRunStateLabel(props.run.state);
   const serverId = props.scope?.serverId ?? null;
+  // When it started, in the meta column the event rows use, on the same shared clock.
+  const startedAt = Date.parse(props.run.createdAt);
+  const readNextRefresh = React.useCallback((nowMs: number) => readRelativeTimeShortRefreshAtMs(startedAt, nowMs), [startedAt]);
+  const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefresh, true);
   return (
     <Item
       testID={props.testID}
       title={name}
       subtitle={progress === null ? state : `${state} · ${progress}`}
+      detail={formatRelativeTimeShort(startedAt, nowMs)}
       icon={
         <Icon
           name="tree-structure"

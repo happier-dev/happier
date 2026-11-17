@@ -19184,6 +19184,8 @@ const es: WorkflowTriggersCopy = {
         passed: ({ workflow }: { workflow: string }) => `${workflow} superado`,
         skipped: ({ workflow }: { workflow: string }) => `${workflow} omitido · se volverá a preguntar`,
         skippedUnavailable: ({ workflow }: { workflow: string }) => `${workflow} omitido`,
+        skippedNeedsMachine: ({ workflow }: { workflow: string }) => `Se omitió ${workflow} · necesita una máquina para ejecutarse`,
+        skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `Se omitió ${workflow} · ${name} no lo ha permitido en esta máquina`,
         openRun: "Abrir ejecución",
         cancel: "Cancelar",
         aCheck: "una comprobación",

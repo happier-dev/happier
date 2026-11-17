@@ -19275,6 +19275,8 @@ const ru: WorkflowTriggersCopy = {
         passed: ({ workflow }: { workflow: string }) => `${workflow} пройден`,
         skipped: ({ workflow }: { workflow: string }) => `${workflow} пропущен · в следующий раз спросим снова`,
         skippedUnavailable: ({ workflow }: { workflow: string }) => `${workflow} пропущен`,
+        skippedNeedsMachine: ({ workflow }: { workflow: string }) => `${workflow} пропущен · для запуска нужна машина`,
+        skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `${workflow} пропущен · ${name} не разрешил(а) его на этой машине`,
         openRun: "Открыть запуск",
         cancel: "Отмена",
         aCheck: "проверка",

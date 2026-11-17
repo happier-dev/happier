@@ -18738,6 +18738,8 @@ const de: WorkflowTriggersCopy = {
         passed: ({ workflow }: { workflow: string }) => `${workflow} bestanden`,
         skipped: ({ workflow }: { workflow: string }) => `${workflow} übersprungen · nächstes Mal wird wieder gefragt`,
         skippedUnavailable: ({ workflow }: { workflow: string }) => `${workflow} übersprungen`,
+        skippedNeedsMachine: ({ workflow }: { workflow: string }) => `${workflow} übersprungen · braucht eine Maschine zum Ausführen`,
+        skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `${workflow} übersprungen · ${name} hat es auf dieser Maschine nicht erlaubt`,
         openRun: "Lauf öffnen",
         cancel: "Abbrechen",
         aCheck: "eine Prüfung",

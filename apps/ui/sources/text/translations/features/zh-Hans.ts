@@ -19128,6 +19128,8 @@ const zhHans: WorkflowTriggersCopy = {
         passed: ({ workflow }: { workflow: string }) => `${workflow} 已通过`,
         skipped: ({ workflow }: { workflow: string }) => `已跳过 ${workflow} · 下次会再询问`,
         skippedUnavailable: ({ workflow }: { workflow: string }) => `已跳过 ${workflow}`,
+        skippedNeedsMachine: ({ workflow }: { workflow: string }) => `已跳过 ${workflow} · 需要一台机器来运行`,
+        skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `已跳过 ${workflow} · ${name} 尚未在这台机器上允许它`,
         openRun: "打开运行",
         cancel: "取消",
         aCheck: "一项检查",

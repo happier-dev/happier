@@ -14,6 +14,8 @@ export const ApprovalDecisionFooter = React.memo(function ApprovalDecisionFooter
     disabled?: boolean;
     decisionDisabled?: boolean;
     approveDisabled?: boolean;
+    /** This viewer cannot give the answer at all (a shared check only its Account holder allows): only the other one shows. */
+    approveHidden?: boolean;
     approveLabel?: string;
     /** The refusal's own word (a request type's label); defaults to the bar's "Deny". */
     rejectLabel?: string;
@@ -56,7 +58,7 @@ export const ApprovalDecisionFooter = React.memo(function ApprovalDecisionFooter
 
     return (
         <ApprovalDecisionBar size="small" disabled={disabled} irreversible={props.irreversible}
-            approve={{ label: props.approveLabel, testID: `${testIDPrefix}-approve`, controlRef: primaryAnswerRef,
+            approve={props.approveHidden ? undefined : { label: props.approveLabel, testID: `${testIDPrefix}-approve`, controlRef: primaryAnswerRef,
                 accessibilityHint: props.approveAccessibilityHint, disabled: approveDisabled,
                 busy: props.isDeciding, onPress: props.onApprove }}
             reject={{ label: props.rejectLabel, testID: `${testIDPrefix}-reject`, onPress: props.onReject }} />

@@ -19273,6 +19273,8 @@ const pl: WorkflowTriggersCopy = {
         passed: ({ workflow }: { workflow: string }) => `${workflow} zaliczony`,
         skipped: ({ workflow }: { workflow: string }) => `Pominięto ${workflow} · zapytamy następnym razem`,
         skippedUnavailable: ({ workflow }: { workflow: string }) => `Pominięto ${workflow}`,
+        skippedNeedsMachine: ({ workflow }: { workflow: string }) => `Pominięto ${workflow} · do uruchomienia potrzebna jest maszyna`,
+        skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `Pominięto ${workflow} · ${name} nie zezwolił(a) na to na tej maszynie`,
         openRun: "Otwórz przebieg",
         cancel: "Anuluj",
         aCheck: "sprawdzenie",

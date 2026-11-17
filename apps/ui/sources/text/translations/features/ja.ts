@@ -19183,6 +19183,8 @@ const ja: WorkflowTriggersCopy = {
         passed: ({ workflow }: { workflow: string }) => `${workflow} に合格`,
         skipped: ({ workflow }: { workflow: string }) => `${workflow} をスキップ · 次回また確認します`,
         skippedUnavailable: ({ workflow }: { workflow: string }) => `${workflow} をスキップ`,
+        skippedNeedsMachine: ({ workflow }: { workflow: string }) => `${workflow} をスキップしました · 実行にはマシンが必要です`,
+        skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `${workflow} をスキップしました · ${name} がこのマシンで許可していません`,
         openRun: "実行を開く",
         cancel: "キャンセル",
         aCheck: "確認",

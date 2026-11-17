@@ -19248,6 +19248,8 @@ const it: WorkflowTriggersCopy = {
         passed: ({ workflow }: { workflow: string }) => `${workflow} superato`,
         skipped: ({ workflow }: { workflow: string }) => `${workflow} saltato · verrà richiesto di nuovo`,
         skippedUnavailable: ({ workflow }: { workflow: string }) => `${workflow} saltato`,
+        skippedNeedsMachine: ({ workflow }: { workflow: string }) => `${workflow} saltato · serve una macchina per eseguirlo`,
+        skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `${workflow} saltato · ${name} non l’ha consentito su questa macchina`,
         openRun: "Apri esecuzione",
         cancel: "Annulla",
         aCheck: "un controllo",

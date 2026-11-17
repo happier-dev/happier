@@ -18,6 +18,25 @@ import { t } from '@/text';
 import { Modal } from '@/modal';
 import { alertApprovalFailure, type ApprovalDecisionOptions } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
 import type { ApprovalAutomaticChecksPresentation } from './useApprovalAutomaticChecksPresentation';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useWorkflowRun } from '@/sync/domains/state/storage';
+import { refreshWorkflowRunsByIds } from '@/sync/engine/workflows/refreshWorkflowRun';
+import { describeWorkflowRunProgress } from '@/components/workflows/presentation/workflowRunProgress';
+
+/** The running check's step progress, from its Run read on the approval's Home (demanded while the card shows it). */
+function useCheckingRunProgress(runId: string | null, serverId: string | null): string | null {
+  const { binding } = useServerCredentialAccountScopeBinding(runId ? serverId : '');
+  const scope = binding?.scope ?? null;
+  const run = useWorkflowRun(runId, { enabled: scope !== null, scope });
+  const loaded = run !== null;
+  React.useEffect(() => {
+    if (!runId || !binding || loaded) return;
+    const controller = new AbortController();
+    void refreshWorkflowRunsByIds([runId], { accountLifetime: binding, fence: binding, signal: controller.signal }).catch(() => {});
+    return () => controller.abort();
+  }, [runId, binding, loaded]);
+  return run?.summary?.state === 'running' ? describeWorkflowRunProgress(run.summary.stepProgress) : null;
+}
 
 /**
  * Which decision the card offers while an Action's before checks hold it (05 S6/S8/S9): a shared check waiting for
@@ -174,9 +193,13 @@ export const ApprovalAutomaticChecks = React.memo(
     const skippedConsents = checks.consents.filter(
       (consent) => consent.decision === 'skip',
     );
-    const skippedNotices = checks.notices.flatMap((notice) =>
-      notice.code === 'action_automation_skipped' ? [notice] : [],
+    // Typed reasons come from the held request's projection; a reason this version cannot read says only that it skipped.
+    const skippedNotices: ApprovalAutomaticChecksPresentation['automaticCheckSkips'] = props.automaticCheckSkips ?? checks.notices.flatMap((notice) =>
+      notice.code === 'action_automation_skipped' ? [{ notice, reason: null }] : [],
     );
+    const checkingRun = checks.phase === 'checking'
+      ? (checks.selected.find((row) => runOf(row) !== null) ?? checks.selected[0] ?? null) : null;
+    const checkingProgress = useCheckingRunProgress(checkingRun ? runOf(checkingRun) : null, props.serverId);
     const openRun = (runId: string | null) =>
       runId && props.onOpenRoute ? (
         <TextLinkButton
@@ -238,9 +261,7 @@ export const ApprovalAutomaticChecks = React.memo(
         </View>
       );
     } else if (checks.phase === 'checking') {
-      const running =
-        checks.selected.find((row) => runOf(row) !== null) ??
-        checks.selected[0];
+      const running = checkingRun;
       body = (
         <View
           style={styles.block}
@@ -257,7 +278,7 @@ export const ApprovalAutomaticChecks = React.memo(
           {running ? (
             <View style={styles.line}>
               <Text variant="meta" style={styles.secondary}>
-                {nameOf(running)}
+                {checkingProgress ? `${nameOf(running)} · ${checkingProgress}` : nameOf(running)}
               </Text>
               {openRun(runOf(running))}
             </View>
@@ -303,10 +324,13 @@ export const ApprovalAutomaticChecks = React.memo(
       ...skippedConsents.map((row) =>
         t('workflows.triggers.checks.skipped', { workflow: nameOf(row) }),
       ),
-      ...skippedNotices.map((notice) =>
-        t('workflows.triggers.checks.skippedUnavailable', {
-          workflow: nameOf(notice),
-        }),
+      ...skippedNotices.map(({ notice, reason }) => reason === 'machineRequired'
+        ? t('workflows.triggers.checks.skippedNeedsMachine', { workflow: nameOf(notice) })
+        // A shared Bot asked by someone else: the line names the Account holder who has not allowed it.
+        : reason === 'actorConsentUnavailableForRequester' && props.automaticChecksExecutionAccountName
+          ? t('workflows.triggers.checks.skippedNotAllowedBy', { workflow: nameOf(notice),
+            name: props.automaticChecksExecutionAccountName })
+          : t('workflows.triggers.checks.skippedUnavailable', { workflow: nameOf(notice) }),
       ),
     ];
     if (!body && skipped.length === 0) return null;
@@ -314,16 +338,18 @@ export const ApprovalAutomaticChecks = React.memo(
       <>
         {body}
         {skipped.map((line, index) => (
-          <Text
-            key={index}
-            variant="meta"
-            style={styles.secondary}
-            testID={
-              props.testID ? `${props.testID}:skipped:${index}` : undefined
-            }
-          >
-            {line}
-          </Text>
+          <View key={index} style={styles.lead}>
+            <Icon name="minus-circle" size={14} color={theme.colors.text.secondary} />
+            <Text
+              variant="meta"
+              style={[styles.secondary, styles.leadText]}
+              testID={
+                props.testID ? `${props.testID}:skipped:${index}` : undefined
+              }
+            >
+              {line}
+            </Text>
+          </View>
         ))}
       </>
     );
