@@ -83,6 +83,8 @@ export async function prepareProjectCheckoutRemoval(input: Readonly<{
     } else if (association?.project) cleanup = 'skipped';
     return { association, cleanup,
         settle(removalKind) {
+            if (cleanup === 'skipped') operation.operationProgress.update({ phase: 'teardown.skipped',
+                label: 'Worktree removed; project teardown skipped' });
             publishDaemonHostEvent({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' }, payload: {
                 kind: 'worktreeRemoved', serverId: runtime.serverId, occurredAt: Date.now(), removal: {
                     workspace: association ? workspaceAddressFromRefV1(association.workspace) : null,

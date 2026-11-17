@@ -99,7 +99,8 @@ export function createAdmittedCheckoutRepositoryFiles(
           let preparation: ReturnType<typeof prepareProjectCheckoutRemoval> | undefined;
           const removed = await removal.remove(async () => {
             preparation ??= prepareProjectCheckoutRemoval({ runtime, ingress, context, operation,
-              worktreePath: removal.worktreePath, skipCleanup: removal.request.skipCleanup === true });
+              worktreePath: removal.worktreePath, skipCleanup: removal.request.skipCleanup === true,
+              unattended: true });
             await preparation;
           });
           if (removed.success && preparation) (await preparation).settle('deleted');

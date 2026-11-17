@@ -62,6 +62,10 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { prepareProjectCheckoutRemoval } from './projectCheckoutRemoval';
+import { createAdmittedCheckoutRepositoryFiles } from '@/deployments/admittedCheckoutRepositoryFiles';
+import { createDeploymentGitRegistry } from '@/deployments/targets/ownServer/exactCommitRelease.testkit';
+import { runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
+import { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from '@happier-dev/protocol/scm/worktrees';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
@@ -2370,6 +2374,54 @@ describe('authenticated finite Project Action owner', () => {
         else await expect(access(join(h.root, '.happier/project.json'))).resolves.toBeUndefined();
         expect(h.operationRuntime.store.list({ accountId: 'owner', machineId: 'machine' }).items).toHaveLength(1);
         await authority.releaseAllRetainedBootstraps();
+    });
+
+    it.each([false, true])('automatically removes a PR worktree and reports skipped untrusted teardown (associated=%s)', async associated => {
+        const h = await harness({ version: 1, workspace: { teardown: [{ kind: 'command', command: 'echo cleanup' }] } });
+        const plugin = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+            runtimeOptions: { pluginIds: [], contributes: createResolvedContributionRegistry({}) } });
+        releaseRequesterContexts.push(() => plugin.dispose());
+        runScmExecutable(h.root, 'git', ['init', '--quiet']);
+        runScmExecutable(h.root, 'git', ['config', 'user.name', 'Project test']);
+        runScmExecutable(h.root, 'git', ['config', 'user.email', 'project@example.test']);
+        runScmExecutable(h.root, 'git', ['add', '.happier/project.json']);
+        runScmExecutable(h.root, 'git', ['commit', '--quiet', '-m', 'Project teardown']);
+        const worktreePath = join(h.root, 'temporary-pr');
+        runScmExecutable(h.root, 'git', ['worktree', 'add', '--quiet', '-b', 'temporary-pr', worktreePath]);
+        if (associated) h.workspaceRefs.push({ ...h.workspaceRefs[0]!, id: 'temporary-pr', rootPath: worktreePath });
+        const request = { cwd: h.root, worktreePath, confirmed: true,
+            authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN };
+        const scope = { accountId: 'owner', machineId: 'machine' };
+        try {
+            expect(await h.operationRuntime.observeExecution({ actionId: 'scm.worktree.remove', input: request,
+                actionRequestId: 'automatic-pr-cleanup', response: 'admission', execute: async operation => {
+                    const host = createAdmittedCheckoutRepositoryFiles({ root: h.root,
+                        context: { ...operation, authority: 'present_user', surface: 'rpc', serverId: 'home' },
+                        registry: createDeploymentGitRegistry(), resolveRemovalRuntime: async () => ({
+                            runtime: { ...h.runtime, requesterIdentity: selectHostRequesterExecutionIdentity({
+                                rpcContext: h.context, hostHomeServerIdentityId: 'home' }) }, ingress: h.context,
+                        }) });
+                    const removed = await host.executeScm('scm.worktree.remove', request);
+                    expect(removed).toMatchObject({ success: true });
+                    return { ok: true, result: {} };
+                } })).toMatchObject({ ok: true });
+            if (associated) {
+                await expect.poll(() => {
+                    const snapshot = h.operationRuntime.store.get(scope, 'operation');
+                    return snapshot?.setupReview !== undefined || snapshot?.state === 'succeeded' || snapshot?.state === 'failed';
+                }).toBe(true);
+            } else await h.operationRuntime.runner.waitForTerminal(scope, 'operation');
+            expect(h.operationRuntime.store.get(scope, 'operation')).toMatchObject({ state: 'succeeded',
+                ...(associated ? { progress: { kind: 'phase', phase: 'teardown.skipped' } } : {}) });
+            expect(h.operationRuntime.store.get(scope, 'operation')?.setupReview).toBeUndefined();
+            expect(h.spawned).toEqual([]);
+            expect(h.post.mock.calls.some(([url]) => String(url).endsWith('/project-trust/mutate'))).toBe(false);
+            await expect(access(worktreePath)).rejects.toMatchObject({ code: 'ENOENT' });
+            await expect(access(join(h.root, '.happier/project.json'))).resolves.toBeUndefined();
+        } finally {
+            h.operationRuntime.runner.cancel(scope, 'operation');
+            await h.operationRuntime.runner.waitForTerminal(scope, 'operation');
+        }
     });
 
     it('preserves the accepted projectless Workspace in the settled removal fact', async () => {
