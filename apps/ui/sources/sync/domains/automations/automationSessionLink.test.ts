@@ -5,7 +5,6 @@ import { createAutomationDefinitionFromDetail } from './automationDefinitionProj
 import type { AutomationDefinition } from './automationTypes';
 import {
     countEnabledAutomationDefinitionsLinkedToSession,
-    filterAutomationDefinitionsLinkedToSession,
     projectAutomationDefinitionSessionLink,
 } from './automationSessionLink';
 
@@ -37,14 +36,6 @@ function detail(overrides: Partial<AutomationDefinitionDetail> = {}): Automation
 }
 
 describe('automationSessionLink', () => {
-    it('projects the current existing-Session association only from exact direct detail', () => {
-        const projected = projectAutomationDefinitionSessionLink({
-            automation: createAutomationDefinitionFromDetail(detail()),
-        });
-
-        expect(projected.linkedExistingSessionId).toBe('session-1');
-    });
-
     it('fails closed for summaries, new-Session targets, and mismatched recipe revisions', () => {
         const summaryOnly = {
             id: 'summary-only',
@@ -68,15 +59,14 @@ describe('automationSessionLink', () => {
         expect(projectAutomationDefinitionSessionLink({ automation: mismatched }).linkedExistingSessionId).toBeNull();
     });
 
-    it('filters and counts enabled definitions using the one projected association', () => {
+    it('projects exact direct detail and counts only enabled definitions linked to that Session', () => {
         const linked = projectAutomationDefinitionSessionLink({
             automation: createAutomationDefinitionFromDetail(detail()),
         });
+        expect(linked.linkedExistingSessionId).toBe('session-1');
         const disabled = { ...linked, id: 'disabled', enabled: false } as AutomationDefinition;
         const other = { ...linked, id: 'other', linkedExistingSessionId: 'session-2' } as AutomationDefinition;
 
-        expect(filterAutomationDefinitionsLinkedToSession([linked, disabled, other], 'session-1').map((item) => item.id))
-            .toEqual(['automation-1', 'disabled']);
         expect(countEnabledAutomationDefinitionsLinkedToSession([linked, disabled, other], 'session-1')).toBe(1);
     });
 });

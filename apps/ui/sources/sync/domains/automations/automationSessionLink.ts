@@ -48,13 +48,6 @@ export function isAutomationDefinitionLinkedToSession(
     return tryGetAutomationDefinitionLinkedExistingSessionId(automation) === sessionId;
 }
 
-export function filterAutomationDefinitionsLinkedToSession(
-    automations: ReadonlyArray<AutomationDefinition>,
-    sessionId: string,
-): AutomationDefinition[] {
-    return automations.filter((automation) => isAutomationDefinitionLinkedToSession(automation, sessionId));
-}
-
 export function countEnabledAutomationDefinitionsLinkedToSession(
     automations: ReadonlyArray<Pick<AutomationDefinition, 'enabled' | 'targetType' | 'linkedExistingSessionId'>>,
     sessionId: string,
