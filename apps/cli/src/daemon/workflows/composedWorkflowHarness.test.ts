@@ -588,6 +588,24 @@ function rowFor(kit: WorkflowRunStorageTestkit, blockId: string, runCrypto: Work
     .find((index) => openRowProgress(kit, index, runCrypto).invocationPath.blockId === blockId);
 }
 
+/** Facts sent to the storage owner that repeat a row's current lifecycle and sealed content. */
+function unchangedFactWrites(kit: WorkflowRunStorageTestkit): string[] {
+  const sealed = new Map<string, string>();
+  const unchanged: string[] = [];
+  for (const call of kit.calls as readonly Readonly<Record<string, unknown>>[]) {
+    const rows = call.operation === 'initialize' ? [call.rootInvocation]
+      : call.operation === 'invocations.admit' ? call.invocations as readonly unknown[] : [];
+    for (const row of rows as readonly (Readonly<{ id?: unknown; contentEnvelope?: unknown }> | undefined)[]) {
+      if (typeof row?.id === 'string' && typeof row.contentEnvelope === 'string') sealed.set(row.id, row.contentEnvelope);
+    }
+    if (call.operation !== 'invocations.fact') continue;
+    const id = String(call.invocationId);
+    if (call.expectedLifecycle === call.lifecycle && sealed.get(id) === call.contentEnvelope) unchanged.push(`${id}:${String(call.lifecycle)}`);
+    sealed.set(id, String(call.contentEnvelope));
+  }
+  return unchanged;
+}
+
 function fanOutDefinition(failurePolicy: 'collect_outcomes' | 'fail_stop'): WorkflowDefinitionV1 {
   return {
     version: 1,
@@ -3842,6 +3860,8 @@ describe('composed Automation workflow claim and optional receipt', () => {
     expect(sentText).not.toContain('scheduledFor');
     const work = rowFor(kit, 'work');
     expect(work?.lifecycle).toBe('completed');
+    // Each storage fact is one server write and Run publication: none repeats a row unchanged.
+    expect(unchangedFactWrites(kit)).toEqual([]);
     expect(kit.run()).toMatchObject({
       origin: { kind: 'automation', automationId: 'automation-1' },
       state: 'succeeded',

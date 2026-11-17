@@ -701,8 +701,10 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
       ...(stepProgress ? { stepProgress } : {}) });
     if (loopProgress) progress = WorkflowProgressEnvelopeV1Schema.parse({ ...progress, loopProgress });
     // Compare before sealing: E2EE ciphertext changes even for an equal fact.
-    // Admitting still reaches the final parent/control predicate on every input.
-    if (current.lifecycle === 'pending' && fact.lifecycle === 'pending'
+    // An unchanged row is not a write (each write is a server CAS and Run
+    // publication). Admitting still reaches the final parent/control predicate
+    // on every input.
+    if (current.lifecycle === fact.lifecycle && fact.lifecycle !== 'admitting'
       && discussionRound === undefined && sameStrictJsonValue(progress, persisted.progress)) return current;
     const index = persisted.index;
     const binding = {
