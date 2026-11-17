@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { AccountEncryptionModeSchema } from '../features/payload/capabilities/encryptionCapabilities.js';
 import { z } from '../zodRuntimePolicy.js';
 import { ApiTokenGrantV1Schema } from './apiTokenGrant.js';
 import { EmbedConfigV1Schema } from '../embed/embedConfigV1.js';
@@ -123,7 +124,7 @@ export const AccountApiTokenChildRevokeRequestV1Schema = lazyZodSchema(() => z.s
 export type AccountApiTokenChildRevokeRequestV1 = z.infer<typeof AccountApiTokenChildRevokeRequestV1Schema>;
 export const AccountApiTokenSelfV1Schema = lazyZodSchema(() => z.strictObject({
   accountId: z.string().check(z.minLength(1)),
-  accountEncryptionMode: z.enum(['plain', 'e2ee']),
+  accountEncryptionMode: AccountEncryptionModeSchema,
   credentialId: AccountApiTokenIdV1Schema,
   parentTokenId: z.nullable(AccountApiTokenIdV1Schema),
   expiresAt: z.nullable(AccountApiTokenInstantV1Schema),

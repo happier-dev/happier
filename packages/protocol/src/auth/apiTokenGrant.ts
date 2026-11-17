@@ -1,4 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { API_TOKEN_ENVIRONMENT_ACTION_IDS_V1, API_TOKEN_DISCOVERY_ACTION_IDS_V1, API_TOKEN_APPROVAL_OBSERVATION_ACTION_IDS_V1 } from './apiTokenActionIdsV1.js';
+export { API_TOKEN_ENVIRONMENT_ACTION_IDS_V1 } from './apiTokenActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { CallerInputConstraintsV1Schema, type CallerInputConstraintsV1 } from './callerInputConstraintsV1.js';
@@ -84,8 +86,6 @@ export const ApiTokenGrantOriginV1Schema = lazyZodSchema(() => CanonicalHttpOrig
 const GrantIdSchema = lazyZodSchema(() => z.string().check(z.minLength(1)));
 const modelKey = (ref: ProviderBoundModelRef) => JSON.stringify([ref.agentTargetKey, ref.providerConnectionId, ref.modelId]);
 
-/** Only these Actions admit Environment-only CI authority; operation custody is checked by its owner. */
-export const API_TOKEN_ENVIRONMENT_ACTION_IDS_V1 = ['deployments.deploy', 'action.operations.get'] as const;
 
 /** Exact authority that can carry the person's saved deployment choice. */
 export function isApiTokenDeploymentGrantV1(grant: Readonly<{
@@ -171,8 +171,8 @@ export function isApiTokenGrantRestrictedV1(grant: ApiTokenGrantV1): boolean {
   return grant.actions !== null || grant.targets !== null || grant.models !== null || grant.permissionModes !== null || grant.create !== null || grant.automationIds != null;
 }
 
-const DISCOVERY_IDS = new Set(['action.spec.search', 'action.spec.get', 'action.options.resolve']);
-const APPROVAL_OBSERVATION_IDS = new Set(['approval.request.list', 'approval.request.get']);
+const DISCOVERY_IDS: ReadonlySet<string> = new Set(API_TOKEN_DISCOVERY_ACTION_IDS_V1);
+const APPROVAL_OBSERVATION_IDS: ReadonlySet<string> = new Set(API_TOKEN_APPROVAL_OBSERVATION_ACTION_IDS_V1);
 function actionGranted(grant: ApiTokenGrantV1, actionId: string, contributedQualifiedId?: string, contributedActionAdmission?: 'pre_open'): boolean {
   // Send includes answering agent questions; exact answer grants remain narrower.
   if (actionId === 'session.user_action.answer' && actionGranted(grant, SESSION_MESSAGE_SEND_ACTION_ID_V1)) return true;
