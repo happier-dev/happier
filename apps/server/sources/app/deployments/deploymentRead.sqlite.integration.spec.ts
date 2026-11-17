@@ -24,6 +24,7 @@ import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymen
 import { listDeploymentEnvironmentsInTx } from './deploymentReadService';
 import { listDeploymentDomainPageInTx } from './deploymentAccountPageReadService';
 import { sealDeploymentReadCursor } from './deploymentReadCursor';
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { linkDeploymentTargetInTx } from './deploymentTargetLinkService';
 import { readArtifactHeadersForCallerInTx, resolveArtifactAccessInTx, readArtifactRecipientCensusInTx,
     commitArtifactRecipientKeyEnvelopesInTx, setArtifactAccessGrantInTx } from '@/app/artifacts/artifactAccessService';
@@ -465,8 +466,11 @@ describe('deployment detail admission cost', () => {
                 // remains bound to its Account and query when explicitly sealed.
                 expect(page.nextCursor).toBeTruthy();
                 const continuation = sealDeploymentReadCursor(owner.id, { serverId }, page.items[0]!.id);
-                expect(await inTx(tx => listDeploymentEnvironmentsInTx(tx, stranger.id,
-                    { serverId, cursor: continuation, limit: 1 }))).toEqual({ ok: false, error: 'deployment_invalid' });
+                const foreignCursor = await inTx(tx => listDeploymentEnvironmentsInTx(tx, stranger.id,
+                    { serverId, cursor: continuation, limit: 1 }));
+                expect(foreignCursor).toEqual({ ok: false, error: 'deployment_invalid' });
+                // The refusal keeps a private phase; the public shape above is unchanged.
+                expect(readActionOutputDiagnostic(foreignCursor)).toMatchObject({ phase: 'deployment.read.cursor', causeKind: 'access_denied' });
                 expect(await inTx(tx => listDeploymentEnvironmentsInTx(tx, owner.id,
                     { serverId, projectSourceId: visible.source.id, cursor: continuation, limit: 1 })))
                     .toEqual({ ok: false, error: 'deployment_invalid' });

@@ -12,7 +12,7 @@ import { projectDeploymentEnvironmentHeader } from './deploymentEnvironmentServi
 import { projectDeploymentTargetHeader } from './deploymentTargetLinkService';
 import { admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
 import { projectDeploymentListRow } from './deploymentListProjection';
-import { openDeploymentReadCursor, sealDeploymentReadCursor } from './deploymentReadCursor';
+import { openDeploymentReadCursor, refuseDeploymentReadCursor, sealDeploymentReadCursor } from './deploymentReadCursor';
 import { deploymentEnvironmentPrincipalSelect } from './deploymentEnvironmentDeployers';
 
 /** Inventory headers and their private content use the same persisted owner and live-Link scope. */
@@ -46,7 +46,7 @@ export async function listDeploymentTargetLinksInTx(tx: Tx, actorAccountId: stri
     const selection = input.selection;
     let cursor: string | undefined;
     try { cursor = openDeploymentReadCursor(actorAccountId, input); }
-    catch { return deploymentFailure('deployment_invalid'); }
+    catch { return refuseDeploymentReadCursor(); }
     const limit = Math.min(input.limit ?? ARTIFACT_LIST_PAGE_MAX_ITEMS_V1, ARTIFACT_LIST_PAGE_MAX_ITEMS_V1);
     const rows = await tx.deploymentTargetLink.findMany({ where: { ...deploymentTargetLinkInventoryWhere({ scope, selection }),
         ...(cursor ? { id: { gt: cursor } } : {}),

@@ -16,7 +16,7 @@ import { readEnvironmentSecretGrantCoverageInTx } from './environmentSecretGrant
 import { DEPLOYMENT_SECRET_SCOPE_PURPOSES_V1 } from '@happier-dev/deployments';
 import { loadDeploymentTargetRowsInTx, projectDeploymentTargetHeader } from './deploymentTargetLinkService';
 import { hasCompleteTeardownInTx } from './deploymentDispositionService';
-import { openDeploymentReadCursor, sealDeploymentReadCursor } from './deploymentReadCursor';
+import { openDeploymentReadCursor, refuseDeploymentReadCursor, sealDeploymentReadCursor } from './deploymentReadCursor';
 import { projectDeploymentListRow, projectDeploymentSourcePresentation } from './deploymentListProjection';
 import { projectDeploymentReceiptHeader } from './deploymentService';
 import { admitDeploymentStoredContentInTx, admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
@@ -264,7 +264,7 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
     if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return deploymentFailure('deployment_unavailable', { phase: 'deployment.environment.list.server', causeKind: 'server_mismatch' });
     let cursor: string | undefined;
     try { cursor = openDeploymentReadCursor(actorAccountId, input); }
-    catch { return deploymentFailure('deployment_invalid'); }
+    catch { return refuseDeploymentReadCursor(); }
     if (input.machineId) {
         const access = await resolveEffectiveMachineAccessForMachinesInTx(tx, { accountIds: [actorAccountId], machineIds: [input.machineId] });
         if (!access.get(input.machineId)?.get(actorAccountId)) return deploymentFailure('deployment_unavailable', { phase: 'deployment.environment.list.machine_access', causeKind: 'access_denied' });

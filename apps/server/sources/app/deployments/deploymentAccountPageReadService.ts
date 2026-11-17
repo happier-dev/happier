@@ -17,7 +17,7 @@ import { projectDeploymentEnvironmentHeader, type DeploymentEnvironmentRow } fro
 import { projectDeploymentDomainHeader } from './deploymentDomainService';
 import { projectDeploymentListRow, projectDeploymentSourcePresentation } from './deploymentListProjection';
 import { admitDeploymentStoredContentsInTx, projectDeploymentStoredContentAuthority, projectDeploymentStoredContentRevision, type DeploymentContentReference } from './deploymentStoredContent';
-import { openDeploymentReadCursor, sealDeploymentReadCursor } from './deploymentReadCursor';
+import { openDeploymentReadCursor, refuseDeploymentReadCursor, sealDeploymentReadCursor } from './deploymentReadCursor';
 import { deploymentEnvironmentPrincipalSelect, type DeploymentEnvironmentPrincipalRow } from './deploymentEnvironmentDeployers';
 
 type Kind = 'domains' | 'data';
@@ -99,7 +99,7 @@ async function listAccountPage(tx: Tx, actorAccountId: string, input: Input, kin
     let cursor: string | undefined;
     try {
         cursor = openDeploymentReadCursor(actorAccountId, cursorInput);
-    } catch { return deploymentFailure('deployment_invalid'); }
+    } catch { return refuseDeploymentReadCursor(); }
     const limit = Math.min(input.limit ?? ARTIFACT_LIST_PAGE_MAX_ITEMS_V1, ARTIFACT_LIST_PAGE_MAX_ITEMS_V1);
     const postgres = resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres';
     let candidates: Candidate[];

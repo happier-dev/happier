@@ -3,6 +3,7 @@ import { decodeBase64, encodeBase64 } from 'privacy-kit';
 import { decryptString, encryptString } from '@/modules/encrypt';
 import type { DeploymentEnvironmentListInputV1, DeploymentTargetLinksListInputV1 } from '@happier-dev/protocol';
 import { normalizeScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
+import { deploymentFailure } from './deploymentAdmission';
 
 const sealed = z.strictObject({ t: z.literal('sealed_v1'), c: z.string().check(z.minLength(1)) });
 type DeploymentListCursorInput = DeploymentEnvironmentListInputV1 | DeploymentTargetLinksListInputV1 | Readonly<{
@@ -33,6 +34,11 @@ const path = (actorAccountId: string, input: DeploymentListCursorInput) => 'page
 /** A filtered-out candidate must advance the page without disclosing its identity. */
 export function sealDeploymentReadCursor(actorAccountId: string, input: DeploymentListCursorInput, cursor: string): string {
     return JSON.stringify({ t: 'sealed_v1', c: encodeBase64(encryptString(path(actorAccountId, input), cursor)) });
+}
+
+/** A cursor sealed for another reader or filter, or altered, is refused with a private phase only. */
+export function refuseDeploymentReadCursor() {
+    return deploymentFailure('deployment_invalid', { phase: 'deployment.read.cursor', causeKind: 'access_denied' });
 }
 
 /** Existing admitted-row cursors stay valid; opaque positions are bound to the exact reader/filter. */
