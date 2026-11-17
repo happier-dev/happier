@@ -24,6 +24,8 @@ import { handleActionsCommand } from '@/cli/commands/actions';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 import { createDaemonApprovalExecutionOriginCurrentness } from './daemonExternalActionTargetResolver';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
+import { fixture as createManagedCustodyFixture } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
 import { admitTargetActionApprovalTransition } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
 
 const externalActionTargetResolverMocks = vi.hoisted(() => ({
@@ -518,6 +520,34 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       } finally { withdrawActiveProjectAccountRowsSnapshot(); vi.restoreAllMocks(); }
     });
   afterEach(() => { vi.restoreAllMocks(); });
+
+  it('executes native managed options with an exact empty Account selection through the daemon adapter', async () => {
+    const unavailable = async (): Promise<never> => { throw new Error('Native options must not acquire an Account'); };
+    const purposeBindingOwner = createConnectedAccountPurposeBindingOwner({
+      store: { read: unavailable, update: unavailable, subscribe: () => ({ dispose() {} }) },
+      selectTarget: unavailable, resolveTarget: unavailable, materializeAccount: unavailable,
+      projectTargetAccounts: unavailable, assertTargetAccountMaterializable: unavailable,
+    });
+    const native = createManagedCustodyFixture({ credentialPurposes: [] });
+    const invoke = createDaemonExternalActionContributedInvoker({
+      managedProviderOperationAuthority: createManagedProviderOperationAuthority({ purposeBindingOwner }),
+      acquireRuntimeRegistryLease: async () => ({ registry: native.runtimeRegistry, source: 'ephemeral',
+        durableRevision: -1, release: async () => {} }),
+    });
+    const identity = { pluginId: 'acme.compute', localId: 'options' };
+
+    const result = await invoke({ action: identity, input: {}, signal: new AbortController().signal,
+      context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+        invocationServices: { connectedAccountPurposeBinding: { identity, operationId: 'preset-prepare',
+          purposes: [], purposeBindings: { v: 1, bindings: [] }, isCurrent: () => true,
+          managedOperation: { role: 'options', credentialConfigurations: [], isCurrent: () => true },
+        } },
+      },
+    });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { dimensions: {
+      size: [], image: [], location: [], network: [], duration: [],
+    } } });
+  });
 
   it.each([
     { requester: 'unknown', waive: false },

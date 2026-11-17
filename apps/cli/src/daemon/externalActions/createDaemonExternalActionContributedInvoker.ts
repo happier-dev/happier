@@ -73,6 +73,7 @@ function projectTargetApprovalRequest(request: TargetActionApprovalRequestV1): A
  * plugin caller.
  */
 export function createDaemonExternalActionContributedInvoker(input: Readonly<{
+  managedProviderOperationAuthority?: import('@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority').ManagedProviderOperationAuthority;
   observePluginExecution?: HostActionOperationRuntime['observePluginExecution'];
   acquireRuntimeRegistryLease?: typeof acquireAuthoritativePluginRuntimeRegistryLease;
   requestCurrentIntent?: (
@@ -83,6 +84,7 @@ export function createDaemonExternalActionContributedInvoker(input: Readonly<{
     ?? acquireAuthoritativePluginRuntimeRegistryLease;
 
   return createCommittedContributedActionInvoker({
+    managedProviderOperationAuthority: input.managedProviderOperationAuthority,
     daemonHoldsApprovalWaiter: true,
     ...(input.observePluginExecution ? { observePluginExecution: input.observePluginExecution } : {}),
     defaultInvocationSurface: 'api',
