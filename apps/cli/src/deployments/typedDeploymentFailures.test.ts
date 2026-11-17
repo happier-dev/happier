@@ -47,7 +47,8 @@ it.each(['git_selection_unavailable', 'not_found'])('retains source acquisition 
     try { rethrowDeploymentSourceAcquisitionFailure(Object.assign(new Error('selection unavailable'), { code })); }
     catch (error) { caught = error; }
     expect(caught).toHaveProperty('cause');
-    expect(normalizeActionExecutorThrownError(caught)).toMatchObject({ errorCode: 'deployment_source_unavailable', error: 'Deployment source is unavailable' });
+    expect(normalizeActionExecutorThrownError(caught)).toMatchObject({ errorCode: 'deployment_source_unavailable',
+        failureCause: { phase: 'deployment.source.acquire', errorCode: code } });
 });
 
 it('retains Domain materialization validation in the Action result', () => {
