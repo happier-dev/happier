@@ -110,7 +110,7 @@ function readCarriedActionFailureCause(error: unknown): ActionFailureCauseV1 | u
   return undefined;
 }
 
-export function normalizeActionExecutorThrownError(error: unknown, phase?: string): Readonly<{ errorCode: string; error: string; requestId?: string; details?: unknown; failureCause: ActionFailureCauseV1; effectAttempted?: boolean }> {
+export function normalizeActionExecutorThrownError(error: unknown, phase?: string, fallbackErrorCode: 'action_failed' | 'cancelled' = 'action_failed'): Readonly<{ errorCode: string; error: string; requestId?: string; details?: unknown; failureCause: ActionFailureCauseV1; effectAttempted?: boolean }> {
   // An adapter may retain a child's public failure as its standard Error cause.
   // Raw exception causes never acquire the public Action contract implicitly.
   let carried = parseActionExecuteFailure(error);
@@ -122,7 +122,7 @@ export function normalizeActionExecutorThrownError(error: unknown, phase?: strin
     }
     catch { /* A private cause accessor cannot replace the original failure. */ }
   }
-  const failure = carried ?? classifyActionExecutorThrownError(error);
+  const failure = carried ?? classifyActionExecutorThrownError(error, fallbackErrorCode);
   // Native Action adapters spread these fields into a failure; terminal projection removes the sidecar.
   const normalized = withActionFailureCauseDiagnostic({ ...failure, error: redactBugReportSensitiveText(failure.error),
     failureCause: readCarriedActionFailureCause(error) ?? carried?.failureCause ?? projectActionFailureCauseV1(error, phase) },
@@ -130,7 +130,7 @@ export function normalizeActionExecutorThrownError(error: unknown, phase?: strin
   return carryActionFailureDiagnostic(normalized, normalized, { enumerable: true });
 }
 
-function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode: string; error: string; details?: unknown; effectAttempted?: boolean }> {
+function classifyActionExecutorThrownError(error: unknown, fallbackErrorCode: 'action_failed' | 'cancelled'): Readonly<{ errorCode: string; error: string; details?: unknown; effectAttempted?: boolean }> {
   if (error instanceof ActionCatalogUnavailableError) return { errorCode: error.code, error: error.code };
   if (error instanceof ApprovalRequestInvalid || error instanceof ApprovalRequestConflict)
     return { errorCode: error.code, error: error.code, ...(error.details ? { details: error.details } : {}) };
@@ -271,8 +271,8 @@ function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode
     };
   }
   return {
-    errorCode: 'action_failed',
-    error: message || 'action_failed',
+    errorCode: fallbackErrorCode,
+    error: message || fallbackErrorCode,
     ...(details ? { details } : {}),
   };
 }

@@ -1504,8 +1504,13 @@ describe('createActionExecutor (session control)', () => {
     expect(sessionSendMessage).not.toHaveBeenCalled();
   });
 
-  it('projects a thrown plugin Session admission dispatch into a strict outcome-unknown result', async () => {
+  it.each([false, true])('projects a thrown plugin Session admission dispatch into a strict outcome-unknown result (cancelled: %s)', async cancelled => {
+    const controller = new AbortController();
     const sessionSendMessage = vi.fn(async () => {
+      if (cancelled) {
+        controller.abort(new Error('Session admission response channel closed after dispatch'));
+        controller.signal.throwIfAborted();
+      }
       throw new Error('Session admission response channel closed after dispatch');
     });
     const executor = createExecutor({ sessionSendMessage });
@@ -1519,6 +1524,7 @@ describe('createActionExecutor (session control)', () => {
       },
       {
         surface: 'plugin',
+        signal: controller.signal,
         actionCaller: {
           kind: 'plugin',
           pluginId: 'acme.channels',

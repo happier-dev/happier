@@ -7687,7 +7687,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           },
         };
       }
-      const normalized = normalizeActionExecutorThrownError(error);
+      const normalized = normalizeActionExecutorThrownError(error, undefined, ctx.signal?.aborted ? 'cancelled' : 'action_failed');
       const failure: ActionExecuteFailure = carryActionFailureDiagnostic({
         ok: false,
         errorCode: normalized.errorCode,

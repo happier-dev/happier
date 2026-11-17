@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { createActionExecuteFailureError } from './actionExecutionResult.js';
 import { getActionSpec, SearchConversationsResultV1Schema } from './actionSpecs.js';
 import { MemorySettingsV1Schema } from '../memory/memorySettings.js';
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
@@ -184,6 +185,33 @@ describe('createActionExecutor (memory)', () => {
     expect(res).toEqual({ ok: true, result: { ...legacy, documents: { state: 'unavailable' } } });
     if (!res.ok) throw new Error('Expected legacy Session search');
     expect(MemorySearchResultV1Schema.parse(res.result)).toEqual({ ...legacy, documents: { state: 'unavailable' } });
+  });
+
+  it('keeps an arbitrary cancellation code private when the Action signal is active', async () => {
+    const deps = createDeps();
+    const controller = new AbortController();
+    deps.daemonMemorySearch = async ({ signal }) => {
+      expect(signal).toBe(controller.signal);
+      throw Object.assign(new Error('private transport failure'), { code: 'cancelled' });
+    };
+    const result = await createActionExecutor(deps).execute('memory.search', {
+      machineId: 'm1', query: { v: 1, query: 'openclaw', scope: { type: 'global' }, mode: 'hints' },
+    }, { surface: 'agent', signal: controller.signal });
+    expect(result).toMatchObject({ ok: false, errorCode: 'action_failed' });
+  });
+
+  it('preserves a typed unknown effect outcome when cancellation arrives after dispatch', async () => {
+    const deps = createDeps();
+    const controller = new AbortController();
+    const failureCause = { phase: 'dispatch', errorClass: 'HttpStatusError', errorCode: 'outcome_unknown', httpStatus: 503 } as const;
+    deps.daemonMemorySearch = async () => {
+      controller.abort();
+      throw createActionExecuteFailureError({ ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown', failureCause });
+    };
+    const result = await createActionExecutor(deps).execute('memory.search', {
+      machineId: 'm1', query: { v: 1, query: 'openclaw', scope: { type: 'global' }, mode: 'hints' },
+    }, { surface: 'agent', signal: controller.signal });
+    expect(result).toMatchObject({ ok: false, errorCode: 'outcome_unknown', failureCause });
   });
 
   it('threads Action cancellation into the authorized memory-search dependency', async () => {
