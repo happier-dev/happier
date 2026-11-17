@@ -945,7 +945,7 @@ export type ActionExecutorContext = Readonly<{
   /** One creation-owner context load, retained within this invocation only. */
   sessionCreationDefaults?: Readonly<{
     context: import('../../teams/managedDefaults.js').ManagedSessionDefaultsContext;
-    unavailableDefaults?: ActionExecuteFailure[];
+    unavailableDefaults?: readonly ActionExecuteFailure[];
     managedPresetAcquisition?: import('../../machines/managed/actionsV1.js').ManagedAcquireInputV1;
     managedPresetControllerAccess?: import('../../machines/managed/managedMachineV1.js').ManagedControllerAccessV1;
     authoredChoices: Readonly<{
