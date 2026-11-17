@@ -2491,6 +2491,41 @@ describe('sync AccountChange catch-up projection', () => {
         }
     });
 
+    it('runs metadata-upgrade discovery for an older-layout Session push without re-reading the Session list', async () => {
+        let serving = false;
+        let discoveryReads = 0;
+        let listReads = 0;
+        await restoreTestAccount({ physicalRequest: (url) => {
+            if (!serving) return undefined;
+            const path = new URL(url).pathname;
+            if (path === '/v2/sessions') {
+                listReads++;
+                // A listed row written by an older CLI (metadata layout 0).
+                return Promise.resolve(jsonResponse({ sessions: [createPlainSessionCurrentProjectionRecordFixture({
+                    id: 'older-cli-session', metadataLayoutVersion: 0 })], nextCursor: null, hasNext: false }));
+            }
+            if (path !== '/v2/sessions/metadata-upgrades') return undefined;
+            discoveryReads++;
+            return Promise.resolve(jsonResponse({ sessionIds: [] }));
+        // The socket owner's own row read for the pushed Session.
+        }, runtimeRequest: path => path === '/v2/sessions/older-cli-session' ? jsonResponse({
+            session: createPlainSessionCurrentProjectionRecordFixture({ id: 'older-cli-session', metadataLayoutVersion: 0 }) }) : undefined });
+        const { sync } = await import('./syncEngine');
+        const { storage } = await import('./domains/state/storage');
+        serving = true;
+        await sync.refreshSessions({ awaitSessionListHydration: true });
+        expect(Object.values(storage.getState().sessionListRowsByServerId).some(rows => rows?.['older-cli-session'])).toBe(true);
+        const listBefore = listReads;
+        const discoveryBefore = discoveryReads;
+        const onUpdate = sockets.at(-1)?.listenersAny()[0];
+        expect(onUpdate).toBeDefined();
+        onUpdate?.('update', { id: 'older-cli-metadata', seq: 1, createdAt: 1, body: { t: 'update-session', id: 'older-cli-session',
+            metadataLayoutVersion: 0, metadata: { version: 2, value: JSON.stringify({ path: '/repo', host: 'host' }) } } });
+        await vi.waitFor(() => expect(discoveryReads - discoveryBefore).toBe(1));
+        await (sync as unknown as { sessionsSync: Pick<InvalidateSync, 'awaitQueue'> }).sessionsSync.awaitQueue();
+        expect(listReads - listBefore).toBe(0);
+    });
+
     it('does not open discovered metadata after the Account lifetime retires', async () => {
         const discovery = createDeferred<void>();
         let serving = false;

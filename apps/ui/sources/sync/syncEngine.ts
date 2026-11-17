@@ -13985,7 +13985,8 @@ class Sync {
         if (!this.embedSessionScope && !context.sessionId && shouldContinue()
             && parsedUpdate && socketRequiresSessionMetadataUpgradeDiscovery(parsedUpdate.body)) {
             this.metadataUpgradeDiscovery.invalidate();
-            this.sessionsSync.invalidate();
+            // The socket owner applies the row itself; only the independent migration owner runs here.
+            fireAndForget(this.refreshSessionMetadataUpgrades(), { tag: 'Sync.handleUpdate.metadataUpgradeDiscovery' });
         }
         const hasCurrentCarrier = (sessionId: string) => {
             const session = storage.getState().sessions[sessionId];
