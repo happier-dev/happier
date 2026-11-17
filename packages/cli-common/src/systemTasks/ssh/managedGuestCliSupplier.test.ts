@@ -12,7 +12,6 @@ import { createCliPayloadFixture } from '../testkit/createCliPayloadFixture.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { installRemoteFirstPartyComponentPayload } from '../kinds/remoteFirstPartyPayloadInstaller.js';
 import { safeBashSingleQuote } from '../../ssh/shellQuote.js';
-import { readServerGuestCliIdentity } from '../../../../../apps/server/sources/app/runtime/serverRelease.js';
 
 const exec = promisify(execFile);
 describe('managed guest CLI source supplier', () => {
@@ -54,12 +53,11 @@ describe('managed guest CLI source supplier', () => {
       const address = server.address();
       if (!address || typeof address === 'string') throw new Error('Expected HTTP listener');
       const homeUrl = `http://127.0.0.1:${address.port}`;
-      const guestCli = readServerGuestCliIdentity({ HAPPIER_DEV_GUEST_CLI_EXPORT: '1',
-        HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: JSON.stringify({ root: fixture.payloadRoot, identity: 'producer', archives: [
-          { target: { os: 'linux', arch: 'arm64' }, sha256: 'b'.repeat(64), archivePath },
-          { target: { os: 'linux', arch: 'x64' }, sha256, archivePath },
-        ] }),
-      });
+      // The Home descriptor is this supplier's network boundary; server minting is covered by the composed Add Machine test.
+      const guestCli = GuestCliIdentityV1Schema.parse({ source: 'home-payload', line: '0.3', channel: 'publicdev', payloads: [
+        { target: { os: 'linux', arch: 'arm64' }, sha256: 'b'.repeat(64), url: '/v1/runtime/guest-cli/payloads/linux/arm64' },
+        { target: { os: 'linux', arch: 'x64' }, sha256, url: '/v1/runtime/guest-cli/payloads/linux/x64' },
+      ] });
       // The admitted producer descriptor remains fixed while download bytes change.
       if (!matching) archive = new Uint8Array([...archive, 0]);
       const guestCliPayload = selectManagedGuestCliPayload({ guestCli, homeUrl, target: { os: 'linux', arch: 'x64' } });
