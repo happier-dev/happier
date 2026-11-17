@@ -59,7 +59,7 @@ describe('Popover phone-sheet focus return', () => {
         }
     });
 
-    it('dismisses a headerless intelligence sheet through the shared Close grabber and restores the opener', async () => {
+    it('dismisses an intelligence sheet through its one header Close control and restores the opener', async () => {
         const container = document.createElement('div');
         document.body.append(container);
         const root = createRoot(container);
@@ -70,7 +70,7 @@ describe('Popover phone-sheet focus return', () => {
                 <View ref={anchorRef}>
                     <button data-testid="intelligence-opener" onClick={() => setOpen(true)}>Info</button>
                 </View>
-                <Popover open={open} phonePresentation="sheet" sheetHeader="none" sheetBackdrop="none"
+                <Popover open={open} phonePresentation="sheet" sheetBackdrop="none"
                     accessibilityLabel="Info" anchorRef={anchorRef} focusReturnRef={anchorRef}
                     onRequestClose={() => setOpen(false)}>
                     {() => <Text>Language intelligence answer</Text>}
@@ -84,7 +84,10 @@ describe('Popover phone-sheet focus return', () => {
                 await act(async () => { opener.focus(); opener.click(); });
                 const dialog = document.querySelector('[role="dialog"]')!;
                 expect(dialog).not.toBeNull();
-                const close = dialog.querySelector<HTMLElement>('[role="button"][aria-label="Close"]')!;
+                // PRIMITIVES-A11Y-1111 A19 / e42429c0b29: the grabber is decorative;
+                // the header owns the sheet's one named Close control.
+                expect(dialog.querySelectorAll('[role="button"][aria-label="Close"]')).toHaveLength(1);
+                const close = dialog.querySelector<HTMLElement>('[data-testid="popover-sheet.close"]')!;
                 expect(close).not.toBeNull();
                 await act(async () => {
                     if (activation === 'pointer') {
