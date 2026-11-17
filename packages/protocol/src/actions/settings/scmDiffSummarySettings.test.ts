@@ -1,12 +1,40 @@
 import { describe, expect, it } from 'vitest';
-import { scmDiffSummarySettingBinding, encodeScmDiffSummaryModelOverride, decodeScmDiffSummaryModelOverride, SCM_DIFF_SUMMARY_SETTING_KEYS, resolveScmDiffSummarySettings, resolveScmDiffSummaryModelSelection } from './scmDiffSummarySettings.js';
+import { scmDiffSummarySettingBinding, encodeScmDiffSummaryModelOverride, decodeScmDiffSummaryModelOverride, SCM_DIFF_SUMMARY_SETTING_KEYS, resolveScmDiffSummarySettings, resolveScmDiffSummaryModelSelection, projectScmDiffSummaryModelSelector } from './scmDiffSummarySettings.js';
 import { buildScmDiffSummaryModelProfiles } from './scmDiffSummaryModels.js';
 import { ProviderModelDescriptorV1Schema } from '../../models/descriptor.js';
 import { ScmDiffSummaryGenerateInputSchema } from '../../scm/diffSummary.js';
 import { readPortableCatalogAccountSettingBindingV1 } from './catalogAccountSettingBindings.js';
 import { readBuiltInSettingDeclarationV1 } from './settingsDeclarations.js';
+import { accountSettingsParse } from '../../account/settings/accountSettings.js';
+import { LlmTaskRunnerConfigV1WriteSchema } from '../../llm/tasks/llmTaskRunnerConfigV1.js';
+import { SessionModelSelectionSchema } from '../../providers/selection/v2.js';
+import { ScmDiffSummaryGeneratorSelectionSchema } from '../../scm/diffSummaryResult.js';
 
 describe('portable SCM Summary setting admission', () => {
+    it.each(['native', 'account_provider_connection', 'team_resource'] as const)(
+        'retains the authored V2 %s source from the task setting through Summary generation and saved retry', source => {
+            const selection = SessionModelSelectionSchema.parse({ v: 2, updatedAt: 1, ref: {
+                source, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'gpt-6-luna',
+                ...(source === 'account_provider_connection' ? { providerConnectionId: 'connection' } : {}),
+                ...(source === 'team_resource' ? { teamId: 'team', resourceId: 'resource', expectedResourceRevision: 2,
+                    deliveryMode: 'brokered' } : {}),
+            } });
+            for (const auth of [{}, { connectedServices: null }]) {
+                const runner = LlmTaskRunnerConfigV1WriteSchema.parse({ v: 1, modelSelection: selection.ref, ...auth });
+                const stored = accountSettingsParse({ [SCM_DIFF_SUMMARY_SETTING_KEYS.runner]: runner });
+                expect(stored[SCM_DIFF_SUMMARY_SETTING_KEYS.runner]).toEqual(runner);
+                const selector = projectScmDiffSummaryModelSelector(runner);
+                const decoded = decodeScmDiffSummaryModelOverride(encodeScmDiffSummaryModelOverride(selector));
+                expect(decoded).toEqual(selector);
+                const request = ScmDiffSummaryGenerateInputSchema.parse({ cwd: '/repo', source: { kind: 'workingTree' }, modelSelector: decoded });
+                const generator = ScmDiffSummaryGeneratorSelectionSchema.parse({
+                    backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+                    modelSelection: request.modelSelector?.modelSelection, ...auth,
+                });
+                expect(generator.modelSelection).toEqual(selection.ref);
+                expect(generator).toMatchObject(auth);
+            }
+        });
     it('stores the canonical native model reference rather than a task-specific selector', () => {
         const value = encodeScmDiffSummaryModelOverride({ backendTargetKey: 'agent:happier.agent.codex/codex', modelId: 'custom/model' });
         expect(JSON.parse(value.slice('model:'.length))).toEqual({ agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'custom/model' });

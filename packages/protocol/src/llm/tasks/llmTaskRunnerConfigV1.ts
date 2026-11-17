@@ -3,7 +3,7 @@ import { z } from '../../zodRuntimePolicy.js';
 
 import { BackendTargetRefSchema } from '../../backends/targets/backendTargetRef.js';
 import { readBackendTargetKeyV2 } from '../../backends/targets/backendTargetRefV2.js';
-import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
+import { SessionModelRefSchema } from '../../providers/selection/v2.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { ConnectedServiceBindingsV2Schema } from '../../connect/connectedServiceBindings.js';
 import { AcpConfigOptionOverridesV1Schema } from '../../sessions/metadata/metadataOverridesV1.js';
@@ -23,7 +23,7 @@ export type LlmTaskPermissionMode = z.infer<typeof LlmTaskPermissionModeSchema>;
  */
 export const LlmTaskRunnerConfigV1WriteSchema = lazyZodSchema(() => z.strictObject({
     v: z.literal(1),
-    modelSelection: ProviderBoundModelRefSchema,
+    modelSelection: SessionModelRefSchema,
     /** Absent: the Account's default route for that Agent. Null: the machine's own sign-in. */
     connectedServices: z.optional(z.nullable(ConnectedServiceBindingsV2Schema)),
     sessionConfigOptionOverrides: z.optional(AcpConfigOptionOverridesV1Schema),

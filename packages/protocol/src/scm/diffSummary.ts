@@ -8,7 +8,7 @@ import { ReviewLaunchFailureSchema } from '../reviews/reviewLaunchFailure.js';
 import { ReviewPublicationEvidenceSchema } from '../reviews/reviewPublicationEvidence.js';
 import { ExecutionRunTransportErrorCodeSchema } from '../execution/runs/runPrimitives.js';
 import { AGENT_START_REFUSAL_CODES_V1 } from '../account/settings/agentStartRefusalCodesV1.js';
-import { ProviderBoundModelRefSchema } from '../providers/selection/v1.js';
+import { SessionModelRefSchema } from '../providers/selection/v2.js';
 import { ConnectedServiceBindingsV2Schema } from '../connect/connectedServiceBindings.js';
 import { AcpConfigOptionOverridesV1Schema } from '../sessions/metadata/metadataOverridesV1.js';
 export * from './comparison.js';
@@ -38,7 +38,7 @@ export const ScmDiffSummaryModelSelectorSchema = lazyZodSchema(() => z.strictObj
     profileId: z.optional(z.string().check(z.trim(), z.minLength(1))),
     modelId: z.optional(z.string().check(z.trim(), z.minLength(1))),
     backendTargetKey: z.optional(z.string().check(z.trim(), z.minLength(1))),
-    modelSelection: z.optional(ProviderBoundModelRefSchema),
+    modelSelection: z.optional(SessionModelRefSchema),
     connectedServices: z.optional(z.nullable(ConnectedServiceBindingsV2Schema)),
     /** The runner's Agent config options (effort) for this run. */
     sessionConfigOptionOverrides: z.optional(AcpConfigOptionOverridesV1Schema),

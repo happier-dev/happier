@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { BackendTargetRefV2Schema } from '../backends/targets/backendTargetRefV2.js';
-import { ProviderBoundModelRefSchema } from '../providers/selection/v1.js';
+import { SessionModelRefSchema } from '../providers/selection/v2.js';
 import { ConnectedServiceBindingsV2Schema } from '../connect/connectedServiceBindings.js';
 import { SESSION_INPUT_ADMISSION_REJECTION_CODES_V1 } from '../sessions/messages/sessionInputAdmissionRejectionV1.js';
 import { ScmCommitPlanApplicationSchema } from './diffSummaryCommitPlan.js';
@@ -18,7 +18,7 @@ export const ScmDiffSummaryGeneratorSelectionSchema = lazyZodSchema(() => z.stri
   investigateSurroundingFiles: z.optional(z.boolean()),
   outputLanguage: z.optional(ScmDiffSummaryOutputLanguageSchema),
   modelId: z.optional(z.string().check(z.minLength(1))), profileId: z.optional(z.string().check(z.minLength(1))),
-  modelSelection: z.optional(ProviderBoundModelRefSchema),
+  modelSelection: z.optional(SessionModelRefSchema),
   connectedServices: z.optional(z.nullable(ConnectedServiceBindingsV2Schema)),
 }));
 export type ScmDiffSummaryGeneratorSelection = z.infer<typeof ScmDiffSummaryGeneratorSelectionSchema>;

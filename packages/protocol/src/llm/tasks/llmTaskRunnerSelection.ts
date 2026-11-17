@@ -3,7 +3,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import type { AcpConfigOptionOverridesV1 } from '../../sessions/metadata/metadataOverridesV1.js';
 import { PROVIDER_REASONING_EFFORT_OPTION_ID } from '../../providers/catalog/reasoningEffort.js';
-import type { ProviderBoundModelRef } from '../../providers/selection/v1.js';
+import type { SessionModelRef } from '../../providers/selection/v2.js';
 import type { ConnectedServiceBindingsV2 } from '../../connect/connectedServiceBindings.js';
 import type { CapabilitySupport } from '../../providers/capabilities/v1.js';
 import type { ProviderModelDescriptorV1 } from '../../models/descriptor.js';
@@ -49,7 +49,7 @@ export type LlmTaskRunnerUnavailableReasonV1 = typeof LLM_TASK_RUNNER_UNAVAILABL
 
 /** One model an enabled Agent can run on the executing machine, through its current credential route. */
 export type LlmTaskRunnerCandidateV1 = Readonly<{
-  modelSelection: ProviderBoundModelRef;
+  modelSelection: SessionModelRef;
   connectedServices?: ConnectedServiceBindingsV2 | null;
   title: string;
   costTier?: ProviderModelDescriptorV1['costTier'];

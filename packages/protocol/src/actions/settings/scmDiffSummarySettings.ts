@@ -5,6 +5,7 @@ import type { CapabilitySupport } from '../../providers/capabilities/v1.js';
 import { ACCOUNT_SETTING_DEFINITIONS, type AccountSettings } from '../../account/settings/accountSettings.js';
 import type { SettingDomainValueV1 } from './settingsOwnerActions.js';
 import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
+import { SessionModelRefSchema } from '../../providers/selection/v2.js';
 import { ConnectedServiceBindingsV2Schema } from '../../connect/connectedServiceBindings.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
@@ -124,7 +125,7 @@ function resolveModelOverride(
 }
 
 const MODEL_SELECTOR_PREFIX = 'model:';
-const StoredModelSelectionSchema = createStoredReadSchema(z.intersection(ProviderBoundModelRefSchema,
+const StoredModelSelectionSchema = createStoredReadSchema(z.intersection(SessionModelRefSchema,
     z.object({ connectedServices: z.optional(z.nullable(ConnectedServiceBindingsV2Schema)) })));
 
 /** The existing string preference carries the canonical selector, never a display label. */
@@ -133,7 +134,8 @@ export function encodeScmDiffSummaryModelOverride(selector: ScmDiffSummaryModelS
     const selection = parsed.modelSelection ?? ProviderBoundModelRefSchema.parse({ agentTargetKey: parsed.backendTargetKey,
         providerConnectionId: null, modelId: parsed.modelId ?? 'default' });
     return `${MODEL_SELECTOR_PREFIX}${JSON.stringify({ ...selection,
-        ...(parsed.connectedServices !== undefined && (parsed.connectedServices !== null || selection.providerConnectionId !== null)
+        ...(parsed.connectedServices !== undefined && (parsed.connectedServices !== null
+            || !('providerConnectionId' in selection) || selection.providerConnectionId !== null)
             ? { connectedServices: parsed.connectedServices } : {}) })}`;
 }
 
@@ -146,7 +148,7 @@ export function decodeScmDiffSummaryModelOverride(value: string): ScmDiffSummary
             // The retained native picker value is explicit own sign-in. Null is
             // the existing run contract for native auth without Account defaults.
             ...(connectedServices !== undefined ? { connectedServices }
-                : selection.providerConnectionId === null ? { connectedServices: null } : {}) };
+                : 'providerConnectionId' in selection && selection.providerConnectionId === null ? { connectedServices: null } : {}) };
     }
     catch { return null; }
 }
