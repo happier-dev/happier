@@ -1670,6 +1670,25 @@ async function connectManagedServer(
                             if (session && areServerProfileIdentifiersEquivalent(session.serverId, entry.id)) {
                                 storage.getState().applySessions([{ ...session, ...buildPendingChangedSessionPatch(body) }], 'projection');
                             }
+                            // A known row takes the pushed counts as a row patch, like the focused socket.
+                            if (storage.getState().sessionListRowsByServerId[entry.id]?.[body.sid]) {
+                                storage.getState().applyServerScopedSessionListRowPatches(entry.id, [{
+                                    sessionId: body.sid, patch: buildPendingChangedSessionPatch(body),
+                                }]);
+                                return;
+                            }
+                        }
+                        // A row-level change reads that one row; only an unknown existing row
+                        // (possibly outside the loaded pages) needs the list reconcile below.
+                        if (update.success && (update.data.body.t === 'update-session' || update.data.body.t === 'new-session')) {
+                            const sessionId = update.data.body.id;
+                            if (update.data.body.t === 'new-session'
+                                || storage.getState().sessionListRowsByServerId[entry.id]?.[sessionId]) {
+                                fireAndForget(refreshConcurrentSessionListRow(entry, socket, sessionId), {
+                                    tag: 'concurrentSessionCache.sessionRow',
+                                });
+                                return;
+                            }
                         }
                     }
                     if (impact === 'delete' || impact === 'archive') {

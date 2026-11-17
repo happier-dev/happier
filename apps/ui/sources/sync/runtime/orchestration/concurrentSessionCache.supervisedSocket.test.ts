@@ -574,6 +574,38 @@ describe('concurrent session cache supervised sockets', () => {
         expect(socket.socket.emit).toHaveBeenLastCalledWith('external-session-status-demand-v1', expect.objectContaining({ revision: 4 }));
     });
 
+    it.each(['update-session', 'pending-changed', 'new-session'] as const)('applies a %s push for one secondary-Home row without re-reading the Session list or Machine census', async type => {
+        h.setSessions(h.homeB, [h.session({ id: 'session-b', seq: 1, updatedAt: 1 })]);
+        await h.start(); await h.ready();
+        expect(rows()?.['session-b']).toBeDefined();
+        const sessionReads = h.requests('/v2/sessions').length;
+        const machineReads = h.requests('/v1/machines').length;
+        const socket = h.socket();
+        if (type === 'update-session') {
+            const changed = h.session({ id: 'session-b', seq: 2, metadataVersion: 2, updatedAt: 2,
+                metadata: { name: 'Renamed', path: '/repo', host: 'host', machineId: 'machine-b' } });
+            h.setSessions(h.homeB, [changed]);
+            socket.trigger('update', { id: 'renamed', seq: 2, createdAt: 2, body: { t: 'update-session', id: 'session-b',
+                metadataLayoutVersion: 1, metadata: { version: changed.metadataVersion, value: changed.metadata } } });
+            await vi.waitFor(() => expect(rows()?.['session-b']?.updatedAt).toBe(2));
+        } else if (type === 'pending-changed') {
+            socket.trigger('update', { id: 'queued', seq: 2, createdAt: 2, body: {
+                t: 'pending-changed', sid: 'session-b', sessionId: 'session-b', pendingCount: 3, pendingVersion: 2 } });
+            await vi.waitFor(() => expect(rows()?.['session-b']?.pendingCount).toBe(3));
+        } else {
+            h.setSessions(h.homeB, [h.session({ id: 'session-b', seq: 1, updatedAt: 1 }), h.session({ id: 'session-new', seq: 1, updatedAt: 2 })]);
+            socket.trigger('update', { id: 'created', seq: 2, createdAt: 2, body: {
+                t: 'new-session', id: 'session-new', seq: 1,
+                metadata: JSON.stringify({ path: '/work', host: 'test' }), metadataVersion: 1,
+                agentState: JSON.stringify({}), agentStateVersion: 1, encryptionMode: 'plain', dataEncryptionKey: null,
+                active: true, activeAt: 2, createdAt: 1, updatedAt: 2 } });
+            await vi.waitFor(() => expect(rows()?.['session-new']).toBeDefined());
+        }
+        await h.ready();
+        expect(h.requests('/v2/sessions').length - sessionReads).toBe(0);
+        expect(h.requests('/v1/machines').length - machineReads).toBe(0);
+    });
+
     it('refreshes only remote machine inventory after a machine update', async () => {
         h.setMachines(h.homeB, [h.machine(h.homeB)]);
         await h.start(); await h.ready();
