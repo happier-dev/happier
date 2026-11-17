@@ -13,6 +13,7 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { resolveItemTextColumnInset } from '@/components/ui/lists/itemDensityMetrics';
+import { useItemDensityInputs } from '@/components/ui/lists/useResolvedItemDensity';
 import { Text } from '@/components/ui/text/Text';
 import { useOptionalAccountNoticeInvestigation } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
@@ -93,6 +94,9 @@ export function MachineSetupRunRegion(
   }>,
 ) {
   const { theme } = useUnistyles();
+  // A page row is drawn at the person's density whatever its section asks; the line aligns to what the row draws.
+  const { preferred } = useItemDensityInputs();
+  const rowDensity = preferred === 'inspector' ? 'compact' : preferred;
   const { progressOperation, steps } = props;
   const domainRef = progressOperation.snapshot.domainRef;
   const operations = React.useMemo(
@@ -173,7 +177,8 @@ export function MachineSetupRunRegion(
             ) : null}
             {position && positionText ? (
               <>
-                <Text testID="machine-setup-position" variant="meta" style={styles.position}>{positionText}</Text>
+                <Text testID="machine-setup-position" variant="meta"
+                  style={[styles.position, { paddingLeft: resolveItemTextColumnInset(rowDensity) }]}>{positionText}</Text>
                 <MeterBar
                   testID="machine-setup-progress"
                   tone="neutral"
@@ -211,10 +216,9 @@ const styles = StyleSheet.create((theme) => ({
   head: {
     marginBottom: theme.space.s12,
   },
-  // Under the run's row, on its titles' left edge (the operation row is compact).
+  // Under the run's row, on its title's left edge (set where it renders, from the row's density).
   position: {
     color: theme.colors.text.secondary,
-    paddingLeft: resolveItemTextColumnInset('compact'),
     paddingRight: theme.space.s16,
     paddingBottom: theme.space.s10,
   },
