@@ -8812,6 +8812,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     },
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} in più…`,
     agentContinuation: {
+    teamModelUnsupported: "I modelli del team non sono supportati quando cambi agente in questa sessione. Avvia una nuova sessione con questo modello.",
       currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Esegue questa sessione.`,
       currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Ultimo usato da questa sessione.`,
       currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Ultimo segnalato per questa sessione.`,

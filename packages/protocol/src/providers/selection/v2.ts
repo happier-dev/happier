@@ -117,7 +117,7 @@ export function projectSessionModelSelectionV2ToV1(
 export function sessionModelSelectionV2TeamBindingIntent(
   value: SessionModelSelectionV2,
   context?: Pick<SessionTeamCredentialProviderModelSelectionV1, 'application' | 'executionMachineId' | 'nativeSource'>,
-): SessionTeamCredentialBindingIntentV1 {
+): SessionTeamCredentialBindingIntentV1 & Readonly<{ slot: Readonly<{ kind: 'provider_model' }> }> {
   const selection = SessionModelSelectionV2Schema.parse(value);
   if (selection.ref.source !== 'team_resource') {
     return { v: 1, slot: { kind: 'provider_model' }, resourceId: null };

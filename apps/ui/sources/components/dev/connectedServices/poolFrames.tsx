@@ -16,6 +16,7 @@ import {
     ConnectedServiceAuthGroupPolicyV2Schema,
     type ConnectedServiceQuotaSnapshotV1,
 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 
 import { ACCOUNTS, CLAUDE, CLAUDE_LAB, DAY, HOUR, LABELS, MIN } from './connectedServicesFixtures';
 
@@ -147,13 +148,14 @@ type GatewayUsage = NonNullable<React.ComponentProps<typeof QualifiedPoolDetailV
 type GatewayFixture = 'serving' | 'replacing';
 
 const LAB_POOL_TARGET = { kind: 'group', service: CLAUDE, groupId: 'lab-pool' } as const;
+const MAIN_GATEWAY_CONNECTION_ID = ProviderConnectionIdSchema.parse('main-gateway');
 
 /** The gateway's slot as the pool section reads it: no writes, every action a no-op. */
 function gatewayUsage(state: GatewayFixture): GatewayUsage {
     const serving = state === 'serving';
     return {
         choices: [{
-            connectionId: 'main-gateway',
+            connectionId: MAIN_GATEWAY_CONNECTION_ID,
             title: 'Main gateway',
             detailRoute: '/settings/connected-services/gateway?connectionId=main-gateway',
             revision: 1,

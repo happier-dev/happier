@@ -9041,6 +9041,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
     },
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} ещё…`,
     agentContinuation: {
+    teamModelUnsupported: "Модели команды не поддерживаются при смене агента в этом сеансе. Начните новый сеанс с этой моделью.",
       currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Ведёт эту сессию.`,
       currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Последний раз использовался в этой сессии.`,
       currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Последний раз сообщался для этой сессии.`,

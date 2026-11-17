@@ -8587,6 +8587,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     },
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} más…`,
     agentContinuation: {
+    teamModelUnsupported: "Los modelos del equipo no se admiten al cambiar de agente en esta sesión. Inicia una sesión nueva con este modelo.",
       currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Ejecutando esta sesión.`,
       currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Usado por última vez en esta sesión.`,
       currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Último informado para esta sesión.`,

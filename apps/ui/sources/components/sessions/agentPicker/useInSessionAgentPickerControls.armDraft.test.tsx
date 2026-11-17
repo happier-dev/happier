@@ -26,16 +26,26 @@ import type {
 } from './resolveSessionAgentContinuationEligibility';
 import { prepareArmedAgentContinuation } from '@/sync/domains/session/input/continueSessionWithArmedAgent';
 import { MetadataSchema } from '@happier-dev/session-core/state';
+import { Modal } from '@/modal';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import 'fake-indexeddb/auto';
 import { createConnectedPurposeCatalogHttpBoundary } from '@/dev/testkit/harness/connectedAccountCatalogBoundary';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { standardCleanup } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storage';
+import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 
 vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
 ).createSocketIoClientBoundary(importOriginal));
+
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 const announceAccessibilityMessage = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScope = vi.hoisted(() => vi.fn());
@@ -218,14 +228,25 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         syncBridge = await loadSyncSingletonForTests();
         const purposes = createConnectedPurposeCatalogHttpBoundary();
         const http = createHomeHubArtifactHttpBoundary('account-1');
+        const sessions = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
+        const features = createRootLayoutFeaturesResponse({ features: { sessions: { enabled: true, agentSwitching: { enabled: true } } } });
         accountConnection = await restoreServerAccountForTest({
             serverUrl: 'https://session-arm-draft.test', accountId: 'account-1',
-            request: async (input, init) => await purposes.handle(input, init) ?? http.request(input, init),
+            request: async (input, init) => {
+                const path = new URL(String(input)).pathname;
+                if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
+                // Let the connection harness compose the real Session read-batch response.
+                if (path === '/v2/sessions/read-batch') return null;
+                return await purposes.handle(input, init) ?? sessions.handle(input, init) ?? http.request(input, init);
+            },
         });
         SCOPE = { serverId: accountConnection.home.id, accountId: 'account-1' };
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        primeServerFeaturesSnapshot({ serverId: SCOPE.serverId, snapshot: { status: 'ready', features } });
         await purposes.hydrate(SCOPE);
         resetSessionDraftValueCachesForTests();
         announceAccessibilityMessage.mockClear();
+        vi.mocked(Modal.alert).mockClear();
         machineRpcWithServerScope.mockReset();
         machineRpcWithServerScope.mockImplementation((params: { payload: { selections: readonly unknown[] } }) => (
             Promise.resolve({
@@ -253,6 +274,40 @@ describe('useInSessionAgentPickerControls arm draft', () => {
 
         expect(second.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
         expect(second.getCurrent().agentPickerSelectedOptionId).toBe('agent:happier.agent.codex/codex');
+    });
+
+    it('keeps an Account connection and refuses a Team ref in an armed continuation', async () => {
+        const agentTargetKey = 'agent:happier.agent.codex/codex';
+        const hook = await renderControls();
+        await armTarget(hook, agentTargetKey);
+        expect(readPersistedArm()?.intent.selection.agentId).toBe('codex');
+        const providerConnectionId = ProviderConnectionIdSchema.parse('pc_work');
+        await act(async () => {
+            expect(await hook.getCurrent().applyDraftModelIntent({
+                kind: 'selection',
+                ref: { source: 'account_provider_connection', agentTargetKey, providerConnectionId, modelId: 'account-model' },
+            })).toBe(true);
+        });
+        expect(readPersistedArm()?.intent.selection).toMatchObject({ modelId: 'account-model', providerConnectionId });
+        await act(async () => {
+            expect(await hook.getCurrent().applyDraftModelIntent({
+                kind: 'selection',
+                ref: { source: 'team_resource', agentTargetKey, modelId: 'team-model', teamId: 'team-1',
+                    resourceId: 'resource-1', expectedResourceRevision: 1, deliveryMode: 'brokered' },
+            })).toBe(false);
+        });
+        expect(readPersistedArm()?.intent.selection).toMatchObject({ modelId: 'account-model', providerConnectionId });
+        expect(Modal.alert).toHaveBeenCalledWith('common.unavailable', 'session.agentContinuation.teamModelUnsupported');
+        vi.mocked(Modal.alert).mockClear();
+        await act(async () => {
+            expect(await hook.getCurrent().applyDraftModelIntent({
+                kind: 'team',
+                selection: { kind: 'team_credential_provider_model', agentTargetKey, modelId: 'team-model', teamId: 'team-1',
+                    resourceId: 'resource-1', expectedResourceRevision: 1, deliveryMode: 'brokered' },
+            })).toBe(false);
+        });
+        expect(readPersistedArm()?.intent.selection).toMatchObject({ modelId: 'account-model', providerConnectionId });
+        expect(Modal.alert).toHaveBeenCalledWith('common.unavailable', 'session.agentContinuation.teamModelUnsupported');
     });
 
     it('preserves the qualified installed Agent through inspection and the armed selection', async () => {

@@ -4,6 +4,7 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 
 import { buildAcpConfigOptionOverridesV1FromConfigOptions } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
 import { isNativeAutomaticModelSelectionInputV1, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelSelectionSchema, readSessionModelSelectionProviderConnectionId, projectSessionModelRefToExecutionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
 import type { NewSessionDraftAgentIntent, NewSessionDraftModelIntent } from '@happier-dev/protocol/actions/appShellActionFamily';
@@ -25,6 +26,7 @@ import {
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
+import { Modal } from '@/modal';
 
 import type {
     SessionArmedAgentContinuation,
@@ -231,6 +233,11 @@ function resolveDefaultTargetSelection(
     return selection ? { ...DEFAULT_TARGET_SELECTION, modelId: selection.ref.modelId, modelSelection: selection } : DEFAULT_TARGET_SELECTION;
 }
 
+function refuseTeamModelContinuation(): false {
+    Modal.alert(t('common.unavailable'), t('session.agentContinuation.teamModelUnsupported'));
+    return false;
+}
+
 /**
  * `default` is the native Agent's "no model choice" sentinel, so it can only
  * mean Automatic when no Provider connection is bound. A Provider is allowed to
@@ -239,7 +246,7 @@ function resolveDefaultTargetSelection(
  */
 function isNativeAutomaticSelection(selection: SessionAgentPickerSelection): boolean {
     return isNativeAutomaticModelSelectionInputV1({
-        providerConnectionId: selection.modelSelection?.ref.providerConnectionId ?? null,
+        providerConnectionId: selection.modelSelection ? readSessionModelSelectionProviderConnectionId(selection.modelSelection) : null,
         modelId: selection.modelId,
     });
 }
@@ -262,12 +269,13 @@ function buildTargetSelection(
         configOptions: selection.configOverrides,
         updatedAt: configUpdatedAt,
     });
+    const providerConnectionId = selection.modelSelection ? readSessionModelSelectionProviderConnectionId(selection.modelSelection) : null;
     return {
         v: 1,
         agentId: resolveContinuationAgentId(entry),
         ...(isNativeAutomaticSelection(selection) ? {} : { modelId: selection.modelId }),
-        ...(selection.modelSelection?.ref.providerConnectionId
-            ? { providerConnectionId: selection.modelSelection.ref.providerConnectionId }
+        ...(providerConnectionId
+            ? { providerConnectionId }
             : {}),
         ...(selection.sessionModeId ? { acpSessionModeId: selection.sessionModeId } : {}),
         ...(overrides ? { sessionConfigOptionOverrides: overrides } : {}),
@@ -879,6 +887,7 @@ export function useInSessionAgentPickerControls(
     armOwnerRef.current = armExactSelection;
     const applySelection = React.useCallback(async (entry: ResolvedBackendCatalogEntry, selection: SessionAgentPickerSelection) => {
         if (!accountScope || !accountScopeIsCurrent() || currentAgentId === null) return false;
+        if (selection.modelSelection && 'teamCredentialModel' in projectSessionModelRefToExecutionModelSelection(selection.modelSelection.ref)) return refuseTeamModelContinuation();
         if (selection.modelSelection && (!backendTargetKeysMatch(selection.modelSelection.ref.agentTargetKey, entry.backendTarget)
             || selection.modelSelection.ref.modelId !== selection.modelId)) return false;
         if (!inspectableTargetSelections.some(selection => selection.agentId === resolveContinuationAgentId(entry))) return false;
@@ -919,11 +928,14 @@ export function useInSessionAgentPickerControls(
 
     const applyDraftModelIntent = React.useCallback(async (intent: NewSessionDraftModelIntent) => {
         const entry = targetEntries.find(candidate => candidate.backendTargetKey === armed?.backendTargetKey);
-        if (!entry || !armed || intent.kind === 'team') return false;
+        if (!entry || !armed) return false;
+        if (intent.kind === 'team') return refuseTeamModelContinuation();
         const selection = readTargetSelection(entry.backendTargetKey);
         return await applySelection(entry, { ...selection,
             modelId: intent.kind === 'mode' ? intent.modelId : intent.ref?.modelId ?? 'default', modelLabel: null,
-            modelSelection: intent.kind === 'selection' && intent.ref ? { v: 1, updatedAt: Date.now(), ref: intent.ref } : null,
+            modelSelection: intent.kind === 'selection' && intent.ref ? SessionModelSelectionSchema.parse({
+                v: 'source' in intent.ref ? 2 : 1, updatedAt: Date.now(), ref: intent.ref,
+            }) : null,
         });
     }, [applySelection, armed, readTargetSelection, targetEntries]);
 

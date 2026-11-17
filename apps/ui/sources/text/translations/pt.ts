@@ -8693,6 +8693,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     },
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} mais…`,
     agentContinuation: {
+    teamModelUnsupported: "Os modelos da equipa não são suportados ao mudar de agente nesta sessão. Inicie uma nova sessão com este modelo.",
       currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. A executar esta sessão.`,
       currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Usado pela última vez nesta sessão.`,
       currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Último reportado para esta sessão.`,

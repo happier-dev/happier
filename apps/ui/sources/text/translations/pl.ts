@@ -8423,6 +8423,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     },
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} więcej…`,
     agentContinuation: {
+    teamModelUnsupported: "Modele zespołu nie są obsługiwane podczas zmiany agenta w tej sesji. Rozpocznij nową sesję z tym modelem.",
       currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Prowadzi tę sesję.`,
       currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Ostatnio używany przez tę sesję.`,
       currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Ostatnio zgłoszony dla tej sesji.`,
