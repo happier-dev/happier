@@ -29,6 +29,18 @@ duplicate id refuses the whole result with
 Composer; the same id in separate snapshots remains valid. This is a Triage
 domain rule, independent of the JSON Schema transport.
 
+## Investigation Session defaults (0.3 development source)
+
+An exact source read may return typed `investigationDefaults` separately from
+descriptive `detailData`. Triage carries this transient default through its
+existing Investigate handoff to New Session authoring or creation. It is never
+retained in the corpus observation and does not change an existing Session.
+The Session permission owner applies the initial choice and its ordinary
+policy locks; later user choices remain editable. Native browser issue sources
+recommend Ask using the canonical `default` permission intent. Other sources
+and tasks retain their ordinary defaults. Matching development source readers
+and writers load together; older strict readers reject the new exact-read field.
+
 ## Session pull-request local forms (0.3 development source)
 
 A source may name its own local-form Action in its descriptor. An explicit

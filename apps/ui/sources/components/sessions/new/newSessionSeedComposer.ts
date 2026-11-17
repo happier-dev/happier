@@ -180,6 +180,7 @@ export function seedAndOpenNewSession(params: Readonly<{
             ...(seed.prompt === undefined ? {} : { prompt: { text: seed.prompt, mode: 'replace' as const } }),
             ...(seed.profileId === undefined ? {} : { profileId: seed.profileId }),
             ...(seed.agentTarget === undefined ? {} : { agentTarget: seed.agentTarget }),
+            ...(seed.permissionMode === undefined ? {} : { permissionMode: seed.permissionMode }),
             ...(seed.checkoutIntent === undefined ? {} : { checkoutIntent: seed.checkoutIntent }),
             ...(seed.placement === undefined ? {} : { placement: seed.placement }),
             ...(seed.directoryIntent === undefined ? {} : { directoryIntent: seed.directoryIntent }),

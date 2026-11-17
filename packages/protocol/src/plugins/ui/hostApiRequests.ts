@@ -17,6 +17,7 @@ import { ActionSessionAddressV1Schema } from '../../actions/sessionTargetV1.js';
 import { SessionIdSchema } from '../../sessions/idsV1.js';
 import { NativePermissionChoicesV1Schema, NativePermissionChoiceAnswerV1Schema, NativePermissionChoiceAvailabilityV1Schema } from '../../sessions/permissions/respondRpcParamsV1.js';
 import { NativePermissionChoiceV1Schema } from '../../sessions/permissions/nativeChoicesV1.js';
+import { AgentPermissionIntentV1Schema } from '../../runtime/permissionIntentV1.js';
 import { PendingLocalIdSchema } from '../../sessions/pending/pendingLocalId.js';
 import { SessionDirectoryIntentV1Schema } from '../../sessions/creation/sessionDirectoryIntentV1.js';
 import { SessionInputForgeEvidenceV1Schema } from '../../sessions/messages/sessionInputForgeEvidenceV1.js';
@@ -836,6 +837,8 @@ export const PluginUiNewSessionSeedV1Schema = lazyZodSchema(() => z.strictObject
   ))),
   profileId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   agentTarget: z.optional(AgentExecutionTargetV1Schema),
+  /** Initial authoring choice; the Session default/policy owner keeps later choices and locks. */
+  permissionMode: z.optional(asProtocolZod(AgentPermissionIntentV1Schema)),
   origin: zMini.optional(PluginUiNewSessionSeedOriginV1Schema),
   /**
    * A resolved checkout question, not a concrete checkout draft. The New

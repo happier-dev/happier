@@ -35,6 +35,7 @@ export async function requestTriageNewSessionAuthoringV1(
         promptText: string | null;
         profileId: string | null;
         agentTarget?: NonNullable<Parameters<typeof requestTriageNewSessionSeed>[1]['agentTarget']>;
+        permissionMode?: TriageNewSessionSeedV1['permissionMode'];
         checkoutIntent: TriageActionCheckoutResolutionV1;
         placement: TriageActionExecutionPlacementV1 | null;
         candidates: readonly PluginUiSessionPlacementCandidateV1[];
@@ -86,6 +87,7 @@ export async function requestTriageNewSessionAuthoringV1(
             ...(input.actionDefault === undefined ? {} : { actionDefault: input.actionDefault }),
             ...(input.profileId === null ? {} : { profileId: input.profileId }),
             ...(input.agentTarget === undefined ? {} : { agentTarget: input.agentTarget }),
+            ...(input.permissionMode === undefined ? {} : { permissionMode: input.permissionMode }),
             checkoutIntent: input.checkoutIntent,
             ...(directoryIntent === undefined ? {} : { directoryIntent }),
             ...(placement === null ? {} : { placement: {

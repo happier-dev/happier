@@ -2,15 +2,40 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { act, renderHook, standardCleanup } from '@/dev/testkit';
 import { ManagedDefaultsV1Schema, type ManagedSessionDefaultsContext } from '@happier-dev/protocol/teams/managedDefaults';
 import { useNewSessionPermissionModeState } from './useNewSessionPermissionModeState';
+import { seedAndOpenNewSession } from '../../newSessionSeedComposer';
+import { readNewSessionDraftFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
+import { resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 describe('useNewSessionPermissionModeState authored draft intent', () => {
     afterEach(standardCleanup);
+    afterEach(resetSessionDraftRepositoryForTests);
     const input = {
         agentType: 'claude', backendTarget: { kind: 'backend' as const, backendId: 'claude' },
         hydratedTempAuthoringDraft: null, hydratedPersistedAuthoringDraft: null,
         selectedProfileId: null, profileMap: new Map(), enabledAgentIds: ['claude'],
         sessionDefaultPermissionModeByTargetKey: { 'agent:happier.agent.claude/claude': 'yolo' as const },
     };
+    it('opens a browser investigation with Ask despite remembered yolo and leaves the reader free to change it', async () => {
+        const initialProps: Parameters<typeof useNewSessionPermissionModeState>[0] = input;
+        const hook = await renderHook(useNewSessionPermissionModeState, { initialProps });
+        expect(hook.getCurrent().permissionMode).toBe('yolo');
+        const scope = { serverId: 'browser-investigation-server', accountId: 'browser-investigation-account' };
+        const draftId = 'browser-investigation';
+        const outcome = seedAndOpenNewSession({
+            seed: { prompt: 'Investigate this browser exception', permissionMode: 'default',
+                forgeEvidence: { v: 1, items: [{ source: { kind: 'alert', label: 'Browser exception' },
+                    author: { kind: 'process' }, text: 'Untrusted application exception evidence' }] } },
+            scope, isCurrent: () => true, createDraftId: () => draftId, navigateToNewSession: () => {},
+        });
+        expect(outcome.kind).toBe('opened');
+        const draft = readNewSessionDraftFromRepository({ scope, draftId });
+        expect(draft).toMatchObject({ permissionMode: 'default', permissionModeExplicit: true });
+        await hook.rerender({ ...initialProps, hydratedPersistedAuthoringDraft: draft,
+            persistedPermissionModeExplicit: draft?.permissionModeExplicit });
+        expect(hook.getCurrent().permissionMode).toBe('default');
+        await act(() => hook.getCurrent().handlePermissionModeChange('yolo'));
+        expect(hook.getCurrent().permissionMode).toBe('yolo');
+    });
     it('updates the native sandbox preview when the execution machine changes without changing approval intent', async () => {
         const initialProps: Parameters<typeof useNewSessionPermissionModeState>[0] = {
             ...input, nativeSandboxAvailable: true,

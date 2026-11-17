@@ -211,6 +211,8 @@ export function projectTriageNewSessionDestinationV1(input: Readonly<{
      * prompt — is resolved there, never here.
      */
     profileId?: string;
+    /** Initial source recommendation; an explicit settled choice takes precedence. */
+    permissionMode?: ReturnType<typeof SessionServerStartSpawnDraftV1Schema.parse>['permissionMode'];
     /** Exact selected-PR facts, supplied only for the pull-request mode. */
     reviewWorkspace?: TriageReviewWorkspacePreparationV1;
     /** Saved project identities already admitted by the canonical placement owner. */
@@ -247,6 +249,7 @@ export function projectTriageNewSessionDestinationV1(input: Readonly<{
 
     const { directory: _directory, ...settledSpawn } = draft.data;
     const spawn = {
+        ...(input.permissionMode === undefined ? {} : { permissionMode: input.permissionMode }),
         ...settledSpawn,
         ...(settledSpawn.profileId === undefined && input.profileId !== undefined
             ? { profileId: input.profileId }

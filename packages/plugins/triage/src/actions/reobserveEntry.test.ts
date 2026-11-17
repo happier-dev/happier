@@ -13,6 +13,27 @@ import { reobserveTriagePostMutationRow, type TriageExactEntryReadV1 } from '../
 const fixture = createTriageSourceV1Fixture();
 
 describe('reobserveTriageEntry', () => {
+  it('keeps the source investigation default transient through an exact read', async () => {
+    const result = await reobserveTriageEntry({
+      entryRef: fixture.detailInput.observation.entryRef,
+      sourceInstanceId: fixture.configuredInstance.instance.sourceInstanceId,
+    }, {
+      readConfiguredInstance: async () => fixture.configuredInstance,
+      readSourceSnapshot: async () => ({ contributions: [{
+        contributor: { pluginId: fixture.detailInput.observation.entryRef.source.pluginId,
+          contributionId: fixture.detailInput.observation.entryRef.source.localId, immutableGenerationId: 'generation-1' },
+        protocol: { id: 'happier.triage/sources', version: 1 }, descriptor: fixture.descriptor,
+        operations: { get: {} as never }, surfaces: {},
+      }] }),
+      executeGet: async () => ({ ...fixture.getResult, investigationDefaults: { permissionMode: 'default' as const } }),
+      nowMs: () => 1_760_000_800_000,
+    });
+    expect(result).toMatchObject({ kind: 'observed', investigationDefaults: { permissionMode: 'default' } });
+    if (result.kind !== 'observed') throw new Error('Expected exact observation');
+    expect(result.observation).not.toHaveProperty('investigationDefaults');
+    expect(result.observation).not.toHaveProperty('outcome.investigationDefaults');
+  });
+
   it.each(['plugin_manifest_invalid', 'plugin_disabled'])(
     'retains source admission cause %s through exact-read failure', async (code) => {
       const { collections, control } = createTestkitCorpusCollections();

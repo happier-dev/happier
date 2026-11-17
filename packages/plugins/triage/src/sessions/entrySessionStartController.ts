@@ -136,6 +136,7 @@ export type TriageEntrySessionStartRequestV1 = Readonly<{
     /** Final human-edited ORC prompt, not a configured Prompt Library or shipped fallback. */
     orchestrationPrompt?: string;
     requestedTask?: TriageSessionHandoffInputV1['task'];
+    investigationDefaults?: import('@happier-dev/triage-protocol/v1').TriageInvestigationDefaultsV1;
     forgeEvidence?: SessionInputForgeEvidenceV1;
     preferredAgentTargetKey?: string;
     resolvedAgentTarget?: AgentExecutionTargetV1;
@@ -939,6 +940,8 @@ export function createTriageEntrySessionStartController(
                     request = { ...request, ...facts };
                 }
                 const preferences = references.profile?.preferences;
+                const permissionMode = request.requestedTask === 'investigate'
+                    ? request.investigationDefaults?.permissionMode : undefined;
                 const promptText = request.orchestrationPrompt ?? resolveTriageActionInstructionV1(
                     action,
                     references.prompt?.text ?? null,
@@ -1033,6 +1036,7 @@ export function createTriageEntrySessionStartController(
                         actionDefault: triageActionDefaultSeedV1(request.savedAction ?? action),
                         attachments: request.forgeEvidence === undefined ? [] : [buildTriageForgeEvidenceAttachmentDraftV1(request.forgeEvidence)],
                         ...(explicitAgent?.status === 'resolved' ? { agentTarget: explicitAgent.agentTarget } : {}),
+                        ...(permissionMode === undefined ? {} : { permissionMode }),
                         checkoutIntent: checkout, placement: executionPlacement, candidates: placementCandidates,
                         signal: selectionLifetime.signal,
                         isCurrent: () => !retired.current,
@@ -1057,6 +1061,7 @@ export function createTriageEntrySessionStartController(
                     workspaceMode: action.workspaceMode,
                     creationKey: mintCreationKey(),
                     settlement,
+                    ...(permissionMode === undefined ? {} : { permissionMode }),
                     ...(action.profileId === null ? {} : { profileId: action.profileId }),
                     ...(action.workspaceMode === 'pull_request'
                         ? { reviewWorkspace: request.reviewWorkspace!.preparation }

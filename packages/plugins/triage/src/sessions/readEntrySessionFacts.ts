@@ -81,6 +81,7 @@ export async function readTriageEntrySessionFactsV1(
         presentation: buildTriageEntryAttachmentPresentation({ title: present.snapshot.title, scopeLabel: present.snapshot.scopeLabel }),
         lastKnownLocator: present.locator,
         linkedSessionIds: detail.linkedSessions.map((link) => link.sessionId),
+        ...(observed.investigationDefaults === undefined ? {} : { investigationDefaults: observed.investigationDefaults }),
         workflowSubject: facts.workflowSubject,
         ...(present.repository === undefined ? {} : { repository: present.repository }),
         ...(operation === undefined || reviewRevision === undefined ? {} : {

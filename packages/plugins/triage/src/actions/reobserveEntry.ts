@@ -10,6 +10,7 @@ import type {
   TriageTaskFieldChoicesV1,
   TriageTaskFieldsV1,
   TriageSourceFailureV1,
+  TriageInvestigationDefaultsV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -44,7 +45,7 @@ export type TriageReobserveEntryInputV1 = Readonly<{
 }>;
 
 export type TriageReobserveEntryResultV1 =
-  | Readonly<{ kind: 'observed'; observation: CorpusQualifiedObservationV1; taskFields?: TriageTaskFieldsV1; taskFieldChoices?: TriageTaskFieldChoicesV1; detailData?: JsonValue }>
+  | Readonly<{ kind: 'observed'; observation: CorpusQualifiedObservationV1; taskFields?: TriageTaskFieldsV1; taskFieldChoices?: TriageTaskFieldChoicesV1; detailData?: JsonValue; investigationDefaults?: TriageInvestigationDefaultsV1 }>
   | Readonly<{ kind: 'unavailable'; failure?: TriageSourceFailureV1 }>
   | Readonly<{ kind: 'rejected'; reason: CorpusQualificationRejectionV1 }>;
 
@@ -134,7 +135,9 @@ export async function reobserveTriageEntry(
             ? { taskFields: observed.taskFields } : {}),
           ...(input.includeTaskFieldChoices === true && observed.kind === 'present' && observed.taskFieldChoices !== undefined
             ? { taskFieldChoices: observed.taskFieldChoices } : {}),
-          ...(observed.kind === 'present' && observed.detailData !== undefined ? { detailData: observed.detailData } : {}) }
+          ...(observed.kind === 'present' && observed.detailData !== undefined ? { detailData: observed.detailData } : {}),
+          ...(observed.kind === 'present' && observed.investigationDefaults !== undefined
+            ? { investigationDefaults: observed.investigationDefaults } : {}) }
       : { kind: 'rejected', reason: qualified.reason };
   })();
   try {
@@ -182,6 +185,7 @@ export function createTriageReobserveEntryActionHandler(): TriageDataActionHandl
       return { kind: 'observed', entryRef, observation: toTriageWireObservation(observation),
         ...(result.taskFields === undefined ? {} : { taskFields: result.taskFields }),
         ...(result.taskFieldChoices === undefined ? {} : { taskFieldChoices: result.taskFieldChoices }),
+        ...(result.investigationDefaults === undefined ? {} : { investigationDefaults: result.investigationDefaults }),
         ...(result.detailData === undefined ? {} : { detailData: result.detailData }) };
     }
     return result.kind === 'unavailable'

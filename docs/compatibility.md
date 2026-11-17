@@ -450,6 +450,14 @@ release wire epoch, migration or compatibility adapter changes. The inspected
 
 ## Session authoring open (unreleased 0.3)
 
+The optional `seed.permissionMode` uses the canonical Agent permission intent.
+The draft owner records it as an explicit initial choice, so an Ask seed is not
+replaced by a remembered permissive default. The existing Session permission
+owner still applies policy locks and later user choices. Matching development
+Protocol, SDK and UI readers load together; preceding strict seed readers
+reject the added field. The existing draft permission and explicit-choice
+fields are reused without a persistence migration.
+
 The optional `seed.forgeEvidence` uses the closed Session descriptive-evidence
 schema. The seed owner admits it as the declared App context descriptive-evidence
 attachment, using the existing attachment value and instance bounds. Existing

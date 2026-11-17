@@ -116,6 +116,7 @@ export type SessionAuthoringActionInputById = {
                 };
                 definitionId?: string | undefined;
             };
+            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             origin?: undefined | {
                 kind: 'project';
                 accountId: string;
@@ -439,6 +440,7 @@ export type SessionAuthoringActionInputById = {
                 };
                 definitionId?: string | undefined;
             };
+            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             origin?: undefined | {
                 kind: 'project';
                 accountId: string;
@@ -837,6 +839,7 @@ export type SessionAuthoringActionInputById = {
                         };
                         definitionId?: string | undefined;
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     origin?: undefined | {
                         kind: 'project';
                         accountId: string;
@@ -3554,6 +3557,7 @@ export type SessionAuthoringActionInputById = {
                     };
                     definitionId?: string | undefined;
                 };
+                permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                 origin?: undefined | {
                     kind: 'project';
                     accountId: string;

@@ -411,6 +411,49 @@ describe('configured action execution through the shared Session owner', () => {
         }
     });
 
+    it.each([
+        { browser: true, delivery: 'compose', task: 'investigate' },
+        { browser: true, delivery: 'send', task: 'investigate' },
+        { browser: false, delivery: 'compose', task: 'investigate' },
+        { browser: false, delivery: 'send', task: 'investigate' },
+        { browser: true, delivery: 'compose', task: 'fix' },
+    ] as const)('uses the source investigation default for a new Session ($browser, $delivery, $task)', async ({ browser, delivery, task }) => {
+        const collections = createTestkitCorpusCollections().collections;
+        const agentTarget: AgentExecutionTargetV1 = { kind: 'agent', identity: { pluginId: 'happier.example.agent', localId: 'example' } };
+        const targetKey = buildAgentTargetKeyV2(agentTarget);
+        const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()], send: [{ status: 'accepted', localId: 'investigation-input' }] });
+        const seeds: PluginUiNewSessionSeedV1[] = [];
+        const host = {
+            version: () => ({ methods: ['openNewSession'] }),
+            openNewSession: async (seed: PluginUiNewSessionSeedV1) => { seeds.push(seed); },
+            context: async () => ({ accountScope: { serverId: 'server-a', accountId: 'account-a' } }),
+            executeAction: async (id: string, value: JsonValue) => {
+                if (triageBoundaryActionId(id) === 'actions/read-v1') return { ...catalog, actions: [{ ...action, profileId: 'saved-profile' }] };
+                if (triageBoundaryActionId(id) === 'sessions/start-entry-v1') return startTriageEntrySession(
+                    TriageStartEntrySessionInputV1Schema.parse(value), { execute: invoker.execute, linkSession: createTestkitEntrySessionLinkWriter(collections) });
+                if (triageBoundaryActionId(id) === 'sessions/link-entry-v1') return { v: 1, status: 'linked' };
+                if (id === 'sessions.spawn.profiles.list') return { items: [{ id: 'saved-profile', name: 'Saved defaults',
+                    preferredAgentTargetKey: targetKey, placement: { fixed: { serverId: 'server-a', machineId: 'machine-a' },
+                        directoryIntent: { kind: 'managed' } }, checkout: 'reuse_workspace' }], coverage: 'complete' };
+                if (id === 'projects.list') return { items: [], truncated: false };
+                if (id === 'agents.backends.list') return { items: [{ targetKey, agentTarget, enabled: true }] };
+                return invoker.execute(id as Parameters<typeof invoker.execute>[0], value as Parameters<typeof invoker.execute>[1]);
+            },
+        };
+        const selected = { entryRef: entry.entryRef, sourceInstanceId: entry.sourceInstance.sourceInstanceId };
+        const input = parseHandoffInput({ v: 1, handoff: {
+            task, configuredActionId: action.actionId, context: { kind: 'entry', entry: selected }, evidence: [{ kind: 'alertEntry', entry: selected }],
+            sessionChoice: { kind: 'new' }, agentChoice: { kind: 'configured' }, delivery,
+        } });
+        const selectedEntry = { ...entry, ...(browser ? { investigationDefaults: { permissionMode: 'default' as const } } : {}) };
+        const result = await runTriageConfiguredHandoffV1(host as unknown as Parameters<typeof runTriageConfiguredHandoffV1>[0],
+            input.handoff, { entries: [selectedEntry], signal: new AbortController().signal });
+        expect(result.handoff.kind, JSON.stringify(result)).toBe(delivery === 'compose' ? 'composed' : 'sendResult');
+        const configuration = delivery === 'compose' ? seeds[0] : invoker.callsFor('session.spawn_new')[0]?.input;
+        if (browser && task === 'investigate') expect(configuration).toMatchObject({ permissionMode: 'default' });
+        else expect(configuration).not.toHaveProperty('permissionMode');
+    });
+
     it('starts a saved fixed no-folder preference through the configured entry launch owner', async () => {
         const collections = createTestkitCorpusCollections().collections;
         const agentTarget: AgentExecutionTargetV1 = { kind: 'agent', identity: { pluginId: 'happier.example.agent', localId: 'example' } };

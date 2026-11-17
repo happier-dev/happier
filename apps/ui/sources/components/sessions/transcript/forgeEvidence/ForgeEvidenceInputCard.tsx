@@ -23,6 +23,7 @@ const SOURCE_GLYPH: Readonly<Record<SourceKind, IconName>> = {
   alert: 'shield',
   localTerminal: 'terminal',
   entry: 'link',
+  databaseFinding: 'server',
 };
 
 function sourceKindLabel(kind: SourceKind): string {
@@ -39,6 +40,8 @@ function sourceKindLabel(kind: SourceKind): string {
       return t('message.forgeEvidence.kind.localTerminal');
     case 'entry':
       return t('message.forgeEvidence.kind.entry');
+    case 'databaseFinding':
+      return t('message.forgeEvidence.kind.databaseFinding');
   }
 }
 

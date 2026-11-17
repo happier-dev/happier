@@ -12,6 +12,7 @@ import {
   TriageSourceFailureV1Schema,
   TriageTaskFieldChoicesV1Schema,
   TriageTaskFieldsV1Schema,
+  TriageInvestigationDefaultsV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
 import { TriageProjectedObservationV1Schema } from './listEntriesProtocol.js';
@@ -39,6 +40,7 @@ export const TriageReobserveEntryResultV1Schema = defineProtocolUnion([
     observation: TriageProjectedObservationV1Schema,
     taskFields: TriageTaskFieldsV1Schema.optional(),
     taskFieldChoices: TriageTaskFieldChoicesV1Schema.optional(),
+    investigationDefaults: TriageInvestigationDefaultsV1Schema.optional(),
     detailData: defineProtocolJsonValue().optional(),
   }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('unavailable'), failure: TriageSourceFailureV1Schema.optional() }, { policy: 'closed' }),

@@ -19674,7 +19674,7 @@ const enMessage = {
   pluginAttributionExternalSender: 'an external sender',
   pluginAttributionExternalBot: 'an external bot',
   forgeEvidence: {
-      kind: { pullRequest: 'PR update', hostedCi: 'CI run', releaseNotes: 'Release notes', alert: 'Security alert', localTerminal: 'Local run', entry: 'Linked item' },
+      kind: { pullRequest: 'PR update', hostedCi: 'CI run', releaseNotes: 'Release notes', alert: 'Security alert', localTerminal: 'Local run', entry: 'Linked item', databaseFinding: 'Database finding' },
       author: { person: 'Someone', bot: 'A bot', process: 'Automation', unknown: 'Unknown sender' },
       showEvidence: 'Show evidence',
       hideEvidence: 'Hide evidence',
