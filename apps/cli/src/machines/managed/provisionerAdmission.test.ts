@@ -5,7 +5,8 @@ import { GuestCliIdentityV1Schema } from '@happier-dev/protocol/features';
 
 afterEach(() => vi.restoreAllMocks());
 
-it('leaves Retry payload custody to Home without reading requester metadata or opening private content', async () => {
+it.each(['machines.managed.bootstrap.retry', 'machines.managed.delete'] as const)(
+  'leaves controller %s custody to Home without reading requester metadata or opening private content', async actionId => {
   const guestCli = GuestCliIdentityV1Schema.parse({ source: 'home-payload', line: '0.3', channel: 'publicdev', payloads: [{
     target: { os: 'linux', arch: 'x64' }, sha256: 'b'.repeat(64), url: '/v1/runtime/guest-cli/payloads/linux/x64',
   }] });
@@ -14,10 +15,13 @@ it('leaves Retry payload custody to Home without reading requester metadata or o
     launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
     allocation: 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
-  const input = { homeId: 'home', managedId: 'managed', expectedIntentRevision: 1, guestCli };
+  const input = actionId === 'machines.managed.bootstrap.retry'
+    ? { homeId: 'home', managedId: 'managed', expectedIntentRevision: 1, guestCli }
+    : { homeId: 'home', managedId: 'managed', expectedRevision: 1,
+      when: 'now', intent: 'delete', reviewedDependencies: true };
   const features = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ capabilities: { guestCli } }));
-  const prepare = (approvalReplay?: true) => prepareCliManagedProvisionerAdmission({ actionId: 'machines.managed.bootstrap.retry',
-    input: approvalReplay ? { ...input, guestCli } : input, context: { surface: 'cli' }, ...(approvalReplay ? { approvalReplay } : {}) }, {
+  const prepare = (approvalReplay?: true) => prepareCliManagedProvisionerAdmission({ actionId,
+    input, context: { surface: 'cli' }, ...(approvalReplay ? { approvalReplay } : {}) }, {
     serverUrl: 'https://home.example',
     // The host Action HTTP adapter is the network boundary. Private hydration
     // and provisioner selection remain real and require no key for this row.

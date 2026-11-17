@@ -67,7 +67,7 @@ export async function prepareCliManagedProvisionerAdmission(
         if (structural.id !== input.managedId || structural.homeId !== input.homeId) {
             return { ok: false as const, errorCode: 'managed_response_invalid', error: 'managed_response_invalid' };
         }
-        if (structural.controller && request.actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1)
+        if (structural.controller)
             return prepareManagedPowerProvisionerAdmissionV1(structural, readSelected, request.actionId, options);
         if (!account.credentials) return { ok: false as const, errorCode: 'credential_unavailable', error: 'credential_unavailable' };
         try {
