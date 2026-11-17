@@ -9,7 +9,7 @@ import { connectUiActionClient } from '@happier-tests/ui-action-client';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { TeamInvitationAcceptResultV1Schema, TeamInvitationCreateResultV1Schema } from '@happier-dev/protocol/teams/invitation';
 import { OpenProjectResultV1Schema, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
-import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { ProjectSourcesReadOutputV1Schema, type ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 
 import { TeamJoinedCard } from '../../../../apps/ui/sources/components/teams/join/TeamJoinedCard';
 import { TeamJoinedSummary } from '../../../../apps/ui/sources/components/teams/join/TeamJoinedSummary';
@@ -39,6 +39,7 @@ let invitationToken: string;
 let invitationUrl: string;
 let teamId: string;
 let homeId: string;
+let teamRepositorySource: ProjectSourceV1;
 let member: Awaited<ReturnType<TeamSetupFFixture['createAccount']>>;
 let existingMember: Awaited<ReturnType<TeamSetupFFixture['createAccount']>>;
 let existingMemberInvitationToken: string;
@@ -75,9 +76,14 @@ beforeAll(async () => {
     const sharedSource = await ownerUi.executeConfirmed('projects.sources.create', {
       serverId: ownerUi.serverId, requestKey: randomUUID(), name: 'Team first project',
       owner: { kind: 'team', teamId },
+      repository: { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+        repository: { nameWithOwner: 'happier-dev/onboarding', cloneUrl: 'https://github.com/happier-dev/onboarding.git' }, protocol: 'https' },
     }, context);
     if (!sharedSource.ok) throw new Error(`Team Source creation refused: ${sharedSource.errorCode}`);
-    expect(ProjectSourcesReadOutputV1Schema.parse(sharedSource.result)).toMatchObject({ ok: true });
+    const createdSource = ProjectSourcesReadOutputV1Schema.parse(sharedSource.result);
+    expect(createdSource).toMatchObject({ ok: true });
+    if (!createdSource.ok) throw new Error(`Team Source unavailable: ${createdSource.error}`);
+    teamRepositorySource = createdSource.source;
     const invited = await ownerUi.executeConfirmed('teams.invitations.create', { v: 1, teamId,
       role: 'member', historyAccess: 'from_membership', recipientEmail: null, requestKey: randomUUID() }, context);
     expect(invited.ok).toBe(true);
@@ -247,14 +253,9 @@ it('TS.D.selectedEffects applies only selected Machine setup and opens an editab
   if (!existing.ok) throw new Error(`Existing checkout unavailable: ${existing.errorCode}`);
   const checkout = OpenProjectResultV1Schema.parse(existing.result);
   if (checkout.kind !== 'opened' || !('machineId' in checkout.workspace)) throw new Error('Existing checkout not opened on member Machine');
-  const selector = { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
-    repository: { nameWithOwner: 'happier-dev/onboarding', cloneUrl: 'https://github.com/happier-dev/onboarding.git' }, protocol: 'https' } as const;
-  const sourceCreation = await ui!.executeConfirmed('projects.sources.create', { serverId: ui!.serverId,
-    requestKey: randomUUID(), name: 'Existing onboarding Source', repository: selector,
-    owner: { kind: 'account', accountId: scope.accountId } }, context);
-  if (!sourceCreation.ok) throw new Error(`Existing Source unavailable: ${sourceCreation.errorCode}`);
-  const source = ProjectSourcesReadOutputV1Schema.parse(sourceCreation.result);
-  if (!source.ok) throw new Error(`Existing Source unavailable: ${source.error}`);
+  const source = teamRepositorySource;
+  const selector = source.repository;
+  if (!selector) throw new Error('Joined Team repository fixture unavailable');
   let draftId: string | undefined;
   let openedProject: Extract<OpenProjectResultV1, { kind: 'opened' }> | undefined;
   let continuation: Promise<void> | undefined;
@@ -271,13 +272,17 @@ it('TS.D.selectedEffects applies only selected Machine setup and opens an editab
   if (nativeRefusal.ok) throw new Error('Missing-folder refusal fixture did not reach the Project owner');
   expect(nativeRefusal.errorCode).not.toBe('action_failed');
   const { useTeamSetupPlan } = await import('../../../../apps/ui/sources/components/teams/setup/useTeamSetupPlan');
-  const setupHook = await renderHook(() => useTeamSetupPlan(executeAction, context));
+  const { useTeamSetupBatchProgress } = await import('../../../../apps/ui/sources/components/teams/setup/useTeamSetupBatchProgress');
+  const setupHook = await renderHook(() => {
+    const controller = useTeamSetupPlan(executeAction, context);
+    return { ...controller, repositoryProgress: useTeamSetupBatchProgress(controller.batch, source.id) };
+  });
   const lifetime = captureActiveServerAccountScopeLifetime();
   if (!lifetime) throw new Error('Member Account lifetime unavailable');
   const prepared = await setupHook.getCurrent().prepare({ target: { serverId: ui!.serverId, homeId, machineId },
     preset: saved.value.preset, isCurrent: lifetime.isCurrent,
-    repositories: [{ id: 'unavailable-checkout', input: missingFolder }, { id: source.source.id, input: {
-      source: { kind: 'source', id: source.source.id, revision: source.source.revision, selector, checkout: checkout.workspace },
+    repositories: [{ id: 'unavailable-checkout', input: missingFolder }, { id: source.id, input: {
+      source: { kind: 'source', id: source.id, revision: source.revision, selector, checkout: checkout.workspace },
       materialization: { kind: 'attach' },
     } }],
   });
@@ -288,7 +293,8 @@ it('TS.D.selectedEffects applies only selected Machine setup and opens an editab
   const screen = await renderScreen(React.createElement(TeamJoinedCard, {
     testID: 'd-selected', result: { outcome: 'already_member', teamId }, teamName: 'D Join', accountScope: scope,
     onOpenTeam: () => {}, setupContinuation: { label: 'Set up for D Join', onContinue: () => continuation = (async () => {
-      const settled = await setupHook.getCurrent().run({ plan: prepared.plan });
+      const settled = await setupHook.getCurrent().run({ plan: prepared.plan,
+        selection: { team: { serverId: ui!.serverId, teamId }, lifetime, sources: [source] } });
       expect(settled.machine).toMatchObject({ ok: true, result: { operationId: expect.any(String) } });
       expect(settled.machineSettlement).toBeNull();
       expect(await readFile(marker, 'utf8')).toBe('selected');
@@ -308,6 +314,11 @@ it('TS.D.selectedEffects applies only selected Machine setup and opens an editab
     await act(async () => { await screen.findByTestId('d-selected-action').props.onPress(); });
     expect(continuation).toBeTruthy();
     await continuation;
+    await waitFor(() => setupHook.getCurrent().repositoryProgress?.ready === true, { timeoutMs: 60_000 });
+    expect(setupHook.getCurrent().repositoryProgress).toMatchObject({ phase: 'ready', queued: false,
+      team: { serverId: ui!.serverId, teamId }, source: { id: source.id, name: source.name },
+      target: { serverId: ui!.serverId, homeId, machineId } });
+    expect(setupHook.getCurrent().batch?.selection.repositories).toHaveLength(1);
     expect(openedProject?.directory).toBe(directory);
     expect(await readFile(dirtyPath, 'utf8')).toBe('Keep my unfinished work\n');
     // R-D2: setup edits reference-only Project metadata through the existing writer;
