@@ -4,11 +4,15 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol';
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
+import { MachineInstallationIdentityV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { connectUiActionClient } from '@happier-tests/ui-action-client';
 import { resolveMachineIdForServerFromSettings } from '../../../../apps/cli/src/daemon/resolveMachineIdForServerFromSettings';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
-import type { Settings } from '../../../../apps/cli/src/persistence';
+import { decodeStoredCredentials, type Settings } from '../../../../apps/cli/src/persistence';
+import { ApiClient } from '../../../../apps/cli/src/api/api';
+import { runWithServerHttpBaseUrl } from '../../../../apps/cli/src/api/client/serverHttpBaseUrl';
+import { buildInstallationProofForMachine } from '../../../../apps/cli/src/daemon/identity/proof';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -172,7 +176,7 @@ describe('core e2e: machine installation identity replacement', () => {
     }
   }, 0);
 
-  it('JOURNEYS-A.J8 adopts the published Machine key after a committed registration acknowledgement is lost', async () => {
+  it('JOURNEYS-A.J8 adopts a different published winning key and recovers a lost registration acknowledgement', async () => {
     const testDir = run.testDir('machine-registration-lost-ack');
     const postgres = await startDatabaseWorkbenchPostgres({ preloadStatistics: false });
     let fixture: Awaited<ReturnType<typeof startTeamSetupFFixture>> | undefined;
@@ -180,10 +184,35 @@ describe('core e2e: machine installation identity replacement', () => {
     let loseAcknowledgement = false;
     let acknowledgementLost = false;
     let acknowledgementRecovered = false;
+    let publishCompetingRegistration: (() => Promise<void>) | undefined;
+    let verifyProposedKey: ((envelope: string) => void) | undefined;
+    let winningEnvelope: string | null | undefined;
+    let competingProposalObserved = false;
     try {
       fixture = await startTeamSetupFFixture({ testDir, dbProvider: 'postgres', guestReachableHome: true,
         serverEnv: { DATABASE_URL: postgres.homeDatabaseUrl, HAPPIER_HOME_IROH_MODE: 'disabled' },
+        captureRequestBody: request => request.method === 'POST' && request.path === '/v1/machines',
+        async beforeHttpRequest(request) {
+          if (request.method !== 'POST' || request.path !== '/v1/machines' || !publishCompetingRegistration) return;
+          const publish = publishCompetingRegistration;
+          publishCompetingRegistration = undefined;
+          await publish();
+        },
         async beforeForwardResponse(request) {
+          if (request.method === 'POST' && request.path === '/v1/machines' && winningEnvelope !== undefined
+            && !competingProposalObserved) {
+            expect(request.statusCode).toBe(200);
+            if (!request.body?.complete) throw new Error('Actual daemon registration body was not captured');
+            const proposal: unknown = JSON.parse(request.body.text);
+            if (!proposal || typeof proposal !== 'object' || !('dataEncryptionKey' in proposal)) {
+              throw new Error('Actual daemon registration omitted its proposed Machine envelope');
+            }
+            if (typeof proposal.dataEncryptionKey !== 'string' || !verifyProposedKey) {
+              throw new Error('Actual daemon registration did not supply a verifiable recipient envelope');
+            }
+            verifyProposedKey(proposal.dataEncryptionKey);
+            competingProposalObserved = true;
+          }
           if (!loseAcknowledgement || request.method !== 'POST' || request.path !== '/v1/machines'
             || request.statusCode !== 200) return;
           if (acknowledgementLost) {
@@ -195,7 +224,51 @@ describe('core e2e: machine installation identity replacement', () => {
         },
       });
       const account = await fixture.createAccount('registration-owner');
+      verifyProposedKey = envelope => {
+        if (typeof winningEnvelope !== 'string') throw new Error('Competing registrar did not publish its envelope');
+        const open = (value: string) => openEncryptedDataKeyEnvelopeV1({
+          envelope: Buffer.from(value, 'base64'), recipientSecretKeyOrSeed: account.auth.accountMachineKey,
+        });
+        const proposedKey = open(envelope);
+        const publishedKey = open(winningEnvelope);
+        expect(proposedKey).not.toBeNull();
+        expect(publishedKey).not.toBeNull();
+        expect(proposedKey).not.toEqual(publishedKey);
+      };
+      // Hold the real first CLI registration at HTTP ingress after its absent
+      // read. Another registrar for the same installation then wins with a
+      // different random key; neither registrar's crypto is mocked.
+      publishCompetingRegistration = async () => {
+        const homeDir = join(testDir, account.name, 'home');
+        const settings = JSON.parse(await readFile(join(homeDir, 'settings.json'), 'utf8')) as Settings;
+        if (!settings.activeServerId) throw new Error('First registrar did not persist its active Home');
+        const machineId = resolveMachineIdForServerFromSettings(settings, settings.activeServerId,
+          readAccountIdFromToken(account.auth.token));
+        if (!machineId) throw new Error('First registrar did not persist its Machine identity');
+        const credentials = decodeStoredCredentials(account.uiCredentials);
+        if (!credentials?.encryption || credentials.encryption.type !== 'dataKey') {
+          throw new Error('Registration fixture omitted its Account recipient key');
+        }
+        const contentPublicKey = credentials.encryption.publicKey;
+        const identity = MachineInstallationIdentityV1Schema.parse(JSON.parse(
+          await readFile(join(homeDir, 'installation-identity.json'), 'utf8')));
+        const api = await ApiClient.create(credentials);
+        await runWithServerHttpBaseUrl(fixture!.server.baseUrl, () => api.getOrCreateMachine({
+          machineId,
+          metadata: { host: 'registration-winner', platform: process.platform,
+            happyCliVersion: 'composed-fixture', homeDir, happyHomeDir: homeDir },
+          registrationIdentity: buildInstallationProofForMachine({ identity, machineId,
+            token: credentials.token, contentPublicKey }),
+        }));
+        const published = await fetchJson<{ machine: unknown }>(`${fixture!.server.baseUrl}/v1/machines/${machineId}`, {
+          headers: { Authorization: `Bearer ${account.auth.token}` },
+        });
+        expect(published.status).toBe(200);
+        winningEnvelope = MachinePublishedRowV1Schema.parse(published.data.machine).dataEncryptionKey;
+        expect(typeof winningEnvelope).toBe('string');
+      };
       const enrolled = await fixture.enrollDaemon(account);
+      expect(competingProposalObserved).toBe(true);
       ui = await connectUiActionClient({ serverUrl: fixture.actionServerApiUrl, addressAnchorUrl: fixture.server.baseUrl,
         credentials: account.uiCredentials });
       await waitFor(() => ui!.isAccountReady(), { timeoutMs: 60_000, context: 'registration Account ready' });
@@ -222,6 +295,7 @@ describe('core e2e: machine installation identity replacement', () => {
       };
       const publishedEnvelope = await readEnvelope();
       expect(typeof publishedEnvelope).toBe('string');
+      expect(publishedEnvelope).toBe(winningEnvelope);
       loseAcknowledgement = true;
       await enrolled.restart();
       expect(acknowledgementLost).toBe(true);
