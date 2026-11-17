@@ -127,7 +127,7 @@ export function createClientActionReverseDispatcher(
         || actionId === 'account.home_continuation.invoke'
         ? currentUiContextReadClientRpcMethod()
       : address?.success ? workflowDraftClientRpcMethod(address.data)
-      : !clientId && !originInput && !libraryAction && !accountClientAction && targetSessionId ? sessionUiActionClientRpcMethod(targetSessionId)
+      : !clientId && !originInput && !libraryAction && !listsThemeDevices && !accountClientAction && targetSessionId ? sessionUiActionClientRpcMethod(targetSessionId)
       : RPC_METHODS.UI_ACTION_EXECUTE;
     if (!client) return machineTransportUnavailable();
     // Advertisements are hints, not receiver authority: reconnect/withdrawal can

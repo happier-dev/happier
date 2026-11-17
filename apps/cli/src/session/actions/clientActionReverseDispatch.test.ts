@@ -27,7 +27,7 @@ const disconnectedClient: ClientActionMachineRpc = {
 };
 
 describe('client Action reverse delivery', () => {
-  it('discovers connected theme devices from the current Session viewer without changing the receiver', async () => {
+  it('discovers connected theme devices across Sessions through the Account-wide receiver', async () => {
     const devices = [{ id: 'viewer', deviceLabel: 'My phone' }, { id: 'desktop', deviceLabel: null }];
     const deliveries: { method: string; payload: unknown; selector: unknown }[] = [];
     const client: ClientActionMachineRpc = {
@@ -36,14 +36,15 @@ describe('client Action reverse delivery', () => {
         deliveries.push({ method, payload, selector: options.answeringClient });
         options.onIssued();
         return { ok: true, result: { v: 1, execution: { ok: true, result: { themes: [] } } },
-          answeringClientId: 'viewer', answeringClientIds: devices.map(device => device.id), answeringClients: devices };
+          answeringClientId: 'viewer', answeringClientIds: devices.map(device => device.id),
+          answeringClients: method === RPC_METHODS.UI_ACTION_EXECUTE ? devices : devices.slice(0, 1) };
       },
     };
     expect(await executor(client).execute('appearance.themes.list', { includeDevices: true },
       { surface: 'agent', authority: 'account_automation', defaultSessionId: 'theme-session' }))
       .toEqual({ ok: true, result: { themes: [], devices } });
     expect(deliveries).toHaveLength(1);
-    expect(deliveries[0].method).toBe(sessionUiActionClientRpcMethod('theme-session'));
+    expect(deliveries[0].method).toBe(RPC_METHODS.UI_ACTION_EXECUTE);
     expect(deliveries[0].selector).toEqual({ requireSingle: true, includeCandidates: true });
     expect(UiActionDispatchRequestV1Schema.parse(deliveries[0].payload)).toMatchObject({
       actionId: 'appearance.themes.list', input: { includeDevices: false },
