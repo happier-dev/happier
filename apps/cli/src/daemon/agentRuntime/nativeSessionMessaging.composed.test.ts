@@ -117,7 +117,7 @@ it('admits runtime-bound native messaging through the production daemon composit
   grantAllowed = false;
   for (const mode of ['none', 'wait', 'return'] as const) {
     expect(await send(mode)).toMatchObject({ ok: true, result: { outcome: { ok: false,
-      errorCode: 'target_unavailable', details: { reason: 'external_authorization_refused' } } } });
+      errorCode: 'credential_scope_denied', details: { reason: 'external_authorization_refused' } } } });
   }
   expect(admitted.length).toBe(0);
   grantAllowed = true;
@@ -399,7 +399,10 @@ it('admits native messaging through the installed requester, real Home and Machi
     recoverySocket.on = (event, handler) => { recoveryEvents.on(event, handler); };
     sessionUpdateHandler(account.id, recoverySocket as never, { connectionType: 'machine-scoped', socket: recoverySocket,
       userId: account.id, machineId: 'machine' } as never);
-    machineUpdateHandler(account.id, recoverySocket as never);
+    // This recovery-only socket does not offer external Session operations.
+    machineUpdateHandler(account.id, recoverySocket as never, {
+      operationSocketBatchLimits: { ok: false, errorCode: 'socket_capacity_insufficient' },
+    });
     expect(recoveryEvents.listenerCount(SESSION_MESSAGE_REPLY_MUTATE_EVENT_V1)).toBe(1);
     const recoveryResult = await new Promise<unknown>(resolve => { recoveryEvents.emit(SESSION_MESSAGE_REPLY_MUTATE_EVENT_V1, {
       v: 1, machineId: 'machine', requestSessionId: destination, requestLocalId: returnedPacket.localId,
