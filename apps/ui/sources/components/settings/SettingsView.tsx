@@ -1,6 +1,7 @@
 import { useReportIssueAction } from './useReportIssueAction';
 import { useOpenExternalUrl } from '@/hooks/ui/useOpenExternalUrl';
 import * as React from 'react';
+import { HappierThemeSurfaceScope } from '@happier-dev/plugin-ui/presentation';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useFocusEffect } from '@/components/appShell/workspace/destinationRoute';
 import { readCurrentAppRuntimeInfo } from '@/sync/runtime/readCurrentAppRuntimeInfo';
@@ -201,7 +202,7 @@ export const SettingsView = React.memo(function SettingsView() {
     );
 
     // The rail carries search where it is shown; otherwise the page does (phones) and owns its scroller.
-    return railVisible
+    return <HappierThemeSurfaceScope enabled={false}>{railVisible
         ? <ItemList style={{ paddingTop: 0 }}>{overview}</ItemList>
-        : <SettingsPageSearch>{overview}</SettingsPageSearch>;
+        : <SettingsPageSearch>{overview}</SettingsPageSearch>}</HappierThemeSurfaceScope>;
 });

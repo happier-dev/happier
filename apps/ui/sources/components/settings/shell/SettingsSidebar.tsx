@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HappierThemeSurfaceScope } from '@happier-dev/plugin-ui/presentation';
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -237,6 +237,7 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
     }, [renderTreeNode]);
 
     return (
+        <HappierThemeSurfaceScope enabled={false}>
         <View testID="settings-sidebar" style={styles.root}>
             <CollectionList
                 surface="plane"
@@ -283,5 +284,6 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
                 )}
             />
         </View>
+        </HappierThemeSurfaceScope>
     );
 });

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { HappierThemeSurfaceScope } from '@happier-dev/plugin-ui/presentation';
 import { Keyboard, StyleSheet as RNStyleSheet, Pressable, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSharedValue, withTiming } from 'react-native-reanimated';
@@ -146,6 +147,7 @@ export function UniversalSearchNativeHost(props: UniversalSearchNativeHostProps)
     const passThroughPointerEvents = resolveOverlayPointerEvents('box-none');
 
     return (
+        <HappierThemeSurfaceScope enabled={false}>
         <View
             testID={testID}
             style={[RNStyleSheet.absoluteFill, rootPointerEvents.webStyle]}
@@ -254,6 +256,7 @@ export function UniversalSearchNativeHost(props: UniversalSearchNativeHostProps)
                 </View>
             </KeyboardAwareScreen>
         </View>
+        </HappierThemeSurfaceScope>
     );
 }
 

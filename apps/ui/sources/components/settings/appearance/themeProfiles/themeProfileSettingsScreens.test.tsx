@@ -346,6 +346,55 @@ afterEach(async () => {
 });
 
 describe('Theme profile settings screen', () => {
+    it.each(['ios', 'android'] as const)('keeps native recovery controls visible under authored hidden buttons and inputs on %s', async (platform) => {
+        const { Platform } = await import('react-native');
+        const { useUnistyles } = await import('react-native-unistyles');
+        const { prepareThemeCssAsync } = await import('@/theme/css/prepareThemeCss');
+        const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+        const { FieldTextInput } = await import('@/components/ui/forms/FieldTextInput');
+        const { SettingsSidebar } = await import('@/components/settings/shell/SettingsSidebar');
+        const { SettingsView } = await import('@/components/settings/SettingsView');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+        const { WorkspaceRouteBody: AppearanceSettingsScreen } = await import('@/app/(app)/settings/appearance');
+        const previousPlatform = Platform.OS;
+        const theme = useUnistyles().theme;
+        const previousSurfaces = theme.surfaces;
+        const prepared = await prepareThemeCssAsync(`
+            [data-surface="button"][data-part="root"] { display: none; }
+            [data-surface="input"][data-part="root"] { display: none; }
+            [data-surface="input"][data-part="text"] { display: none; }
+        `);
+        Object.assign(Platform, { OS: platform });
+        Object.assign(theme, { surfaces: prepared.light });
+        onTestFinished(() => {
+            Object.assign(Platform, { OS: previousPlatform });
+            Object.assign(theme, { surfaces: previousSurfaces });
+        });
+
+        const ordinary = await renderSettingsView(<>
+            <RoundButton testID="ordinary-theme-button" title="Continue" onPress={() => {}} />
+            <FieldTextInput testID="ordinary-theme-input" value="" onChangeText={() => {}} />
+        </>);
+        const paintedControls = (screen: typeof ordinary) => screen.tree.root.findAll(node => typeof node.type === 'string'
+            && ['button', 'input'].includes(node.props.dataSet?.surface));
+        const hidden = (screen: typeof ordinary) => paintedControls(screen)
+            .filter(node => flattenTestStyle(node.props.style).display === 'none');
+        expect(new Set(hidden(ordinary).map(node => node.props.dataSet.surface))).toEqual(new Set(['button', 'input']));
+        const roots = [
+            ['Themes', <ThemeProfilesSettingsScreen />],
+            ['Settings rail', <SettingsSidebar />],
+            ['Settings page', <InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>],
+            ['Appearance recovery', <AppearanceSettingsScreen />],
+        ] as const;
+        for (const [name, recovery] of roots) {
+            const screen = await renderSettingsView(recovery);
+            expect(paintedControls(screen).length, `${name} has rendered shared controls`).toBeGreaterThan(0);
+            expect(hidden(screen), name).toHaveLength(0);
+        }
+        // A recovery subtree cannot disable an unrelated ordinary surface beside it.
+        expect(hidden(ordinary).length).toBeGreaterThan(0);
+    });
+
     it('opens the connected-device picker from either in-use slot without changing the selection', async () => {
         // Adaptive shows a slot for each mode (MODE-ON-THEMES); an explicit mode shows its one slot.
         storage.getState().applyLocalSettings({ themePreference: 'adaptive' });

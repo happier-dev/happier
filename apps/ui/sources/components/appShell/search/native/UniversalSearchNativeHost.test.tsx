@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { layoutHitArea } from '@/dev/testkit/harness/hitFrameReach';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { SelectionListStep } from '@/components/ui/selectionList';
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 import { resolveHappierMinimumInteractiveTargetSize } from '@happier-dev/plugin-ui/environment';
@@ -87,7 +87,45 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
+// Collect the real presentation graph before the assertion timeout, as the other native
+// source suites do; cold transforms can take longer than the interaction being tested.
+const { useUnistyles } = await import('react-native-unistyles');
+const { prepareThemeCssAsync } = await import('@/theme/css/prepareThemeCss');
+const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+const { FieldTextInput } = await import('@/components/ui/forms/FieldTextInput');
+const { createDefaultDynamicSectionCache } = await import('@/components/ui/selectionList');
+const { UniversalSearchNativeHost } = await import('./UniversalSearchNativeHost');
+
 describe('UniversalSearchNativeHost', () => {
+    it('keeps recovery buttons and input visible while ordinary native controls accept authored hiding', async () => {
+        const theme = useUnistyles().theme;
+        const previousSurfaces = theme.surfaces;
+        const prepared = await prepareThemeCssAsync(`
+            [data-surface="button"][data-part="root"] { display: none; }
+            [data-surface="input"][data-part="root"] { display: none; }
+            [data-surface="input"][data-part="text"] { display: none; }
+        `);
+        Object.assign(theme, { surfaces: prepared.light });
+        onTestFinished(() => { Object.assign(theme, { surfaces: previousSurfaces }); });
+        const screen = await renderScreen(<>
+            <RoundButton testID="ordinary-native-button" title="Continue" onPress={() => {}} />
+            <FieldTextInput testID="ordinary-native-input" value="" onChangeText={() => {}} />
+            <UniversalSearchNativeHost rootStep={makeStep()} query="theme" onChangeQuery={() => {}}
+                onSelect={() => {}} onRequestClose={() => {}} dynamicSectionCache={createDefaultDynamicSectionCache()} />
+        </>);
+        const native = screen.findHostByTestId('universal-search-native-host')!;
+        const controls = (root: typeof native) => root.findAll(node => typeof node.type === 'string'
+            && ['button', 'input'].includes(node.props.dataSet?.surface));
+        const hidden = (root: typeof native) => controls(root).filter(node => flattenTestStyle(node.props.style).display === 'none');
+        // SelectionList owns a standard native TextInput; its clear button uses surface binding.
+        const input = screen.findHostByTestId('universal-search-native-host:input');
+        expect(input).not.toBeNull();
+        expect(flattenTestStyle(input!.props.style).display).not.toBe('none');
+        expect(new Set(controls(native).map(node => node.props.dataSet.surface))).toEqual(new Set(['button']));
+        expect(hidden(native)).toHaveLength(0);
+        expect(new Set(hidden(screen.tree.root).map(node => node.props.dataSet.surface))).toEqual(new Set(['button', 'input']));
+    });
+
     it('marks the native Search surface as an accessibility modal', async () => {
         const { UniversalSearchNativeHost } = await import('./UniversalSearchNativeHost');
         const screen = await renderScreen(<UniversalSearchNativeHost {...(defaultProps() as any)} />);

@@ -3,6 +3,7 @@ import { Platform, useColorScheme } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
+import { HappierThemeSurfaceScope } from '@happier-dev/plugin-ui/presentation';
 import type { ThemeActionId } from '@happier-dev/protocol/actions/themeActionFamily';
 
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
@@ -97,7 +98,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
         ...navigation,
     };
     const viewProps = useThemeLibraryModel(input, execute);
-    return <>
+    return <HappierThemeSurfaceScope enabled={false}>
         <ThemeLibraryView {...viewProps} slots={{
             light: { ...viewProps.slots.light, devicesAnchorRef: lightDevicesAnchor },
             dark: { ...viewProps.slots.dark, devicesAnchorRef: darkDevicesAnchor },
@@ -105,5 +106,5 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
         {deviceTarget ? <ThemeDevicePickerHost theme={deviceTarget}
             anchorRef={deviceTarget.mode === 'light' ? lightDevicesAnchor : darkDevicesAnchor}
             execute={execute} onDismiss={dismissDevices} /> : null}
-    </>;
+    </HappierThemeSurfaceScope>;
 });

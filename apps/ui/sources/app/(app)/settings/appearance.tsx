@@ -22,7 +22,7 @@ import { machineSummaryStyleTitle } from '@/components/machines/summary/MachineS
 import { AvatarStylePreview } from '@/components/settings/appearance/AvatarStylePreview';
 import { BotFaceStylePreview } from '@/components/settings/appearance/BotFaceStylePreview';
 import { NeedsYouHighlightPreview, WorkingIndicatorPreview } from '@/components/settings/appearance/NeedsYouHighlightPreview';
-import { HAPPIER_NEEDS_YOU_HIGHLIGHTS } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_NEEDS_YOU_HIGHLIGHTS, HappierThemeSurfaceScope } from '@happier-dev/plugin-ui/presentation';
 import { BOT_FACE_STYLES } from '@/components/sessions/bots/face/botFaceIdentity';
 import { AvatarStyleSchema } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { Settings } from '@/sync/domains/settings/settings';
@@ -302,6 +302,7 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
     ].filter(Boolean).join(' · ');
 
     return (
+        <HappierThemeSurfaceScope enabled={false}>
         <ItemList style={{ paddingTop: 0 }} pageColumn={deviceType === 'phone' ? 'reading' : 'wide'}>
             <SettingsPageHeader
                 description={t('settingsAppearance.pageDescription')}
@@ -901,6 +902,7 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
             </>)}
             </PageAsideColumns>
         </ItemList>
+        </HappierThemeSurfaceScope>
     );
 });
 
