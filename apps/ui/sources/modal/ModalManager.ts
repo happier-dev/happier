@@ -1,9 +1,9 @@
 import { Platform, Alert } from 'react-native';
 import { t } from '@/text';
-import { AlertButton, ModalConfig, CustomModalConfig, IModal, type CustomModalShowConfig, type CustomModalComponentType, type CustomModalInjectedProps, type CustomModalCallerProps } from './types';
+import { AlertButton, type ModalShowConfig, CustomModalConfig, IModal, type CustomModalShowConfig, type CustomModalComponentType, type CustomModalInjectedProps, type CustomModalCallerProps } from './types';
 
 type ModalProviderFunctions = Readonly<{
-    showModal: (config: Omit<ModalConfig, 'id'>) => string;
+    showModal: (config: ModalShowConfig) => string;
     hideModal: (id: string) => void;
     hideAllModals: () => void;
     updateCustomModalProps: (id: string, props: Record<string, unknown>) => void;
@@ -15,7 +15,7 @@ type ModalProviderRegistration = Readonly<{
 }>;
 
 class ModalManagerClass implements IModal {
-    private showModalFn: ((config: Omit<ModalConfig, 'id'>) => string) | null = null;
+    private showModalFn: ((config: ModalShowConfig) => string) | null = null;
     private hideModalFn: ((id: string) => void) | null = null;
     private hideAllModalsFn: (() => void) | null = null;
     private updateCustomModalPropsFn: ((id: string, props: Record<string, unknown>) => void) | null = null;
@@ -43,7 +43,7 @@ class ModalManagerClass implements IModal {
     }
 
     setFunctions(
-        showModal: (config: Omit<ModalConfig, 'id'>) => string,
+        showModal: (config: ModalShowConfig) => string,
         hideModal: (id: string) => void,
         hideAllModals: () => void,
         updateCustomModalProps: (id: string, props: Record<string, unknown>) => void = () => {},
@@ -110,7 +110,7 @@ class ModalManagerClass implements IModal {
                 message,
                 buttons: buttons || [{ text: t('common.ok') }],
                 commandBridge: options?.commandBridge,
-            } as Omit<ModalConfig, 'id'>);
+            } as ModalShowConfig);
         } else {
             // Use native alert
             Alert.alert(title, message, buttons);
@@ -130,7 +130,7 @@ class ModalManagerClass implements IModal {
                 message,
                 buttons: buttons || [{ text: t('common.ok') }],
                 commandBridge: options?.commandBridge,
-            } as Omit<ModalConfig, 'id'>);
+            } as ModalShowConfig);
 
             return new Promise<void>((resolve) => {
                 this.alertResolvers.set(modalId, resolve);
@@ -186,7 +186,7 @@ class ModalManagerClass implements IModal {
                 destructive: options?.destructive,
                 focusReturnRef: options?.focusReturnRef,
                 commandBridge: options?.commandBridge,
-            } as Omit<ModalConfig, 'id'>);
+            } as ModalShowConfig);
 
             return new Promise<boolean>((resolve) => {
                 const abort = () => {
@@ -238,7 +238,7 @@ class ModalManagerClass implements IModal {
             ...(config as unknown as Omit<CustomModalConfig<CustomModalInjectedProps>, 'id' | 'type'>),
         };
 
-        return this.showModalFn(modalConfig as Omit<ModalConfig, 'id'>);
+        return this.showModalFn(modalConfig as ModalShowConfig);
     }
 
     update<P extends CustomModalInjectedProps>(
@@ -317,7 +317,7 @@ class ModalManagerClass implements IModal {
             inputType: options?.inputType,
             commandBridge: options?.commandBridge,
             onConfirmContext: options?.onConfirmContext,
-        } as Omit<ModalConfig, 'id'>);
+        } as ModalShowConfig);
 
         return new Promise<string | null>((resolve) => {
             this.promptResolvers.set(modalId, resolve);

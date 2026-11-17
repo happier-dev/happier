@@ -5,7 +5,7 @@ import { MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilit
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
-import type { ModalConfig } from '@/modal/types';
+import type { ModalShowConfig } from '@/modal/types';
 
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -22,7 +22,7 @@ const { machineAgentInventoryStore } = await import('./machineAgentInventoryStor
 const { serverAccountScopedResourceKey } = await import('@/sync/domains/scope/serverAccountScope');
 
 describe('install confirmation lifetime through real mounted Actions and Modal controller', () => {
-    const dialogs = new Map<string, Omit<ModalConfig, 'id'>>();
+    const dialogs = new Map<string, ModalShowConfig>();
     const starts: unknown[] = [];
     let unregister: () => void;
     let nextId = 0;

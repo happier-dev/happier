@@ -226,6 +226,9 @@ export interface CustomModalConfig<P extends CustomModalInjectedProps = any> ext
 
 export type ModalConfig = AlertModalConfig | ConfirmModalConfig | PromptModalConfig | CustomModalConfig<any>;
 
+/** Keep each modal's fields while the provider supplies its id. */
+export type ModalShowConfig<T extends ModalConfig = ModalConfig> = T extends unknown ? Omit<T, 'id'> : never;
+
 export interface ModalState {
     modals: ModalConfig[];
 }
@@ -240,7 +243,7 @@ export interface ModalContextValue {
      */
     isKeyboardLiftSuppressedByModal: boolean;
     state: ModalState;
-    showModal: (config: Omit<ModalConfig, 'id'>) => string;
+    showModal: (config: ModalShowConfig) => string;
     hideModal: (id: string) => void;
     hideAllModals: () => void;
     updateCustomModalProps: (id: string, props: Record<string, unknown>) => void;
