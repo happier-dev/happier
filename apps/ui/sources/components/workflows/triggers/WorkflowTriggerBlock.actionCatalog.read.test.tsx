@@ -104,6 +104,8 @@ describe('Action trigger catalog read presentation', () => {
                 await vi.waitFor(() => expect(screen.getTextContent()).toContain('workflows.triggers.card.actionsLoading'));
             } else {
                 expect.soft(screen.getTextContent()).toContain('common.loading');
+                // The card's note says the catalog state once; its source line does not repeat it.
+                expect.soft(screen.getTextContent().split('common.loading').length - 1).toBe(1);
                 expect.soft(screen.getTextContent()).not.toContain('workflows.page.blocks.actionNotInCatalog');
                 expect.soft(screen.getTextContent()).not.toContain('workflows.page.blocks.noFields');
             }
@@ -123,6 +125,7 @@ describe('Action trigger catalog read presentation', () => {
             const settledLabel = state === 'failed' ? 'common.requestFailed'
                 : surface === 'then' ? resolveWorkflowActionTitle(discoveryRead.id, discoveryRead) : emptyLabel;
             await vi.waitFor(() => expect(screen.getTextContent()).toContain(settledLabel));
+            if (surface === 'step') expect(screen.getTextContent().split(settledLabel).length - 1).toBe(1);
             expect(screen.getTextContent()).not.toContain('workflows.triggers.card.actionsLoading');
             if (state === 'ready') expect(screen.getTextContent()).not.toContain('common.requestFailed');
             if (state === 'failed') {

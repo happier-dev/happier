@@ -139,8 +139,9 @@ export function WorkflowActionBlockEditor(props: Readonly<{
     const headingCarriesCard = resolveWorkflowUnnamedHeading(block) === 'card';
     const catalogReadLabel = catalog.phase === 'ready' ? null : catalog.phase === 'error'
         ? t('common.requestFailed') : catalog.phase === 'loading' ? t('common.loading') : t('common.unavailable');
+    // While the catalog cannot be read, the card's note says so once; the source line does not repeat it.
     const actionSource = spec?.plugin?.title ?? (spec === null
-        ? catalogReadLabel ?? t('workflows.page.blocks.actionNotInCatalog') : 'Happier');
+        ? catalogReadLabel === null ? t('workflows.page.blocks.actionNotInCatalog') : undefined : 'Happier');
 
     // At rest, fields the workflow fills from its inputs read as one line; selecting the step opens them.
     const askedRows = props.selected === true ? NO_ROWS : rows.filter((row) =>
@@ -180,7 +181,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                 visibleOrdinal={props.visibleOrdinal ?? null}
                 {...(props.focusRegistration === undefined ? {} : { focusRegistration: props.focusRegistration })}
                 displayName={displayName}
-                {...(headingCarriesCard ? { sourceLabel: actionSource } : {})}
+                {...(headingCarriesCard && actionSource !== undefined ? { sourceLabel: actionSource } : {})}
                 accessibilityLabel={t('workflows.a11y.stepContext', { block: displayName, position: props.ordinal, total: props.total })}
                 actions={editable ? props.actions : []}
                 accessory={props.slots?.state}
@@ -192,7 +193,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                 testID={`${rowPrefix}-card`}
                 mark={<Icon name={actionGlyph} size={ICON_SIZE.sm} />}
                 title={actionTitle}
-                source={actionSource}
+                {...(actionSource === undefined ? {} : { source: actionSource })}
                 header={!headingCarriesCard}
                 note={spec === null
                     ? catalogReadLabel ?? t('workflows.page.blocks.actionUnavailable', { action: displayName })

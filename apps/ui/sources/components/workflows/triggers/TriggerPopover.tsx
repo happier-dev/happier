@@ -238,9 +238,13 @@ export const TRIGGER_POPOVER_WIDTH = 380 + 2 * PAGE_LIST_METRICS.rowPaddingHoriz
 const CLOCK_FIELD_STYLE = { minWidth: 0, width: FIELD_BOX_METRICS.triggerMinWidthPx } as const;
 
 const styles = StyleSheet.create((theme) => ({
+    // One text edge for the title, the rows and the foot (lab T1): the popover owns its inset, so its
+    // rows add no second page margin and their titles start on the line its title and History start on.
     surface: {
         width: TRIGGER_POPOVER_WIDTH,
         maxWidth: '100%',
+        // The foot's own inset (s16 below), so title, rows and foot share one edge.
+        paddingHorizontal: theme.space.s16,
     },
     foot: {
         flexDirection: 'row',
@@ -560,7 +564,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                 renderPage={(page, sheetHeaderBack) => (
                 // Its own scroller: reusing the form's kept the form's scroll offset and hid Back and the title (D13).
                 <FloatingOverlay key="pushed-page" maxHeight={maxHeight} scrollEnabled surfaceChrome="theme" arrow={placement ? { placement } : false}>
-                    <ListPresentationProvider value="page">
+                    <ListPresentationProvider value="page" pageInsets="contained">
                         <View style={styles.surface}>
                             {sheetHeaderBack ? null : <View style={styles.back}><ToolbarButton testID={`${props.testID}-back`}
                                 label={t('common.back')} onPress={page.onBack} /></View>}
@@ -624,19 +628,20 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                 </>
                             )}
                         </View></RoundButtonSizeScope>}>
-                    <ListPresentationProvider value="page">
+                    <ListPresentationProvider value="page" pageInsets="contained">
                     <View testID={props.testID} style={styles.surface}>
                         {/* The popover is a configuration page (07 §3 Sections): its title is the
                             summary, its description the next occurrence, and Done is its one primary,
                             beside the title (lab T1). */}
                         {/* The popover is the surface: its rows sit on it directly, with no card inside it (lab T1). */}
+                        {/* Done stays on the title line beside the next occurrence (lab T1), never dropped beneath it. */}
                         <ItemGroup
                             header={presentation === 'sheet' ? 'none' : 'section'}
                             surface="none"
                             title={presentation === 'sheet' ? undefined : title}
                             {...(unavailableWhen !== undefined ? { description: unavailableWhen }
                                 : subtitle === undefined ? {} : { description: subtitle })}
-                            {...(isNew || presentation === 'sheet' || failureMessage !== null ? {} : { action: completion })}
+                            {...(isNew || presentation === 'sheet' || failureMessage !== null ? {} : { action: completion, actionLayout: 'trailing' as const })}
                         >
                             {props.submitNotice ? <Item mode="info" title={props.submitNotice} titleLines={0} showChevron={false} /> : null}
                             {props.submitRefusal === undefined ? <>
@@ -870,7 +875,8 @@ export function ScheduleRows(props: Readonly<{
                 />
             ) : null}
             <FieldValueItem
-                accessoryLayout={accessoryLayout}
+                // A clock is a short value: beside its label and timezone (lab T1), beneath it only on a phone.
+                accessoryLayout={accessoryLayout === 'stacked' ? 'stacked' : 'inline'}
                 testID={`${props.testID}-at`}
                 fieldStyle={CLOCK_FIELD_STYLE}
                 title={t('workflows.triggers.popover.at')}
