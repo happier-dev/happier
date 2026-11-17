@@ -1864,6 +1864,7 @@ jobs:
             .project/logs/e2e/*core*/cli-update-*/*.log
             .project/logs/e2e/*core*/cli-update-*/*.json
             .project/logs/e2e/*core*/cli-update-*/*.jsonl
+            .project/logs/e2e/*core*/cli-update-*/daemon-home/logs/*.log
             .project/logs/e2e/vitest-heartbeat-diagnostic.ndjson
           if-no-files-found: ignore
 
