@@ -82,7 +82,7 @@ describe('theme proposal card controller', () => {
         const messages = [];
         for (const name of ['A', 'B', 'C']) {
             const parsed = parseThemeProfileDocument({ ...themeActionDocument(name).raw,
-                css: `.dark [data-surface="composer"] { height: ${name === 'A' ? 12 : 28}px; } .dark [data-surface="session-row"] { padding: 8px; } .dark [data-surface="user-bubble"] { display: none; }` });
+                css: `.dark [data-surface="composer"] { height: ${name === 'A' ? 12 : 28}px; } .dark [data-surface="session-row"] { padding: 8px; } .dark [data-surface="user-bubble"] { display: none; } [data-surface="composer"]::before { content: "${name}"; }` });
             if (!parsed.ok) throw new Error('Invalid CSS proposal');
             const input = ThemeActionInputSchemas[THEME_ACTION_IDS.tryOn].parse({ document: parsed.document,
                 mode: 'dark', origin: { kind: 'agent' }, group: 'options' });
@@ -140,6 +140,10 @@ describe('theme proposal card controller', () => {
             await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ theme: { name: key }, currentOptionKey: key, busy: null }));
             expect(hook.getCurrent()?.theme.miniature.mode).toBe('dark');
             expect(hook.getCurrent()?.theme.surfaceStyles?.composer?.root?.base.height).toBe(key === 'A' ? 12 : 28);
+            expect(hook.getCurrent()?.webOnlyRules, 'switching proposals does not disclose the previous proposal rules').toBeUndefined();
+            expect(hook.getCurrent()?.onRevealWebOnly).toBeTypeOf('function');
+            await act(async () => hook.getCurrent()!.onRevealWebOnly!());
+            expect(hook.getCurrent()?.webOnlyRules).toEqual([`[data-surface="composer"]::before { content: "${key}"; }`]);
         }
         expect(state.writes()).toBe(writesBefore);
         await act(async () => hook.getCurrent()!.onKeep());

@@ -73,6 +73,53 @@ function renderResultInTranscript(input: Props) {
 }
 
 describe('ThemeActionResultView', () => {
+  it('reveals authored web-only rules from the real proposal model only when Which is pressed', async () => {
+    const { createThemeActionHarness, themeActionDocument } = await import('@/dev/testkit/harness/themeActionHarness');
+    const { parseThemeProfileDocument } = await import('@happier-dev/protocol/account/settings/themeProfiles');
+    const { THEME_ACTION_IDS, ThemeActionOutputSchemas } = await import('@happier-dev/protocol/actions/themeActionFamily');
+    const { readThemeActionCardPresentation } = await import('@/components/sessions/transcript/references/transcriptThemeAction');
+    const { createToolCallMessageFixture } = await import('@/dev/testkit/fixtures/transcriptFixtures');
+    const { makeToolCall } = await import('@/dev/testkit');
+    const { prepareThemeProfileCssAsync } = await import('@/theme/css/prepareThemeCss');
+    const { useThemeActionResultModel } = await import('./useThemeActionResultModel');
+    const state = createThemeActionHarness();
+    const nativeRule = '[data-surface="composer"] { padding: 8px; }';
+    const webRule = '@media (min-width: 600px) { [data-surface="composer"] { gap: 13px; } }';
+    const parsed = parseThemeProfileDocument({ ...themeActionDocument('Notebook').raw, css: `${nativeRule}\n${webRule}` });
+    if (!parsed.ok) throw new Error('Invalid proposal');
+    const prepared = await prepareThemeProfileCssAsync(parsed.document.profile);
+    const details = vi.spyOn(prepared, 'detailedCoverage', 'get');
+    const input = { document: parsed.document, mode: 'light' as const, origin: { kind: 'agent' as const } };
+    const preview = state.owner.begin(input);
+    const output = ThemeActionOutputSchemas[THEME_ACTION_IDS.tryOn].parse({ previewRef: preview.previewRef,
+      coverage: prepared.coverage, compatibility: parsed.document.compatibility });
+    const message = createToolCallMessageFixture({ id: 'css-proposal', tool: makeToolCall({ id: 'css-proposal',
+      name: 'mcp__happier__action_execute', state: 'completed',
+      input: { actionId: THEME_ACTION_IDS.tryOn, input }, result: { ok: true, result: output } }) });
+    const presentation = readThemeActionCardPresentation({ tool: message.tool, messages: [message], messageId: message.id });
+    if (!presentation) throw new Error('Missing proposal card');
+    function ProposalCard() {
+      const model = useThemeActionResultModel(presentation!, { preview: state.owner, entry: null, created: true, here: 'here' },
+        async () => { throw new Error('Disclosure must not execute an Action'); });
+      return model ? <ThemeActionResultView {...model} testID="card" /> : null;
+    }
+    const screen = await renderScreen(<ProposalCard />);
+    expect(has(screen, 'card:coverage')).toBe(true);
+    expect(details).not.toHaveBeenCalled();
+    const which = screen.tree.findAll(node => node.props.testID === 'card:which' && typeof node.props.onPress === 'function')[0];
+    expect(which, 'the production model exposes the Which disclosure').toBeDefined();
+    await pressTestInstanceAsync(which!);
+    expect(details).toHaveBeenCalledTimes(1);
+    expect(has(screen, 'card:which')).toBe(false);
+    const rules = screen.tree.findAll(node => typeof node.type === 'string' && typeof node.props.children === 'string'
+      && node.props.children.includes('gap: 13px'));
+    expect(rules.length).toBeGreaterThan(0);
+    expect(rules.every(node => !node.props.children.includes('padding: 8px'))).toBe(true);
+    expect(state.writes()).toBe(0);
+    await screen.unmount();
+    details.mockRestore();
+  });
+
   it('windows device failure records in the transcript without dropping outcomes', async () => {
     const screen = await renderResultInTranscript(props({ phase: { kind: 'kept' }, distribution: {
       applied: [], failed: Array.from({ length: 200 }, (_, index) => ({ label: `Failed-device-${index}`, reason: 'failed' as const })),

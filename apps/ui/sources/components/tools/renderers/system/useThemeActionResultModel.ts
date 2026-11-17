@@ -13,6 +13,7 @@ import type { ThemeActionCardPresentation, TranscriptThemeTry } from '@/componen
 import type { ThemeActionResultViewProps, ThemeResultOperation, ThemeResultPhase, ThemeResultTheme } from '@/components/tools/renderers/system/themeActionResultViewTypes';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { usePreparedThemeCss } from '@/theme/css/usePreparedThemeCss';
+import { getThemeCssWebOnlyRules } from '@/theme/css/prepareThemeCss';
 import { resolveCustomThemeSourceLabel } from '@/components/settings/appearance/themeProfiles/themeProfilePresetOptions';
 import { t } from '@/text';
 
@@ -66,14 +67,23 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
     const preview = React.useSyncExternalStore(subscribePreview, readPreview, readPreview);
     React.useLayoutEffect(() => presented && preview?.origin.kind === 'agent' ? facts.preview.present(preview.previewRef) : undefined,
         [facts.preview, presented, preview?.previewRef, preview?.origin.kind]);
-    // The retained preview is the compiler identity; transcript inputs rebuild documents.
-    const preparedCss = usePreparedThemeCss(preview?.document?.profile.css ?? '', presented);
-    const surfaceStyles = preview?.document ? preparedCss.prepared?.[preview.mode] : undefined;
     const [currentOptionKey, setCurrentOptionKey] = React.useState(() => input.options.at(-1)?.id ?? null);
+    const selected = input.options.find(option => option.id === currentOptionKey)?.call ?? input.replayTry;
+    const [revealedCssSource, setRevealedCssSource] = React.useState<string | null>(null);
+    // Replaced transcript cards retain their authored input, while preparations share CSS identity.
+    const cssSource = preview?.document?.profile.css ?? selected?.input.document?.profile.css ?? '';
+    const revealWebOnly = revealedCssSource === cssSource;
+    const preparedCss = usePreparedThemeCss(cssSource, presented && (preview !== null || revealWebOnly));
+    const surfaceStyles = preview?.document ? preparedCss.prepared?.[preview.mode] : undefined;
+    const webOnlyRules = React.useMemo(() => {
+        const prepared = preparedCss.prepared;
+        return revealWebOnly && prepared ? getThemeCssWebOnlyRules(prepared)
+            .map(rule => prepared.source.slice(rule.range.start, rule.range.end)) : undefined;
+    }, [revealWebOnly, preparedCss.prepared]);
+    const onRevealWebOnly = React.useCallback(() => setRevealedCssSource(cssSource), [cssSource]);
     const [busy, setBusy] = React.useState<ThemeResultOperation | null>(null);
     const [failure, setFailure] = React.useState<Extract<ThemeResultPhase, { kind: 'failed' }> | null>(null);
     const retryOperation = React.useRef<(() => Promise<void>) | null>(null);
-    const selected = input.options.find(option => option.id === currentOptionKey)?.call ?? input.replayTry;
     const previewEntry = React.useMemo(() => selected ? projectTryEntry(selected) : null, [selected]);
     const entry = outcome.kind === 'kept' ? outcome.output.entry : previewEntry ?? facts.entry;
     const sourceYours = t('settingsAppearance.themeProfiles.sourceYours');
@@ -160,6 +170,8 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
         created: facts.created }, phase, busy, here: facts.here,
         before: facts.before?.miniature, beforeSurfaceStyles: facts.before?.surfaceStyles,
         options, currentOptionKey, coverage,
+        webOnlyRules: coverage ? webOnlyRules : undefined,
+        onRevealWebOnly: coverage && coverage.webOnly > 0 ? onRevealWebOnly : undefined,
         reshapes: coverage?.affectedSurfaces.map(address => themeSurfaceLabel(address.surface)),
         hides: coverage?.hides.map(hidden => themeSurfaceLabel(hidden.address.surface)),
         onTryOption, onKeep, onUndo, onRedo, onRetry,
