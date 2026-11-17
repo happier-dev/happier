@@ -102,10 +102,13 @@ export async function listTaskResourcesInTx(tx: Tx, actorAccountId: string, sele
         keys.push(`todo.${task.taskId}`);
         byOwner.set(task.ownerAccountId, keys);
     }
-    // The whole visible set is the response: each access arm reads its own rows through its own index.
-    const rows = mergeResourceGrantArmPages(await Promise.all([access.owned, ...access.received].map(arm => tx.userKVStore.findMany({
-        where: { ...taskRowsWhere, AND: [arm,
-            ...(selection === undefined ? [] : [{ OR: [...byOwner].map(([accountId, keys]) => ({ accountId, key: { in: keys } })) }]) ] },
+    // An exact selection is index-bounded by its owner keys, so one query may OR the arms.
+    // Otherwise the whole visible set is the response: each arm reads its own rows through its own index.
+    const arms: Prisma.UserKVStoreWhereInput[][] = selection === undefined ? [[access.owned], ...access.received.map(arm => [arm])]
+        : [[{ OR: [access.owned, ...access.received] },
+            { OR: [...byOwner].map(([accountId, keys]) => ({ accountId, key: { in: keys } })) }]];
+    const rows = mergeResourceGrantArmPages(await Promise.all(arms.map(conditions => tx.userKVStore.findMany({
+        where: { ...taskRowsWhere, AND: conditions },
         select: { ...taskReadSelect(actorAccountId), updatedAt: true }, orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }] }))),
         (left, right) => right.updatedAt.getTime() - left.updatedAt.getTime() || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
     const actor = rows.some(row => row.account.encryptionMode === 'e2ee')

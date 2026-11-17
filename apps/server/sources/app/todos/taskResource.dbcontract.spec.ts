@@ -426,7 +426,8 @@ describe('Task resource HTTP authority (native database)', () => {
         expect(first.result).toMatchObject({ ok: true, value: { tasks: expect.arrayContaining([
             expect.objectContaining({ taskId: legacyId }), expect.objectContaining({ taskId: currentId }),
         ]) } });
-        expect(first.reads).toEqual(['userKVStore.findMany', 'account.findUnique']);
+        // One Task query per access arm (owner, Account, Team, Group grants), then the caller's readiness.
+        expect(first.reads).toEqual([...Array.from({ length: 4 }, () => 'userKVStore.findMany'), 'account.findUnique']);
         const addedId = randomUUID();
         await db.userKVStore.create({ data: { accountId: owner.id, key: `todo.${addedId}`,
             value: new TextEncoder().encode(JSON.stringify({ t: 'encrypted', c: 'new-task' })) } });
