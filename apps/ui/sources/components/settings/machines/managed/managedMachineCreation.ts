@@ -263,12 +263,13 @@ export async function runManagedMachineCreation(input: Readonly<{
     controller ??= scopedMachine?.controller;
     let machine: ManagedMachineReadSnapshotV1 | null = null;
     if (controller && acquisition.operation && (!alreadyAdmitted?.enrolledMachineId || awaitingSetupWithoutGuestOperation)) {
-        let requesterMachine = scopedMachine && isManagedMachineEnrollmentRequester(scopedMachine, input.scope.accountId) ? scopedMachine : null;
+        let promptMachine = scopedMachine && isManagedMachineEnrollmentRequester(scopedMachine, input.scope.accountId) ? scopedMachine : null;
         input.onProgress({ kind: 'acquiring', managedId: acquisition.managedId });
         while (current()) {
             const result = await execute('action.operations.get', { serverId: input.scope.serverId, machineId: controller.machineId,
-                ...(requesterMachine ? { managed: { homeId: requesterMachine.homeId, managedId: requesterMachine.id }, includeManagedPrompt: true } : {}),
-                ...acquisition.operation, waitForTerminal: true }, context);
+                ...(promptMachine && isManagedMachineEnrollmentRequester(promptMachine, input.scope.accountId)
+                    ? { managed: { homeId: promptMachine.homeId, managedId: promptMachine.id } } : {}),
+                ...acquisition.operation, waitForTerminal: true, includeManagedPrompt: true }, context);
             if (!current()) return fail('continuation_retired');
             const outcome = classifyHomeActionOutcome(result);
             if (outcome.kind !== 'completed') return fail(outcome.kind === 'failed' ? homeDomainFailureCode(outcome.failure) : 'approval_required',
@@ -277,23 +278,23 @@ export async function runManagedMachineCreation(input: Readonly<{
             if (found.kind === 'not_found') return fail('operation_not_found');
             if (found.operation.operationId !== acquisition.operation.operationId || found.operation.scope.machineId !== controller.machineId
                 || found.operation.scope.accountId !== input.scope.accountId) return fail('operation_scope_mismatch');
-            if (requesterMachine) {
+            const question = readManagedInstallationPromptSnapshot(found.operation);
+            if (promptMachine || question) {
                 // Allocation can advance while the operation waits. Correlate its
                 // resource with the current row, not the row read at admission.
                 machine = await read();
                 if (!current()) return fail('continuation_retired');
                 if (!machine) return fail(readFailureCode, undefined, undefined, readFailure);
                 if (!managedMachineOperationMatchesResource(machine, found.operation)) return fail('operation_scope_mismatch');
-                requesterMachine = machine;
+                promptMachine = machine;
             }
             observedOperation = found.operation;
             if (found.operation.domainRef?.kind === 'managedMachine') agentUpdate = found.operation.domainRef.agentUpdate;
             input.onProgress({ kind: 'acquiring', managedId: acquisition.managedId, operation: found.operation });
-            const question = requesterMachine ? readManagedInstallationPromptSnapshot(found.operation) : null;
-            if (requesterMachine && question) {
+            if (promptMachine && question) {
                 const { taskId, ...prompt } = question;
-                const resource = { homeId: requesterMachine.homeId, managedId: requesterMachine.id };
-                const expectedIntentRevision = requesterMachine.intentRevision;
+                const resource = { homeId: promptMachine.homeId, managedId: promptMachine.id };
+                const expectedIntentRevision = promptMachine.intentRevision;
                 const correlation = { ...resource, serverId: input.scope.serverId, operationId: found.operation.operationId, taskId };
                 const answered = prompt.kind === 'administrator.establish'
                     ? await answerManagedCreationEstablish({ prompt, isCurrent: current,
@@ -303,7 +304,7 @@ export async function runManagedMachineCreation(input: Readonly<{
                         decline: () => executeConfirmed('machines.managed.cancel', { ...resource,
                             expectedIntentRevision }),
                     })
-                    : prompt.kind === 'auth.approveRemoteProvisioning'
+                    : prompt.kind === 'auth.approveRemoteProvisioning' && isManagedMachineEnrollmentRequester(promptMachine, input.scope.accountId)
                     ? await approveManagedMachineEnrollment({ prompt, correlation,
                         respond: answer => executeApproved('machines.managed.bootstrap.respond', answer) })
                     : await answerManagedCreationPrompt({ prompt, isCurrent: current,
