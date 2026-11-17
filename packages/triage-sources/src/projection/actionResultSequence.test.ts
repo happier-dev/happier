@@ -2,15 +2,11 @@ import {
   EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
   isExternalActionResultWithinResponseEnvelopeLimitV1,
 } from '@happier-dev/plugin-sdk/actions';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   fitActionResultPageV1,
   fitActionResultSequenceV1,
 } from './actionResultSequence.js';
-
-vi.mock('@happier-dev/plugin-sdk/actions', async () => (
-  import('../../../protocol/src/actions/externalActionApi.js')
-));
 
 describe('fitActionResultSequenceV1', () => {
   const project = (rows: readonly string[], omittedCount: number) => ({ rows, omittedCount });

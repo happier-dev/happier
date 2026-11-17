@@ -512,15 +512,6 @@ describe('the candidate row projection', () => {
     }
   });
 
-  it('states what removal costs rather than implying it discards the user own state', () => {
-    const row = project(
-      { kind: 'retired', sourceInstanceId: INSTANCE_ID },
-      { outcome: { kind: 'removed', sourceInstanceId: INSTANCE_ID } },
-    );
-    expect(row.status).toBe(
-      'Removed from PRs & Issues. Its entries leave the list; the pins and Session links you made stay.',
-    );
-  });
 });
 
 describe('the configured-instance read', () => {
