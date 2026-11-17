@@ -3,7 +3,7 @@ import * as z from '../../zodRuntimePolicy.js';
 import { deriveReviewCommentMutationCommitmentV1, type AccountScopedCryptoMaterial } from '../../crypto/accountScopedCipher.js';
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { ReviewCommentActionInputSchemasV1, ReviewCommentActionOutputSchemasV1, stringifyReviewCommentPrincipalCanonicalJsonV1, type ReviewCommentActionIdV1, } from './actions.js';
-import { buildReviewCommentMutationEventEnvelopeV1, openReviewCommentSensitiveMigrationSourceV1, reviewCommentMutationInputWithoutEventEnvelopeV1, sealReviewCommentSensitiveEnvelopeV1, StoredReviewCommentV1Schema, type ReviewCommentMutationActionIdV1, } from './content.js';
+import { buildReviewCommentMutationEventEnvelopeV1, openReviewCommentSensitiveEnvelopeV1, openReviewCommentSensitiveMigrationSourceV1, reviewCommentMutationInputWithoutEventEnvelopeV1, sealReviewCommentSensitiveEnvelopeV1, StoredReviewCommentV1Schema, type ReviewCommentMutationActionIdV1, type ReviewCommentResourceCryptoV1, } from './content.js';
 import { applyReviewCommentPreparedSensitiveMutationV1, projectReviewCommentStructuralMutationV1, ReviewCommentPrepareMutationRequestV1Schema, ReviewCommentPrepareMutationResponseV1Schema, ReviewCommentCommitMutationRequestV1Schema, ReviewCommentCommitMutationResponseV1Schema, ReviewCommentStoredSourceV1Schema, type ReviewCommentStoredSourceV1, } from './mutation.js';
 import { canonicalReviewCommentListFilters, matchesReviewCommentListFilters } from './queries.js';
 import type { ReviewCommentActorRefV1, ReviewCommentV1 } from './v1.js';
@@ -20,9 +20,14 @@ export type ReviewCommentTransportContextV1 = Readonly<{
     accountId: string;
     mode: 'plain' | 'e2ee';
     material: AccountScopedCryptoMaterial | null;
+    resource?: ReviewCommentResourceCryptoV1;
 }>;
 function fail(code: string): never { throw Object.assign(new Error(code), { code }); }
 function assertContext(context: ReviewCommentTransportContextV1) {
+    if (context.resource) {
+        if (context.material || context.mode !== context.resource.mode) fail('review_comment_encryption_mode_mismatch');
+        return;
+    }
     if (context.mode === 'e2ee' && !context.material)
         fail('review_comment_encryption_material_unavailable');
     if (context.mode === 'plain' && context.material)
@@ -36,19 +41,25 @@ function source(value: unknown): ReviewCommentStoredSourceV1 {
 }
 async function open(value: unknown, context: ReviewCommentTransportContextV1): Promise<ReviewCommentV1> {
     const record = source(value);
-    if (record.structural.accountId !== context.accountId)
+    if (context.resource ? record.structural.reviewId !== context.resource.reviewId
+        : record.structural.reviewId !== undefined || record.structural.accountId !== context.accountId)
         fail('review_comment_content_binding_mismatch');
     const mode = record.source.layout === 'canonical_v1'
         ? record.source.envelope.t === 'plain' ? 'plain' : 'e2ee' : record.source.sourceMode;
     if (mode !== context.mode)
         fail('review_comment_encryption_mode_mismatch');
-    const result = await openReviewCommentSensitiveMigrationSourceV1({ ...record,
-        ...(context.material ? { material: context.material } : {}) });
+    if (context.resource && record.source.layout !== 'canonical_v1') fail('review_comment_encryption_mode_mismatch');
+    const result = context.resource && record.source.layout === 'canonical_v1'
+        ? openReviewCommentSensitiveEnvelopeV1({ structural: record.structural,
+            envelope: { t: 'plain', v: await context.resource.open(record.source.envelope) }, mode: 'plain' })
+        : await openReviewCommentSensitiveMigrationSourceV1({ ...record,
+            ...(context.material ? { material: context.material } : {}) });
     if (result.status !== 'available')
         fail(`review_comment_${result.reason}`);
     return result.comment;
 }
 function digest(context: ReviewCommentTransportContextV1, purpose: 'effect' | 'create-equivalence' | 'list-filters', value: unknown) {
+    if (context.resource) return context.resource.commitment(purpose, stringifyReviewCommentPrincipalCanonicalJsonV1(value));
     return deriveReviewCommentMutationCommitmentV1({ ...context, purpose,
         components: [stringifyReviewCommentPrincipalCanonicalJsonV1(value)] });
 }
@@ -96,10 +107,14 @@ export async function executeReviewCommentTransportV1(params: Readonly<{
 }>): Promise<unknown> {
     assertContext(params.context);
     const input = ReviewCommentActionInputSchemasV1[params.actionId].parse(params.input);
+    if (params.context.resource ? input.reviewId !== params.context.resource.reviewId : input.reviewId !== undefined) {
+        fail('review_comment_content_binding_mismatch');
+    }
     if (params.actionId === 'reviews.comments.get') {
         const parsed = ReviewCommentActionInputSchemasV1['reviews.comments.get'].parse(input);
         const result = parseClassic(z.strictObject({ comment: sourceSchema }), await params.request({ method: 'get',
-            path: `/v1/reviews/comments/${encodeURIComponent(parsed.commentId)}`, query: { stored: true, includeHistory: parsed.includeHistory } }));
+            path: `/v1/reviews/comments/${encodeURIComponent(parsed.commentId)}`, query: { stored: true, includeHistory: parsed.includeHistory,
+                ...(parsed.reviewId ? { reviewId: parsed.reviewId } : {}) } }));
         const comment = await open(result.comment, params.context);
         if (comment.id !== parsed.commentId)
             fail('review_comment_content_binding_mismatch');
@@ -130,7 +145,7 @@ export async function executeReviewCommentTransportV1(params: Readonly<{
         return ReviewCommentActionOutputSchemasV1[params.actionId].parse({ items,
             cursor: serverCursor ? encodeCursor(filterKey, serverCursor) : null });
     }
-    if (params.context.mode !== 'e2ee')
+    if (params.context.mode !== 'e2ee' && !params.context.resource)
         fail('review_comment_encryption_mode_mismatch');
     const actionId: ReviewCommentMutationActionIdV1 = params.actionId;
     const logicalInput = reviewCommentMutationInputWithoutEventEnvelopeV1(params.input);
@@ -152,10 +167,11 @@ export async function executeReviewCommentTransportV1(params: Readonly<{
             && sameFindingScope(record.structural, { ...mutation.input,
                 sessionId: params.actor.kind === 'workflow' && mutation.input.sessionId === undefined
                     ? record.structural.sessionId : mutation.input.sessionId });
-        if (record.structural.accountId !== params.context.accountId
-            || (!semanticReplay && record.structural.projectId !== mutation.input.projectId)
-            || record.structural.workspace?.machineId !== mutation.input.workspace?.machineId
-            || record.structural.workspace?.path !== mutation.input.workspace?.path)
+        if ((params.context.resource ? record.structural.reviewId !== params.context.resource.reviewId
+            : record.structural.reviewId !== undefined || record.structural.accountId !== params.context.accountId)
+            || (!params.context.resource && ((!semanticReplay && record.structural.projectId !== mutation.input.projectId)
+                || record.structural.workspace?.machineId !== mutation.input.workspace?.machineId
+                || record.structural.workspace?.path !== mutation.input.workspace?.path)))
             fail('review_comment_content_binding_mismatch');
         const previous = record.previous ? await open(record.previous, params.context) : undefined;
         if (mutation.actionId !== 'reviews.comments.create') {
@@ -178,11 +194,17 @@ export async function executeReviewCommentTransportV1(params: Readonly<{
         if (!record.event)
             continue; // Equivalent-create replay uses the existing bound ciphertext, not a resealed event.
         const sensitive = applyReviewCommentPreparedSensitiveMutationV1({ mutation, input: logicalInput, prepared: record, previous });
+        const resource = params.context.resource;
+        const plainSensitive = resource ? sealReviewCommentSensitiveEnvelopeV1({ structural: record.structural, sensitive, mode: 'plain' }) : null;
+        const plainEvent = resource ? buildReviewCommentMutationEventEnvelopeV1({ accountId: params.context.accountId,
+            actor: params.actor, actionId, input: logicalInput, event: record.event, mode: 'plain' }) : null;
         records.push({ commentId: record.structural.id,
-            sensitiveEnvelope: sealReviewCommentSensitiveEnvelopeV1({ structural: record.structural, sensitive,
-                mode: 'e2ee', material: params.context.material!, randomBytes: params.randomBytes }),
-            eventEnvelope: buildReviewCommentMutationEventEnvelopeV1({ accountId: params.context.accountId,
-                actor: params.actor, actionId, input: logicalInput, mode: 'e2ee', material: params.context.material!, randomBytes: params.randomBytes }),
+            sensitiveEnvelope: resource && plainSensitive?.t === 'plain' ? await resource.seal(plainSensitive.v)
+                : sealReviewCommentSensitiveEnvelopeV1({ structural: record.structural, sensitive,
+                    mode: 'e2ee', material: params.context.material!, randomBytes: params.randomBytes }),
+            eventEnvelope: resource && plainEvent?.t === 'plain' ? await resource.seal(plainEvent.v)
+                : buildReviewCommentMutationEventEnvelopeV1({ accountId: params.context.accountId,
+                    actor: params.actor, actionId, input: logicalInput, mode: 'e2ee', material: params.context.material!, randomBytes: params.randomBytes }),
         });
     }
     const commit = ReviewCommentCommitMutationRequestV1Schema.parse({ v: 1, receipt: prepared.receipt, records });

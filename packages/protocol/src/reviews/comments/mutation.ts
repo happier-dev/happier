@@ -171,17 +171,19 @@ export function deriveReviewCommentStructuralMutationV1(params: Readonly<{
   const requireCurrent = (id: string, expected: number) => {
     const value = byId.get(id);
     if (!value) mutationError('review_comment_not_found', 'Review comment not found');
-    if (value.accountId !== params.accountId || value.serverRevision !== expected
-      || value.projectId !== mutation.input.projectId
-      || value.workspace?.machineId !== mutation.input.workspace?.machineId
-      || value.workspace?.path !== mutation.input.workspace?.path) {
+    if (value.serverRevision !== expected || (mutation.input.reviewId
+      ? value.reviewId !== mutation.input.reviewId
+      : value.reviewId !== undefined || value.accountId !== params.accountId
+        || value.projectId !== mutation.input.projectId
+        || value.workspace?.machineId !== mutation.input.workspace?.machineId
+        || value.workspace?.path !== mutation.input.workspace?.path)) {
       mutationError('review_comment_conflict', 'Review comment currentness did not match');
     }
     return value;
   };
   const event = (structural: ReviewCommentStructuralV1, kind: z.infer<typeof ReviewCommentEventV1Schema>['eventKind'], bulkActionId?: string) => ReviewCommentEventV1Schema.parse({
     eventId: params.runtime.createId('review-comment-event'), commentId: structural.id,
-    accountId: params.accountId, projectId: structural.projectId, workspace: structural.workspace,
+    accountId: params.accountId, reviewId: structural.reviewId, projectId: structural.projectId, workspace: structural.workspace,
     eventKind: kind, actor: params.actor, createdAt: now, serverRevision: structural.serverRevision,
     bulkActionId, authorDeviceId: mutation.input.authorDeviceId, clientLamport: mutation.input.clientLamport,
     event: { clientMutationId: mutation.input.clientMutationId },
@@ -204,7 +206,7 @@ export function deriveReviewCommentStructuralMutationV1(params: Readonly<{
     }
     const state = mutation.actionId === 'reviews.comments.create' && mutation.input.authorIntent === 'open' ? 'open' : 'proposed';
     const structural = ReviewCommentStructuralV1Schema.parse({
-      v: 1, id, accountId: params.accountId, projectId: input.projectId, workspace: input.workspace,
+      v: 1, id, accountId: params.accountId, reviewId: parent?.reviewId ?? input.reviewId, projectId: input.projectId, workspace: input.workspace,
       ...(mutation.actionId === 'reviews.comments.create' ? {
         workspaceId: mutation.input.workspaceId,
         sessionId: params.actor.kind === 'workflow' ? mutation.input.sessionId ?? params.workflowOriginSessionId : mutation.input.sessionId,

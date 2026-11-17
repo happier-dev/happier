@@ -1,4 +1,4 @@
-import { bindReviewCommentEventSensitiveEnvelopeV1, BoundReviewCommentEventSensitiveEnvelopeV1Schema, ReviewCommentEventRequestBindingV1Schema, openReviewCommentEventSensitiveEnvelopeV1, sealReviewCommentEventSensitiveEnvelopeV1, reviewCommentEventSensitiveBindingMatchesV1, type BoundReviewCommentEventSensitiveEnvelopeV1, type ReviewCommentEventRequestBindingV1 } from '@happier-dev/protocol/reviews/comments/content';
+import { buildReviewCommentEventSensitivePayloadV1, bindReviewCommentEventSensitiveEnvelopeV1, BoundReviewCommentEventSensitiveEnvelopeV1Schema, ReviewCommentEventRequestBindingV1Schema, openReviewCommentEventSensitiveEnvelopeV1, sealReviewCommentEventSensitiveEnvelopeV1, reviewCommentEventSensitiveBindingMatchesV1, type BoundReviewCommentEventSensitiveEnvelopeV1, type ReviewCommentEventRequestBindingV1 } from '@happier-dev/protocol/reviews/comments/content';
 import { ReviewCommentEventV1Schema, type ReviewCommentEventV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { StoredJsonContentEnvelopeSchema, type StoredJsonContentEnvelope } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
 
@@ -17,11 +17,11 @@ export function bindReviewCommentEventSensitiveForStorage(params: Readonly<{
     } else if (params.storageMode === "plain") {
         sensitive = sealReviewCommentEventSensitiveEnvelopeV1({
             mode: "plain",
-            payload: {
-                v: 1,
+            payload: buildReviewCommentEventSensitivePayloadV1({
+                event,
                 requestBinding: params.requestBinding,
                 details: event.event,
-            },
+            }),
         });
     } else {
         throw new ReviewCommentOperationError(

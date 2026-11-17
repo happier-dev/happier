@@ -115,6 +115,17 @@ export const ReviewCommentStructuralV1Schema = lazyZodSchema(() => z.strictObjec
 }).check(z.superRefine(validateReviewCommentScopeV1)));
 export type ReviewCommentStructuralV1 = z.infer<typeof ReviewCommentStructuralV1Schema>;
 
+export const REVIEW_COMMENT_RESOURCE_COMMITMENT_DOMAIN_V1 = 'happier:review-comment-resource-commitment:v1';
+
+/** Borrowed from the admitted Artifact; the comment author supplies neither its mode nor its key. */
+export type ReviewCommentResourceCryptoV1 = Readonly<{
+  reviewId: string;
+  mode: 'plain' | 'e2ee';
+  open(envelope: StoredJsonContentEnvelope): Promise<unknown>;
+  seal(value: unknown): Promise<StoredJsonContentEnvelope>;
+  commitment(purpose: 'effect' | 'create-equivalence' | 'list-filters', canonicalInput: string): string;
+}>;
+
 export const ReviewCommentSensitiveContentV1Schema = lazyZodSchema(() => z.strictObject({
   anchor: ReviewCommentAnchorV1Schema,
   snapshot: ReviewCommentSnapshotV1Schema,
@@ -250,6 +261,7 @@ function sensitiveBinding(structural: ReviewCommentStructuralV1): ReviewCommentS
   return {
     v: 1,
     accountId: structural.accountId,
+    ...(structural.reviewId === undefined ? {} : { reviewId: structural.reviewId }),
     projectId: structural.projectId,
     ...(structural.workspace === undefined ? {} : { workspace: structural.workspace }),
     commentId: structural.id,
@@ -279,6 +291,7 @@ export function splitReviewCommentV1(commentInput: ReviewCommentV1): ReviewComme
       v: 1,
       id: comment.id,
       accountId: comment.accountId,
+      reviewId: comment.reviewId,
       projectId: comment.projectId,
       workspace: comment.workspace,
       workspaceId: comment.workspaceId,
@@ -342,6 +355,7 @@ function reconstructComment(
     v: 1,
     id: structural.id,
     accountId: structural.accountId,
+    ...(structural.reviewId === undefined ? {} : { reviewId: structural.reviewId }),
     projectId: structural.projectId,
     ...(structural.workspace === undefined ? {} : { workspace: structural.workspace }),
     ...(structural.workspaceId === undefined ? {} : { workspaceId: structural.workspaceId }),
@@ -721,6 +735,7 @@ function requiredBindingPositiveInteger(input: Record<string, unknown>, key: str
 
 export function buildReviewCommentEventRequestBindingV1(params: Readonly<{
   accountId: string;
+  reviewId?: string;
   projectId?: string;
   workspace?: ReviewCommentWorkspaceV1;
   actor: z.input<typeof ReviewCommentActorRefV1Schema>;
@@ -771,6 +786,8 @@ export function buildReviewCommentEventRequestBindingV1(params: Readonly<{
   return ReviewCommentEventRequestBindingV1Schema.parse({
     v: 1,
     accountId: params.accountId,
+    ...(params.reviewId === undefined && typeof params.input.reviewId !== 'string'
+      ? {} : { reviewId: params.reviewId ?? params.input.reviewId }),
     ...(params.projectId === undefined ? {} : { projectId: params.projectId }),
     ...(params.workspace === undefined ? {} : { workspace: params.workspace }),
     actionId,
@@ -785,6 +802,7 @@ export function buildReviewCommentEventRequestBindingV1(params: Readonly<{
 export const ReviewCommentEventSensitivePayloadV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   requestBinding: ReviewCommentEventRequestBindingV1Schema,
+  binding: z.optional(ReviewCommentEventSensitiveBindingV1Schema),
   details: z.record(z.string(), z.unknown()),
 }));
 export type ReviewCommentEventSensitivePayloadV1 = z.infer<typeof ReviewCommentEventSensitivePayloadV1Schema>;
@@ -843,6 +861,7 @@ function eventBinding(
     eventId: event.eventId,
     commentId: event.commentId,
     accountId: event.accountId,
+    ...(event.reviewId === undefined ? {} : { reviewId: event.reviewId }),
     projectId: event.projectId,
     workspace: event.workspace,
     eventKind: event.eventKind,
@@ -893,6 +912,19 @@ export function sealReviewCommentEventSensitiveEnvelopeV1(params: Readonly<{
   });
 }
 
+export function buildReviewCommentEventSensitivePayloadV1(params: Readonly<{
+  event: ReviewCommentEventV1;
+  requestBinding: ReviewCommentEventRequestBindingV1;
+  details: Record<string, unknown>;
+}>): ReviewCommentEventSensitivePayloadV1 {
+  return ReviewCommentEventSensitivePayloadV1Schema.parse({
+    v: 1,
+    requestBinding: params.requestBinding,
+    ...(params.event.reviewId === undefined ? {} : { binding: eventBinding(params.event, params.requestBinding) }),
+    details: params.details,
+  });
+}
+
 export function reviewCommentMutationInputWithoutEventEnvelopeV1(
   input: Readonly<Record<string, unknown>>,
 ): Record<string, unknown> {
@@ -902,6 +934,7 @@ export function reviewCommentMutationInputWithoutEventEnvelopeV1(
 
 export function buildReviewCommentMutationEventEnvelopeV1(params: Readonly<{
   accountId: string;
+  event?: ReviewCommentEventV1;
   actor: z.input<typeof ReviewCommentActorRefV1Schema>;
   actionId: z.input<typeof ReviewCommentMutationActionIdV1Schema>;
   input: Record<string, unknown>;
@@ -914,6 +947,7 @@ export function buildReviewCommentMutationEventEnvelopeV1(params: Readonly<{
     }>
 )): StoredJsonContentEnvelope {
   const scope = lazyZodSchema(() => ReviewCommentScopeV1Schema.check(z.superRefine(validateReviewCommentScopeV1))).parse({
+    reviewId: params.input.reviewId,
     projectId: params.input.projectId,
     workspace: params.input.workspace,
   });
@@ -928,6 +962,7 @@ export function buildReviewCommentMutationEventEnvelopeV1(params: Readonly<{
   const payload = ReviewCommentEventSensitivePayloadV1Schema.parse({
     v: 1,
     requestBinding,
+    ...(params.event?.reviewId === undefined ? {} : { binding: eventBinding(params.event, requestBinding) }),
     details,
   });
   return params.mode === 'plain'
@@ -1003,7 +1038,8 @@ export function openReviewCommentEventSensitiveEnvelopeV1(params: Readonly<{
   if (!payload.success) {
     return { status: 'locked', reason: 'content_unreadable', event, bound };
   }
-  if (!exactJson(payload.data.requestBinding, bound.binding.requestBinding)) {
+  if (!exactJson(payload.data.requestBinding, bound.binding.requestBinding)
+    || (event.reviewId !== undefined && !exactJson(payload.data.binding, bound.binding))) {
     return { status: 'locked', reason: 'event_binding_mismatch', event, bound };
   }
   return {

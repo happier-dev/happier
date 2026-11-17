@@ -13,16 +13,17 @@ export const ReviewCommentWorkspaceV1Schema = lazyZodSchema(() => z.strictObject
 export type ReviewCommentWorkspaceV1 = z.infer<typeof ReviewCommentWorkspaceV1Schema>;
 
 export const ReviewCommentScopeV1Schema = lazyZodSchema(() => z.strictObject({
+  reviewId: z.optional(z.string().check(z.minLength(1))),
   projectId: z.optional(z.string().check(z.minLength(1))),
   workspace: z.optional(ReviewCommentWorkspaceV1Schema),
 }));
 export type ReviewCommentScopeV1 = z.infer<typeof ReviewCommentScopeV1Schema>;
 
 export function validateReviewCommentScopeV1(
-  value: { projectId?: string; workspace?: ReviewCommentWorkspaceV1 },
+  value: { reviewId?: string; projectId?: string; workspace?: ReviewCommentWorkspaceV1 },
   ctx: z.core.$RefinementCtx,
 ): void {
-  if (!value.projectId && !value.workspace) {
+  if (!value.reviewId && !value.projectId && !value.workspace) {
     ctx.addIssue({ code: "custom", path: ['workspace'], message: 'A Project or machine workspace is required' });
   }
 }

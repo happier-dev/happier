@@ -170,6 +170,7 @@ export type ReviewCommentOperationErrorCodeV1 = z.infer<typeof ReviewCommentOper
 export const REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1 = 200;
 
 export const ReviewCommentListRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  reviewId: ReviewCommentScopeV1Schema.shape.reviewId,
   workspace: z.optional(ReviewCommentWorkspaceV1Schema),
   workspaceId: z.optional(z.string().check(z.minLength(1))),
   projectId: z.optional(z.string().check(z.minLength(1))),
@@ -195,6 +196,7 @@ export const ReviewCommentListActionRequestV1Schema = lazyZodSchema(() => (<T ex
 })));
 
 export const ReviewCommentGetRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  reviewId: ReviewCommentScopeV1Schema.shape.reviewId,
   commentId: z.string().check(z.minLength(1)),
   includeHistory: z._default(z.boolean(), true),
 }));

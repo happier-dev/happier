@@ -1,5 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex } from '@noble/hashes/utils';
+import { hmac } from '@noble/hashes/hmac';
 
 import { encodeBase64 } from './base64.js';
 
@@ -32,6 +33,13 @@ export function computeCanonicalDomainSeparatedDigest(
     parts: readonly (string | Uint8Array)[],
 ): string {
     return encodeBase64(sha256(encodeCanonicalLengthDelimited([domain, ...parts])), 'base64url');
+}
+
+/** Private equality commitment at a keyholding resource owner, without exposing the key. */
+export function computeCanonicalDomainSeparatedKeyedDigest(
+    key: Uint8Array, domain: string, parts: readonly (string | Uint8Array)[],
+): string {
+    return encodeBase64(hmac(sha256, key, encodeCanonicalLengthDelimited([domain, ...parts])), 'base64url');
 }
 
 /**
