@@ -106,7 +106,7 @@ const repairUntilItPasses: WorkflowDefinitionV1 = {
 const morningDigest: WorkflowDefinitionV1 = {
   version: 1, defaults: {}, inputs: [],
   blocks: [
-    agent('digest', 'Prepare the morning digest', 'scout', "Summarize yesterday's commits, open pull requests and failing checks in this project; lead with what needs me.", [], true),
+    agent('digest', 'Prepare the morning digest', 'scout', "Summarize yesterday's commits, open pull requests and failing checks in this project; lead with what needs me. Use the read-only Happier Actions for project and SCM data: discover them with action_spec_search, inspect their inputs with action_spec_get, then call action_execute. Keep verified project facts when another source is unavailable, and identify what could not be read. Do not request shell access or run git/gh commands.", [], true),
     { kind: 'action', id: 'notify', name: 'Tell me about it', actionId: 'notifications.notify_me',
       input: { title: literal('Morning digest'), message: result('digest') } },
   ],

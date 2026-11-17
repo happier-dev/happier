@@ -271,7 +271,8 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
       // Happier Actions enforce their own enablement, authorization, and
       // configurable confirmation. The provider layer only applies the
       // effective permission-mode ceiling before delegating to that owner.
-      return { decision: happierActionPermission.decision };
+      return resolveNativePermissionImmediateDecision(
+        { decision: happierActionPermission.decision }, context?.nativeChoices, happierActionPermission);
     }
     if (mcpTool) {
       return resolveNativePermissionImmediateDecision(

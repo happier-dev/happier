@@ -1315,6 +1315,11 @@ identity. The existing ACP permission path cancels these requests before policy
 or execution; a launch-time tool policy is not a complete name inventory.
 Uniquely recoverable names still reach the live host policy owner, and built-in
 Happier binding names remain governed by the Action owner.
+For a recognized Happier Action, Session and detached Run permission handlers
+carry that owner's permission-mode decision into the exact offered native
+one-call choice. This does not grant shell access or bypass the Action's own
+authorization and confirmation; ambiguous or unavailable offered choices remain
+pending.
 
 In 0.3 development source, OpenCode's server runtime requires the Happier MCP
 bridge only when the Session or Run open request supplies it. Detached Runs may

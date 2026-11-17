@@ -134,7 +134,8 @@ function resolveExecutionRunImmediateDecision(args: Readonly<{
     return { decision: shouldAlwaysApproveExecutionRunTool(args.toolName) ? 'approved' : 'denied' };
   }
 
-  if (actionPermission.decision) return { decision: actionPermission.decision };
+  if (actionPermission.decision) return resolveNativePermissionImmediateDecision(
+    { decision: actionPermission.decision }, args.context?.nativeChoices, actionPermission);
 
   if (shouldAlwaysApproveExecutionRunTool(args.toolName)) return { decision: 'approved' };
 

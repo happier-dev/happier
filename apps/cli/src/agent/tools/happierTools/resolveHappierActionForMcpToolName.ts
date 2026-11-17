@@ -57,14 +57,15 @@ export function resolveHappierActionForMcpToolName(params: Readonly<{
   return readActionIds().has(actionId as ActionId) ? actionId as ActionId : null;
 }
 
+export type HappierActionPermissionDecision =
+  | Readonly<{ decision: 'approved' | 'denied'; actionId: ActionId }>
+  | Readonly<{ decision: null; actionId: null }>;
+
 export function resolveProviderPermissionForHappierAction(params: Readonly<{
   toolName: string;
   input: unknown;
   permissionMode: PermissionMode;
-}>): Readonly<{
-  decision: 'approved' | 'denied' | null;
-  actionId: ActionId | null;
-}> {
+}>): HappierActionPermissionDecision {
   const actionId = resolveHappierActionForMcpToolName({
     toolName: params.toolName,
     input: params.input,

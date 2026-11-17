@@ -10,6 +10,16 @@ const nativeChoices: NativePermissionChoicesV1 = { source: 'native-fixture', req
     response: { approved: true, decision: 'approved' } },
 ] };
 
+it('applies the Happier Action owner decision through the exact native offer without granting shell access', () => {
+  const f = fixture('read-only');
+  const context = { nativeChoices, source: 'native_tool_approval_once' };
+  expect(f.handler.getImmediateDecision('discovery', 'mcp__happier__action_spec_search', { query: 'scm' }, context))
+    .toEqual({ decision: 'approved', nativeChoice: { requirementId: nativeChoices.requirementId, choiceId: 'one-native-choice' } });
+  expect(f.handler.getImmediateDecision('write', 'mcp__happier__action_execute',
+    { actionId: 'daemon.filesystem.writeFile' }, context)).toMatchObject({ decision: 'denied' });
+  expect(f.handler.getImmediateDecision('shell', 'Bash', { command: 'pwd' }, context)).toBeNull();
+});
+
 function fixture(permissionMode = 'default') {
   let state: AgentState = {};
   const store = new AgentStateRequestStore({ logPrefix: '[Run native permission test]', target: {

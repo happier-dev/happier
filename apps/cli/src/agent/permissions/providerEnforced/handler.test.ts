@@ -13,6 +13,8 @@ import { createPluginSessionHandleCapabilitiesFactory } from '@/session/services
 import { DeferredApiSessionClient } from '@/agent/runtime/startup/DeferredApiSessionClient';
 import { createRunScopedExecutionPermissionHandler } from '@/agent/executionRuns/policy/runScopedExecutionPermissionHandler';
 import { __resetToolTraceForTests } from '@/agent/tools/trace/toolTrace';
+import { createMcpPermissionChoices } from '@/mcp/runtime/mcpPermissionChoices';
+import { createDeferred } from '@/testkit/async/deferred';
 import { ServerBoundPermissionRpcHandlerManager } from '../testkit/serverBoundPermissionRpcHandlerManager';
 import type { AgentState } from '@/api/types';
 import { createNativeAgentSessionServices } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionInteractions';
@@ -861,6 +863,31 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     expect(handler.getImmediateDecision('execution-run-1', 'mcp__happier__execution_run_start', {})).toEqual({ decision: 'approved' });
     expect(handler.getImmediateDecision('execution-run-2', 'mcp__happier__subagents_delegate_start', {})).toEqual({ decision: 'approved' });
     expect(handler.getImmediateDecision('perm-1', 'bash', { command: 'pwd' })).toBeNull();
+    const nativeChoices = createMcpPermissionChoices('first-party-discovery', null);
+    expect(handler.getImmediateDecision('native-discovery', 'mcp__happier__action_spec_search', {}, { nativeChoices }))
+      .toEqual({ decision: 'approved', nativeChoice: { requirementId: nativeChoices.requirementId, choiceId: 'approved' } });
+    expect(handler.getImmediateDecision('native-shell', 'bash', { command: 'pwd' }, { nativeChoices })).toBeNull();
+  });
+
+  it('applies the native Happier Action choice before completing the Session permission request', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as never, { logPrefix: '[native Action]' });
+    const nativeChoices = createMcpPermissionChoices('native-action-application', null);
+    const expected = { decision: 'approved', nativeChoice: { requirementId: nativeChoices.requirementId, choiceId: 'approved' } };
+    const started = createDeferred<void>();
+    const application = createDeferred<void>();
+    const pending = handler.handleToolCall('native-action', 'mcp__happier__action_spec_search', { query: 'scm' }, {
+      nativeChoices, acknowledgeDecisionApplication: async decision => {
+        expect(decision).toEqual(expected);
+        started.resolve();
+        await application.promise;
+      },
+    });
+    try {
+      await started.promise;
+      expect(await settledState(pending)).toBe('pending');
+    } finally { application.resolve(); }
+    await expect(pending).resolves.toEqual(expected);
   });
 
   it('keeps the immediate-decision probe side-effect free until handleToolCall records the approval', async () => {

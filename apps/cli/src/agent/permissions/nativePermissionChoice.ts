@@ -5,6 +5,7 @@ import {
 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import type { ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import type { PermissionResult } from './BasePermissionHandler';
+import type { HappierActionPermissionDecision } from '@/agent/tools/happierTools/resolveHappierActionForMcpToolName';
 import { deepEqual } from '@/utils/deterministicJson';
 
 /** Omitted fields in a native observation are unobserved, never an invented vendor answer. */
@@ -96,18 +97,18 @@ export function resolvePlainNativePermissionChoice(
     }
 }
 
-/** MCP policy may select an exact offered grant; other native prompts still require a person. */
+/** MCP and Happier Action owners may select an exact offered grant; other native prompts require a person. */
 export function resolveNativePermissionImmediateDecision<T extends PermissionResult>(
     decision: T | null,
     nativeChoices: NativePermissionChoicesV1 | undefined,
-    mcpTool?: ResolvedMcpToolIdentityV1 | null,
+    policyOwner?: ResolvedMcpToolIdentityV1 | Extract<HappierActionPermissionDecision, { actionId: string }> | null,
 ): PermissionResult | null {
     if (!nativeChoices || !decision || decision.nativeChoice) return decision;
     if (decision.decision === 'denied' || decision.decision === 'abort') {
         const answer = resolveMediatedNativePermissionChoice(nativeChoices, decision.decision === 'abort' ? 'abort' : 'deny', 'request');
         return answer ? resolveNativePermissionChoice(nativeChoices, answer)?.result ?? decision : decision;
     }
-    if (!mcpTool) return null;
+    if (!policyOwner) return null;
     const answer = resolveMediatedNativePermissionChoice(nativeChoices, 'allow',
         decision.decision === 'approved_for_session' ? 'session' : 'request');
     return answer ? resolveNativePermissionChoice(nativeChoices, answer)?.result ?? null : null;
