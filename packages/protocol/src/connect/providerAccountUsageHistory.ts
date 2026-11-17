@@ -68,7 +68,7 @@ export function projectProviderAccountUsageQuotaReadV1(input: Readonly<{ input: 
   // outward Action boundary validates serialized results.
   if (input.daySummaries || recentRead) {
     result.pageFacts = getProviderAccountUsageQuotaPageFactsV1({ ...result,
-      history: exactHistory ?? { entries: [], nextCursor: null } }, operands, input.daySummaries, range);
+      history: recentRead ? exactHistory ?? { entries: [], nextCursor: null } : history }, operands, input.daySummaries, range);
     if (result.pageFacts) {
       result.pageFacts = { ...result.pageFacts, historyStatus: partial ? 'partial' : 'complete',
         ...(recentRead ? {
@@ -90,7 +90,7 @@ export function projectProviderAccountUsageQuotaReadV1(input: Readonly<{ input: 
 /** Retained meter endpoints survive detail retention; exact admitted observations win an overlapping endpoint. */
 function mergeRetainedUsageSnapshots(details: readonly ProviderAccountUsageSnapshotV1[] | undefined,
   retained: readonly ProviderAccountUsageSnapshotV1[] | undefined): readonly ProviderAccountUsageSnapshotV1[] | undefined {
-  if (!retained?.length) return details ?? retained;
+  if (!retained?.length) return details;
   const key = (snapshot: ProviderAccountUsageSnapshotV1, meterId: string) => JSON.stringify([snapshot.recordId, snapshot.fetchedAtMs, snapshot.observedAtMs, meterId]);
   const remaining = new Set<string>();
   for (const snapshot of retained) for (const meter of snapshot.meters) remaining.add(key(snapshot, meter.meterId));

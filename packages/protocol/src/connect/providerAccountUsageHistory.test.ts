@@ -12,6 +12,23 @@ describe('opened accepted provider history', () => {
   const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey, providerId: 'test', accountSubject: { kind: 'providerSubject', id: 'account' }, observedAtMs: 100, fetchedAtMs: 100, staleAfterMs: 1000, source: 'providerHttp', confidence: 'confirmed', meters: [], subscription: { status: 'subscribed', renewal: 'off', observedAtMs: 100, staleAfterMs: 1000, currentPeriodEndAtMs: 200 } });
   const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
   const metadata = { fetchedAt: 100, staleAfterMs: 1000, status: 'ok' as const };
+  it('does not settle legacy projection history from an empty summary response', () => {
+    const source = { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' as const };
+    const input = { source, projection: { range: { startAtMs: 0, endAtMs: 2000 }, resolution: 'accepted_observations' as const } };
+    for (const daySummaries of [undefined, []]) {
+      const pending = projectProviderAccountUsageQuotaReadV1({ input, current: snapshot, daySummaries, nowMs: 150 });
+      expect(pending.unusedCapacity).toEqual({ historyStatus: 'not_loaded', windows: [] });
+      expect(pending.pageFacts).toBeUndefined();
+      const complete = projectProviderAccountUsageQuotaReadV1({ input, current: snapshot, daySummaries,
+        history: { entries: [], nextCursor: null }, nowMs: 150 });
+      expect(complete.unusedCapacity).toEqual({ historyStatus: 'returned_page', windows: [] });
+      expect(complete.pageFacts?.historyStatus).toBe('complete');
+      const partial = projectProviderAccountUsageQuotaReadV1({ input, current: snapshot, daySummaries,
+        history: { entries: [], nextCursor: { id: 'pending', observedAtMs: 100 } }, nowMs: 150 });
+      expect(partial.unusedCapacity?.historyStatus).toBe('partial');
+      expect(partial.pageFacts?.historyStatus).toBe('partial');
+    }
+  });
   it('projects summary days and ended windows while deriving exact recent pace independently', () => {
     const source = { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' as const };
     const sample = (at: number, used: number, resetAtMs = 2000) => ProviderAccountUsageSnapshotV1Schema.parse({ ...snapshot,
