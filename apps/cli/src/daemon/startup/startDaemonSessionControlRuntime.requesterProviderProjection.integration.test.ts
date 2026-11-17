@@ -194,7 +194,7 @@ it.each(['providers.models.projection', 'providers.models.refresh', 'providers.c
         const result = await execute();
         const expected = inventory ? { supportedServiceIds: ['acme.managed-run/accounts'], items: [] }
           : actionId === 'providers.connections.describe' ? { connections: [{ connectionId: 'run-gateway', authorized: true }] }
-          : actionId === 'providers.models.list' ? { connectionId: 'run-gateway', models: [],
+          : actionId === 'providers.models.list' ? { connectionId: 'run-gateway', models: [{ id: 'example', source: 'static' }],
             sourceCatalogs: [{ purpose: 'upstream', catalogObserved: false, models: [] }] }
           : { groups: [{ connectionName: 'Gateway', rows: [{ descriptor: { id: 'example' } }] }] };
         expect(result, JSON.stringify({ actionId, result })).toMatchObject({ ok: true,
