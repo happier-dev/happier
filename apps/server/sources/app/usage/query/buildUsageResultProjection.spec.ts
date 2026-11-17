@@ -37,7 +37,7 @@ describe("canonical usage result projection", () => {
         const evidence = projectUsageCoverageEvidence(sourceRows);
         const expected = buildUsageResultProjection({ contributions: sourceRows, preparedContributions: prepared,
             evidenceRows: [], coverageEvidence: evidence, coverageReasons: sourceRows.flatMap(value => value.coverageReasons),
-            request, deferCost: true }).coverage;
+            request }).coverage;
         const dayFacts = prepared.map((value, index) => projectUsageResultCoverageFacts([value], request,
             sourceRows[index]!.coverageReasons));
         const retained = JSON.parse(JSON.stringify(dayFacts)) as typeof dayFacts;
@@ -49,7 +49,7 @@ describe("canonical usage result projection", () => {
         const nextEvidence = projectUsageCoverageEvidence([first, corrected]);
         const nextExpected = buildUsageResultProjection({ contributions: [first, corrected],
             preparedContributions: [prepared[0]!, correctedPrepared], evidenceRows: [], coverageEvidence: nextEvidence,
-            coverageReasons: first.coverageReasons, request, deferCost: true }).coverage;
+            coverageReasons: first.coverageReasons, request }).coverage;
         expect(projectUsageResultCoverage(mergeUsageResultCoverageFacts(nextFacts), nextEvidence, request)).toEqual(nextExpected);
         expect(nextExpected.reasons).not.toContain("ambiguous_overlap");
     });
@@ -192,22 +192,11 @@ describe("canonical usage result projection", () => {
         ]);
     });
 
-    it("retains named monetary facts without recovering an unavailable presentation basis", () => {
-        const unknown = { ...row("unknown-basis", 10), cost: { ...createEmptyUsageCost(), reportedUsd: 2 } };
-        const result = buildUsageResultProjection({ contributions: [unknown], evidenceRows: [unknown], coverageReasons: [], request: { granularity: "day", timeZoneOffsetMinutes: 0, includeSeries: true, topLimit: 20 } });
-        expect(result.costFacts).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "reported", amountUsd: 2 })]));
-        expect(result.costPresentation).toBeUndefined();
-    });
-    it("groups cost kinds without blending them and preserves vendor token categories", () => {
+    it("preserves ranked coverage before the canonical money projection", () => {
         const api = { ...row("api", 10), cost: { ...createEmptyUsageCost(), reportedUsd: 0.2, costSource: "provider_reported_api_equivalent" as const } };
         const unpriced = row("unpriced", 20);
         const result = buildUsageResultProjection({ contributions: [api, unpriced], evidenceRows: [api, unpriced], coverageReasons: [], request: { granularity: "day", timeZoneOffsetMinutes: 0, includeSeries: true, topLimit: 1 }, ranked: [{ dimension: "model", totalEntries: 2, returnedEntries: 1, complete: false }] });
-        expect(result.costFacts).toEqual(expect.arrayContaining([
-            expect.objectContaining({ kind: "reported", source: "provider_reported_api_equivalent", amountUsd: 0.2, tokens: expect.objectContaining({ input: 10, cacheRead: 5, total: 10 }) }),
-            expect.objectContaining({ kind: "unpriced", amountUsd: null, tokens: expect.objectContaining({ total: 20 }) }),
-        ]));
-        expect(result.costPresentation).toBeUndefined();
-        expect(result.coverage.reasons).toEqual(expect.arrayContaining(["unpriced_tokens", "ranked_truncation"]));
+        expect(result.coverage.reasons).toEqual(expect.arrayContaining(["ranked_truncation"]));
     });
 
     it("uses producer status even for zero rows and keeps absent evidence unknown", () => {
@@ -220,14 +209,6 @@ describe("canonical usage result projection", () => {
         expect(unknown.coverage.status).toBe("unknown");
     });
 
-    it("distinguishes a proven zero price from defaults and separates invoice from vendor reported money", () => {
-        const free = { ...row("free", 10), cost: { ...createEmptyUsageCost(), estimatedUsd: 0, costSource: "pricing_estimate" as const } };
-        const paid = { ...row("paid", 20), cost: { ...createEmptyUsageCost(), reportedUsd: 2, invoiceUsd: 1, costSource: "provider_reported_api_equivalent" as const } };
-        const result = buildUsageResultProjection({ contributions: [free, paid], evidenceRows: [free, paid], coverageReasons: [], request: { granularity: "day", timeZoneOffsetMinutes: 0, includeSeries: true, topLimit: 20 } });
-        expect(result.costFacts.map((fact) => [fact.kind, fact.amountUsd])).toEqual(expect.arrayContaining([["estimated", 0], ["reported", 2], ["invoice", 1]]));
-        expect(result.costFacts.some((fact) => fact.kind === "unpriced")).toBe(false);
-        expect(result.costPresentation).toBeUndefined();
-    });
     it("projects every selected row's categories only with witnessed overlap semantics", () => {
         const inclusive = { ...row("inclusive", 120), tokens: { input: 100, output: 20, reasoning: 5, cacheRead: 30, cacheWrite: 0, total: 120 }, metadata: { usageAccounting: { inputIncludesCache: true, outputIncludesReasoning: true } } };
         const result = buildUsageResultProjection({ contributions: [inclusive], evidenceRows: [inclusive], coverageReasons: [], request: { granularity: "day", timeZoneOffsetMinutes: 0, includeSeries: true, topLimit: 20 } });

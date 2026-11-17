@@ -132,7 +132,8 @@ function normalizeScopedUsageMetadata(value: unknown, admittedEvidence?: ScopedU
 /** Normalize historical identity and coverage without token or monetary row bodies. */
 export function toScopedUsageEvidenceRow<Row extends Pick<ScopedUsageEvidenceDbRow, 'metadata' | 'accountingEvidence'>>(row: Row):
     Omit<Row, 'metadata' | 'accountingEvidence'> & Pick<ScopedUsageEvidenceRow, 'metadata' | 'accountingEvidence'> {
-    return { ...row, ...normalizeScopedUsageMetadata(row.metadata, row.accountingEvidence) };
+    const { metadata, accountingEvidence, ...facts } = row;
+    return { ...facts, ...normalizeScopedUsageMetadata(metadata, accountingEvidence) };
 }
 
 /** One batch shares admitted native identity while retaining each event's diagnostics and attribution. */

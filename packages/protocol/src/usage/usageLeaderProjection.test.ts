@@ -121,14 +121,15 @@ it('preserves half-open, overlapping and empty chart ranges with exact monetary 
     const result = projectUsagePageCost(response, 'reported');
     expect(result.accounting.contributions).toBe(contributions);
     // Owner ruling 2026-10-31 L0 corrects IEEE-order boundaries in the shared exact baseline.
+    // Empty admitted ranges use the accounting owner's zero population identity.
     expect(result.accounting.series!.map(bucket => bucket.cost.effectiveUsd))
-        .toEqual([1e16 + 4, 1e16 + 2, undefined, 1, undefined, 1e16, 1e16 + 4]);
+        .toEqual([1e16 + 4, 1e16 + 2, 0, 1, 0, 1e16, 1e16 + 4]);
     expect(result.amountUsd).toBe(1e16 + 4);
     const changed = projectUsagePageCost({ ...response,
         contributions: contributions.map((row, index) => index === 0 ? { ...row, observedAtMs: 1 } : row),
     }, 'reported');
     expect(changed.accounting.series!.map(bucket => bucket.cost.effectiveUsd))
-        .toEqual([1e16 + 4, 2, undefined, 1, undefined, undefined, 1e16 + 4]);
+        .toEqual([1e16 + 4, 2, 0, 1, 0, 0, 1e16 + 4]);
 });
 
 it('ranks counted contributions without copying their unrelated evidence fields', () => {

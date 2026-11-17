@@ -66,6 +66,25 @@ function row(id: string, total: number, metadata: CapturedRow['metadata'], optio
 }
 
 describe('captured usage query projection', () => {
+    it('conserves decimal source facts and selected totals through rich and compact query projection', () => {
+        const rows = [0.1, 0.2, 0.3].map((reportedCostUsd, index) => ({
+            ...row(String(index), 10, { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } }),
+            reportedCostUsd, estimatedCostUsd: null, invoiceCostUsd: null, costSource: 'provider_reported',
+        }));
+        const snapshot: UsageAnalyticsSnapshot = { rows, legacyReports: [],
+            priceCatalog: { fetchEnabled: false, stored: null }, messageCountsBySession: undefined };
+        const query = UsageAnalyticsQueryRequestSchema.parse({ costMode: 'reported', includeSeries: false });
+        for (const grouped of [false, true]) {
+            const population = projectUsageAnalyticsPopulation(snapshot, query);
+            const preparation = prepareUsageAnalyticsProjectionSteps(snapshot, query,
+                resolveCapturedUsageModelPriceCatalog(snapshot.priceCatalog), population, undefined, grouped);
+            let next = preparation.next();
+            while (!next.done) next = preparation.next();
+            const result = next.value.value;
+            expect(resolveEffectiveUsageCostUsd(result.totals.cost, 'reported')).toBe(0.6);
+            expect(result.costFacts?.find(fact => fact.kind === 'reported')?.amountUsd).toBe(0.6);
+        }
+    });
     it.each(['auto', 'reported', 'estimated', 'api_equivalent'] as const)(
         'measures an empty accounting population as zero through JSON and page-cost selection in %s mode', costMode => {
             const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 200 }, costMode, includeSeries: false });
@@ -177,7 +196,7 @@ describe('captured usage query projection', () => {
             const preparedContributions = buildUsageResultProjection({ contributions: population.totalContributions,
                 evidenceRows: [], coverageEvidence,
                 coverageReasons: population.totalContributions.flatMap(row => row.coverageReasons ?? []),
-                request: query, deferCost: true }).contributions;
+                request: query }).contributions;
             const slim = { ...population, evidenceRows: [], coverageEvidence, preparedContributions,
                 totalContributions: population.totalContributions.map(({ metadata: _metadata,
                     accountingEvidence: _accountingEvidence, ...contribution }) => contribution) };

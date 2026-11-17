@@ -244,14 +244,9 @@ export function* prepareUsageAnalyticsProjectionSteps(snapshot: UsageAnalyticsPr
         preparedContributions: population.preparedContributions,
         coverageReasons: totalContributions.flatMap((row) => row.coverageReasons ?? []),
         timelineTruncated: timelineTruncatedFor(request.topLimit), request, ranked: rankedFor(request),
-        // Repricing below owns the published cost facts and presentation for
-        // rich detail too. Raw per-row facts would be immediately replaced.
-        deferCost: true,
     });
-    if (!projection.costPresentation) {
-        const { effectiveUsd: _selected, ...rawCost } = totals.cost;
-        totals.cost = rawCost;
-    }
+    const { effectiveUsd: _selected, ...rawCost } = totals.cost;
+    totals.cost = rawCost;
     yield;
     const series = request.includeSeries
         ? buildSeries(totalContributions, request.granularity, request.timeZoneOffsetMinutes, costMode)

@@ -1,13 +1,12 @@
-import type { UsageAccountingCoverageReason, UsageAnalyticsBreakdownDimension, UsageAnalyticsContribution, UsageAnalyticsCostFact, UsageAnalyticsCoverage, UsageAnalyticsQueryRequest, UsageAnalyticsQueryResponse, UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import type { UsageAccountingCoverageReason, UsageAnalyticsBreakdownDimension, UsageAnalyticsContribution, UsageAnalyticsCoverage, UsageAnalyticsQueryRequest, UsageAnalyticsQueryResponse, UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { projectUsageAnalyticsCoverage } from '@happier-dev/protocol/usage/usageLeaderProjection';
 import { projectUsageContributionTokenCategories } from '@happier-dev/protocol/usage/usageActivityProjectionFacts';
 import { readUsageRequestAttribution } from "@happier-dev/protocol/usage/usageAnalyticsContracts";
 import { isScopedUsageTurnDelta, readScopedUsageAccountingEvidence } from './scopedUsageEventRow';
-import { resolveUsageContributionDimensionKey, resolveUsageCostBasis, resolveUsageCostFacts, resolveUsageCostMode } from "@happier-dev/protocol/usage/usageCost";
+import { resolveUsageContributionDimensionKey } from "@happier-dev/protocol/usage/usageCost";
 import { resolveUsageTokenCategories } from "@happier-dev/protocol/usage/usageTokenCategories";
 import { ProviderConnectionIdSchema, ProviderContributionKeySchema } from "@happier-dev/protocol/providers/ids";
 
-import { addUsageMeasuredTokens } from "@happier-dev/protocol/usage/usageAggregation";
 import type { ScopedUsageContribution, ScopedUsageEventRow } from "./resolveScopedUsageContributions";
 import { resolveUsageContributionSourceContext } from "./resolveScopedUsageContributions";
 import { projectUsageCoverageEvidence, type UsageCoverageEvidence } from './projectUsageCoverageEvidence';
@@ -50,8 +49,6 @@ export interface UsageResultProjectionInput {
     request: UsageAnalyticsQueryRequest;
     ranked?: readonly RankedCoverage[];
     timelineTruncated?: boolean;
-    /** The compact summary owns money projection before this internal result is delivered. */
-    deferCost?: boolean;
 }
 
 /** Resolve one folded row once; retained facts contain no source metadata. */
@@ -70,23 +67,6 @@ function projectScopedUsageContributionWithCategories(row: ScopedUsageContributi
         workspaceId: row.workspaceId, source: row.source, sourceContext: resolveUsageContributionSourceContext(row), tokens: row.tokens, cost: row.cost,
         ...(categories ? { tokenCategories: categories } : {}),
     };
-}
-
-function costFactsForRow(row: ScopedUsageContribution): UsageAnalyticsCostFact[] {
-    const { accounting } = readScopedUsageAccountingEvidence(row);
-    const complete = accounting?.status === "available" && accounting.historyComplete === true && !row.coverageReasons?.length;
-    const base = {
-        currency: row.cost.currency,
-        tokens: row.tokens,
-        eventCount: 1,
-        asOfMs: accounting?.asOfMs ?? row.observedAt.getTime(),
-        complete,
-    };
-    const facts: UsageAnalyticsCostFact[] = resolveUsageCostFacts(row.cost).map((fact) => ({
-        ...base, ...fact, complete: complete && (fact.kind !== "estimated" || row.modelId !== null),
-    }));
-    if (facts.length === 0 && (row.tokens.total === null || row.tokens.total > 0)) facts.push({ ...base, kind: "unpriced", amountUsd: null, source: "none", complete: false });
-    return facts;
 }
 
 function createUsageCoverageProjector(coverageReasons: readonly UsageAccountingCoverageReason[],
@@ -142,14 +122,13 @@ export function mergeUsageResultCoverageFacts(parts: readonly UsageResultCoverag
 }
 
 function createUsageResultCoverageProjector(facts: UsageResultCoverageFacts, evidence: UsageCoverageEvidence,
-    request: UsageAnalyticsQueryRequest, costReasons: readonly UsageAccountingCoverageReason[] = []) {
+    request: UsageAnalyticsQueryRequest) {
     const reasons = new Set(facts.coverageReasons);
     if (facts.unknownTokenCategories) reasons.add('unknown_token_categories');
     const missing = new Set(facts.missingDimensions);
     const missingDimensions = coverageDimensions(request).filter(dimension => missing.has(dimension));
     if (missing.has('model')) reasons.add('unattributed_model');
     for (const reason of evidence.reasons) reasons.add(reason);
-    for (const reason of costReasons) reasons.add(reason);
     const sourceRows = evidence.sources;
     const historyComplete = sourceRows.length > 0
         && sourceRows.every(source => source.status === 'available' && source.historyComplete === true)
@@ -166,11 +145,9 @@ export function projectUsageResultCoverage(facts: UsageResultCoverageFacts, evid
 
 /** Projects selected canonical contributions; it never reconciles or admits observations. */
 export function buildUsageResultProjection(input: UsageResultProjectionInput): {
-    costFacts: UsageAnalyticsCostFact[];
     coverage: UsageAnalyticsCoverage;
     contributions: NonNullable<UsageAnalyticsQueryResponse["contributions"]>;
     tokenCategories?: UsageObservationTokens;
-    costPresentation?: UsageAnalyticsQueryResponse["costPresentation"];
     projectCoverage: (request: UsageAnalyticsQueryRequest, ranked: readonly RankedCoverage[], timelineTruncated: boolean) => UsageAnalyticsCoverage;
 } {
     const perContributionCategories = input.preparedContributions
@@ -180,40 +157,13 @@ export function buildUsageResultProjection(input: UsageResultProjectionInput): {
     const tokenCategories = projectUsageContributionTokenCategories(perContributionCategories.map(tokenCategories => ({ tokenCategories: tokenCategories ?? undefined })));
     const ranked = [...input.ranked ?? []];
     const evidence = input.coverageEvidence ?? projectUsageCoverageEvidence(input.evidenceRows);
-    const costReasons = new Set<UsageAccountingCoverageReason>();
-    const groupedFacts = new Map<string, UsageAnalyticsCostFact>();
-    if (!input.deferCost) for (const row of input.contributions) {
-        for (const fact of costFactsForRow(row)) {
-            if (fact.kind === "unpriced") costReasons.add("unpriced_tokens");
-            const key = JSON.stringify([fact.kind, fact.currency, fact.source]);
-            const previous = groupedFacts.get(key);
-            groupedFacts.set(key, previous ? {
-                ...fact,
-                amountUsd: fact.amountUsd === null || previous.amountUsd === null ? null : fact.amountUsd + previous.amountUsd,
-                tokens: addUsageMeasuredTokens(previous.tokens, fact.tokens),
-                eventCount: previous.eventCount + fact.eventCount,
-                asOfMs: Math.max(previous.asOfMs, fact.asOfMs),
-                complete: previous.complete && fact.complete,
-            } : fact);
-        }
-    }
-    // Source/category admission is shared; only the requested ranking and
-    // dimension badge varies between output demands over this population.
-    const projectCoverage = createUsageResultCoverageProjector(coverageFacts, evidence, input.request, [...costReasons]);
-    const mode = resolveUsageCostMode(input.request.costMode);
-    const selected = input.deferCost ? [] : input.contributions.map((row) => resolveUsageCostBasis(row.cost, mode));
-    const first = selected[0];
-    const oneBasis = first && selected.every((fact) => fact !== null && fact.kind === first.kind && fact.currency === first.currency && fact.source === first.source);
-    const costPresentation = oneBasis ? {
-        mode, effectiveUsd: selected.reduce((sum, fact) => sum + fact!.amountUsd, 0), currency: first.currency, source: first.source,
-    } : undefined;
+    // Monetary facts and selection belong to the protocol pricing projection.
+    const projectCoverage = createUsageResultCoverageProjector(coverageFacts, evidence, input.request);
     return {
-        costFacts: [...groupedFacts.values()],
         coverage: projectCoverage(input.request, ranked, input.timelineTruncated === true),
         projectCoverage,
         contributions: input.preparedContributions ? [...input.preparedContributions]
             : input.contributions.map((row, index) => projectScopedUsageContributionWithCategories(row, perContributionCategories[index]!)),
         ...(tokenCategories ? { tokenCategories } : {}),
-        ...(costPresentation ? { costPresentation } : {}),
     };
 }
