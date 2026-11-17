@@ -798,7 +798,8 @@ includes arbitrary exception context.
 In 0.3 development, the shared native vendor-cause projector also retains decoded
 HTTP status, vendor code and an adapter's supplied retryability when the failure
 has no classified refusal. Pi supplies its existing retryability decision;
-OpenCode uses the same projector. A known typed refusal remains authoritative,
+OpenCode forwards native retryability when supplied. Both use the same projector.
+A known typed refusal remains authoritative,
 and absent gateway facts do not establish a cause.
 
 

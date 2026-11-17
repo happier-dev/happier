@@ -96,6 +96,7 @@ export function buildOpenCodeProviderErrorIssue(params: Readonly<{
   const failureCause = safeOpenCodeFailureCause(projectProviderSessionFailureCause(params.error, params.phase ?? 'turn', {
     code: vendorFacts.code ?? normalizeString(record?.code ?? data?.code ?? response?.code ?? responseError?.type),
     httpStatus: httpStatus ?? vendorFacts.httpStatus,
+    ...(typeof data?.isRetryable === 'boolean' ? { retryable: data.isRetryable } : {}),
     authenticationEvidence: [nativeAuthEvidence, record?.name, data?.name, data?.message, message]
       .map(normalizeString).join('\n'),
   }) ?? projectSessionRuntimeFailureCause(params.error, params.phase ?? 'turn', 'agent.turn'));

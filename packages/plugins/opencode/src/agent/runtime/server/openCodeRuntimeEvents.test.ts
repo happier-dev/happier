@@ -3,6 +3,15 @@ import { describe, expect, it } from 'vitest';
 import { buildOpenCodeProviderErrorIssue, projectOpenCodeTurnCancellationCause } from './openCodeRuntimeEvents.js';
 
 describe('projectOpenCodeTurnCancellationCause', () => {
+  it.each([true, false])('retains the native APIError retryability decision (%s)', (retryable) => {
+    const issue = buildOpenCodeProviderErrorIssue({ code: 'opencode_provider_error', occurredAt: 1,
+      error: { name: 'APIError', data: { statusCode: 503, isRetryable: retryable,
+        responseBody: JSON.stringify({ error: { code: 'overloaded_error' } }),
+      } },
+    });
+    expect(issue.failureCause).toMatchObject({ httpStatus: 503, providerErrorCode: 'overloaded_error', retryable });
+  });
+
   it.each(['invalid_api_key', 'invalid_request_error'])('projects OpenAI code %s without HTTP status', (code) => {
     const issue = buildOpenCodeProviderErrorIssue({ code: 'opencode_provider_error', occurredAt: 1,
       error: { name: 'APIError', data: { responseBody: JSON.stringify({ error: {
@@ -11,6 +20,7 @@ describe('projectOpenCodeTurnCancellationCause', () => {
     expect(issue).toMatchObject(code === 'invalid_api_key'
       ? { source: 'auth_error', failureCause: { failureReason: 'authentication_required', providerErrorCode: code } }
       : { source: 'agent_session_error', failureCause: { failureReason: 'unknown', providerErrorCode: code } });
+    expect(issue.failureCause).not.toHaveProperty('retryable');
   });
 
   it('decodes the Google SDK nested HTTP 400 body through the shared owner', () => {
