@@ -165,6 +165,8 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
     const profile = targetSettings.profile;
     const profileRow = targetSettings.profileRow;
     const profileSetsAction = approvalProfileSetsAction(profile, props.actionId);
+    // A profile shared with this person to use shows its values; only its editors get controls (05 S7 recipient).
+    const readOnly = inProfile && targetSettings.profileCapabilities?.canEdit === false;
     const writePolicy = useActionPolicyWriter(target);
     const scmRemoteConfirmPolicy = useSetting('scmRemoteConfirmPolicy');
     const rawSpawnPolicy = useSetting('sessionAgentSpawnPolicyV1');
@@ -380,7 +382,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                             ? t(profileSetsAction ? 'workflows.triggers.guided.profile.actionSetByProfile'
                                 : 'workflows.triggers.guided.profile.actionFollowsAccount')
                             : parseQualifiedPluginResourcePolicyId(entry.actionId) ? undefined : t('settingsActions.approvalHelpBody')}
-                        action={inProfile && profileRow && profileSetsAction ? (
+                        action={inProfile && profileRow && profileSetsAction && !readOnly ? (
                             <RoundButton
                                 testID={`settings-actions:action:${entry.actionId}:use-account-setting`}
                                 size="small"
@@ -393,7 +395,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                         {/* The loosening warning leads the section holding the Allowed choice, one per exact
                             key, so Keep Ask first restores only that surface. */}
                         {rows.map(({ target, testIDPrefix, controlState }) => (
-                            controlState.kind === 'approval' && controlState.approvalLooseningNotice ? (
+                            controlState.kind === 'approval' && controlState.approvalLooseningNotice && !readOnly ? (
                                 <ActionApprovalLooseningNotice
                                     key={`${target.id}:loosening`}
                                     target={props.target}
@@ -411,6 +413,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                                     accessibilityLabel={t(target.titleKey)}
                                     controlState={controlState}
                                     disabled={!entry.enabled || !available}
+                                    readOnly={readOnly}
                                     layout={shouldStackModeControl ? 'stacked' : 'inline'}
                                     onChange={(value) => handleTargetControlChange(target, value)}
                                 />
@@ -422,7 +425,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                                     testID={testIDPrefix}
                                     title={t(target.titleKey)}
                                     subtitle={getTargetSubtitle(target, controlState, entry.actionId)}
-                                    mode={available ? 'interactive' : 'info'}
+                                    mode={available && !readOnly ? 'interactive' : 'info'}
                                     disabled={!entry.enabled || !available}
                                     showChevron={false}
                                     subtitleAccessory={shouldStackModeControl ? targetModeControl : null}
@@ -510,7 +513,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                                 testIDPrefix={exposureTestIDPrefix}
                                 surfaceTitle={t(target.titleKey)}
                                 state={exposureState}
-                                disabled={!entry.enabled || !available}
+                                disabled={!entry.enabled || !available || readOnly}
                                 onChange={(value) => handleToolExposureChange(target, value)}
                             />
                         );

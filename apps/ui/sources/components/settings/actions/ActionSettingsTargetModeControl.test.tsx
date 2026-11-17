@@ -43,6 +43,16 @@ describe('ActionSettingsTargetModeControl', () => {
         expect(screen.findByTestId('resource:mode:off')?.props.accessibilityState.checked).toBe(true);
         expect(screen.findByTestId('resource:mode:allowed')?.props.accessibilityState.disabled).toBe(false);
     });
+    it('shows a use-only value as its word, with no choices to press', async () => {
+        const state = resolveActionSettingsTargetControlState({ settings: setActionApprovalOverride({
+            settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId: 'mcp.servers.signIn.start', surface: 'cli', approvalRequired: true,
+        }), actionId: 'mcp.servers.signIn.start', targetId: 'cli' });
+        const screen = await renderScreen(<ActionSettingsTargetModeControl testIDPrefix="shared" accessibilityLabel="Action availability"
+            controlState={state} readOnly onChange={() => { throw new Error('A use-only value must not change'); }} />);
+        expect(screen.findByTestId('shared:mode:value')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('settingsActions.modes.askFirst');
+        for (const choice of ['off', 'ask_first', 'allowed', 'useDefault']) expect(screen.findByTestId(`shared:mode:${choice}`)).toBeNull();
+    });
     it('offers Off, Ask first and Allowed, and returns an override to the inherited default', async () => {
         const screen = await renderScreen(<ControlHarness Control={ActionSettingsTargetModeControl} actionId="mcp.servers.signIn.start" targetId="cli" />);
         for (const choice of ['off', 'ask_first', 'allowed']) {

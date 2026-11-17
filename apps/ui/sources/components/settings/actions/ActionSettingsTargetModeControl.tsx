@@ -35,6 +35,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     useDefault: {
         alignSelf: 'center',
     },
+    // A shared-to-use value reads as the row's value, in the value column's ink.
+    readOnlyValue: {
+        color: theme.colors.text.secondary,
+    },
     unavailable: {
         color: theme.colors.text.secondary,
         fontSize: Platform.select({ ios: 13, default: 13 }),
@@ -46,6 +50,8 @@ export type ActionSettingsTargetModeControlProps = Readonly<{
     controlState: ActionSettingsTargetControlState;
     accessibilityLabel: string;
     disabled?: boolean;
+    /** A person who can only use this setting (a profile shared to use) sees its value, not a control. */
+    readOnly?: boolean;
     layout?: 'inline' | 'stacked';
     testIDPrefix: string;
     onChange: (value: ActionSettingsApprovalControlValue | ActionSettingsBooleanControlValue) => void;
@@ -67,7 +73,7 @@ export const ActionSettingsTargetModeControl = React.memo(function ActionSetting
             <Switch
                 compact
                 accessibilityLabel={props.accessibilityLabel}
-                disabled={props.disabled}
+                disabled={props.disabled || props.readOnly}
                 testID={`${props.testIDPrefix}:enabled`}
                 value={props.controlState.value === 'on'}
                 onValueChange={(value) => props.onChange(value ? 'on' : 'off')}
@@ -94,6 +100,12 @@ export const ActionSettingsTargetModeControl = React.memo(function ActionSetting
     const activeTabId: ActionSettingsApprovalControlValue = inheriting
         ? (state.approvalRequiredByPolicy ? 'ask_first' : 'allowed')
         : state.value;
+    if (props.readOnly) {
+        const label = approvalTabs.find((tab) => tab.id === activeTabId)?.label ?? '';
+        return (
+            <Text testID={`${props.testIDPrefix}:mode:value`} variant="body" style={styles.readOnlyValue}>{label}</Text>
+        );
+    }
     const segments = (
         <SegmentedTabBar
             key="segments"
