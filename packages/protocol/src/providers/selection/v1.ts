@@ -10,26 +10,9 @@ import {
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModelIdSchema } from '../ids.js';
 import { NonBlankOpaqueIdentifierSchema, readNonBlankOpaqueIdentifier } from '../../strings/opaqueIdentifier.js';
 import { resolveBackendTargetKeyV2, type BackendTargetRefV2Input } from '../../backends/targets/backendTargetRefV2.js';
+import { ProviderBoundModelRefSchema, SessionModelSelectionV1Schema, SessionModelSelectionSchema, type ProviderBoundModelRef, type SessionModelSelectionV1, type SessionModelSelection } from './schemas.js';
 
-const NativeModelRefSchema = lazyZodSchema(() => z.strictObject({
-  agentTargetKey: ProviderAgentTargetKeySchema,
-  providerConnectionId: z.null(),
-  modelId: NonBlankOpaqueIdentifierSchema,
-}));
-const ConnectionModelRefSchema = lazyZodSchema(() => z.strictObject({
-  agentTargetKey: ProviderAgentTargetKeySchema,
-  providerConnectionId: ProviderConnectionIdSchema,
-  modelId: ProviderModelIdSchema,
-}));
-export const ProviderBoundModelRefSchema = lazyZodSchema(() => z.union([NativeModelRefSchema, ConnectionModelRefSchema]));
-export type ProviderBoundModelRef = z.infer<typeof ProviderBoundModelRefSchema>;
-
-export const SessionModelSelectionV1Schema = lazyZodSchema(() => z.strictObject({
-  v: z.literal(1),
-  ref: ProviderBoundModelRefSchema,
-  updatedAt: z.number().check(z.nonnegative()),
-}));
-export type SessionModelSelectionV1 = z.infer<typeof SessionModelSelectionV1Schema>;
+export { ProviderBoundModelRefSchema, SessionModelSelectionV1Schema, type ProviderBoundModelRef, type SessionModelSelectionV1 } from './schemas.js';
 
 /** Intent is a preference, not proof that its connection is currently reachable. */
 export const ProviderDefaultModelSelectionsByAgentTargetKeyV1Schema = lazyZodSchema(() => z.record(
@@ -118,8 +101,13 @@ export type SessionAppliedModelV1 = z.infer<typeof SessionAppliedModelV1Schema>;
 
 export const SESSION_MESSAGE_MODEL_SELECTION_V1_META_KEY = 'modelSelectionV1';
 
-export const SessionMessageModelSelectionV1Schema = lazyZodSchema(() => SessionModelSelectionV1Schema.check(z.superRefine((selection, ctx) => {
-    if (selection.ref.providerConnectionId === null && selection.ref.modelId === 'default') {
+function readNativeSessionMessageModelId(selection: SessionModelSelection): string | undefined {
+  const ref = selection.ref;
+  return ('source' in ref ? ref.source === 'native' : ref.providerConnectionId === null) ? ref.modelId : undefined;
+}
+
+export const SessionMessageModelSelectionV1Schema = lazyZodSchema(() => SessionModelSelectionSchema.check(z.superRefine((selection, ctx) => {
+    if (readNativeSessionMessageModelId(selection) === 'default') {
       ctx.addIssue({
         code: 'custom',
         path: ['ref', 'modelId'],
@@ -131,7 +119,7 @@ export const SessionMessageModelSelectionV1Schema = lazyZodSchema(() => SessionM
 export type SessionMessageModelSelectionV1ReadResult =
   | Readonly<{ status: 'absent' }>
   | Readonly<{ status: 'invalid' }>
-  | Readonly<{ status: 'valid'; selection: SessionModelSelectionV1 }>;
+  | Readonly<{ status: 'valid'; selection: SessionModelSelection }>;
 
 /**
  * Reads the additive, structured per-message selection seam. The discriminated
@@ -156,10 +144,10 @@ export function readSessionMessageModelSelectionV1(
 
 export function withSessionMessageModelSelectionV1(
   meta: Readonly<Record<string, unknown>> | null | undefined,
-  selection: SessionModelSelectionV1,
-): Record<string, unknown> & { modelSelectionV1: SessionModelSelectionV1 } {
+  selection: SessionModelSelection,
+): Record<string, unknown> & { modelSelectionV1: SessionModelSelection } {
   const parsed = SessionMessageModelSelectionV1Schema.parse(selection);
-  const next: Record<string, unknown> & { modelSelectionV1: SessionModelSelectionV1 } = {
+  const next: Record<string, unknown> & { modelSelectionV1: SessionModelSelection } = {
     ...(meta ?? {}),
     [SESSION_MESSAGE_MODEL_SELECTION_V1_META_KEY]: parsed,
   };
@@ -174,16 +162,14 @@ export function withSessionMessageModelSelectionV1(
 
 /**
  * Projects a structured per-message selection onto the released providerless
- * message seam. Old readers receive native models only; provider-bound choices
+ * message seam. Old readers receive native models only; Provider and Team choices
  * and the legacy `default` reset token are omitted so they degrade closed.
  */
 export function projectSessionMessageModelSelectionToLegacyModelV1(
-  value: SessionModelSelectionV1,
+  value: SessionModelSelection,
 ): string | undefined {
-  const selection = SessionModelSelectionV1Schema.parse(value);
-  return selection.ref.providerConnectionId === null && selection.ref.modelId !== 'default'
-    ? selection.ref.modelId
-    : undefined;
+  const modelId = readNativeSessionMessageModelId(SessionModelSelectionSchema.parse(value));
+  return modelId === 'default' ? undefined : modelId;
 }
 
 export const SessionModelSelectionIntentV1Schema = lazyZodSchema(() => z.strictObject({

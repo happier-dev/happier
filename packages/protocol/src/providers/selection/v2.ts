@@ -1,12 +1,12 @@
+import { TeamResourceSessionModelSelectionV2Schema, SessionModelSelectionV2Schema, type SessionModelRef, type SessionModelSelectionV2, type SessionModelSelection } from './schemas.js';
+export { NativeSessionModelRefV2Schema, AccountProviderConnectionSessionModelRefV2Schema, TeamResourceSessionModelRefV2Schema, SessionModelRefV2Schema, SessionModelRefSchema, SessionModelSelectionV2Schema, SessionModelSelectionSchema, type SessionModelRefV2, type SessionModelRef, type SessionModelSelectionV2, type SessionModelSelection } from './schemas.js';
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.js';
 import { z } from '../../zodRuntimePolicy.js';
 
-import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModelIdSchema } from '../ids.js';
-import { ProviderBoundModelRefSchema, SessionActiveModelSelectionV1Schema, SessionModelSelectionV1Schema, serializeSessionModelSelectionV1, deserializeSessionModelSelectionV1, type SessionActiveModelSelectionV1, type SessionModelSelectionV1 } from './v1.js';
-import { TeamCredentialProviderModelSelectionV1Schema, TeamCredentialRouteV1Schema, type TeamCredentialProviderModelSelectionV1 } from '../../teams/credentials/resourceV1.js';
-import { SessionTeamCredentialNativeDeliveryV1Schema, type SessionTeamCredentialBindingIntentV1, type SessionTeamCredentialProviderModelSelectionV1 } from '../../teams/credentials/sessionBindingIntentV1.js';
+import { SessionActiveModelSelectionV1Schema, SessionModelSelectionV1Schema, serializeSessionModelSelectionV1, deserializeSessionModelSelectionV1, type SessionActiveModelSelectionV1, type SessionModelSelectionV1 } from './v1.js';
+import { TeamCredentialProviderModelSelectionV1Schema, type TeamCredentialProviderModelSelectionV1 } from '../../teams/credentials/resourceV1.js';
+import { type SessionTeamCredentialBindingIntentV1, type SessionTeamCredentialProviderModelSelectionV1 } from '../../teams/credentials/sessionBindingIntentV1.js';
 
 /** The existing active-model carrier's second epoch retains the runtime-opened Team source. */
 export const SessionActiveModelSelectionV2Schema = lazyZodSchema(() => z.strictObject({
@@ -40,47 +40,6 @@ export function createSessionActiveModelSelection(input: Readonly<{
   return parsed.success ? parsed.data : null;
 }
 
-export const NativeSessionModelRefV2Schema = lazyZodSchema(() => z.strictObject({
-  source: z.literal('native'),
-  agentTargetKey: ProviderAgentTargetKeySchema,
-  modelId: NonBlankOpaqueIdentifierSchema,
-}));
-
-export const AccountProviderConnectionSessionModelRefV2Schema = lazyZodSchema(() => z.strictObject({
-  source: z.literal('account_provider_connection'),
-  agentTargetKey: ProviderAgentTargetKeySchema,
-  providerConnectionId: ProviderConnectionIdSchema,
-  modelId: ProviderModelIdSchema,
-}));
-
-export const TeamResourceSessionModelRefV2Schema = lazyZodSchema(() => z.strictObject({
-  source: z.literal('team_resource'),
-  resourceId: z.string().check(z.minLength(1)),
-  teamId: z.string().check(z.minLength(1)),
-  expectedResourceRevision: z.number().check(z.int(), z.nonnegative()),
-  deliveryMode: TeamCredentialRouteV1Schema,
-  nativeDelivery: z.optional(SessionTeamCredentialNativeDeliveryV1Schema),
-  agentTargetKey: ProviderAgentTargetKeySchema,
-  modelId: ProviderModelIdSchema,
-}).check(z.superRefine((selection, context) => {
-  if (selection.nativeDelivery && selection.deliveryMode !== 'vendor-native') {
-    context.addIssue({ code: 'custom', path: ['nativeDelivery'], message: 'Native references require native delivery' });
-  }
-})));
-
-export const SessionModelRefV2Schema = lazyZodSchema(() => z.discriminatedUnion('source', [
-  NativeSessionModelRefV2Schema,
-  AccountProviderConnectionSessionModelRefV2Schema,
-  TeamResourceSessionModelRefV2Schema,
-]));
-export type SessionModelRefV2 = z.infer<typeof SessionModelRefV2Schema>;
-
-/** Ref-only consumers accept the same source variants as the Session launch carrier. */
-export const SessionModelRefSchema = lazyZodSchema(() => z.union([
-  SessionModelRefV2Schema, ProviderBoundModelRefSchema,
-]));
-export type SessionModelRef = z.infer<typeof SessionModelRefSchema>;
-
 /** Native Execution Actions retain their existing split model selectors. */
 export function projectSessionModelRefToExecutionModelSelection(ref: SessionModelRef):
   | Readonly<{ modelSelection: SessionModelSelectionV1['ref']; teamCredentialModel?: never }>
@@ -96,35 +55,6 @@ export function projectSessionModelRefToExecutionModelSelection(ref: SessionMode
     modelId: ref.modelId,
   } };
 }
-
-const SessionModelSelectionV2BaseShape = {
-  v: z.literal(2),
-  updatedAt: z.number().check(z.nonnegative()),
-} as const;
-
-const TeamResourceSessionModelSelectionV2Schema = lazyZodSchema(() => z.strictObject({
-  ...SessionModelSelectionV2BaseShape,
-  ref: TeamResourceSessionModelRefV2Schema,
-}));
-
-export const SessionModelSelectionV2Schema = lazyZodSchema(() => z.union([
-  z.strictObject({
-    ...SessionModelSelectionV2BaseShape,
-    ref: NativeSessionModelRefV2Schema,
-  }),
-  z.strictObject({
-    ...SessionModelSelectionV2BaseShape,
-    ref: AccountProviderConnectionSessionModelRefV2Schema,
-  }),
-  TeamResourceSessionModelSelectionV2Schema,
-]));
-export type SessionModelSelectionV2 = z.infer<typeof SessionModelSelectionV2Schema>;
-
-/** Current Session launch carrier; retained V1 inputs keep their original source. */
-export const SessionModelSelectionSchema = lazyZodSchema(() => z.union([
-  SessionModelSelectionV2Schema, SessionModelSelectionV1Schema,
-]));
-export type SessionModelSelection = z.infer<typeof SessionModelSelectionSchema>;
 
 const modelSelectionEncoder = new TextEncoder();
 const modelSelectionDecoder = new TextDecoder('utf-8', { fatal: true });

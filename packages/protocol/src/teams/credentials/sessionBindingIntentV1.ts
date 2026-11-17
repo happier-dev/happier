@@ -2,21 +2,10 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connectedAccountPurposeIdentity.js';
-import { TeamCredentialRouteV1Schema } from './deliveryV1.js';
+import { TeamCredentialRouteV1Schema, SessionTeamCredentialNativeDeliveryV1Schema } from './deliveryV1.js';
+export { SessionTeamCredentialNativeDeliveryV1Schema, type SessionTeamCredentialNativeDeliveryV1 } from './deliveryV1.js';
 import { ProviderAgentTargetKeySchema, ProviderModelIdSchema, ProviderMachineIdSchema } from '../../providers/ids.js';
 import { ProviderBrokerApplicationBindingV1Schema } from '../../providers/brokerRouteGrantV1.js';
-
-/** Comparison-only references; raw placeholder and source ticket stay private. */
-export const SessionTeamCredentialNativeDeliveryV1Schema = lazyZodSchema(() => z.strictObject({
-  managedId: z.string().check(z.minLength(1)),
-  controllerInstallationId: z.string().check(z.minLength(1)),
-  guestInstallationId: z.string().check(z.minLength(1)),
-  bindingKey: z.string().check(z.minLength(1)),
-  placeholderRef: z.string().check(z.minLength(1)),
-  sourceRevision: z.string().check(z.minLength(1), z.maxLength(512)),
-  providerTicket: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
-}));
-export type SessionTeamCredentialNativeDeliveryV1 = z.infer<typeof SessionTeamCredentialNativeDeliveryV1Schema>;
 
 export const SessionTeamCredentialNativeSourceV1Schema = lazyZodSchema(() => z.strictObject({
   sourceRevision: z.string().check(z.minLength(1), z.maxLength(512)),

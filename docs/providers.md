@@ -1116,6 +1116,13 @@ The existing `session.draft.model.set` Action accepts both retained V1 refs and
 source-qualified V2 refs in its `selection` intent. The draft keeps V2 native and
 Account refs in their current carrier; Team refs use the existing Team selection
 coordinator without dropping revision, delivery mode or native-delivery facts.
+Per-message metadata keeps the existing `modelSelectionV1` key and carries the
+same canonical `SessionModelSelection` union. Its shared writer and reader retain
+V1 inputs and exact V2 source facts. Only native choices mirror a legacy `model`
+value; Account and Team choices remove that mirror. A present malformed selection
+remains invalid rather than falling back to legacy model text, and native
+`default` reset tokens remain invalid for per-message selection.
+
 The retained V1 Account/native reference identifies a model by the exact tuple:
 
 ```text

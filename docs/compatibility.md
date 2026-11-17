@@ -9519,6 +9519,14 @@ strict development readers reject V2 refs. The inspected `../0.2` frontier at
 This closes the existing 0.3 source-selection migration without a new Action kind,
 released wire epoch, persisted format or mixed-development adapter.
 
+Unreleased 0.3 per-message model metadata retains the `modelSelectionV1` key but
+accepts the canonical V1/V2 `SessionModelSelection` carrier through its shared
+writer and reader. Retained V1 messages remain readable. V2 Account and Team
+sources never emit the providerless legacy `model` mirror; malformed present
+carriers remain invalid. Matching development message producers and runtime
+consumers update together; no data migration or mixed-development adapter is
+introduced.
+
 Unreleased 0.3 Automation Database subjects accept the managed deployment arm
 `{kind: 'managed_deployment', environmentId, targetLinkId, databaseName}` under
 the existing server-qualified subject. Existing Environment, worktree and manual

@@ -840,6 +840,36 @@ describe('provider model selection contracts', () => {
     expect(() => withSessionMessageModelSelectionV1({}, nativeDefaultSelection)).toThrow();
   });
 
+  it.each(['native', 'account_provider_connection', 'team_resource'] as const)(
+    'retains the canonical %s per-message source and projects only native legacy model text', source => {
+      const selection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 25, ref: {
+        source, agentTargetKey: 'backend:codex', modelId: 'selected-model',
+        ...(source === 'account_provider_connection' ? { providerConnectionId: 'pc_work' } : {}),
+        ...(source === 'team_resource' ? { teamId: 'team', resourceId: 'resource', expectedResourceRevision: 3, deliveryMode: 'direct' } : {}),
+      } });
+      const meta = withSessionMessageModelSelectionV1({ source: 'ui', model: 'stale-native' }, selection);
+      expect(readSessionMessageModelSelectionV1(meta)).toEqual({ status: 'valid', selection });
+      expect(meta.modelSelectionV1).toEqual(selection);
+      expect(meta.model).toBe(source === 'native' ? 'selected-model' : undefined);
+      expect(projectSessionMessageModelSelectionToLegacyModelV1(selection)).toBe(source === 'native' ? 'selected-model' : undefined);
+      expect(readSessionMessageModelSelectionV1({ ...meta, model: 'fallback', modelSelectionV1: {
+        ...selection, ref: { ...selection.ref, source: 'unknown' },
+      } })).toEqual({ status: 'invalid' });
+    },
+  );
+
+  it('rejects native V2 default resets while retaining a Team model literally named default', () => {
+    const native = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 25,
+      ref: { source: 'native', agentTargetKey: 'backend:codex', modelId: 'default' } });
+    expect(() => withSessionMessageModelSelectionV1({}, native)).toThrow();
+    const team = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 25, ref: {
+      source: 'team_resource', agentTargetKey: 'backend:codex', modelId: 'default',
+      teamId: 'team', resourceId: 'resource', expectedResourceRevision: 3, deliveryMode: 'direct',
+    } });
+    expect(readSessionMessageModelSelectionV1(withSessionMessageModelSelectionV1({ model: 'default' }, team)))
+      .toEqual({ status: 'valid', selection: team });
+  });
+
   it('round-trips provider identity and a literal provider model named default through child argv', () => {
     const selection = SessionModelSelectionV1Schema.parse({
       v: 1,

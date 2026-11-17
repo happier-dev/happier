@@ -2,6 +2,18 @@ import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import type { TeamCredentialResourceReadinessV1 } from './resourceReadinessV1.js';
 
+/** Comparison-only references; raw placeholder and source ticket stay private. */
+export const SessionTeamCredentialNativeDeliveryV1Schema = lazyZodSchema(() => z.strictObject({
+  managedId: z.string().check(z.minLength(1)),
+  controllerInstallationId: z.string().check(z.minLength(1)),
+  guestInstallationId: z.string().check(z.minLength(1)),
+  bindingKey: z.string().check(z.minLength(1)),
+  placeholderRef: z.string().check(z.minLength(1)),
+  sourceRevision: z.string().check(z.minLength(1), z.maxLength(512)),
+  providerTicket: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+}));
+export type SessionTeamCredentialNativeDeliveryV1 = z.infer<typeof SessionTeamCredentialNativeDeliveryV1Schema>;
+
 /** Recipient paths, distinct from the administration-only delivery union. */
 export const TEAM_CREDENTIAL_ROUTES_V1 = ['brokered', 'direct', 'vendor-native'] as const;
 export const TeamCredentialRouteV1Schema = lazyZodSchema(() => z.enum(TEAM_CREDENTIAL_ROUTES_V1));
