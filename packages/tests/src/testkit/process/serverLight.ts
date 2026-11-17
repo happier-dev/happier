@@ -295,7 +295,7 @@ export type ServerStartLaunchSpec = Readonly<{
   command: string;
   args: string[];
   cwd: string;
-  env?: NodeJS.ProcessEnv;
+  env?: EnvOverrides;
 }>;
 
 let sharedDepsBuildPromise: Promise<void> | null = null;
@@ -317,7 +317,7 @@ export function resolveServerLightDatabaseUrlEnv(params: {
   dbProvider: TestDbProvider;
   generatedSqliteUrl: string;
   explicitDatabaseUrl?: string;
-}): NodeJS.ProcessEnv {
+}): EnvOverrides {
   const explicitDatabaseUrl = params.explicitDatabaseUrl?.trim();
   if (params.dbProvider === 'sqlite') {
     return {

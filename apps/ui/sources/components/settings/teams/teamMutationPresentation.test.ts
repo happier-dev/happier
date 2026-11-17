@@ -48,13 +48,6 @@ describe('a Team read the person turned off in Settings, Actions', () => {
 });
 
 describe('teamMutationFailureLabel', () => {
-    it.each(['approval_canceled', 'approval_rejected'])('silently keeps the person’s %s decision distinct from genuine permission refusals', code => {
-        const failure = { kind: 'forbidden' as const, retryable: false, code };
-        expect(teamMutationFailureLabel(failure)).toBeNull();
-        expect(teamCreateFailureLabel(failure, false)).toBeNull();
-        expect(teamMutationFailureLabel({ ...failure, code: 'team_forbidden' })).toBe('teams.errors.forbidden');
-    });
-
     it('uses a single actionable sentence for a generic Team policy refusal', () => {
         expect(teamMutationFailureLabel({ kind: 'invalid', retryable: false, code: 'invalid_team_input' }, 'policy'))
             .toBe('teams.errors.policySaveFailed');

@@ -17,7 +17,7 @@ export async function startTeamSetupFFixture(params: Readonly<{
   beforeHttpRequest?: (request: RecordedHttpProxyRequest) => void | Promise<void>;
   captureRequestBody?: (request: RecordedHttpProxyRequest) => boolean;
   requestBodyMaxBytes?: number;
-  serverEnv?: NodeJS.ProcessEnv;
+  serverEnv?: Parameters<typeof startProjectDaemonFixture>[0]['serverEnv'];
 }>) {
   const core = await startProjectDaemonFixture({ testDir: params.testDir,
     dbProvider: params.dbProvider, serverEnv: params.serverEnv,

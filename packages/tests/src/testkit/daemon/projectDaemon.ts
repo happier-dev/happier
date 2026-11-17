@@ -19,6 +19,7 @@ import { createCliActionExecutorFromCredentials } from '../../../../../apps/cli/
 import { createTestAuth, createTestTerminalAuth } from '../auth';
 import { buildTestAccountCliAuthCredentials } from '../cliAuth';
 import { fetchJson } from '../http';
+import type { EnvOverrides } from '../env';
 import { startHttpRequestRecordingProxy, type HttpRequestRecordingProxy, type RecordedHttpProxyRequest } from '../httpRequestRecordingProxy';
 import { repoRootDir } from '../paths';
 import { startServerLight, type TestDbProvider } from '../process/serverLight';
@@ -43,11 +44,11 @@ export async function startProjectDaemonFixture(params: Readonly<{
   testDir: string;
   /** Real TLS ingress for flows that create a guest outside the controller's loopback. */
   guestReachableHome?: boolean;
-  serverEnv?: NodeJS.ProcessEnv;
+  serverEnv?: EnvOverrides;
   dbProvider?: TestDbProvider;
   serverPreloadModules?: readonly string[];
   requestObservation?: Omit<Parameters<typeof startHttpRequestRecordingProxy>[0], 'targetBaseUrl'>;
-  daemonEnv?: NodeJS.ProcessEnv;
+  daemonEnv?: EnvOverrides;
   observeActionRequests?: boolean;
   beforeHttpRequest?: (request: RecordedHttpProxyRequest) => void | Promise<void>;
 }>) {
@@ -181,7 +182,7 @@ export async function startProjectDaemonFixture(params: Readonly<{
       return { sessionId: created.sessionId, metadata };
     },
       async enrollDaemon(account: Awaited<ReturnType<typeof createAccount>>, options: Readonly<{
-        env?: NodeJS.ProcessEnv;
+        env?: EnvOverrides;
         cliLaunchSpec?: Parameters<typeof startTestDaemon>[0]['cliLaunchSpec'];
         pairedHome?: Readonly<{ homeDir: string; serverId: string; machineId: string }>;
       }> = {}) {
