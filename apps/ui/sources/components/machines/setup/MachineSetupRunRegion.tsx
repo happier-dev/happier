@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { TriageFailureSubjectV1 } from '@happier-dev/triage-protocol/v1';
 
@@ -32,11 +34,12 @@ function StoppedBanner(props: StoppedNoticeProps & Readonly<{
   return (
     <AttentionBanner
       testID="machine-setup-stopped"
+      placement="inline"
       tone="neutral"
       iconName="x-circle"
       title={t('machinePresets.setup.tab.stoppedAt', { step: props.step })}
       description={props.cause}
-      action={props.onRetry ? { label: t('machinePresets.setup.tab.retryFrom', { step: props.step }), onPress: props.onRetry } : null}
+      action={props.onRetry ? { label: t('machinePresets.setup.tab.retryFrom', { step: props.step }), onPress: props.onRetry, display: 'default' } : null}
       secondaryAction={props.investigate ? {
         label: t('inbox.work.healthNotice.investigate'),
         icon: 'sparkle',
@@ -110,20 +113,24 @@ export function MachineSetupRunRegion(
       title={t('machinePresets.setup.tab.applying')}
     >
       {sudoPrompt ? (
-        <ActionOperationSudoQuestion
-          key={sudoPrompt.id}
-          operation={progressOperation}
-        />
+        <View style={styles.head}>
+          <ActionOperationSudoQuestion
+            key={sudoPrompt.id}
+            operation={progressOperation}
+          />
+        </View>
       ) : stoppedTitle ? (
-        <MachineSetupStoppedNotice
-          serverId={props.serverId}
-          operation={progressOperation.snapshot}
-          step={stoppedTitle}
-          cause={
-            typeof stopped?.subtitle === 'string' ? stopped.subtitle : undefined
-          }
-          onRetry={runSettled ? props.onRetry : null}
-        />
+        <View style={styles.head}>
+          <MachineSetupStoppedNotice
+            serverId={props.serverId}
+            operation={progressOperation.snapshot}
+            step={stoppedTitle}
+            cause={
+              typeof stopped?.subtitle === 'string' ? stopped.subtitle : undefined
+            }
+            onRetry={runSettled ? props.onRetry : null}
+          />
+        </View>
       ) : null}
       <MachineSetupStepsChecklist
         testID="machine-setup-steps"
@@ -149,3 +156,10 @@ export function MachineSetupRunRegion(
     </ItemGroup>
   );
 }
+
+const styles = StyleSheet.create((theme) => ({
+  // The head that needs the person stands apart from the steps it is about.
+  head: {
+    marginBottom: theme.space.s12,
+  },
+}));

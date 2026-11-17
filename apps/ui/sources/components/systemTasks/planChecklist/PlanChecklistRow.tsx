@@ -330,7 +330,8 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
         ? (status === 'done' || props.selected ? 'check-circle' : 'circle')
         : getExecutionStatusIcon(status, props.selected);
     const iconWeight: IconWeight | undefined = props.phase === 'select' && status === 'done' ? 'fill' : undefined;
-    const canToggleSelection = props.phase === 'select' && !props.item.disabled;
+    const choosing = props.phase === 'select';
+    const canToggleSelection = choosing && !props.item.disabled;
     const canToggleExpanded = detailsAvailable;
     const rowOnPress = React.useMemo(() => {
         if (canToggleSelection) {
@@ -382,8 +383,9 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                     styles.row,
                     usesOnboardingVariant ? styles.rowOnboarding : null,
                     usesCompactNestedRow ? styles.rowCompact : null,
-                    props.selected ? styles.rowSelected : null,
-                    hovered && !props.selected && rowOnPress ? styles.rowHovered : null,
+                    // Selection is a choice only while choosing; in a run every listed row is in it.
+                    choosing && props.selected ? styles.rowSelected : null,
+                    hovered && !(choosing && props.selected) && rowOnPress ? styles.rowHovered : null,
                     pressed && rowOnPress ? { backgroundColor: theme.colors.surface.pressed } : null,
                     dimRow ? styles.rowDisabled : null,
                     needsAttention ? styles.rowNeedsAttention : null,
@@ -432,7 +434,7 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                                                 ? theme.colors.state.success.foreground
                                                 : status === 'error'
                                                     ? theme.colors.state.danger.foreground
-                                                    : props.selected
+                                                    : choosing && props.selected
                                                         ? (usesOnboardingVariant ? theme.colors.text.primary : theme.colors.accent.blue)
                                                         : theme.colors.text.tertiary
                                         }

@@ -74,8 +74,7 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
   const open = React.useCallback(
     async (row: MachineCliSignInRow) => {
       // A sign-in into an OS user other people's Sessions run as is theirs to use too: say so before it starts.
-      const confirmed = await confirmMachineSignInScope({ scope: row.authentication?.signInScope,
-        tool: row.title, machine: props.machineName, hostUser });
+      const confirmed = await confirmMachineSignInScope({ row, machine: props.machineName, hostUser });
       if (!confirmed) return;
       const target = {
         serverId: props.serverId,

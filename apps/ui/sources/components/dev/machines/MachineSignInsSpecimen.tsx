@@ -74,8 +74,7 @@ export function MachineSignInsSpecimen(
     useAllMachines((machines) => machines[0]?.id ?? null) ?? 'devbox';
   const warn = React.useCallback((target: MachineCliSignInRow) => {
     void confirmMachineSignInScope({
-      scope: target.authentication?.signInScope,
-      tool: target.title,
+      row: target,
       machine: 'devbox',
       hostUser: 'leeroy',
     });
