@@ -7,6 +7,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import * as persistence from '@/persistence';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -693,6 +694,7 @@ describe('workflow Session step executor', () => {
 
   it('retains the absent Agent catalog cause through original startup and cold rejoin', async () => {
     const launches = installSessionCreationTransport();
+    const credentials = { token: 'token', encryption: null };
     const scope = { accountId: 'account-1', machineId: 'machine-1' };
     const operations = createHostActionOperationRuntime({ machineId: scope.machineId,
       resolveAccountId: async () => scope.accountId, generateOperationId: () => 'catalog-startup' });
@@ -704,18 +706,40 @@ describe('workflow Session step executor', () => {
         ...(options.waitForTerminal ? { waitForTerminal: true } : {}) }),
       cancelOperation: async target => operations.runner.cancel(scope, target.operationId), cleanupOnFailure: async () => {},
     } satisfies Parameters<typeof runObservedWorkflowSessionStartup>[1];
-    const input = { creationKey: 'workflow:catalog-startup', request: {
-      credentials: { token: 'token', encryption: null }, directory: '/repo', machineId: scope.machineId,
-      agentTarget: { kind: 'agent', identity: { pluginId: 'missing.agent', localId: 'absent' } },
-    } } satisfies Parameters<WorkflowSessionStartup>[0];
+    const baseline = readCurrentContributionRegistry();
+    onTestFinished(async () => {
+      await pluginReloadController.adoptPreparedRuntimeRegistry({
+        registry: await resolveExecutablePluginRuntimeRegistry({ contributes: baseline, pluginIds: [] }),
+        changedPluginIds: [], runningSessionDisposition: 'retainRunningSessions',
+      });
+    });
+    let admittedInput: Parameters<WorkflowSessionStartup>[0] | undefined;
+    const create = createProductionFreshWorkflowSessionConversation({ credentials, serverId: host.serverId,
+      machineId: scope.machineId, workDepth: 0, originRunId: 'catalog-startup', machineAdmissionTransport: vi.fn(),
+      sessionStartup: async input => {
+        admittedInput = input;
+        // The filesystem boundary yields after Action input preparation. Retire
+        // the real catalog there, preserving the producer's native admission.
+        vi.mocked(fs.access).mockImplementation(async path => {
+          if (path !== '/repo') return;
+          await pluginReloadController.adoptPreparedRuntimeRegistry({
+            registry: await resolveExecutablePluginRuntimeRegistry({ contributes: createResolvedContributionRegistry({}), pluginIds: [] }),
+            changedPluginIds: [], runningSessionDisposition: 'retainRunningSessions',
+          });
+        });
+        return runUnadmittedObservedWorkflowSessionStartup(input, host);
+      } });
     const expected = { code: 'target_unavailable', failureCause: {
       phase: 'session.agent_target', errorClass: 'Error', errorCode: 'agent_contribution_unavailable', httpStatus: null,
     }, runtimeIssueV1: undefined };
-    await expect(runObservedWorkflowSessionStartup(input, host)).rejects.toMatchObject(expected);
+    await expect(create({ creationKey: 'workflow:catalog-startup', selection: {
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, connectedServices: null,
+    }, workspace: { machineId: scope.machineId, directory: '/repo', checkoutRootPath: '/repo' } })).rejects.toMatchObject(expected);
     const original = operations.store.get(scope, 'catalog-startup');
     expect(original).toMatchObject({ state: 'failed', result: { type: 'error', code: expected.code,
       retryable: false, failureCause: expected.failureCause } });
-    await expect(runObservedWorkflowSessionStartup({ ...input,
+    if (!admittedInput) throw new Error('Workflow producer did not prepare startup admission');
+    await expect(runUnadmittedObservedWorkflowSessionStartup({ ...admittedInput,
       retainedOperation: { key: 'startup', serverId: host.serverId, machineId: scope.machineId, operationId: 'catalog-startup' },
       retainedOperationSnapshot: original,
     }, { ...host, observeExecution: async () => { throw new Error('Cold refusal cannot admit another operation'); } }))

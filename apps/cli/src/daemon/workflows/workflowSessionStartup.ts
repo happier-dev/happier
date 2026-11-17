@@ -221,11 +221,11 @@ export async function runObservedWorkflowSessionStartup(
               bypassActionInterception: true,
             });
             const result = prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
-            if (!result.ok) {
+            const created = SessionSpawnNewActionResultV1Schema.safeParse(result.ok ? result.result : result.details);
+            if (!result.ok && !(created.success && created.data.type === 'error')) {
               if (spawnFailure) throw spawnFailure;
               throw new WorkflowSessionCompositionError(result.errorCode);
             }
-            const created = SessionSpawnNewActionResultV1Schema.safeParse(result.result);
             if (created.success && created.data.type === 'error') {
               try { await host.cleanupOnFailure(); } catch { /* Preserve the original startup refusal. */ }
               return { ok: true, result: created.data };
