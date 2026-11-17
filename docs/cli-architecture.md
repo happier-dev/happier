@@ -10190,7 +10190,9 @@ neither readiness nor failure: the daemon continues its Home transport retries.
 Stack passes its readiness budget to that foreground wait and separately verifies
 the daemon. Restart and service readiness waits retain their own policies.
 On Windows, the launch adapter preserves the detached daemon PID returned by
-PowerShell; the launcher's own exit does not establish daemon failure.
+PowerShell; the launcher's own exit does not establish daemon failure. It returns
+after PowerShell exits and delivers that PID, releasing launcher pipes that the
+daemon may retain so readiness does not wait for the daemon to stop.
 
 The daemon acquires its lifecycle lock and publishes ownership before waiting
 for credentials or Home transport. Its ordinary local state uses `httpPort: 0`,

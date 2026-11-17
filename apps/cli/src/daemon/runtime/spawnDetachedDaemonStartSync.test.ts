@@ -113,11 +113,28 @@ describe('spawnDetachedDaemonStartSync', () => {
     );
   });
 
-  it('uses Win32_Process.Create on Windows so the detached daemon survives parent CLI exit', async () => {
+  it('retains launcher failure diagnostics delivered after exit', async () => {
     Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
-
     const stdout = new EventEmitter();
     const stderr = new EventEmitter();
+    const launcherChild = Object.assign(new EventEmitter(), { stdout, stderr, unref() {} });
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        launcherChild.emit('exit', 1);
+        stderr.emit('data', 'Start-Process failed');
+        launcherChild.emit('close', 1);
+      });
+      return launcherChild as any;
+    });
+    const mod = await import('./spawnDetachedDaemonStartSync');
+    await expect(mod.spawnDetachedDaemonStartSync()).rejects.toThrow('Start-Process failed');
+  });
+
+  it.each(['before', 'after', 'split-after'] as const)('returns the Windows daemon PID delivered %s launcher exit while the daemon retains inherited pipes', async (pidDelivery) => {
+    Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
+
+    const stdout = Object.assign(new EventEmitter(), { destroy() {} });
+    const stderr = Object.assign(new EventEmitter(), { destroy() {} });
     const launcherChild = Object.assign(new EventEmitter(), {
       stdout,
       stderr,
@@ -125,8 +142,13 @@ describe('spawnDetachedDaemonStartSync', () => {
     });
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
-        stdout.emit('data', '24680\r\n');
-        launcherChild.emit('close', 0);
+        if (pidDelivery === 'before') stdout.emit('data', '24680\r\n');
+        launcherChild.emit('exit', 0);
+        if (pidDelivery === 'after') stdout.emit('data', '24680\r\n');
+        if (pidDelivery === 'split-after') {
+          stdout.emit('data', '24');
+          queueMicrotask(() => stdout.emit('data', '680\r\n'));
+        }
       });
       return launcherChild as any;
     });
@@ -136,7 +158,16 @@ describe('spawnDetachedDaemonStartSync', () => {
     }));
 
     const mod = await import('./spawnDetachedDaemonStartSync');
-    const child = await mod.spawnDetachedDaemonStartSync();
+    let child: Awaited<ReturnType<typeof mod.spawnDetachedDaemonStartSync>> | undefined;
+    const launch = mod.spawnDetachedDaemonStartSync().then(result => { child = result; });
+    try {
+      await expect.poll(() => child).toBeDefined();
+    } finally {
+      // A descendant closes inherited handles only on exit. The launch itself
+      // must already have returned, as observed on real Windows PowerShell.
+      launcherChild.emit('close', 0);
+      await launch;
+    }
 
     expect(child).toBe(launcherChild);
     expect(child).toHaveProperty('detachedDaemonPid', 24680);

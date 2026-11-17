@@ -93,9 +93,32 @@ async function spawnWindowsDetachedDaemonStartSync(params: Readonly<{
 
     let stdout = '';
     let stderr = '';
+    let launcherExitCode: number | null | undefined;
+
+    const completeLaunch = (outputClosed = false): boolean => {
+      if (launcherExitCode === undefined) return false;
+      if (launcherExitCode !== 0) {
+        if (!outputClosed) return false;
+        reject(new Error(`PowerShell launcher exited with code ${launcherExitCode}: ${(stderr || stdout).trim()}`.trim()));
+        return true;
+      }
+      // Write-Output terminates the PID line. A data event can carry only a
+      // prefix, especially when output arrives after the launcher's exit.
+      if (!outputClosed && !stdout.replaceAll('\u0000', '').includes('\n')) return false;
+      const pid = parsePowerShellStartProcessPid(stdout);
+      if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) return false;
+      // Start-Process descendants can retain PowerShell's pipe handles after
+      // PowerShell exits. Waiting for `close` waits for the daemon's lifetime,
+      // so settle on launcher exit + its PID and release these unused pipes.
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      resolve(Object.assign(child, { detachedDaemonPid: pid }));
+      return true;
+    };
 
     child.stdout?.on('data', (data) => {
       stdout += Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
+      completeLaunch();
     });
     child.stderr?.on('data', (data) => {
       stderr += Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
@@ -105,21 +128,16 @@ async function spawnWindowsDetachedDaemonStartSync(params: Readonly<{
       reject(error instanceof Error ? error : new Error('Failed to spawn PowerShell launcher'));
     });
 
+    child.once('exit', (code) => {
+      launcherExitCode = code;
+      completeLaunch();
+    });
+
     child.once('close', (code) => {
-      if (code !== 0) {
-        reject(new Error(`PowerShell launcher exited with code ${code}: ${(stderr || stdout).trim()}`.trim()));
-        return;
+      launcherExitCode = code;
+      if (!completeLaunch(true)) {
+        reject(new Error(`Failed to parse detached daemon pid from PowerShell output: ${stdout.trim()}`));
       }
-
-      const pid = parsePowerShellStartProcessPid(stdout);
-      if (typeof pid === 'number' && Number.isInteger(pid) && pid > 0) {
-        // Preserve the PID PowerShell already returned: its own completed
-        // launcher is not the process whose startup the caller must observe.
-        resolve(Object.assign(child, { detachedDaemonPid: pid }));
-        return;
-      }
-
-      reject(new Error(`Failed to parse detached daemon pid from PowerShell output: ${stdout.trim()}`));
     });
   });
 }

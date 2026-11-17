@@ -21,6 +21,48 @@ describe('detached daemon fatal capture', () => {
     vi.resetModules();
   });
 
+  it('returns the detached launch while its child is still running', async () => {
+    await withTempDir('daemon-live-launch-', async (root) => {
+      const entrypoint = join(root, 'package-dist', 'index.mjs');
+      const ready = join(root, 'ready');
+      const release = join(root, 'release');
+      await mkdir(join(root, 'package-dist'), { recursive: true });
+      await writeFile(entrypoint, `
+        import { existsSync, writeFileSync } from 'node:fs';
+        writeFileSync(${JSON.stringify(ready)}, String(process.pid));
+        const timer = setInterval(() => {
+          if (existsSync(${JSON.stringify(release)})) clearInterval(timer);
+        }, 25);
+      `);
+      vi.stubEnv('HAPPIER_HOME_DIR', join(root, 'launcher'));
+      vi.stubEnv('HAPPIER_CLI_SUBPROCESS_PREFER_TSX', '0');
+      process.argv = [process.execPath, entrypoint, 'daemon', 'start'];
+      vi.resetModules();
+      const { spawnDetachedDaemonStartSync } = await import('./spawnDetachedDaemonStartSync');
+      let launched = false;
+      const launch = spawnDetachedDaemonStartSync({ cwd: root, env: {
+        ...process.env, HAPPIER_HOME_DIR: root, DBUS_SESSION_BUS_ADDRESS: '',
+      } }).then(child => {
+        launched = true;
+        child.unref();
+        return child;
+      });
+      try {
+        await expect.poll(async () => readFile(ready, 'utf8').catch(() => '')).not.toBe('');
+        const pid = Number(await readFile(ready, 'utf8'));
+        await expect.poll(() => launched).toBe(true);
+        expect(isPidPresent(pid)).toBe(true);
+      } finally {
+        await writeFile(release, 'release');
+        const child = await launch;
+        const pid = Number(await readFile(ready, 'utf8'));
+        await expect.poll(() => isPidPresent(pid), { timeout: testTimeoutMs }).toBe(false);
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      }
+    });
+  }, testTimeoutMs);
+
   it.each([
     { name: 'native abort', script: 'process.abort();\n', reason: /Abort|abort|Native stack trace/ },
     { name: 'V8 heap exhaustion', script: 'const retained = []; while (true) retained.push(new Array(1024).fill(1));\n', reason: /FATAL ERROR:.*heap|heap out of memory/i },
