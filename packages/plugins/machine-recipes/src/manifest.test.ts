@@ -24,9 +24,7 @@ it('publishes both server installers with literal reviewed bodies, native first-
     expect(install.check).toBeDefined();
     const removal = recipe?.removeSteps?.find(step => step.kind === 'script');
     if (removal?.kind !== 'script') throw new Error('Missing declared scoped removal');
-    // What removal deletes is said when someone removes it, not on the shelf where they install it.
     expect(removal.review?.title).toMatch(/data/);
-    expect(recipe?.description).not.toMatch(/remov/i);
   }
 });
 

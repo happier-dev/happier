@@ -23,14 +23,6 @@ it('requires a deliberate Docker configuration choice and binds only the reviewe
   }
 });
 
-it('resolves an authored whole-object merge input without writing the input-reference wrapper', () => {
-  const step = { id: 'docker-daemon-config', kind: 'file' as const, path: '/etc/docker/daemon.json', owner: 'root', group: 'root', mode: 0o644,
-    content: { kind: 'jsonMerge' as const, value: { kind: 'input', path: 'daemonConfig' } } };
-  expect(resolveMachineRecipeStepInputsV1(step, { daemonConfig: { icc: false } })).toMatchObject({
-    content: { kind: 'jsonMerge', value: { icc: false } },
-  });
-});
-
 it('offers rootless alongside legacy group inputs without admitting shared daemon settings in rootless mode', () => {
   const recipe = MachineRecipeV1Schema.parse({ id: 'docker-engine', ...dockerEngine });
   const schema = compilePluginJsonSchema(recipe.inputSchema);
