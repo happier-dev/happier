@@ -12,7 +12,7 @@ import { ActionOperationDeclarationV1Schema, ActionOperationReentryPolicyV1Schem
 import { ActionCliProjectionSchema, readActionSchemaTopLevelFieldNames } from '../actionCliProjection.js';
 import { ActionExecutionPlacementSchema, ActionInputHintsSchema, ActionRequiredAuthoritySchema, ActionPermissionChangingSchema, ActionSurfaceSchema, ActionToolExposureSchema, type ActionExecutionPlacement, type ActionRequiredAuthority, type ActionSurfaces } from '../metadata.js';
 import type { ActionCaller, ActionExecutorContext, ActionMachineRuntimeDemandV1, HostReviewedChildrenPlanV1 } from '../executor/types.js';
-import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
+import { HostReviewedChildDeclarationV1Schema } from '../executor/hostReviewedChildrenV1.js';
 import type { DeploymentPreparationScopeDeclarationV1 } from './deploymentPreparationScope.js';
 import type { DeploymentReadScopeV1 } from './deploymentReadScope.js';
 import type { ExternalActionTargetV1 } from '../externalActionApi.js';
@@ -201,11 +201,7 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
   approvalPolicy: z.optional(ActionApprovalPolicySchema),
   /** Host-local child roles reviewed with this operation; never catalog or caller authority. */
   hostReviewedChildren: z.optional(z.union([
-    z.readonly(z.array(z.strictObject({
-      action: ActionIdSchema,
-      role: z.string().check(z.minLength(1)),
-      input: z.optional(StrictJsonValueSchema),
-    }))),
+    z.readonly(z.array(HostReviewedChildDeclarationV1Schema)),
     z.custom<(input: unknown) => HostReviewedChildrenPlanV1['children']>((value) => typeof value === 'function'),
   ])),
   /** Local admitted-job declaration; never serialized as caller authority. */

@@ -4,12 +4,12 @@ import { sameStrictJsonValue, StrictJsonValueSchema } from '../../json/strictJso
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { ActionIdSchema, type ActionId } from '../actionIds.js';
-import { ActionSurfaceSchema } from '../actionSpecs.js';
+import { ActionSurfaceSchema } from '../metadata.js';
 import type { HostReviewedChildrenPlanV1 } from './types.js';
 import type { HostReviewedChildPolicyV1 } from './deploymentRoleChild.js';
 
 /** One closed representation for prepared review facts, at rest and in authenticated dispatch. */
-const HostReviewedChildDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
+export const HostReviewedChildDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
   action: z.union([ActionIdSchema, asProtocolZod(PluginContributionIdentityV1Schema)]),
     role: z.string().check(z.minLength(1)), input: z.optional(StrictJsonValueSchema),
     scopeInput: z.optional(z.record(z.string(), StrictJsonValueSchema)),

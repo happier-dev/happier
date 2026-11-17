@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { ActionSpecSchema } from './specs/definition.js';
+import { getActionSpec } from './actionSpecs.js';
 import { createActionExecutor, type ActionExecutorContext, type ActionExecutorDeps } from './actionExecutor.js';
 import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
@@ -11,6 +13,14 @@ import { ProjectDefinitionInspectOutputSchema } from './projectDefinitionActionF
 import type { z } from 'zod/mini';
 
 describe('setup decision protected Artifact children', () => {
+  it('retains the protected Artifact scope in the public reviewed-child declaration', () => {
+    const childDeclaration = ActionSpecSchema.shape.hostReviewedChildren;
+    expect(childDeclaration.parse([{ action: 'artifact.create', role: 'artifact.create' }]))
+      .toEqual([{ action: 'artifact.create', role: 'artifact.create' }]);
+    expect(childDeclaration.parse(getActionSpec('projects.setup.set').hostReviewedChildren))
+      .toEqual([{ action: 'artifact.create', role: 'artifact.create',
+        scopeInput: { header: { kind: 'project_setup.v1' } } }]);
+  });
   it.each(['cli', 'ui'] as const)('creates and reopens accepted detail under one reviewed %s setup decision', async surface => {
     let organization = ProjectAccountOrganizationV1Schema.parse({});
     let revision = -1;
