@@ -198,6 +198,7 @@ type TeamAuthEntrySurfaceProps = Readonly<{
         onContinue?: never;
         invitation?: never;
         onAdmissionComplete?: never;
+        onSetupTeam?: never;
     }>
     /**
      * Team entry for somebody already signed in to that exact Home. The scope is
@@ -210,6 +211,7 @@ type TeamAuthEntrySurfaceProps = Readonly<{
         onContinue: () => Promise<void> | void;
         invitation?: never;
         onAdmissionComplete?: never;
+        onSetupTeam?: never;
     }>
     | Readonly<{
         teamId?: never;
@@ -219,6 +221,8 @@ type TeamAuthEntrySurfaceProps = Readonly<{
             | Readonly<{ token: string; accountScope?: ServerAccountScope }>
             | Readonly<{ continuation: TeamInvitationPostAuthContinuationV1; accountScope?: ServerAccountScope }>;
         onAdmissionComplete: (result: InvitationAdmissionSuccess) => Promise<void> | void;
+        /** Optional member setup continues the same admitted Account after its name step. */
+        onSetupTeam?: (result: InvitationAdmissionSuccess) => Promise<void> | void;
     }>
 );
 
@@ -727,6 +731,10 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                         teamName={teamName}
                         accountScope={completedAdmission.accountScope}
                         onOpenTeam={() => props.onAdmissionComplete?.(completedAdmission.result)}
+                        setupContinuation={'onSetupTeam' in props && props.onSetupTeam ? {
+                            label: t('teams.join.setUpForTeam', { team: teamName }),
+                            onContinue: () => props.onSetupTeam?.(completedAdmission.result),
+                        } : undefined}
                     />
                 ) : admissionTerminal && admissionTerminalPresentation ? (
                     <SurfaceStateCard

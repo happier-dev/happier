@@ -705,6 +705,7 @@ export const english = {
             nameAccountSwitched: ({ account }: { account: string }) => `You’ve switched to another account. Switch back to ${account} to save this name.`,
             nameAccountSwitchedUnnamed: 'You’ve switched to another account. Switch back to the account that joined to save this name.',
             alreadyMemberTitle: 'You are already a member',
+            setUpForTeam: ({ team }: { team: string }) => `Set up for ${team}`,
             openTeam: ({ team }: { team: string }) => `Open ${team}`,
             expiredTitle: 'This invitation has expired',
             revokedTitle: 'This invitation was revoked',
