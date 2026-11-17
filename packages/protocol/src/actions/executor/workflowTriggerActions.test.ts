@@ -44,6 +44,7 @@ import type { ArtifactRevisionProvenanceV1, ArtifactSavedByV1 } from '../../arti
 import { createNightlyBackupsWorkflowV1 } from '../../workflows/builtins/backupExamples.js';
 import { prepareActionCompletionV1 } from '../actionCompletion.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
+import { AutomationDefinitionCreateRequestSchema } from '../../automations/automationApiV3.js';
 import { normalizePluginJsonSchema } from '../../plugins/actions/protocolComposableSchema.js';
 import { validateExecutionRunProfileResult } from '../../execution/runs/resultContract.js';
 
@@ -1216,9 +1217,17 @@ describe('Account source watcher assignment', () => {
     const params = { automations: f.deps.automations, resolveEncryption: async () => encryption,
       randomBytes: (length: number) => new Uint8Array(length).fill(3), resolveWorkflow: f.deps.resolveWorkflow,
       newId: () => crypto.randomUUID() };
+    params.automations = { ...f.deps.automations,
+      create: async input => f.deps.automations.create(AutomationDefinitionCreateRequestSchema.parse(input)),
+    };
     const deploymentPreview = { serverId: 'home', environmentId: 'preview-template' };
+    const previewDefinition = WorkflowDefinitionV1Schema.parse({ version: 1, inputs: [], defaults: {}, blocks: [{
+      kind: 'action', id: 'preview-source', actionId: 'deployments.environments.get', input: {
+        serverId: { kind: 'literal', value: 'home' }, environmentId: { kind: 'literal', value: 'preview-template' },
+      },
+    }] });
     const actions = createAccountWorkflowTriggerActions(params);
-    const saved = await actions.add({ target: { kind: 'inline', definition }, project,
+    const saved = await actions.add({ target: { kind: 'inline', definition: previewDefinition }, project,
       executionTarget: { kind: 'detached_run' }, deploymentPreview, trigger: deploymentEventTrigger });
     const reloaded = createAccountWorkflowTriggerActions(params);
     const listed = WorkflowTriggerListResultV1Schema.parse(await reloaded.list({ scope: 'account_inline' }));

@@ -56,7 +56,9 @@ describe('workflow Action refusal classification', () => {
       }] },
     });
     expect(normalizeWorkflowActionThrownError(parsed.error, undefined, true, 'workflow.run.get'))
-      .toMatchObject({ ok: false, errorCode: 'storage_unavailable' });
+      .toMatchObject({ ok: false, errorCode: 'storage_unavailable', failureCause: {
+        phase: 'workflow.run.get', errorClass: expect.any(String), errorCode: null, httpStatus: null,
+      } });
   });
   it('consumes nullable RPC absence while preserving causal authority refusals and ceilings', () => {
     const context = { surface: 'agent' as const, callerPermissionMode: 'yolo' };

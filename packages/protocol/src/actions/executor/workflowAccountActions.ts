@@ -83,9 +83,10 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
   const sourceCause = thrown && 'failureCause' in thrown && thrown.failureCause !== undefined
     ? readActionFailureCauseV1(thrown.failureCause) : undefined;
   const projectedCause = sourceCause ?? projectActionFailureCauseV1(error, phase);
-  const failureCause = sourceCause !== undefined || projectedCause.errorCode !== null || projectedCause.httpStatus !== null
-    ? projectedCause : undefined;
-  const causeFields = failureCause === undefined ? {} : { failureCause };
+  // Codeless failures still identify their class and failing boundary. In
+  // particular, an internal schema failure must not lose that cause merely
+  // because it has no native code or HTTP response.
+  const causeFields = { failureCause: projectedCause };
   const failure = WorkflowActionFailureV1Schema.safeParse({
     ok: false,
     errorCode: code,
