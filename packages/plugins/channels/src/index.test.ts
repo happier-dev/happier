@@ -31,13 +31,6 @@ function declaredMigrationIds(
 
 
 describe('Channels plugin daemon entry', () => {
-  it('exposes the callable activation the host resolves from the declared entrypoint', () => {
-    // The declared entrypoint string itself is owned by `manifest.test.ts`;
-    // this asserts the half that file cannot: the module the host loads from
-    // that entrypoint really exports a callable `activate`.
-    expect(entry.activate).toBeTypeOf('function');
-  });
-
   it('exports the executable Collection migration half the author-module guard requires', () => {
     // The host projects this exported namespace member against the parsed
     // manifest declarations before any candidate may be loaded or bundled, so

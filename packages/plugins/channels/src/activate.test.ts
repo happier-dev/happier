@@ -33,7 +33,7 @@ import {
 } from '@happier-dev/channels-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
 
-import { activate } from './activate.js';
+import { activate } from './index.js';
 import {
   CHANNEL_DELIVERIES_COLLECTION,
   CHANNEL_STATE_COLLECTION,
@@ -2121,6 +2121,7 @@ describe('Channels core activation', () => {
             authorityEpoch: 4,
             enabled: true,
             deletionState: 'none',
+            recommendedRecovery: null,
             attention: {
               historyGap: null,
               providerReadiness: null,
@@ -2142,6 +2143,7 @@ describe('Channels core activation', () => {
             authorityEpoch: 4,
             enabled: true,
             deletionState: 'none',
+            recommendedRecovery: null,
             attention: {
               historyGap: null,
               providerReadiness: null,
