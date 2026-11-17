@@ -1,4 +1,4 @@
-import { readPluginAutomationSubjectV1 } from '../../automations/automationPluginSubjectV1.js';
+import { isPluginAutomationActionSubjectV1, readPluginAutomationSubjectV1 } from '../../automations/automationPluginSubjectV1.js';
 import { encodeBase64 } from '../../crypto/base64.js';
 import { collectWorkflowTriggerEventReferencesV1, createWorkflowActionTriggerEventDeclarationV1, type WorkflowTriggerEventDeclarationV1 } from '../../workflows/workflowTriggerEventReferenceV1.js';
 import type {
@@ -408,9 +408,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         const spec = core.success ? getActionSpec(core.data) : contributedDefinition;
         if (!spec) refuse('target_unavailable');
         if (!isActionEffectHookableV1(spec.sideEffectClass)) refuseInput('invalid_trigger_target');
-        if (subject?.kind === 'plugin' && contributed?.pluginId === subject.pluginId
-          && typeof contributedDefinition?.approvalScope === 'object'
-          && contributedDefinition.approvalScope.subjectKindId === subject.subjectKindId) {
+        if (subject?.kind === 'plugin' && contributed && contributedDefinition
+          && isPluginAutomationActionSubjectV1(subject, { pluginId: contributed.pluginId,
+            approvalScope: contributedDefinition.approvalScope })) {
           const kind = contributedDefinition.subjectKindDefinition;
           if (!kind) refuse('target_unavailable');
           const admitted = readPluginAutomationSubjectV1({ ...subject,

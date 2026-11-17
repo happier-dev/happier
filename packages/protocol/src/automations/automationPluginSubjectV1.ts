@@ -1,7 +1,7 @@
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '../plugins/actions/jsonSchemaValidation.js';
 import { readInputPath } from '../inputs/inputPredicates.js';
 import type { PluginSubjectKindContributionV1 } from '../plugins/contributions/subjectKinds.js';
-import type { PluginSubjectProjectionV1 } from '../plugins/actions/v2.js';
+import type { PluginActionApprovalScopeV2, PluginSubjectProjectionV1 } from '../plugins/actions/v2.js';
 import { AutomationSubjectV1Schema, type AutomationSubjectV1, type AutomationSubjectContextV1 } from './automationSubjectV1.js';
 
 type PluginAutomationSubjectV1 = Extract<AutomationSubjectV1, { kind: 'plugin' }>;
@@ -18,6 +18,15 @@ export type PluginAutomationSubjectProjectionReadV1 = Readonly<
   | { ok: true; subjects: readonly AutomationSubjectContextV1[] }
   | { ok: false; code: 'subject_kind_unavailable' | 'invalid_subject_identity' }
 >;
+
+/** Action-trigger authoring consumes the operand declared by the selected Action. */
+export function isPluginAutomationActionSubjectV1(subject: PluginAutomationSubjectV1, action: Readonly<{
+  pluginId: string;
+  approvalScope?: PluginActionApprovalScopeV2 | undefined;
+}>): boolean {
+  return action.pluginId === subject.pluginId && typeof action.approvalScope === 'object'
+    && action.approvalScope.subjectKindId === subject.subjectKindId;
+}
 
 /** Kind lookup uses the same qualified catalog at picker discovery and identity admission. */
 export function readPluginAutomationSubjectKindV1(params: Readonly<{

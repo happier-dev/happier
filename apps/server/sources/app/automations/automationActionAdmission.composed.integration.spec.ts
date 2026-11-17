@@ -11,6 +11,9 @@ import { automationSubjectKeyV1 } from "@happier-dev/protocol/automations/automa
 import { AutomationTriggerIdSchema, sealAutomationTriggerDefinitionStoredEnvelopeV1,
     createAccountScopedCryptoMaterialSnapshotV1 } from "@happier-dev/protocol";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
+import { PluginManifestV2Schema } from "@happier-dev/protocol/plugins/manifest/v2";
+import { createReleaseLessDeclarationV1 } from "@/app/plugins/availability/currentDeclaration";
+import { formatQualifiedPluginActionId } from "@happier-dev/protocol/plugins/actions/qualifiedActionId";
 
 describe("Action occurrence admission through the real router", () => {
     let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
@@ -20,6 +23,80 @@ describe("Action occurrence admission through the real router", () => {
             env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: "1", HAPPIER_FEATURE_WORKFLOWS__ENABLED: "1" } });
     }, 120_000);
     afterAll(async () => { await harness?.close(); });
+
+    it("validates declared plugin subject identities at public Action trigger writes", async () => {
+        const accountId = randomUUID();
+        const automationId = randomUUID();
+        const triggerId = randomUUID();
+        const serverId = await getOrCreateServerIdentityId();
+        const pluginId = "fixture.action-subject-ingress";
+        const actionId = formatQualifiedPluginActionId({ pluginId, localId: "close-ticket" });
+        const manifest = PluginManifestV2Schema.parse({ schemaVersion: 2, id: pluginId, version: "1.0.0",
+            displayName: "Ticket subject ingress", engines: { happier: "^1.0.0" }, runtime: { apiVersion: 1 },
+            contributes: { subjectKinds: [{ id: "ticket", label: "Ticket", listAction: "list-tickets",
+                identitySchema: { type: "object", properties: { ticketId: { type: "string" } },
+                    required: ["ticketId"], additionalProperties: false } }], actions: [
+                { id: "list-tickets", title: "List tickets", surfaces: ["plugin"], scopes: ["global"],
+                    dangerLevel: "safe", readOnly: true, execution: { target: "daemon" } },
+                { id: "close-ticket", title: "Close ticket", surfaces: ["plugin"], scopes: ["global"],
+                    dangerLevel: "writesRemote", execution: { target: "daemon" },
+                    approvalScope: { kind: "plugin", subjectKindId: "ticket", identityField: "ticket" } },
+            ] } });
+        await db.account.create({ data: { id: accountId, encryptionMode: "plain" } });
+        await db.accountPluginIntent.create({ data: { accountId, pluginId, enabled: true,
+            desiredVersion: null, writableCollections: [], releaseLessDeclaration: createReleaseLessDeclarationV1(manifest) } });
+        await db.automation.create({ data: { id: automationId, accountId, name: "Ticket checks", enabled: false,
+            templateCiphertext: JSON.stringify(createAutomationWorkflowRecipeFixture({ templateVersion: 1,
+                directory: "/tmp/ticket-check", prompt: "Check ticket" })), templateVersion: 1 } });
+        const definition = (identity: unknown, subjectKindId = "ticket") => ({
+            kind: "action", phase: "after", actionIds: [actionId],
+            subject: { kind: "plugin", serverId, pluginId, subjectKindId, identity },
+        });
+        const app = createAuthenticatedTestApp();
+        automationRoutes(app);
+        try {
+            const created = await app.inject({ method: "POST", url: `/v3/automations/${automationId}/triggers`,
+                headers: { "x-test-user-id": accountId }, payload: { triggerId,
+                    trigger: { ...definition({ ticketId: "ticket-1" }), enabled: true } } });
+            expect(created.statusCode, created.body).toBe(200);
+            for (const [identity, subjectKindId, error] of [
+                [{ ticketId: 17 }, "ticket", "invalid_subject_identity"],
+                [{ ticketId: "ticket-1" }, "missing-kind", "subject_kind_unavailable"],
+            ] as const) {
+                const rejected = await app.inject({ method: "POST", url: `/v3/automations/${automationId}/triggers`,
+                    headers: { "x-test-user-id": accountId }, payload: { triggerId: randomUUID(),
+                        trigger: { ...definition(identity, subjectKindId), enabled: true } } });
+                expect(rejected.statusCode, rejected.body).toBe(400);
+                expect(rejected.json()).toEqual({ error });
+            }
+            const unrelatedAction = await app.inject({ method: "POST", url: `/v3/automations/${automationId}/triggers`,
+                headers: { "x-test-user-id": accountId }, payload: { triggerId: randomUUID(),
+                    trigger: { ...definition({ ticketId: "ticket-1" }), enabled: true,
+                        actionIds: [formatQualifiedPluginActionId({ pluginId, localId: "list-tickets" })] } } });
+            expect(unrelatedAction.statusCode, unrelatedAction.body).toBe(400);
+            expect(unrelatedAction.json()).toEqual({ error: "subject_kind_unavailable" });
+            const patched = await app.inject({ method: "PATCH", url: `/v3/automations/${automationId}/triggers`,
+                headers: { "x-test-user-id": accountId }, payload: { triggerId, expectedRevision: 0,
+                    trigger: definition({ ticketId: 17 }) } });
+            expect(patched.statusCode, patched.body).toBe(400);
+            expect(patched.json()).toEqual({ error: "invalid_subject_identity" });
+            const reconciled = await app.inject({ method: "PUT", url: `/v3/automations/${automationId}`,
+                headers: { "x-test-user-id": accountId }, payload: { expectedTemplateVersion: created.json().templateVersion,
+                    name: "Ticket checks", description: null, enabled: false, assignments: [], removedTriggers: [],
+                    triggers: [{ kind: "existing", triggerId, expectedRevision: 0,
+                        trigger: definition({ ticketId: 17 }) }] } });
+            expect(reconciled.statusCode, reconciled.body).toBe(400);
+            expect(reconciled.json()).toEqual({ error: "invalid_subject_identity" });
+            const rejectedDefinition = await app.inject({ method: "POST", url: "/v3/automations",
+                headers: { "x-test-user-id": accountId }, payload: { automationId: randomUUID(), name: "Invalid ticket",
+                    enabled: false, executionRecipe: createAutomationWorkflowRecipeFixture({ templateVersion: 1,
+                        directory: "/tmp/ticket-check", prompt: "Check ticket" }),
+                    triggers: [{ triggerId: randomUUID(), trigger: { ...definition({ ticketId: 17 }), enabled: true } }] } });
+            expect(rejectedDefinition.statusCode, rejectedDefinition.body).toBe(400);
+            expect(rejectedDefinition.json()).toEqual({ error: "invalid_subject_identity" });
+            expect(await db.automationTrigger.count({ where: { automationId } })).toBe(1);
+        } finally { await app.close(); }
+    });
 
     it("derives plain subject reach from the Machine grant owner at every write", async () => {
         const ownerId = randomUUID();

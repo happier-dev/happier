@@ -50,6 +50,7 @@ import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributio
 import { AutomationActionTriggerSchema, projectAutomationActionTriggerStructuralV1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { AUTOMATION_ACTION_TRIGGER_FIELDS_CLEARED, automationConsentReferenceSelect, decodeAutomationActionTriggerConfiguration } from './automationActionTriggerConfiguration';
 import { resolveAutomationActionReachInTx } from './automationActionReachAdmission';
+import { assertAutomationActionSubjectInTx } from './automationActionSubjectAdmission';
 import { createAutomationPluginEventTriggerDefinitionV1, sealAutomationTriggerDefinitionStoredEnvelopeV1, openAutomationTriggerDefinitionStoredEnvelopeV1, type AutomationTriggerDefinitionBindingV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { parseAutomationRunFailureDetailStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationRunFailureDetailStoredContent';
 import { parseAutomationRunResultStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationReplyHandoffStoredContent';
@@ -4376,6 +4377,8 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
             const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding, envelope });
             if (opened.kind !== 'available') throw new AutomationStoredContentReadError('contentInvalid');
             const definition = AutomationActionTriggerSchema.parse(opened.definition);
+            await assertAutomationActionSubjectInTx(params.tx, { accountId: params.accountId,
+                actionIds: definition.actionIds, subject: definition.subject });
             const projection = projectAutomationActionTriggerStructuralV1(definition);
             const { reachesOthers: _reach, ...matching } = structural;
             if (!pluginJsonValuesEqual(projection, matching)) throw new AutomationStoredContentReadError('contentInvalid');
