@@ -1,4 +1,5 @@
 import { createActionExecuteFailureError } from '../actions/actionExecutionResult.js';
+import { withActionFailureCauseDiagnostic } from '../actions/executor/actionFailureDiagnostic.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
@@ -20,7 +21,8 @@ export async function parseDeploymentComposeSourceV1(document: string): Promise<
     const yaml = await import('yaml');
     let value: unknown;
     try { value = { ...yaml.default, ...yaml }.parse(document, { merge: true }); }
-    catch { throw createActionExecuteFailureError({ ok: false, errorCode: 'invalid_request', error: 'Invalid Compose source' }); }
+    catch (error) { throw withActionFailureCauseDiagnostic(createActionExecuteFailureError({ ok: false,
+        errorCode: 'invalid_request', error: 'Invalid Compose source' }), error, 'deployment.compose.parse'); }
     if (!value || typeof value !== 'object' || Array.isArray(value))
         throw createActionExecuteFailureError({ ok: false, errorCode: 'invalid_request', error: 'Invalid Compose source' });
     return value as Record<string, unknown>;

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { normalizeActionExecutorThrownError } from '../actions/executor/resultProjection.js';
+import { normalizeActionExecutorThrownError, settleActionOutput } from '../actions/executor/resultProjection.js';
 import { captureDeploymentBindingSavedSecretRevisionsV1 } from './deploymentBindingPatchV1.js';
 import { EnvironmentSecretBindingV1Schema, parseDeploymentComposeSourceV1 } from './storedAppInputV1.js';
 import { formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
@@ -18,4 +18,12 @@ it.each(['[broken', 'scalar'])('retains invalid Compose syntax/shape as invalid_
     let caught: unknown;
     try { await parseDeploymentComposeSourceV1(document); } catch (error) { caught = error; }
     expect(normalizeActionExecutorThrownError(caught)).toMatchObject({ errorCode: 'invalid_request', error: 'Invalid Compose source' });
+    if (document === '[broken') {
+        const diagnostics: unknown[] = [];
+        const result = settleActionOutput('deployments.create', { ok: false, ...normalizeActionExecutorThrownError(caught) },
+            undefined, undefined, diagnostic => diagnostics.push(diagnostic));
+        expect(diagnostics).toMatchObject([{ phase: 'deployment.compose.parse',
+            failureCause: { errorClass: 'Error', errorCode: 'MISSING_CHAR' } }]);
+        expect(JSON.stringify([result, diagnostics])).not.toContain(document);
+    }
 });
