@@ -11,6 +11,7 @@ import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { renderWorkflowCardFieldRow } from '@/components/workflows/editor/workflowCardFieldRow';
 
 /**
  * What a sentence chip is (lab round 1116c "Grammar"): `option` a chosen value (bordered), `placeholder` a
@@ -173,10 +174,23 @@ export function WorkflowSentenceWord(
   );
 }
 
-/** A word and the chip it introduces, kept on one line so no "in" is stranded at a line's end. */
+/**
+ * Whether the sentence lays its slots out as labelled rows: a phone's sheet (05 S3) reads When, Then, Machine
+ * and Folder down the label track instead of wrapping prose. Wide hosts keep the prose.
+ */
+export const WorkflowSentenceRowsContext = React.createContext(false);
+
+/**
+ * A word and the chip it introduces, kept on one line so no "in" is stranded at a line's end. As labelled rows
+ * the slot takes its own row on the card label track's owner, named by `rowLabel`.
+ */
 export function WorkflowSentenceUnit(
-  props: Readonly<{ word?: string; children: React.ReactNode }>,
+  props: Readonly<{ word?: string; rowLabel?: string; children: React.ReactNode }>,
 ) {
+  const rows = React.useContext(WorkflowSentenceRowsContext);
+  if (rows && props.rowLabel !== undefined) {
+    return <View style={styles.row}>{renderWorkflowCardFieldRow(props.rowLabel, props.rowLabel, props.children)}</View>;
+  }
   if (props.word === undefined) return <>{props.children}</>;
   return (
     <View style={styles.unit}>
@@ -227,6 +241,9 @@ const styles = StyleSheet.create((theme) => ({
   word: {
     ...Typography.variant('body'),
     color: theme.colors.text.secondary,
+  },
+  row: {
+    width: '100%',
   },
   unit: {
     flexDirection: 'row',

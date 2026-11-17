@@ -120,6 +120,11 @@ export function WorkflowTriggerSentenceLines(
                   ? t('workflows.sentence.when')
                   : t('workflows.sentence.or')
               }
+              rowLabel={
+                index === 0
+                  ? t('workflows.sentence.rows.when')
+                  : t('workflows.sentence.rows.or')
+              }
             >
               {line.startId === null || !props.editable ? (
                 <WorkflowSentenceChip
@@ -163,18 +168,20 @@ export function WorkflowTriggerSentenceLines(
               )}
             </WorkflowSentenceUnit>
             {line.detail === null && !line.incomplete ? null : (
-              <WorkflowSentenceRowsChip
-                testID={`${props.testIDPrefix}-sentence-trigger:${line.key}-detail`}
-                label={
-                  line.incomplete
-                    ? t('workflows.triggers.card.setUp')
-                    : lowerStart(line.detail ?? '')
-                }
-                placeholder={line.incomplete}
-                struck={!line.enabled}
-                title={line.startTitle}
-                renderRows={line.renderRows}
-              />
+              <WorkflowSentenceUnit rowLabel={t('workflows.sentence.rows.details')}>
+                <WorkflowSentenceRowsChip
+                  testID={`${props.testIDPrefix}-sentence-trigger:${line.key}-detail`}
+                  label={
+                    line.incomplete
+                      ? t('workflows.triggers.card.setUp')
+                      : lowerStart(line.detail ?? '')
+                  }
+                  placeholder={line.incomplete}
+                  struck={!line.enabled}
+                  title={line.startTitle}
+                  renderRows={line.renderRows}
+                />
+              </WorkflowSentenceUnit>
             )}
             {index === last && props.editable ? (
               <WorkflowSentenceStartMenu

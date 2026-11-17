@@ -199,6 +199,11 @@ const WorkflowSentencePlace = React.memo(function WorkflowSentencePlace(
             ? t('workflows.sentence.on')
             : t('workflows.sentence.in')
         }
+        rowLabel={
+          chip.field === 'machine'
+            ? t('workflows.sentence.rows.machine')
+            : t('workflows.sentence.rows.folder')
+        }
       >
         <WorkflowSentenceChip
           anchorRef={chip.anchorRef}

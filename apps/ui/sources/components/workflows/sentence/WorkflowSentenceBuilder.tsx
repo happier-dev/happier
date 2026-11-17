@@ -42,7 +42,7 @@ import { formatWorkflowSummaryStepName } from '../presentation/workflowSummaryLi
 import { useWorkflowAuthoringHost } from '../screens/useWorkflowAuthoringHost';
 import { validateWorkflowEditorPage } from '../screens/WorkflowEditorBody';
 import { WorkflowTriggerSection } from '../triggers/WorkflowTriggerSection';
-import { WorkflowSentenceChip } from './WorkflowSentenceChip';
+import { WorkflowSentenceChip, WorkflowSentenceRowsContext, WorkflowSentenceUnit } from './WorkflowSentenceChip';
 import { WorkflowSentenceView } from './WorkflowSentenceView';
 
 /** The lab's builder width (05 S3): the sentence reads on one or two lines beside its verb body. */
@@ -179,6 +179,7 @@ function WorkflowSentenceBuilderBody(
     });
   };
   const verbClause = (
+    <WorkflowSentenceUnit rowLabel={t('workflows.sentence.rows.then')}>
     <WorkflowAddBlockMenu
       purpose="verb"
       onAdd={changeVerb}
@@ -203,6 +204,7 @@ function WorkflowSentenceBuilderBody(
       )}
       testID={`${TEST_ID}-verb-menu`}
     />
+    </WorkflowSentenceUnit>
   );
   const validation = validateWorkflowEditorPage(draftStore.get(), {
     stagedAttachments: composerCustody.readStagedAttachments(),
@@ -276,6 +278,7 @@ function WorkflowSentenceBuilderBody(
             {t('workflows.sentence.builder.title')}
           </Text>
         )}
+        <WorkflowSentenceRowsContext.Provider value={props.sheet}>
         <WorkflowDocumentGridContext.Provider value="compact">
           <WorkflowSentenceView
             draftStore={draftStore}
@@ -321,6 +324,7 @@ function WorkflowSentenceBuilderBody(
             testIDPrefix={TEST_ID}
           />
         </WorkflowDocumentGridContext.Provider>
+        </WorkflowSentenceRowsContext.Provider>
         {step === null ? (
           <Text style={styles.blank}>
             {t('workflows.sentence.builder.blank')}
