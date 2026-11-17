@@ -1,0 +1,197 @@
+import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useSyncExternalStore, type ReactNode } from 'react';
+import type { DatabaseRelationV1, DatabaseTargetsListInputV1 } from '@happier-dev/database-protocol';
+import type { WorkbenchInstance } from './workbench.js';
+import type { WorkbenchChange, WorkbenchLocation, WorkbenchStatus } from './models.js';
+import type { WorkbenchResource } from './resource.js';
+import type { CodeEditorProps, CodeEditorSelectionRange } from '@happier-dev/plugin-ui/presentation';
+import { createDatabaseCompletionSource } from './completions.js';
+import { createWorkbenchPaneState, workbenchPaneKey, type WorkbenchPaneIdentity, type WorkbenchPaneState } from './state.js';
+
+const paneState = createWorkbenchPaneState();
+
+/** Scope is supplied by the opened Project/Session; the targets owner decides membership. */
+export function useDatabasePaneState(scope: DatabaseTargetsListInputV1['scope'], identity?: WorkbenchPaneIdentity) {
+    const key = workbenchPaneKey(scope, identity);
+    const subscribe = useCallback((listener: () => void) => paneState.subscribe(key, listener), [key]);
+    const get = useCallback(() => paneState.get(key), [key]);
+    const pane = useSyncExternalStore(subscribe, get, get);
+    const setPane = useCallback((value: WorkbenchPaneState) => paneState.set(key, value), [key]);
+    return useMemo(() => ({ pane, setPane }), [pane, setPane]);
+}
+
+export function useDatabasePicker(scope: DatabaseTargetsListInputV1['scope'], identity?: WorkbenchPaneIdentity) {
+    const targets = useDatabaseTargets(scope);
+    const key = workbenchPaneKey(scope, identity);
+    const subscribe = useCallback((listener: () => void) => paneState.subscribe(key, listener), [key]);
+    const get = useCallback(() => paneState.get(key).targetKey, [key]);
+    const selectedTargetKey = useSyncExternalStore(subscribe, get, get);
+    const select = useCallback((targetKey: string) => {
+        if (paneState.get(key).targetKey !== targetKey) paneState.set(key, { targetKey, location: null });
+    }, [key]);
+    return useMemo(() => ({ ...targets, selectedTargetKey, select }), [targets, selectedTargetKey, select]);
+}
+
+const WorkbenchContext = createContext<WorkbenchInstance | null>(null);
+export function WorkbenchProvider(props: Readonly<{ instance: WorkbenchInstance; children?: ReactNode }>) {
+    return createElement(WorkbenchContext.Provider, { value: props.instance }, props.children);
+}
+export function useWorkbenchInstance(): WorkbenchInstance {
+    const instance = useContext(WorkbenchContext);
+    if (!instance) throw new Error('Database hooks require a WorkbenchProvider');
+    return instance;
+}
+function useResource<T>(resource: WorkbenchResource<T>) {
+    const snapshot = useSyncExternalStore(resource.subscribe, resource.get, resource.get);
+    useEffect(() => { void resource.demand(); }, [resource]);
+    return snapshot;
+}
+function useLocationValue<T>(instance: WorkbenchInstance, select: (location: WorkbenchLocation) => T): T {
+    const subscribe = useCallback((listener: () => void) => instance.local.subscribe('location', listener), [instance]);
+    const get = useCallback(() => select(instance.local.get('location')), [instance, select]);
+    return useSyncExternalStore(subscribe, get, get);
+}
+const selectLocation = (location: WorkbenchLocation) => location;
+export function projectWorkbenchStatus<T>(snapshot: ReturnType<WorkbenchResource<T>['get']>, empty = false): WorkbenchStatus {
+    if (snapshot.status === 'loading') return 'loading';
+    if (snapshot.status === 'failed') {
+        if (snapshot.data !== undefined) return 'stale';
+        return 'unavailable';
+    }
+    return empty ? 'empty' : 'ready';
+}
+const emptyTargets = Object.freeze([]);
+const emptySchemas = Object.freeze([]);
+const emptyColumns = Object.freeze([]);
+const emptyRows = Object.freeze([]);
+export function useDatabaseTargets(scope: DatabaseTargetsListInputV1['scope']) {
+    const instance = useWorkbenchInstance();
+    const resource = instance.targets(scope);
+    const snapshot = useResource(resource);
+    return useMemo(() => ({ targets: snapshot.data?.targets ?? emptyTargets, looked: snapshot.data?.looked ?? emptyTargets,
+        completeness: snapshot.data?.completeness,
+        status: projectWorkbenchStatus(snapshot, snapshot.data?.targets.length === 0), error: snapshot.error,
+        refresh: () => resource.invalidate() }), [snapshot, resource]);
+}
+export function useDatabaseRelations(targetKey: string, after?: string) {
+    const instance = useWorkbenchInstance();
+    const resource = instance.relations(targetKey, after);
+    const snapshot = useResource(resource);
+    return useMemo(() => ({ schemas: snapshot.data?.schemas ?? emptySchemas, completeness: snapshot.data?.completeness, status: projectWorkbenchStatus(snapshot, snapshot.data?.schemas.length === 0),
+        error: snapshot.error, refresh: () => resource.invalidate() }), [snapshot, resource]);
+}
+/** Mount in an expanded group. Unopened schemas perform zero relation reads. */
+export function useDatabaseSchemaRelations(targetKey: string, schema: string, after?: string) {
+    const instance = useWorkbenchInstance();
+    const resource = instance.schemaRelations(targetKey, schema, after);
+    const snapshot = useResource(resource);
+    return useMemo(() => ({ relations: snapshot.data?.relations ?? emptyRows, completeness: snapshot.data?.completeness,
+        status: projectWorkbenchStatus(snapshot, snapshot.data?.relations.length === 0), error: snapshot.error,
+        refresh: () => resource.invalidate() }), [snapshot, resource]);
+}
+export function useRelationPage(location: WorkbenchLocation) {
+    const instance = useWorkbenchInstance();
+    const resource = instance.page(location);
+    const snapshot = useResource(resource);
+    return useMemo(() => ({ ...snapshot.data, columns: snapshot.data?.columns ?? emptyColumns, rows: snapshot.data?.rows ?? emptyRows,
+        page: snapshot.data?.page ?? { offset: location.page.offset, limit: location.page.rows, approxTotal: null, hasNext: false },
+        sort: location.sort, conditions: location.conditions,
+        capabilities: snapshot.data?.capabilities ?? { edit: false, insert: false, delete: false },
+        status: projectWorkbenchStatus(snapshot, snapshot.data?.rows.length === 0), error: snapshot.error,
+        cellValue: snapshot.data?.cellValue, refresh: () => resource.invalidate() }), [snapshot, resource, location]);
+}
+export function useStructure(relation: DatabaseRelationV1) {
+    const instance = useWorkbenchInstance();
+    const location = useWorkbenchLocation();
+    const resource = instance.structure(location.targetKey, relation);
+    const snapshot = useResource(resource);
+    return useMemo(() => ({ columns: snapshot.data?.columns.map(column => ({ name: column.name, type: column.nativeType,
+        nullable: column.nullable, default: column.defaultExpression ?? null })) ?? emptyColumns,
+        primaryKey: snapshot.data?.primaryKey ?? emptyColumns, foreignKeys: snapshot.data?.foreignKeys ?? emptyRows,
+        indexes: snapshot.data?.indexes.map(index => ({ ...index, method: null })) ?? emptyRows,
+        status: snapshot.status === 'failed' ? 'unsupported' as const : snapshot.status === 'loading' ? 'loading' as const
+            : snapshot.data?.columns.length ? 'loaded' as const : 'empty' as const,
+        error: snapshot.error, refresh: () => resource.invalidate() }), [snapshot, resource]);
+}
+export function useWorkbenchLocation() {
+    const instance = useWorkbenchInstance();
+    const location = useLocationValue(instance, selectLocation);
+    return useMemo(() => ({ ...location, navigate: instance.navigate }), [instance, location]);
+}
+/** Call from the resize-end intent; pointer movement stays inside Collection. */
+export function useWorkbenchColumnWidths(relation: DatabaseRelationV1) {
+    const instance = useWorkbenchInstance();
+    const select = useCallback((location: WorkbenchLocation) => JSON.stringify([location.targetKey, relation]),
+        [relation.database, relation.schema, relation.name]);
+    const key = useLocationValue(instance, select);
+    const subscribe = useCallback((listener: () => void) => instance.widths.subscribe(key, listener), [instance, key]);
+    const get = useCallback(() => instance.widths.get(key), [instance, key]);
+    const value = useSyncExternalStore(subscribe, get, get);
+    const commit = useCallback((widths: Readonly<Record<string, number>>) => instance.widths.set(key, widths), [instance, key]);
+    return useMemo(() => ({ widths: value, commit }), [value, commit]);
+}
+export function useDatabaseAccess(targetKey: string) {
+    const instance = useWorkbenchInstance();
+    const resource = instance.access(targetKey);
+    const snapshot = useResource(resource);
+    return useMemo(() => ({ ...snapshot.data, status: projectWorkbenchStatus(snapshot), error: snapshot.error }), [snapshot]);
+}
+export function useWorkbenchDraft(instance: WorkbenchInstance) {
+    const changes = useSyncExternalStore(instance.drafts.subscribe, instance.drafts.changes, instance.drafts.changes);
+    const select = useCallback((location: WorkbenchLocation) => location.relation ? JSON.stringify([location.targetKey, location.relation]) : '', []);
+    const key = useLocationValue(instance, select);
+    const subscribe = useCallback((listener: () => void) => instance.applyOutcomes.subscribe(key, listener), [instance, key]);
+    const get = useCallback(() => instance.applyOutcomes.get(key), [instance, key]);
+    const outcome = useSyncExternalStore(subscribe, get, get);
+    return useMemo(() => ({
+        counts: { edits: changes.filter(item => item.change.kind === 'update').length, inserts: changes.filter(item => item.change.kind === 'insert').length,
+            removals: changes.filter(item => item.change.kind === 'delete').length },
+        stage: (change: WorkbenchChange) => instance.drafts.stage(instance.draftKey(change), change),
+        takeBack: (change: Pick<WorkbenchChange, 'rowKey' | 'relation' | 'targetKey'>) => instance.drafts.takeBack(instance.draftKey(change)),
+        discard: instance.drafts.discard,
+        cellState: (rowKey: string, column: string) => instance.cellState(rowKey, column),
+        review: instance.review,
+        apply: instance.apply,
+        outcome,
+    }), [changes, instance, outcome]);
+}
+
+/** Completion reads held metadata only; unopened schemas and columns stay unread. */
+export function useDatabaseCompletions(targetKey: string, relation?: DatabaseRelationV1) {
+    const instance = useWorkbenchInstance();
+    return useMemo(() => createDatabaseCompletionSource(() => ({
+        schemas: instance.relations(targetKey).get().data?.schemas,
+        ...(relation ? { relations: instance.schemaRelations(targetKey, relation.schema).get().data?.relations,
+            columns: instance.structure(targetKey, relation).get().data?.columns } : {}),
+    })), [instance, targetKey, relation?.database, relation?.schema, relation?.name]);
+}
+
+export function useDatabaseConsole(targetKey: string) {
+    const instance = useWorkbenchInstance();
+    const location = useWorkbenchLocation();
+    const completionSource = useDatabaseCompletions(targetKey, location.relation);
+    const controller = instance.console(targetKey);
+    const text = useSyncExternalStore(controller.text.subscribe, controller.text.get, controller.text.get);
+    const subscribeSelection = useCallback((listener: () => void) => controller.selection.subscribe('selection', listener), [controller]);
+    const getSelection = useCallback(() => controller.selection.get('selection'), [controller]);
+    const selection = useSyncExternalStore(subscribeSelection, getSelection, getSelection);
+    const subscribeExecution = useCallback((listener: () => void) => controller.execution.subscribe('run', listener), [controller]);
+    const getExecution = useCallback(() => controller.execution.get('run'), [controller]);
+    const execution = useSyncExternalStore(subscribeExecution, getExecution, getExecution);
+    const onSelection = useCallback((range: CodeEditorSelectionRange | null) => { if (range) controller.setSelection(range); }, [controller]);
+    const editorProps = useMemo(() => ({ value: text.sql, onChange: controller.setText, onSelection, completionSource,
+        language: 'sql', resetKey: targetKey } satisfies CodeEditorProps), [controller, onSelection, completionSource, targetKey, text.sql]);
+    return useMemo(() => ({ text: text.sql, history: text.history, selection, ...execution,
+        setText: controller.setText, setSelection: controller.setSelection, setMode: controller.setMode, setParameters: controller.setParameters,
+        run: controller.run, explain: controller.explain, cancel: controller.cancel, clearHistory: controller.clearHistory,
+        editorProps }), [controller, text, selection, execution, editorProps]);
+}
+export function useWorkbenchCellState(rowKey: string, column: string) {
+    const instance = useWorkbenchInstance();
+    const select = useCallback((location: WorkbenchLocation) => location.relation
+        ? instance.draftKey({ targetKey: location.targetKey, relation: location.relation, rowKey }) : '', [instance, rowKey]);
+    const key = useLocationValue(instance, select);
+    const subscribe = useCallback((listener: () => void) => instance.drafts.subscribeRow(key, listener), [instance, key]);
+    const get = useCallback(() => instance.drafts.get(key), [instance, key]);
+    const row = useSyncExternalStore(subscribe, get, get);
+    return useMemo(() => instance.cellState(rowKey, column), [instance, row, rowKey, column, key]);
+}
