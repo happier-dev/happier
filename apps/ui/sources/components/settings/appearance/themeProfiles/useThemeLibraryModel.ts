@@ -27,6 +27,7 @@ export type ThemeLibraryModelInput = Readonly<{
     onCreate: (from?: string) => void;
     onEdit: (id: string) => void;
     onExport: (id: string) => void;
+    onShare?: (reference: ThemeReference) => void;
     onImport: () => void;
     onOpenStore?: () => void;
     onUseOtherDevices?: (theme: Readonly<{ reference: ThemeReference | null; mode: ThemeProfileMode; name: string }>) => void;
@@ -74,8 +75,11 @@ export function useThemeLibraryModel(input: ThemeLibraryModelInput, execute: The
         if (option.entry?.editable) menu.push({ id: 'edit', title: input.labels.editTheme, onSelect: () => input.onEdit(option.id) });
         menu.push({ id: 'duplicate', title: t('settingsAppearance.themeProfiles.duplicateTheme'), onSelect: () => input.onCreate(option.id) });
         if (option.reference) menu.push({ id: 'export', title: input.labels.exportFile, onSelect: () => input.onExport(option.id) });
-        return { key: option.id, name: title(option), sourceLabel: sourceLabel(option), preview: previewFor(option, mode), menu };
-    }), [input.options, input.onEdit, input.onCreate, input.onExport, input.labels, mode, title, sourceLabel, previewFor]);
+        const reference = option.reference;
+        const share = input.onShare;
+        return { key: option.id, name: title(option), sourceLabel: sourceLabel(option), preview: previewFor(option, mode), menu,
+            ...(option.entry?.editable && reference && share ? { onShare: () => share(reference) } : {}) };
+    }), [input.options, input.onEdit, input.onCreate, input.onExport, input.onShare, input.labels, mode, title, sourceLabel, previewFor]);
     const slots = React.useMemo((): Record<ThemeProfileMode, ThemeLibrarySlot> => {
         const slot = (slotMode: ThemeProfileMode): ThemeLibrarySlot => {
             const option = activeOption(slotMode);
