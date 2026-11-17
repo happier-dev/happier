@@ -53,7 +53,7 @@ export { resolveProtectedSessionInputActionTarget } from '@/session/services/ses
 import { buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime/session/follow/createSessionFollowSourceKeyPreparationAfterSet';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
-import { getActionSpec, resolveActionExecutionPlacementForInput, PublicActionIdSchema, SignedRootActionIdSchema, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, hasDeclaredActionDaemonIngress, resolveActionExecutionPlacementForInput, PublicActionIdSchema, SignedRootActionIdSchema, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindCallerInput } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -1909,7 +1909,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         ordinary || pairedTerminal ? admittedInput : undefined);
       const clientAction = spec.cli !== undefined && (!settingsAction || settingsInput?.success)
         && executionPlacement === 'client';
-      const declaredDaemonIngress = spec.originalExecution?.daemonIngressSurfaces?.includes('cli') === true;
+      const declaredDaemonIngress = hasDeclaredActionDaemonIngress(spec, 'cli');
       const selectedOriginalMachine = (requireDaemonIngress || params.externalActionClient || managedMachineDaemonIngress
         || spec.id === 'session.spawn_new' && requiresOriginalAccountMachineActionProof(spec.id, admittedInput, context)
         || declaredDaemonIngress)

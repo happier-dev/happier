@@ -24,6 +24,7 @@ import { NpmRegistryProfileActionInputSchemasV1, NpmRegistryProfileActionOutputS
 import { PluginExecutionOriginActionInputSchemas, PluginExecutionOriginActionOutputSchemas,
   type PluginExecutionOriginActionId } from './pluginExecutionOriginActionFamily.js';
 export { ActionPromptingSchema, type ActionPrompting } from './metadata.js';
+export { hasDeclaredActionDaemonIngress } from './originalExecution.js';
 export { SessionOpenDestinationSchema, type SessionOpenDestination } from './sessionOpenDestination.js';
 import { MEMORY_DOCUMENT_ACTION_SPECS_V1 } from './specs/memoryDocuments.js';
 import { BOT_TEMPLATE_ACTION_SPECS_V1 } from './specs/botTemplates.js';
