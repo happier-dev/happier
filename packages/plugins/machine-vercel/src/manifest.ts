@@ -51,8 +51,11 @@ export const PLUGIN = definePlugin({
   id: CONTRIBUTION.pluginId, version: '0.0.0', displayName: 'Vercel Machines',
   description: label('description'),
   entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
-  resources: Object.fromEntries(locales.map(locale => ['i18n-' + locale.toLowerCase(),
-    { kind: 'asset' as const, path: 'assets/i18n/' + locale + '.json', contentType: 'application/json' }])),
+  // The provider's own mark beside its name in Machines: Vercel's mark from Simple Icons 13.21.0 (CC0-1.0), monochrome so the host draws it in ink.
+  brand: { iconResourceId: 'brand-icon', monochrome: true },
+  resources: { 'brand-icon': { kind: 'asset' as const, path: 'assets/brand.png', contentType: 'image/png' },
+    ...Object.fromEntries(locales.map(locale => ['i18n-' + locale.toLowerCase(),
+      { kind: 'asset' as const, path: 'assets/i18n/' + locale + '.json', contentType: 'application/json' }])) },
   ui: { translations: locales.map(locale => ({ locale, resourceId: 'i18n-' + locale.toLowerCase() })) },
   hostAccess: { required: [
     { id: 'native-api', capability: 'network', reason: label('confirmBody'),

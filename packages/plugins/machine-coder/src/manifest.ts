@@ -35,6 +35,9 @@ export const MACHINE_PROVISIONER = {
 export const PLUGIN = definePlugin({
   id: CONTRIBUTION.pluginId, version: '0.0.0', displayName: 'Coder Machines', description: MACHINE_PROVISIONER.description,
   entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
+  // The provider's own mark beside its name in Machines: Coder's mark from Simple Icons 13.21.0 (CC0-1.0), monochrome so the host draws it in ink.
+  brand: { iconResourceId: 'brand-icon', monochrome: true },
+  resources: { 'brand-icon': { kind: 'asset' as const, path: 'assets/brand.png', contentType: 'image/png' } },
   hostAccess: { required: [
     { id: networkAccess, capability: 'network', reason: 'Manage workspaces on the selected Coder deployment.',
       scope: { targets: [{ kind: 'connectedAccountOrigin', service: ACCOUNT_SERVICE.localId }], methods: ['GET', 'POST'] } },

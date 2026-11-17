@@ -40,6 +40,9 @@ export const PLUGIN = definePlugin({
   id: CONTRIBUTION.pluginId, version: '0.0.0', displayName: 'Upstash Box Machines' satisfies PluginLocalizedStringV2,
   description: 'Create and manage Upstash Box sandboxes as ordinary Happier Machines.',
   entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
+  // The provider's own mark beside its name in Machines: Upstash's mark from Simple Icons 13.21.0 (CC0-1.0), monochrome so the host draws it in ink.
+  brand: { iconResourceId: 'brand-icon', monochrome: true },
+  resources: { 'brand-icon': { kind: 'asset' as const, path: 'assets/brand.png', contentType: 'image/png' } },
   hostAccess: { required: [
     { id: 'native-api', capability: 'network', reason: 'Manage the selected Upstash Box sandbox.',
       scope: { targets: ORIGINS.map(origin => ({ kind: 'fixedOrigin' as const, origin })), methods: ['GET', 'POST', 'PUT', 'DELETE'] } },

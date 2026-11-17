@@ -40,6 +40,9 @@ export const PLUGIN = definePlugin({
   id: CONTRIBUTION.pluginId, version: '0.0.0', displayName: 'Railway Machines' satisfies PluginLocalizedStringV2,
   description: 'Create and manage Railway sandboxes as ordinary Happier Machines.',
   entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
+  // The provider's own mark beside its name in Machines: Railway's mark from Simple Icons 13.21.0 (CC0-1.0), monochrome so the host draws it in ink.
+  brand: { iconResourceId: 'brand-icon', monochrome: true },
+  resources: { 'brand-icon': { kind: 'asset' as const, path: 'assets/brand.png', contentType: 'image/png' } },
   hostAccess: { required: [
     { id: 'native-api', capability: 'network', reason: 'Manage the selected Railway sandbox.',
       scope: { targets: ORIGINS.map(origin => ({ kind: 'fixedOrigin' as const, origin })), methods: ['POST'] } },
