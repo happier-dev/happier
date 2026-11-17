@@ -1,44 +1,60 @@
 import axios from 'axios';
 import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ActionsSettingsV1Schema, ScmDiffSummaryGenerateOutputSchema, createActionExecutor } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema, HomeConnectionDescriptorV1Schema, ScmDiffSummaryGenerateOutputSchema, createActionExecutor } from '@happier-dev/protocol';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { createDaemonControlApp } from '@/daemon/controlServer';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
 import * as control from '@/daemon/controlClient';
 import * as publication from '@/daemon/multiDaemon';
 import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { runWithScmAccountScope } from '@/scm/accountScope';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
-import { updateSettings } from '@/persistence';
+import { updateSettings, writeStoredCredentialsForServerId } from '@/persistence';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { createCliActionDeps } from './createCliActionDeps';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
+import { createTestRpcManager } from '@/scm/rpc/__tests__/testRpcHarness';
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('original terminal saved-result custody', () => {
-  it('retains list/read/edit/delete after Session deletion through the own-daemon public entry', async () => {
+  it('retains list/read/edit/delete after Session deletion through the own-daemon public entry', async () => runWithScmAccountScope('owner', async () => {
     await withTempDir('scm-terminal-custody-', async home => {
       const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
       let app: ReturnType<typeof createDaemonControlApp> | undefined;
       const currentness = await createRequesterCurrentnessSocketHarness();
       try {
         env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'custody-home' }); reloadConfiguration();
-        await updateSettings(settings => ({ ...settings, machineIdByServerId: { 'custody-home': 'machine' } }));
         const serverUrl = configuration.serverUrl;
+        await updateSettings(settings => ({ ...settings, activeServerId: 'custody-home',
+          machineIdByServerId: { 'custody-home': 'machine' }, servers: { 'custody-home': {
+            id: 'custody-home', name: 'Custody Home', serverUrl, webappUrl: serverUrl,
+            createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
+            homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: 'srv_custody',
+              canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] }),
+          } } }));
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1,
           provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
         const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+        await writeStoredCredentialsForServerId('custody-home', credentials);
         const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: {}, approvalWaivedSurfaces: {
           'scm.diffSummary.result.edit': ['cli'], 'scm.diffSummary.result.delete': ['cli'],
         } });
         const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(42));
-        const receiver = createActionExecutor({ ...createCliActionDeps({ token, credentials, sessionId: '', mode: 'plain', ctx: null,
+        const scm = createTestRpcManager({ machineId: 'machine', workingDirectory: home,
+          accessPolicy: { kind: 'restrictedRoots', roots: [home] },
+          actionExecutor: { execute: (...args) => receiver.execute(...args) } });
+        const receiver: ReturnType<typeof createActionExecutor> = createActionExecutor({ ...createCliActionDeps({ token, credentials, sessionId: '', mode: 'plain', ctx: null,
           serverId: 'custody-home', serverHttpBaseUrl: serverUrl,
+          externalActionMachineRequestPrivateKey: installation.secretKey,
+          externalActionMachineInstallationId: 'installation',
+          machineActionDirectTargetTransport: { machineId: 'machine', invoke: scm.invokeLocal },
           scmFilesystemAccessPolicy: { kind: 'restrictedRoots', roots: [home] } }),
           readActionsSettings: () => settings,
         });
@@ -50,15 +66,19 @@ describe('original terminal saved-result custody', () => {
           stopSession: async () => { throw new Error('No process stop expected'); },
           spawnSession: async () => { throw new Error('No process spawn expected'); },
           requestShutdown: () => { throw new Error('No shutdown expected'); }, onHappySessionWebhook: () => {},
-          externalActionApi: { currentServerId: 'custody-home', currentAccountId: 'owner', executor: receiver,
+          externalActionApi: { currentServerId: 'custody-home', currentAccountId: 'owner', currentServerHttpBaseUrl: serverUrl, executor: receiver,
+            resolvePluginExecutionOriginContext: async () => ({ serverIdentityId: 'srv_custody', machineId: 'machine' }),
+            resolveInstallationId: () => 'installation',
             verifyPat: async () => { throw new Error('Local control has no PAT'); }, resolveTarget: async () => target },
         });
         const controlApp = app;
+        const httpPaths: string[] = [];
         // OS publication and HTTP are boundaries. Both the incumbent local
         // root and Home-signed delivery run real admission, executor and store.
         vi.spyOn(control, 'requestDaemonSignedRootActionExecution').mockImplementation(async request => {
           const response = await controlApp.inject({ method: 'POST', url: '/actions/root/execute',
             headers: { 'x-happier-daemon-token': 'fixture-control' }, payload: request });
+          httpPaths.push(`POST /actions/root/execute ${response.statusCode}`);
           return response.json();
         });
         const machine = { id: 'machine', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
@@ -66,6 +86,7 @@ describe('original terminal saved-result custody', () => {
           access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
         vi.spyOn(axios, 'get').mockImplementation(async url => {
           const path = new URL(String(url)).pathname;
+          httpPaths.push(`GET ${path}`);
           if (path === '/v1/machines') return { status: 200, data: [machine] };
           if (path === '/v1/machines/machine') return { status: 200, data: { machine } };
           if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
@@ -77,6 +98,7 @@ describe('original terminal saved-result custody', () => {
         });
         vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
           const path = new URL(String(url)).pathname;
+          httpPaths.push(`POST ${path}`);
           if (path.endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
           if (path.endsWith('/execution-authorization')) {
             const raw = body as { envelope: unknown };
@@ -105,6 +127,13 @@ describe('original terminal saved-result custody', () => {
           if (result.kind !== 'response') throw new Error('Signed delivery was not admitted');
           return { status: 200, data: result.response };
         });
+        vi.spyOn(axios, 'request').mockImplementation(async request => {
+          const path = new URL(request.url!).pathname;
+          httpPaths.push(`${request.method} ${path}`);
+          expect(path).toBe(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1);
+          expect(request.method).toBe('GET');
+          return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+        });
         const saved = await scmDiffSummaryResultStore.create({ cwd: home, sessionId: 'deleted-session',
           output: ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'retained',
             metadata: { source: { kind: 'workingTree' }, sourceKey: 'retained' },
@@ -117,7 +146,9 @@ describe('original terminal saved-result custody', () => {
           serverIdentityId: 'srv_custody', externalActionClient: true,
           actionsSettingsProvider: { getActionsSettings: () => settings } });
         const context = { surface: 'cli' as const, externalActionTarget: target };
-        expect(await caller.execute('scm.diffSummary.result.list', { query: { cwd: home, sessionId: 'deleted-session' } }, context))
+        const inventory = await caller.execute('scm.diffSummary.result.list', { query: { cwd: home, sessionId: 'deleted-session' } }, context);
+        expect(inventory, JSON.stringify({ ok: inventory.ok,
+          ...(!inventory.ok ? { errorCode: inventory.errorCode } : {}), httpPaths }))
           .toMatchObject({ ok: true, result: { success: true, count: 1, results: [{ resultId: saved.resultId }] } });
         const scope = { cwd: home, resultId: saved.resultId };
         expect(await caller.execute('scm.diffSummary.result.read', scope, context))
@@ -130,5 +161,5 @@ describe('original terminal saved-result custody', () => {
         expect(await scmDiffSummaryResultStore.read(scope)).toMatchObject({ success: false, errorCode: 'result_not_found' });
       } finally { await app?.close(); await currentness.close(); env.restore(); reloadConfiguration(); }
     });
-  });
+  }));
 });

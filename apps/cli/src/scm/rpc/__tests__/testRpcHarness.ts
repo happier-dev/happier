@@ -38,6 +38,7 @@ export function createTestGitScmBackendRegistry() {
 }
 
 export function createTestRpcManager(params?: { scopePrefix?: string; machineId?: string; workingDirectory?: string; registry?: ScmBackendRegistry;
+    actionExecutor?: NonNullable<Parameters<typeof registerScmHandlers>[2]>['actionExecutor'];
     accessPolicy?: FilesystemAccessPolicy; prepareFileBytesExport?: ScmExportPublisher }) {
     const encryptionKey = new Uint8Array(32).fill(7);
     const encryptionVariant = 'legacy' as const;
@@ -52,7 +53,8 @@ export function createTestRpcManager(params?: { scopePrefix?: string; machineId?
     });
 
     registerScmHandlers(manager, workingDirectory, { registry: params?.registry, accessPolicy: params?.accessPolicy,
-        machineId: params?.machineId ?? scopePrefix, prepareFileBytesExport: params?.prepareFileBytesExport });
+        machineId: params?.machineId ?? scopePrefix, prepareFileBytesExport: params?.prepareFileBytesExport,
+        ...(params?.actionExecutor ? { actionExecutor: params.actionExecutor } : {}) });
 
     const content: SocketRpcContent = { mode: 'e2ee', cipher: {
         encryptRaw: async (value) => encodeBase64(encrypt(encryptionKey, encryptionVariant, value)),
