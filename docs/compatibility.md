@@ -2823,7 +2823,10 @@ delete-on-Undo; Keep refuses selection if an older server omits that fact.
 
 A parsed theme document retains its raw JSON alongside the fields this build can
 apply. Unknown presentation fields and safe token identifiers survive unrelated
-edits and export; unsupported presentation has no visual effect. A deliberate
+edits and export; unsupported presentation has no visual effect. The shared
+Protocol token catalog owns supported override identities; unknown identifiers
+in either mode produce partial compatibility with their override paths, while
+remaining available in the retained document. A deliberate
 edit overlays only the supported fields it changed. The header carries palette
 inputs and style summary; the miniature is derived from those inputs at read
 time. An optional per-mode `palettes` projection preserves both miniatures when

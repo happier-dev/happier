@@ -4,7 +4,7 @@ import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdent
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { isJsonObject, normalizeStrictJsonValue } from '../../json/strictJsonValue.js';
 import { RegistryProvenanceV1Schema } from '../../registries/registryItemsV1.js';
-import { migrateThemeProfileOverrideTokenIds } from './themeProfileTokens.js';
+import { isSupportedThemeProfileTokenId, migrateThemeProfileOverrideTokenIds } from './themeProfileTokens.js';
 import * as z from '../../zodRuntimePolicy.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { isValidThemeProfileColorValue } from './themeProfileColors.js';
@@ -44,7 +44,7 @@ export const ThemeProfileIdSchema = z.string().check(z.trim(), z.minLength(1), z
 export const ThemeProfileNameSchema = z.string().check(z.refine((name) => !/[\u0000-\u001F\u007F]/.test(name)), z.trim(), z.minLength(1), z.maxLength(THEME_PROFILE_NAME_MAX_LENGTH));
 export const ThemeProfileTokenIdSchema = z.string().check(z.minLength(1));
 export const ThemeProfileColorSchema = z.string().check(z.refine(isValidThemeProfileColorValue));
-// Token ids are opaque persistence keys. The UI token registry decides which ones
+// Token ids are opaque persistence keys. The shared token catalog decides which ones
 // this build can apply; retaining newer ids prevents unrelated edits losing them.
 export const ThemeProfileColorOverridesSchema = z.pipe(
     z.record(ThemeProfileTokenIdSchema, ThemeProfileColorSchema),
@@ -208,6 +208,11 @@ export function parseThemeProfileDocument(value: unknown): ThemeProfileDocumentR
     }
     const parsed = ThemeProfileV1Schema.safeParse(known);
     if (!parsed.success) return { ok: false, error: 'invalid_known_envelope' };
+    for (const [mode, overrides] of Object.entries(parsed.data.overrides)) {
+        for (const tokenId of Object.keys(overrides)) {
+            if (!isSupportedThemeProfileTokenId(tokenId)) unsupportedPaths.push(`overrides.${mode}.${tokenId}`);
+        }
+    }
     return { ok: true, document: {
         profile: parsed.data, raw,
         compatibility: { status: unsupportedPaths.length ? 'partial' : 'supported', unsupportedPaths,

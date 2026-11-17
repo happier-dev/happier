@@ -3,6 +3,7 @@ import { parseThemeProfileDocument, type ThemeReference } from '@happier-dev/pro
 import { createThemeProfileLibrary, createThemeProfileSourceAdapter, type ThemeProfileArtifactAdapter } from './themeProfileLibrary';
 import { projectPluginThemeLibraryEntries, projectThemeLibraryEntries, projectThemeLibraryEntry } from './themeProfilePresentation';
 import type { ThemePreference } from '@/components/ui/layout/statusBarStyle';
+import { resolveThemeProfile } from './resolveThemeProfile';
 
 const ids = { first: '11111111-1111-4111-8111-111111111111', second: '22222222-2222-4222-8222-222222222222', kept: '33333333-3333-4333-8333-333333333333' };
 function document(id: string, extra: Record<string, unknown> = {}) {
@@ -53,6 +54,25 @@ function setup(acknowledgeCreation = true, initialPreference?: ThemePreference) 
 }
 
 describe('theme profile library', () => {
+    it('reports retained future override ids through library get and entries while rendering supported paint', async () => {
+        const state = setup();
+        const theme = document(ids.first, { overrides: {
+            light: { 'background.canvas': '#fafafa', 'future.token': '#aabbcc' },
+            dark: { 'text.primary': '#eeeeee', 'future.darkToken': '#445566' },
+        } });
+        const compatibility = { status: 'partial', unsupportedPaths: ['overrides.light.future.token', 'overrides.dark.future.darkToken'] };
+        const saved = await state.library.save({ document: theme });
+        expect(saved.entry?.compatibility).toEqual(compatibility);
+        expect((await state.library.list()).find(entry => entry.id === ids.first)?.compatibility).toEqual(compatibility);
+        const read = await state.library.get(ref(ids.first));
+        expect(read?.compatibility).toEqual(compatibility);
+        expect(read?.raw.overrides).toEqual(theme.raw.overrides);
+        expect(read?.profile.overrides).toEqual(theme.profile.overrides);
+        expect(resolveThemeProfile({ mode: 'light', profile: read!.profile }).colors.background.canvas).toBe('#fafafa');
+        expect(resolveThemeProfile({ mode: 'dark', profile: read!.profile }).colors.text.primary).toBe('#eeeeee');
+        expect(saved.entry?.miniatures?.light?.canvas).toBe('#fafafa');
+    });
+
     it.each(['select', 'keep'] as const)('switches an explicit mode atomically through %s and restores both with Undo', async operation => {
         const state = setup(true, 'light');
         const theme = document(ids.first);

@@ -70,6 +70,27 @@ describe('portable theme presentation', () => {
 
 
 describe('theme document retention', () => {
+    it('reports unknown override ids while preserving them through edits and alias migration', () => {
+        const raw = { ...profile('future_tokens'), overrides: {
+            light: { 'groupped.background': '#112233', 'future.token': '#aabbcc', constructor: '#abcdef' },
+            dark: { 'text.primary': '#eeeeee', 'future.darkToken': '#445566' },
+        } };
+        const parsed = themes.parseThemeProfileDocument(raw);
+        if (!parsed.ok) throw new Error('Valid newer token document rejected');
+        expect(parsed.document.compatibility).toEqual({ status: 'partial', unsupportedPaths: [
+            'overrides.light.constructor', 'overrides.light.future.token', 'overrides.dark.future.darkToken',
+        ] });
+        expect(parsed.document.raw).toEqual(raw);
+        expect(parsed.document.profile.overrides.light).toEqual({
+            'background.canvas': '#112233', 'future.token': '#aabbcc', constructor: '#abcdef',
+        });
+        const edited = themes.mergeThemeProfileDocumentEdit(parsed.document, { name: 'Renamed' });
+        expect(edited.raw.overrides).toEqual(raw.overrides);
+        expect(edited.compatibility).toEqual(parsed.document.compatibility);
+        const supported = themes.parseThemeProfileDocument(profile('supported_tokens'));
+        expect(supported).toMatchObject({ ok: true, document: { compatibility: { status: 'supported', unsupportedPaths: [] } } });
+    });
+
     it('resets known presentation while retaining future children and preserving omitted partial edits', () => {
         const parsed = themes.parseThemeProfileDocument({ ...profile('reset_theme'), schemaVersion: 2,
             seeds: { canvas: '#112233', accent: '#abcdef', futureTone: '#fedcba' },
