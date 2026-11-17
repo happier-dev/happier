@@ -16,7 +16,8 @@ import { prepareDependencyConsumersForRefresh } from './dependency_consumers.mjs
 import { inspectUiPostinstallOutputs } from './ui_postinstall.mjs';
 import { inspectPatchHashDrift, relockPatchHashes, validateRegisteredPatches } from './patch_hash_relock.mjs';
 import { createWorkspaceBuildWaitNotifier } from './workspaceBuildWaitNotifier.mjs';
-import { DEPENDENCY_LOCK_STALE_AFTER_MS, dependencyWriterEnv, hasDependencyReadLock, inheritedDependencyWriter, waitForDependencyReaders, withDependencyReadLock } from './dependency_consumption.mjs';
+import { admitDependencyReaders, closeDependencyReaderAdmission, DEPENDENCY_LOCK_STALE_AFTER_MS, dependencyWriterEnv, hasDependencyReadLock, inheritedDependencyWriter, waitForDependencyReaders, withDependencyReadLock } from './dependency_consumption.mjs';
+import { createDependencyGeneration, flipDependencyGeneration, isDependencyGenerationManaged, moveInPlaceInstallationIntoGeneration, pruneDependencyGenerations, retargetGenerationWorkspaceLinks } from './dependency_generations.mjs';
 
 const REFRESH_STATE_VERSION = 7;
 const REFRESH_MARKER = '.happier-stack-dependencies-ready';
@@ -66,7 +67,10 @@ export function resolveLockedInstallEnv(env = process.env, { lockPath, owner } =
   return lockPath && owner ? dependencyWriterEnv(lockPath, owner, scoped) : scoped;
 }
 
-export async function withDependencyRefreshLock({ installDir, env = process.env, signal, wait = true, isRequired }, action) {
+/** `admitReaders`: the action installs into a new dependency generation, so
+ * readers keep entering until it calls `context.closeReaderAdmission()` right
+ * before switching generations; existing readers are never drained. */
+export async function withDependencyRefreshLock({ installDir, env = process.env, signal, wait = true, isRequired, admitReaders = false }, action) {
   signal?.throwIfAborted();
   await assertDependencyTreeWritable(installDir);
   const lockPath = resolveDependencyRefreshLockPath(installDir, env);
@@ -108,7 +112,10 @@ export async function withDependencyRefreshLock({ installDir, env = process.env,
     // once more at this writer's turn, before draining every consumer for
     // nothing (2026-11-16: ~20 writers drained readers and mutated nothing).
     if (isRequired && !judgedThisTurn && !await isRequired()) return undefined;
-    await waitForDependencyReaders({ lockPath, env, signal, wait });
+    if (admitReaders) {
+      admitDependencyReaders(lockPath, context.owner);
+      context = { ...context, closeReaderAdmission: () => closeDependencyReaderAdmission(lockPath) };
+    } else await waitForDependencyReaders({ lockPath, env, signal, wait });
     const generationPath = `${lockPath}.generation`;
     const initialGeneration = await readJsonIfExists(generationPath);
     const beforeGeneration = initialGeneration?.generation ?? null;
@@ -117,7 +124,10 @@ export async function withDependencyRefreshLock({ installDir, env = process.env,
     let result;
     try {
       result = await dependencyWriters.run(new Map([...(inherited ?? []), [lockPath, writer]]), () => action(context));
-    } finally { writer.active = false; }
+    } finally {
+      writer.active = false;
+      if (admitReaders) closeDependencyReaderAdmission(lockPath);
+    }
     // The root operation, including its nested prerequisite writers, has now
     // succeeded. A prerequisite repair cannot certify the rest of a tree left
     // unfinished by an earlier installer; only full installation can do that.
@@ -155,7 +165,7 @@ export async function withDependencyConsumption({ installDir, env = process.env,
       let admissionFailure;
       try {
         return await withDependencyReadLock({
-          lockPath, env, signal, wait,
+          lockPath, installDir, env, signal, wait,
           onAdmit: async () => {
             const publication = await readJsonIfExists(generationPath);
             try { assertDependencyPublicationComplete(installDir, publication); }
@@ -420,8 +430,11 @@ export async function inspectDependencyRefresh({ installDir, componentDir = inst
     && selfReferentialNodeModulesLinkPath === null && !unfinishedMutation;
   const required = !admitted || marker.identity !== installIdentity;
   if (borrowedNodeModulesTarget !== null && required) throw dependenciesBorrowed(installDir, borrowedNodeModulesTarget);
+  // A failed generation install never switched generations: the live tree is
+  // complete, yet the same inputs must not be retried by every consumer.
   return { admitted, required, installedIdentity,
-    failedInstallIdentity: unfinishedMutation ? generation?.installationFailure?.inputIdentity ?? null : null,
+    failedInstallIdentity: unfinishedMutation || generation?.installationFailure?.liveTreeIntact
+      ? generation?.installationFailure?.inputIdentity ?? null : null,
     inputPaths, inputSnapshot, dependencyIdentity, installIdentity, markerPath, selfReferentialNodeModulesLinkPath };
 }
 
@@ -520,7 +533,7 @@ export async function removeInstalledDependencyQuarantine(installDir) {
 
 export async function withDependencyRefresh({
   installDir, componentDir = installDir, env = process.env, onDependenciesReady = null,
-  runtimeIdentity, refreshExisting = true, force = false, signal,
+  runtimeIdentity, refreshExisting = true, force = false, signal, generationInstall = false,
 }, refresh) {
   if (typeof refresh !== 'function') throw new TypeError('withDependencyRefresh requires a refresh callback');
   if (onDependenciesReady != null && typeof onDependenciesReady !== 'function') {
@@ -554,7 +567,13 @@ export async function withDependencyRefresh({
   }
   let readinessUnderWriter = false;
   let skippedReadiness;
-  const result = await withDependencyRefreshLock({ installDir, env, signal,
+  // `generationInstall`: the refresh callback installs into `installCwd` and
+  // calls `publishInstallation()` once that installation is complete. A
+  // generation-managed tree then installs beside the live one; readers keep
+  // entering and never drain, and every node_modules path switches at once.
+  const generations = generationInstall && isDependencyGenerationManaged(installDir);
+  let pruneAfterRelease = false;
+  const result = await withDependencyRefreshLock({ installDir, env, signal, admitReaders: generations,
     isRequired: force ? undefined : async () => {
       const readiness = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, env });
       skippedReadiness = readiness;
@@ -570,7 +589,8 @@ export async function withDependencyRefresh({
       ? await prepareDependencyConsumersForRefresh({ installDir, env }) : { stacksNeedingRestart: [] };
     // Cold installation/link repair retains its publication boundary. Warm
     // output inspection runs outside it; output owners exclude actual repairs.
-    if (willInstall || willRepairLink) await markDependencyMutation({ installDir, env });
+    if (willRepairLink && generations) context.closeReaderAdmission?.();
+    if ((willInstall && !generations) || willRepairLink) await markDependencyMutation({ installDir, env });
     let repaired = false;
     if (willRepairLink) {
       await unlink(before.selfReferentialNodeModulesLinkPath);
@@ -579,9 +599,40 @@ export async function withDependencyRefresh({
     }
     const didRefresh = canInstall && (force || before.required);
     const installEnv = resolveLockedInstallEnv(env, context);
+    let generation = null;
+    let published = !generations;
+    const runRefresh = async () => {
+      if (!generations) return await refresh({ env: installEnv });
+      generation = await createDependencyGeneration(installDir);
+      const publishInstallation = async () => {
+        if (published) return;
+        await retargetGenerationWorkspaceLinks(installDir, generation);
+        for (const project of ['', ...generation.projects]) {
+          await rm(join(generation.genRoot, project, 'node_modules', '.ignored'), { recursive: true, force: true });
+        }
+        // From here on the live paths change: new readers wait, as for any
+        // in-place mutation, while readers already in keep their generation.
+        // A nested repair inside an active writer has no admission to close.
+        context.closeReaderAdmission?.();
+        await markDependencyMutation({ installDir, env });
+        await flipDependencyGeneration(installDir, generation);
+        published = true;
+        pruneAfterRelease = true;
+      };
+      try {
+        await refresh({ env: installEnv, installCwd: generation.genRoot, publishInstallation });
+        await publishInstallation();
+      } catch (error) {
+        if (!published) {
+          await rm(generation.genRoot, { recursive: true, force: true });
+          generation = null;
+        }
+        throw error;
+      }
+    };
     try {
       if (didRefresh) {
-        try { await refresh({ env: installEnv }); }
+        try { await runRefresh(); }
         catch (error) {
           signal?.throwIfAborted();
           if (dependencyInstallationFailure(error).pnpmErrorCode !== 'ERR_PNPM_LOCKFILE_CONFIG_MISMATCH'
@@ -604,7 +655,7 @@ export async function withDependencyRefresh({
           await writeJsonAtomic(generationPath, { ...await readJsonIfExists(generationPath), patchHashRelock });
           console.log(`[local] Self-relocked patch hashes in pnpm-lock.yaml: ${patchHashRelock.patches.join(', ')}; retrying frozen install once.`);
           before = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, env });
-          await refresh({ env: installEnv });
+          await runRefresh();
         }
       }
       if (onDependenciesReady) {
@@ -619,7 +670,8 @@ export async function withDependencyRefresh({
         const generationPath = `${context.lockPath}.generation`;
         const publication = await readJsonIfExists(generationPath);
         await writeJsonAtomic(generationPath, { ...publication,
-          installationFailure: { pnpmErrorCode: failure.pnpmErrorCode, inputIdentity: before.installIdentity } });
+          installationFailure: { pnpmErrorCode: failure.pnpmErrorCode, inputIdentity: before.installIdentity,
+            ...(published ? {} : { liveTreeIntact: true }) } });
       }
       throw failure;
     }
@@ -636,6 +688,11 @@ export async function withDependencyRefresh({
     if (stacksNeedingRestart.length) console.log(`[local] Stacks running on pre-refresh dependencies; restart at the next owner boundary: ${stacksNeedingRestart.join(', ')}`);
     return { refreshed: true, reason: force ? 'forced-refresh' : 'stale-inputs', stacksNeedingRestart };
   });
+  // Outside the writer: the generation just replaced is removed as soon as
+  // no reader that entered before the switch still holds it.
+  if (pruneAfterRelease) {
+    await pruneDependencyGenerations(installDir, { readersDir: `${resolveDependencyRefreshLockPath(installDir, env)}.readers` });
+  }
   if (onDependenciesReady && !readinessUnderWriter) await onDependenciesReady({ env });
   signal?.throwIfAborted();
   return result ?? { refreshed: false, reason: skippedReadiness.required ? 'refresh-disabled' : 'up-to-date' };
@@ -673,6 +730,28 @@ export async function adoptDependencyInstallation({ installDir, componentDir = i
     if (!marker) await writeJsonAtomic(before.markerPath, { version: REFRESH_STATE_VERSION,
       identity: before.installIdentity, stacksNeedingRestart: [] });
     return { refreshed: false, reason: marker ? 'up-to-date' : 'adopted-installation' };
+  });
+}
+
+/** One-time switch of an in-place installation to dependency generations
+ * (owner ruling 2026-11-17, "Atomic dependency installs"). It runs as an
+ * ordinary writer, draining readers, and only on a current, complete tree:
+ * every node_modules directory moves (rename) into the first generation and its
+ * path becomes a link. Later refreshes of a generation-managed tree install
+ * beside it and switch atomically. Explicit, so each host switches when its
+ * operator announces it. */
+export async function adoptDependencyGenerations({ installDir, env = process.env, signal }) {
+  if (isDependencyGenerationManaged(installDir)) return { adopted: false, reason: 'already-managed' };
+  return await withDependencyRefreshLock({ installDir, env, signal }, async () => {
+    if (isDependencyGenerationManaged(installDir)) return { adopted: false, reason: 'already-managed' };
+    const readiness = await inspectDependencyRefresh({ installDir, env });
+    if (readiness.required) throw dependenciesNeedRefresh(installDir, 'stale-or-unadmitted');
+    // Installed real paths move: consumers that watch installed files (Expo)
+    // restart on this publication like on any installation.
+    await markDependencyMutation({ installDir, env });
+    const generation = await moveInPlaceInstallationIntoGeneration(installDir);
+    dependencyWriters.getStore().get(resolveDependencyRefreshLockPath(installDir, env)).installationPublished = true;
+    return { adopted: true, generation: generation.name };
   });
 }
 

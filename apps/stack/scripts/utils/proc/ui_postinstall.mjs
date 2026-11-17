@@ -5,7 +5,8 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { readJsonIfExists, writeJsonAtomic } from '../fs/json.mjs';
-import { dependencyInstallationFailure, isDependencyRefreshDisabled, markDependencyMutation, removeInstalledDependencyQuarantine, withDependencyConsumption, withDependencyRefreshLock } from './dependency_refresh.mjs';
+import { dependencyInstallationFailure, isDependencyRefreshDisabled, markDependencyMutation, removeInstalledDependencyQuarantine, withDependencyConsumption, withDependencyRefresh, withDependencyRefreshLock } from './dependency_refresh.mjs';
+import { isDependencyGenerationManaged } from './dependency_generations.mjs';
 
 function resolveUiPostinstallMarkerPath(installDir) {
   return join(installDir, 'node_modules', '.happier-ui-postinstall-ready');
@@ -145,7 +146,14 @@ export async function ensureUiPostinstallOutputs(componentDir, installDir, {
       // Changed patch inputs can leave a mixed tree. Re-extract pristine bytes
       // through the caller's PM adapter, then retry the same UI postinstall.
       if (!quiet) console.log('[local] repairing mixed happier-ui patched dependency bytes...');
-      try { await restoreDependencies(); }
+      // A generation-managed tree is never reinstalled in place (pnpm refuses a
+      // linked node_modules): the pristine bytes go into a new generation.
+      try {
+        if (isDependencyGenerationManaged(installDir)) {
+          await withDependencyRefresh({ installDir, env, signal, force: true, generationInstall: true },
+            async ({ installCwd, publishInstallation }) => { await restoreDependencies({ cwd: installCwd }); await publishInstallation(); });
+        } else await restoreDependencies({ cwd: installDir });
+      }
       catch (error) { signal?.throwIfAborted(); throw dependencyInstallationFailure(error); }
       restoredDependencies = true;
       await runPostinstall(postinstallEnv);

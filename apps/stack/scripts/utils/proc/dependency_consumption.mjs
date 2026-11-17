@@ -6,6 +6,7 @@ import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../..
 import { observePidLiveness } from './pids.mjs';
 import { readJsonOwnerLockSnapshot, isJsonOwnerFileLockActive, JSON_OWNER_FILE_LOCK_BUSY_ERROR_CODE } from './jsonOwnerFileLock.mjs';
 import { createWorkspaceBuildWaitNotifier } from './workspaceBuildWaitNotifier.mjs';
+import { pruneDependencyGenerations, readCurrentDependencyGeneration } from './dependency_generations.mjs';
 
 const readers = new AsyncLocalStorage();
 const custodyVariable = 'HAPPIER_BUILD_DEPENDENCY_CUSTODY';
@@ -38,6 +39,27 @@ function inheritedReader(lockPath, env) {
     ? { active: true, env } : null;
 }
 
+// A writer installing into a new dependency generation mutates no installed
+// path readers can see, so it admits readers until it switches generations.
+// The admission names the exact lock owner; it ends with that owner.
+function readerAdmissionPath(lockPath) { return `${lockPath}.readers-admitted`; }
+
+export function admitDependencyReaders(lockPath, owner) {
+  writeFileSync(readerAdmissionPath(lockPath), JSON.stringify({ pid: owner.pid, createdAtMs: owner.createdAtMs }));
+}
+
+export function closeDependencyReaderAdmission(lockPath) {
+  try { unlinkSync(readerAdmissionPath(lockPath)); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+}
+
+function writerAdmitsReaders(lockPath) {
+  let admission;
+  try { admission = JSON.parse(readFileSync(readerAdmissionPath(lockPath), 'utf8')); }
+  catch (error) { if (error.code === 'ENOENT' || error instanceof SyntaxError) return false; throw error; }
+  const owner = readJsonOwnerLockSnapshot(lockPath).owner;
+  return owner?.pid === admission.pid && owner.createdAtMs === admission.createdAtMs;
+}
+
 export function hasDependencyReadLock(lockPath, env) {
   return inheritedReader(lockPath, env) !== null;
 }
@@ -46,7 +68,7 @@ export function hasDependencyReadLock(lockPath, env) {
 // and drains it, or the reader sees the writer and withdraws before importing.
 // Readers never take an exclusive FIFO turn merely to register consumption.
 // Publication admission runs once here; inherited readers/writers retain it.
-export async function withDependencyReadLock({ lockPath, env, signal, wait = true, onAdmit }, consume) {
+export async function withDependencyReadLock({ lockPath, installDir, env, signal, wait = true, onAdmit }, consume) {
   if (inheritedDependencyWriter(lockPath, env)) return await consume(env);
   const inherited = inheritedReader(lockPath, env);
   if (inherited) return await consume({ ...env, [custodyVariable]: inherited.env[custodyVariable] });
@@ -59,12 +81,17 @@ export async function withDependencyReadLock({ lockPath, env, signal, wait = tru
   const notify = createWorkspaceBuildWaitNotifier({ env, label: 'dependency refresh', kind: 'lock' });
   const startedAt = Date.now();
   let reader;
+  // Readers resolve through the current links. The record retains the
+  // generation current at entry and every newer one until it is gone; one
+  // switched to meanwhile is newer, so it is retained too.
+  const generation = installDir ? readCurrentDependencyGeneration(installDir) : null;
   try {
     for (;;) {
       signal?.throwIfAborted();
       const snapshot = observer.capture(readGate);
-      writeFileSync(recordPath, JSON.stringify({ pid: process.pid }), { flag: 'wx' });
-      if (!isJsonOwnerFileLockActive(lockPath, { staleAfterMs: DEPENDENCY_LOCK_STALE_AFTER_MS })) break;
+      writeFileSync(recordPath, JSON.stringify({ pid: process.pid, ...(generation ? { generation } : {}) }), { flag: 'wx' });
+      if (!isJsonOwnerFileLockActive(lockPath, { staleAfterMs: DEPENDENCY_LOCK_STALE_AFTER_MS })
+        || writerAdmitsReaders(lockPath)) break;
       unlinkSync(recordPath);
       const owner = readJsonOwnerLockSnapshot(lockPath).owner;
       if (!wait) throw Object.assign(new Error(`Dependency refresh is busy with writer pid=${owner?.pid ?? 'unknown'}`),
@@ -84,6 +111,11 @@ export async function withDependencyReadLock({ lockPath, env, signal, wait = tru
     observer.close();
     if (reader) reader.active = false;
     try { unlinkSync(recordPath); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    // A reader that outlived its generation may have been its last holder:
+    // remove what no reader needs any more (the writer prunes at its switch).
+    if (reader && generation && readCurrentDependencyGeneration(installDir) !== generation) {
+      await pruneDependencyGenerations(installDir, { readersDir: directory });
+    }
   }
 }
 

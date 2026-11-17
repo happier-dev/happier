@@ -290,10 +290,11 @@ async function repairCorruptedCliPkgrollInstallIfNeeded(cliDir, { quiet = false,
     // eslint-disable-next-line no-console
     console.log(`[local] repairing corrupted pkgroll install at ${pkgrollCliPath}...`);
   }
-  await withDependencyRefresh({ installDir, componentDir: cliDir, env, force: true }, async ({ env: installEnv }) => {
+  await withDependencyRefresh({ installDir, componentDir: cliDir, env, force: true, generationInstall: true }, async ({ env: installEnv, installCwd = installDir, publishInstallation }) => {
     // A concurrent repair may have finished while this caller waited.
     if ((await readScriptEntrypointKind(pkgrollCliPath)) !== 'shell-wrapper') return;
-    await runPm(pm, repairArgs, { cwd: installDir, stdio, env: installEnv, captureFailureDiagnostic: true });
+    await runPm(pm, repairArgs, { cwd: installCwd, stdio, env: installEnv, captureFailureDiagnostic: true });
+    await publishInstallation?.();
     const monorepoRoot = coerceHappyMonorepoRootFromPath(cliDir);
     await ensureUiPostinstallOutputs(monorepoRoot ? join(monorepoRoot, 'apps', 'ui') : cliDir,
       installDir, { quiet, env, pm, force: true });
@@ -516,13 +517,13 @@ export async function ensureUiPostinstallOutputs(componentDir, installDir, { qui
         await runPm(pm, ['run', '-s', 'postinstall:real'], { cwd: componentDir, stdio, env: postinstallEnv });
       }
     },
-    restoreDependencies: async () => {
+    restoreDependencies: async ({ cwd = installDir } = {}) => {
       await prepare();
       const repairArgs = buildDependencyInstallArgs(pm.name, {
         force: true,
       });
       repairArgs.push('--ignore-scripts');
-      await runPm(pm, repairArgs, { cwd: installDir, stdio, env, captureFailureDiagnostic: true });
+      await runPm(pm, repairArgs, { cwd, stdio, env, captureFailureDiagnostic: true });
     },
   });
 }
@@ -718,7 +719,7 @@ async function ensureComponentDependenciesInstalled(
     if (pm.name !== 'pnpm' || onDependenciesReady || needsSharedUiRepair) return false;
     const readiness = await inspectDependencyRefresh({ installDir, componentDir, env });
     if (readiness.required || (await inspectUiPostinstallOutputs(componentDir, installDir, { env })).length > 0) return false;
-    await withDependencyRefresh({ installDir, componentDir, env, refreshExisting, signal }, refreshDependencies);
+    await withDependencyRefresh({ installDir, componentDir, env, refreshExisting, signal, generationInstall: true }, refreshDependencies);
     if (prepareComponentOutputs) await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
     return true;
   };
@@ -733,8 +734,11 @@ async function ensureComponentDependenciesInstalled(
     }
   };
   const installArgs = buildDependencyInstallArgs(pm.name);
-  const installAndPrepare = async (installEnv = env) => {
-    await runPm(pm, installArgs, { cwd: installDir, stdio, env: installEnv, signal, captureFailureDiagnostic: true });
+  // A generation-managed tree installs into `installCwd` (a new dependency
+  // generation) and switches to it before preparing outputs in place.
+  const installAndPrepare = async (installEnv = env, { installCwd = installDir, publishInstallation } = {}) => {
+    await runPm(pm, installArgs, { cwd: installCwd, stdio, env: installEnv, signal, captureFailureDiagnostic: true });
+    await publishInstallation?.();
     if (pm.name === 'pnpm' && String(installEnv.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1') {
       await ensureServerGeneratedProviderOutputs(join(installDir, 'apps', 'server'), installDir, { quiet, env: installEnv, pm });
     }
@@ -743,13 +747,13 @@ async function ensureComponentDependenciesInstalled(
     // cannot prove changed patches or generated worker/webview assets are current.
     await ensureUiPostinstallOutputs(uiDir, installDir, { quiet, env: installEnv, pm, force: true });
   };
-  const refreshDependencies = async ({ env: installEnv = env } = {}) => {
+  const refreshDependencies = async ({ env: installEnv = env, ...generation } = {}) => {
     await ensureCanonicalPnpmReady();
     if (!quiet) {
       // eslint-disable-next-line no-console
       console.log(`[local] refreshing ${label} dependencies (pnpm-lock.yaml/pnpm-workspace.yaml/package.json/patches changed)...`);
     }
-    await installAndPrepare(installEnv);
+    await installAndPrepare(installEnv, generation);
   };
 
   if (await pathExists(nodeModules)) {
@@ -773,6 +777,7 @@ async function ensureComponentDependenciesInstalled(
         env,
         onDependenciesReady: guardedDependencyReadyAction,
         signal,
+        generationInstall: true,
       }, refreshDependencies);
     }
 

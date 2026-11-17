@@ -496,6 +496,27 @@ configuration leave the existing tree intact. A later linking or lifecycle
 failure may already have changed installed files; correct the cause and rerun
 preparation. The refresh owner never deletes or renames `node_modules`.
 
+A checkout can switch to dependency generations (owner ruling 2026-11-17,
+"Atomic dependency installs"; development tooling only). `adoptDependencyGenerations`
+in `apps/stack/scripts/utils/proc/dependency_refresh.mjs` runs once per host as an
+ordinary writer on a current tree. It moves every `node_modules` into
+`.deps/node_modules/<generation>/` and leaves a relative symlink at each path.
+From then on, a refresh installs into a new generation: a shadow workspace whose
+project directories link the real sources. Readers keep entering and are never
+drained while it installs. When the install succeeds, the owner points workspace
+links at the real projects and closes reader entry. It then marks the mutation
+and switches every `node_modules` link (one rename per path, root last). Output
+preparation runs on the new generation as before. A failed install never
+switches, so the live tree and its marker stay as they were. The failure is
+recorded with `liveTreeIntact`, so consumers don't retry the same inputs. The
+replaced generation stays while any reader registered before the switch is
+alive. Reader records carry the generation they entered on. The writer prunes
+after it releases, and the last reader of a retired generation prunes on exit.
+pnpm refuses a plain `pnpm install` into a linked `node_modules`, so forced
+repairs (UI patch restore, pkgroll) install into a generation too.
+`pnpm install --lockfile-only` still works. Windows directory junctions can't
+be replaced atomically, so adoption refuses on Windows.
+
 Agent hooks protect primary-checkout patch files and `patchedDependencies`; prepare changes in an outside worktree and hand the diff to Systemic.
 Only the dependency applier sets `HAPPIER_DEPENDENCY_APPLIER=1` in its hook environment when applying the complete validated change.
 

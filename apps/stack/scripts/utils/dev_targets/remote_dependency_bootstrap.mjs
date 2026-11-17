@@ -58,16 +58,16 @@ async function prepareInitialUiOutputs({ repoDir, env, force, stdio = 'inherit',
   // Installation precedes source registration; readiness does not require published workspace dist.
   await import(new URL('../../../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url));
   const installEnv = resolveInitialInstallEnv(env);
-  const runPnpm = async (args, postinstallEnv = installEnv) => {
+  const runPnpm = async (args, postinstallEnv = installEnv, cwd = repoDir) => {
     const invocation = resolvePnpmCommandInvocation(args, { preferPath: true });
     await run(invocation.command, invocation.args, {
-      cwd: repoDir, env: postinstallEnv, stdio, captureFailureDiagnostic: true,
+      cwd, env: postinstallEnv, stdio, captureFailureDiagnostic: true,
     });
   };
   await ensureUiPostinstallOutputs(join(repoDir, 'apps', 'ui'), repoDir, {
     force, env: installEnv, quiet,
     runPostinstall: async (postinstallEnv) => runPnpm(['--filter', '@happier-dev/app', 'run', '--silent', 'postinstall:real'], postinstallEnv),
-    restoreDependencies: async () => runPnpm(['install', '--force', ...REMOTE_INITIAL_DEPENDENCY_INSTALL_ARGS.slice(1)]),
+    restoreDependencies: async ({ cwd = repoDir } = {}) => runPnpm(['install', '--force', ...REMOTE_INITIAL_DEPENDENCY_INSTALL_ARGS.slice(1)], installEnv, cwd),
   });
 }
 
