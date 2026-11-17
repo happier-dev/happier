@@ -29,6 +29,7 @@ import { StoreUpdateRow, useStoreUpdateRowHost } from './StoreUpdateRow';
 
 const KIND_TITLE: Readonly<Record<StoreUpdateKind, () => string>> = {
   app: () => t('capabilities.store.kinds.app.title'),
+  theme: () => t('themeStore.title'),
   mcpServer: () => t('capabilities.store.kinds.mcpServer.title'),
   skill: () => t('capabilities.store.kinds.skill.title'),
   agent: () => t('capabilities.store.kinds.agent.title'),
@@ -59,11 +60,12 @@ export function StoreUpdatesScreen(): React.ReactNode {
     () => ({ scope, machine: selectedMachine ? { serverIdentityId: selectedMachine.serverId, machineId: selectedMachine.machineId } : null, projectKey: null }),
     [scope, selectedMachine],
   );
-  const { view, check, checkNow, execution, app, mcpServer, skill, agent, browserExtension, plugin } =
+  const { view, check, checkNow, execution, app, mcpServer, skill, agent, browserExtension, plugin, theme } =
     useInstalledUpdates(query, presented, externalActionTarget, true);
   const refreshBrowserExtensions = browserExtension.continuation;
   const families = {
     app: { kind: 'app', result: app }, mcpServer: { kind: 'mcpServer', result: mcpServer },
+    theme: { kind: 'theme', result: theme },
     skill: { kind: 'skill', result: skill }, agent: { kind: 'agent', result: agent },
     browserExtension: { kind: 'browserExtension', result: browserExtension }, plugin: { kind: 'plugin', result: plugin },
   } as const;
@@ -73,7 +75,7 @@ export function StoreUpdatesScreen(): React.ReactNode {
 
   const loading =
     view.sections.length === 0 &&
-    [app, mcpServer, skill, agent, browserExtension, plugin].some((family) => family.coverage === 'loading');
+    [app, mcpServer, skill, agent, browserExtension, plugin, theme].some((family) => family.coverage === 'loading');
   const coverageKinds = STORE_UPDATE_KINDS.filter((kind): kind is keyof typeof families => kind in families);
   const coverageFamilies = coverageKinds.map(kind => families[kind]);
   const unresolved = coverageKinds.flatMap(kind => {

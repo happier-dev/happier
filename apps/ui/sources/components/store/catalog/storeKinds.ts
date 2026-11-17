@@ -18,6 +18,7 @@ import { softwareSummary, useSoftwareList, type StoreSoftwareItem, type StoreSof
 import { useInstalledSoftware } from './storeSoftwareInstalled';
 import { useInstalledApps } from './storeApps';
 import { useInstalledBrowserExtensions } from './storeBrowserExtensions';
+import { useInstalledThemes } from './storeThemesInstalled';
 import { APP_STORE_KIND } from './storeKindContributions';
 export type { InstalledAppRow } from './storeApps';
 export type { InstalledBrowserExtensionRow } from './storeBrowserExtensions';
@@ -54,6 +55,9 @@ function registrySummary(item: RegistryCatalogItemSummary): StoreItemSummary<Reg
 type RegistryList = ReturnType<typeof useRegistryItems>;
 function useAppList(input: StoreListInput, demand: StoreDemand): RegistryList {
     return useRegistryItems({ kind: 'app', query: input.query, sourceIds: input.sourceIds }, demand.presented);
+}
+function useThemeList(input: StoreListInput, demand: StoreDemand): RegistryList {
+    return useRegistryItems({ kind: 'theme', query: input.query, sourceIds: input.sourceIds }, demand.presented);
 }
 function useStarterList(input: StoreListInput, demand: StoreDemand): RegistryList {
     return useRegistryItems({ kind: 'starter', query: input.query, sourceIds: input.sourceIds }, demand.presented);
@@ -149,6 +153,7 @@ function pluginSummary(item: PluginMarketplaceCatalogEntry): StoreItemSummary<Pl
 /** Closed host UI adapters. Each kind is mounted by a static leaf; never iterate this map to call hooks. */
 export const storeKinds = {
     app: { ...APP_STORE_KIND, summary: registrySummary, useList: useAppList, useInstalled: useInstalledApps },
+    theme: { summary: registrySummary, useList: useThemeList, useInstalled: useInstalledThemes },
     // Software second: what a Machine runs sits beside the Apps it hosts (S40-R02).
     software: { summary: softwareSummary, useList: useSoftwareList, useInstalled: useInstalledSoftware },
     starter: { summary: registrySummary, useList: useStarterList, useInstalled: undefined },

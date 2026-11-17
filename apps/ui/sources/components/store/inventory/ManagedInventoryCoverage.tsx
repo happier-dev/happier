@@ -32,7 +32,8 @@ export function ManagedInventoryCoverage(props: Readonly<{
     for (const { kind, result } of props.families) {
         const coverage = result.coverage;
         if (typeof coverage !== 'object') continue;
-        const entry = { kind: kind === 'configuredBackup' ? t('projects.deployments.sectionBackups') : t(`capabilities.store.kindSentenceNames.${kind}`),
+        const entry = { kind: kind === 'configuredBackup' ? t('projects.deployments.sectionBackups')
+            : kind === 'theme' ? t('themeStore.title') : t(`capabilities.store.kindSentenceNames.${kind}`),
             retry: typeof result.continuation === 'function' ? result.continuation as () => unknown : undefined };
         if (!('unavailable' in coverage)) {
             // A page whose section shows its own Next/All says nothing more here; a settled short read is not "loading".

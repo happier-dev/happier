@@ -172,6 +172,12 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
     };
     const host = createRegistryHostV1({ host: Platform.OS === 'web' ? 'web' : 'native', signal: context.signal,
         http: createUiRegistryHttpV1(runtimeFetch, context.signal, Date.now, memo.rateLimitedUntil), readSources,
+        readThemeUpdateItems: async () => {
+            const { sync } = await import('@/sync/sync');
+            return sync.withThemeProfileLibrary(async library => (await library.list()).flatMap(entry =>
+                entry.source.kind === 'store' ? [{ key: entry.id, provenance: entry.source.provenance }] : []),
+            { expectedScope: account, signal: context.signal });
+        },
         readBotTemplateOnDaemon: async (registryItem, contributionId) => {
             const result = await executeActionForSource(registryItem.sourceId, 'template.preview', {
                 source: { kind: 'plugin', registryItem, contributionId },

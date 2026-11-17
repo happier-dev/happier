@@ -13,10 +13,12 @@ import type { CapabilityStatus } from '@/components/capabilities/status/capabili
 import type { ManagedInventoryRow as InstalledRow } from '../inventory/useManagedInventory';
 import type { BrowserExtensionActionIntent } from '../catalog/storeBrowserExtensions';
 import type { StorePluginUpdateEntry } from './useStorePluginUpdates';
+import type { InstalledThemeRow } from '../catalog/storeThemes';
 
 /** The kinds whose owners record where they came from and what that source says now (the registry trackers). */
 export const STORE_UPDATE_KINDS = [
   'app',
+  'theme',
   'mcpServer',
   'skill',
   'agent',
@@ -72,6 +74,10 @@ type Tracked = Readonly<{
   modified: boolean;
   basis: string;
 }>;
+
+function themeBasis(row: InstalledThemeRow): string {
+  return JSON.stringify(row.native.entries.map(entry => [entry.id, entry.source.provenance]));
+}
 
 /** The owner's own record of where an installed thing came from; null when nothing upstream can publish a newer one. */
 function readTracked(row: InstalledRow): Tracked | null {
@@ -142,6 +148,7 @@ function readTracked(row: InstalledRow): Tracked | null {
 export function captureStoreUpdateBasis(rows: readonly InstalledRow[]): ReadonlyMap<string, string> {
   const basis = new Map<string, string>();
   for (const row of rows) {
+    if (row.kind === 'theme') { basis.set(row.key, themeBasis(row)); continue; }
     const item = readTracked(row);
     if (item) basis.set(row.key, item.basis);
   }
@@ -175,6 +182,32 @@ export function buildStoreUpdates(
   let successful = 0;
   let complete = check?.checkedAt != null && !check.failed;
   for (const row of rows) {
+    if (row.kind === 'theme') {
+      tracked += 1;
+      const current = !check?.basis || check.basis.get(row.key) === themeBasis(row);
+      const faces = row.native.entries.map(face => ({ face,
+        upstream: current ? checked.get(`theme:${face.id}`) : undefined }));
+      if (faces.every(item => item.upstream && item.upstream.state !== 'unchecked')) successful += 1;
+      else complete = false;
+      const failed = faces.find(item => item.upstream?.state === 'unchecked')?.upstream;
+      if (failed) unchecked += 1;
+      const available = faces.filter(item => item.upstream?.state === 'update_available');
+      const removed = faces.filter(item => item.upstream?.state === 'removed_from_source');
+      const affected = available.length ? available : removed;
+      const from = [...new Set(affected.flatMap(item => item.face.source.provenance.ref
+        ? [contentRefLabel(item.face.source.provenance.ref)] : []))].join(' · ') || null;
+      const to = [...new Set(available.flatMap(item => item.upstream?.state === 'update_available' && item.upstream.latest
+        ? [contentRefLabel(item.upstream.latest)] : []))].join(' · ') || null;
+      const entry: StoreUpdateEntry | null = available.length
+        ? { key: row.key, row, state: 'available', from, to }
+        : removed.length ? { key: row.key, row, state: 'removed', status: { kind: 'removed' }, from, to: null }
+          : failed?.state === 'unchecked' ? { key: row.key, row, state: 'unchecked', reason: failed.reason, from, to: null } : null;
+      if (entry) {
+        const entries = byKind.get('theme');
+        if (entries) entries.push(entry); else byKind.set('theme', [entry]);
+      }
+      continue;
+    }
     if (row.kind === 'plugin') {
       tracked += 1;
       const updates = pluginUpdates.get(row.key);

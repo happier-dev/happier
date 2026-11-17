@@ -54,6 +54,7 @@ export function ManagedInventorySections(props: SectionsProps): React.ReactNode 
         const native = props.inventory.families;
         const sections = {
             app: { kind: 'app', result: native.app },
+            theme: { kind: 'theme', result: native.theme },
             browserExtension: { kind: 'browserExtension', result: native.browserExtension },
             software: { kind: 'software', result: native.software },
             setup: { kind: 'setup', result: props.inventory.operationalFamilies.setup },

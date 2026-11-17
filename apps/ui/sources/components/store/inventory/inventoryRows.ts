@@ -5,7 +5,7 @@ import { mcpServerDisplayName, mcpServerRoute } from '@/components/settings/mcpS
 import { skillDisplayName, skillHref } from '@/components/settings/skills/skillsCollectionModel';
 import { skillStatus } from '@/components/settings/skills/status/skillStatus';
 import { skillSourceId } from '@/components/settings/skills/skillSource';
-import { buildPluginDetailRoute, buildStoreBrowserProfileRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
+import { buildPluginDetailRoute, buildStoreBrowserProfileRoute, buildStoreListingRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { isPluginIncludedWithHappier, projectAccountInstalledPlugin } from '@/components/settings/plugins/model/pluginMarketplaceModel';
 import { providerConnectionDetailRoute } from '@/components/settings/providers/collection/providerCollectionModel';
 import { presentProviderConnection } from '@/providers/connection/presentation';
@@ -31,9 +31,11 @@ function operationalKindWord(kind: InstalledRow['kind']): string | null {
     }
 }
 export function inventoryKindTitle(kind: InstalledRow['kind']): string {
+    if (kind === 'theme') return t('themeStore.title');
     return operationalKindWord(kind) ?? t(`capabilities.store.kinds.${kind as Exclude<InstalledRow['kind'], OperationalKind>}.title`);
 }
 export function inventoryKindWord(kind: InstalledRow['kind']): string {
+    if (kind === 'theme') return t('settingsAppearance.theme');
     return operationalKindWord(kind) ?? t(`capabilities.store.kindWord.${kind as Exclude<InstalledRow['kind'], OperationalKind>}`);
 }
 export type ManagedInventoryRowPresentation = Readonly<{
@@ -146,9 +148,16 @@ export function presentInventoryRow(row: InstalledRow, input: StoreInstalledInpu
     let included = false;
     let machines: readonly MachineAdministrationTargetV1[] | null = input.machine ? [input.machine] : null;
     // A scoped row was admitted by the native Project/reach owner. All does not infer Projects from checkouts.
-    const projects = row.kind === 'app' || row.kind === 'configuredBackup' ? row.projectKeys : input.projectKey ? [input.projectKey] : row.kind === 'provider' || row.kind === 'plugin'
+    const projects = row.kind === 'app' || row.kind === 'configuredBackup' ? row.projectKeys : input.projectKey ? [input.projectKey] : row.kind === 'provider' || row.kind === 'plugin' || row.kind === 'theme'
         || row.kind === 'agent' && row.subject === 'definition' ? [] : null;
     switch (row.kind) {
+        case 'theme':
+            title = row.native.entries.map(entry => entry.name).join(' · ');
+            context = [...new Set(row.native.entries.map(entry => entry.mode))]
+                .map(mode => t(mode === 'light' ? 'themeCard.light' : 'themeCard.dark')).join(' · ');
+            href = buildStoreListingRoute({ type: 'registryItem', kind: 'theme', ...row.native.listing });
+            machines = [];
+            break;
         case 'browserExtension':
             title = row.subject === 'extension' ? row.native.extension.name
                 // A saved profile without a display name reads by its id, as its own page titles it.

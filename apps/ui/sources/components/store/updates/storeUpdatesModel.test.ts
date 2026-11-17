@@ -12,6 +12,9 @@ import { createPluginAccountAvailabilityReader } from '@/sync/domains/plugins/av
 
 import type { InstalledAppRow, InstalledRow, InstalledSkillRow, InstalledPluginRow } from '../catalog/storeKinds';
 import { buildStoreUpdates, captureStoreUpdateBasis, describeUncheckedSources } from './storeUpdatesModel';
+import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { projectThemeLibraryEntry } from '@/theme/profiles/themeProfilePresentation';
+import { projectInstalledStoreThemeRows } from '../catalog/storeThemes';
 
 const scope = { serverId: 'server-a', accountId: 'account-a' };
 const registry = (id: string, commit: string) => ({
@@ -56,6 +59,35 @@ function skill(
 }
 
 describe('buildStoreUpdates', () => {
+  it('joins per-face theme observations into one installed listing and retains a partially updated face', () => {
+    const faces = (['dark', 'light'] as const).map(mode => {
+      const parsed = parseThemeProfileDocument({ schemaVersion: 1, id: `palette-${mode}`, name: mode,
+        createdAt: '2026-11-16', updatedAt: '2026-11-16', base: { light: 'light', dark: 'dark' },
+        overrides: { light: {}, dark: {} }, assetAppearance: mode, source: { kind: 'store', contributionId: mode,
+          provenance: { sourceId: 'catalog', sourceUrl: 'https://catalog.example.test', format: 'happier-catalog',
+            itemId: 'palette', importedAt: 1, ref: { kind: 'version', version: '1.0.0' } } } });
+      if (!parsed.ok) throw new Error('Invalid theme fixture');
+      return projectThemeLibraryEntry(parsed.document);
+    });
+    const rows = projectInstalledStoreThemeRows(faces, scope);
+    const results: RegistryUpdateCheckResultV1['results'] = faces.map(face => ({ kind: 'theme', key: face.id,
+      upstream: { state: 'update_available', latest: { kind: 'version', version: '2.0.0' } } }));
+    const check = { checkedAt: 20, failed: false, basis: captureStoreUpdateBasis(rows) };
+    const view = buildStoreUpdates(rows, results, check);
+    expect(view).toMatchObject({ count: 1, tracked: 1, freshness: { checked: 1, tracked: 1 } });
+    expect(view.sections).toMatchObject([{ kind: 'theme', entries: [{ key: rows[0]!.key,
+      state: 'available', from: '1.0.0', to: '2.0.0' }] }]);
+    const dark = faces[0]!;
+    if (dark.source.kind !== 'store') throw new Error('Expected installed Store fixture');
+    const partialRows = projectInstalledStoreThemeRows([{ ...dark, source: { ...dark.source,
+      provenance: { ...dark.source.provenance, ref: { kind: 'version', version: '2.0.0' } } } }, faces[1]!], scope);
+    const partialResults = [{ ...results[0]!, upstream: { state: 'current' as const } }, results[1]!];
+    const partialCheck = { ...check, basis: captureStoreUpdateBasis(partialRows) };
+    expect(buildStoreUpdates(partialRows, partialResults, partialCheck).sections[0]?.entries).toHaveLength(1);
+    expect(buildStoreUpdates(partialRows, partialResults, partialCheck).count).toBe(1);
+    expect(buildStoreUpdates(partialRows, results, check).count).toBeNull();
+    expect(buildStoreUpdates(rows, results.slice(0, 1), check).count).toBeNull();
+  });
   it('projects supplied app observations into the existing Environment review without body reads', () => {
     const detail = createDeploymentEnvironmentDetailV1();
     const row: InstalledAppRow = { kind: 'app', key: 'app:env', scope,

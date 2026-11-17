@@ -24,18 +24,24 @@ export function projectStoreThemeCard(item: RegistryCatalogItemSummary, sourceTi
     };
 }
 
+export type InstalledStoreThemeEntry = ThemeLibraryEntry & Readonly<{
+    source: Extract<ThemeLibraryEntry['source'], { kind: 'store' }>;
+}>;
+function isStoreThemeEntry(entry: ThemeLibraryEntry): entry is InstalledStoreThemeEntry {
+    return entry.source.kind === 'store';
+}
 export type InstalledStoreThemeGroup = Readonly<{
     key: string;
     listing: ThemeRegistryItemKey;
     /** Keep every face's own provenance, including a partially updated listing's differing versions. */
-    entries: readonly ThemeLibraryEntry[];
+    entries: readonly InstalledStoreThemeEntry[];
 }>;
 
 /** Installed lists a Store listing once; editable copies belong to Yours and carry no upstream demand. */
 export function groupInstalledStoreThemes(entries: readonly ThemeLibraryEntry[]): readonly InstalledStoreThemeGroup[] {
-    const groups = new Map<string, { key: string; listing: ThemeRegistryItemKey; entries: ThemeLibraryEntry[] }>();
+    const groups = new Map<string, { key: string; listing: ThemeRegistryItemKey; entries: InstalledStoreThemeEntry[] }>();
     for (const entry of entries) {
-        if (entry.source.kind !== 'store') continue;
+        if (!isStoreThemeEntry(entry)) continue;
         const { sourceId, itemId } = entry.source.provenance;
         const key = JSON.stringify([sourceId, itemId]);
         const held = groups.get(key);

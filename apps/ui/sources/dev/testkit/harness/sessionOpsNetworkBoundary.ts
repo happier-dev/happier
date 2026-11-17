@@ -141,9 +141,9 @@ export async function installSessionOpsNetworkBoundary() {
         const url = new URL(String(input));
         const token = new Headers(init?.headers).get('authorization');
         httpRequests.push({ url: url.href, token, method: (init?.method ?? 'GET').toUpperCase() });
-        if (!homes.has(url.origin)) throw new Error(`Unexpected test Home: ${url.origin}`);
         const response = httpResponder ? await httpResponder(input, init) : null;
         if (response !== null) return response;
+        if (!homes.has(url.origin)) throw new Error(`Unexpected test Home: ${url.origin}`);
         if (url.pathname === '/v2/sessions/read-batch') return undefined;
         const settingsResponse = homes.get(url.origin)!.settings.handle(input, init);
         if (settingsResponse) return settingsResponse;

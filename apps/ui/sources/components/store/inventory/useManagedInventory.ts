@@ -60,15 +60,16 @@ export function useManagedInventory(query: ManagedInventoryQuery): ManagedInvent
     const provider = storeKinds.provider.useInstalled(input, demand('provider'), admitted);
     const plugin = storeKinds.plugin.useInstalled(input, demand('plugin'), admitted);
     const software = storeKinds.software.useInstalled(input, demand('software'), admitted);
+    const theme = storeKinds.theme.useInstalled(input, demand('theme'), admitted);
     const watchedService = useManagedWatchedServices(input, demand('watchedService'), admitted);
     const setup = useManagedSetup(input, demand('setup'), admitted);
     const configuredCheck = useManagedConfiguredChecks(input, demand('configuredCheck'), admitted);
     const operationalFamilies = React.useMemo(() => ({ watchedService, setup, configuredCheck, configuredBackup }), [watchedService, setup, configuredCheck, configuredBackup]);
-    const families = React.useMemo(() => ({ app, browserExtension, mcpServer, skill, agent, provider, plugin, software }),
-        [app, browserExtension, mcpServer, skill, agent, provider, plugin, software]);
+    const families = React.useMemo(() => ({ app, browserExtension, mcpServer, skill, agent, provider, plugin, software, theme }),
+        [app, browserExtension, mcpServer, skill, agent, provider, plugin, software, theme]);
     const rows = React.useMemo<readonly ManagedInventoryRow[]>(() => [...app.rows, ...browserExtension.rows, ...mcpServer.rows, ...agent.rows, ...skill.rows,
-        ...provider.rows, ...plugin.rows, ...software.rows, ...setup.rows, ...watchedService.rows, ...configuredCheck.rows, ...configuredBackup.rows].filter(row => query.presented && (query.kinds === undefined || query.kinds.includes(row.kind))),
-        [query.presented, query.kinds, app.rows, browserExtension.rows, mcpServer.rows, agent.rows, skill.rows, provider.rows, plugin.rows, software.rows, setup.rows, watchedService.rows, configuredCheck.rows, configuredBackup.rows]);
+        ...provider.rows, ...plugin.rows, ...software.rows, ...theme.rows, ...setup.rows, ...watchedService.rows, ...configuredCheck.rows, ...configuredBackup.rows].filter(row => query.presented && (query.kinds === undefined || query.kinds.includes(row.kind))),
+        [query.presented, query.kinds, app.rows, browserExtension.rows, mcpServer.rows, agent.rows, skill.rows, provider.rows, plugin.rows, software.rows, theme.rows, setup.rows, watchedService.rows, configuredCheck.rows, configuredBackup.rows]);
     const attentionQuery = React.useMemo(() => ({ ...input, presented: query.presented }), [input, query.presented]);
     const attention = useManagedInventoryAttention(attentionQuery, families, rows, admitted.scope);
     return React.useMemo(() => {

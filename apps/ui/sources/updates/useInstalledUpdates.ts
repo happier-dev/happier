@@ -22,8 +22,9 @@ export function useInstalledUpdates(query: StoreInstalledInput, presented: boole
     const agent = storeKinds.agent.useInstalled(query, demand, admitted);
     const browserExtension = storeKinds.browserExtension.useInstalled(query, demand, admitted);
     const plugin = storeKinds.plugin.useInstalled(query, demand, admitted);
-    const rows = React.useMemo(() => [...app.rows, ...mcpServer.rows, ...agent.rows, ...skill.rows, ...browserExtension.rows, ...plugin.rows],
-        [app.rows, mcpServer.rows, agent.rows, skill.rows, browserExtension.rows, plugin.rows]);
+    const theme = storeKinds.theme.useInstalled(query, demand, admitted);
+    const rows = React.useMemo(() => [...app.rows, ...mcpServer.rows, ...agent.rows, ...skill.rows, ...browserExtension.rows, ...plugin.rows, ...theme.rows],
+        [app.rows, mcpServer.rows, agent.rows, skill.rows, browserExtension.rows, plugin.rows, theme.rows]);
     const execution = useMountedActionExecution(scope);
     const execute = React.useCallback<typeof execution.execute>((actionId, input, options) =>
         execution.execute(actionId, input, { ...options, externalActionTarget }), [execution.execute, externalActionTarget]);
@@ -54,7 +55,7 @@ export function useInstalledUpdates(query: StoreInstalledInput, presented: boole
         await Promise.all([ordinary.checkNow(), ...(hasApps ? [apps.checkNow()] : [])]);
     }, [ordinary.checkNow, apps.checkNow, hasApps]);
     const pluginUpdates = useStorePluginUpdates({ rows: plugin.rows, check });
-    const inventoryReady = [app, mcpServer, skill, agent, browserExtension, plugin].every(family => family.coverage === 'available');
+    const inventoryReady = [app, mcpServer, skill, agent, browserExtension, plugin, theme].every(family => family.coverage === 'available');
     const view = useStoreUpdates(rows, check, scope, presented && publishStoreSummary, inventoryReady, pluginUpdates.entries);
-    return { view, check, checkNow, execution, app, mcpServer, skill, agent, browserExtension, plugin };
+    return { view, check, checkNow, execution, app, mcpServer, skill, agent, browserExtension, plugin, theme };
 }

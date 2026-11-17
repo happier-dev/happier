@@ -36,6 +36,7 @@ import type { InstalledFamilyResult, StoreDemand, StoreInstalledInput } from './
 import type { InstalledSoftwareRow } from './storeSoftwareInstalled';
 import type { InstalledAppRow } from './storeApps';
 import type { InstalledBrowserExtensionRow } from './storeBrowserExtensions';
+import type { InstalledThemeRow } from './storeThemes';
 import { createInstalledAgentRowsProjection } from './storeInstalledAgentRows';
 import type { InstalledScopeAdmission, StoreScopeFailure as ScopeFailure } from './storeAccountAdmission';
 
@@ -68,7 +69,7 @@ export type InstalledPluginRow = InstalledIdentity & Readonly<{
     /** Native daemon facts exist only for the explicitly demanded Machine. */
     detail?: InstalledPluginEntry;
 }>;
-export type InstalledRow = InstalledAppRow | InstalledMcpServerRow | InstalledSkillRow | InstalledAgentRow | InstalledProviderRow | InstalledPluginRow | InstalledSoftwareRow | InstalledBrowserExtensionRow;
+export type InstalledRow = InstalledAppRow | InstalledThemeRow | InstalledMcpServerRow | InstalledSkillRow | InstalledAgentRow | InstalledProviderRow | InstalledPluginRow | InstalledSoftwareRow | InstalledBrowserExtensionRow;
 export type InstalledMcpServersResult = InstalledFamilyResult<InstalledMcpServerRow,
     ScopeFailure | MachineFailure | McpServerCatalogValueSnapshot | PlacementFact, () => Promise<void>>;
 export type InstalledSkillsResult = InstalledFamilyResult<InstalledSkillRow,

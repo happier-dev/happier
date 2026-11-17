@@ -1,4 +1,4 @@
-import { initializeArtifactInventoryDemandHarness } from '@/dev/testkit/harness/artifactInventoryDemandHarness';
+import { createArtifactInventoryDemandHarness, initializeArtifactInventoryDemandHarness } from '@/dev/testkit/harness/artifactInventoryDemandHarness';
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from '@zip.js/zip.js';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
@@ -9,6 +9,9 @@ import { createDeferred, createMachineFixture, renderHook, renderScreen, standar
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createPlainPromptLibraryCatalogHomeFixture, createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { projectThemeLibraryEntry, projectThemeMiniaturePalette } from '@/theme/profiles/themeProfilePresentation';
 import { createPromptRegistrySkillFixture } from '@/dev/testkit/harness/promptMachineTransferBoundary';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { PromptBundleArtifactHeaderV1Schema, PromptBundleBodyV1Schema } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
@@ -93,6 +96,50 @@ const { useSkillsLibrary } = await import('@/sync/domains/skills/useSkillsLibrar
 const { useSkillsUpdates } = await import('@/components/settings/skills/updates/useSkillsUpdates');
 const { useSkillDetail } = await import('@/components/settings/skills/detail/useSkillDetail');
 const { useRegistrySources } = await import('./useRegistrySources');
+
+it('checks installed theme header provenance through the captured Account without reading face bodies', async () => {
+    const catalog = createPromptLibraryCatalogBoundary({ records: [{ key: 'registry-sources',
+        value: { v: 2, disabledSourceIds: [], sources: [] } }], revision: 1, settingsVersion: 1 });
+    const fixture = await createArtifactInventoryDemandHarness({ handleRequest: async (url, init) => {
+        const response = await catalog.handle(`${url.pathname}${url.search}`, init);
+        if (response) return response;
+        if (url.href === 'https://open-vsx.org/api/sample/palette/latest') return Response.json({
+            namespace: 'sample', name: 'palette', version: '2.0.0', displayName: 'Palette',
+            files: { manifest: 'https://open-vsx.org/manifest.json', download: 'https://open-vsx.org/package.vsix',
+                sha256: 'https://open-vsx.org/package.sha256' } });
+        return null;
+    } });
+    onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+    const scope = storage.getState().settingsScope!;
+    const provenance = { sourceId: 'builtin:open-vsx', sourceUrl: 'https://open-vsx.org/api', format: 'open-vsx' as const,
+        itemId: 'sample/palette', ref: { kind: 'version' as const, version: '1.0.0' }, importedAt: 1 };
+    fixture.inventory = (['dark', 'light'] as const).map((mode, index) => {
+        const id = `11111111-1111-4111-8111-00000000000${index}`;
+        const parsed = parseThemeProfileDocument({ schemaVersion: 1, id, name: mode, createdAt: '2026-11-16', updatedAt: '2026-11-16',
+            base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} }, assetAppearance: mode,
+            source: { kind: 'store', provenance, contributionId: mode } });
+        if (!parsed.ok) throw new Error('Invalid theme boundary fixture');
+        const entry = projectThemeLibraryEntry(parsed.document);
+        return { ...fixture.inventory[0]!, id, ownerAccountId: scope.accountId, kindHint: 'theme_profile.v1',
+            dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            header: encodePlainArtifactStoredContent({ v: 1, kind: 'theme_profile.v1', title: entry.name, mode: entry.mode,
+                themeSource: entry.source, compatibility: entry.compatibility, palette: projectThemeMiniaturePalette(parsed.document.profile) }),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify(parsed.document.raw) }) };
+    });
+    fixture.pages.length = 0; fixture.bodyReads.length = 0;
+    const account = await captureLazyActionAccountContext(scope.serverId);
+    onTestFinished(() => account.dispose());
+    const port = createUiPromptLibraryArtifactStore(account.workflowArtifacts, account).organization!;
+    const host = await createUiRegistryHostV1(account, port, {});
+    const result = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].parse(
+        await host.execute('registries.updates.check', { kind: 'theme' }));
+    expect(Object.fromEntries(result.results.map(item => [item.key, { kind: item.kind, state: item.upstream.state }])))
+        .toEqual(Object.fromEntries(fixture.inventory.map(row => [row.id, { kind: 'theme', state: 'update_available' }])));
+    expect(fixture.bodyReads).toEqual([]);
+    expect(fixture.pages).toEqual([{ kinds: '["theme_profile.v1"]', headers: 2 }]);
+    expect(fixture.network.httpRequests.filter(request => request.url.startsWith('https://open-vsx.org/'))
+        .map(request => request.token)).toEqual([null]);
+});
 
 it('reads the Environment database picker on its controller when another own Machine is first', async () => {
     const sourceId = 'environment-databases';

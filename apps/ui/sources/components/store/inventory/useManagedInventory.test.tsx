@@ -11,6 +11,9 @@ import { createSeededSkillsHome } from '@/dev/testkit/harness/skillsSurfaceHarne
 import { MachinePublishedResourceSummaryV1Schema } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 import { createHydratedPlainMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { observeMachinePresenceForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { ThemeProfileArtifactHeaderSchema } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import { createArtifactListHttpResponse, createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 
 const rpc = createProviderSettingsHarness({ machines: [] });
 installProviderSettingsRpcBoundary(rpc);
@@ -23,6 +26,38 @@ const { useMachinesNeedingAttention } = await import('@/components/machines/atte
 const { useMcpServerMachineTests } = await import('@/components/settings/mcpServers/status/useMcpServerMachineTests');
 const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
 function Boundary({ children }: React.PropsWithChildren) { return <InboxArtifactSourceBoundary>{children}</InboxArtifactSourceBoundary>; }
+
+it('lists one Account theme listing from its held face headers and never relabels another Account projection', async () => {
+    const home = await account.restore({ serverIdentityId: 'srv_inventory_themes', machines: [] });
+    const scope = storage.getState().settingsScope!;
+    const rows: Extract<DecryptedArtifact, { isDecrypted: true }>[] = (['dark', 'light', 'copy'] as const).map((mode, index) => ({
+        id: `theme-${mode}`, sourceServerId: scope.serverId, ownerAccountId: scope.accountId, access: 'owner',
+        isDecrypted: true, title: mode, headerVersion: 1, bodyVersion: 1, seq: index, createdAt: 0, updatedAt: 0,
+        rawHeader: ThemeProfileArtifactHeaderSchema.parse({ v: 1, kind: 'theme_profile.v1', title: mode,
+            mode: mode === 'light' ? 'light' : 'dark', themeSource: mode === 'copy' ? { kind: 'yours' } : {
+                kind: 'store', contributionId: mode, provenance: { sourceId: 'catalog', itemId: 'palette',
+                    sourceUrl: 'https://catalog.example.test', format: 'happier-catalog', importedAt: 1,
+                    ref: { kind: 'version', version: '1.0.0' } } },
+            compatibility: { status: 'supported', unsupportedPaths: [] }, palette: { overrides: {}, radius: 'soft' } }),
+    }));
+    const persisted = rows.map(row => createPlainArtifactHttpFixture(row, scope.accountId));
+    for (const row of persisted) account.home.artifacts(home.serverId).replaceStoredRow(row);
+    account.home.answer(home.serverId, 'GET /v1/artifacts', { select: async (_input, request) => ({ body:
+        await createArtifactListHttpResponse(new URL(request.url), persisted).json(),
+    }) });
+    const hook = await renderHook((inputScope: StoreInstalledInput['scope']) => useManagedInventory({
+        scope: inputScope, machine: null, projectKey: null, presented: true, kinds: ['theme'],
+    }), { initialProps: scope, wrapper: Boundary });
+    try {
+        await vi.waitFor(() => expect(hook.getCurrent().families.theme.coverage).toBe('available'));
+        expect(hook.getCurrent().rows).toHaveLength(1);
+        expect(hook.getCurrent().rows[0]).toMatchObject({ kind: 'theme', scope,
+            native: { listing: { sourceId: 'catalog', itemId: 'palette' },
+                entries: expect.arrayContaining([expect.objectContaining({ id: 'theme-dark' }), expect.objectContaining({ id: 'theme-light' })]) } });
+        await hook.rerender({ ...scope, accountId: 'another-account' });
+        expect(hook.getCurrent().rows).toEqual([]);
+    } finally { await hook.unmount(); }
+});
 
 it('shares one admission across Installed and reports every cold family as loading until credentials settle', async () => {
     const home = await account.restore({ serverIdentityId: 'srv_inventory_cold', machines: [] });

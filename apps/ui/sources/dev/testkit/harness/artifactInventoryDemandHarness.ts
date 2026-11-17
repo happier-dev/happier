@@ -21,7 +21,9 @@ export async function initializeArtifactInventoryDemandHarness() {
 }
 
 /** Shared native and web demand scenarios replace HTTP/Socket/OS ports, keeping Sync and stores real. */
-export async function createArtifactInventoryDemandHarness() {
+export async function createArtifactInventoryDemandHarness(options?: Readonly<{
+    handleRequest?: (url: URL, init?: RequestInit) => Promise<Response | null>;
+}>) {
     const network = await installSessionOpsNetworkBoundary();
     const fixture: {
         network: SessionOpsNetworkBoundary;
@@ -86,6 +88,8 @@ export async function createArtifactInventoryDemandHarness() {
         network.setHttpResponder(async (input, init) => {
             const url = new URL(String(input));
             const path = url.pathname;
+            const additional = await options?.handleRequest?.(url, init);
+            if (additional) return additional;
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
@@ -112,7 +116,7 @@ export async function createArtifactInventoryDemandHarness() {
             if (path === '/v2/sessions' || path === '/v2/sessions/active') return Response.json({ sessions: [], nextCursor: null, hasNext: false });
             if (path === '/v2/session-organization') return Response.json({ error: 'Not found' }, { status: 404 });
             if (path === '/v1/machines') return Response.json([]);
-            if (path === '/v1/artifacts') {
+            if (path === '/v1/artifacts' && (!init?.method || init.method === 'GET')) {
                 if (fixture.listFailure) return Response.json({ error: 'artifact_access_forbidden' }, { status: fixture.listFailure });
                 const response = await fixture.artifactStore?.handle(path + url.search, init)
                     ?? createArtifactListHttpResponse(url, fixture.inventory);
