@@ -77,7 +77,8 @@ theme is painted. If a theme hides an app area, the library's warning offers
 
 The library shares its **Adaptive · Light · Dark** choice with Appearance.
 Light and dark themes have separate sections; a theme authored for both modes
-appears once with both previews. Press a tile to try it in its own mode.
+appears once with both previews. Adaptive shows both in-use slots; Light or Dark
+shows the slot for that mode. Press a tile to try it in its own mode.
 **Revert** restores the previous theme and mode without saving anything.
 
 In **Adaptive**, **Keep** fills the theme's Light or Dark slot and leaves Adaptive
@@ -89,7 +90,9 @@ disconnected are not listed, and changes are not queued for them.
 
 Choose **Add theme → From the Store**, or open the **Store** link below the
 library, to browse themes, including Open VSX
-editor themes. Filter by source or light/dark mode, then open a listing for its
+editor themes. Store cards show theme miniatures as their package colours load
+near the visible part of the page. Filter by source or light/dark mode,
+then open a listing for its
 included themes, changes, platform coverage and licence. **Try on** previews a
 theme on this device without saving it. For registry themes, **Install** adds the
 listing's themes to your library and selects the one you tried; **Revert** returns
@@ -114,6 +117,9 @@ the draft here before saving it. Choose an option to preview it, then **Keep**
 the one you want or undo the preview. After Keep, the card offers the same
 connected-device picker. Agents proposing CSS through try-on or save request
 approval under the normal Action policy.
+
+Theme choices repaint the app with a reveal transition where supported. With
+reduced motion enabled, the theme changes without that animation.
 
 The command palette includes **Change theme**, a built-in-theme recovery
 choice, **Undo last theme change** and **Edit current CSS**.
