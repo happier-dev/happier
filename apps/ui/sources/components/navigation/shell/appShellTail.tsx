@@ -75,7 +75,9 @@ export function AppShellTailSlot(
     const target = host ?? anchorRef.current;
     if (target && container.parentNode !== target)
       target.appendChild(container);
-    container.style.display = host && hidden ? 'none' : 'contents';
+    // The container stands outside the tree that owns it. When that tree is frozen or hidden off screen, React
+    // detaches the anchor, and the container leaves with it rather than keeping whatever its owner last committed.
+    container.style.display = anchorRef.current === null || (host && hidden) ? 'none' : 'contents';
   }, [container, hidden, host]);
   // The anchor comes before the portal, so it places the container before the children's own layout
   // effects measure anything.

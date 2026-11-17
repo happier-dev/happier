@@ -175,6 +175,32 @@ it('keeps a slot in its tail host but shows nothing while its page is off screen
     expect(mounts).toBe(1);
 });
 
+// DESIGN-ACCEPT-1116-D D-K1: a parked Session tab freezes its body before its rail's focus update commits. The
+// portal sits outside the `display: none` that hides the frozen body, so the slot itself must leave with it:
+// otherwise the parked tab's rail stands beside the open one, visible and reachable by Tab.
+it('hides a slot whose retained body is frozen off screen, even before its own hidden update commits', async () => {
+    const { RetainedPanelSurface } = await import('@/components/ui/panels/RetainedPanelSurface');
+    const { root } = mountRoot();
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    cleanups.push(async () => { host.remove(); });
+    const render = async (active: boolean) => act(async () => root.render(
+        <RetainedPanelSurface isActive={active} mode="flow" suspendWhenHidden>
+            <AppShellTailSlot host={host} hidden={false}><span data-testid="parked-rail">rail</span></AppShellTailSlot>
+        </RetainedPanelSurface>,
+    ));
+    await render(true);
+    const rail = host.querySelector<HTMLElement>('[data-testid="parked-rail"]')!;
+    expect((rail.parentElement as HTMLElement).style.display).toBe('contents');
+    await render(false);
+    await act(async () => {});
+    expect(host.querySelector('[data-testid="parked-rail"]')).toBe(rail);
+    expect((rail.parentElement as HTMLElement).style.display).toBe('none');
+    await render(true);
+    await act(async () => {});
+    expect((rail.parentElement as HTMLElement).style.display).toBe('contents');
+});
+
 it('gives a vacant rail no column only where its More has a home in the title strip, and stands again when it has an action', async () => {
     const { container, root } = mountRoot();
     const { PaneActionRailContext } = await import('./PaneActionRailContext');
