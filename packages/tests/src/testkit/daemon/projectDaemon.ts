@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { networkInterfaces } from 'node:os';
+import { getCACertificates, setDefaultCACertificates } from 'node:tls';
 import { pathToFileURL } from 'node:url';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -34,12 +36,15 @@ import type { CliTestLaunchSpec } from '../process/cliLaunchSpec';
 import type { TestAccountCliAuthCredentials } from '../cliAuth';
 import { startCliAuthLoginForTerminalConnect } from '../uiE2e/cliTerminalConnect';
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
+import { createEphemeralTlsServerFixture } from '../tls/ephemeralTlsServerFixture.mjs';
 
 /** Project journeys compose the existing authenticated daemon harness. Account
  * and terminal credentials come from their committed auth/cliAuth owners;
  * every consent is made separately by the person through the real UI client. */
 export async function startProjectDaemonFixture(params: Readonly<{
   testDir: string;
+  /** Real TLS ingress for flows that create a guest outside the controller's loopback. */
+  guestReachableHome?: boolean;
   serverEnv?: NodeJS.ProcessEnv;
   dbProvider?: TestDbProvider;
   serverPreloadModules?: readonly string[];
@@ -52,12 +57,34 @@ export async function startProjectDaemonFixture(params: Readonly<{
     pathToFileURL(resolve(repoRootDir(), 'packages/cli-common/registerSourceRuntime.mjs')).href].filter(Boolean).join(' ');
   const serverSourceOptions = [sourceOptions, ...(params.serverPreloadModules ?? []).flatMap(module => ['--import', module])].join(' ');
   const port = await reserveAvailablePort();
+  let ingress: HttpRequestRecordingProxy | undefined;
+  let tls: Awaited<ReturnType<typeof createEphemeralTlsServerFixture>> | undefined;
+  let previousCertificates: string[] | undefined;
+  if (params.guestReachableHome) {
+    const host = Object.values(networkInterfaces()).flat().find(address => address?.family === 'IPv4' && !address.internal)?.address;
+    if (!host) throw new Error('Guest Home fixture requires a non-loopback IPv4 interface');
+    tls = await createEphemeralTlsServerFixture({ additionalIpAddresses: [host] });
+    try {
+      ingress = await startHttpRequestRecordingProxy({ targetBaseUrl: `http://127.0.0.1:${port}`, listenHost: host,
+        tls: { key: await readFile(tls.privateKeyPath), cert: await readFile(tls.leafCertificatePath) } });
+      // The signed-in Node UI client follows the same published TLS descriptor.
+      previousCertificates = getCACertificates('default');
+      setDefaultCACertificates([...previousCertificates, await readFile(tls.caCertificatePath, 'utf8')]);
+    } catch (error) { await tls.cleanup(); throw error; }
+  }
+  const enrollmentEnv = tls ? { NODE_EXTRA_CA_CERTS: tls.caCertificatePath } : {};
   const serverEnv = { NODE_OPTIONS: serverSourceOptions, HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: '1',
     HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1',
     // Real CLI enrollment retains the authenticated descriptor published for this ingress.
-    HAPPIER_PUBLIC_SERVER_URL: `http://127.0.0.1:${port}`, ...params.serverEnv };
+    HAPPIER_PUBLIC_SERVER_URL: ingress?.baseUrl ?? `http://127.0.0.1:${port}`, ...params.serverEnv };
   const server = await startServerLight({ testDir: join(params.testDir, 'server'), port,
-    dbProvider: params.dbProvider ?? 'postgres', extraEnv: serverEnv });
+    dbProvider: params.dbProvider ?? 'postgres', extraEnv: serverEnv }).catch(async error => {
+      try { await ingress?.stop(); } finally {
+        if (previousCertificates) setDefaultCACertificates(previousCertificates);
+        await tls?.cleanup();
+      }
+      throw error;
+    });
   const daemons: StartedDaemon[] = [];
   let requestProxy: HttpRequestRecordingProxy | undefined;
   try {
@@ -168,10 +195,10 @@ export async function startProjectDaemonFixture(params: Readonly<{
         const enrollment = options.pairedHome
           ? await readEnrolledProjectDaemonHome({ homeDir, serverId, accountToken: account.auth.token })
           : await enrollProjectDaemonHome({ homeDir, testDir: directory,
-            serverUrl: actionServerApiUrl, serverId, sourceOptions, account, cliLaunchSpec: options.cliLaunchSpec });
+            serverUrl: actionServerApiUrl, serverId, sourceOptions, account, cliLaunchSpec: options.cliLaunchSpec, env: enrollmentEnv });
         const launch = () => startTestDaemon({ testDir: directory, happyHomeDir: homeDir, requireMachineControlReady: true,
           ...(options.cliLaunchSpec ? { cliLaunchSpec: options.cliLaunchSpec } : {}), env: {
-          ...process.env, CI: '1', HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: actionServerApiUrl,
+          ...process.env, ...enrollmentEnv, CI: '1', HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: actionServerApiUrl,
           HAPPIER_WEBAPP_URL: server.baseUrl, HAPPIER_VARIANT: 'dev', HAPPIER_DISABLE_CAFFEINATE: '1',
           HAPPIER_CLAUDE_CONFIG_DIR: claudeConfigDir,
           HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1', NODE_OPTIONS: sourceOptions,
@@ -224,7 +251,11 @@ export async function startProjectDaemonFixture(params: Readonly<{
   async function stop() {
     const errors: unknown[] = [];
     for (const close of [...daemons].reverse().map(daemon => () => daemon.stop())
-      .concat(async () => { await requestProxy?.stop(); }, () => server.stop())) {
+      .concat(async () => { await requestProxy?.stop(); }, () => server.stop(),
+        async () => { await ingress?.stop(); }, async () => {
+          if (previousCertificates) setDefaultCACertificates(previousCertificates);
+          await tls?.cleanup();
+        })) {
       try { await close(); } catch (error) { errors.push(error); }
     }
     if (errors.length) throw new AggregateError(errors, 'Project daemon fixture cleanup failed');
@@ -236,6 +267,7 @@ export type ProjectDaemonFixture = Awaited<ReturnType<typeof startProjectDaemonF
 /** Await real CLI login and its Machine registration before exposing a target. */
 export async function enrollProjectDaemonHome(params: Readonly<{
   serverUrl: string;
+  env?: NodeJS.ProcessEnv;
   serverId: string;
   sourceOptions: string;
   account: Readonly<{ uiCredentials: TestAccountCliAuthCredentials; auth: Readonly<{ token: string }> }>;
@@ -246,7 +278,7 @@ export async function enrollProjectDaemonHome(params: Readonly<{
   const { account, cliLaunchSpec, homeDir } = params;
   const login = await startCliAuthLoginForTerminalConnect({ testDir: join(params.testDir, 'login'),
     cliHomeDir: homeDir, serverUrl: params.serverUrl, webappUrl: params.serverUrl,
-    cliLaunchSpec, waitForConnectUrlReady: false, env: { ...process.env, NODE_OPTIONS: params.sourceOptions,
+    cliLaunchSpec, waitForConnectUrlReady: false, env: { ...process.env, ...params.env, NODE_OPTIONS: params.sourceOptions,
       HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1', HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1' } });
   try {
     const link = parseTerminalConnectUrl(login.connectUrl);

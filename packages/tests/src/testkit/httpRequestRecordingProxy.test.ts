@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { connect, type Socket } from 'node:net';
+import { networkInterfaces } from 'node:os';
 import { gzipSync } from 'node:zlib';
 
 import { describe, expect, it } from 'vitest';
@@ -95,9 +96,12 @@ describe('startHttpRequestRecordingProxy', () => {
     await listen(target);
     const targetAddress = target.address();
     if (!targetAddress || typeof targetAddress !== 'object') throw new Error('target server did not bind');
-    const tls = await createEphemeralTlsServerFixture();
+    const host = Object.values(networkInterfaces()).flat().find(address => address?.family === 'IPv4' && !address.internal)?.address;
+    if (!host) throw new Error('Guest Home TLS test requires a non-loopback IPv4 interface');
+    const tls = await createEphemeralTlsServerFixture({ additionalIpAddresses: [host] });
     const proxy = await startHttpRequestRecordingProxy({
       targetBaseUrl: `http://127.0.0.1:${targetAddress.port}`,
+      listenHost: host,
       tls: {
         key: await readFile(tls.privateKeyPath),
         cert: await readFile(tls.leafCertificatePath),
@@ -119,7 +123,7 @@ describe('startHttpRequestRecordingProxy', () => {
         request.end();
       });
       expect(payload).toBe('secure ingress');
-      expect(proxy.baseUrl).toMatch(/^https:\/\/127\.0\.0\.1:/u);
+      expect(new URL(proxy.baseUrl).hostname).toBe(host);
     } finally {
       await proxy.stop().catch(() => {});
       await tls.cleanup();

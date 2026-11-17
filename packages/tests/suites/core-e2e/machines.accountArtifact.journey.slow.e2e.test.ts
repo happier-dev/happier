@@ -39,7 +39,7 @@ it('runs Account provisioner options and acquire, then refuses both roles when t
   // Existing executable boundary fixture admits local allocation; guest execution remains deliberately unavailable.
   await writeFile(join(payloadRoot, 'happier'), guestCliExecutable('exit 1\n'), { mode: 0o755 });
   const postgres = await startDatabaseWorkbenchPostgres({ preloadStatistics: false });
-  const fixture = await startProjectDaemonFixture({ testDir, dbProvider: 'postgres',
+  const fixture = await startProjectDaemonFixture({ testDir, dbProvider: 'postgres', guestReachableHome: true,
     daemonEnv: { HAPPIER_LOG_LEVEL: 'debug', HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: payloadRoot },
     serverEnv: { DATABASE_URL: postgres.homeDatabaseUrl,
       HAPPIER_FEATURE_PLUGINS_UI_ARTIFACT_HOSTING__ENABLED: '1',

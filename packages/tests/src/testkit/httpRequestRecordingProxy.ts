@@ -104,6 +104,8 @@ function headerLinesFromRawHeaders(rawHeaders: readonly string[]): string {
 
 export async function startHttpRequestRecordingProxy(params: Readonly<{
   targetBaseUrl: string;
+  /** Bind a real fixture ingress reachable from its guest network. */
+  listenHost?: string;
   /** Expose the proxy through HTTPS while keeping its upstream target on loopback HTTP. */
   tls?: Readonly<{ key: string | Buffer; cert: string | Buffer }>;
   delayRequestMs?: (request: RecordedHttpProxyRequest) => number | Promise<number>;
@@ -452,13 +454,14 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
     socket.once('error', () => targetSocket.destroy());
   });
 
-  server.listen(0, '127.0.0.1');
+  const listenHost = params.listenHost ?? '127.0.0.1';
+  server.listen(0, listenHost);
   await once(server, 'listening');
   const address = server.address();
   if (!address || typeof address !== 'object') throw new Error('http request recording proxy missing address');
 
   return {
-    baseUrl: `${params.tls ? 'https' : 'http'}://127.0.0.1:${address.port}`,
+    baseUrl: `${params.tls ? 'https' : 'http'}://${listenHost.includes(':') ? `[${listenHost}]` : listenHost}:${address.port}`,
     entries: () => entries.map(snapshot),
     clear: () => {
       entries.length = 0;
