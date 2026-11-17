@@ -4,8 +4,8 @@ import tweetnacl from 'tweetnacl';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
-import { ManagedEnrollmentCorrelationV1Schema, type ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { MachineEnrollmentCorrelationV1Schema, type MachineEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
+import { MachinePublishedMetadataV1Schema, DeploymentAppMachineBindingV1Schema, type DeploymentAppMachineBindingV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 
 import { decodeBase64 } from '@/api/encryption';
 import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
@@ -46,8 +46,9 @@ type PendingAuthState = Readonly<{
   supportsTokenOnly: true;
   pairingRequirement: 'v3';
   homeConnectionDescriptor?: HomeConnectionDescriptorV1;
-  managedEnrollment?: ManagedEnrollmentCorrelationV1;
+  managedEnrollment?: MachineEnrollmentCorrelationV1;
   machineDisplayName?: string;
+  deploymentAppBinding?: DeploymentAppMachineBindingV1;
   remoteProfileId?: string;
   createdAt: string;
 }>;
@@ -155,7 +156,7 @@ function parsePendingAuthState(raw: string): PendingAuthState {
     throw new Error('Invalid auth state (homeConnectionDescriptor identity)');
   }
   const managedEnrollment = parsed.managedEnrollment === undefined ? undefined
-    : ManagedEnrollmentCorrelationV1Schema.parse(parsed.managedEnrollment);
+    : MachineEnrollmentCorrelationV1Schema.parse(parsed.managedEnrollment);
   if (managedEnrollment && (!parsedDescriptor?.success || managedEnrollment.homeId !== normalizedServerIdentityId)) {
     throw new Error('Invalid auth state (managed enrollment Home)');
   }
@@ -191,6 +192,7 @@ function parsePendingAuthState(raw: string): PendingAuthState {
     pairingRequirement: 'v3',
     ...(parsedDescriptor?.success ? { homeConnectionDescriptor: parsedDescriptor.data } : {}),
     ...(managedEnrollment ? { managedEnrollment } : {}),
+    ...(parsed.deploymentAppBinding !== undefined ? { deploymentAppBinding: DeploymentAppMachineBindingV1Schema.parse(parsed.deploymentAppBinding) } : {}),
     ...(parsed.machineDisplayName !== undefined ? {
       machineDisplayName: MachinePublishedMetadataV1Schema.shape.displayName.parse(parsed.machineDisplayName),
     } : {}),
@@ -362,7 +364,7 @@ export async function handleAuthWait(argsRaw: string[], signal?: AbortSignal): P
         await removeProtectedLocalStateFile(statePath, PENDING_AUTH_STATE_PROTECTION);
         ({ machineId } = await registerAndPersistManagedTerminalEnrollmentCredential({ token, opened,
           runtimeOrigin: acquired.runtime.runtimeOrigin, managedEnrollment: state.managedEnrollment,
-          machineDisplayName: state.machineDisplayName,
+          machineDisplayName: state.machineDisplayName, deploymentAppBinding: state.deploymentAppBinding,
           homeRetry,
           assertCurrent: () => signal?.throwIfAborted() }));
       } else {

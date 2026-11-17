@@ -1,12 +1,18 @@
 import { guestCliExecutable } from './enrollmentPayload.testkit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
+import { Server as SocketServer } from 'socket.io';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
+import axios from 'axios';
+import { ApiClient } from '@/api/api';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { encodePlainMachineStoredContent, decodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { MachineUpdateMetadataRequestSchema } from '@happier-dev/protocol/machines/metadataUpdate';
 import { MACHINE_PROVISIONER_PUT_FILE_BASE64_MAX_LENGTH_V1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -20,6 +26,7 @@ import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import { MachineEffectInternalRequestSchema } from '@/machines/setup/effectInternalProtocol';
 import { prepareDedicatedDaemonBootstrap } from './dedicatedDaemonBootstrap';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 
 const execFileAsync = promisify(execFile);
 
@@ -72,6 +79,119 @@ describe('runManagedMachineEnrollment', () => {
     });
   });
   afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+
+  it.each(['fresh', 'changed', 'missing'] as const)('enrolls an admitted App and updates changed private service binding (retained=%s)', async bindingState => {
+    const retained = bindingState !== 'fresh';
+    const root = await mkdtemp(join(tmpdir(), 'happier-app-enrollment-'));
+    const events: string[] = [];
+    const commands: string[] = [];
+    const http = createServer();
+    const sockets = new SocketServer(http, { path: '/v1/updates/' });
+    await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
+    const address = http.address();
+    if (!address || typeof address === 'string') throw new Error('Missing test Home address');
+    const target = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: correlation.homeId,
+      canonicalServerUrl: `http://127.0.0.1:${address.port}`, revision: 1, endpoints: [{ kind: 'https', url: `http://127.0.0.1:${address.port}` }] }, authority: 'trusted_enrollment' });
+    const deploymentAppBinding = { serviceName: 'private-renamed-collector-service', port: 5318 };
+    const originalMetadata = { host: 'collector', platform: 'linux', happyCliVersion: '0.3', homeDir: '/home/collector',
+      happyHomeDir: '/home/collector/.happier', displayName: 'Retained collector name',
+      ...(bindingState === 'missing' ? {} : { deploymentApp: { serviceName: 'old-service', port: 4318 } }) };
+    let metadata = encodePlainMachineStoredContent(originalMetadata);
+    let writes = 0;
+    sockets.on('connection', socket => {
+      expect(socket.handshake.auth.token).toBe('admitted-app-account');
+      socket.on('machine-update-metadata', (raw: unknown, acknowledge: (result: unknown) => void) => {
+        const request = MachineUpdateMetadataRequestSchema.parse(raw);
+        expect(events).toContain('bound-existing');
+        expect(request.machineId).toBe('collector-machine');
+        expect(request.expectedVersion).toBe(1);
+        expect(decodePlainMachineStoredContent(request.metadata)).toEqual({ ...originalMetadata, deploymentApp: deploymentAppBinding });
+        writes++; metadata = request.metadata;
+        acknowledge({ result: 'success', version: 2, metadata });
+      });
+    });
+    const enrollment = { source: 'deploymentApp' as const, homeId: target.homeServerIdentityId!,
+      environmentId: 'environment-collector', deploymentId: 'deployment-collector', actionOperationId: 'operation-collector',
+      controller: { machineId: 'controller-1', installationId: 'installation-1' } };
+    const publicKey = Buffer.alloc(32, 7).toString('base64');
+    const request = { kind: 'remote_home_enrollment_pairing_request', protocolVersion: 1,
+      publicKey, homeServerIdentityId: target.homeServerIdentityId,
+      pairing: { secretB64Url: Buffer.alloc(32, 9).toString('base64url'), createdAtMs: Date.now(), expiresAtMs: Date.now() + 240_000 },
+      supportsTokenOnly: true, pairingRequirement: 'v3', remoteProfileId: 'app-home' };
+    let authenticated = retained;
+    let running = false;
+    try {
+      await writeFile(join(root, 'happier'), '#!/bin/sh\nexit 0\n');
+      vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', root);
+      vi.mocked(globalThis.fetch).mockImplementation(async () => Response.json({ features: {},
+        capabilities: { serverIdentity: { serverIdentityId: target.homeServerIdentityId },
+          guestCli: { source: 'home-payload', line: '0.3', channel: 'stable' } },
+        homeConnectionDescriptor: target.descriptor }));
+      vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200, data: String(url).endsWith('/v1/account/encryption/currentness')
+        ? createAccountEncryptionCurrentnessFixture({ mode: 'plain', version: 1, contentKeyFingerprint: null })
+        : String(url).endsWith('/v1/account/encryption') ? { mode: 'plain', updatedAt: 1 }
+        : { machine: { id: 'collector-machine', metadata, metadataVersion: writes ? 2 : 1, daemonState: null, daemonStateVersion: 0,
+          dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, storageMode: 'plain' } } }));
+      const approve = vi.spyOn(axios, 'post').mockImplementation(async (url, _body, options) => {
+        expect(url).toBe(`${target.applicationUrl}/v1/auth/response`);
+        expect(options?.headers?.Authorization).toBe('Bearer admitted-app-account');
+        expect(events).toContain('bound-pairing');
+        events.push('approved');
+        return { status: 200, data: {} };
+      });
+      await expect(runManagedMachineEnrollment({ source: 'deploymentApp', enrollment, target,
+        deploymentAppBinding, enrollmentAccountId: 'requester-account',
+        onExistingMachine: async machineId => { expect(retained).toBe(true); expect(machineId).toBe('collector-machine'); events.push('bound-existing'); },
+        machineDisplayName: 'Telemetry collector', binaryPath: '/opt/happier/current/happier',
+        homeDir: '/home/collector', happyHomeDir: '/home/collector/.happier', channel: 'stable',
+        accountCredentials: { token: 'admitted-app-account', encryption: null },
+        onTask: () => { events.push('task'); },
+        onPairingRequest: async key => { expect(key).toBe(publicKey); events.push('bound-pairing'); },
+        restartDaemon: async () => { expect(authenticated).toBe(true);
+          if (retained) expect(decodePlainMachineStoredContent(metadata)).toMatchObject({ deploymentApp: deploymentAppBinding });
+          running = true; events.push('restart'); },
+      }, { native: {
+        putFile: async () => {},
+        exec: async ({ command, input }) => {
+          commands.push(command);
+          const invocation = command.replaceAll(/["']/gu, '');
+          if (command.includes('managed_guest_cli_absent')) return { status: 0, stdout: 'managed_guest_cli_absent\n', stderr: '' };
+          if (command.includes('uname -m')) return { status: 0, stdout: 'Linux\nx86_64\n/home/collector\n', stderr: '' };
+          if (invocation.includes('server list')) return { status: 0, stderr: '', stdout: JSON.stringify({ data: { activeServerId: 'app-home',
+            profiles: [{ id: 'app-home', serverUrl: target.canonicalAuthUrl, homeServerIdentityId: target.homeServerIdentityId }] } }) };
+          if (invocation.includes('auth request')) {
+            expect(retained).toBe(false);
+            expect(JSON.parse(input ?? '{}')).toMatchObject({ managedEnrollment: enrollment, machineDisplayName: 'Telemetry collector', deploymentAppBinding });
+            return { status: 0, stdout: JSON.stringify(request), stderr: '' };
+          }
+          if (invocation.includes('auth wait')) {
+            expect(events).toContain('approved');
+            authenticated = true;
+            return { status: 0, stdout: JSON.stringify({ kind: 'remote_home_enrollment_result', protocolVersion: 1,
+              success: true, homeServerIdentityId: target.homeServerIdentityId, machineId: 'collector-machine',
+              encryptionType: 'tokenOnly', pairingAuthentication: 'v3', remoteProfileId: 'app-home' }), stderr: '' };
+          }
+          if (invocation.includes('auth status') || invocation.includes('daemon status')) {
+            const status = { authenticated, server: { activeServerId: 'app-home' }, accountId: authenticated ? 'requester-account' : undefined,
+              credentialState: authenticated ? 'valid' : 'missing', machineRegistrationState: authenticated ? 'server-confirmed' : 'unconfirmed',
+              machineId: authenticated ? 'collector-machine' : undefined, daemon: { running, healthy: running }, service: { installed: false },
+              auth: { needsAuth: !authenticated, machineId: 'collector-machine' }, services: [] };
+            return { status: 0, stderr: '', stdout: JSON.stringify({ ...status, v: 1, ok: true, kind: 'auth_status', data: status }) };
+          }
+          return { status: 0, stdout: '', stderr: '' };
+        },
+      } })).resolves.toEqual({ machineId: 'collector-machine' });
+      expect(approve).toHaveBeenCalledTimes(retained ? 0 : 1);
+      expect(writes).toBe(retained ? 1 : 0);
+      if (retained) {
+        const api = await ApiClient.create({ token: 'admitted-app-account', encryption: null });
+        const machine = await runWithServerHttpBaseUrl(target.applicationUrl, () => api.getMachine('collector-machine'));
+        expect(machine?.metadata).toMatchObject({ displayName: originalMetadata.displayName, deploymentApp: deploymentAppBinding });
+      }
+      expect(events).toEqual(retained ? ['task', 'bound-existing', 'restart'] : ['task', 'bound-pairing', 'approved', 'restart']);
+      expect(commands.some(command => /\bdaemon\b.*\bservice\b/u.test(command))).toBe(false);
+    } finally { await new Promise<void>(resolve => sockets.close(() => resolve())); await rm(root, { recursive: true, force: true }); }
+  });
 
   it('retains the original typed installation failure through the local task wait', async () => {
     const cause = Object.assign(new Error('private filesystem path'), { code: 'EACCES' });

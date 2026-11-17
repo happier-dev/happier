@@ -19,6 +19,16 @@ const metadata = {
 const readiness = { engine: { state: 'ready' }, carrier: { state: 'ready' } };
 
 describe('whole Machine publication', () => {
+  it('retains a closed private App service binding in Machine content', () => {
+    const deploymentApp = { serviceName: 'private-collector-service', port: 4318 };
+    expect(parseMachinePublishedMetadataV1({ ...metadata, deploymentApp })).toEqual({ ...metadata, deploymentApp });
+    expect(StoredMachinePublishedMetadataV1Schema.parse({ ...metadata, deploymentApp })).toEqual({ ...metadata, deploymentApp });
+    for (const invalid of [{ ...deploymentApp, privateOutput: 'native output' }, { ...deploymentApp, port: 0 },
+      { ...deploymentApp, port: 65536 }, { ...deploymentApp, serviceName: '' }]) {
+      expect(() => parseMachinePublishedMetadataV1({ ...metadata, deploymentApp: invalid })).toThrow();
+    }
+  });
+
   it('preserves additive provider settings reports and their existing runtime source identity', () => {
     const state = {
       status: 'running', pid: 19,

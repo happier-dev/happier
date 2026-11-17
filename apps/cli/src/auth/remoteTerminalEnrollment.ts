@@ -1,7 +1,8 @@
+import type { DeploymentAppMachineBindingV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { createHash, randomBytes } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
-import { ManagedEnrollmentCorrelationV1Schema, type ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineEnrollmentCorrelationV1Schema, type MachineEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
 
 import { decodeBase64, encodeBase64 } from '@/api/encryption';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
@@ -98,8 +99,9 @@ async function delayWithSignal(ms: number, signal: AbortSignal | undefined): Pro
  */
 export async function runRemoteTerminalEnrollment(params: Readonly<{
   target: ResolvedHomeTarget;
-  managedEnrollment?: ManagedEnrollmentCorrelationV1;
+  managedEnrollment?: MachineEnrollmentCorrelationV1;
   machineDisplayName?: string;
+  deploymentAppBinding?: DeploymentAppMachineBindingV1;
   signal?: AbortSignal;
   timeoutMs: number;
   pollIntervalMs?: number;
@@ -110,7 +112,7 @@ export async function runRemoteTerminalEnrollment(params: Readonly<{
   const homeRetry = { deadlineMs, pollIntervalMs, signal: params.signal };
   throwIfStopped(params.signal, deadlineMs);
   const managedEnrollment = params.managedEnrollment === undefined ? undefined
-    : ManagedEnrollmentCorrelationV1Schema.parse(params.managedEnrollment);
+    : MachineEnrollmentCorrelationV1Schema.parse(params.managedEnrollment);
   if (managedEnrollment && params.target.homeServerIdentityId !== managedEnrollment.homeId) {
     throw enrollmentError('AUTH_ENROLL_REMOTE_IDENTITY_MISMATCH', 'Managed enrollment does not match the selected Home.');
   }
@@ -244,7 +246,7 @@ export async function runRemoteTerminalEnrollment(params: Readonly<{
       if (managedEnrollment) {
         completion = await registerAndPersistManagedTerminalEnrollmentCredential({ token, opened,
           runtimeOrigin: acquired.runtime.runtimeOrigin, managedEnrollment,
-          machineDisplayName: params.machineDisplayName,
+          machineDisplayName: params.machineDisplayName, deploymentAppBinding: params.deploymentAppBinding,
           homeRetry,
           assertCurrent: () => throwIfStopped(params.signal, deadlineMs) });
       } else {

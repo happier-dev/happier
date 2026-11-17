@@ -595,12 +595,15 @@ describe('runRemoteHomeEnrollmentFlow', () => {
     expect(JSON.stringify(result)).not.toContain(PAIRING_SECRET);
   });
 
-  it('rejects a managed enrollment for another Home before starting the guest process', async () => {
+  it.each(['managed', 'deploymentApp'] as const)('rejects a %s enrollment for another Home before starting the guest process', async (source) => {
     const seen: Array<Readonly<{ args: readonly string[]; input?: string }>> = [];
     await expect(runRemoteHomeEnrollmentFlow({
       executor: createExecutor({ seen, lines: [] }),
       homeTargetInput: { kind: 'descriptor', descriptor, authority: 'trusted_enrollment' },
-      managedEnrollment: {
+      managedEnrollment: source === 'deploymentApp' ? {
+        source, homeId: 'srv_other_home', environmentId: 'environment-collector', deploymentId: 'deployment-collector',
+        actionOperationId: 'operation-collector', controller: { machineId: 'controller', installationId: 'installation' },
+      } : {
         homeId: 'srv_other_home', managedId: 'managed-1', expectedIntentRevision: 1,
         requestId: 'request-1', controller: { machineId: 'controller', installationId: 'installation' },
         resource: { contributionRef: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, value: { instance: 'paid-1' } },
@@ -610,20 +613,25 @@ describe('runRemoteHomeEnrollmentFlow', () => {
     expect(seen).toEqual([]);
   });
 
-  it('carries managed correlation only in protected guest input', async () => {
+  it.each(['managed', 'deploymentApp'] as const)('carries %s correlation only in protected guest input', async (source) => {
     const seen: Array<Readonly<{ args: readonly string[]; input?: string }>> = [];
-    const managedEnrollment = {
+    const managedEnrollment = source === 'deploymentApp' ? {
+      source, homeId: descriptor.homeServerIdentityId, environmentId: 'environment-collector', deploymentId: 'deployment-collector',
+      actionOperationId: 'operation-collector', controller: { machineId: 'controller', installationId: 'installation' },
+    } : {
       homeId: descriptor.homeServerIdentityId, managedId: 'managed-1', expectedIntentRevision: 1,
       requestId: 'request-1', controller: { machineId: 'controller', installationId: 'installation' },
       resource: { contributionRef: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, value: { instance: 'paid-1' } },
     };
     await expect(runRemoteHomeEnrollmentFlow({
       executor: createExecutor({ seen, lines: [] }), managedEnrollment,
+      ...(source === 'deploymentApp' ? { deploymentAppBinding: { serviceName: 'private-collector-service', port: 4318 } } : {}),
       homeTargetInput: { kind: 'descriptor', descriptor, authority: 'trusted_enrollment' },
       approvePairingRequest: async () => {},
     })).rejects.toMatchObject({ code: 'invalid_cli_response' });
     expect(JSON.parse(seen[0]!.input!)).toEqual({
       homeTarget: parseHomeTargetInput({ kind: 'descriptor', descriptor, authority: 'trusted_enrollment' }), managedEnrollment,
+      ...(source === 'deploymentApp' ? { deploymentAppBinding: { serviceName: 'private-collector-service', port: 4318 } } : {}),
     });
     expect(seen[0]!.args).not.toContain('managed-1');
   });

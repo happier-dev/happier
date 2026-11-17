@@ -1,5 +1,6 @@
+import type { DeploymentAppMachineBindingV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import tweetnacl from 'tweetnacl';
-import type { ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { MachineEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
 
 import { ApiClient } from '@/api/api';
 import { configuration } from '@/configuration';
@@ -65,8 +66,9 @@ export async function registerAndPersistManagedTerminalEnrollmentCredential(para
   token: string;
   opened: OpenTerminalProvisioningResponseResult;
   runtimeOrigin: string;
-  managedEnrollment: ManagedEnrollmentCorrelationV1;
+  managedEnrollment: MachineEnrollmentCorrelationV1;
   machineDisplayName?: string;
+  deploymentAppBinding?: DeploymentAppMachineBindingV1;
   homeRetry: HomeOperationRetry;
   assertCurrent(): void;
 }>): Promise<Readonly<{ machineId: string; encryptionType: 'dataKey' | 'tokenOnly' }>> {
@@ -80,7 +82,7 @@ export async function registerAndPersistManagedTerminalEnrollmentCredential(para
     ? await prepareCredentialsTokenOnlyForServerId(configuration.activeServerId, { token: params.token }, { previousAccountId })
     : prepared.credentials;
   params.assertCurrent();
-  const machineId = await registerTerminalEnrollmentMachine(credentials, params.runtimeOrigin, params.managedEnrollment, params.homeRetry, params.machineDisplayName);
+  const machineId = await registerTerminalEnrollmentMachine(credentials, params.runtimeOrigin, params.managedEnrollment, params.homeRetry, params.machineDisplayName, params.deploymentAppBinding);
   params.assertCurrent();
   await persistTerminalEnrollmentCredential({ ...params, previousAccountId });
   return { machineId, encryptionType: prepared.encryptionType };
@@ -89,9 +91,10 @@ export async function registerAndPersistManagedTerminalEnrollmentCredential(para
 export async function registerTerminalEnrollmentMachine(
   credentials: StoredCredentials,
   runtimeOrigin: string,
-  managedEnrollment?: ManagedEnrollmentCorrelationV1,
+  managedEnrollment?: MachineEnrollmentCorrelationV1,
   homeRetry?: HomeOperationRetry,
   machineDisplayName?: string,
+  deploymentAppBinding?: DeploymentAppMachineBindingV1,
 ): Promise<string> {
   const register = async () => await runWithServerHttpBaseUrl(runtimeOrigin, async () => {
     const { machineId } = await ensureMachineIdForCredentials(credentials);
@@ -99,7 +102,10 @@ export async function registerTerminalEnrollmentMachine(
     const registered = await ensureMachineRegistered({
       api,
       machineId,
-      metadata: machineDisplayName === undefined ? initialMachineMetadata : { ...initialMachineMetadata, displayName: machineDisplayName },
+      metadata: { ...initialMachineMetadata,
+        ...(machineDisplayName === undefined ? {} : { displayName: machineDisplayName }),
+        ...(deploymentAppBinding === undefined ? {} : { deploymentApp: deploymentAppBinding }),
+      },
       caller: 'auth.wait',
       ...(managedEnrollment ? { managedEnrollment } : {}),
     });

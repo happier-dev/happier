@@ -81,9 +81,16 @@ describe('native transport through the remote bootstrap task', () => {
       }
     });
 
-  it.each(['auth_request', 'auth_wait', 'prose', 'released-http', 'released-network'] as const)('retains only safe stderr causes without retrying managed bootstrap (%s)', async kind => {
+  it.each([
+    ...(['auth_request', 'auth_wait', 'prose', 'released-http', 'released-network'] as const)
+      .map(kind => ({ kind, source: 'managed' as const })),
+    { kind: 'auth_request' as const, source: 'deploymentApp' as const },
+  ])('retains only safe stderr causes without retrying $source bootstrap ($kind)', async ({ kind, source }) => {
     const secret = 'private-guest-token-must-not-cross-bootstrap';
-    const correlation = { homeId: HOME_TARGET.homeServerIdentityId, managedId: 'managed-stderr', requestId: 'request-stderr', expectedIntentRevision: 1,
+    const correlation = source === 'deploymentApp' ? {
+      source, homeId: HOME_TARGET.homeServerIdentityId, environmentId: 'environment-collector', deploymentId: 'deployment-collector',
+      actionOperationId: 'operation-collector', controller: { machineId: 'controller', installationId: 'installation' },
+    } : { homeId: HOME_TARGET.homeServerIdentityId, managedId: 'managed-stderr', requestId: 'request-stderr', expectedIntentRevision: 1,
       controller: { machineId: 'controller', installationId: 'installation' },
       resource: { contributionRef: { pluginId: 'test.provisioner', localId: 'vm' }, schemaVersion: 1, value: { nativeId: 'guest-stderr' } } };
     let guestInput: unknown;

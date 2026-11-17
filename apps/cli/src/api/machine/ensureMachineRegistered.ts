@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { MachineEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
 
 import type { ApiClient } from '@/api/api';
 import type { DaemonState, Machine, MachineMetadata } from '@/api/types';
@@ -180,7 +180,7 @@ export async function ensureMachineRegistered(opts: Readonly<{
   daemonState?: DaemonState;
   timeoutMs?: number;
   caller?: string;
-  managedEnrollment?: ManagedEnrollmentCorrelationV1;
+  managedEnrollment?: MachineEnrollmentCorrelationV1;
   recoveryLogger?: RecoveryLogger;
   isShuttingDown?: () => boolean;
 }>): Promise<{

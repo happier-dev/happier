@@ -3,6 +3,7 @@ import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
 import { runManagedMachineEnrollment as runSharedManagedMachineEnrollment, projectManagedMachineBootstrapPrompt,
   SystemTaskExecutionError, type ManagedNativeBootstrapIO,
+  type DeploymentAppMachineEnrollmentInput as PortableDeploymentAppEnrollmentInput,
   type ManagedMachineEnrollmentDependencies as PortableEnrollmentDependencies } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import type { InteractiveSystemTaskEventInput, InteractiveSystemTaskKind } from '@happier-dev/cli-common/systemTasks';
 import type { ManagedEnrollmentCorrelationV1, ManagedEnrollmentFullCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -16,6 +17,9 @@ import { createManagedEnrollmentPairingDelivery } from './enrollmentPairing';
 import { installManagedNativePayload } from './enrollmentPayload';
 import { resolveManagedEnrollmentSshTrust } from './enrollmentSshTrust';
 import type { StoredCredentials } from '@/persistence';
+import { createAccountServerMachineMetadataClient } from '@/api/machine/accountServerMachineMetadata';
+import { getMachineMetadataFieldV1, mutateMachineMetadataFieldV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
+import { MachinePublishedMetadataV1Schema, type DeploymentAppMachineBindingV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 
 export { projectManagedMachineBootstrapPrompt };
 export { runManagedSessionSshTrust } from './enrollmentSshTrust';
@@ -27,8 +31,7 @@ export type ManagedMachineEnrollmentDependencies = Readonly<{
   materializeBootstrapCredential?(reference: Extract<SavedSecretRefV1, { kind: 'shared_resource' }>): Promise<Readonly<{ path: string; dispose(): Promise<void> }>>;
 }>;
 
-/** Host custody binds the existing binary task to one retained resource. */
-export async function runManagedMachineEnrollment(input: Readonly<{
+export type ManagedMachineEnrollmentInput = Readonly<{
   correlation: ManagedEnrollmentFullCorrelationV1;
   homeCorrelation: ManagedEnrollmentCorrelationV1;
   target: ResolvedHomeTarget;
@@ -47,8 +50,20 @@ export async function runManagedMachineEnrollment(input: Readonly<{
   onTask?: (task: Readonly<{ taskId: string; kind: 'remote.ssh.bootstrapMachine.v1' }>) => void | Promise<void>;
   /** The task's current unanswered question, then `null` once it is answered, so the waiting surface can ask it. */
   onPrompt?: (prompt: ManagedMachineBootstrapPromptV1 | null) => void;
-}>, deps: ManagedMachineEnrollmentDependencies): Promise<Readonly<{ machineId: string }>> {
-  const correlation = input.correlation;
+}>;
+
+export type DeploymentAppMachineEnrollmentInput = Omit<PortableDeploymentAppEnrollmentInput, 'channel'>
+  & Pick<ManagedMachineEnrollmentInput, 'channel' | 'onEvent' | 'onTask' | 'onPrompt'>
+  & Readonly<{ accountCredentials: StoredCredentials }>;
+export type DeploymentAppMachineEnrollmentDependencies = Pick<ManagedMachineEnrollmentDependencies, 'native' | 'onEnrollmentLifetime'>;
+
+export function runManagedMachineEnrollment(input: DeploymentAppMachineEnrollmentInput,
+  deps: DeploymentAppMachineEnrollmentDependencies): Promise<Readonly<{ machineId: string }>>;
+export function runManagedMachineEnrollment(input: ManagedMachineEnrollmentInput,
+  deps: ManagedMachineEnrollmentDependencies): Promise<Readonly<{ machineId: string }>>;
+/** Host custody binds the existing binary task to its admitted enrollment source. */
+export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmentInput | DeploymentAppMachineEnrollmentInput,
+  deps: Partial<ManagedMachineEnrollmentDependencies>): Promise<Readonly<{ machineId: string }>> {
   const approveLocalAuthRequest: PortableEnrollmentDependencies['approveLocalAuthRequest'] = async ({ publicKey, pairing, supportsTokenOnly, signal }) => {
     input.signal?.throwIfAborted();
     const { approveTerminalAuthRequest } = await import('@/auth/terminalAuthApproval');
@@ -63,17 +78,48 @@ export async function runManagedMachineEnrollment(input: Readonly<{
     if (!machineId) throw new SystemTaskExecutionError('machine_registration_unconfirmed', 'Managed guest registration was not confirmed.');
     return { machineId };
   };
-  return await runSharedManagedMachineEnrollment({ ...input,
-    channel: input.channel ?? resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label,
+  const channel = input.channel ?? resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label;
+  const onEnrollmentDeadline: PortableEnrollmentDependencies['onEnrollmentDeadline'] = (deadlineMs, transport) => deps.onEnrollmentLifetime?.({ deadlineMs,
+    pollIntervalMs: transport === 'native'
+      ? TERMINAL_AUTH_POLL_INTERVAL_MS : REMOTE_HOME_ENROLLMENT_POLL_INTERVAL_MS, signal: input.signal });
+  if ('source' in input) return await runSharedManagedMachineEnrollment({ ...input, channel,
+    onExistingMachine: async machineId => {
+      await input.onExistingMachine(machineId);
+      const withMetadata = await createAccountServerMachineMetadataClient({ machineId, credentials: input.accountCredentials,
+        serverHttpBaseUrl: input.target.applicationUrl, signal: input.signal });
+      const field = { field: 'deploymentApp', storedSchema: MachinePublishedMetadataV1Schema.shape.deploymentApp,
+        defaultValue: (): DeploymentAppMachineBindingV1 | undefined => undefined,
+        equal: (left: DeploymentAppMachineBindingV1 | undefined, right: DeploymentAppMachineBindingV1 | undefined) =>
+          left?.serviceName === right?.serviceName && left?.port === right?.port };
+      await withMetadata(async port => {
+        const current = await getMachineMetadataFieldV1(port, field);
+        if (current.status !== 'ready') throw new SystemTaskExecutionError('machine_registration_unconfirmed',
+          'The retained App Machine service binding is unavailable.');
+        const result = await mutateMachineMetadataFieldV1({ expectedMetadataVersion: current.metadataVersion,
+          expectedPolicy: current.policy, policy: input.deploymentAppBinding, comparison: 'field' }, port, field, { signal: input.signal });
+        if (result.status !== 'applied' && result.status !== 'unchanged' && result.status !== 'satisfied') {
+          throw new SystemTaskExecutionError('machine_registration_unconfirmed', 'The retained App Machine service binding could not be published.');
+        }
+      });
+    },
   }, {
-    readCurrentManagedRow: deps.readCurrentManagedRow,
+    native: deps.native,
+    runTask: runPreparedTask,
+    installNativePayload: installManagedNativePayload,
+    onEnrollmentDeadline,
+    approveLocalAuthRequest,
+  });
+  const correlation = input.correlation;
+  return await runSharedManagedMachineEnrollment({ ...input,
+    channel,
+  }, {
+    // The managed overload requires its retained-row owner; App enrollment returns above.
+    readCurrentManagedRow: deps.readCurrentManagedRow!,
     native: deps.native,
     createPromptId: randomUUID,
     runTask: runPreparedTask,
     installNativePayload: installManagedNativePayload,
-    onEnrollmentDeadline: (deadlineMs, transport) => deps.onEnrollmentLifetime?.({ deadlineMs,
-      pollIntervalMs: transport === 'native'
-        ? TERMINAL_AUTH_POLL_INTERVAL_MS : REMOTE_HOME_ENROLLMENT_POLL_INTERVAL_MS, signal: input.signal }),
+    onEnrollmentDeadline,
     createPairingDelivery: enrollmentAccountId => {
       if (!input.operationId) return undefined;
       responseOwner = { correlation: input.homeCorrelation, operationId: input.operationId, enrollmentAccountId, readTaskId: taskRunner.readTaskId,

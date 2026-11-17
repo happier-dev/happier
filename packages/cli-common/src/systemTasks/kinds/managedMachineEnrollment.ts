@@ -3,6 +3,8 @@ import type { GuestCliIdentityV1, GuestCliPayloadV1 } from '@happier-dev/protoco
 import { selectManagedGuestCliPayload } from '../ssh/managedGuestCliSupplier.js';
 import type { ManagedEnrollmentCorrelationV1, ManagedEnrollmentFullCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { DeploymentAppEnrollmentCorrelationV1Schema, type DeploymentAppEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
+import type { DeploymentAppMachineBindingV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { readManagedMachineRequesterEnrollmentAccountIdV1 } from '@happier-dev/protocol/machines/managed/enrollmentIdentityV1';
 import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { MachineProvisionerProcessConfigV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -23,6 +25,7 @@ import { installRemoteCli as installSharedRemoteCli } from '../ssh/installRemote
 import { prepareDedicatedDaemonBootstrap } from '../ssh/dedicatedDaemonBootstrap.js';
 import { createHappierJsonExecutorFromTextRunner } from '../executors/happierJsonExecutorFromTextRunner.js';
 import { createEnrollMachineFlowExecutorFromHappierJsonExecutor } from '../executors/enrollMachineFlowExecutor.js';
+import { readLocalServerProfileIdentity } from '../executors/serverProfileScope.js';
 import { resolveLocalHappierCommandTimeoutMs } from '../executors/happierJsonExecutorFromTextRunner.js';
 import type { InteractiveSystemTaskPromptRequest } from '../interactiveTaskKinds.js';
 import { readManagedSshTrustedHostKey } from './sshHostTrustResolution.js';
@@ -72,6 +75,29 @@ export type ManagedMachineEnrollmentInput = Readonly<{
   channel: 'stable' | 'preview' | 'dev';
 }>;
 
+/** Compose owns this daemon's image, foreground process and retained Home. */
+export type DeploymentAppMachineEnrollmentInput = Readonly<{
+  source: 'deploymentApp';
+  enrollment: DeploymentAppEnrollmentCorrelationV1;
+  target: ResolvedHomeTarget;
+  machineDisplayName: string;
+  binaryPath: string;
+  homeDir: string;
+  happyHomeDir: string;
+  deploymentAppBinding: DeploymentAppMachineBindingV1;
+  enrollmentAccountId: string;
+  guestCli?: GuestCliIdentityV1;
+  /** The existing Compose owner replaces PID 1 after first payload installation. */
+  restartDaemon(): Promise<void>;
+  /** Bind the existing terminal request to this admitted App before Account approval. */
+  onPairingRequest(publicKey: string): Promise<void>;
+  /** A retained Home reuses its registered child instead of pairing again. */
+  onExistingMachine(machineId: string): Promise<void>;
+  operationId?: string;
+  signal?: AbortSignal;
+  channel: ManagedMachineEnrollmentInput['channel'];
+}>;
+
 export type ManagedMachineEnrollmentDependencies = Readonly<{
   readCurrentManagedRow(): Promise<ManagedMachineFullV1>;
   onEnrollmentDeadline?(deadlineMs: number, transport: 'ssh' | 'native'): void;
@@ -94,6 +120,9 @@ export type ManagedMachineEnrollmentDependencies = Readonly<{
   installNativePayload?(input: ManagedNativePayloadInstallation): Promise<Readonly<{ binaryPath: string }>>;
 }>;
 
+export type DeploymentAppMachineEnrollmentDependencies = Pick<ManagedMachineEnrollmentDependencies,
+  'native' | 'runTask' | 'approveLocalAuthRequest' | 'onEnrollmentDeadline' | 'installNativePayload'>;
+
 /** The retained operation publishes only the current question's closed, nonsecret projection. */
 export function projectManagedMachineBootstrapPrompt(prompt: InteractiveSystemTaskPromptRequest): ManagedMachineBootstrapPromptV1 {
   const data = prompt.data && typeof prompt.data === 'object' && !Array.isArray(prompt.data) ? prompt.data : undefined;
@@ -112,8 +141,10 @@ export function projectManagedMachineBootstrapPrompt(prompt: InteractiveSystemTa
 }
 
 /** The shared admitted native/SSH install, ordinary enrollment and startup owner. */
-export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmentInput,
-  deps: ManagedMachineEnrollmentDependencies): Promise<Readonly<{ machineId: string }>> {
+export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmentInput | DeploymentAppMachineEnrollmentInput,
+  deps: ManagedMachineEnrollmentDependencies | DeploymentAppMachineEnrollmentDependencies): Promise<Readonly<{ machineId: string }>> {
+  if ('source' in input) return runDeploymentAppEnrollment(input, deps);
+  if (!('readCurrentManagedRow' in deps)) throw new SystemTaskExecutionError('admission_unavailable', 'Managed enrollment requires its admitted resource owner.');
   const correlation = ManagedEnrollmentFullCorrelationV1Schema.parse(input.correlation);
   const carrier = ManagedBootstrapCarrierV1Schema.parse(input.carrier);
   const onEnrollmentDeadline = (deadlineMs: number) => deps.onEnrollmentDeadline?.(deadlineMs, carrier.kind);
@@ -331,4 +362,67 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
     }
     throw error;
   }
+}
+
+/** A new admitted source uses the same task, approval and registration recipe. */
+async function runDeploymentAppEnrollment(input: DeploymentAppMachineEnrollmentInput,
+  deps: DeploymentAppMachineEnrollmentDependencies): Promise<Readonly<{ machineId: string }>> {
+  const enrollment = DeploymentAppEnrollmentCorrelationV1Schema.parse(input.enrollment);
+  if (input.target.homeServerIdentityId !== enrollment.homeId || !input.target.descriptor) {
+    throw new SystemTaskExecutionError('home_identity_mismatch', 'App enrollment requires its admitted Home descriptor.');
+  }
+  if (!deps.native) throw new SystemTaskExecutionError('resource_mismatch', 'App enrollment requires its admitted native service.');
+  const native = deps.native;
+  let binaryPath = input.binaryPath;
+  const exec: ManagedNativeBootstrapIO['exec'] = request => native.exec({ ...request,
+    command: buildManagedNativeGuestCommand(request.command, { homeDir: input.homeDir, happyHomeDir: input.happyHomeDir }),
+    signal: request.signal ?? input.signal });
+  const executor = createHappierJsonExecutorFromTextRunner(async (args, options) => {
+    input.signal?.throwIfAborted();
+    return exec({ ...options, command: buildRemoteHappierInvocationCommand({
+      binaryPath, args, channel: input.channel,
+    }), signal: options?.signal ?? input.signal,
+      timeoutMs: options?.timeoutMs === undefined ? resolveLocalHappierCommandTimeoutMs(args) : options.timeoutMs });
+  });
+  const result = await deps.runTask(createRemoteNativeBootstrapMachineTaskKind({
+    configuration: { relay: { relayUrl: input.target.canonicalAuthUrl, webappUrl: input.target.webappUrl },
+      homeTarget: input.target, managedEnrollment: enrollment, deploymentAppBinding: input.deploymentAppBinding,
+      machineDisplayName: input.machineDisplayName,
+      serviceMode: 'none', channel: input.channel },
+    executor,
+    readInitialAuthStatus: async () => {
+      const status = await createEnrollMachineFlowExecutorFromHappierJsonExecutor({ executor }).readAuthStatus();
+      if (status.credentialState !== 'missing') {
+        const scope = await readLocalServerProfileIdentity(executor, { serverUrl: input.target.canonicalAuthUrl,
+          serverIdentityId: enrollment.homeId, requireRecordedHomeIdentity: true });
+        if (!scope.serverId || scope.serverId !== scope.activeServerId) throw new SystemTaskExecutionError('home_identity_mismatch',
+          'The retained App Home does not match the admitted Home.');
+        if (status.accountId !== input.enrollmentAccountId) throw new SystemTaskExecutionError('machine_registration_unconfirmed',
+          'The retained App Home belongs to a different Account.');
+        if (status.credentialState === 'valid' && status.machineRegistrationState === 'server-confirmed' && status.machineId) {
+          await input.onExistingMachine(status.machineId);
+        }
+      }
+      return status;
+    },
+    installRemoteCli: async signal => {
+      if (!deps.installNativePayload) throw new SystemTaskExecutionError('guest_payload_missing', 'App enrollment requires the existing Home CLI payload owner.');
+      const platform = await probeManagedNativeGuestPlatform(exec, signal);
+      const installed = await deps.installNativePayload({ ...platform, channel: input.channel,
+        homeUrl: input.target.applicationUrl, remoteHomeDir: input.happyHomeDir, dedicatedIdentity: false,
+        ...(input.guestCli?.source === 'home-payload' && input.guestCli.payloads ? { guestCliPayload: selectManagedGuestCliPayload({
+          guestCli: input.guestCli, homeUrl: input.target.applicationUrl, target: platform }) } : {}),
+        resource: enrollment, signal, exec, putFile: native.putFile, bootstrapExec: exec, cleanupExec: native.exec });
+      binaryPath = installed.binaryPath;
+    },
+    startDaemonProcess: async () => { await input.restartDaemon(); },
+    assertCurrent: async () => { input.signal?.throwIfAborted(); },
+    onEnrollmentDeadline: deadline => deps.onEnrollmentDeadline?.(deadline, 'native'),
+    approveLocalAuthRequest: deps.approveLocalAuthRequest,
+    approveAdmittedEnrollmentRequest: async request => {
+      await input.onPairingRequest(request.publicKey);
+      await deps.approveLocalAuthRequest(request);
+    },
+  }));
+  return result;
 }

@@ -23,6 +23,8 @@ export {
   projectManagedMachineBootstrapPrompt,
   type ManagedMachineEnrollmentInput,
   type ManagedMachineEnrollmentDependencies,
+  type DeploymentAppMachineEnrollmentInput,
+  type DeploymentAppMachineEnrollmentDependencies,
   type ManagedNativeBootstrapIO,
   type ManagedNativePayloadInstallation,
 } from './kinds/managedMachineEnrollment.js';

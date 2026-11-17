@@ -2,8 +2,8 @@ import type { SystemTaskJsonObject, SystemTaskJsonValue } from '@happier-dev/pro
 import { GuestCliIdentityV1Schema } from '@happier-dev/protocol/features';
 import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
 import { readHostAdmittedReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { ManagedEnrollmentCorrelationV1Schema, type ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { MachineEnrollmentCorrelationV1Schema, type MachineEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
+import { MachinePublishedMetadataV1Schema, DeploymentAppMachineBindingV1Schema, type DeploymentAppMachineBindingV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { ManagedMachineEnrollmentIdentityV1Schema, type ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { isLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { normalizePublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
@@ -30,6 +30,7 @@ import {
   resolveEnrollMachineReadiness,
   runEnrollMachineFlow,
   type EnrollMachineFlowExecutor,
+  type EnrollMachineAuthStatus,
 } from '../flows/enrollMachineFlow.js';
 import { runRemoteHomeEnrollmentFlow } from '../flows/remoteHomeEnrollmentFlow.js';
 import {
@@ -272,9 +273,10 @@ export interface RemoteBootstrapMachineParams {
     publicRelayUrl?: string;
   }>;
   homeTarget?: ResolvedHomeTarget;
-  managedEnrollment?: ManagedEnrollmentCorrelationV1;
+  managedEnrollment?: MachineEnrollmentCorrelationV1;
   /** Initial managed-guest presentation, not an update to an incumbent Machine name. */
   machineDisplayName?: string;
+  deploymentAppBinding?: DeploymentAppMachineBindingV1;
   enrollmentIdentity?: ManagedMachineEnrollmentIdentityV1;
   requireLocalApproval?: boolean;
   channel?: 'stable' | 'preview' | 'dev';
@@ -320,7 +322,7 @@ export type RemoteSshBootstrapMachineDeps = Readonly<{
   }>>;
   onEnrollmentDeadline?: (deadlineMs: number) => void;
   /** Recheck once before pairing approval can register the guest. */
-  assertManagedEnrollmentCurrent?: (correlation: ManagedEnrollmentCorrelationV1) => Promise<void>;
+  assertManagedEnrollmentCurrent?: (correlation: MachineEnrollmentCorrelationV1) => Promise<void>;
   /** Current requesting client's approval replaces local sealing; context stays only in this closure. */
   deliverAuthApproval?: (input: Readonly<{
     request: unknown; publicKey: string; homeServerIdentityId: string; pairing?: unknown;
@@ -625,7 +627,8 @@ export function parseRemoteBootstrapMachineParams(params: unknown): RemoteBootst
     },
     ...(value.homeTarget !== undefined ? { homeTarget: parseResolvedHomeTarget(value.homeTarget) } : {}),
     ...(value.guestCli !== undefined ? { guestCli: GuestCliIdentityV1Schema.parse(value.guestCli) } : {}),
-    ...(value.managedEnrollment !== undefined ? { managedEnrollment: ManagedEnrollmentCorrelationV1Schema.parse(value.managedEnrollment) } : {}),
+    ...(value.deploymentAppBinding !== undefined ? { deploymentAppBinding: DeploymentAppMachineBindingV1Schema.parse(value.deploymentAppBinding) } : {}),
+    ...(value.managedEnrollment !== undefined ? { managedEnrollment: MachineEnrollmentCorrelationV1Schema.parse(value.managedEnrollment) } : {}),
     ...(value.machineDisplayName !== undefined ? { machineDisplayName: MachinePublishedMetadataV1Schema.shape.displayName.parse(value.machineDisplayName) } : {}),
     ...(value.enrollmentIdentity !== undefined ? { enrollmentIdentity: ManagedMachineEnrollmentIdentityV1Schema.parse(value.enrollmentIdentity) } : {}),
     requireLocalApproval: value.requireLocalApproval === true,
@@ -868,6 +871,9 @@ type RemoteMachineBootstrapRecipeParams = Readonly<{
   serviceFlowExecutor: EnrollMachineFlowExecutor;
   createRemoteEnrollmentExecutor(): HappierJsonExecutor | undefined;
   approveLocalAuthRequest(request: Omit<Parameters<RemoteSshBootstrapMachineDeps['approveLocalAuthRequest']>[0], 'parsed'> & { parsed: RemoteBootstrapMachineConfiguration }): Promise<void>;
+  /** Host-private admission port; never part of serialized task configuration. */
+  approveAdmittedEnrollmentRequest?: RemoteMachineBootstrapRecipeParams['approveLocalAuthRequest'];
+  initialAuthStatus?: EnrollMachineAuthStatus;
   deliverAuthApproval?: RemoteSshBootstrapMachineDeps['deliverAuthApproval'];
   reviewedChild?: HostReviewedChildPortV1;
   assertCurrent?: () => Promise<void>;
@@ -879,13 +885,13 @@ type RemoteMachineBootstrapRecipeParams = Readonly<{
 
 async function runRemoteMachineBootstrapRecipe({
   ctx, parsedRemote, parsedLocalForApproval, relayRuntime, relayRuntimeLocalServerUrl,
-  remoteHappierExecutor, serviceFlowExecutor, createRemoteEnrollmentExecutor, approveLocalAuthRequest, deliverAuthApproval, reviewedChild, assertCurrent, enrollmentProcessIO, onEnrollmentDeadline, startDaemonProcess,
+  remoteHappierExecutor, serviceFlowExecutor, createRemoteEnrollmentExecutor, approveLocalAuthRequest, approveAdmittedEnrollmentRequest, initialAuthStatus, deliverAuthApproval, reviewedChild, assertCurrent, enrollmentProcessIO, onEnrollmentDeadline, startDaemonProcess,
 }: RemoteMachineBootstrapRecipeParams) {
   // The host-issued Create or Retry admission covers its managed pairing.
   // A correlation, a projected parent or a public task option cannot grant it.
   const reviewedActionId = readHostAdmittedReviewedParentV1(reviewedChild)?.actionId;
-  const requireLocalApproval = !parsedRemote.managedEnrollment
-    || (reviewedActionId !== 'machines.managed.acquire' && reviewedActionId !== 'machines.managed.bootstrap.retry');
+  const requireLocalApproval = !approveAdmittedEnrollmentRequest && (!parsedRemote.managedEnrollment
+    || (reviewedActionId !== 'machines.managed.acquire' && reviewedActionId !== 'machines.managed.bootstrap.retry'));
   let deadlineMs: number | undefined;
   const updateEnrollmentDeadline = (nextDeadlineMs: number): void => {
     if (deadlineMs === nextDeadlineMs) return;
@@ -957,7 +963,7 @@ async function runRemoteMachineBootstrapRecipe({
               : { kind: 'https_url', url: parsedRemote.relay.relayUrl },
             signal: ctx.signal,
             onEnrollmentDeadline: updateEnrollmentDeadline,
-            ...(parsedRemote.managedEnrollment ? { managedEnrollment: parsedRemote.managedEnrollment, machineDisplayName: parsedRemote.machineDisplayName } : {}),
+            ...(parsedRemote.managedEnrollment ? { managedEnrollment: parsedRemote.managedEnrollment, machineDisplayName: parsedRemote.machineDisplayName, deploymentAppBinding: parsedRemote.deploymentAppBinding } : {}),
             approvePairingRequest: async (request) => {
               publicKey = request.publicKey;
               if (!approvePairingRequest) {
@@ -1008,7 +1014,7 @@ async function runRemoteMachineBootstrapRecipe({
       const flowResult = await runEnrollMachineFlow({
         relayProfile,
         executor: flowExecutor,
-        ...(parsedRemote.homeTarget?.descriptor
+        ...(initialAuthStatus ? { initialAuthStatus } : parsedRemote.homeTarget?.descriptor
           ? {
               initialAuthStatus: {
                 authenticated: false,
@@ -1085,7 +1091,7 @@ async function runRemoteMachineBootstrapRecipe({
           if (deliverAuthApproval) return;
           await assertCurrent?.();
           try {
-            await approveLocalAuthRequest({
+            await (approveAdmittedEnrollmentRequest ?? approveLocalAuthRequest)({
               publicKey,
               homeServerIdentityId,
               parsed: parsedLocalForApproval,
@@ -1195,6 +1201,9 @@ export function createRemoteNativeBootstrapMachineTaskKind(input: Readonly<{
   installRemoteCli(signal?: AbortSignal, context?: Pick<InteractiveSystemTaskContext, 'taskId' | 'emit' | 'prompt'>): Promise<void>;
   executor: HappierJsonExecutor;
   approveLocalAuthRequest: RemoteMachineBootstrapRecipeParams['approveLocalAuthRequest'];
+  approveAdmittedEnrollmentRequest?: RemoteMachineBootstrapRecipeParams['approveAdmittedEnrollmentRequest'];
+  /** Native retained Homes use the same readiness observation after payload installation. */
+  readInitialAuthStatus?(): Promise<EnrollMachineAuthStatus>;
   reviewedChild?: HostReviewedChildPortV1;
   deliverAuthApproval?: RemoteSshBootstrapMachineDeps['deliverAuthApproval'];
   /** Pairing authority boundary only; installation uses the task's abort signal. */
@@ -1225,6 +1234,8 @@ export function createRemoteNativeBootstrapMachineTaskKind(input: Readonly<{
         serviceFlowExecutor: createEnrollMachineFlowExecutorFromHappierJsonExecutor({ executor }),
         createRemoteEnrollmentExecutor: () => executor,
         approveLocalAuthRequest: input.approveLocalAuthRequest,
+        approveAdmittedEnrollmentRequest: input.approveAdmittedEnrollmentRequest,
+        initialAuthStatus: await input.readInitialAuthStatus?.(),
         deliverAuthApproval: input.deliverAuthApproval,
         reviewedChild: input.reviewedChild,
         assertCurrent: input.assertCurrent,

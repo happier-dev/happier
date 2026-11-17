@@ -31,10 +31,18 @@ export const MachinePublishedAgentInventoryV1Schema = lazyZodSchema(() => z.stri
   installedAgentIds: z.array(z.string().check(z.minLength(1))),
 }));
 
+/** Authored service coordinates stay inside the Account-mode Machine content envelope. */
+export const DeploymentAppMachineBindingV1Schema = lazyZodSchema(() => z.strictObject({
+  serviceName: z.string().check(z.minLength(1)),
+  port: z.number().check(z.int(), z.minimum(1), z.maximum(65535)),
+}));
+export type DeploymentAppMachineBindingV1 = z.infer<typeof DeploymentAppMachineBindingV1Schema>;
+
 /** One share-wide projection: neither owner nor recipient receives private work here. */
 export const MachinePublishedMetadataV1Schema = lazyZodSchema(() => z.strictObject({
   setup: z.optional(MachineSetupDesiredV1Schema),
   devcontainerChild: z.optional(DevcontainerChildProjectionV1Schema),
+  deploymentApp: z.optional(DeploymentAppMachineBindingV1Schema),
   finitePolicyV1: z.optional(MachineFinitePolicyV1Schema),
   agentIsolation: z.optional(MachineAgentIsolationPolicyV1Schema),
   adminAccess: z.optional(MachineAdminAccessV1Schema),

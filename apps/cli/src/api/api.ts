@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { createMachineContentCodec } from './machine/machineStoredContent';
 import { parseMachinePublishedMetadataV1, parseMachinePublishedDaemonStateV1, StoredMachinePublishedMetadataV1Schema, StoredMachinePublishedDaemonStateV1Schema, projectMachinePublishedMetadataFromRowV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import axios from '@/api/client/credentialAxios';
-import { ManagedEnrollmentCorrelationV1Schema, type ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineEnrollmentCorrelationV1Schema, isDeploymentAppEnrollmentCorrelationV1, type MachineEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
 import { deriveManagedDevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { readSessionCreationInitialTriggerError } from './session/sessionCreationInitialTriggerError';
 import { pickSessionCreateOriginFields } from '@/session/shared/sessionCreateOrigin';
@@ -1343,11 +1343,11 @@ export class ApiClient {
     daemonState?: DaemonState,
     timeoutMs?: number,
     registrationIdentity?: MachineRegistrationIdentity,
-    managedEnrollment?: ManagedEnrollmentCorrelationV1,
+    managedEnrollment?: MachineEnrollmentCorrelationV1,
   }): Promise<Machine> {
     const managedEnrollment = opts.managedEnrollment
-      ? ManagedEnrollmentCorrelationV1Schema.parse(opts.managedEnrollment) : undefined;
-    const devcontainerChild = managedEnrollment ? deriveManagedDevcontainerChildProjectionV1({
+      ? MachineEnrollmentCorrelationV1Schema.parse(opts.managedEnrollment) : undefined;
+    const devcontainerChild = managedEnrollment && !isDeploymentAppEnrollmentCorrelationV1(managedEnrollment) ? deriveManagedDevcontainerChildProjectionV1({
       managedMachineId: managedEnrollment.managedId, controllerMachineId: managedEnrollment.controller?.machineId,
       enrolledMachineId: opts.machineId, resource: managedEnrollment.resource,
     }) : undefined;

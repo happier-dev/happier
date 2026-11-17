@@ -118,7 +118,7 @@ export async function handleAuthRequest(args: string[], signal?: AbortSignal, in
           supportsTokenOnly: true,
           pairingRequirement: 'v3',
           ...(target.descriptor ? { homeConnectionDescriptor: target.descriptor } : {}),
-          ...(managed ? { managedEnrollment: managed.managedEnrollment, machineDisplayName: managed.machineDisplayName } : {}),
+          ...(managed ? { managedEnrollment: managed.managedEnrollment, machineDisplayName: managed.machineDisplayName, deploymentAppBinding: managed.deploymentAppBinding } : {}),
           ...(prepared ? { remoteProfileId: prepared.profileId } : {}),
           createdAt: new Date().toISOString(),
         },

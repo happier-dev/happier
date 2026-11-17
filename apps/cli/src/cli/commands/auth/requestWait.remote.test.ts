@@ -21,12 +21,20 @@ const homeTarget = { kind: 'descriptor' as const, descriptor, authority: 'truste
 const managedEnrollment = { homeId: descriptor.homeServerIdentityId, managedId: 'managed-1', requestId: 'request-1', expectedIntentRevision: 1,
   controller: { machineId: 'controller', installationId: 'installation' },
   resource: { contributionRef: { pluginId: 'test.provisioner', localId: 'vm' }, schemaVersion: 1, value: { nativeId: 'retained-1' } } };
+const deploymentAppEnrollment = { source: 'deploymentApp' as const, homeId: descriptor.homeServerIdentityId,
+  environmentId: 'environment-collector', deploymentId: 'deployment-collector', actionOperationId: 'operation-collector',
+  controller: { machineId: 'controller', installationId: 'installation' } };
+const deploymentAppBinding = { serviceName: 'private-collector-service', port: 4318 };
 
 describe('buffered normal auth request/wait', () => {
   const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_LOCAL_SERVER_URL', 'HAPPIER_PUBLIC_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
   afterEach(() => { env.restore(); reloadConfiguration(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-  it.each(['current', 'retired', 'invalid-response', 'expired', 'invalid-status', 'denied', 'transport'] as const)('retains the admitted tuple privately and saves the Account bearer only for a %s normal registration', async (admission) => {
+  it.each([
+    ...(['current', 'retired', 'invalid-response', 'expired', 'invalid-status', 'denied', 'transport'] as const)
+      .map(admission => ({ admission, enrollment: managedEnrollment, source: 'managed' })),
+    { admission: 'current' as const, enrollment: deploymentAppEnrollment, source: 'deploymentApp' },
+  ])('retains the $source tuple privately and saves the Account bearer only for a $admission normal registration', async ({ admission, enrollment }) => {
     await withTempDir('happier-buffered-auth-', async (homeDir) => {
       env.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: undefined, HAPPIER_ACTIVE_SERVER_ID: undefined });
       reloadConfiguration();
@@ -77,16 +85,19 @@ describe('buffered normal auth request/wait', () => {
       });
       await handleAuthRequest(['--json', '--remote-enrollment', '--home-target-stdin', '--managed-enrollment-stdin',
         '--server-url', descriptor.canonicalServerUrl, '--no-persist'], undefined,
-        Readable.from([JSON.stringify({ homeTarget, managedEnrollment,
+        Readable.from([JSON.stringify({ homeTarget, managedEnrollment: enrollment,
           ...(admission === 'current' ? { machineDisplayName: 'Managed design box' } : {}),
+          ...('source' in enrollment ? { deploymentAppBinding } : {}),
         })]));
       const request = JSON.parse(outputs[0]!) as { publicKey: string; remoteProfileId: string; pairing: { secretB64Url: string; createdAtMs: number; expiresAtMs: number } };
       expect(JSON.parse(outputs[0]!)).toMatchObject({ kind: 'remote_home_enrollment_pairing_request', homeServerIdentityId: descriptor.homeServerIdentityId });
       const pending = (await readdir(homeDir, { recursive: true })).find((path) => /auth[\\/]pending[\\/].*\.json$/u.test(path));
       expect(pending).toBeDefined();
-      expect(JSON.parse(await readFile(join(homeDir, pending!), 'utf8'))).toMatchObject({ managedEnrollment, serverIdentityId: descriptor.homeServerIdentityId });
+      expect(JSON.parse(await readFile(join(homeDir, pending!), 'utf8'))).toMatchObject({ managedEnrollment: enrollment, serverIdentityId: descriptor.homeServerIdentityId });
+      if ('source' in enrollment) expect(JSON.parse(await readFile(join(homeDir, pending!), 'utf8'))).toMatchObject({ deploymentAppBinding });
+      expect(outputs[0]).not.toContain(deploymentAppBinding.serviceName);
       expect(outputs[0]).not.toContain('claimSecret');
-      expect(outputs[0]).not.toContain(managedEnrollment.managedId);
+      expect(outputs[0]).not.toContain('managedId' in enrollment ? enrollment.managedId : enrollment.deploymentId);
       response = Buffer.from(sealTerminalProvisioningV3TokenOnlyPayload({
         terminalEphemeralPublicKey: Buffer.from(request.publicKey, 'base64'),
         pairingSecret: Buffer.from(request.pairing.secretB64Url, 'base64url'),
@@ -120,7 +131,7 @@ describe('buffered normal auth request/wait', () => {
         const consumed = await runRemoteHomeEnrollmentFlow({
           executor: createHappierJsonExecutorFromTextRunner(async (args) => ({ status: 0, stderr: '',
             stdout: args[1] === 'request' ? outputs[0]! : completion })),
-          processIO: 'buffered', homeTargetInput: homeTarget, managedEnrollment,
+          processIO: 'buffered', homeTargetInput: homeTarget, managedEnrollment: enrollment,
           approvePairingRequest: async () => {},
         });
         expect(consumed).toMatchObject({ machineId: JSON.parse(completion).machineId, remoteProfileId: request.remoteProfileId,
@@ -135,18 +146,19 @@ describe('buffered normal auth request/wait', () => {
         const failure: unknown = await runRemoteHomeEnrollmentFlow({
           executor: createHappierJsonExecutorFromTextRunner(async args => ({ status: args[1] === 'request' ? 0 : 1,
             stdout: args[1] === 'request' ? outputs[0]! : outputs.at(-1)!, stderr: '' })),
-          processIO: 'buffered', homeTargetInput: homeTarget, managedEnrollment, approvePairingRequest: async () => {},
+          processIO: 'buffered', homeTargetInput: homeTarget, managedEnrollment: enrollment, approvePairingRequest: async () => {},
         }).catch((error: unknown) => error);
         if (!(failure instanceof Error) || !('code' in failure)) throw failure;
         expect(readRemoteEnrollmentCommandFailure(failure.code, failure.message)?.message).toContain('HTTP 409');
         expect(outputs.at(-1)).not.toContain('retired managed row');
       }
       if (admission !== 'current' && admission !== 'retired') expect(registration).toBeUndefined();
-      else expect(registration).toMatchObject({ managedEnrollment });
+      else expect(registration).toMatchObject({ managedEnrollment: enrollment });
       if (admission === 'current') {
         if (!registration || typeof registration !== 'object' || !('metadata' in registration)
           || typeof registration.metadata !== 'string') throw new Error('Expected published Machine metadata');
-        expect(decodePlainMachineStoredContent(registration.metadata)).toMatchObject({ displayName: 'Managed design box' });
+        expect(decodePlainMachineStoredContent(registration.metadata)).toMatchObject({ displayName: 'Managed design box',
+          ...('source' in enrollment ? { deploymentApp: deploymentAppBinding } : {}) });
       }
       expect((await readdir(homeDir, { recursive: true })).some((path) => /(?:^|[\\/])access\.key$/u.test(path))).toBe(admission === 'current');
       expect(outputs.join('')).not.toContain('full-account-bearer');
