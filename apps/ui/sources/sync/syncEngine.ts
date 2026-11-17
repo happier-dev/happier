@@ -550,6 +550,7 @@ import {
     fetchArtifactBinaryFromApi,
     fetchArtifactHtmlPreviewFromApi,
     fetchArtifactForViewFromApi,
+    prepareOwnedSharedArtifactRecipientKeys,
     handleDeleteArtifactSocketUpdate,
     handleNewArtifactSocketUpdate,
     handleUpdateArtifactSocketUpdate,
@@ -673,7 +674,7 @@ import type { SessionMetadataInactiveModelIntentExpectationV1 } from '@happier-d
 import type { AutomationV3ClearRunHistoryResponse, AutomationV3Settings } from '@happier-dev/protocol/automations/automationApiV3';
 import type { AccountSettingMutationV1 } from '@happier-dev/protocol/account/settings/accountSettingMutationV1';
 import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
-import { abortServerFetches, createServerFetchAtEndpoint, StaleServerGenerationError, type ServerFetch, type ServerFetchOptions, type ServerResponseRequest } from './http/client';
+import { abortServerFetches, createServerFetchAtEndpoint, createServerFetchForActiveServer, StaleServerGenerationError, type ServerFetch, type ServerFetchOptions, type ServerResponseRequest } from './http/client';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 import { clearEmbedMemoryStorage } from '@/sync/domains/state/persistenceStorage';
 import { clearEmbedBrowserRecords } from '@/sync/domains/state/browserRecordStorage';
@@ -1870,6 +1871,12 @@ class Sync {
                     await prepareOwnedSharedTaskKeys({ credentials, accountId: scope.accountId, serverId: scope.serverId,
                         isCurrent: () => this.credentials === credentials && areServerAccountScopesEqual(getActiveServerAccountScope(), scope),
                     }).catch((error: unknown) => log.log(`Task key repair deferred: ${error instanceof Error ? error.message : 'unavailable'}`));
+                    // Owned Artifacts shared with a Team or Group (documents, Reviews) owe later members the same key.
+                    await prepareOwnedSharedArtifactRecipientKeys({ credentials, accountId: scope.accountId, encryption,
+                        artifactDataKeys: this.artifactDataKeys,
+                        request: createServerFetchForActiveServer(undefined, { credentials,
+                            isCurrent: () => this.credentials === credentials && areServerAccountScopesEqual(getActiveServerAccountScope(), scope) }),
+                    }).catch((error: unknown) => log.log(`Artifact key repair deferred: ${error instanceof Error ? error.message : 'unavailable'}`));
                 }
                 await repairTeamLabelEnvelopes(target.serverId);
             }, { pause, backoff, shouldRetry,
