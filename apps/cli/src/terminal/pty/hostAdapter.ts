@@ -293,7 +293,12 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
           },
         };
       }
-      if (opts.prepareLaunch) opts = { ...opts, ...await opts.prepareLaunch() };
+      let stdinPreamble: Uint8Array | undefined;
+      if (opts.prepareLaunch) {
+        const launch = await opts.prepareLaunch();
+        opts = { ...opts, ...launch };
+        stdinPreamble = launch.stdinPreamble;
+      }
       if (existing) {
         cleanupSession(opts.sessionName, existing, { kill: false, retainExitState: true });
       }
@@ -336,8 +341,8 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
           },
         });
       }
-      const nativeLaunch = opts.stdinPreamble?.byteLength
-        ? createTerminalNativeLaunch(opts.stdinPreamble, data => pty.write(data)) : undefined;
+      const nativeLaunch = stdinPreamble?.byteLength
+        ? createTerminalNativeLaunch(stdinPreamble, data => pty.write(data)) : undefined;
       const session: PtyTerminalHostSession = {
         pty,
         disposables: [],

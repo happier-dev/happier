@@ -21,13 +21,19 @@ const SESSION_STACK_ENV_KEYS = new Set([
  * Callers provide the two launch-mode-specific controls explicitly so regular,
  * Windows, tmux, ACP, and plugin execution cannot independently re-derive them.
  */
-export function finalizeSessionChildEnvironment(params: Readonly<{
+type FinalizeSessionChildEnvironmentOptions = Readonly<{
   environment: NodeJS.ProcessEnv;
   explicitEnvironment?: Readonly<NodeJS.ProcessEnv>;
   canonicalSessionControlEnvironment?: Readonly<Record<string, string | undefined>>;
   enableCgroupSelfMigration: boolean;
   stackProcessKind: 'session' | null;
-}>): NodeJS.ProcessEnv {
+}>;
+
+export function finalizeSessionChildEnvironment(params: FinalizeSessionChildEnvironmentOptions & Readonly<{
+  environment: Record<string, string>;
+}>): Record<string, string>;
+export function finalizeSessionChildEnvironment(params: FinalizeSessionChildEnvironmentOptions): NodeJS.ProcessEnv;
+export function finalizeSessionChildEnvironment(params: FinalizeSessionChildEnvironmentOptions): NodeJS.ProcessEnv {
   const env = stripNestedSessionDetectionEnv(
     stripDaemonServiceInstallRequestEnv(stripSessionControlEnvOverrides(params.environment)),
     params.explicitEnvironment,
