@@ -4,6 +4,7 @@ import { log } from "@/utils/logging/log";
 import { db } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv } from "@/storage/prisma";
+import { resolveDbSqlDialect } from "@/config/databaseProvider";
 import { parseIntEnv } from "@/config/env";
 import { createHostedElevenLabsService } from "@/voice/providers/elevenLabs";
 import { readVoiceFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
@@ -42,7 +43,7 @@ function createVoiceProviderBindingNonce(): string {
  * no extra lock is required.
  */
 async function lockAccountForMint(tx: Tx, accountId: string): Promise<void> {
-    const provider = getDbProviderFromEnv(process.env, "postgres");
+    const provider = resolveDbSqlDialect(getDbProviderFromEnv(process.env, "postgres"));
     if (provider !== "postgres") return;
     const raw = tx as { $executeRawUnsafe?: (query: string, ...values: unknown[]) => Promise<unknown> };
     if (typeof raw.$executeRawUnsafe !== "function") return;
