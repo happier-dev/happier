@@ -1910,7 +1910,9 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         && executionPlacement === 'client';
       const declaredDaemonIngress = hasDeclaredActionDaemonIngress(spec, 'cli');
       const allowsDaemonIngress = spec.originalExecution?.daemonIngressSurfaces === undefined || declaredDaemonIngress;
-      const selectedOriginalMachine = (requireDaemonIngress || params.externalActionClient && allowsDaemonIngress || managedMachineDaemonIngress
+      // An external client's Machine-placed Action keeps its signed original
+      // carrier; UI-only ingress declarations narrow Session delivery below.
+      const selectedOriginalMachine = (requireDaemonIngress || params.externalActionClient || managedMachineDaemonIngress
         || spec.id === 'session.spawn_new' && requiresOriginalAccountMachineActionProof(spec.id, admittedInput, context)
         || declaredDaemonIngress)
         && (executionPlacement === 'machine' || controlControllerTarget !== null) && originalCliCaller
