@@ -245,7 +245,7 @@ describe('Voice client raw credential machine RPC', () => {
     expect(failed).not.toHaveProperty('error');
   });
 
-  it('rejects browser environment access and an undeclared phase before reading a secret', async () => {
+  it('rejects browser environment access and invalid phases, and refuses unavailable access for declared phases before reading a secret', async () => {
     const { handlers, registrar } = manager();
 
     const materialize = vi.fn();
@@ -274,14 +274,16 @@ describe('Voice client raw credential machine RPC', () => {
       ok: false,
       errorCode: 'plugin_voice_provider_result_invalid',
     });
-    await expect(invoke?.({ ...selection, phase: 'settings', request })).resolves.toEqual({
+    await expect(invoke?.({ ...selection, phase: 'undeclared', request })).resolves.toEqual({
       ok: false,
       errorCode: 'plugin_voice_provider_result_invalid',
     });
-    await expect(invoke?.({ ...selection, phase: 'connection', request })).resolves.toEqual({
-      ok: false,
-      errorCode: 'plugin_voice_credential_access_unavailable',
-    });
+    for (const phase of ['settings', 'prepare', 'connection']) {
+      await expect(invoke?.({ ...selection, phase, request })).resolves.toEqual({
+        ok: false,
+        errorCode: 'plugin_voice_credential_access_unavailable',
+      });
+    }
     expect(materialize).not.toHaveBeenCalled();
   });
 });
