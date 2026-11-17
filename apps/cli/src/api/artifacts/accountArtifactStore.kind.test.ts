@@ -148,23 +148,27 @@ describe('Account Artifact coarse kind transport', () => {
     expect(queries).toHaveLength(1);
   });
 
-  it('keeps unknown membership partial without metadata writes or an inventory fallback', async () => {
+  it('merges readable legacy skill headers before paging without metadata writes or an inventory fallback', async () => {
     const known = row('known', skillHeader, 1);
-    const older = row('unclassified', skillHeader, 502);
+    const newerLegacy = row('unclassified', skillHeader, 502);
     const kinds: Array<string | null> = [];
     get.mockImplementation(async (url: string) => {
       const query = new URL(url).searchParams;
       kinds.push(query.get('kind') ?? query.get('unclassified'));
       expect(query.has('kind') || query.has('unclassified')).toBe(true);
-      return { status: 200, data: { items: query.has('unclassified') ? [older] : [known], hasUnclassified: true,
+      expect(query.has('includeBody')).toBe(false);
+      return { status: 200, data: { items: query.has('unclassified') ? [newerLegacy] : [known], hasUnclassified: true,
         coverage: ArtifactKindCoverageV1Schema.parse({ status: 'partial', unclassifiedCount: 1, reason: 'unclassified_legacy_rows' }) } };
     });
     post.mockResolvedValue({ status: 409, data: { success: false, error: 'version-mismatch' } });
     const artifacts = store();
     const first = await artifacts.list({ coarseKind: 'skill', limit: 1 });
-    expect(first.items.map(item => item.artifactId)).toEqual(['known']);
-    expect(first.coverage).toBe('partial');
-    expect(kinds).toEqual(['skill']);
+    expect(first.items.map(item => item.artifactId)).toEqual(['unclassified']);
+    expect(first.items[0]).not.toHaveProperty('body');
+    expect(first.nextCursor).toBe(encodeAccountArtifactListCursor({ artifactId: 'unclassified', updatedAt: 502 }));
+    expect(first.coverage).toBe('complete');
+    expect(first.kindCoverage?.status).toBe('partial');
+    expect(kinds).toEqual(['skill', 'coarse']);
     expect(post).not.toHaveBeenCalled();
   });
 

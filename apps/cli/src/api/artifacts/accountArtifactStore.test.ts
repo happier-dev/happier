@@ -22,6 +22,7 @@ import { readDeploymentAuthorizationFailure } from '@/deployments/deploymentAuth
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { normalizeActionExecuteResult, projectCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionHttpError';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 
 import { createAccountArtifactStore, createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore, encodeAccountArtifactListCursor, type ArtifactRequestAuthorizationHeaders } from './accountArtifactStore';
 import { readCarrierMutation } from './accountArtifactStore.testkit';
@@ -76,17 +77,18 @@ function fixtureArtifactDeletionGuard(store: Parameters<typeof createCliArtifact
   };
 }
 
-const { mockDelete, mockGet, mockPatch, mockPost, mockPut } = vi.hoisted(() => ({
+const { mockDelete, mockGet, mockPatch, mockPost, mockPut, mockRequest } = vi.hoisted(() => ({
   mockDelete: vi.fn(),
   mockGet: vi.fn(),
   mockPatch: vi.fn(),
   mockPost: vi.fn(),
   mockPut: vi.fn(),
+  mockRequest: vi.fn(),
 }));
 
 vi.mock('axios', async importOriginal => {
   const actual = await importOriginal<typeof import('axios')>();
-  return { ...actual, default: Object.assign(actual.default.create(), actual.default, { delete: mockDelete, get: mockGet, patch: mockPatch, post: mockPost, put: mockPut }) };
+  return { ...actual, default: Object.assign(actual.default.create(), actual.default, { delete: mockDelete, get: mockGet, patch: mockPatch, post: mockPost, put: mockPut, request: mockRequest }) };
 });
 vi.mock('@/configuration', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/configuration')>();
@@ -181,7 +183,7 @@ describe('createAccountArtifactStore', () => {
     // The existing Artifact audience owner admits the next authoring request.
     shared = true;
     expect(await executor.execute('template.draft', { sourceSessionRef, content, expectedRevision: { headerVersion: 1, bodyVersion: 1 } }, context))
-      .toMatchObject({ ok: false, errorCode: 'artifact_access_forbidden' });
+      .toMatchObject({ ok: false, errorCode: 'artifact_shared_content_forbidden' });
     expect(mockPost).toHaveBeenCalledTimes(1);
     expect(await executor.execute('template.open', { sourceSessionRef, draftArtifactId: artifactId }, context))
       .toMatchObject({ ok: false, errorCode: 'surface_unavailable' });
@@ -924,6 +926,7 @@ describe('createAccountArtifactStore', () => {
     mockPatch.mockReset();
     mockPost.mockReset();
     mockPut.mockReset();
+    mockRequest.mockReset();
     resetServerFeaturesClientForTests();
   });
   afterEach(() => { vi.unstubAllGlobals(); resetServerFeaturesClientForTests(); });
@@ -2957,7 +2960,13 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
           { status: 200, headers: { 'content-type': 'application/json' } });
       }));
       const artifactId = '11111111-1111-4111-8111-111111111111';
-      const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+      // Each row has a fresh credential so its Account index seed is isolated.
+      const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', fixture: expectedPolicy.network })).toString('base64url')}.signature`;
+      mockRequest.mockImplementation(async ({ url, method }: { url: string; method: string }) => {
+        expect(new URL(url).pathname).toBe(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1);
+        expect(method).toBe('GET');
+        return { status: 200, data: { v: 1, rows: [] } };
+      });
       const credentials = { token, encryption: null };
       const store = createAccountArtifactStore({ credentials,
         getAccountEncryptionMode: async () => 'plain' });
