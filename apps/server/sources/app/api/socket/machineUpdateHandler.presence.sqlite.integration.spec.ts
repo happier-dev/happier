@@ -1310,6 +1310,35 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
         }
     });
 
+    // P03 ORCH 2026-11-16: a failed backstop read keeps the socket (no reconnect storm during a
+    // database outage), logs on a default-on warn signal, and the next reconcile re-checks it.
+    it('keeps a machine-scoped socket on a failed backstop read, reports it, and re-checks at the next reconcile', async () => {
+        const owner = await db.account.create({ data: { publicKey: `reconfirm-fail-${randomUUID()}`, encryptionMode: 'plain' } });
+        const machine = await createMachine(owner.id);
+        const admitted = Object.assign(createFakeSocket({ data: { userId: owner.id,
+            clientType: 'machine-scoped', machineId: machine.id,
+            [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: machine.installationId } }), { disconnect: vi.fn() });
+        await db.machine.update({ where: { id: machine.id }, data: { revokedAt: new Date() } });
+        const warnings = vi.spyOn(logging, 'log');
+        let failNextMachineRead = true;
+        const stopObserving = observeSqliteRequests({ before: request => {
+            if (request.model !== 'Machine' || !failNextMachineRead) return;
+            failNextMachineRead = false;
+            throw new Error('transient database boundary unavailable');
+        } });
+        try {
+            await reconfirmMachineScopedSocketAdmissions([admitted] as unknown as Socket[]);
+            expect(admitted.disconnect).not.toHaveBeenCalled();
+            expect(warnings).toHaveBeenCalledWith(expect.objectContaining({ level: 'warn', event: 'machine_socket_reconfirm_failed' }),
+                expect.any(String));
+            await reconfirmMachineScopedSocketAdmissions([admitted] as unknown as Socket[]);
+            expect(admitted.disconnect).toHaveBeenCalledWith(true);
+        } finally {
+            stopObserving();
+            warnings.mockRestore();
+        }
+    });
+
     it('publishes only safe Machine liveness to owner, Manage and Use, excluding outsiders and retired grants', async () => {
         const account = () => db.account.create({ data: { publicKey: `presence-${randomUUID()}`, encryptionMode: 'plain' } });
         const [owner, manager, user, outsider] = await Promise.all([account(), account(), account(), account()]);
