@@ -110,7 +110,8 @@ ${MUSE_MSP_PLAYBACK_SCRIPT}
     const resource = TeamCredentialResourceSummaryV1Schema.parse(await act(owner, 'teams.credentials.create', {
       teamId, resourceId, displayName, source: candidate.source, deliveryPolicy: { preferredAllowedModes: ['brokered'] },
       sessionUsePolicy: 'personal_allowed', brokerPlacement: { kind: 'machine', machineId: hub.target.machineId },
-      requestPolicy: null, allMembersAllowedRoutes: ['brokered'], groupGrants: [], memberGrants: [], usageLimits: [],
+      requestPolicy: null, allMembersAllowedRoutes: ['brokered'], groupGrants: [], memberGrants: [],
+      usageLimits: [{ subjectKind: 'each_member', subjectId: '', period: 'day', metric: 'inference_requests', maximum: '2', enabled: true }],
     }));
     const registry = readCurrentContributionRegistry();
     const applications = projectAgentProviderBrokerApplications({ registry, agentTargetKey: 'agent:happier.agent.claude/claude',
@@ -155,9 +156,8 @@ ${MUSE_MSP_PLAYBACK_SCRIPT}
       limit: { subjectKind: 'each_member', subjectId: '', period: 'day', metric: 'inference_requests', maximum: '1', enabled: true } });
     expect(ProviderBrokerOpenResponseV1Schema.parse(await post(member.credentials.token, PROVIDER_BROKER_OPEN_HTTP_PATH_V1,
       { ...openRequest, refreshAuthority: opened.authority }))).toMatchObject({ ok: true });
-    // The new window starts at the edit: its first request is valid, and the
-    // following one must expose the usage refusal rather than stale authority.
-    expect(await admit()).toMatchObject({ ok: true });
+    // Editing the same limit retains the request already recorded in its window.
+    // The next request must expose usage refusal rather than stale authority.
     expect(await admit()).toMatchObject({ ok: false, reasonCode: 'team_credential_usage_limit' });
     await act(owner, 'teams.members.remove', { v: 1, teamId, membershipId: membership.id });
     expect(await admit()).toMatchObject({ ok: false, reasonCode: 'operation_not_current' });

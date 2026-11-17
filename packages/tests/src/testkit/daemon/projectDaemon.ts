@@ -218,7 +218,9 @@ export async function startProjectDaemonFixture(params: Readonly<{
         };
       },
       claimHomeOwner(account: Awaited<ReturnType<typeof createAccount>>) {
-        return claimTestHomeOwner({ server, accountId: readAccountIdFromToken(account.credentials.token),
+        const accountId = readAccountIdFromToken(account.credentials.token);
+        if (!accountId) throw new Error('Home owner fixture token omitted its Account ID');
+        return claimTestHomeOwner({ server, accountId,
           dbProvider: params.dbProvider ?? 'postgres', env: serverEnv });
       },
       stop,
