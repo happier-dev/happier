@@ -89,7 +89,9 @@ function parseRepositoryEventPayload(input: Readonly<{
   });
   if (input.raw.type === 'PullRequestEvent' && input.eventLocalId === GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle) {
     try {
-      const pullRequest = normalizeGithubPullRequestLifecycle(rawPayload.pull_request, rawPayload.action);
+      const pullRequest = normalizeGithubPullRequestLifecycle(rawPayload.pull_request, rawPayload.action, {
+        repository, actor: input.raw.actor,
+      });
       return pullRequest === null ? null : normalizeGithubAutomationEvent({ kind: 'pullRequestLifecycle', repository, pullRequest });
     } catch {
       throw new GithubRepositoryEventsHistoryGapError('GitHub pull request lifecycle Event has invalid provider facts');

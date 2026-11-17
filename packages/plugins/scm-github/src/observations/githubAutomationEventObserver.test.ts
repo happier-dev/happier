@@ -29,6 +29,7 @@ import {
   type GithubAutomationEventCheckpointedPullObserver,
 } from './githubAutomationEventObserver.js';
 import { parseGithubRepositoryEventsCursor } from './githubRepositoryEventsCursor.js';
+import { capturedRepositoryPullRequestEvent } from './testkit/githubRepositoryPullRequestEvent.fixture.js';
 import { observeGithubDeploymentReviewsV1 } from './githubDeploymentMonitor.js';
 import { activate, activateAccount } from '../activate.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
@@ -1408,6 +1409,39 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     expect(admissions.find(value => value.eventRef.localId === lifecycle.eventRef.localId)?.payload).toMatchObject({
       pullRequest: { action: 'opened', headSha: 'a'.repeat(40) },
     });
+    expect(http.request).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['own', 'fork'] as const)('admits the captured %s repository Events API PR through the checkpointed observer', async kind => {
+    const source = definition({ automationId: 'lifecycle', sourceSelectorId: sourceSelectorA,
+      eventLocalId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle });
+    const checkpoints = createCheckpointCollection([checkpointRow({ automationId: source.automationId,
+      sourceSelectorId: source.sourceSelectorId, eventLocalId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle })]);
+    const event = structuredClone(capturedRepositoryPullRequestEvent);
+    if (kind === 'fork') event.payload.pull_request.head.repo = {
+      id: 78, name: 'widgets', url: 'https://api.github.com/repos/fork/widgets',
+    };
+    const admissions: AutomationEventAdmitInput[] = [];
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return sourceListResult(input, '7', [source]);
+      if (action === 'automation.event.source.status.report') return {};
+      if (action === 'automation.event.admit') { admissions.push(AutomationEventAdmitInputV1Schema.parse(input));
+        return { results: [{ kind: 'admitted', runId: 'preview-run', checkpointSafe: true }] }; }
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    const http = { request: vi.fn(async () => ({ status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify([
+      { id: 'old', type: 'OtherEvent', created_at: '1970-01-01T00:00:00.900Z', repo: event.repo, payload: {} }, event,
+    ])) })) };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
+    await observer.runCycle(sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection, http })));
+    expect(admissions).toHaveLength(1);
+    expect(admissions[0]).toMatchObject({ eventRef: source.eventRef, payload: {
+      repository: { repositoryId: '77', nameWithOwner: 'acme/widgets' },
+      pullRequest: { id: '455', number: 33, action: 'opened', headSha: 'a'.repeat(40),
+        baseRepository: { kind: 'github', repository: 'acme/widgets' },
+        headRepository: { kind: 'github', repository: kind === 'fork' ? 'fork/widgets' : 'acme/widgets' },
+        author: { id: '99', login: 'fixture-actor', kind: 'unsupported' } },
+    } });
     expect(http.request).toHaveBeenCalledTimes(1);
   });
 

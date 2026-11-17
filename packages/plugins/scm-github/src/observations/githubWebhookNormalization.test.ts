@@ -59,6 +59,17 @@ describe('GitHub webhook normalization', () => {
     }) })]);
     expect(() => delivery('a'.repeat(7))).toThrow();
   });
+  it.each(['repository', 'author'] as const)('keeps webhook %s facts mandatory despite the shorter Events API shape', missing => {
+    const { user: _user, ...withoutUser } = pullRequestSourceFacts;
+    const pullRequest = { id: 455, number: 33,
+      ...(missing === 'author' ? withoutUser : { ...pullRequestSourceFacts,
+        base: { ref: 'main', repo: { id: 77, name: 'widgets', url: 'https://api.github.com/repos/acme/widgets' } } }),
+    };
+    expect(() => normalizeGithubWebhookDelivery({ eventType: 'pull_request', providerDeliveryId: 'short-webhook',
+      receivedAtMs: defaultReceivedAtMs, rawBody: new TextEncoder().encode(JSON.stringify({ action: 'reopened',
+        repository: { id: 77, full_name: 'acme/widgets' }, sender: { id: 99, login: 'fixture-actor', type: 'User' }, pull_request: pullRequest,
+      })) })).toThrow(GithubWebhookPayloadError);
+  });
   it.each(['requested', 'approved', 'rejected'])('projects deployment_review/%s only to its exact delivered run', action => {
     const delivery = normalizeGithubWebhookDelivery({ eventType: 'deployment_review', providerDeliveryId: 'review-1', receivedAtMs: defaultReceivedAtMs,
       rawBody: new TextEncoder().encode(JSON.stringify({ action, repository: { id: 77, full_name: 'acme/widgets' }, workflow_run: { id: 81 } })) });

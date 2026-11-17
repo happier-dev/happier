@@ -8,6 +8,7 @@ import {
   type GithubAutomationEventRefV1,
 } from '../githubAutomationEvents.js';
 import { normalizeScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
+import { readGithubRepositoryRouteFromApiUrl } from '../triage/mapping/entry.js';
 
 /** Only an attributable GitHub User is authoritative for Channels input. */
 export type GithubActorV1 = GithubPullRequestLifecycleV1['author'];
@@ -170,19 +171,39 @@ function eventRepository(repository: Readonly<{ id: string; nameWithOwner: strin
   });
 }
 
-/** Webhooks and the Events timeline carry the same provider pull-request facts. */
+/** Events omit webhook repository names and PR users; their source supplies those facts. */
 export function normalizeGithubPullRequestLifecycle(
   value: unknown,
   action: unknown,
+  repositoryEventContext?: Readonly<{
+    repository: Readonly<{ repositoryId: string; nameWithOwner: string }>;
+    actor: unknown;
+  }>,
 ): GithubPullRequestLifecycleV1 | null {
   const parsedAction = GithubPullRequestLifecycleActionV1Schema.safeParse(action);
   if (!parsedAction.success) return null;
   const pullRequest = readObject(value, 'pull_request');
   const head = readObject(pullRequest.head, 'pull_request.head');
   const base = readObject(pullRequest.base, 'pull_request.base');
-  const identity = (value: unknown) => normalizeScmHostingRepositoryIdentity({
-    kind: 'github', deployment: 'https://github.com', repository: readRepository(value).nameWithOwner,
-  });
+  const identity = (value: unknown) => {
+    const repository = readObject(value, 'repository');
+    let nameWithOwner: string;
+    if (repositoryEventContext !== undefined && repository.full_name === undefined) {
+      const id = String(readPositiveInteger(repository, 'id'));
+      if (id === repositoryEventContext.repository.repositoryId) {
+        nameWithOwner = repositoryEventContext.repository.nameWithOwner;
+      } else {
+        const route = readGithubRepositoryRouteFromApiUrl(repository.url);
+        if (route === null) throw new GithubWebhookPayloadError('GitHub repository Event lacks its repository API URL');
+        nameWithOwner = `${route.owner}/${route.name}`;
+      }
+    } else {
+      nameWithOwner = readRepository(repository).nameWithOwner;
+    }
+    return normalizeScmHostingRepositoryIdentity({
+      kind: 'github', deployment: 'https://github.com', repository: nameWithOwner,
+    });
+  };
   return GithubPullRequestLifecycleV1Schema.parse({
     id: String(readPositiveInteger(pullRequest, 'id')),
     number: readPositiveInteger(pullRequest, 'number'),
@@ -192,7 +213,8 @@ export function normalizeGithubPullRequestLifecycle(
     baseRef: readString(base, 'ref'),
     baseRepository: identity(base.repo),
     headRepository: head.repo === null ? null : identity(head.repo),
-    author: readActor(pullRequest.user, 'pull_request.user'),
+    author: readActor(pullRequest.user === undefined && repositoryEventContext !== undefined
+      ? repositoryEventContext.actor : pullRequest.user, 'pull_request.user'),
   });
 }
 
