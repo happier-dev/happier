@@ -380,6 +380,9 @@ describe('Run a workflow trigger inputs', () => {
         // No popover: the Event's own rows sit in the card, with its edit entry.
         expect(screen.findByTestId('event-workflow-trigger-popover')).toBeNull();
         expect(screen.findByTestId('event-workflow-trigger:saved:event-row-configure-event')).toBeTruthy();
+        // QA-C: a saved source is configured even before its sealed label is read; it offers Edit, never Set up.
+        expect(screen.findByTestId('event-workflow-trigger:saved:event-row-configure-event')?.props.accessibilityLabel)
+            .toBe('workflows.triggers.card.source: workflows.triggers.popover.editEvent');
         expect(screen.findByTestId('event-workflow-trigger:saved:event-row-starts.trigger')?.props.accessibilityLabel)
             .toBe('workflows.triggers.card.when: workflows.triggers.kind.pluginEvent');
         await toggleTrigger(screen, 'event-workflow-trigger:saved:event-row');
@@ -685,7 +688,8 @@ describe('Run a workflow trigger inputs', () => {
         expect(block.props.selectedId).toBe('event:happier.sentry/issue-transition');
         const blockId = String(block.props.testID).replace(/-starts$/, '');
         expect(screen.findByTestId(`${blockId}-title`)?.props.children).toBe('A new issue appears');
-        expect(screen.findByTestId(`${blockId}-configure-event`)).not.toBeNull();
+        expect(screen.findByTestId(`${blockId}-configure-event`)?.props.accessibilityLabel)
+            .toBe('workflows.triggers.card.source: workflows.triggers.card.setUp');
         expect(screen.getTextContent()).toContain('workflows.triggers.card.incomplete');
     });
     it('turns off a newly authored Event row without discarding its configured source', async () => {

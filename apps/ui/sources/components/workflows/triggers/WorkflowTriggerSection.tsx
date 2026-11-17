@@ -84,6 +84,8 @@ const styles = StyleSheet.create((theme) => ({
     menuFoot: { ...Typography.variant('meta'), color: theme.colors.text.secondary, paddingHorizontal: theme.space.s12, paddingVertical: theme.space.s8,
         borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border.default },
     addNote: { ...Typography.variant('meta'), color: theme.colors.text.tertiary, flexShrink: 1, textAlign: 'right' },
+    addRowStacked: { flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'flex-start', gap: theme.space.s4 },
+    addNoteStacked: { textAlign: 'left' },
 }));
 
 type WorkflowTriggerRoleDefinition = React.ComponentProps<typeof WorkflowRunRoles>['definition'];
@@ -486,7 +488,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                             addStart(id);
                         }}
                         trigger={({ toggle, open }) => (
-                            <View style={styles.addRow}>
+                            <View style={[styles.addRow, compact ? styles.addRowStacked : null]}>
                                 <HappierPressable
                                     testID={`${props.testIDPrefix}-triggers-add`}
                                     accessibilityRole="button"
@@ -500,10 +502,14 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                                     <Icon name="plus" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
                                     <Text style={styles.addLabel}>{t('workflows.triggers.card.add')}</Text>
                                 </HappierPressable>
-                                {/* A phone has no room beside the action: the reminder would only crowd it. */}
-                                {/* A before-trigger says where it applies (D6): only Actions started from Happier wait for it. */}
-                                {rows.length > 0 && !compact ? <Text style={styles.addNote}>{t(!runsBeforeActions ? 'workflows.triggers.card.runNowToo'
-                                    : reachesOthers ? 'workflows.triggers.card.startedFromHappier' : 'workflows.triggers.card.startedFromHappierOwn')}</Text> : null}
+                                {/* A before-trigger says where it applies (D6/R22): only Actions started from Happier wait for it. That
+                                  * truth stays on a phone, beneath the action; the Run now reminder would only crowd it there. */}
+                                {rows.length > 0 && (!compact || runsBeforeActions) ? (
+                                    <Text testID={`${props.testIDPrefix}-triggers-add-note`} style={[styles.addNote, compact ? styles.addNoteStacked : null]}>
+                                        {t(!runsBeforeActions ? 'workflows.triggers.card.runNowToo'
+                                            : reachesOthers ? 'workflows.triggers.card.startedFromHappier' : 'workflows.triggers.card.startedFromHappierOwn')}
+                                    </Text>
+                                ) : null}
                             </View>
                         )}
                     />

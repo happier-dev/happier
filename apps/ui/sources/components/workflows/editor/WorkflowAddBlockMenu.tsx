@@ -286,13 +286,16 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
         };
         if (props.purpose === 'verb') {
             const verbIcon = (name: React.ComponentProps<typeof Icon>['name']) => () => <Icon name={name} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />;
-            // A verb is the Action's own preset, offered only while the catalog lists that Action here.
-            const verbPreset = (actionId: string, verb: 'command' | 'message', icon: React.ComponentProps<typeof Icon>['name']) => {
+            // A verb is the Action's own preset. While the catalog doesn't list that Action here (still reading, or this
+            // Machine's Actions unreadable) the verb stays in the menu, unavailable, saying why: verbs never vanish.
+            const verbPreset = (actionId: string, verb: 'command' | 'message', icon: React.ComponentProps<typeof Icon>['name']): SelectionListOption => {
                 const spec = catalog.specs.find((candidate) => candidate.id === actionId);
-                if (spec === undefined || spec.projectionError !== undefined) return [];
+                const label = t(`workflows.sentence.verbs.${verb}Menu`);
+                if (spec === undefined || spec.projectionError !== undefined) return { id: optionId(`verb-${verb}`), label, icon: verbIcon(icon),
+                    disabled: true, subtitle: catalog.phase === 'loading' ? t('common.loading')
+                        : t('workflows.page.blocks.actionUnavailable', { action: label }) };
                 const { rightAccessory: _source, ...option } = actionOption(spec);
-                return [{ ...option, id: optionId(`verb-${verb}`), label: t(`workflows.sentence.verbs.${verb}Menu`),
-                    subtitle: t(`workflows.sentence.verbs.${verb}Sub`), icon: verbIcon(icon) }];
+                return { ...option, id: optionId(`verb-${verb}`), label, subtitle: t(`workflows.sentence.verbs.${verb}Sub`), icon: verbIcon(icon) };
             };
             return {
                 id: 'verb-root',
@@ -301,8 +304,8 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
                 searchAcrossSections: true,
                 sections: [
                     { kind: 'static', id: 'verbs', options: [
-                        ...verbPreset('machines.command.run', 'command', 'terminal'),
-                        ...verbPreset('session.message.send', 'message', 'chat-circle'),
+                        verbPreset('machines.command.run', 'command', 'terminal'),
+                        verbPreset('session.message.send', 'message', 'chat-circle'),
                         { id: optionId('verb-session'), label: t('workflows.sentence.verbs.sessionMenu'), subtitle: t('workflows.sentence.verbs.sessionSub'),
                             icon: verbIcon('sparkle'), onSelect: add({ kind: 'step' }) },
                     ] },
@@ -354,7 +357,7 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
             ],
         };
     }, [libraryOptions, library.hasMore, library.loadingMore, library.loadMore, library.retry, library.status,
-        catalog.specs, onAdd, onClose, props.currentWorkflowRef, props.purpose, props.testID, theme.colors.text.secondary, theme.colors.text.tertiary]);
+        catalog.specs, catalog.phase, onAdd, onClose, props.currentWorkflowRef, props.purpose, props.testID, theme.colors.text.secondary, theme.colors.text.tertiary]);
 
     return (
         <AgentInputSelectionListPopover

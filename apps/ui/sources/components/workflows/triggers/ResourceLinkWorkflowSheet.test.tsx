@@ -30,6 +30,12 @@ vi.mock('@/components/ui/popover', async (importOriginal) =>
 const { ResourceLinkWorkflowSheet } =
   await import('./ResourceLinkWorkflowSheet');
 const { TriggerPluginEventRows } = await import('./TriggerPluginEventRows');
+const { SelectionList } = await import('@/components/ui/selectionList');
+
+/** The sheet opens on the workflow list (pick first, then configure); choosing one opens the form. */
+async function pickWorkflow(screen: Awaited<ReturnType<typeof renderScreen>>, ref: string) {
+  await act(async () => screen.findAllByType(SelectionList)[0]!.props.onSelect(ref));
+}
 const { ValueFieldSelect } =
   await import('@/components/ui/forms/ValueFieldSelect');
 const { SegmentedTabBar } =
@@ -87,7 +93,7 @@ function linkFor(missingAudience: readonly PrincipalRefV1[]) {
 
 // 05 S5 Link + D8: Workflow, When from the resource's starts, the before wait policy, and the same-step share question.
 describe('Link a workflow to a resource', () => {
-  it.each([false, true])('retains configured Event input when choosing another Workflow (configured first: %s)', async configuredFirst => {
+  it('retains configured Event input when choosing another Workflow', async () => {
     const eventRef = { pluginId: 'acme.deploy', localId: 'released' };
     const eventOption = {
       id: 'event:acme.deploy/released', label: 'Released', relation: 'event', subject,
@@ -107,8 +113,8 @@ describe('Link a workflow to a resource', () => {
       resourceName="Production" link={link} serverId={null} machineId={null} accountLifetime={null}
       onRequestClose={() => undefined} onLinked={() => undefined} />);
     try {
+      await pickWorkflow(screen, 'builtin:review-and-converge');
       const [workflowSelect, whenSelect] = screen.findAllByType(ValueFieldSelect);
-      if (!configuredFirst) await act(async () => workflowSelect!.props.onSelect('builtin:review-and-converge'));
       await act(async () => whenSelect!.props.onSelect(eventOption.id));
       // The real Event editor's accepted configuration is the presentation owner's input.
       await act(async () => screen.findAllByType(TriggerPluginEventRows)[0]!.props.onChange(configured));
@@ -118,12 +124,21 @@ describe('Link a workflow to a resource', () => {
     } finally { await screen.unmount(); }
   });
 
-  it('groups the Workflow choices as yours, shared with you, then built-in', async () => {
+  it('opens on the workflow list grouped as yours, shared with you, then built-in, and configures after the pick', async () => {
     const screen = await renderScreen(<ResourceLinkWorkflowSheet anchorRef={React.createRef<never>()}
       resourceName="Production" link={linkFor([]) as never} serverId={null} machineId={null} accountLifetime={null}
       onRequestClose={() => undefined} onLinked={() => undefined} />);
     try {
+      // D6: no Workflow menu hangs over the sheet; the sheet is the list until a workflow is chosen.
+      expect(screen.findAllByType(ValueFieldSelect)).toHaveLength(0);
+      const step = screen.findAllByType(SelectionList)[0]!.props.rootStep;
+      const builtinGroup = step.sections.find((section: { id: string }) => section.id === 'builtin');
+      expect(builtinGroup?.title).toBe('workflows.triggers.link.builtIn');
+      expect(builtinGroup?.options.some((row: { id: string }) => row.id === 'builtin:review-and-converge')).toBe(true);
+      await pickWorkflow(screen, 'builtin:review-and-converge');
+      expect(screen.findAllByType(SelectionList)).toHaveLength(0);
       const [workflowSelect] = screen.findAllByType(ValueFieldSelect);
+      expect(workflowSelect!.props.selectedId).toBe('builtin:review-and-converge');
       const builtin = workflowSelect!.props.items.find((item: { id: string }) => item.id === 'builtin:review-and-converge');
       expect(builtin?.category).toBe('workflows.triggers.link.builtIn');
     } finally { await screen.unmount(); }
@@ -146,10 +161,8 @@ describe('Link a workflow to a resource', () => {
         onLinked={() => undefined}
       />,
     );
-    const [workflowSelect, whenSelect] = screen.findAllByType(ValueFieldSelect);
-    await act(async () => {
-      workflowSelect!.props.onSelect('builtin:review-and-converge');
-    });
+    await pickWorkflow(screen, 'builtin:review-and-converge');
+    const [, whenSelect] = screen.findAllByType(ValueFieldSelect);
     await act(async () => {
       whenSelect!.props.onSelect(option.id);
     });
@@ -185,8 +198,8 @@ describe('Link a workflow to a resource', () => {
       resourceName="Studio" link={link} serverId={null} machineId={null} accountLifetime={null}
       onRequestClose={() => undefined} onLinked={() => undefined} />;
     const screen = await renderScreen(sheet(first));
-    const [workflowSelect, whenSelect] = screen.findAllByType(ValueFieldSelect);
-    await act(async () => workflowSelect!.props.onSelect('builtin:review-and-converge'));
+    await pickWorkflow(screen, 'builtin:review-and-converge');
+    const [, whenSelect] = screen.findAllByType(ValueFieldSelect);
     await act(async () => whenSelect!.props.onSelect(option.id));
     const drafted = first.setDraft.mock.calls.at(-1)?.[0];
     expect(drafted).toMatchObject({ workflow: 'builtin:review-and-converge' });
@@ -217,6 +230,7 @@ describe('Link a workflow to a resource', () => {
         onLinked={() => undefined}
       />,
     );
+    await pickWorkflow(screen, 'w');
     expect(screen.findByTestId('resource-link-share')).toBeNull();
     expect(screen.getTextContent()).toContain('workflows.triggers.link.link');
     await act(async () => {

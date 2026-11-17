@@ -91,7 +91,9 @@ export const ValueFieldSelect = React.memo(function ValueFieldSelect(props: Read
             {...(props.keepsOpen === undefined ? {} : { closeOnSelect: false })}
             {...(props.emptyLabel === undefined ? {} : { emptyLabel: props.emptyLabel })}
             placement="bottom"
-            popoverAnchorAlign={props.fill ? 'start' : 'end'}
+            // A select's menu opens under the field's leading edge (its own value column), never back over the
+            // form's label column; the popover clamps a menu wider than the room left.
+            popoverAnchorAlign="start"
             variant="slim"
             matchTriggerWidth={props.fill === true}
             {...(props.fill ? {} : { maxWidthCap: 320 })}

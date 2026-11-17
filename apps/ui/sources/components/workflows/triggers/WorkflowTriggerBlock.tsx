@@ -289,7 +289,8 @@ export function WorkflowTriggerBlock(
               <FieldButton
                 testID={`${props.testID}-configure-event`}
                 label={t('workflows.triggers.card.source')}
-                value={entry.detail ?? t('workflows.triggers.card.setUp')}
+                // A saved Event's label is in its sealed setup, read when opened: at rest it offers Edit, never Set up (QA-C).
+                value={entry.detail ?? t(entry.configured ? 'workflows.triggers.popover.editEvent' : 'workflows.triggers.card.setUp')}
                 onPress={entry.onPress}
               />
             </TrackRow>

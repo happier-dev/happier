@@ -11,6 +11,7 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
+import { SelectionList, type SelectionListStep } from '@/components/ui/selectionList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { sharePrincipalKey } from '@/components/sharing/sharePrincipalPresentation';
@@ -113,6 +114,26 @@ export function ResourceLinkWorkflowSheet(
   const clearDraft = React.useRef(setDraft);
   clearDraft.current = setDraft;
   React.useEffect(() => () => clearDraft.current(null), []);
+
+  // Pick first, then configure (lab `automations-states-pick` → `link`): the sheet opens on the workflow list itself,
+  // so choosing a workflow never hangs a second menu over the sheet's own foot.
+  const pickStep = React.useMemo<SelectionListStep>(() => {
+    const ordered = [...workflowOptions].sort((a, b) => LINK_GROUP_ORDER[a.origin ?? 'yours'] - LINK_GROUP_ORDER[b.origin ?? 'yours']);
+    const groups = (['yours', 'shared', 'builtin'] as const).map((origin) => ({
+      kind: 'static' as const,
+      id: origin,
+      title: t(origin === 'builtin' ? 'workflows.triggers.link.builtIn'
+        : origin === 'shared' ? 'workflows.triggers.link.sharedWithYou' : 'workflows.triggers.link.yours'),
+      options: ordered.filter((option) => (option.origin ?? 'yours') === origin).map((option) => ({
+        id: option.ref,
+        label: option.title,
+        icon: <Icon name="tree-structure" size={ICON_SIZE.md} color={theme.colors.text.secondary} />,
+        testID: `resource-link-pick:${option.ref}`,
+        ...(option.unavailableReason ? { disabled: true, subtitle: option.unavailableReason } : {}),
+      })),
+    })).filter((group) => group.options.length > 0);
+    return { id: 'resource-link-pick', inputPlaceholder: t('workflows.triggers.link.findWorkflow'), sections: groups };
+  }, [theme.colors.text.secondary, workflowOptions]);
 
   const workflowItems = React.useMemo<ValueFieldSelectItem[]>(
     () =>
@@ -224,7 +245,24 @@ export function ResourceLinkWorkflowSheet(
         anchorAlign: 'end',
       }}
     >
-      {({ maxHeight }) => (
+      {({ maxHeight }) => workflow === null ? (
+        <FloatingOverlay maxHeight={maxHeight}>
+          <SelectionList
+            testID="resource-link-pick"
+            rootStep={pickStep}
+            selectedOptionId={null}
+            listAccessibilityLabel={t('workflows.triggers.link.title', { name: props.resourceName })}
+            onSelect={(id) => {
+              setWorkflow(id);
+              draftFor(id, when);
+            }}
+            onRequestClose={props.onRequestClose}
+            autoFocusInputOnWeb
+            maxHeight={maxHeight}
+            heightBehavior="stabilizedContentHeight"
+          />
+        </FloatingOverlay>
+      ) : (
         <FloatingOverlay maxHeight={maxHeight} scrollEnabled>
           <View style={styles.body} testID="resource-link-sheet">
             <Text variant="label" emphasis="semiBold" style={styles.title}>

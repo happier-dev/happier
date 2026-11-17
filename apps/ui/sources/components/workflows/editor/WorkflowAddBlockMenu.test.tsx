@@ -115,6 +115,15 @@ describe('workflow Add Action picker', () => {
         await screen.pressByTestIdAsync('verb');
         expect(screen.findByTestId('selection-list:verb-root:option:add-if')).toBeNull();
         expect(screen.findByTestId('selection-list:verb-root:option:add-verb-another')).not.toBeNull();
+        // DESIGN-ACCEPT-1 D11: without a readable catalog the Action verbs stay listed, unavailable, with the reason.
+        const { Item } = await import('@/components/ui/lists/Item');
+        for (const verb of ['command', 'message']) {
+            const row = screen.findAllByType(Item).find(node => node.props.testID === `selection-list:verb-root:option:add-verb-${verb}`);
+            expect(row?.props.disabled).toBe(true);
+            expect(row?.props.subtitle).toEqual(expect.any(String));
+        }
+        await screen.pressByTestIdAsync('selection-list:verb-root:option:add-verb-command');
+        expect(onAdd).not.toHaveBeenCalled();
         await screen.pressByTestIdAsync('selection-list:verb-root:option:add-verb-session');
         expect(onAdd).toHaveBeenCalledWith({ kind: 'step' });
     });
