@@ -1,6 +1,7 @@
 import { PROJECT_STARTER_ACTION_SPECS_V1 } from './specs/projectStarters.js';
 import { parseQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 import { lazyActionSpecArray, lazyActionSpecRecord, memoizeActionSpecValue , type ActionSpecArrayConcat } from './lazyActionSpecValue.js';
+import { ACTION_SPEC_FAMILY_IDS, ACTION_SPEC_FAMILY_READERS, ACTION_SPEC_UI_PLACEMENT_IDS } from './actionSpecFamilies.generated.js';
 import type { ExternalActionRequestEnvelope, ExternalActionTargetV1 } from './externalActionApi.js';
 
 
@@ -155,6 +156,7 @@ import {
 } from './metadata.js';
 
 import {
+  ACTION_IDS,
   ACTION_ID_FAMILIES_V1,
   ActionIdSchema,
   PLUGIN_DEV_LOOP_ACTION_IDS_V1,
@@ -1146,9 +1148,36 @@ function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): Normalize
 
 // Declarations by id, so one lookup normalizes one Action, not the catalog
 // (the normalized catalog is ~9 MiB live per process; P03-CODE-COVERAGE).
-const ACTION_SPEC_DECLARATIONS_BY_ID = memoizeActionSpecValue(() => new Map(
-  ACTION_SPECS_WITHOUT_APPROVAL.map((spec) => [spec.id, spec] as const),
+// A lookup reads only the family that declares its id: under inline requires
+// each family module is evaluated on first read, and indexing the whole
+// catalog for one id evaluated ~270 modules before Home (P03-BOOT-CUT).
+const ACTION_SPEC_DECLARATIONS_BY_ID = new Map<string, PreNormalizedActionSpec>();
+const ACTION_SPEC_FAMILY_BY_ID = memoizeActionSpecValue(() => new Map(
+  ACTION_SPEC_FAMILY_IDS.flatMap((ids, family) => ids.map((id) => [id, family] as const)),
 ));
+const READ_ACTION_SPEC_FAMILIES = new Set<number>();
+const KNOWN_ACTION_IDS = memoizeActionSpecValue(() => new Set<string>(ACTION_IDS));
+
+function readActionSpecDeclaration(id: ActionId): PreNormalizedActionSpec | undefined {
+  const family = ACTION_SPEC_FAMILY_BY_ID().get(id);
+  if (family !== undefined && !READ_ACTION_SPEC_FAMILIES.has(family)) {
+    READ_ACTION_SPEC_FAMILIES.add(family);
+    for (const declaration of ACTION_SPEC_FAMILY_READERS[family]!() as readonly PreNormalizedActionSpec[]) {
+      if (!ACTION_SPEC_DECLARATIONS_BY_ID.has(declaration.id)) ACTION_SPEC_DECLARATIONS_BY_ID.set(declaration.id, declaration);
+    }
+  }
+  const declaration = ACTION_SPEC_DECLARATIONS_BY_ID.get(id);
+  if (declaration || family !== undefined || !KNOWN_ACTION_IDS().has(id)) return declaration;
+  // An id the generated routing does not know yet (a family added without
+  // regenerating) still resolves through the whole catalog, loudly; the
+  // actionSpecFamilies drift test keeps this path out of committed code.
+  const stale = ACTION_SPECS_WITHOUT_APPROVAL.find((candidate) => candidate.id === id);
+  if (stale) {
+    console.error(`actionSpecFamilies.generated.ts does not route ${id}: run node packages/protocol/scripts/generateActionSpecFamilies.mjs`);
+    ACTION_SPEC_DECLARATIONS_BY_ID.set(id, stale);
+  }
+  return stale;
+}
 const ACTION_SPECS_WITH_PUBLIC_EXPOSURE_BY_ID = new Map<ActionId, NormalizedActionSpec>();
 
 function readActionSpecWithPublicExposure(spec: PreNormalizedActionSpec): NormalizedActionSpec {
@@ -2214,7 +2243,7 @@ const ACTION_SPECS_BY_ID = new Map<ActionId, ActionSpec>();
 function readActionSpec(id: ActionId): ActionSpec | undefined {
   let spec = ACTION_SPECS_BY_ID.get(id);
   if (!spec) {
-    const declaration = ACTION_SPEC_DECLARATIONS_BY_ID().get(id);
+    const declaration = readActionSpecDeclaration(id);
     if (!declaration) return undefined;
     spec = completeActionSpec(readActionSpecWithPublicExposure(declaration));
     ACTION_SPECS_BY_ID.set(id, spec);
@@ -2228,6 +2257,11 @@ export const ACTION_SPECS: readonly ActionSpec[] = lazyActionSpecArray(() => Obj
 
 export function listActionSpecs(): readonly ActionSpec[] {
   return ACTION_SPECS;
+}
+
+/** UI-surfaced Actions that declare one placement, in catalog order, read through their families only. */
+export function listUiActionSpecsForPlacement(placement: string): readonly ActionSpec[] {
+  return (ACTION_SPEC_UI_PLACEMENT_IDS[placement] ?? []).map((id) => getActionSpec(id as ActionId));
 }
 
 /**
