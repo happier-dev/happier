@@ -195,3 +195,26 @@ it('saves and hands over the place the sentence chose, not the place it started 
     expect(JSON.stringify(home.automations.creates[0])).toContain('machine-b');
     expect(JSON.stringify(home.automations.creates[0])).not.toContain('machine-a');
 });
+
+it('carries unresolved native Event intent through sentence history and the full editor without reading the watched Machine', async () => {
+    const home = await sourceHome();
+    const nativeEvent = { key: 'presence', kind: 'machine', machineId: 'offline-machine', event: 'offline',
+        sourceRevision: 999_999, occurredAt: 10, coverage: 'live' } as const;
+    const hook = await renderHook(() => authoring.useWorkflowSentenceDraft({ name: 'Offline', step: message, nativeEvent }, home.lifetime));
+    expect(hook.getCurrent().triggers.incomplete.pending).toMatchObject([{ nativeEvent, when: { kind: 'pluginEvent', value: null } }]);
+    expect(hook.getCurrent().triggers.incomplete.pending[0]?.when).not.toHaveProperty('eventRef');
+    const edited = { ...message, input: { ...message.input, message: { kind: 'literal' as const, value: 'Edited offline notice' } } };
+    await act(async () => hook.getCurrent().changeStep(edited));
+    await act(async () => hook.getCurrent().history.undo());
+    expect(hook.getCurrent().draftStore.get().blocks).toEqual([message]);
+    await act(async () => hook.getCurrent().history.redo());
+    const project = { machineId: 'controller', directory: '/repo' };
+    await act(async () => hook.getCurrent().changeProject(project));
+    const entry = hook.getCurrent().openInEditor();
+    if (!entry) throw new Error('Expected the ordinary full editor entry');
+    expect(readWorkflowDefinitionDraftSeed(entry.params.definitionDraftSeedId, home.lifetime.scope))
+        .toMatchObject({ project, draft: { blocks: [edited] }, incompleteTriggers: { pending: [{ nativeEvent }] } });
+    expect(home.requests.some(request => request.includes('offline-machine'))).toBe(false);
+    expect(home.creates).toEqual([]);
+    expect(home.automations.creates).toEqual([]);
+});

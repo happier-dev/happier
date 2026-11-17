@@ -94,7 +94,7 @@ export function TriggerPluginEventRows(props: Readonly<{
             detail={readStatus === 'unavailable' ? t('common.retry') : undefined} showChevron={false} /></FloatingOverlay> : <PluginEventAutomationEditor
                 automationId={automationId ?? 'trigger-draft'} clientId={triggerId ?? 'event-draft'}
                 value={props.when.value} seed={needsSeed ? props.initialEventEditSeed ?? seedRead.seed : null} initialEventRef={eventRef ?? null}
-                authoringMachineId={props.initialEventSeed ? props.initialEventSeed.monitoringMachineId ?? null : props.machineId} serverId={props.serverId}
+                authoringMachineId={props.initialEventSeed?.monitoringMachineId ?? props.machineId} serverId={props.serverId}
                 initialSetupSeed={props.initialEventSeed}
                 onEditSeedApplied={props.onEditSeedApplied}
                 observationOnly={props.when.observationOnly}

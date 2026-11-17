@@ -1175,10 +1175,17 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(editedSection.props.incomplete?.state.pending).toEqual([]);
         // The Live events companion hands unconfigured intent through the same mounted editor intake.
         await act(async () => readBodyProps()!.onAddTriggerWhen?.({ kind: 'pluginEvent', value: null,
-            eventRef: eventSeed.eventRef }, eventSeed));
+            eventRef: eventSeed.eventRef }, { eventSeed }));
         const liveSection = readBodyProps()!.triggersSection;
         if (!React.isValidElement<React.ComponentProps<typeof WorkflowTriggerSection>>(liveSection)) throw new Error('Missing live trigger editor');
         expect(liveSection.props.incomplete?.state.pending).toMatchObject([{ eventSeed }]);
+        await act(async () => liveSection.props.incomplete!.onChange(() => ({ pending: [], edits: {} })));
+        const nativeEvent = { key: 'presence', kind: 'machine', machineId: 'offline-machine', event: 'offline',
+            sourceRevision: 999_999, occurredAt: 10, coverage: 'live' } as const;
+        await act(async () => readBodyProps()!.onAddTriggerWhen?.({ kind: 'pluginEvent', value: null }, { nativeEvent }));
+        const nativeSection = readBodyProps()!.triggersSection;
+        if (!React.isValidElement<React.ComponentProps<typeof WorkflowTriggerSection>>(nativeSection)) throw new Error('Missing native trigger editor');
+        expect(nativeSection.props.incomplete?.state.pending).toMatchObject([{ nativeEvent, when: { kind: 'pluginEvent', value: null } }]);
         const replacementSeed = { ...eventSeed, setupInput: { subject: { kind: 'environment', environmentId: 'staging' } } };
         const replacement = prepareWorkflowSentenceEditorEntry({ name: 'Staging', project, eventSeed: replacementSeed }, lifetime);
         if (!replacement) throw new Error('Expected the next sentence source');

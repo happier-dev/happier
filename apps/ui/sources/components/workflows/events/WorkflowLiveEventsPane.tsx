@@ -15,11 +15,12 @@ import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { WorkflowActivityProjection } from '@/sync/engine/workflows/workflowActivityProjection';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
-import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
+import type { WorkflowTriggerDraftSeedIntent } from '../triggers/workflowTriggerStarts';
 import { t } from '@/text';
 
 import {
   readWorkflowEventWhen,
+  readWorkflowEventDraftIntent,
   type WorkflowEventFilter,
 } from './workflowEventFacts';
 import {
@@ -28,7 +29,6 @@ import {
 } from './useWorkflowEventPresentation';
 import { WorkflowEventCarries } from './WorkflowEventDetail';
 import { WorkflowEventStartedRuns } from './WorkflowEventStartedRuns';
-import { useWorkflowEventDraftSeed } from './useWorkflowEventDraftSeed';
 import {
   WorkflowEventsFilters,
   WorkflowEventsListening,
@@ -45,9 +45,8 @@ export const WorkflowLiveEventsPane = React.memo(
   function WorkflowLiveEventsPane(
     props: Readonly<{
       active: boolean;
-      catalogMachineId?: string | null;
       /** Adds the event's start to the mounted draft's triggers; absent when this person cannot manage them. */
-      onAddTrigger: ((when: TriggerWhenValue, eventSeed?: PluginUiOpenAutomationEventRequestV1) => void) | null;
+      onAddTrigger: ((when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => void) | null;
       /** Closes the companion; `null` inside the phone sheet, whose own title and close already stand above. */
       onClose: (() => void) | null;
       testID: string;
@@ -63,8 +62,8 @@ export const WorkflowLiveEventsPane = React.memo(
       setExpanded((current) => (current === key ? null : key)),
     );
     const { onAddTrigger } = props;
-    const add = useEventCallback((key: string, when: TriggerWhenValue, eventSeed?: PluginUiOpenAutomationEventRequestV1) => {
-      onAddTrigger?.(when, eventSeed);
+    const add = useEventCallback((key: string, when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => {
+      onAddTrigger?.(when, seed);
       setAdded((current) => new Set(current).add(key));
     });
     const renderExpanded = React.useCallback(
@@ -72,7 +71,6 @@ export const WorkflowLiveEventsPane = React.memo(
         <LiveEventBody
           projection={feed.projection}
           active={props.active}
-          catalogMachineId={props.catalogMachineId}
           eventKey={key}
           scope={scope}
           retainedRuns={feed.retained?.runs}
@@ -81,7 +79,7 @@ export const WorkflowLiveEventsPane = React.memo(
           testID={props.testID}
         />
       ),
-      [feed.projection, feed.retained?.runs, scope, added, onAddTrigger, add, props.testID, props.active, props.catalogMachineId],
+      [feed.projection, feed.retained?.runs, scope, added, onAddTrigger, add, props.testID, props.active],
     );
     return (
       <View testID={props.testID} style={styles.pane}>
@@ -130,22 +128,21 @@ const LiveEventBody = React.memo(function LiveEventBody(
   props: Readonly<{
     projection: WorkflowActivityProjection;
     active: boolean;
-    catalogMachineId?: string | null;
     eventKey: string;
     scope: ServerAccountScope | null;
     retainedRuns: readonly WorkflowRunSummaryV1[] | undefined;
     added: boolean;
-    onAdd: ((key: string, when: TriggerWhenValue, eventSeed?: PluginUiOpenAutomationEventRequestV1) => void) | null;
+    onAdd: ((key: string, when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => void) | null;
     testID: string;
   }>,
 ) {
   const router = useRouter();
   const fact = useWorkflowEventFact(props.projection, props.eventKey);
   const presentation = useWorkflowEventPresentation(fact, props.scope, props.retainedRuns);
-  const seed = useWorkflowEventDraftSeed(fact ?? null, props.active, props.catalogMachineId);
+  const seed = !props.active || fact == null ? null : readWorkflowEventDraftIntent(fact);
   if (presentation === null) return null;
-  const when: TriggerWhenValue | null = seed?.setupRequired
-    ? { kind: 'pluginEvent', value: null, eventRef: seed.eventSeed.eventRef }
+  const when: TriggerWhenValue | null = seed?.nativeEvent
+    ? { kind: 'pluginEvent', value: null }
     : readWorkflowEventWhen(presentation.fact);
   const open = presentation.open;
   const { onAdd, eventKey } = props;
@@ -169,7 +166,7 @@ const LiveEventBody = React.memo(function LiveEventBody(
             testID={`${props.testID}:add`}
             size="small"
             title={t('workflows.events.addToWorkflow')}
-            onPress={() => onAdd(eventKey, when, seed?.setupRequired ? seed.eventSeed : undefined)}
+            onPress={() => onAdd(eventKey, when, seed?.nativeEvent ? { nativeEvent: seed.nativeEvent } : undefined)}
           />
         )}
         {open === null ? null : (

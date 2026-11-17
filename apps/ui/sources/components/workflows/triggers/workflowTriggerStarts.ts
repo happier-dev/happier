@@ -5,6 +5,7 @@ import type { AutomationTriggerId } from '@happier-dev/protocol/automations/auto
 import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
+import type { WorkflowActivityLiveFact } from '@/sync/domains/workflows/workflowActivityTypes';
 
 import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
@@ -239,11 +240,24 @@ export function createWorkflowTriggerStartWhen(id: string, previous?: TriggerWhe
  * edits of listed ones (`edits`, by row key). Held beside the trigger draft, never in it, so the When
  * card and the Sentence view show the same ones.
  */
+export type WorkflowTriggerDraftSeedIntent = Readonly<{
+    eventSeed?: PluginUiOpenAutomationEventRequestV1;
+    /** The watched resource is independent of the controller the author selects later. */
+    nativeEvent?: Extract<WorkflowActivityLiveFact, { kind: 'machine' }>;
+}>;
 export type WorkflowTriggerIncomplete = Readonly<{
-    pending: readonly Readonly<{ clientId: string; when: TriggerWhenValue; enabled?: boolean; eventSeed?: PluginUiOpenAutomationEventRequestV1 }>[];
+    pending: readonly Readonly<{ clientId: string; when: TriggerWhenValue; enabled?: boolean } & WorkflowTriggerDraftSeedIntent>[];
     edits: Readonly<Record<string, TriggerWhenValue>>;
 }>;
 export const EMPTY_WORKFLOW_TRIGGER_INCOMPLETE: WorkflowTriggerIncomplete = Object.freeze({ pending: Object.freeze([]), edits: Object.freeze({}) });
+
+export function createWorkflowTriggerIncompleteSeed(intent?: WorkflowTriggerDraftSeedIntent): WorkflowTriggerIncomplete | undefined {
+    if (intent?.eventSeed === undefined && intent?.nativeEvent === undefined) return undefined;
+    return { pending: [{ clientId: createWorkflowTriggerClientId(), when: { kind: 'pluginEvent', value: null,
+        ...(intent.eventSeed === undefined ? {} : { eventRef: intent.eventSeed.eventRef }) },
+        ...(intent.eventSeed === undefined ? {} : { eventSeed: intent.eventSeed }),
+        ...(intent.nativeEvent === undefined ? {} : { nativeEvent: intent.nativeEvent }) }], edits: {} };
+}
 
 export type WorkflowTriggerRowRef =
     | Readonly<{ kind: 'saved'; triggerId: AutomationTriggerId }>
@@ -286,7 +300,7 @@ export function createWorkflowTriggerClientId(): string {
 export function addWorkflowTriggerWhen(params: Readonly<{
     draft: WorkflowTriggerDraft;
     when: TriggerWhenValue;
-    eventSeed?: PluginUiOpenAutomationEventRequestV1;
+    seed?: WorkflowTriggerDraftSeedIntent;
     onChangeDraft: (next: WorkflowTriggerDraft) => void;
     updateIncomplete: (update: (current: WorkflowTriggerIncomplete) => WorkflowTriggerIncomplete) => void;
 }>): void {
@@ -294,7 +308,7 @@ export function addWorkflowTriggerWhen(params: Readonly<{
     const next = commitWorkflowTriggerWhen({ draft: params.draft, row: { kind: 'new', clientId }, when: params.when, enabled: true });
     if (next !== null) params.onChangeDraft(next);
     else params.updateIncomplete((current) => ({ ...current, pending: [...current.pending, { clientId, when: params.when,
-        ...(params.eventSeed ? { eventSeed: params.eventSeed } : {}) }] }));
+        ...params.seed }] }));
 }
 
 export function removeWorkflowTriggerRow(draft: WorkflowTriggerDraft, row: WorkflowTriggerRowRef): WorkflowTriggerDraft {

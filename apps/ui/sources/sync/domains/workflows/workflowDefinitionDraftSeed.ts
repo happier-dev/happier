@@ -5,11 +5,10 @@ import type { WorkflowDefinitionCaptureResultV1 } from '@happier-dev/protocol/wo
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 import type { WorkflowDraftSettingsPatchV1 } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
-import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 import type { WorkflowEditorDraft } from './workflowEditorDraft';
 import type { WorkflowTriggerSnapshot } from '@/components/workflows/triggers/workflowTriggerDraft';
 import type { WorkflowTriggerAddRequestV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
-import type { WorkflowTriggerIncomplete } from '@/components/workflows/triggers/workflowTriggerStarts';
+import type { WorkflowTriggerIncomplete, WorkflowTriggerDraftSeedIntent } from '@/components/workflows/triggers/workflowTriggerStarts';
 
 import { readWorkflowEditorDraftSeed, storeWorkflowEditorDraftSeed } from './workflowEditorDraftSeed';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -28,7 +27,9 @@ export type WorkflowDefinitionDraftSeed = Readonly<{
     /** Event declaration retained with its trigger for local validation and history. */
     payloadSchema?: PluginJsonSchemaV2 | null;
     /** An unconfigured source stays with the ordinary When editor until enrollment completes. */
-    eventSeed?: PluginUiOpenAutomationEventRequestV1;
+    eventSeed?: WorkflowTriggerDraftSeedIntent['eventSeed'];
+    /** Native source intent resolves after the author chooses a Runs-on controller. */
+    nativeEvent?: WorkflowTriggerDraftSeedIntent['nativeEvent'];
     project?: WorkflowProjectTargetV1;
     /** Session lifetime is independent of the event's watched subject and execution placement. */
     lifetimeSession?: Extract<WorkflowTriggerAddRequestV1, { observationOnly?: never }>['lifetimeSession'];

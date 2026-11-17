@@ -16,6 +16,7 @@ import { useWorkflowEditorHistory, workflowEditorSnapshotsEqual, type WorkflowEd
 import { saveWorkflowEditorDefinition, type PendingWorkflowDefinitionCreate, type WorkflowEditorSavedRevision } from '../editor/saveWorkflowEditorDefinition';
 import { useWorkflowTriggerEditing, type WorkflowTriggerEditing } from '../triggers/useWorkflowTriggerEditing';
 import { editWorkflowTriggerDraft, EMPTY_WORKFLOW_TRIGGER_DRAFT, type WorkflowTriggerSnapshot } from '../triggers/workflowTriggerDraft';
+import { createWorkflowTriggerIncompleteSeed } from '../triggers/workflowTriggerStarts';
 import { prepareWorkflowSentenceEditorEntry, type WorkflowSentenceEditorIntent } from './workflowSentenceAuthoring';
 
 export type WorkflowSentenceDraft = Readonly<{
@@ -48,8 +49,7 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
             : buildWorkflowEditorDraftFromDefinition({ draftId, name: intent.name, definition });
         return { intent, lifetime: accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : accountLifetime,
             store: createWorkflowEditorReadable(draft),
-            incomplete: intent.eventSeed === undefined ? undefined : { pending: [{ clientId: randomUUID(),
-                when: { kind: 'pluginEvent' as const, value: null, eventRef: intent.eventSeed.eventRef }, eventSeed: intent.eventSeed }], edits: {} } };
+            incomplete: createWorkflowTriggerIncompleteSeed(intent) };
     });
     const mounted = React.useRef(true);
     React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -146,7 +146,7 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
         } }, history: history.controls, save, saving, failed, saved,
         openInEditor: () => {
             if (source.lifetime === null) return null;
-            const { step: _step, definition: _definition, trigger: _trigger, eventSeed: _eventSeed, payloadSchema: _payloadSchema, ...seed } = source.intent;
+            const { step: _step, definition: _definition, trigger: _trigger, eventSeed: _eventSeed, nativeEvent: _nativeEvent, payloadSchema: _payloadSchema, ...seed } = source.intent;
             return prepareWorkflowSentenceEditorEntry({ ...seed, ...(projectRef.current === null ? {} : { project: projectRef.current }),
                 name: source.store.get().name }, source.lifetime, { draft: source.store.get(),
                 triggers: triggers.captureSnapshot(), incompleteTriggers: triggers.incomplete });

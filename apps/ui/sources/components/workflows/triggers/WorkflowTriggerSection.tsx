@@ -47,6 +47,7 @@ import { useWorkflowDefinitionLibrary } from '../library/workflowLibraryReads';
 import { WorkflowTriggerRunHistory } from './WorkflowTriggerRunHistory';
 import { WorkflowTriggerBlock } from './WorkflowTriggerBlock';
 import { useWorkflowTriggerEventOptions } from './useWorkflowTriggerEventOptions';
+import { readWorkflowEventDraftSeed } from '../events/workflowEventFacts';
 import { describeLegacyTriggerSet } from './sessionTriggerGroups';
 import { WorkflowRunRoles, workflowUsedRoleIds } from '../run/WorkflowRunRoles';
 import { useWorkflowRunVisibility } from '../run/useWorkflowRunVisibility';
@@ -215,6 +216,11 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
         && rows.every((row) => row.trigger.kind !== 'action' || row.trigger.phase !== 'before'
             || ('reachesOthers' in row.trigger && row.trigger.reachesOthers === true));
     const catalog = useWorkflowTriggerEventOptions({ ...placement, enabled: catalogDemanded || showsEvent });
+    // The pending fact names the watched resource; only this selected controller resolves its declaration.
+    const resolvedPending = pending.map(item => {
+        const seed = item.nativeEvent === undefined ? null : readWorkflowEventDraftSeed(item.nativeEvent, { serverId, events: catalog.events });
+        return seed?.setupRequired ? { ...item, when: { kind: 'pluginEvent' as const, value: null, eventRef: seed.eventSeed.eventRef }, eventSeed: seed.eventSeed } : item;
+    });
     const startOptions = React.useMemo(() => buildWorkflowTriggerStartOptions(catalog.events, undefined, props.startContext),
         [catalog.events, props.startContext]);
     // The menu's foot says where plugin triggers come from: the trigger set's Machine.
@@ -276,11 +282,12 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     };
     const editPending = (clientId: string, when: TriggerWhenValue) => {
         const enabled = pending.find(item => item.clientId === clientId)?.enabled ?? true;
+        const previousWhen = resolvedPending.find(item => item.clientId === clientId)?.when;
         const next = commitWorkflowTriggerWhen({ draft: props.draft, row: { kind: 'new', clientId }, when, enabled });
         setPending(current => next === null
             ? current.some(item => item.clientId === clientId)
                 ? current.map(item => item.clientId === clientId
-                    ? { ...item, when, ...(readWorkflowTriggerStartId(item.when) === readWorkflowTriggerStartId(when) ? {} : { eventSeed: undefined }) }
+                    ? { ...item, when, ...(readWorkflowTriggerStartId(previousWhen ?? item.when) === readWorkflowTriggerStartId(when) ? {} : { eventSeed: undefined, nativeEvent: undefined }) }
                     : item) : [...current, { clientId, when }]
             : current.filter(item => item.clientId !== clientId));
         if (next !== null) change(next);
@@ -346,7 +353,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                 />
             );
         }),
-        ...pending.map((item) => (
+        ...resolvedPending.map((item) => (
             <WorkflowTriggerBlock key={`new:${item.clientId}`} testID={`${props.testIDPrefix}-trigger:new:${item.clientId}`}
                 title={startTitle(item.when)} when={item.when} enabled={item.enabled ?? true} incomplete startOptions={startOptions}
                 initialEventSeed={item.eventSeed}
@@ -388,7 +395,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     },
                     renderRows: () => blocks[index] };
             }),
-            ...pending.map((item, index): WorkflowTriggerSentenceLine => ({ key: `new:${item.clientId}`,
+            ...resolvedPending.map((item, index): WorkflowTriggerSentenceLine => ({ key: `new:${item.clientId}`,
                 startId: readWorkflowTriggerStartId(item.when), startTitle: startTitle(item.when), detail: null, enabled: item.enabled ?? true, incomplete: true,
                 onSelectStart: (id) => selectStart(item.when, id, (next) => editPending(item.clientId, next)),
                 onRemove: () => setPending(current => current.filter(candidate => candidate.clientId !== item.clientId)),

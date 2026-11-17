@@ -1,6 +1,7 @@
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { useWorkflowNavigation, selectWorkflowNavigationItem } from '../navigation/workflowNavigation';
 import { useWorkflowPageNavigationShown, WorkflowPageNavigation, WorkflowCompanionNavigation } from '../navigation/WorkflowNavigationViews';
+import type { WorkflowTriggerDraftSeedIntent } from '../triggers/workflowTriggerStarts';
 import { WorkflowLiveEventsPane } from '../events/WorkflowLiveEventsPane';
 import type { TriggerWhenValue } from '../triggers/sessionTriggerForm';
 import { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
@@ -95,7 +96,7 @@ import { WorkflowInspector } from '../editor/WorkflowInspector';
 import { WorkflowResultFoot } from '../editor/WorkflowResultFoot';
 import { useWorkflowSessionBinding } from '../editor/useWorkflowSessionBinding';
 import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
-import type { EntityDragScopeV1, PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
+import type { EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import type { WorkflowProjectTargetControlHandle } from '../editor/WorkflowProjectTargetControl';
 import {
@@ -431,7 +432,7 @@ export type WorkflowEditorBodyProps = Readonly<{
     /** The same triggers as the Sentence view's When clause (round 1116c). */
     triggersSentence?: React.ReactNode;
     /** Live events' "Add to this workflow" (D11): adds that event's start to the triggers above; absent when they are not this person's to change. */
-    onAddTriggerWhen?: (when: TriggerWhenValue, eventSeed?: PluginUiOpenAutomationEventRequestV1) => void;
+    onAddTriggerWhen?: (when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => void;
     /** The document's reading presentation (04 §4.11), for a read-only workflow. */
     documentPresentation?: WorkflowDocumentPresentation;
     /** Options for Action-step fields with an `optionsSourceId`, for the workflow's Where Machine. */
@@ -1663,7 +1664,6 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         pane: (
             <View testID={`${testIDPrefix}-${shownCompanion}-pane`} style={styles.paneBody}>
                 {shownCompanion === 'events' ? <WorkflowLiveEventsPane testID={`${testIDPrefix}-live-events`} active
-                    catalogMachineId={props.projectTarget?.machineId}
                     onAddTrigger={props.onAddTriggerWhen ?? null} onClose={closeSettings} /> : null}
                 {companionHeader}
                 {agentCompanionAvailable ? agentSessionPane : null}
@@ -1700,7 +1700,6 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                     portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false }}>
                     {({ maxHeight }) => <View style={{ height: maxHeight }}>
                         <WorkflowLiveEventsPane testID={`${testIDPrefix}-live-events`} active
-                            catalogMachineId={props.projectTarget?.machineId}
                             onAddTrigger={props.onAddTriggerWhen ?? null} onClose={null} />
                     </View>}
                 </Popover>

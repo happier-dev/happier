@@ -57,6 +57,15 @@ export function readWorkflowEventTrigger(
     : buildTriggerDefinition({ when, enabled: true, sessionId: null });
 }
 
+/** Native facts stay unconfigured until the editor's Runs-on catalog can identify their Event. */
+export function readWorkflowEventDraftIntent(
+  fact: Parameters<typeof readWorkflowEventTrigger>[0],
+): Pick<WorkflowDefinitionDraftSeed, 'trigger' | 'nativeEvent'> | null {
+  if (fact.kind === 'machine') return { nativeEvent: fact };
+  const trigger = readWorkflowEventTrigger(fact);
+  return trigger === null ? null : { trigger };
+}
+
 /** Authoring intent only: the ordinary Event setup Action acquires source identity and cursor. */
 export function readWorkflowEventDraftSeed(
   fact: Parameters<typeof readWorkflowEventTrigger>[0],

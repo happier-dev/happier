@@ -3,7 +3,6 @@ import { SessionDraftHydrationBoundary } from '@/components/sessions/drafts/Sess
 // Load the canonical read projection before a cold editor publishes a delete acknowledgement.
 import { affectsSelectedWorkflowDefinition } from '../library/workflowLibraryReads';
 import * as React from 'react';
-import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 import { readWorkflowEngineChoiceV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
 import { createWorkflowDefinitionRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
@@ -53,6 +52,7 @@ import {
     buildWorkflowEditorDraftFromDefinition,
     validateWorkflowEditorDraft,
 } from '@/sync/domains/workflows/workflowAuthoring';
+import { createWorkflowTriggerIncompleteSeed, type WorkflowTriggerDraftSeedIntent } from '../triggers/workflowTriggerStarts';
 import { readWorkflowDefinitionDraftSeed, storeWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 import { useWorkflowEditorDraftSeed } from '@/sync/domains/workflows/workflowEditorDraftSeed';
 import {
@@ -732,10 +732,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     // Trigger edits are part of the draft (04 §5.4): written after the definition on Save.
     const initialIncomplete = React.useMemo(() => {
         if (definitionDraftSeed?.incompleteTriggers !== undefined) return definitionDraftSeed.incompleteTriggers;
-        const eventSeed = definitionDraftSeed?.eventSeed;
-        return eventSeed === undefined ? undefined : { pending: [{ clientId: randomUUID(),
-            when: { kind: 'pluginEvent' as const, value: null, eventRef: eventSeed.eventRef }, eventSeed }], edits: {} };
-    }, [authoringSourceKey, definitionDraftSeed?.eventSeed, definitionDraftSeed?.incompleteTriggers]);
+        return createWorkflowTriggerIncompleteSeed(definitionDraftSeed ?? undefined);
+    }, [authoringSourceKey, definitionDraftSeed?.eventSeed, definitionDraftSeed?.nativeEvent, definitionDraftSeed?.incompleteTriggers]);
     const triggers = useWorkflowTriggerEditing({ definitionId: saved?.definitionId ?? null, sourceKey: authoringSourceKey, projectTarget,
         ...(definitionDraftSeed?.lifetimeSession === undefined ? {} : { lifetimeSession: definitionDraftSeed.lifetimeSession }),
         accountLifetime, initialIncomplete });
@@ -2062,7 +2060,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                         incomplete: { state: triggers.incomplete, onChange: triggers.updateIncomplete },
                     } satisfies React.ComponentProps<typeof WorkflowTriggerSection>;
                     return { onSave: saveFromUi, triggersSummary: triggers.summary,
-                        onAddTriggerWhen: (when: TriggerWhenValue, eventSeed?: PluginUiOpenAutomationEventRequestV1) => addWorkflowTriggerWhen({ draft: triggers.draft, when, eventSeed,
+                        onAddTriggerWhen: (when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => addWorkflowTriggerWhen({ draft: triggers.draft, when, seed,
                             onChangeDraft: section.onChangeDraft, updateIncomplete: triggers.updateIncomplete }),
                         resultDecides: formatTriggerResultDecides(projectWorkflowTriggerRows(triggers.set, triggers.draft).map((row) => row.trigger)),
                         triggersSection: <WorkflowEditorTriggerSection draftStore={bodyDraftStore} {...section} />,

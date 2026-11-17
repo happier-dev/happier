@@ -4,7 +4,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { storeWorkflowDefinitionDraftSeed, type WorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 
 export type WorkflowSentenceEditorIntent = Readonly<Pick<WorkflowDefinitionDraftSeed,
-    'name' | 'description' | 'definition' | 'trigger' | 'payloadSchema' | 'eventSeed' | 'project' | 'lifetimeSession' | 'executionTarget'> & {
+    'name' | 'description' | 'definition' | 'trigger' | 'payloadSchema' | 'eventSeed' | 'nativeEvent' | 'project' | 'lifetimeSession' | 'executionTarget'> & {
     step?: WorkflowActionLeafV1;
 }>;
 

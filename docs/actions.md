@@ -6395,10 +6395,11 @@ through `automation.source.nativeActivity`. Both Events hosts consume that bindi
 from the demanded catalog to open an ordinary, unconfigured Event draft with its
 qualified reference, payload schema and `{ v, serverId, machineId }` setup input.
 The Event setup Action owns the retained cursor, source identity and observation
-transport; the live fact's timestamp is not a presence revision. The shortcut is
-unavailable without a reachable catalog or when several declarations match. The
-editor companion reuses its Runs-on Machine for catalog access; the main detail
-uses the observed Machine, so a cold offline Machine can require reconnection.
+transport; the live fact's timestamp is not a presence revision. Both Events hosts
+retain native intent in the ordinary unsaved trigger draft.
+The editor resolves it through its selected Runs-on Machine's existing demanded
+catalog; opening a cold offline Machine fact does not contact the watched Machine.
+A missing catalog or several matching declarations leaves setup unconfigured.
 
 In 0.3 development source, `workflow.activity.list` reads Account-visible retained
 Run membership through the existing Run list owner. It returns `{ retained, live }`;

@@ -19,7 +19,7 @@ import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { t } from '@/text';
 
 import type { WorkflowSentenceEditorIntent } from '../authoring/workflowSentenceAuthoring';
-import { useWorkflowEventDraftSeed } from './useWorkflowEventDraftSeed';
+import { readWorkflowEventDraftIntent } from './workflowEventFacts';
 import {
   useWorkflowEventFact,
   useWorkflowEventPresentation,
@@ -74,15 +74,13 @@ export function useWorkflowEventAutomate(
     intent: WorkflowSentenceEditorIntent;
   }> | null>(null);
   const keyRef = React.useRef(0);
-  const seed = useWorkflowEventDraftSeed(presentation?.fact ?? null, active);
+  const seed = !active || presentation === null ? null : readWorkflowEventDraftIntent(presentation.fact);
   const title = presentation?.title ?? '';
   const open = React.useCallback(() => {
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (lifetime === null || seed === null) return;
     keyRef.current += 1;
-    const intent: WorkflowSentenceEditorIntent = seed.setupRequired
-      ? { name: title, eventSeed: seed.eventSeed, payloadSchema: seed.payloadSchema }
-      : { name: title, trigger: seed.trigger };
+    const intent: WorkflowSentenceEditorIntent = { name: title, ...seed };
     setOpening({ lifetime, key: keyRef.current, intent });
   }, [seed, title]);
   const builder =
