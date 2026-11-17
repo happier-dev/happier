@@ -13,6 +13,7 @@ import { Text } from '@/components/ui/text/Text';
 import { useWorkflowReferenceTitles } from '@/components/workflows/presentation/workflowReferenceOptions';
 import { useApprovalAccountLabel } from '@/components/approvals/ApprovalRequesterConfirmationSection';
 import { resolveUnknownAccountActorName } from '@/sync/domains/account/accountActorPresentation';
+import { createWorkflowDefinitionRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { alertApprovalFailure, type ApprovalDecisionOptions } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
@@ -100,9 +101,6 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
-const runRoute = (runId: string) => `/workflows/runs/${encodeURIComponent(runId)}`;
-const workflowRoute = (workflowId: string) => `/workflows/${encodeURIComponent(workflowId)}`;
-
 /**
  * The before checks an Action is waiting on, told inside its card: who set a shared check up and what changed when it
  * asks again, the running check, a refusal or a check that could not run, and the visible Skips. Decisions stay in the
@@ -183,7 +181,7 @@ export const ApprovalAutomaticChecks = React.memo(
         <TextLinkButton
           label={t('workflows.triggers.checks.openRun')}
           size="meta"
-          onPress={() => props.onOpenRoute?.(runRoute(runId))}
+          onPress={() => props.onOpenRoute?.(createWorkflowRunRoute(runId, props.serverId))}
         />
       ) : null;
 
@@ -229,7 +227,7 @@ export const ApprovalAutomaticChecks = React.memo(
                 size="meta"
                 tone="strong"
                 testID={props.testID ? `${props.testID}:review` : undefined}
-                onPress={() => props.onOpenRoute?.(workflowRoute(workflowId))}
+                onPress={() => props.onOpenRoute?.(createWorkflowDefinitionRoute(workflowId, props.serverId))}
               />
             </View>
           ) : null}

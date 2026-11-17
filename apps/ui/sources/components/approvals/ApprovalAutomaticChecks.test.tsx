@@ -6,6 +6,7 @@ import {
 } from '@happier-dev/protocol/approvals/approvalAutomaticChecks';
 
 import { act, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
 vi.mock('@/text', async () =>
   (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
@@ -63,6 +64,31 @@ function checks(
 
 // 05 S6/S8/S9: the card answers a shared check's consent, cancels a running check, or approves anyway after a failure.
 describe('Action before checks on the approval card', () => {
+  it('opens Review steps and check Runs on the approval Home instead of the focused Home', async () => {
+    const navigation = createExpoRouterMock({ params: { serverId: 'focused-home' } });
+    const approvalHome = 'approval-home';
+    const runId = '971fe48e-43ac-49da-b01c-ed30f5d9a6f7';
+    const cases = [
+      { value: checks({ consents: [{ ...ref, decision: 'pending' }] }), label: 'reviewSteps',
+        route: `/workflows/${selected.workflowId}?serverId=${approvalHome}` },
+      { value: checks({ phase: 'checking', runs: [{ ...ref, runId }] }), label: 'openRun',
+        route: `/workflows/runs/${runId}?serverId=${approvalHome}` },
+      { value: checks({ phase: 'override', runs: [{ ...ref, runId }], results: [{ ...ref, runId, outcome: 'failed' }] }), label: 'openRun',
+        route: `/workflows/runs/${runId}?serverId=${approvalHome}` },
+    ];
+    for (const { value, label, route } of cases) {
+      const screen = await renderScreen(<ApprovalAutomaticChecks checks={value} actionTitle="Deploy"
+        serverId={approvalHome} onOpenRoute={href => navigation.module.router.push(href)} />);
+      const link = screen.findAll(node => typeof node.type === 'string'
+        && node.props.accessibilityLabel === `workflows.triggers.checks.${label}`
+        && typeof node.props.onPress === 'function')[0];
+      expect(link).toBeDefined();
+      await act(async () => { link!.props.onPress(); });
+      expect(navigation.spies.push).toHaveBeenLastCalledWith(route);
+      await screen.unmount();
+    }
+  });
+
   it('asks for consent once per pending shared check and says it is asked again after a change', async () => {
     const pending = checks({
       consents: [{ ...ref, decision: 'pending', review: { reason: 'steps' } }],
