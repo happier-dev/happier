@@ -1730,7 +1730,7 @@ test('a killed holder releases its slot and leaves no slot socket file behind', 
     'a released slot leaves no socket file that a filesystem census could count as held');
 });
 
-test('status projects a new arrival\'s start from memory × recorded run time ahead over achievable capacity', linux, async t => {
+test('status projects a new arrival\'s start by simulating the queue against achievable capacity', linux, async t => {
   let now = 1_000_000;
   t.mock.method(Date, 'now', () => now);
   const { root } = await fixture(t);
@@ -1739,12 +1739,29 @@ test('status projects a new arrival\'s start from memory × recorded run time ah
   await acquire(root, 50, t, { durationClass, p99DurationMs: 2_000 });
   await acquire(root, 50, t);
   const sample = await requestAdmissionSample(root);
-  // Slot: 60 × 1000 remaining. Waiters: 50 × 2000, and 50 × the mean recorded
-  // p99 (1500) for the waiter without one. Achievable capacity is 100.
-  assert.equal(sample.expectedStartMs, (60 * 1_000 + 50 * 2_000 + 50 * 1_500) / 100);
+  // Capacity 100. The slot (60) releases at 1000; both 50-unit waiters start then
+  // (2000 and the mean recorded p99 1500 for the waiter without one), filling the
+  // host; a new arrival starts at the first of their releases, 1000 + 1500.
+  assert.equal(sample.expectedStartMs, 2_500);
   now += 400;
-  assert.equal((await requestAdmissionSample(root)).expectedStartMs, (60 * 600 + 50 * 2_000 + 50 * 1_500) / 100,
+  assert.equal((await requestAdmissionSample(root)).expectedStartMs, 2_100,
     'an admitted slot contributes only its remaining recorded run time; the fill stays the mean recorded p99');
+  await held.release();
+});
+
+test('the projected start serializes waiters whose floors cannot run together (windows2-linux 2026-11-17)', linux, async t => {
+  // INFRA-SWEEP-3: a 21 GiB host with 16 GiB waiters runs them one at a time, yet the
+  // area estimate (memory × time / capacity) projected it as the fleet's earliest start.
+  let now = 1_000_000;
+  t.mock.method(Date, 'now', () => now);
+  const { root } = await fixture(t);
+  const durationClass = 'targeted-validation';
+  const held = await (await acquire(root, 80, t, { durationClass, p99DurationMs: 1_000 })).admit();
+  await acquire(root, 80, t, { durationClass, p99DurationMs: 1_000 });
+  await acquire(root, 80, t, { durationClass, p99DurationMs: 1_000 });
+  // Capacity 100: each 80-unit job runs alone. The second waiter starts when the first
+  // ends (2000); a new arrival starts after that, when the second releases (3000).
+  assert.equal((await requestAdmissionSample(root)).expectedStartMs, 3_000);
   await held.release();
 });
 

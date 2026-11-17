@@ -651,20 +651,46 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     await observe();
     await drain();
   }
-  /** AUTO placement compares hosts by when a new arrival would start: the
-   * memory x recorded p99 run time ahead of it (admitted slots' remaining time
-   * plus every waiter's floor x p99) spread over the achievable memory. A slot
-   * or waiter without a recorded p99 takes the mean recorded p99; with
-   * none recorded, or no achievable memory, there is no projection (null). */
+  /** AUTO placement compares hosts by when a new arrival would start. Simulate
+   * the queue in its service order against the achievable memory: admitted slots
+   * release at their remaining recorded p99, and each waiter starts at the first
+   * release that frees its floor, so floors that cannot run together run one
+   * after another (windows2-linux 2026-11-17: 16 GiB waiters on a 21 GiB host).
+   * The arrival starts once every waiter ahead has started and the memory left
+   * fits the smallest floor ahead (any memory when none waits), else at the next
+   * release. A slot or waiter without a recorded p99 takes the mean recorded p99;
+   * with none recorded, or no achievable memory, there is no projection (null). */
   function projectedArrivalStartMs(now) {
-    const ahead = [...[...slots.values()].map(slot => ({ floorKiB: slot.floorKiB, p99Ms: slot.p99DurationMs,
-      remainingMs: slot.p99DurationMs > 0 && Number.isFinite(slot.admittedAt) ? Math.max(0, slot.admittedAt + slot.p99DurationMs - now) : undefined })),
-    ...waiting.filter(item => !item.slot).map(item => ({ floorKiB: item.floorOptions?.at(-1).floorKiB ?? item.floorKiB,
-      p99Ms: item.p99DurationMs, remainingMs: item.p99DurationMs > 0 ? item.p99DurationMs : undefined }))];
-    const recorded = ahead.filter(entry => entry.remainingMs !== undefined);
-    if (!(sample.achievableMemoryKiB > 0) || (ahead.length && !recorded.length)) return ahead.length ? null : 0;
+    const capacityKiB = sample.achievableMemoryKiB;
+    const admitted = [...slots.values()].map(slot => ({ floorKiB: slot.floorKiB, p99Ms: slot.p99DurationMs,
+      remainingMs: slot.p99DurationMs > 0 && Number.isFinite(slot.admittedAt) ? Math.max(0, slot.admittedAt + slot.p99DurationMs - now) : undefined }));
+    const queued = waiting.filter(item => !item.slot).map(item => ({ floorKiB: item.floorOptions?.at(-1).floorKiB ?? item.floorKiB,
+      p99Ms: item.p99DurationMs, remainingMs: item.p99DurationMs > 0 ? item.p99DurationMs : undefined }));
+    const recorded = [...admitted, ...queued].filter(entry => entry.remainingMs !== undefined);
+    if (!(capacityKiB > 0) || ((admitted.length || queued.length) && !recorded.length)) return admitted.length || queued.length ? null : 0;
     const meanMs = recorded.reduce((sum, entry) => sum + entry.p99Ms, 0) / recorded.length;
-    return Math.ceil(ahead.reduce((sum, entry) => sum + entry.floorKiB * (entry.remainingMs ?? meanMs), 0) / sample.achievableMemoryKiB);
+    // Running jobs as [end, floor]; a floor above capacity runs alone.
+    const running = admitted.map(entry => [entry.remainingMs ?? meanMs, Math.min(entry.floorKiB, capacityKiB)]);
+    let at = 0;
+    let usedKiB = running.reduce((sum, [, floorKiB]) => sum + floorKiB, 0);
+    const releaseNext = () => {
+      running.sort((left, right) => left[0] - right[0]);
+      const [end, floorKiB] = running.shift();
+      at = Math.max(at, end);
+      usedKiB -= floorKiB;
+    };
+    const releaseDone = () => { while (running.length && running.some(([end]) => end <= at)) releaseNext(); };
+    for (const entry of queued) {
+      const floorKiB = Math.min(entry.floorKiB, capacityKiB);
+      releaseDone();
+      while (capacityKiB - usedKiB < floorKiB && running.length) releaseNext();
+      running.push([at + (entry.remainingMs ?? meanMs), floorKiB]);
+      usedKiB += floorKiB;
+    }
+    releaseDone();
+    const arrivalKiB = queued.length ? Math.min(...queued.map(entry => Math.min(entry.floorKiB, capacityKiB))) : 1;
+    while (capacityKiB - usedKiB < arrivalKiB && running.length) releaseNext();
+    return Math.ceil(at);
   }
   /** EASY backfill projection: the earliest time the head's minimum floor fits
    * if admitted slots release at their recorded p99 run time. A slot without a
