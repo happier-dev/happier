@@ -9888,6 +9888,16 @@ const enSession = {
     requestId: ({ id }: { id: string }) => `Request ID: ${id}`,
     title: 'Couldn’t start this session',
     modelSelectionRequired: "This session needs a model before it can start.",
+    // A refused model change, by the transition status its runtime issue names.
+    modelTransition: {
+      restart_required: "This model change needs the session to restart.",
+      unsupported: "This agent can’t change models during a session.",
+      superseded: "A newer model choice replaced this one.",
+      apply_failed: "The agent couldn’t switch to the new model.",
+      publication_failed_rolled_back: "The model change couldn’t be saved, so the previous model is still in use.",
+      reconciliation_required: "Happier couldn’t confirm which model this session is using.",
+      owner_unavailable: "The model can’t change while this session’s machine is unreachable.",
+    },
     cause: {
       agent_startup_rpc_rejected: 'Agent startup was rejected by its native API.',
       agent_startup_transport_failed: 'Agent startup transport failed.',

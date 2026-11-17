@@ -8912,6 +8912,15 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
         requestId: ({ id }: { id: string }) => `ID запроса: ${id}`,
       title: "Не удалось запустить эту сессию",
       modelSelectionRequired: "Этой сессии нужна модель, чтобы запуститься.",
+      modelTransition: {
+        restart_required: "Для этой смены модели нужно перезапустить сессию.",
+        unsupported: "Этот агент не может менять модель во время сессии.",
+        superseded: "Этот выбор модели заменён более новым.",
+        apply_failed: "Агенту не удалось переключиться на новую модель.",
+        publication_failed_rolled_back: "Не удалось сохранить смену модели, поэтому используется прежняя модель.",
+        reconciliation_required: "Happier не удалось подтвердить, какую модель использует эта сессия.",
+        owner_unavailable: "Модель нельзя сменить, пока машина этой сессии недоступна.",
+      },
       cause: {
         agent_startup_rpc_rejected: "Нативный API агента отклонил запуск.",
         agent_startup_transport_failed: "Сбой транспорта при запуске агента.",

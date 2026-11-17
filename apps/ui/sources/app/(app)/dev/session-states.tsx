@@ -126,6 +126,23 @@ const TRANSCRIPT: Message[] = [
     },
   ),
   runtimeRow(
+    'model-change-refused',
+    5.5 * 60_000,
+    'Custom ACP Agent turn failed: Native model transition requires restart: native_model_restart_required; service=qa-cp1-peer',
+    {
+      code: 'session_model_transition_apply_failed',
+      source: 'agent_session_error',
+      agentId: 'custom-acp',
+      sanitizedPreview: 'Native model transition requires restart: native_model_restart_required; service=qa-cp1-peer',
+      failureCause: {
+        phase: 'turn',
+        failureReason: 'unclassified_provider_error',
+        providerErrorCode: -32000,
+        providerErrorMessage: 'Native model transition requires restart: native_model_restart_required; service=qa-cp1-peer',
+      },
+    },
+  ),
+  runtimeRow(
     'team-denied',
     5 * 60_000,
     'Shared Team credential refused the request',

@@ -12,6 +12,7 @@ import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/s
 import { SUPPORTED_LANGUAGE_CODES, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 
 import { presentSessionActivationFailure, presentSessionRuntimeIssue, presentSessionStartupFailureCause } from './sessionRuntimeIssuePresentation';
+import { SESSION_MODEL_TRANSITION_FAILURE_STATUSES, formatSessionModelTransitionFailureCode } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import { getPendingMessageVisualState, pendingMessageStatesBlockedReason, resolveSessionDeliveryFailure } from '@/components/sessions/pending/pendingMessageVisualState';
 import { resolvePendingActivationBanner } from '@/components/sessions/pending/resolvePendingActivationBanner';
 import { shouldShowAbortButtonForSessionState } from '@/utils/sessions/sessionUtils';
@@ -66,6 +67,24 @@ describe('closed startup-failure recovery copy', () => {
         expect(resolveSessionSpawnNewResultFailureMessage({ type: 'error', code: 'spawn_failed', retryable: true,
             launchError: { kind: 'launch_error', code, message: 'PRIVATE_CUSTODY_BODY' } })).toContain(message);
         expect(presentSessionRuntimeIssue(issue({ code, sanitizedPreview: undefined })).message).toBe(message);
+    });
+    it('says each refused model change in plain words in every locale, never its code', async () => {
+        for (const language of SUPPORTED_LANGUAGE_CODES) {
+            await useLanguage(language);
+            const messages = SESSION_MODEL_TRANSITION_FAILURE_STATUSES.map((status) => {
+                const code = formatSessionModelTransitionFailureCode(status);
+                const message = presentSessionStartupFailureCause(code);
+                expect(message, `${language}:${status}`).toBeTruthy();
+                expect(message).not.toContain('session.startFailure.');
+                expect(message).not.toContain(status);
+                expect(presentSessionRuntimeIssue(issue({ code, sanitizedPreview: 'Native refusal: native_code; service=peer' })).message,
+                    `${language}:${status}`).toBe(message);
+                return message;
+            });
+            // One sentence per refusal: no two statuses read the same.
+            expect(new Set(messages).size, language).toBe(messages.length);
+        }
+        expect(presentSessionStartupFailureCause('session_model_transition_owner_unproven')).toBeNull();
     });
     it('explains a server transaction timeout without startup phase facts in every locale', async () => {
         const code = 'database_transaction_timeout';

@@ -16,6 +16,7 @@ export { readTranscriptAttachmentsMeta } from './structured/happierMetaEnvelope'
 import { resolveUnsupportedContentLabel } from '@/sync/domains/messages/resolveUnsupportedContentLabel';
 import { scanInlineReferenceTokensV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
 import { readAgentStartupFailureCode, SESSION_PREPARATION_FAILURE_PREVIEWS } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readSessionModelTransitionFailureStatus } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import { projectInlineReferenceLabelsV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
 import { resolveInlineMessageReference, resolveMessageStructuredReferences, type MessageStructuredReferences } from './references/messageStructuredReferences';
 import { readRuntimeIssueMessageMeta } from './events/runtimeIssueMessage';
@@ -90,6 +91,9 @@ export function prepareTranscriptMessageBody(
         : runtimeIssue?.code === 'provider_model_not_found' || readAgentStartupFailureCode(runtimeIssue?.code) !== null
         ? [presentSessionRuntimeIssue(runtimeIssue).message, runtimeIssue?.failureCause?.providerErrorMessage]
             .filter(Boolean).join('\n') || null
+        // A refused model change reads as its status; the Agent's own words wait in the row's Details.
+        : readSessionModelTransitionFailureStatus(runtimeIssue?.code) !== null
+            ? presentSessionRuntimeIssue(runtimeIssue).message
         // Other closed startup causes (preparation) read exactly as the Session's start-failure banner.
         : runtimeIssue && Object.hasOwn(SESSION_PREPARATION_FAILURE_PREVIEWS, runtimeIssue.code)
             ? resolveSessionStartFailureNotice({ issue: runtimeIssue, sessionActive: false })?.message ?? null : null;

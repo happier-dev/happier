@@ -91,6 +91,27 @@ describe('resolveTranscriptMessageDisplayText', () => {
         expect(resolveTranscriptMessageDisplayText(agent({ ...message, isThinking: true })).text).toBe(message.text);
     });
 
+    it('words a refused model change by its transition status; the Agent\'s raw refusal waits in Details', () => {
+        // Stored-issue vector from QA-MATRIX CONT4 CP1 (UNSEEN-COORD-B2-SESSION-1117 row 4): a custom ACP Agent refused
+        // the model switch; the host recorded the transition status as the code and the Agent's words as the preview.
+        const raw = 'Native model transition requires restart: native_model_restart_required; service=qa-cp1-peer';
+        const normalized = normalizeRawMessage('model-transition', 'model-transition', 1794846630930, {
+            role: 'agent', content: { type: 'acp', agentId: 'custom-acp', data: {
+                type: 'message', message: `Custom ACP Agent turn failed: ${raw}`,
+            } }, meta: { source: 'runtime', runtimeIssueV1: { v: 1, scope: 'primary_session', status: 'failed',
+                code: 'session_model_transition_apply_failed', source: 'agent_session_error', occurredAt: 1794846630930,
+                agentId: 'custom-acp', sanitizedPreview: raw,
+                failureCause: { phase: 'turn', failureReason: 'unclassified_provider_error',
+                    providerErrorCode: -32000, providerErrorMessage: raw } } },
+        });
+        const message = agent({ meta: normalized?.meta, text: `Custom ACP Agent turn failed: ${raw}` });
+        const issue = presentSessionRuntimeIssue(readRuntimeIssueMessageMeta(message.meta));
+        const text = resolveTranscriptMessageDisplayText(message).text;
+        expect(text).toBe(issue.message);
+        expect(text).not.toContain('native_model_restart_required');
+        expect(issue.details).toContain(raw);
+    });
+
     it('words a usage-limit failure row like the card\'s cause, with its reset and no native prefix', () => {
         const normalized = normalizeRawMessage('quota-failure', 'quota-failure', 1794000000000, {
             role: 'agent', content: { type: 'acp', agentId: 'codex', data: {

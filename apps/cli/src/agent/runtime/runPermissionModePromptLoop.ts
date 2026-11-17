@@ -7,6 +7,7 @@ import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendi
 import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
 import { validatePluginHookPayloadV1 } from '@happier-dev/protocol/plugins/hooks';
 import { ProviderErrorCodeV1Schema, type ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
+import { formatSessionModelTransitionFailureCode } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { SessionPendingQueueDeliveryTiming, ProviderBoundModelRef, SessionModelTransitionResultV1, AgentSessionStartupInstructionsMarkerV1 } from '@happier-dev/protocol';
 import type { AgentRuntimeDiagnosticDataV1 } from '@happier-dev/protocol/runtime/agentRuntimeDiagnosticV1';
@@ -324,7 +325,7 @@ function createModelTransitionPreTurnFailure(
       ? 'runtime_config_blocked' as const
       : 'provider_rejected_before_acceptance' as const;
   const providerCode = ProviderErrorCodeV1Schema.safeParse(transition.reason);
-  const code = providerCode.success ? providerCode.data : `session_model_transition_${transition.status}`;
+  const code = providerCode.success ? providerCode.data : formatSessionModelTransitionFailureCode(transition.status);
   const message = transition.reason ?? `Structured model transition failed: ${transition.status}`;
   const diagnostic: AgentRuntimeDiagnosticDataV1 | undefined = transition.failureCause
     ? { code, severity: 'error', message, details: { failureCause: transition.failureCause } }

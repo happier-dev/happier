@@ -20,6 +20,7 @@ import { ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/error
 import type { PendingActivationFailureDetailsV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
 import { describeAgentReadinessCause } from '@/components/sessions/model/sessionReadinessPresentation';
+import { readSessionModelTransitionFailureStatus } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 
 /** Closed spawn refusals retain the same availability vocabulary as the Machine inventory. */
 export function readSessionAgentAvailabilityFailure(code: unknown): 'needsSignIn' | 'notInstalled' | null {
@@ -107,6 +108,8 @@ function resolveSessionStartupFailureCause(
     failureCause = issue?.failureCause,
 ): string | null {
     if (code === 'database_transaction_timeout') return t('session.startFailure.cause.database_transaction_timeout');
+    const modelTransition = readSessionModelTransitionFailureStatus(code);
+    if (modelTransition) return t(`session.startFailure.modelTransition.${modelTransition}`);
     if (code === 'agent_startup_model_reconciliation_failed'
         && failureCause?.failureReason === 'model_selection_required') return t('session.startFailure.modelSelectionRequired');
     const nativeAuth = presentSessionAgentAuthRequired(issue);

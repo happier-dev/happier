@@ -8144,6 +8144,15 @@ export const zhHans: TranslationStructure = {
         requestId: ({ id }: { id: string }) => `请求 ID：${id}`,
       title: "无法启动此会话",
       modelSelectionRequired: "此会话需要先选择模型才能启动。",
+      modelTransition: {
+        restart_required: "此模型更改需要重启会话。",
+        unsupported: "此代理无法在会话中更换模型。",
+        superseded: "更新的模型选择已取代此选择。",
+        apply_failed: "代理未能切换到新模型。",
+        publication_failed_rolled_back: "模型更改未能保存，因此仍在使用之前的模型。",
+        reconciliation_required: "Happier 无法确认此会话正在使用哪个模型。",
+        owner_unavailable: "此会话的机器无法连接时，模型无法更改。",
+      },
       cause: {
         agent_startup_rpc_rejected: "智能体的原生 API 拒绝了启动。",
         agent_startup_transport_failed: "智能体启动传输失败。",

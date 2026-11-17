@@ -8763,6 +8763,15 @@ localTailscale: {
         requestId: ({ id }: { id: string }) => `リクエスト ID: ${id}`,
       title: "このセッションを開始できませんでした",
       modelSelectionRequired: "このセッションを開始するにはモデルが必要です。",
+      modelTransition: {
+        restart_required: "このモデル変更にはセッションの再起動が必要です。",
+        unsupported: "このエージェントはセッション中にモデルを変更できません。",
+        superseded: "より新しいモデルの選択がこの選択に置き換わりました。",
+        apply_failed: "エージェントは新しいモデルに切り替えられませんでした。",
+        publication_failed_rolled_back: "モデルの変更を保存できなかったため、以前のモデルを使い続けています。",
+        reconciliation_required: "このセッションが使用しているモデルを Happier が確認できませんでした。",
+        owner_unavailable: "このセッションのマシンに接続できない間はモデルを変更できません。",
+      },
       cause: {
         agent_startup_rpc_rejected: "エージェントのネイティブ API が起動を拒否しました。",
         agent_startup_transport_failed: "エージェントの起動トランスポートが失敗しました。",

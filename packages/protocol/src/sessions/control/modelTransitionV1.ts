@@ -46,15 +46,17 @@ const SessionModelTransitionArmedV1Schema = lazyZodSchema(() => z.strictObject({
   requestedSelection: ProviderBoundModelRefSchema,
 }));
 
+const SESSION_MODEL_TRANSITION_KNOWN_ACTIVE_FAILURE_STATUSES = [
+  'restart_required',
+  'unsupported',
+  'superseded',
+  'apply_failed',
+  'publication_failed_rolled_back',
+] as const;
+
 const SessionModelTransitionKnownActiveFailureV1Schema = lazyZodSchema(() => z.strictObject({
   ok: z.literal(false),
-  status: z.enum([
-    'restart_required',
-    'unsupported',
-    'superseded',
-    'apply_failed',
-    'publication_failed_rolled_back',
-  ]),
+  status: z.enum(SESSION_MODEL_TRANSITION_KNOWN_ACTIVE_FAILURE_STATUSES),
   activeSelection: ProviderBoundModelRefSchema,
   requestedSelection: ProviderBoundModelRefSchema,
   reason: z.optional(z.string().check(z.trim(), z.minLength(1))),
@@ -89,6 +91,28 @@ export const SessionModelTransitionResultV1Schema = lazyZodSchema(() => z.union(
 export type SessionModelTransitionResultV1 = z.infer<
   typeof SessionModelTransitionResultV1Schema
 >;
+
+/** Every way a structured model transition can refuse, in one closed list. */
+export const SESSION_MODEL_TRANSITION_FAILURE_STATUSES = [
+  ...SESSION_MODEL_TRANSITION_KNOWN_ACTIVE_FAILURE_STATUSES,
+  'reconciliation_required',
+  'owner_unavailable',
+] as const satisfies readonly Extract<SessionModelTransitionResultV1, { ok: false }>['status'][];
+export type SessionModelTransitionFailureStatusV1 = (typeof SESSION_MODEL_TRANSITION_FAILURE_STATUSES)[number];
+
+const SESSION_MODEL_TRANSITION_FAILURE_CODE_PREFIX = 'session_model_transition_';
+
+/** The runtime-issue code a refused transition carries when no closed Provider code names it. */
+export function formatSessionModelTransitionFailureCode(status: SessionModelTransitionFailureStatusV1): string {
+  return `${SESSION_MODEL_TRANSITION_FAILURE_CODE_PREFIX}${status}`;
+}
+
+/** The refused transition's status named by a runtime-issue code, or null for any other code. */
+export function readSessionModelTransitionFailureStatus(code: unknown): SessionModelTransitionFailureStatusV1 | null {
+  if (typeof code !== 'string' || !code.startsWith(SESSION_MODEL_TRANSITION_FAILURE_CODE_PREFIX)) return null;
+  const status = code.slice(SESSION_MODEL_TRANSITION_FAILURE_CODE_PREFIX.length);
+  return SESSION_MODEL_TRANSITION_FAILURE_STATUSES.find((candidate) => candidate === status) ?? null;
+}
 
 /** Public Action successes include the addressed Session and inactive intent writes.
  * Failures use the canonical Action failure envelope rather than this result payload.
