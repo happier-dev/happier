@@ -4,18 +4,18 @@ import { resolveCodexTerminalPermissionPolicy } from './permissionPolicy.js';
 
 describe('Codex terminal permission policy', () => {
   it.each([
-    ['default', 'untrusted'], ['safe-yolo', 'on-request'], ['yolo', 'never'],
+    ['default', 'untrusted'], ['safe-yolo', 'on-request'], ['yolo', 'never'], ['read-only', 'never'],
   ] as const)('disables the sandbox independently of %s approvals', (mode, approvalPolicy) => {
     expect(resolveCodexTerminalPermissionPolicy(mode, undefined, undefined, 'off')).toEqual({
       approvalPolicy, sandbox: 'danger-full-access',
     });
   });
 
-  it('retains read-only authority when the sandbox preference is off', () => {
+  it('retains the admitted write and tool ceilings when the sandbox preference is off', () => {
     expect(resolveCodexTerminalPermissionPolicy('yolo', 'deny', undefined, 'off')).toEqual({
       approvalPolicy: 'never', sandbox: 'read-only',
     });
-    expect(resolveCodexTerminalPermissionPolicy('read-only', undefined, undefined, 'off')).toEqual({
+    expect(resolveCodexTerminalPermissionPolicy('yolo', undefined, 'deny', 'off')).toEqual({
       approvalPolicy: 'never', sandbox: 'read-only',
     });
   });

@@ -33,10 +33,10 @@ describe('buildCodexNativeAcpRuntimeOptions', () => {
     } finally { vi.unstubAllEnvs(); }
   });
 
-  it('disables the ACP native sandbox without changing approval policy', () => {
+  it.each(['safe-yolo', 'read-only'] as const)('disables the ACP native sandbox without changing %s approval policy', (mode) => {
     const options = buildCodexNativeAcpRuntimeOptions({ kind: 'create', sessionId: 'sandbox', cwd: '/workspace',
       configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 },
-        permissionIntent: { value: 'safe-yolo', updatedAtMs: 0 }, nativeSandbox: 'off', options: {} } });
+        permissionIntent: { value: mode, updatedAtMs: 0 }, nativeSandbox: 'off', options: {} } });
     expect(options.transport.args).toEqual(['-c', 'approval_policy="on-request"', '-c', 'sandbox_mode="danger-full-access"']);
   });
   it('preserves native ACP approvals when only a sandbox choice is supplied', () => {

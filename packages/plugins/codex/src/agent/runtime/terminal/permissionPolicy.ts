@@ -21,7 +21,7 @@ export function resolveCodexTerminalPermissionPolicy(
   const writableSandbox = nativeSandbox === 'off' ? 'danger-full-access' : 'workspace-write';
   switch (normalizeAcpPermissionIntent(permissionMode)) {
     case 'read-only':
-      return { approvalPolicy: 'never', sandbox: 'read-only' };
+      return { approvalPolicy: 'never', sandbox: nativeSandbox === 'off' ? 'danger-full-access' : 'read-only' };
     case 'safe-yolo':
       return { approvalPolicy: 'on-request', sandbox: writableSandbox };
     case 'yolo':

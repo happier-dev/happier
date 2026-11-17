@@ -1063,6 +1063,26 @@ describe('native Codex attachment preparation', () => {
     } });
   });
 
+  it.each(['session', 'run'] as const)(
+    'honors admitted no-sandbox for read-only intent in a native %s',
+    async (scope) => {
+      await withFixture(async ({ openConfiguredSession, openConfiguredRun, requests }) => {
+        const session = scope === 'session' ? await openConfiguredSession() : await openConfiguredRun();
+        await session.send({
+          inputIds: ['unsandboxed-read'],
+          input: { text: 'Report the current directory.' },
+          delivery: { kind: 'newTurn', turnId: 'unsandboxed-read-turn' },
+        });
+        expect(requests.find(request => request.method === 'thread/start')?.params).toMatchObject({
+          approvalPolicy: 'never', sandbox: 'danger-full-access',
+        });
+        const turn = requests.find(request => request.method === 'turn/start')?.params;
+        expect(turn).toMatchObject({ approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } });
+        expect(turn).not.toHaveProperty('permissions');
+      }, { permissionMode: 'read-only', configuration: { nativeSandbox: 'off' } });
+    },
+  );
+
   it('replaces a retained read-only sandbox when the person selects yolo', async () => {
     await withFixture(async ({ openConfiguredSession, requests }) => {
       const session = await openConfiguredSession();
