@@ -203,10 +203,18 @@ function createRegistrar(): Readonly<{
   };
 }
 
-function createRuntimeRegistry(): ResolvedExecutablePluginRuntimeRegistry {
+function createRuntimeRegistry(
+  resolveMaterializationId: () => string | null = () => 'materialization-1',
+): ResolvedExecutablePluginRuntimeRegistry {
   const unavailableDependency = async () => { throw new Error('No native dependency installation is available in this fixture'); };
   return {
     ...runtimeFixture.registry,
+    resolveCurrentPluginMaterializationRef: (pluginId) => {
+      const materializationId = resolveMaterializationId();
+      return pluginId === thirdPartyDeliveryActionRef.pluginId && materializationId
+        ? { pluginId, machineId: 'machine-1', materializationId }
+        : null;
+    },
     claimReleaseLessDeclarations: async () => undefined,
     startConfiguredActivation: async () => undefined,
     activatePluginsForValidation: async () => [],
@@ -249,6 +257,7 @@ function createRuntimeLease(
     registry,
     source: 'active',
     durableRevision: -1,
+    resolveCurrentPluginMaterializationRef: registry.resolveCurrentPluginMaterializationRef,
     release,
   };
 }
@@ -264,7 +273,9 @@ function createRegistration(overrides?: Readonly<{
   materialSequence?: readonly (AccountScopedCryptoMaterialSnapshotV1 | null)[];
 }>) {
   const { handlers, registrar } = createRegistrar();
-  const registry = createRuntimeRegistry();
+  const registry = createRuntimeRegistry(() => overrides?.materializationId === undefined
+    ? 'materialization-1'
+    : overrides.materializationId);
   const release = vi.fn(async () => {});
   const executeContributedAction = vi.fn<AutomationReplyHandoffActionExecutor>(
     overrides?.executeContributedAction ?? (async () => overrides?.execution ?? ({
@@ -289,15 +300,6 @@ function createRegistration(overrides?: Readonly<{
     resolveInstallationId: () => overrides?.installationId === undefined ? 'installation-1' : overrides.installationId,
     resolveAccountEncryptionCurrentness,
     resolveAccountEncryptionMaterial,
-    // Production resolves the current materialization for the frozen target
-    // plugin. Model that here so a substituted plugin id cannot borrow the
-    // frozen materialization of the plugin that actually admitted.
-    resolveCurrentTargetMaterializationId: async (pluginId) => {
-      if (pluginId !== thirdPartyDeliveryActionRef.pluginId) return null;
-      return overrides?.materializationId === undefined
-        ? 'materialization-1'
-        : overrides.materializationId;
-    },
     acquireRuntimeLease: async () => createRuntimeLease(registry, release),
     executeContributedAction,
   });
@@ -386,9 +388,11 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
     expect(executeContributedAction).not.toHaveBeenCalled();
   });
 
-  it('does not pair a pre-reload target with a lease acquired after its materialization changed', async () => {
+  it.each([
+    ['serving', 'materialization-2', 'materialization-1'],
+    ['published', 'materialization-1', 'materialization-2'],
+  ])('rejects a frozen target when the %s runtime materialization changed', async (_label, servingId, publishedId) => {
     const { handlers, registrar } = createRegistrar();
-    let currentMaterializationId = 'materialization-1';
     const executeContributedAction = vi.fn<AutomationReplyHandoffActionExecutor>(async () => ({
       matched: true,
       result: { ok: true, result: { kind: 'accepted', custodyId: 'unexpected' } },
@@ -400,11 +404,10 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
       resolveInstallationId: () => 'installation-1',
       resolveAccountEncryptionCurrentness: async () => plainCurrentness,
       resolveAccountEncryptionMaterial: async () => null,
-      resolveCurrentTargetMaterializationId: async () => currentMaterializationId,
-      acquireRuntimeLease: async () => {
-        currentMaterializationId = 'materialization-2';
-        return createRuntimeLease();
-      },
+      acquireRuntimeLease: async () => ({
+        ...createRuntimeLease(createRuntimeRegistry(() => servingId)),
+        resolveCurrentPluginMaterializationRef: createRuntimeRegistry(() => publishedId).resolveCurrentPluginMaterializationRef,
+      }),
       executeContributedAction,
     });
     const handler = handlers.get(AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1);
@@ -441,6 +444,7 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
 
   it('never substitutes another plugin for a frozen third-party delivery target', async () => {
     const { handler, executeContributedAction } = createRegistration();
+    const reportOperationDiagnostics = vi.fn();
 
     await expect(handler({
       ...request,
@@ -448,11 +452,17 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
         ...request.target,
         actionRef: { pluginId: 'happier.channels', localId: 'automation/result-deliver-v1' },
       },
-    })).resolves.toEqual({
+    }, { signal: new AbortController().signal, reportOperationDiagnostics })).resolves.toEqual({
       kind: 'unavailable',
       code: 'targetMismatch',
     });
     expect(executeContributedAction).not.toHaveBeenCalled();
+    expect(reportOperationDiagnostics).toHaveBeenCalledWith({
+      failedPhase: 'automationReplyHandoff',
+      causeCode: 'targetMismatch',
+      phaseDurationsMs: {},
+      phaseTimingsMs: [],
+    });
   });
 
   it('reports a typed unavailable when the frozen target declares no such Action', async () => {
@@ -701,6 +711,7 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
 
   it('blocks a sealed handoff identity that belongs to no delivery of this Run', async () => {
     const { handler, executeContributedAction } = createRegistration();
+    const reportOperationDiagnostics = vi.fn();
 
     await expect(handler({
       ...request,
@@ -708,12 +719,18 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
         ...request.handoff,
         handoffId: 'handoff-2',
       },
-    })).resolves.toEqual({
+    }, { signal: new AbortController().signal, reportOperationDiagnostics })).resolves.toEqual({
       kind: 'settled',
       settlement: { kind: 'blocked' },
       accountCurrentness: { mode: 'plain', version: 7, contentKeyFingerprint: null },
     });
     expect(executeContributedAction).not.toHaveBeenCalled();
+    expect(reportOperationDiagnostics).toHaveBeenCalledWith({
+      failedPhase: 'resultOpen',
+      causeCode: 'targetMismatch',
+      phaseDurationsMs: {},
+      phaseTimingsMs: [],
+    });
   });
 
   it('delivers the frozen handoff after unrelated Account sequence movement', async () => {
@@ -846,6 +863,28 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
     expect(executeContributedAction).toHaveBeenCalledOnce();
   });
 
+  it('retains the Channels blocked cause while keeping the server settlement content-free', async () => {
+    const reportOperationDiagnostics = vi.fn();
+    const { handler } = createRegistration({
+      execution: {
+        matched: true,
+        result: { ok: true, result: { kind: 'blocked', code: 'invalidCustodyRequest' } },
+      },
+    });
+
+    await expect(handler(request, { signal: new AbortController().signal, reportOperationDiagnostics })).resolves.toEqual({
+      kind: 'settled',
+      settlement: { kind: 'blocked' },
+      accountCurrentness: { mode: 'plain', version: 7, contentKeyFingerprint: null },
+    });
+    expect(reportOperationDiagnostics).toHaveBeenCalledWith({
+      failedPhase: 'resultDelivery',
+      causeCode: 'invalidCustodyRequest',
+      phaseDurationsMs: {},
+      phaseTimingsMs: [],
+    });
+  });
+
   it('reports a retryable execution failure separately from a proven missing Action', async () => {
     const reportOperationDiagnostics = vi.fn();
     const { handler } = createRegistration({
@@ -950,8 +989,7 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
       resolveInstallationId: () => 'installation-1',
       resolveAccountEncryptionCurrentness: async () => plainCurrentness,
       resolveAccountEncryptionMaterial: async () => null,
-      resolveCurrentTargetMaterializationId: async () => currentMaterializationId,
-      acquireRuntimeLease: async () => createRuntimeLease(),
+      acquireRuntimeLease: async () => createRuntimeLease(createRuntimeRegistry(() => currentMaterializationId)),
       executeContributedAction,
     });
     const handler = handlers.get(AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1);

@@ -48,11 +48,24 @@ function parseStoredEnvelope(raw: string): unknown | undefined {
     }
 }
 
-function buildDispatchRequest(claim: Awaited<ReturnType<typeof claimNextAutomationReplyHandoff>>) {
+function buildDispatchRequest(
+    claim: Awaited<ReturnType<typeof claimNextAutomationReplyHandoff>>,
+    reportInvalid: (failure: Readonly<{
+        phase: "resultEnvelopeParse" | "replyContextEnvelopeParse" | "requestSchema";
+        schemaIssues?: readonly Readonly<{ code: string; path: readonly PropertyKey[] }>[];
+    }>) => void,
+) {
     if (!claim) return null;
     const resultEnvelope = parseStoredEnvelope(claim.resultEnvelope);
+    if (resultEnvelope === undefined) {
+        reportInvalid({ phase: "resultEnvelopeParse" });
+        return null;
+    }
     const replyContextEnvelope = parseStoredEnvelope(claim.replyContextEnvelope);
-    if (resultEnvelope === undefined || replyContextEnvelope === undefined) return null;
+    if (replyContextEnvelope === undefined) {
+        reportInvalid({ phase: "replyContextEnvelopeParse" });
+        return null;
+    }
 
     const request = AutomationReplyHandoffDispatchRequestV1Schema.safeParse({
         v: 1,
@@ -79,7 +92,16 @@ function buildDispatchRequest(claim: Awaited<ReturnType<typeof claimNextAutomati
             replyContextEnvelope,
         },
     });
-    return request.success ? request.data : null;
+    if (!request.success) {
+        reportInvalid({ phase: "requestSchema", schemaIssues: request.error.issues.map(issue => ({
+            code: issue.code,
+            // The strict request's first two segments name schema fields only;
+            // deeper opaque content keys, issue messages and values stay private.
+            path: issue.path.slice(0, 2),
+        })) });
+        return null;
+    }
+    return request.data;
 }
 
 function isRetryableUnavailable(
@@ -106,7 +128,11 @@ export async function runAutomationReplyHandoffWorkerPass(params: Readonly<{
         return { claimed: false, settled: false, nextDueAt: await findNextAutomationReplyHandoffDueAt() };
     }
 
-    const request = buildDispatchRequest(claim);
+    const request = buildDispatchRequest(claim, failure => warn({
+        module: "automation-reply-handoff-worker", operation: "build-request",
+        runId: claim.runId, handoffId: claim.handoffId, code: "invalidRequest",
+        ...failure,
+    }, "Automation reply handoff request construction failed"));
     const warnDispatchFailure = (
         code: Extract<AutomationReplyHandoffDispatchResultV1, { kind: "unavailable" }>["code"],
         failureCause?: ActionFailureCauseV1,
@@ -115,7 +141,6 @@ export async function runAutomationReplyHandoffWorkerPass(params: Readonly<{
         ...(failureCause === undefined ? {} : { failureCause }),
     }, "Automation reply handoff dispatch failed");
     if (!request) {
-        warnDispatchFailure("invalidRequest");
         const settlement = await settleAutomationReplyHandoff({
             claim,
             now: params.now(),

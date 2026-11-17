@@ -13,11 +13,6 @@ import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecu
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { createWorkflowRunStorageClient } from '@/daemon/workflows/workflowRunStorageClient';
 import { executeContributedAction } from '@/plugins/runtime/invocation/actions/executeContributedAction';
-import {
-    createPluginRegistryStateStore,
-    type PluginRegistryAvailabilityInventory,
-} from '@/plugins/store/registry/currentState';
-import { configuration } from '@/configuration';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import {
@@ -25,35 +20,6 @@ import {
 } from '@/plugins/runtime/automations/automationAccountCurrentness';
 
 type AutomationReplyHandoffActionExecutor = typeof executeContributedAction;
-
-/**
- * This validates the persisted result-delivery target, not an Action caller.
- * It stays target-owned so a live caller path cannot reselect authority by
- * plugin id.
- */
-type ResolveCurrentAutomationReplyTargetMaterializationId = (
-    pluginId: string,
-) => Promise<string | null>;
-
-function resolveCurrentAutomationReplyTargetMaterializationId(
-    inventory: PluginRegistryAvailabilityInventory,
-    pluginId: string,
-): string | null {
-    const matches = inventory.materializations.filter((row) => (
-        row.pluginId === pluginId
-        && row.enabled
-        && row.trustState === 'trusted'
-    ));
-    return matches.length === 1 ? matches[0]!.materializationId : null;
-}
-
-function createCurrentAutomationReplyTargetMaterializationResolver(): ResolveCurrentAutomationReplyTargetMaterializationId {
-    const stateStore = createPluginRegistryStateStore({ happyHomeDir: configuration.happyHomeDir });
-    return async (pluginId) => resolveCurrentAutomationReplyTargetMaterializationId(
-        await stateStore.readAvailabilityInventory(),
-        pluginId,
-    );
-}
 
 export type AutomationReplyHandoffRpcRegistrationOptions = Readonly<{
     /** The exact authenticated Machine hosting this daemon connection. */
@@ -75,16 +41,9 @@ export type AutomationReplyHandoffRpcRegistrationOptions = Readonly<{
     resolveAccountEncryptionMaterial: (
         signal?: AbortSignal,
     ) => Promise<AccountScopedCryptoMaterialSnapshotV1 | null>;
-    resolveCurrentTargetMaterializationId?: ResolveCurrentAutomationReplyTargetMaterializationId;
     acquireRuntimeLease?: () => Promise<PluginRuntimeRegistryLease>;
     executeContributedAction?: AutomationReplyHandoffActionExecutor;
 }>;
-
-function unavailable(
-    code: Extract<AutomationReplyHandoffDispatchResultV1, { kind: 'unavailable' }>['code'],
-): AutomationReplyHandoffDispatchResultV1 {
-    return { kind: 'unavailable', code };
-}
 
 function readSignal(signal: AbortSignal | undefined): AbortSignal {
     return signal ?? new AbortController().signal;
@@ -163,25 +122,30 @@ export function registerAutomationReplyHandoffRpcHandler(
     rpc: RpcHandlerRegistrar,
     options: AutomationReplyHandoffRpcRegistrationOptions,
 ): void {
-    const resolveCurrentTargetMaterializationId = options.resolveCurrentTargetMaterializationId
-        ?? createCurrentAutomationReplyTargetMaterializationResolver();
     const acquireRuntimeLease = options.acquireRuntimeLease
         ?? acquireAuthoritativePluginRuntimeRegistryLease;
     const dispatchAction = options.executeContributedAction
         ?? executeContributedAction;
 
     rpc.registerHandler(AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1, async (raw, context) => {
-        const parsed = AutomationReplyHandoffDispatchRequestV1Schema.safeParse(raw);
-        if (!parsed.success) return unavailable('invalidRequest');
-
-        const signal = readSignal(context?.signal);
-        if (signal.aborted) return unavailable('cancelled');
         const reportFailure = (failedPhase: string, error: unknown) => context?.reportOperationDiagnostics?.({
             failedPhase,
             causeCode: readActionErrorCodeV1(error) ?? 'action_failed',
             phaseDurationsMs: {},
             phaseTimingsMs: [],
         });
+        const unavailable = (
+            code: Extract<AutomationReplyHandoffDispatchResultV1, { kind: 'unavailable' }>['code'],
+            failure?: Readonly<{ phase: string; error: unknown }>,
+        ): AutomationReplyHandoffDispatchResultV1 => {
+            reportFailure(failure?.phase ?? 'automationReplyHandoff', failure?.error ?? { code });
+            return { kind: 'unavailable', code };
+        };
+        const parsed = AutomationReplyHandoffDispatchRequestV1Schema.safeParse(raw);
+        if (!parsed.success) return unavailable('invalidRequest');
+
+        const signal = readSignal(context?.signal);
+        if (signal.aborted) return unavailable('cancelled');
 
         const request = parsed.data;
         if (request.target.machineId !== options.machineId) {
@@ -276,17 +240,18 @@ export function registerAutomationReplyHandoffRpcHandler(
         // instead of being re-narrowed at every later read.
         const resultContent = recipeKind === 'workflow-v2'
             ? (() => {
-                if (!workflowCensus) return { kind: 'unavailable' as const };
+                if (!workflowCensus) return { kind: 'unavailable' as const, causeCode: 'targetUnavailable' };
                 const resolved = resolveWorkflowRunDataKeyV1({ encryption: encryptionAtOpen, census: workflowCensus });
-                if (resolved.kind !== 'available') return { kind: 'unavailable' as const };
+                if (resolved.kind !== 'available') return { kind: 'unavailable' as const, causeCode: resolved.reason };
                 const opened = openWorkflowFinalResultStoredEnvelopeV1({
                     ...resolved.encryption.runCrypto,
                     binding: { v: 1, purpose: 'final_result', accountId: workflowCensus.ownerAccountId, runId: request.handoff.runId },
                     envelope: request.handoff.resultEnvelope,
                 });
-                return opened.kind === 'available' && opened.content.result.kind === 'text'
+                if (opened.kind !== 'available') return { kind: 'unavailable' as const, causeCode: opened.kind };
+                return opened.content.result.kind === 'text'
                     ? { kind: 'available' as const, result: { v: 1 as const, kind: 'text' as const, text: opened.content.result.value } }
-                    : { kind: 'unavailable' as const };
+                    : { kind: 'unavailable' as const, causeCode: 'contractInvalid' };
             })()
             : (() => {
                 const opened = openAutomationRunResultStoredEnvelopeV1({
@@ -294,10 +259,10 @@ export function registerAutomationReplyHandoffRpcHandler(
                     ...(encryptionAtOpen.material ? { material: encryptionAtOpen.material.material } : {}),
                     envelope: request.handoff.resultEnvelope,
                 });
-                return opened.kind === 'available'
-                    && sameCorrespondence(opened.correspondence, expectedCorrespondence)
+                if (opened.kind !== 'available') return { kind: 'unavailable' as const, causeCode: opened.kind };
+                return sameCorrespondence(opened.correspondence, expectedCorrespondence)
                     ? { kind: 'available' as const, result: opened.result }
-                    : { kind: 'unavailable' as const };
+                    : { kind: 'unavailable' as const, causeCode: 'targetMismatch' };
             })();
         const contextContent = openAutomationConversationReplyContextStoredEnvelopeV1({
             mode: encryptionAtOpen.witness.mode,
@@ -342,6 +307,13 @@ export function registerAutomationReplyHandoffRpcHandler(
                     accountCurrentness: encryptionAfterOpenFailure.witness,
                 });
             }
+            if (resultContent.kind !== 'available') {
+                reportFailure('resultOpen', { code: resultContent.causeCode });
+            } else if (contextContent.kind !== 'available') {
+                reportFailure('replyContextOpen', { code: contextContent.kind });
+            } else {
+                reportFailure('replyContextCorrespondence', { code: 'targetMismatch' });
+            }
             return settled({
                 settlement: { kind: 'blocked' },
                 accountCurrentness: encryptionAfterOpenFailure.witness,
@@ -365,22 +337,28 @@ export function registerAutomationReplyHandoffRpcHandler(
 
         let lease: PluginRuntimeRegistryLease | null = null;
         try {
-            const currentBeforeLease = await resolveCurrentTargetMaterializationId(
-                request.target.actionRef.pluginId,
-            );
-            if (currentBeforeLease !== request.target.materializationId) {
-                return unavailable('targetMismatch');
-            }
             lease = await acquireRuntimeLease();
             if (signal.aborted) return unavailable('cancelled');
 
-            // A lease pins the generation used for the Action. Re-read the
-            // exact target after acquiring it so a reload cannot pair an old
-            // registry with a newly published materialization.
-            const currentAfterLease = await resolveCurrentTargetMaterializationId(
-                request.target.actionRef.pluginId,
-            );
-            if (currentAfterLease !== request.target.materializationId) {
+            // The runtime owns both installed and daemon-selected targets.
+            // Match the serving lease and its currently published owner so a
+            // reload cannot substitute another materialization for the frozen one.
+            const pluginId = request.target.actionRef.pluginId;
+            await lease.registry.activateContributionsOnDemand([{
+                pluginId,
+                family: 'actions',
+                localId: request.target.actionRef.localId,
+            }]);
+            const materializations = [
+                lease.registry.resolveCurrentPluginMaterializationRef?.(pluginId),
+                lease.resolveCurrentPluginMaterializationRef?.(pluginId),
+            ];
+            if (materializations.some((materialization) => (
+                !materialization
+                || materialization.machineId !== request.target.machineId
+                || materialization.pluginId !== pluginId
+                || materialization.materializationId !== request.target.materializationId
+            ))) {
                 return unavailable('targetMismatch');
             }
 
@@ -425,13 +403,12 @@ export function registerAutomationReplyHandoffRpcHandler(
                 return unavailable('actionUnavailable');
             }
             if (!execution.result.ok) {
-                reportFailure('actionExecution', execution.result);
                 // `notStarted` is effect-safety evidence, not proof that the
                 // frozen Action contract is absent. Generation retirement,
                 // connected-account binding, and other pre-handler runtime
                 // failures use it and must retry. Only `matched: false` above
                 // proves that this materialization has no such Action.
-                return unavailable('actionExecutionFailed');
+                return unavailable('actionExecutionFailed', { phase: 'actionExecution', error: execution.result });
             }
             const actionResult = AutomationResultDeliveryResultV1Schema.safeParse(
                 execution.result.result,
@@ -465,13 +442,17 @@ export function registerAutomationReplyHandoffRpcHandler(
             // Custody ids, suppression reasons and provider detail stay with
             // the Channels Action that produced them. The server only needs
             // the coarse settlement plus the post-effect Account witness.
+            if (actionResult.data.kind === 'blocked') {
+                reportFailure('resultDelivery', { code: actionResult.data.code });
+            }
             return settled({
                 settlement: projectSettlement(actionResult.data),
                 accountCurrentness: encryptionAfterInvoke.witness,
             });
         } catch (error) {
-            reportFailure('automationReplyHandoff', error);
-            return signal.aborted ? unavailable('cancelled') : unavailable('actionExecutionFailed');
+            return unavailable(signal.aborted ? 'cancelled' : 'actionExecutionFailed', {
+                phase: 'automationReplyHandoff', error,
+            });
         } finally {
             if (lease) {
                 await lease.release();

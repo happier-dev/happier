@@ -107,6 +107,7 @@ const admitInput = {
 
 function createBridgeRuntimeRegistry(
   invoke: (call: Readonly<{ pluginId: string; localId: string; input: unknown }>) => unknown,
+  installed = true,
 ): ResolvedExecutablePluginRuntimeRegistry {
   const action = {
     pluginId: BRIDGE_PLUGIN_ID,
@@ -117,6 +118,12 @@ function createBridgeRuntimeRegistry(
     },
   } as unknown as ResolvedActionContribution;
   return {
+    activateContributionsOnDemand: async () => [],
+    resolveCurrentPluginMaterializationRef: (pluginId: string) => (
+      installed && pluginId === BRIDGE_PLUGIN_ID
+        ? { pluginId, machineId, materializationId }
+        : null
+    ),
     contributes: {
       actionsById: new Map([
         [`${BRIDGE_PLUGIN_ID}/${BRIDGE_REPLY_DELIVERY_LOCAL_ID}`, action],
@@ -189,8 +196,9 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
     const { handlers, registrar } = createRegistrar();
     const options = { machineId, resolveAccountId: async () => accountId, resolveInstallationId: () => machineInstallationId,
       resolveAccountEncryptionCurrentness: async () => currentness, resolveAccountEncryptionMaterial: async () => material,
-      resolveCurrentTargetMaterializationId: async () => materializationId,
-      acquireRuntimeLease: async () => ({ registry, source: 'active' as const, durableRevision: -1, release: async () => {} }),
+      acquireRuntimeLease: async () => ({ registry, source: 'active' as const, durableRevision: -1,
+        resolveCurrentPluginMaterializationRef: registry.resolveCurrentPluginMaterializationRef,
+        release: async () => {} }),
       workflowRunStorage: createWorkflowRunStorageClient({ token: 'test-token', serverHttpBaseUrl: 'https://example.test' }),
       executeContributedAction };
     registerAutomationReplyHandoffRpcHandler(registrar, options);
@@ -388,13 +396,11 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
       resolveInstallationId: () => machineInstallationId,
       resolveAccountEncryptionCurrentness: async () => plainCurrentness,
       resolveAccountEncryptionMaterial: async () => null,
-      resolveCurrentTargetMaterializationId: async (pluginId) => (
-        pluginId === BRIDGE_PLUGIN_ID ? materializationId : null
-      ),
       acquireRuntimeLease: async () => ({
         registry,
         source: 'active',
         durableRevision: -1,
+        resolveCurrentPluginMaterializationRef: registry.resolveCurrentPluginMaterializationRef,
         release: async () => {},
       }),
       executeContributedAction,
@@ -423,7 +429,7 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
   it('reports a typed unavailable when the frozen third-party target is not installed', async () => {
     const registry = createBridgeRuntimeRegistry(() => {
       throw new Error('the uninstalled target must never be invoked');
-    });
+    }, false);
     const { handlers, registrar } = createRegistrar();
     registerAutomationReplyHandoffRpcHandler(registrar, {
       machineId,
@@ -432,12 +438,11 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
       resolveInstallationId: () => machineInstallationId,
       resolveAccountEncryptionCurrentness: async () => plainCurrentness,
       resolveAccountEncryptionMaterial: async () => null,
-      // No current materialization for the frozen plugin: it is uninstalled.
-      resolveCurrentTargetMaterializationId: async () => null,
       acquireRuntimeLease: async () => ({
         registry,
         source: 'active',
         durableRevision: -1,
+        resolveCurrentPluginMaterializationRef: registry.resolveCurrentPluginMaterializationRef,
         release: async () => {},
       }),
       executeContributedAction,
