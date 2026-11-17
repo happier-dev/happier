@@ -8,6 +8,7 @@ import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/r
 import { validatePluginHookPayloadV1 } from '@happier-dev/protocol/plugins/hooks';
 import { ProviderErrorCodeV1Schema, type ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
 import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { resolveEffectivePermissionMode } from '@happier-dev/protocol/actions/permissionPrivilege';
 import type { SessionPendingQueueDeliveryTiming, ProviderBoundModelRef, SessionModelTransitionResultV1, AgentSessionStartupInstructionsMarkerV1 } from '@happier-dev/protocol';
 import type { AgentRuntimeDiagnosticDataV1 } from '@happier-dev/protocol/runtime/agentRuntimeDiagnosticV1';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
@@ -1067,6 +1068,16 @@ export async function runPermissionModePromptLoop(opts: {
 
     const readRequestedModelSelection = () => message.mode.modelSelection ?? opts.readArmedModelSelection?.() ?? null;
     const readCallerInputFailure = (): PreTurnFailure | null => {
+      // Native policies may never ask the host for permission. Refuse before
+      // dispatch when this process's mode exceeds the input's admitted ceiling.
+      const causalAuthority = message.mode.causalPermissionAuthority;
+      if (causalAuthority) {
+        const effective = resolveEffectivePermissionMode({ currentMode: message.mode.permissionMode,
+          admittedPermissionCeiling: causalAuthority.admittedPermissionCeiling });
+        if (!effective.ok || effective.effectiveMode !== effective.currentMode) {
+          return { code: 'permission_mode_not_granted', message: 'permission_mode_not_granted', retryable: false };
+        }
+      }
       const constraints = message.mode.callerInputConstraints;
       if (!constraints) return null;
       const effectiveModel = readRequestedModelSelection() ?? opts.readActiveModelSelection?.() ?? 'automatic';
