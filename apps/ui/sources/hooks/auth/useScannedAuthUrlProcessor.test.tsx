@@ -51,6 +51,24 @@ function buildHomeInviteLink(pairId: string): string {
 }
 
 describe('useScannedAuthUrlProcessor', () => {
+    it('opens Source setup review from account scanning without connecting a terminal and rejects terminal scanning', async () => {
+        processorTestState.routerPush.mockClear();
+        processorTestState.terminalProcess.mockClear();
+        const path = '/projects/setup?source=source-a&target=srv_home_b';
+        const account = await renderHook(() => useScannedAuthUrlProcessor({ allowedUrlKind: 'account', homeQrEntryIntent: 'add_home' }));
+        let result = false;
+        await act(async () => { result = await account.getCurrent().processAuthUrl(`https://app.test${path}`); });
+        expect(result).toBe(true);
+        expect(processorTestState.routerPush).toHaveBeenCalledWith(path);
+        expect(processorTestState.terminalProcess).not.toHaveBeenCalled();
+        processorTestState.routerPush.mockClear();
+        const terminal = await renderHook(() => useScannedAuthUrlProcessor({ allowedUrlKind: 'terminal' }));
+        await act(async () => { result = await terminal.getCurrent().processAuthUrl(`https://app.test${path}`); });
+        expect(result).toBe(false);
+        expect(processorTestState.routerPush).not.toHaveBeenCalled();
+        await account.unmount();
+        await terminal.unmount();
+    });
     it('routes V2 Home input to the restore owner carrying the scanner-owned add-home intent', async () => {
         processorTestState.routerPush.mockClear();
         processorTestState.terminalProcess.mockClear();

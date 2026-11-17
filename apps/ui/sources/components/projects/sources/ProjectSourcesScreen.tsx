@@ -16,7 +16,7 @@ import { useCollectionRailWidth } from '@/components/ui/lists/collection/useColl
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useTeamsDirectory } from '@/hooks/teams/useTeamsDirectory';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
@@ -37,6 +37,8 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ProjectAttachedDashboardSelection } from '../detail/projectRouteState';
 import { PROJECT_SOURCES_ROUTE, projectSourceRoute } from './projectSourceNavigation';
+import { useProjectSourceSetupTarget } from './useProjectSourceSetupTarget';
+import { buildHomeRecoveryHref } from '@/components/settings/server/navigation/serverSettingsRouteParams';
 export { PROJECT_SOURCES_ROUTE, projectSourceRoute } from './projectSourceNavigation';
 
 /** Projects › Sources: one Collection list beside the selected Source (lab `p-sources`). */
@@ -49,8 +51,10 @@ function readParam(value: string | string[] | undefined): string | null {
   return typeof first === 'string' && first.trim() ? first : null;
 }
 
-export const ProjectSourcesScreen = React.memo(function ProjectSourcesScreen() {
+export const ProjectSourcesScreen = React.memo(function ProjectSourcesScreen(props: Readonly<{ setupLink?: boolean }>) {
+  const params = useLocalSearchParams<{ source?: string | string[]; target?: string | string[] }>();
   const scope = useActiveServerAccountScope();
+  if (props.setupLink) return <ProjectSourceSetupEntry params={params} />;
   if (!scope) {
     return (
       <ItemList testID="projects.sources.signedOut">
@@ -64,8 +68,29 @@ export const ProjectSourcesScreen = React.memo(function ProjectSourcesScreen() {
   return <CollectionDraftTitleScope><ProjectSourcesCollection scope={scope} /></CollectionDraftTitleScope>;
 });
 
+/** Admission/navigation adapter only: existing Source details keep their presentation. */
+function ProjectSourceSetupEntry(props: Readonly<{
+  params: Parameters<typeof useProjectSourceSetupTarget>[0];
+}>) {
+  const router = useRouter();
+  const { selection, target, credentials, returnTo } = useProjectSourceSetupTarget(props.params);
+  const recovery = target.kind === 'resolved' && credentials.resolution.kind === 'signed_out' && returnTo
+    ? buildHomeRecoveryHref({ profileRef: target.serverId, returnTo }) : null;
+  React.useEffect(() => {
+    if (recovery) router.replace(recovery);
+  }, [recovery?.params.recoveryProfile, recovery?.params.recoveryReturnTo, router]);
+  const binding = credentials.binding;
+  if (selection && binding) return <CollectionDraftTitleScope><ProjectSourcesCollection scope={binding.scope} lifetime={binding} selectedSourceId={selection.sourceId} /></CollectionDraftTitleScope>;
+  const pending = target.kind === 'acquiring' || (target.kind === 'resolved' && (credentials.resolution.kind === 'resolving' || recovery !== null));
+  return <ItemList testID="projects.sources.setup.target"><SurfaceStateCard
+    kind={pending ? 'loading' : 'unavailable'}
+    title={t(pending ? 'projects.sources.loading' : 'projects.sources.unavailable')}
+    {...(target.kind === 'acquisition_failed' ? { action: { label: t('common.retry'), onPress: target.retry } } : {})}
+  /></ItemList>;
+}
+
 const ProjectSourcesCollection = React.memo(function ProjectSourcesCollection(
-  props: Readonly<{ scope: ServerAccountScope }>,
+  props: Readonly<{ scope: ServerAccountScope; lifetime?: ServerAccountScopeLifetime; selectedSourceId?: string }>,
 ) {
   const router = useRouter();
   const navigateToOpen = useNavigateToProjectOpen();
@@ -73,14 +98,14 @@ const ProjectSourcesCollection = React.memo(function ProjectSourcesCollection(
   const { fontScale } = useWindowDimensions();
   const railWidth = useCollectionRailWidth('project-sources');
   const params = useLocalSearchParams<{ source?: string | string[] }>();
-  const requested = readParam(params.source);
+  const requested = props.selectedSourceId ?? readParam(params.source);
   const creating = requested === NEW_SOURCE;
   const selectedId = creating ? null : requested;
-  const { state, controller } = useProjectSources(props.scope);
+  const { state, controller } = useProjectSources(props.scope, { lifetime: props.lifetime, catalog: props.selectedSourceId === undefined });
   const [query, setQuery] = React.useState('');
   const openProject = useOpenProject();
   const openSource = React.useCallback((source: ProjectSourceV1, attachedDashboard?: ProjectAttachedDashboardSelection) => {
-    const lifetime = captureActiveServerAccountScopeLifetime();
+    const lifetime = props.lifetime ?? captureActiveServerAccountScopeLifetime();
     if (!lifetime?.isCurrent() || lifetime.scope.serverId !== props.scope.serverId) return;
     const route = buildProjectSourceOpenRoute(props.scope.serverId, source);
     const selection = route ? readProjectOpenRouteDraft(route.params) : null;
@@ -90,7 +115,7 @@ const ProjectSourcesCollection = React.memo(function ProjectSourcesCollection(
         dashboardSourceId: attachedDashboard.sourceId, dashboardArtifactId: attachedDashboard.artifactId,
         ...(attachedDashboard.serverId === undefined ? {} : { dashboardServerId: attachedDashboard.serverId }),
       } : {}) } }) }), { tag: 'ProjectSources.open' });
-  }, [navigateToOpen, props.scope.serverId]);
+  }, [navigateToOpen, props.scope.serverId, props.lifetime]);
   const teamsDirectory = useTeamsDirectory({
     serverIds: [props.scope.serverId],
   });

@@ -853,6 +853,10 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
 
     const handleScan = React.useCallback(async (data: string) => {
         const parsed = parseOnboardingScanPayload(data);
+        if (parsed.kind === 'team_join' || parsed.kind === 'source_setup') {
+            homeRouter.push(parsed.path);
+            return;
+        }
         relayAccessRunnerRef.current = undefined;
         relayAccessRemoteHostRef.current = undefined;
         setRelayAccessTarget(null);
@@ -895,7 +899,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             return;
         }
         await Modal.alert(t('common.error'), t('modals.invalidAuthUrl'));
-    }, [canonicalCloudUrl]);
+    }, [canonicalCloudUrl, homeRouter]);
 
     const handleSaveCustomRelayUrl = React.useCallback(async () => {
         const trimmed = urlDraft.trim();

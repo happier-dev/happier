@@ -24,7 +24,15 @@ export function useProjectSourceActionExecute() {
 }
 
 /** The screen opts into catalog demand; mounting a closed picker does no work. */
-export function useProjectSources(scope: ServerAccountScope, options: Readonly<{ enabled?: boolean; repositoryFacts?: boolean; sharedWithTeamId?: string; lifetime?: ServerAccountScopeLifetime | null }> = {}) {
+export function useProjectSources(scope: ServerAccountScope, options: Readonly<{
+    enabled?: boolean; repositoryFacts?: boolean;
+    /** The Source query owner applies Team ownership and the viewer's Team/Group audience before paging. */
+    sharedWithTeamId?: string;
+    /** Explicit-link readers consume the named Home's credential lifetime rather than focus. */
+    lifetime?: ServerAccountScopeLifetime | null;
+    /** A portable setup link demands only its selected Source, never the Source inventory. */
+    catalog?: boolean;
+}> = {}) {
     const execute = useProjectSourceActionExecute();
     const activeLifetime = useActiveServerAccountScopeLifetime();
     const lifetime = options.lifetime === undefined
@@ -46,9 +54,9 @@ export function useProjectSources(scope: ServerAccountScope, options: Readonly<{
         // captured owner resumes; scope replacement still retires the old one.
         controller.resume();
         const retirement = lifetime?.onRetire(() => { controller.retireCatalog(); controller.dispose(); });
-        if (options.enabled !== false) void controller.load();
+        if (options.enabled !== false && options.catalog !== false) void controller.load();
         return () => retirement?.dispose();
-    }, [controller, options.enabled, lifetime]);
+    }, [controller, options.enabled, options.catalog, lifetime]);
     React.useEffect(() => () => { controller.dispose(); }, [controller]);
     React.useEffect(() => {
         if (options.enabled === false || state.addressResolution.kind !== 'waiting_for_machines'
@@ -58,10 +66,10 @@ export function useProjectSources(scope: ServerAccountScope, options: Readonly<{
     }, [controller, inventoryStatus, lifetime, options.enabled, scope, state.addressResolution]);
     React.useEffect(() => {
         if (options.enabled === false) return;
-        const stopDemand = catalog?.demand();
+        const stopDemand = options.catalog !== false ? catalog?.demand() : undefined;
         const stopDetail = observeProjectSources(controller, { detailOnly: Boolean(catalog) });
         return () => { stopDemand?.(); stopDetail(); };
-    }, [catalog, controller, options.enabled]);
+    }, [catalog, controller, options.enabled, options.catalog]);
     return { state, controller, repositoryFacts };
 }
 

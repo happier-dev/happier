@@ -3,6 +3,7 @@ import type { HomeQrInviteV2 } from '@happier-dev/protocol/crypto/qrProvisioning
 import { parseAccountConnectDeepLink } from '@/auth/pairing/accountConnectUrl';
 import { classifyLegacyPairingDeepLink, parseHomeQrInviteDeepLink } from '@/auth/pairing/pairingUrl';
 import { parseTerminalConnectUrl, type ParsedTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
+import { parseProjectSourceSetupLink, type ProjectSourceSetupLink } from '@/components/projects/sources/projectSourceNavigation';
 
 export type ClassifiedPairingLink =
     | Readonly<{ kind: 'home_qr_invite'; rawLink: string; invite: HomeQrInviteV2 }>
@@ -11,6 +12,7 @@ export type ClassifiedPairingLink =
     | Readonly<{ kind: 'terminal_connect'; terminal: ParsedTerminalConnectUrl }>
     /** A Team join link: `path` is its in-app join destination, carrying the bearer and Home target verbatim. */
     | Readonly<{ kind: 'team_join'; path: `/join/${string}` }>
+    | (Readonly<{ kind: 'source_setup' }> & ProjectSourceSetupLink)
     | Readonly<{ kind: 'unknown' }>;
 
 const UNKNOWN: ClassifiedPairingLink = Object.freeze({ kind: 'unknown' });
@@ -19,7 +21,7 @@ const UNKNOWN: ClassifiedPairingLink = Object.freeze({ kind: 'unknown' });
  * The one classifier for a scanned, pasted or deep-linked pairing link.
  *
  * Precedence: a canonical Home QR invite, then a legacy V1 pairing link, then a
- * legacy account-connect link, then a terminal-connect link, then a Team join link. The formats do not
+ * legacy account-connect link, then a terminal-connect link, then a Team join or Source setup link. The formats do not
  * overlap today; the fixed order keeps every entry point deciding identically
  * if one ever does. Consumers own only their policy for each kind (which kinds
  * they admit, where they route); they never re-parse the link.
@@ -50,6 +52,9 @@ export function classifyPairingLink(
 
     const teamJoinPath = readTeamJoinPath(rawLink);
     if (teamJoinPath) return { kind: 'team_join', path: teamJoinPath };
+
+    const sourceSetup = parseProjectSourceSetupLink(rawLink);
+    if (sourceSetup) return { kind: 'source_setup', ...sourceSetup };
 
     return UNKNOWN;
 }

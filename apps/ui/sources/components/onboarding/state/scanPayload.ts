@@ -6,6 +6,7 @@ export type ParsedOnboardingScanPayload =
     | Readonly<{ kind: 'legacy_pairing_update_required' }>
     | Readonly<{ kind: 'account_connect'; publicKeyB64Url: string }>
     | Readonly<{ kind: 'relay_url'; serverUrl: string }>
+    | Readonly<{ kind: 'team_join' | 'source_setup'; path: string }>
     | Readonly<{ kind: 'unknown' }>;
 
 function isLikelyRelayUrlCandidate(raw: string): boolean {
@@ -24,6 +25,9 @@ export function parseOnboardingScanPayload(raw: string): ParsedOnboardingScanPay
             return { kind: 'legacy_pairing_update_required' };
         case 'account_connect':
             return { kind: 'account_connect', publicKeyB64Url: link.publicKeyB64Url };
+        case 'team_join':
+        case 'source_setup':
+            return { kind: link.kind, path: link.path };
         case 'terminal_connect':
             // A terminal link is not a relay address; onboarding has no terminal step.
             return { kind: 'unknown' };

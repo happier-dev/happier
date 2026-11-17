@@ -5,6 +5,11 @@ import { buildHomeQrInviteDeepLink } from '@/auth/pairing/pairingUrl';
 import { encodeBase64 } from '@/encryption/base64';
 
 describe('parseOnboardingScanPayload', () => {
+    it('preserves recognized Source setup and Team destinations instead of treating them as Home addresses', () => {
+        const path = '/projects/setup?source=source-a&target=srv_home_b';
+        expect(parseOnboardingScanPayload(`https://app.test${path}`)).toEqual({ kind: 'source_setup', path });
+        expect(parseOnboardingScanPayload('https://app.test/join/token?target=srv_home_b')).toEqual({ kind: 'team_join', path: '/join/token?target=srv_home_b' });
+    });
     it('preserves a strict V2 Home invite for the restore owner', () => {
         const rawLink = buildHomeQrInviteDeepLink({
             invite: {

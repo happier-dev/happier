@@ -226,6 +226,105 @@ describe('Projects › Sources', () => {
     } finally { await homes.dispose(); }
   });
 
+  it('shows an explicitly linked Source when its Home retains an empty catalog', async () => {
+    const homes = await serveAccountHomes({ homes: [
+      { key: 'linked', serverUrl: 'https://empty-source-catalog.test', accountId: 'account-1', serverIdentityId: 'srv_empty_source_catalog' },
+    ], route: request => { throw new Error(`Unexpected Home request: ${request.path}`); } });
+    try {
+      const { resolveServerCredentialAccountScope, captureServerCredentialAccountScopeLifetime } = await import('@/sync/domains/scope/serverCredentialAccountScope');
+      const resolution = await resolveServerCredentialAccountScope(homes.homes.linked!.id);
+      if (resolution.kind !== 'bound') throw new Error('Linked Home credentials did not bind');
+      const { readProjectSourcesCatalog } = await import('./projectSourcesCatalog');
+      const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+      const catalog = readProjectSourcesCatalog(captureServerCredentialAccountScopeLifetime(resolution), createFrontDoorActionExecute()).read('', undefined);
+      await catalog.load();
+      expect(catalog.getSnapshot()).toMatchObject({ status: 'ready', rows: [] });
+      expect(shared.calls.filter(call => call.actionId === 'projects.sources.list')).toHaveLength(1);
+      shared.sources = [{ id: 'linked-source', revision: 1, name: 'Explicitly linked setup',
+        audience: [], createdByAccountId: 'account-1' }];
+      shared.routes.params = { source: 'linked-source', target: 'srv_empty_source_catalog' };
+      const screen = await renderScreen(<ProjectSourcesScreen setupLink />);
+      try {
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Explicitly linked setup'));
+        expect(screen.findByTestId('projects.sources.empty')).toBeNull();
+        expect(screen.findByTestId('projects.sources.detail.header')).not.toBeNull();
+        expect(shared.calls.filter(call => call.actionId === 'projects.sources.list')).toHaveLength(1);
+        expect(shared.calls.filter(call => call.actionId === 'projects.sources.read').map(call => call.input)).toEqual([
+          { serverId: homes.homes.linked!.id, sourceId: 'linked-source' },
+        ]);
+      } finally { await screen.unmount(); }
+    } finally { await homes.dispose(); }
+  });
+
+  it('reads only the linked Home Source and retains its Open draft while another Home stays focused', async () => {
+    const homes = await serveAccountHomes({ homes: [
+      { key: 'linked', serverUrl: 'https://source-setup-link.test', accountId: 'account-1', serverIdentityId: 'srv_source_setup_link' },
+    ], route: request => { throw new Error(`Unexpected Home request: ${request.path}`); } });
+    try {
+      signIn();
+      shared.routes.params = { source: 'stored-source', target: 'srv_source_setup_link' };
+      shared.sources = [{ id: 'stored-source', revision: 1, name: 'Linked Source', audience: [], createdByAccountId: 'account-1',
+        repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+          repository: { nameWithOwner: 'acme/linked' }, protocol: 'https' } }];
+      const { WorkspaceRouteBody } = await import('@/app/(app)/projects/setup');
+      const screen = await renderScreen(<WorkspaceRouteBody />);
+      try {
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Linked Source'));
+        expect(shared.calls.map(call => ({ actionId: call.actionId, serverId: call.input.serverId }))).toEqual([
+          { actionId: 'projects.sources.read', serverId: homes.homes.linked!.id },
+        ]);
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.show).mockClear();
+        await act(async () => screen.pressByTestId('projects.sources.detail.open'));
+        await vi.waitFor(() => expect(Modal.show).toHaveBeenCalledOnce());
+        const shown = vi.mocked(Modal.show).mock.calls[0]![0];
+        expect(shown.chrome?.testID).toBe('projects.open.dialog');
+        const routeParams = (shown.props as { routeParams: Record<string, string> }).routeParams;
+        expect(routeParams).toMatchObject({ serverId: homes.homes.linked!.id, draftId: expect.any(String) });
+        const { getSessionDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        expect(getSessionDraftSnapshot({ serverId: homes.homes.linked!.id, accountId: 'account-1' },
+          { kind: 'projectOpen', draftId: routeParams.draftId! })?.document).toMatchObject({
+          selection: { value: { source: { kind: 'source', id: 'stored-source' } } },
+        });
+        expect(storage.getState().profileScope?.serverId).toBe('server-1');
+        expect(shared.calls.some(call => call.actionId === 'projects.open')).toBe(false);
+      } finally { await screen.unmount(); }
+    } finally { await homes.dispose(); }
+  });
+  it('never reads a same-id Source on the focused Home when a setup link names an unknown Home', async () => {
+    signIn();
+    shared.routes.params = { source: 'stored-source', target: 'srv_unadopted_home' };
+    shared.sources = [{ id: 'stored-source', revision: 1, name: 'Wrong Home Source', audience: [], createdByAccountId: 'account-1' }];
+    const screen = await renderScreen(<ProjectSourcesScreen setupLink />);
+    await flushHookEffects();
+    expect(shared.calls).toEqual([]);
+    expect(screen.getTextContent()).not.toContain('Wrong Home Source');
+    await screen.unmount();
+  });
+  it('returns through the link Home sign-in without reading the Source while signed out there', async () => {
+    const homes = await serveAccountHomes({ homes: [
+      { key: 'signedOut', serverUrl: 'https://source-setup-signed-out.test', accountId: 'account-1', serverIdentityId: 'srv_source_setup_signed_out' },
+    ], route: request => { throw new Error(`Unexpected Home request: ${request.path}`); } });
+    try {
+      const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+      await TokenStorage.removeCredentialsForServerUrl('https://source-setup-signed-out.test');
+      signIn();
+      shared.routes.params = { source: 'stored-source', target: 'srv_source_setup_signed_out' };
+      const { resolveServerProfileForPortableIdentity } = await import('@/sync/domains/server/serverProfiles');
+      const linkedHome = resolveServerProfileForPortableIdentity('srv_source_setup_signed_out');
+      if (linkedHome.kind !== 'resolved') throw new Error('Linked Home identity did not resolve');
+      const screen = await renderScreen(<ProjectSourcesScreen setupLink />);
+      try {
+        await vi.waitFor(() => expect(shared.navigation).toContainEqual({
+          pathname: '/server', params: {
+            recoveryProfile: linkedHome.profile.id,
+            recoveryReturnTo: '/projects/setup?source=stored-source&target=srv_source_setup_signed_out',
+          },
+        }));
+        expect(shared.calls).toEqual([]);
+      } finally { await screen.unmount(); }
+    } finally { await homes.dispose(); }
+  });
   it('keeps Project chrome on the standalone Deployments entry without inventing a checkout', async () => {
     const homes = await serveAccountHomes({ homes: [
       { key: 'source', serverUrl: 'https://standalone-deployments.example', accountId: 'account-1' },

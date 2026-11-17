@@ -66,6 +66,7 @@ export function useScannedAuthUrlProcessor(options: UseScannedAuthUrlProcessorOp
                     return true;
                 }
                 case 'team_join':
+                case 'source_setup':
                     // A Team join link joins a Home through its Team; the join screen owns the rest.
                     if (options.allowedUrlKind !== 'account') return await rejectAsInvalid();
                     router.push(link.path);

@@ -22,6 +22,18 @@ const INVITE = {
 };
 
 describe('classifyPairingLink', () => {
+    it('routes Source setup links to review with their explicit Home and excludes them from pinned recovery', () => {
+        const path = '/projects/setup?source=source%2Fa&target=srv_home_b';
+        for (const link of [`https://app.example.test${path}`, `happier://${path.slice(1)}`, `happier-dev://${path.slice(1)}`]) {
+            expect(classifyPairingLink(link)).toEqual({ kind: 'source_setup', path, sourceId: 'source/a', homeTarget: 'srv_home_b' });
+            expect(classifyPairingLink(link, {
+                expectedInvite: { homeServerIdentityId: 'srv_home_b', direction: 'trusted_home_displays' },
+            })).toEqual({ kind: 'unknown' });
+        }
+        expect(classifyPairingLink('https://app.example.test/projects/setup?source=source-a')).toEqual({ kind: 'unknown' });
+        expect(classifyPairingLink('https://app.example.test/projects/sources?source=source-a&target=srv_home_b')).toEqual({ kind: 'unknown' });
+        expect(classifyPairingLink('https://app.example.test/projects/setup?source=source-a&source=source-b&target=srv_home_b')).toEqual({ kind: 'unknown' });
+    });
     it('classifies each scanned or pasted link family through one owner', () => {
         const inviteLink = buildHomeQrInviteDeepLink({ invite: INVITE });
         expect(classifyPairingLink(`  ${inviteLink}  `)).toEqual({ kind: 'home_qr_invite', rawLink: inviteLink, invite: INVITE });
