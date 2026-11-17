@@ -62,6 +62,28 @@ describe('machine agent inventory recovery', () => {
         expect(screen.findByTestId('chosen-definition')?.props.children).toBe('second');
     });
 
+    it('says once that the machine is offline: its agent rows keep only what they last reported', async () => {
+        const { t } = await import('@/text');
+        const offline = ['signedIn', 'signedOut'].map((status, index) => projectMachineAgent({
+            agentId: `agent-${index}`, title: `Agent ${index}`, checking: false, stale: true, staleReason: 'offline',
+            connectedServices: [], job: null,
+            facts: MachineAgentInventoryItemSchema.parse({ agentId: `agent-${index}`, title: `Agent ${index}`,
+                installed: true, version: '1.0', latestVersion: '1.0', update: { supported: false, command: null },
+                signIn: { status, required: true, loginSupport: 'login_terminal' }, platform: { supported: true },
+                install: { available: true, mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [] }),
+        }));
+        const screen = await renderSettingsView(<MachineAgentsSectionView testID="machine-agents"
+            agents={offline} status="offline" lastCheckedAt={1} machineName="Workstation"
+            renderMark={() => null} sessionFor={() => null} renderForm={() => null}
+            expandedAgentIds={new Set()} onExpandedChange={() => {}} onAction={() => {}} onCheckAgain={() => {}} />);
+        const text = screen.getTextContent();
+        expect(text).toContain(t('machineAgents.offlineNote', { machine: 'Workstation' }));
+        expect(text).not.toContain(t('machineAgents.offlineSignedIn'));
+        expect(text).not.toContain(t('machineAgents.offlineSignedOut'));
+        expect(text).toContain(t('machineAgents.lastSeenSignedIn'));
+        expect(text).toContain(t('machineAgents.lastSeenSignedOut'));
+    });
+
     it('hosts the section under a page that already says Agents without repeating the title', async () => {
         const { t } = await import('@/text');
         const render = (titled: boolean) => renderSettingsView(<ListPresentationProvider value="page"><MachineAgentsSectionView testID="machine-agents"

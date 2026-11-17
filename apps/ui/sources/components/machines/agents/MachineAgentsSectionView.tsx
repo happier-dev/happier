@@ -64,6 +64,8 @@ export const MachineAgentsSectionView = React.memo(function MachineAgentsSection
             onExpandedChange={(expanded) => props.onExpandedChange(buildMachineAgentInventoryKey(agent), expanded)}
             showDivider={index < list.length - 1}
             canManage={props.canManage}
+            // The section's one offline line says it; rows keep what they last reported.
+            machineOfflineSaid={props.status === 'offline'}
         />
     );
     // "No agent here" is a claim about a finished check. Descriptor-only rows (still checking, or the machine could not

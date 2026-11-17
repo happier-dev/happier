@@ -31,6 +31,8 @@ export type MachineAgentRowProps = Readonly<{
     onExpandedChange?: (expanded: boolean) => void;
     showDivider?: boolean;
     canManage?: boolean;
+    /** The section already says the machine is offline; the row keeps only what it last reported. */
+    machineOfflineSaid?: boolean;
     testID: string;
 }>;
 
@@ -65,7 +67,7 @@ export const MachineAgentRow = React.memo(function MachineAgentRow(props: Machin
             title={agent.title}
             titleStyle={dim ? styles.dimTitle : undefined}
             titleAccessory={agent.version ? <Text style={styles.version}>{agent.version}</Text> : undefined}
-            subtitle={<MachineAgentStatusLine testID={`${props.testID}.status`} status={status} />}
+            subtitle={<MachineAgentStatusLine testID={`${props.testID}.status`} status={status} machineOfflineSaid={props.machineOfflineSaid} />}
             rightElement={actionButton}
             rightElementOutsidePressable
             showChevron={false}
