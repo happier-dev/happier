@@ -240,6 +240,57 @@ describe('Run Notify me through personal Follow', () => {
         expect(owner.listReads()).toBe(listReads);
     });
 
+    it('retries a followed Workflow Run missing from a successfully read exact window', async () => {
+        const source = { kind: 'workflow_run', runId: 'retry-missing-workflow' } as const;
+        const owner = await setup(source);
+        owner.oneShotOnly();
+        owner.setDeliveries([RunFollowOccurrenceV1Schema.parse({ original: { source, revision: 1 }, event: { kind: 'finished' } })]);
+        const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+        await loadSyncSingletonForTests();
+        const { createWorkflowActionHttpTransport } = await import('@/dev/testkit/fixtures/workflowActionHttpTransport');
+        const { createWorkflowRunSummaryFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+        const run = createWorkflowRunSummaryFixture({ id: source.runId, ownerAccountId: owner.home.accountId, state: 'succeeded' });
+        let present = false;
+        let exactReads = 0;
+        const workflow = createWorkflowActionHttpTransport({ accountId: () => owner.home.accountId, fixtureResponse: async (actionId, input) => {
+            if (actionId !== 'workflow.run.list') throw new Error(`Unexpected Workflow action: ${actionId}`);
+            const exact = Array.isArray(input.runIds) && input.runIds.includes(source.runId);
+            if (exact) exactReads++;
+            return { ok: true, result: { runs: exact && present ? [run] : [], metadataByRunId: {},
+                ...(input.projection === 'membership' ? { projection: 'membership' } : {}) } };
+        } });
+        const features = createRootLayoutFeaturesResponse({ ...workflow.features,
+            features: { ...workflow.features.features, sessions: { ...workflow.features.features.sessions, following: { enabled: true } } } });
+        const listPath = new URL(resolveSessionFollowActionRequest('follow.list', { receiver: { kind: 'account' }, direction: 'following' }).path,
+            owner.home.serverUrl).pathname;
+        network.setHttpResponder(async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === listPath) return Response.json({ follows: [owner.follow()] });
+            if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
+            return workflow.fetch(input, init);
+        });
+        const { restoreConnectionToActiveServer, disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+        await restoreConnectionToActiveServer({ token: owner.home.token });
+        primeServerFeaturesSnapshot({ serverId: owner.home.id, snapshot: { status: 'ready', features } });
+        const { WorkflowAttentionSourceBoundary } = await import('@/hooks/inbox/useWorkflowAttentionSource');
+        let detail: ReturnType<typeof useInboxExecutionRunSource> | null = null;
+        const readDetail = () => detail;
+        function Detail() { detail = useInboxExecutionRunSource(); return null; }
+        try {
+            await renderScreen(<WorkflowAttentionSourceBoundary><InboxExecutionRunSourceBoundary><Detail /></InboxExecutionRunSourceBoundary></WorkflowAttentionSourceBoundary>);
+            await vi.waitFor(() => expect(exactReads).toBeGreaterThan(0));
+            await vi.waitFor(() => expect(readDetail()?.failed).toBe(true));
+            const beforeRetry = exactReads;
+            const followReads = owner.listReads();
+            present = true;
+            await act(async () => readDetail()?.retry());
+            await vi.waitFor(() => expect(exactReads).toBe(beforeRetry + 1));
+            await vi.waitFor(() => expect(readDetail()?.failed).toBe(false));
+            expect(readDetail()?.workflowFollows.map(follow => follow.source.runId)).toEqual([source.runId]);
+            expect(owner.listReads()).toBe(followReads);
+        } finally { await disconnectActiveServerConnection(); }
+    });
+
     it('counts a source receipt without reading a Run body and clears it only on explicit open', async () => {
         const source = { kind: 'execution_run', machineId: 'machine-one', runId: 'receipt-demand' } as const;
         const owner = await setup(source);

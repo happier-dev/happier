@@ -206,7 +206,7 @@ function useCreateSource(detailsDemanded: boolean): Source {
         const current = censusRef.current;
         if (current?.lifetime === lifetime && current.failed) refreshCensusRef.current?.();
         headerReads.owner?.retryFailed();
-        if (workflowFollows.length > 0 && workflowWindow.status === 'failed') workflowWindow.retry();
+        if (workflowFollows.some(follow => workflowFailed(follow.source.runId))) workflowWindow.retry();
         for (const address of sessionAddresses.values()) {
             if (readRunningExecutionRunRosterSnapshot(address).failed) refreshRunningExecutionRunRoster(address);
         }
