@@ -18,6 +18,12 @@ import { registerBashHandler } from '@/rpc/handlers/bash';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { resolveProcessCustodySupportExecutable } from './processCustody';
 import { createClaudeNativeSdkQueryContext } from '../../../../../packages/plugins/claude/src/agent/sdk/nativeExec';
+import { prepareRunnerDaemonPluginServices } from '@/agent/runtime/session/process/runnerDaemonPluginServices';
+import { createRunnerDaemonPluginServicesHost } from '@/daemon/agentRuntime/runnerDaemonPluginServicesHost';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
+import { AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
+import { RunnerDaemonPluginServiceOperationV1Schema, decodeRunnerDaemonPluginServiceWireValueV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonPluginServicesProtocol';
 import { queryWithContext } from '../../../../../packages/plugins/claude/src/agent/sdk/query';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import { resolveHappierMcpServerConfig } from '@/agent/runtime/createHappierMcpBridge';
@@ -139,7 +145,7 @@ describe.skipIf(process.platform === 'win32' || !holderExecutable)('Session targ
         }
     });
 
-    it('publishes Claude SDK generated files before the placed Agent reads its remapped argv', async () => {
+    it.each(['direct', 'daemon-authorized'] as const)('publishes Claude SDK generated files before the placed Agent reads its remapped argv (%s)', async route => {
         const session = new AbortController();
         const channels: ChildProcess[] = [];
         let hostSources: readonly string[] = [];
@@ -151,9 +157,9 @@ describe.skipIf(process.platform === 'win32' || !holderExecutable)('Session targ
                 if (command.includes('nohup')) await Promise.all(hostSources.map(path => rm(path, { force: true })));
                 return operations.exec(command, signal);
             } }, lifetime: session.signal,
-            readTrustedCallerPid: () => process.pid, socketPath: join(directory, 'required-files.sock') });
-        const targetRoot = join(directory, 'required-workspace');
-        const runtimeHome = join(directory, 'required-session');
+            readTrustedCallerPid: () => process.pid, socketPath: join(directory, `required-files-${route}.sock`) });
+        const targetRoot = join(directory, `required-workspace-${route}`);
+        const runtimeHome = join(directory, `required-session-${route}`);
         await mkdir(targetRoot);
         sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({
             id: 'managed:required-files', holderPath: holderExecutable, socketDirectory: directory, relaySocketPath: socketPath,
@@ -174,12 +180,43 @@ createInterface({ input: process.stdin }).once('line', () => {
   process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } }) + '\n');
   process.exit(0);
 });`;
-        const exec = createStablePluginExecService({ signal: session.signal, isOccurrenceCurrent: () => true,
+        const hostExec = createStablePluginExecService({ signal: session.signal, isOccurrenceCurrent: () => true,
             resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => directory,
             environment: { HAPPIER_TEST_HOST_ONLY: 'must-stay-on-host' },
             systemTools: { resolve: async request => ({ grantId: 'required-files-agent', toolId: request.toolId,
                 displayName: 'Required files fixture Agent', source: 'system', executablePath: process.execPath,
                 launch: { kind: 'binary', executablePath: process.execPath, args: ['-e', agent, '--'] } }) } });
+        const unavailable = createUnavailablePluginServices();
+        const services = { ...unavailable, exec: hostExec,
+            availability: (id: Parameters<typeof unavailable.availability>[0]) => id === 'exec'
+                ? { status: 'available' as const } : unavailable.availability(id) };
+        const daemon = route === 'daemon-authorized' ? createRunnerDaemonPluginServicesHost({ createInvocation: async () => ({
+            services, resourceDescriptors: {},
+            subscriptionCapabilities: { settingsWatch: false, eventSubscriptions: [], resourceWatches: [], notificationPreferencesWatch: false },
+            dispose() {}, authorizeOperation: () => true, executeCurrentGlobalAction: async () => null,
+            currentGlobalMcp: services.mcp, currentGlobalExternalSessions: services.sessions.external,
+        }) }) : undefined;
+        const binding = createAgentSessionRunnerFactoryBinding({
+            v: 1, pluginId: 'fixture.plugin', pluginVersion: '1.0.0', agentId: 'fixture.agent', localAgentId: 'agent',
+            sourceCustody: { kind: 'managed', immutableGenerationId: 'generation-1', installSource: 'localPath' },
+            locator: { module: './agent.js', export: 'createRuntime', runtimeApiVersion: 1 },
+            normalizedModulePath: '/plugins/fixture/agent.js', loadMode: 'immutable-js',
+        });
+        const runnerServices = daemon ? await prepareRunnerDaemonPluginServices({
+            invocationId: 'placed-files', signal: session.signal,
+            dispatch: async (operation, options) => {
+                const result = await daemon.dispatch({ sessionId: 'placed-files-session',
+                    runner: { pid: process.pid, processStartTimeMs: 1, processCommandHash: '4'.repeat(64), snapshotIdentity: 'snapshot-1' },
+                    retainedAgent: binding, operation: RunnerDaemonPluginServiceOperationV1Schema.parse(operation), signal: options?.signal });
+                AgentRuntimeDaemonServiceResponseV1Schema.parse({ ok: true, result });
+                return decodeRunnerDaemonPluginServiceWireValueV1(result.value);
+            },
+            local: { availability: unavailable.availability, logger: unavailable.logger, sessions: unavailable.sessions,
+                managedServices: unavailable.managedServices, machineProvisioners: unavailable.machineProvisioners,
+                exec: unavailable.exec, interactions: unavailable.interactions, targetedContributions: unavailable.targetedContributions,
+                composerContent: unavailable.composerContent, backgroundServices: unavailable.backgroundServices, deploymentSource: unavailable.deploymentSource },
+        }) : undefined;
+        const exec = runnerServices?.exec ?? hostExec;
         // Observe the public process input while retaining the entire real Exec implementation.
         const observedExec: ExecService = { ...exec, clients: { ...exec.clients, spawn: (spec, options) => {
             hostSources = spec.launch.requiredFiles ?? [];
@@ -210,6 +247,7 @@ createInterface({ input: process.stdin }).once('line', () => {
             }
         } finally {
             await running.dispose(); session.abort();
+            await daemon?.dispose();
             delete sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY];
         }
     });

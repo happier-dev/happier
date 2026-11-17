@@ -1780,8 +1780,9 @@ export function createStablePluginExecService(params: Readonly<{
                 await launch.release();
                 throw error;
             }
+            const authorizedLaunch = { ...launch, ...(request.requiredFiles ? { requiredFiles: request.requiredFiles } : {}) };
             return hostAgentIsolation || params.agentIsolation ? await finalizeHostExecLaunch({
-                launch: { ...launch, ...(request.requiredFiles ? { requiredFiles: request.requiredFiles } : {}) },
+                launch: authorizedLaunch,
                 ...(hostCwd !== undefined ? { requestedCwd: hostCwd } : {}),
                 agentIsolation: hostAgentIsolation ?? params.agentIsolation, agentNativeLaunch,
                 ...(nativeLaunch ? { sessionMcpContext: INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch)?.(),
@@ -1791,7 +1792,7 @@ export function createStablePluginExecService(params: Readonly<{
                 requesterIdentity,
                 hostNativeSystemTool,
                 signal: options?.signal ? AbortSignal.any([params.signal, options.signal]) : params.signal,
-                assertCurrent }) : launch;
+                assertCurrent }) : authorizedLaunch;
         }
         const environmentValidation = validateEnvVarRecordStrict(request.env);
         if (!environmentValidation.ok) {
