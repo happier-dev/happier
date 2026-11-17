@@ -61,6 +61,8 @@ export const ManagedMachinePresetPreparedV1Schema = lazyZodSchema(() => z.strict
   binding: ManagedMachinePresetPreparationBindingV1Schema,
   status: z.enum(['building', 'ready', 'failed', 'cancelled']),
   artifact: z.optional(ManagedNativeOperationReferenceV1Schema),
+  /** Native inspection of this artifact; absence means the provider did not report size. */
+  artifactSizeBytes: z.optional(z.number().check(z.int(), z.gte(0))),
   nativeOperationRef: z.optional(ManagedNativeOperationReferenceV1Schema),
   /** Supplier-selected image install path; it is usable only with a ready artifact. */
   cliBinaryPath: z.optional(id()),

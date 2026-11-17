@@ -529,6 +529,7 @@ describe('reachable preset detail', () => {
       machineId: 'next-builder', onChanged }));
     try {
       expect(hook.getCurrent().reportedStatus).toBe('building');
+      expect(hook.getCurrent().estimates).toBeNull();
       expect(hook.getCurrent().operation).toBeNull();
       expect(hook.getCurrent().canCancel).toBe(false);
       expect(onChanged).not.toHaveBeenCalled();
@@ -556,6 +557,27 @@ describe('reachable preset detail', () => {
       expect(hook.getCurrent().operation).toBeNull();
       expect(hook.getCurrent().canCancel).toBe(false);
     } finally { await hook.unmount(); actionOperationStore.reset(); }
+  });
+  it('exposes measured prepared storage and canonical unpriced cost, omitting unknown size', async () => {
+    const serverId = await seed();
+    const { useMachinePresetPreparation } = await import('./useMachinePresets');
+    const opened = createPlainManagedMachinePresetFixture({ ...preset, preparation: { enabled: true } }).opened;
+    const prepared = { operationId: 'measured-build', status: 'ready' as const, artifactSizeBytes: 1024,
+      artifact: { contributionRef: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, value: { image: 'native-snapshot' } },
+      binding: { presetRevision: preset.revision, cliIdentity: 'supplier-identity', credentialConfigurations: [], configuration: {
+        launch: { provider: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, choices: preset.launch.choices },
+      } } };
+    let measured = true;
+    const hook = await renderHook(() => useMachinePresetPreparation({ serverId, preset: { ...opened,
+      prepared: measured ? prepared : (({ artifactSizeBytes: _size, ...unknown }) => unknown)(prepared) },
+      machineId: null, onChanged: () => {} }));
+    try {
+      expect(hook.getCurrent().estimates).toEqual({ storageBytes: 1024, cost: { kind: 'unpriced', provider: null } });
+      measured = false;
+      await hook.rerender();
+      expect(hook.getCurrent().estimates).toEqual({ storageBytes: null, cost: { kind: 'unpriced', provider: null } });
+      expect(boundary.rpc).not.toHaveBeenCalled();
+    } finally { await hook.unmount(); }
   });
   it('headless preset preparation sends the displayed revision and retries through the same admitted Action', async () => {
     const serverId = await seed();

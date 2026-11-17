@@ -5,7 +5,7 @@ import { jsonSchemaContainsReference } from '../../actions/actionInputJsonSchema
 import { projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
 import { PluginLocalizedStringV2Schema, type PluginLocalizedStringV2 } from './publicTypes.js';
 import { createProtocolComposableSchema, embedProtocolJsonSchema, defineProtocolJsonValue, defineProtocolLiteral,
-  defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolComposableSchema } from '../actions/protocolComposableSchema.js';
+  defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolComposableSchema } from '../actions/protocolComposableSchema.js';
 
 const referenceSchema: ProtocolComposableSchema<ManagedNativeOperationReferenceV1, ManagedNativeOperationReferenceV1> =
   projectZodProtocolSchema(lazyDefinition(() => ManagedNativeOperationReferenceV1Schema));
@@ -41,7 +41,8 @@ export function defineMachineProvisionerPreparationSchemas<II, IO, AI, AO, NI, N
   const code = defineProtocolString({ minLength: 1 });
   const artifact = preparationReference(schemas.artifact);
   const nativeOperationRef = preparationReference(schemas.nativeOperation);
-  const ready = defineProtocolObject({ kind: defineProtocolLiteral('ready'), artifact }, closed);
+  const ready = defineProtocolObject({ kind: defineProtocolLiteral('ready'), artifact,
+    artifactSizeBytes: defineProtocolNumber({ integer: true, minimum: 0 }).optional() }, closed);
   const pending = defineProtocolObject({ kind: defineProtocolLiteral('pending'), nativeOperationRef }, closed);
   const refused = defineProtocolObject({ kind: defineProtocolLiteral('refused'), code, nativeCause: nativeCauseSchema.optional(),
     status: localizedStatusSchema.optional() }, closed);

@@ -172,8 +172,9 @@ async function advanceOperation(input: OperationInput, current: OpenPreset,
   const { code: _oldCode, nativeCause: _oldCause, ...withoutCode } = prepared;
   switch (nativeResult.kind) {
     case 'ready': {
-      const { buildSetup, bakedSetup: _bakedSetup, ...ready } = withoutCode;
+      const { buildSetup, bakedSetup: _bakedSetup, artifactSizeBytes: _priorSize, ...ready } = withoutCode;
       return await persist(input, current, { ...ready, status: 'ready', artifact: nativeResult.artifact,
+        ...(nativeResult.artifactSizeBytes === undefined ? {} : { artifactSizeBytes: nativeResult.artifactSizeBytes }),
         ...(buildSetup === undefined ? {} : { bakedSetup: buildSetup }) }, 'ready');
     }
     case 'pending': return await persist(input, current, { ...prepared, status: 'building', nativeOperationRef: nativeResult.nativeOperationRef }, 'pending');
@@ -244,7 +245,7 @@ async function cancelOperation(input: OperationInput, current: OpenPreset, expec
   const nativeResult = await input.native.destroy(references, root(current));
   switch (nativeResult.kind) {
     case 'confirmed': {
-      const { artifact: _artifact, nativeOperationRef: _nativeOperationRef, code: _code, nativeCause: _cause, ...settled } = cancelled.prepared;
+      const { artifact: _artifact, artifactSizeBytes: _size, nativeOperationRef: _nativeOperationRef, code: _code, nativeCause: _cause, ...settled } = cancelled.prepared;
       return await persist(input, current, settled, 'cancelled');
     }
     case 'pending': return await persist(input, current, { ...cancelled.prepared, nativeOperationRef: nativeResult.nativeOperationRef }, 'pending');

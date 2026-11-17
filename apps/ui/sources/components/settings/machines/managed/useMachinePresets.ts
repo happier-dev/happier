@@ -8,6 +8,7 @@ import { MACHINE_PRESET_PREPARE_ACTION_ID_V1, type MachinePresetActionInputV1 } 
 import { ActionOperationAcceptedResultSchema, type ActionOperationAcceptedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { resolveManagedConfigurationCost } from '@happier-dev/protocol/machines/managed/configurationPresentation';
 
 import { getServerProfileById, areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useServerCredentialAccountScopeStates, useServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -121,7 +122,12 @@ export function useMachinePresetPreparation(input: Readonly<{
     const openOperation = React.useCallback(() => {
         if (operation) openActionOperationDetail({ serverId: operation.serverId, operationId: operation.snapshot.operationId });
     }, [operation]);
-    return { prepared, reportedStatus: prepared?.status ?? null, prepare, retry: prepare,
+    const estimates = React.useMemo(() => prepared?.status === 'ready' ? {
+        storageBytes: prepared.artifactSizeBytes ?? null,
+        // Compute pricing does not price a retained prepared artifact.
+        cost: resolveManagedConfigurationCost({ provider: null }),
+    } : null, [prepared]);
+    return { prepared, estimates, reportedStatus: prepared?.status ?? null, prepare, retry: prepare,
         pending: pendingScope === scopeKey && !approval.approvalPending,
         error: failure?.scopeKey === scopeKey ? failure.code : null,
         approval, operation, openOperation, canCancel, stopControl };

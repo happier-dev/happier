@@ -212,6 +212,20 @@ describe('private preset preparation operation', () => {
     expect(readManagedMachinePresetPreparationV1({ content: fixture.opened(), ...identity }))
       .toMatchObject({ kind: 'warm', binaryPath: buildInput.cli.binaryPath });
   });
+  it.each(['plain', 'e2ee'] as const)('persists native inspection storage bytes without inventing an estimate in %s', async mode => {
+    let nonce = 23;
+    const custody: ManagedMachinePresetPreparationCustodyV1 = mode === 'plain' ? { mode }
+      : { mode, accountId: 'owner', accountKey: deriveBoxSecretKeyFromSeed(new Uint8Array(32).fill(71)),
+        randomBytes: length => new Uint8Array(length).fill(nonce++) };
+    const fixture = storageFixture(custody);
+    const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }), custody, storage: fixture.storage,
+      native: nativeFixture({ build: async () => ({ kind: 'pending', nativeOperationRef }),
+        inspect: async () => ({ kind: 'ready', artifact, artifactSizeBytes: 1024 }) }) };
+    await advanceManagedMachinePresetPreparationOperationV1(request);
+    expect(fixture.opened().prepared).not.toHaveProperty('artifactSizeBytes');
+    await advanceManagedMachinePresetPreparationOperationV1(request);
+    expect(fixture.opened().prepared).toMatchObject({ status: 'ready', artifactSizeBytes: 1024 });
+  });
   it('foreground following retains the operation until native readiness and leaves no settled timer', async () => {
     vi.useFakeTimers();
     try {

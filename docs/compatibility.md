@@ -9127,6 +9127,13 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 preparation ready results accept optional `artifactSizeBytes` from
+native artifact inspection. The existing private prepared state retains the same
+optional measurement; older records without it remain readable and unknown. The
+closed native result schema requires matching development Protocol, SDK and
+provider manifests when the measurement is emitted. No released wire epoch,
+new store, migration, mixed-development adapter or gate is introduced.
+
 Unreleased 0.3 daemon-database declarations accept optional
 `retention: [{ table, timeColumn }]` through the existing closed manifest family
 and `definePlugin` projection. Omitted retention preserves existing declarations.

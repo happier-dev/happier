@@ -3375,6 +3375,13 @@ prepared image through the same operation owner and native destroy, while the
 preset rows, revisions and capacity retain their reversible behavior. Restore
 returns it cold; only an explicit Prepare rebuilds the image.
 
+Preparation reports may retain native `artifactSizeBytes` beside the artifact in
+the existing private preset envelope. The preparation hook exposes this measured
+storage size; an omitted native value stays unknown. Prepared-artifact cost uses
+the managed-cost owner, separately from Machine compute pricing. An unpriced
+result can be presented as “Provider charges apply”. Startup savings require
+paired measured cold and warm starts; unknown durations supply no estimate.
+
 Home checks Machine and preset authority at admission. The original signed binding
 retains `presetPreparationAdmission` with Home, preset and initial revision;
 Prepare also binds its selected Machine. Archive spends the same finite admission
