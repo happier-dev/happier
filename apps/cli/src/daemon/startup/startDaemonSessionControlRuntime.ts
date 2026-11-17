@@ -3134,6 +3134,7 @@ export async function startDaemonSessionControlRuntime(
   let onChildExited: (pid: number, exit: ChildExit) => Promise<void> = async () => {};
   // Assigned once the managed-service durability owner exists; exits before that retire at startup.
   let retireEndedRunnerOwnedState: () => Promise<void> = async () => {};
+  let endedRunnerStateRetirement: Promise<void> = Promise.resolve();
   let releaseExecutionRunAuthorityForRunnerExit: (
     input: Readonly<{
       runnerPid: number;
@@ -11270,11 +11271,15 @@ export async function startDaemonSessionControlRuntime(
     rootDir: managedServiceEndpointProjectionRoot,
     observeProcessStartIdentity: observeManagedServiceProcessStartIdentity,
   });
-  retireEndedRunnerOwnedState = async () => {
-    if (isRuntimePublicationQuiescing()) return;
-    const retiredPids = await managedServiceDurabilityOwner!.retireEndedSessionRunnerOwnedProjections({ processOwnership: processOwnershipRuntime });
-    if (retiredPids.length) logger.infoFile('[DAEMON RUN] Retired retained managed services of ended owners', { retiredPids });
-    await collectEndedExecutionRunMarkers(params.trackedSessionsByKey);
+  retireEndedRunnerOwnedState = () => {
+    if (controlRuntimeResourcesDisposed || isRuntimePublicationQuiescing()) return Promise.resolve();
+    const retirement = endedRunnerStateRetirement.then(async () => {
+      const retiredPids = await managedServiceDurabilityOwner!.retireEndedSessionRunnerOwnedProjections({ processOwnership: processOwnershipRuntime });
+      if (retiredPids.length) logger.infoFile('[DAEMON RUN] Retired retained managed services of ended owners', { retiredPids });
+      await collectEndedExecutionRunMarkers(params.trackedSessionsByKey);
+    });
+    endedRunnerStateRetirement = retirement.catch(() => undefined);
+    return retirement;
   };
   managedServiceEndpointReadOwner = createDaemonManagedServiceEndpointReadOwner(
     {
@@ -11955,6 +11960,7 @@ export async function startDaemonSessionControlRuntime(
           ]
         : []),
       ['control_runtime_resources', disposeControlRuntimeResources],
+      ['ended_runner_state_retirement', async () => { await endedRunnerStateRetirement; }],
       ...trailingPhases,
     ];
     for (const [phase, run] of phases) {

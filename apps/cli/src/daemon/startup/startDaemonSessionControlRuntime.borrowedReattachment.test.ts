@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol';
+import { projectSessionOwnerCompatibilityViewV1, SessionMetadataTuplePatchSuccessV1Schema } from '@happier-dev/protocol';
 
 import { configuration, reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -19,7 +19,7 @@ import { startDaemonSessionControlRuntime } from './startDaemonSessionControlRun
 import { createSessionHooksService } from '@/plugins/runtime/hooks/session/service';
 import { createHerdrTerminalHostAdapter } from '@/integrations/herdr/adapter';
 import { withHerdrApi } from '@/integrations/herdr/herdrApi.testkit';
-import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createSessionRecordFixture, type SessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { publishReportedTerminalControlServiceability } from './publishReportedTerminalControlServiceability';
 import { startDaemonControlServer } from '../controlServer';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
@@ -31,6 +31,7 @@ const boundary = vi.hoisted(() => ({
     metadata: {} as Record<string, unknown>,
     version: 1,
     sessionId: 'session-reattached-borrowed',
+    tuple: null as Pick<SessionRecordFixture, 'metadataLayoutVersion' | 'metadata' | 'ownerMetadata' | 'agentState' | 'agentStateVersion'> | null,
 }));
 const hookRemoval = vi.hoisted(() => ({ target: '', completion: null as Promise<void> | null }));
 const terminalRemoval = vi.hoisted(() => ({ target: '', beforeUnlink: null as (() => Promise<void>) | null }));
@@ -52,26 +53,51 @@ vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/session/transport/http/sessionsHttp')>(),
     fetchSessionByIdCompat: vi.fn(async () => ({
         ...createSessionRecordFixture({ id: boundary.sessionId,
-            metadata: JSON.stringify(boundary.metadata), metadataVersion: boundary.version }),
+            metadata: JSON.stringify(boundary.metadata), metadataVersion: boundary.version,
+            ...boundary.tuple }),
         encryptionMode: 'plain',
     })),
     patchSessionMetadata: vi.fn(async ({ expectedVersion, ciphertext }: { expectedVersion: number; ciphertext: string }) => {
+        expect(boundary.tuple).toBeNull();
         expect(expectedVersion).toBe(boundary.version);
         boundary.metadata = JSON.parse(ciphertext) as Record<string, unknown>;
         boundary.version += 1;
         return { success: true, version: boundary.version };
     }),
     patchSessionMetadataEnvelopeTuple: vi.fn(async ({ patch }: Parameters<typeof import('@/session/transport/http/sessionsHttp').patchSessionMetadataEnvelopeTuple>[0]) => {
-        if (patch.mode !== 'owner_migration' || patch.target.ownerMetadata.t !== 'plain') {
-            throw new Error('Expected the canonical plain-owner tuple migration');
+        if (patch.mode === 'owner_migration') {
+            expect(boundary.tuple).toBeNull();
+            expect(patch.source.metadata).toEqual({ version: boundary.version, ciphertext: JSON.stringify(boundary.metadata) });
+            expect(patch.source.agentState).toEqual({ version: 0, ciphertext: null });
+            boundary.tuple = {
+                metadataLayoutVersion: 1, metadata: patch.target.sharedMetadata.ciphertext,
+                ownerMetadata: patch.target.ownerMetadata, agentState: patch.target.agentState.ciphertext,
+                agentStateVersion: 1,
+            };
+        } else if (patch.mode === 'owner') {
+            expect(boundary.tuple).not.toBeNull();
+            expect(patch.sharedMetadata.expectedVersion).toBe(boundary.version);
+            expect(patch.expectedOwnerMetadata).toEqual(boundary.tuple!.ownerMetadata);
+            expect(patch.agentState.expectedVersion).toBe(boundary.tuple!.agentStateVersion);
+            boundary.tuple = {
+                metadataLayoutVersion: 1, metadata: patch.sharedMetadata.ciphertext,
+                ownerMetadata: patch.ownerMetadata, agentState: patch.agentState.ciphertext,
+                agentStateVersion: boundary.tuple!.agentStateVersion + 1,
+            };
+        } else {
+            throw new Error('Expected a canonical owner tuple mutation');
         }
-        expect(patch.source.metadata.version).toBe(boundary.version);
+        const ownerMetadata = boundary.tuple.ownerMetadata;
+        if (ownerMetadata?.t !== 'plain') throw new Error('Expected plain owner metadata');
         boundary.metadata = projectSessionOwnerCompatibilityViewV1({
-            sharedMetadata: JSON.parse(patch.target.sharedMetadata.ciphertext),
-            ownerMetadata: patch.target.ownerMetadata.v,
+            sharedMetadata: JSON.parse(boundary.tuple.metadata),
+            ownerMetadata: ownerMetadata.v,
         });
         boundary.version += 1;
-        return { success: true, metadataLayoutVersion: 1, sharedMetadata: { version: boundary.version }, agentState: { version: 1 } };
+        return SessionMetadataTuplePatchSuccessV1Schema.parse({
+            success: true, metadataLayoutVersion: 1, sharedMetadata: { version: boundary.version },
+            agentState: { version: boundary.tuple.agentStateVersion },
+        });
     }),
 }));
 vi.mock('@/api/client/connectedServiceCredentialApi', async (importOriginal) => ({
@@ -92,6 +118,7 @@ afterEach(() => {
     hookRemoval.completion = null;
     terminalRemoval.target = '';
     terminalRemoval.beforeUnlink = null;
+    boundary.tuple = null;
     reloadConfiguration();
     vi.restoreAllMocks();
 });
