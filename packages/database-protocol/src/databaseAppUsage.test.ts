@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { projectDatabaseCaptureUsageV1 as project, projectDatabaseAppCostMetricSeriesV1 as toSeries,
-    type DatabaseCaptureCostsReadResultV1 } from './index.js';
+import { projectDatabaseCaptureUsageV1 as project, projectDatabaseCaptureUsageSourcesV1 as projectSources, projectDatabaseAppCostMetricSeriesV1 as toSeries,
+} from './databaseAppUsage.js';
+import type { DatabaseCaptureCostsReadResultV1 } from '@happier-dev/database-protocol';
 import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 
@@ -52,6 +53,24 @@ describe('App calls Usage projection', () => {
         expect(result.accounting.coverage?.reasons).toContain('unknown_token_categories');
         expect(result.accounting.costFacts).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'unpriced', eventCount: 2 })]));
         expect(result.coverage.lostObservations).toBe(1);
+    });
+
+    it('keeps each Environment a distinct named App calls source in one priced population', () => {
+        const staging = { ...raw, source: { ...raw.source, environmentId: 'staging' },
+            items: [{ ...row, callCount: 1, modelId: 'unlisted' }],
+            coverage: { ...raw.coverage, callCount: 1, tokenCategoryCallCount: 1, lostObservations: 2, reason: 'capture_write_failed' } };
+        const result = projectSources([{ source: 'app_calls:production', label: 'Production', read: raw },
+            { source: 'app_calls:staging', label: 'Staging', read: staging }], catalog, {}, { granularity: 'hour' });
+        expect(result.accounting.totals.eventCount).toBe(3);
+        expect(result.accounting.totals.cost.apiEquivalentUsd).toBe(6);
+        expect(result.accounting.breakdowns?.source).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: 'app_calls:production', label: 'Production', eventCount: 2 }),
+            expect.objectContaining({ key: 'app_calls:staging', label: 'Staging', eventCount: 1 }),
+        ]));
+        expect(result.accounting.costFacts).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'unpriced', eventCount: 1 })]));
+        expect(result.coverage).toEqual({ callCount: 3, tokenCategoryCallCount: 3, reportedCostCallCount: 0,
+            lostObservations: 2, reason: 'capture_write_failed' });
+        expect(result.accounting.coverage?.sources.map(source => source.source)).toEqual(['app_calls:production', 'app_calls:staging']);
     });
 
     it('retains reported money in its emitted currency beside the distinct API-equivalent estimate', () => {

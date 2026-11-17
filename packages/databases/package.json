@@ -7,6 +7,11 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./app-usage": {
+      "happier-source": "./src/appUsage.ts",
+      "types": "./dist/appUsage.d.ts",
+      "default": "./dist/appUsage.js"
+    },
     "./connection/postgresql": {
       "happier-source": "./src/connection/postgresql.ts",
       "types": "./dist/connection/postgresql.d.ts",

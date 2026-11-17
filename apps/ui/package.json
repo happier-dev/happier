@@ -165,6 +165,7 @@
     "@happier-dev/brand": "0.0.0",
     "@happier-dev/cli-common": "0.0.0",
     "@happier-dev/database-protocol": "0.0.0",
+    "@happier-dev/databases": "0.0.0",
     "@happier-dev/deployment-protocol": "0.0.0",
     "@happier-dev/deployments": "0.0.0",
     "@happier-dev/connection-supervisor": "0.0.0",
