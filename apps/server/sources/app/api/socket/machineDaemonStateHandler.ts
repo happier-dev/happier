@@ -6,9 +6,7 @@ import { machineUpdateMatchesStoredMode, machineStoredContentMatchesAccountMode 
 import { resolveMachineAdmissionInTx, resolveMachineAccessForActorsInTx } from '@/app/machines/machineAccess';
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import { recordMachineAliveInTx } from '@/app/presence/presenceRecorder';
-import { readMachineDevcontainerChildInTx, acquireManagedMachinePublicationAccountsInTx, invalidateManagedMachineInTx,
-    type StoredManagedMachine } from '@/app/machines/managed/managedRows';
-import { readManagedGuestActivityPublicationRowInTx } from '@/app/machines/managed/managedGuestActivity';
+import { readMachineDevcontainerChildInTx } from '@/app/machines/managed/managedRows';
 import { markAccountsChanged } from '@/app/changes/markAccountChanged';
 import { buildUpdateMachineUpdate, eventRouter } from '@/app/events/eventRouter';
 import { serializeMachineKeyBasis } from '@/app/machines/machineSerialization';
@@ -109,8 +107,7 @@ export function registerMachineDaemonStateHandler(userId: string, socket: Socket
                     : { result: 'success', version: current.machine.daemonStateVersion, daemonState: current.machine.daemonState }));
             };
             type AdmittedMachine = Extract<Awaited<ReturnType<typeof readContent>>, { machine: object }>['machine'];
-            const publishContent = async (tx: Tx, recipientAccountIds: string[], machine: AdmittedMachine,
-                managedActivityRow: StoredManagedMachine | null) => {
+            const publishContent = async (tx: Tx, recipientAccountIds: string[], machine: AdmittedMachine) => {
                 const { count } = await tx.machine.updateMany({
                     where: {
                         accountId: userId, id: machineId, daemonStateVersion: expectedVersion,
@@ -154,8 +151,6 @@ export function registerMachineDaemonStateHandler(userId: string, socket: Socket
                 }
 
                 const daemonStateUpdate = { value: daemonState, version: expectedVersion + 1 };
-                // The hint wakes policy only; signed exact activity still decides idle.
-                if (managedActivityRow) await invalidateManagedMachineInTx(tx, managedActivityRow);
                 const child = await readMachineDevcontainerChildInTx(tx, machineId);
                 const recipientAccess = await resolveMachineAccessForActorsInTx(tx, { machineId, actorAccountIds: recipientAccountIds });
                 const publications = await markAccountsChanged(tx, { accountIds: recipientAccountIds, kind: 'machine', entityId: machineId });
@@ -187,12 +182,6 @@ export function registerMachineDaemonStateHandler(userId: string, socket: Socket
                     acknowledgeRead(tx, observed);
                     return null;
                 }
-                // Keep the existing Account→Machine lock order of semantic publishers.
-                const managedActivityRow = parsed.data.managedActivityChanged === true && observed.machine.installationId
-                    ? await readManagedGuestActivityPublicationRowInTx(tx, { accountId: userId, machineId,
-                        installationId: observed.machine.installationId }) : null;
-                if (managedActivityRow) await acquireManagedMachinePublicationAccountsInTx(tx,
-                    { homeId: managedActivityRow.homeId, managedId: managedActivityRow.id });
                 const recipientAccountIds = await acquireMachinePublicationLocksInTx(tx, machineId);
                 const current = await readContent(tx);
                 if (current.kind !== 'change_required') {
@@ -202,7 +191,7 @@ export function registerMachineDaemonStateHandler(userId: string, socket: Socket
                 const timestamp = Date.now();
                 const admission = await recordMachineAliveInTx(tx, { accountId: userId, machineId, timestamp },
                     (_, machine) => publishContent(tx, recipientAccountIds, { ...current.machine,
-                        active: machine.active, lastActiveAt: machine.lastActiveAt }, managedActivityRow), current.machine);
+                        active: machine.active, lastActiveAt: machine.lastActiveAt }), current.machine);
                 return admission ? { admission, timestamp } : null;
             }, {
                 isolationLevel: "ReadCommitted",

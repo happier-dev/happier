@@ -29,6 +29,7 @@ import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createAuthenticatedFakeSocket, createSocketRoomDiscoveryHarness, triggerSocketHandler, getSocketHandler } from '@/app/api/testkit/socketHarness';
 import { registerMachineDaemonStateHandler } from '@/app/api/socket/machineDaemonStateHandler';
+import { observeMachineAliveFromSocket } from '@/app/api/socket/machineUpdateHandler';
 import { registerSocketRpcHandlers } from '@/app/api/socket/rpc/registerSocketRpcHandlers';
 import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
 import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
@@ -342,7 +343,7 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
         expect(await inTx(tx => readCurrentManagedGuestActivityInTx(tx, test.authorization.binding, test.guest.id))).toBeNull();
     });
 
-    it('wakes native retention only on changed requester guest activity, never equal, stale or ordinary state', async () => {
+    it('wakes native retention only on a machine-alive activity hint, never on an ordinary beat or Machine state write', async () => {
         const test = await setup('account', 'machines.managed.power.set', 'plain', false, true);
         await db.managedMachine.update({ where: { id: test.row.id }, data: { admittedInput: { enrollmentAccountId: test.requester.id } } });
         const token = await auth.createToken(test.requester.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -352,22 +353,26 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
         });
         qualifyCurrentAccountStoredContentSocket(publisher);
         registerMachineDaemonStateHandler(test.requester.id, publisher as unknown as Socket);
-        const publish = async (state: unknown, expectedVersion: number, hint = false) => {
+        const publish = async (state: unknown, expectedVersion: number) => {
             const reply = vi.fn();
             await getSocketHandler(publisher, 'machine-update-state')({ machineId: test.guest.id,
                 daemonState: encodePlainMachineStoredContent(state), expectedVersion,
-                expectedDataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, ...(hint ? { managedActivityChanged: true } : {}) }, reply);
+                expectedDataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER }, reply);
             return reply.mock.calls[0]?.[0];
         };
+        const beat = (managedActivityChanged?: true) => observeMachineAliveFromSocket({ userId: test.requester.id,
+            socket: publisher as unknown as Socket, timestamp: Date.now(), machineId: test.guest.id, continuingBeat: true,
+            ...(managedActivityChanged ? { managedActivityChanged } : {}) });
         const count = () => db.accountChange.count({ where: { accountId: test.owner.id, entityId: test.row.id } });
-        expect(await publish({ status: 'running' }, 0)).toMatchObject({ result: 'success', version: 1 });
+        expect(await publish({ status: 'running', pid: 1 }, 0)).toMatchObject({ result: 'success', version: 1 });
+        await beat();
         expect(await count()).toBe(0);
-        const idle = { status: 'running', managedActivity: { kind: 'idle', since: 123 } };
-        expect(await publish(idle, 1, true)).toMatchObject({ result: 'success', version: 2 });
+        await beat(true);
         expect(await count()).toBe(1);
-        expect(await publish(idle, 2, true)).toMatchObject({ result: 'success', version: 2 });
-        expect(await publish({ status: 'running', pid: 1 }, 1, true)).toMatchObject({ result: 'version-mismatch' });
-        expect(await publish({ ...idle, pid: 2 }, 2)).toMatchObject({ result: 'success', version: 3 });
+        // The busy/idle decision is no longer Machine content: such a write is refused and wakes nothing.
+        expect(await publish({ status: 'running', pid: 1, managedActivity: { kind: 'idle', since: 123 } }, 1))
+            .toMatchObject({ result: 'error' });
+        expect(await publish({ status: 'running', pid: 2 }, 1)).toMatchObject({ result: 'success', version: 2 });
         expect(await count()).toBe(1);
     });
 

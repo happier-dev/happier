@@ -51,6 +51,7 @@ import { retireExternalBrokerOperationInTx } from "@/app/teams/credentials/exter
 import { verifyExternalActionMachineRpcExecution, verifyExternalActionMachinePublicationRequester } from "@/app/auth/externalActionExecutionAuthorization";
 import { serializeMachineKeyBasis } from "@/app/machines/machineSerialization";
 import { readMachineDevcontainerChildInTx } from '@/app/machines/managed/managedRows';
+import { publishManagedGuestActivityAvailable } from '@/app/machines/managed/managedGuestActivity';
 import { USAGE_SOURCES_INVALIDATION_EVENT_V1, UsageSourcesInvalidationV1Schema } from '@happier-dev/protocol/usage/usageSources';
 import {
     resolveMachineAccessInTx,
@@ -75,6 +76,8 @@ export async function observeMachineAliveFromSocket(input: Readonly<{
     machineId?: string;
     continuingBeat: boolean;
     workSummaryChanged?: true;
+    /** Non-persisted wake hint, never evidence of idle or effect admission. */
+    managedActivityChanged?: true;
     isCurrent?: () => Promise<boolean>;
 }>): Promise<void> {
     const { userId, socket } = input;
@@ -109,6 +112,11 @@ export async function observeMachineAliveFromSocket(input: Readonly<{
     // publish their separate content-free notifications.
     await publishMachineAliveObservation(userId, machineId, timestamp, presence, !input.continuingBeat,
         input.workSummaryChanged === true);
+    if (input.managedActivityChanged === true) {
+        // The hint wakes Home managed policy only; signed exact activity still decides idle.
+        const installationId = readVerifiedMachineSocketInstallationIdFromSocketData(socket.data);
+        if (installationId) await publishManagedGuestActivityAvailable({ accountId: userId, machineId, installationId });
+    }
     if (!input.continuingBeat) {
         const installationId = readVerifiedMachineSocketInstallationIdFromSocketData(socket.data);
         if (installationId) await replayWorkflowRunMachineWakes({
@@ -691,6 +699,7 @@ export function machineUpdateHandler(
         machineId?: string;
         time: number;
         workSummaryChanged?: true;
+        managedActivityChanged?: true;
     }) => {
         try {
             // Track metrics
@@ -701,6 +710,7 @@ export function machineUpdateHandler(
             await observeMachineAliveFromSocket({ userId, socket, timestamp: data.time,
                 machineId: data.machineId, continuingBeat: true,
                 ...(data.workSummaryChanged === true ? { workSummaryChanged: true as const } : {}),
+                ...(data.managedActivityChanged === true ? { managedActivityChanged: true as const } : {}),
                 isCurrent: options.isMachineSocketCurrent });
         } catch {
             log(
