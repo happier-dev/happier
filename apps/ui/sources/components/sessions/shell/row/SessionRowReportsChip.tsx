@@ -25,9 +25,13 @@ import { t } from '@/text';
  * the person, including unseen failures and news whose exact count is not projected.
  */
 
-const DISCLOSURE_WIDTH_PX = 14;
+/**
+ * The caret's box fits inside the narrowest row's leading padding (a phone sheet's roster pads 12), so the box
+ * never hangs past the sheet's edge; the 11 px glyph still has room either side.
+ */
+const DISCLOSURE_WIDTH_PX = 12;
 /** How far the hit area reaches past the caret's box into the row's leading edge. */
-const DISCLOSURE_LEADING_PAD_PX = 6;
+const DISCLOSURE_LEADING_PAD_PX = 8;
 /**
  * The identity follows the caret with no gap, and the row's own press must keep it: the hit area reaches
  * only backwards, into the leading padding nothing else presses and the row's edge bounds; never forwards,

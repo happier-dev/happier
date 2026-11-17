@@ -144,11 +144,11 @@ describe('SessionRowReportsChip', () => {
           <SessionRowReportsDisclosure sessionId="bot" nodeId="session:home/bot" name="Reading desk" count={9} collapsed onSetCollapsed={vi.fn()} />
         </HappierUiPlatformProvider>,
       );
-      const area = await layoutHitArea(() => screen.findByTestId('session-row-reports-disclosure:bot'), { width: 14, height: 24 });
+      const area = await layoutHitArea(() => screen.findByTestId('session-row-reports-disclosure:bot'), { width: 12, height: 24 });
       // The Session row's identity follows the caret at once: the hit area ends at the caret's drawn right edge.
       expect(area.insets.right).toBe(0);
-      // Only the 6 px of row padding before the caret is taken; the row band is never left.
-      expect(area.insets.left).toBe(6);
+      // Only the 8 px of row padding before the caret is taken; the row band is never left.
+      expect(area.insets.left).toBe(8);
       expect(area.width).toBe(20);
       expect(area.insets.top).toBe(0);
       expect(area.insets.bottom).toBe(0);

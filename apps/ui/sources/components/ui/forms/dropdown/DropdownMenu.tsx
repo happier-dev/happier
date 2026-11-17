@@ -465,10 +465,14 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 checked: item.prompt === true ? undefined : item.checked ?? (selectCheckedId === null ? undefined : item.id === selectCheckedId),
                 multiSelect: item.multiSelect,
                 swatch: item.swatch,
-                left: item.icon ?? null,
+                // A pending row with an icon draws its spinner in the icon's place, so the title and subtitle keep
+                // their width and nothing re-wraps while it works; a row without one takes it on the trailing edge.
+                left: item.loading && item.icon
+                    ? <ActivitySpinner size={iconMatchedSpinnerSize(16)} color={theme.colors.text.secondary} />
+                    : item.icon ?? null,
                 rowContainerStyle: item.rowContainerStyle,
                 ...(item.destructive ? { rowTitleStyle: { color: theme.colors.state.danger.foreground } } : {}),
-                right: item.loading
+                right: item.loading && !item.icon
                     ? <ActivitySpinner size={iconMatchedSpinnerSize(16)} color={theme.colors.text.secondary} />
                     : item.rightElement
                     ? item.rightElement

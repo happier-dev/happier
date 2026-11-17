@@ -269,9 +269,9 @@ export const BotFacePickerPanel = React.memo(function BotFacePickerPanel(
         id: 'custom' as const,
         title: t('bots.face.custom'),
         preview: (
-          // A phone sheet's square cell cannot hold the word; the tile keeps it as its accessible name and the
-          // section value names it once chosen.
-          <ShapeTile label={layout === 'panel' ? t('bots.face.custom') : undefined} colour={colors.text.secondary}>
+          // Named under its glyph everywhere (lab r8-shapes-U): a bare "+" says nothing. A phone sheet's smaller
+          // square takes the word at the micro step, so it fits the cell with the glyph above it.
+          <ShapeTile label={t('bots.face.custom')} labelVariant={layout === 'panel' ? 'meta' : 'micro'} colour={colors.text.secondary}>
             {customShape ? (
               <BotFace identity={{ ...identity, shape: customShape }} style={style} size={BODY_TILE_FACE_PX * 0.75} mood="quiet" />
             ) : null}
@@ -470,12 +470,12 @@ function PetTileFace(props: Readonly<{ pet: PetAccountReferenceV1; size: number 
  * "Surprise", so the Surprise face is captioned by its shuffle glyph alone; its name stays the tile's label for
  * assistive tech and the section value.
  */
-function ShapeTile(props: Readonly<{ glyph?: 'shuffle'; icon?: IconName; label?: string; colour: string; children: React.ReactNode }>) {
+function ShapeTile(props: Readonly<{ glyph?: 'shuffle'; icon?: IconName; label?: string; labelVariant?: 'meta' | 'micro'; colour: string; children: React.ReactNode }>) {
   return (
     <View style={styles.shapeCell}>
       {props.children ?? <Icon name={props.icon ?? 'plus'} size={ICON_SIZE.xs} color={props.colour} />}
       {props.glyph ? <Icon name={props.glyph} size={ICON_SIZE.xxs} color={props.colour} /> : null}
-      {props.label ? <Text variant="meta" numberOfLines={1} style={styles.shapeLabel}>{props.label}</Text> : null}
+      {props.label ? <Text variant={props.labelVariant ?? 'meta'} numberOfLines={1} style={styles.shapeLabel}>{props.label}</Text> : null}
     </View>
   );
 }
