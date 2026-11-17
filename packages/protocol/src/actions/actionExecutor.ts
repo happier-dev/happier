@@ -1337,6 +1337,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   /** Terminal approvals publish through their originating input owner, including receipt replays. */
   async function settleApprovalExecutionPublication(artifactId: string, request: ApprovalRequest,
     context: ActionExecutorContext, replayAcknowledgement?: ActionExecuteResult): Promise<ActionExecuteFailure | null> {
+    // Retired Publish history never reaches a current outcome publisher; replay refuses it the same way.
+    if (isHistoricalPublishApprovalRequestV2(request)) {
+      return { ok: false, effectAttempted: false, errorCode: 'approval_stale', error: 'approval_stale' };
+    }
     if (request.v === 2 && request.approval?.flow === 'deferred' && isApprovalRequestExecutionApproved(request)) {
       const origin = request.executionOriginV1;
       if ((origin.surface === 'agent' || origin.surface === 'mcp') && origin.caller.kind === 'session'
