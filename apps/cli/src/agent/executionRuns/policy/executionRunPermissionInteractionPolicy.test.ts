@@ -7,6 +7,20 @@ import {
 } from './executionRunPermissionInteractionPolicy';
 
 describe('resolveExecutionRunPermissionInteractionMode', () => {
+  it.each(['attached', 'detached'] as const)('allows review questions with an %s response target while tools remain deterministic', (scope) => {
+    const context = {
+      intent: 'review', runClass: 'bounded', ioMode: 'request_response', retentionPolicy: 'ephemeral',
+      permissionMode: 'read-only', parentSessionId: scope === 'attached' ? 'session-1' : null,
+      interactionTargetAvailable: true,
+      backendCapabilities: { canRespondToPermission: true, canSurfaceParentSessionPrompt: true },
+    } as const;
+    expect(resolveExecutionRunPermissionInteractionMode({ ...context, requestKind: 'question' })).toBe('prompt_in_execution_scope');
+    expect(resolveExecutionRunPermissionInteractionMode(context)).toBe('deterministic');
+    expect(resolveExecutionRunPermissionInteractionMode({ ...context, requestKind: 'question', parentSessionId: null, interactionTargetAvailable: false })).toBe('interaction_unavailable');
+    expect(resolveExecutionRunPermissionInteractionMode({ ...context, requestKind: 'question', interactionTargetAvailable: false })).toBe('interaction_unavailable');
+    expect(resolveExecutionRunPermissionInteractionMode({ ...context, requestKind: 'question', backendCapabilities: { canRespondToPermission: false, canSurfaceParentSessionPrompt: true } })).toBe('fail_closed');
+  });
+
   it('keeps review, plan, and memory_hints runs deterministic', () => {
     expect(resolveExecutionRunPermissionInteractionMode({
       intent: 'review',

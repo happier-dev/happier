@@ -44,6 +44,13 @@ effective decision or grant payload. The permission response owner resolves the
 stored offer, refuses missing or stale native answers, and applies the native
 decision before reporting success. Application failure leaves the occurrence pending.
 
+In 0.3 development, native Review runs can ask structured clarification questions
+through their existing execution-run response target, including detached runs.
+The interaction policy distinguishes questions from tool permission requests:
+read-only tools keep deterministic decisions, and a missing or unsupported answer
+target reports interaction unavailable. Answers and cancellation retain the exact
+run and controller occurrence; final-result Review questions remain follow-up content.
+
 Application uses each transport's existing decision boundary: MSP awaits its
 separate `approval/decide` command result; ACP returns the chosen permission option
 from its handler; Codex app-server sends its existing approval response. Response

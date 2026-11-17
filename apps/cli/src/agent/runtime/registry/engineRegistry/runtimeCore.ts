@@ -686,12 +686,13 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                 handler: host.permissionHandler,
                                 toolPolicy: resolveSessionOwnedRunToolPolicy({ options, parentMetadata: parentToolPolicy, agentId: nativeIdentity.agentId }),
                                 mcpToolPolicy: { permissionMode: options.permissionMode, readContext: () => readRunMcpToolContext?.() ?? null },
-                                readInteractionMode: () => {
+                                readInteractionMode: (requestKind) => {
                                     const { intent, runClass, ioMode, retentionPolicy } = options.start ?? {};
                                     if (!intent || !runClass || !ioMode || !retentionPolicy) {
                                         return 'interaction_unavailable';
                                     }
                                     return resolveExecutionRunPermissionInteractionMode({
+                                        requestKind,
                                         intent,
                                         runClass,
                                         ioMode,

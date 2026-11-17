@@ -33,7 +33,7 @@ export function createRunScopedExecutionPermissionHandler(params: Readonly<{
     requestId: string;
     reason: string;
   }>) => void | Promise<void>;
-  readInteractionMode?: () => ExecutionRunPermissionInteractionMode;
+  readInteractionMode?: (requestKind: 'question' | 'permission') => ExecutionRunPermissionInteractionMode;
 }>): Readonly<{
   handler: Omit<AcpPermissionHandler, 'handleToolCall'> & Pick<ExecutionRunPermissionHandler, 'handleToolCall'>;
   respondToPermissionRequest: ExecutionRunPermissionResponder;
@@ -102,13 +102,13 @@ export function createRunScopedExecutionPermissionHandler(params: Readonly<{
         : {}),
       async handleToolCall(toolCallId, toolName, input, context) {
         const requestId = scopedRequestId(toolCallId);
-        const question = isAgentStructuredQuestionRequest({ toolName, source: context?.source });
+        const question = !context?.nativeChoices && isAgentStructuredQuestionRequest({ toolName, source: context?.source });
         const immediate = readImmediate(requestId, toolName, input, context);
         if (immediate) return await applyNativePermissionImmediateDecision(immediate, context);
         // Startup questions have no admitted executable turn. Keep their exact
         // Run scope, but let the Session question owner collect the person's answer.
         const interactionMode = isHostOccurrenceQuestion(toolName, context) && params.parentSessionId !== null
-          ? undefined : params.readInteractionMode?.();
+          ? undefined : params.readInteractionMode?.(question ? 'question' : 'permission');
         if (interactionMode === 'interaction_unavailable'
           || (question && (interactionMode === 'deterministic' || interactionMode === 'fail_closed'))) {
           throw Object.assign(

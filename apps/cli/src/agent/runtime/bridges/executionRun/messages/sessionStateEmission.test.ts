@@ -746,7 +746,7 @@ describe('createExecutionRunControllerMessageHandler', () => {
     });
   });
 
-  it('routes prompt-capable requests from the host-owned backend identity without interpreting the runtime descriptor', () => {
+  it.each(['delegate', 'review'] as const)('routes %s requests from the host-owned backend identity without interpreting the runtime descriptor', (intent) => {
     const respondToPermission = vi.fn(async () => ({ delivered: true as const }));
     const ctrl = createController({
       backend: {
@@ -756,8 +756,8 @@ describe('createExecutionRunControllerMessageHandler', () => {
     });
     const run: ExecutionRunState = {
       ...createRunningRun(),
-      intent: 'delegate',
-      permissionMode: 'default',
+      intent,
+      permissionMode: intent === 'review' ? 'read-only' : 'default',
       runClass: 'long_lived',
       ioMode: 'streaming',
     };
@@ -799,7 +799,9 @@ describe('createExecutionRunControllerMessageHandler', () => {
       type: 'permission-request',
       id: 'provider-request-parent',
       reason: 'write',
-      payload: { toolName: 'write', input: { path: '/tmp/parent-prompt.txt' } },
+      payload: intent === 'review'
+        ? { toolName: 'AskUserQuestion', input: { questions: [{ question: 'Which branch?' }] } }
+        : { toolName: 'write', input: { path: '/tmp/parent-prompt.txt' } },
     });
 
     expect(publishRequest).toHaveBeenCalledWith(expect.objectContaining({

@@ -338,13 +338,14 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
         runId,
         controllerOccurrenceId: params.controllerOccurrenceId,
         handler: permissionHandler,
-        readInteractionMode: () => {
+        readInteractionMode: (requestKind) => {
             const requestStore = params.getPermissionRequestStore?.() ?? null;
             const { intent, runClass, ioMode, retentionPolicy } = params.start;
             if (!intent || !runClass || !ioMode || !retentionPolicy) {
                 return 'interaction_unavailable';
             }
             return resolveExecutionRunPermissionInteractionMode({
+                requestKind,
                 intent,
                 runClass,
                 ioMode,

@@ -28,6 +28,8 @@ export type ExecutionRunPermissionInteractionContext = Readonly<{
   ioMode: ExecutionRunIoMode;
   retentionPolicy: ExecutionRunRetentionPolicy;
   permissionMode: string;
+  /** Questions collect an answer without granting tool authority. */
+  requestKind?: 'question' | 'permission';
   parentSessionId?: string | null;
   interactionTargetAvailable?: boolean;
   backendCapabilities?: ExecutionRunPermissionBackendCapabilities | null;
@@ -89,20 +91,21 @@ export function resolveExecutionRunPermissionInteractionMode(
 ): ExecutionRunPermissionInteractionMode {
   const profile = resolveExecutionRunIntentProfile(context.intent);
   const canonicalPermissionMode = normalizePermissionMode(context.permissionMode);
+  const reviewQuestion = profile.intent === 'review' && context.requestKind === 'question';
 
-  if (canonicalPermissionMode === 'read-only' || canonicalPermissionMode === 'plan') {
+  if (!reviewQuestion && (canonicalPermissionMode === 'read-only' || canonicalPermissionMode === 'plan')) {
     return 'deterministic';
   }
 
-  if (canonicalPermissionMode === 'safe-yolo') {
+  if (!reviewQuestion && canonicalPermissionMode === 'safe-yolo') {
     return 'deterministic';
   }
 
-  if (!isPromptCapableIntent(profile.intent)) {
+  if (!reviewQuestion && !isPromptCapableIntent(profile.intent)) {
     return 'deterministic';
   }
 
-  if (context.interactionTargetAvailable !== true && !context.parentSessionId) {
+  if (context.interactionTargetAvailable !== true && (reviewQuestion || !context.parentSessionId)) {
     return 'interaction_unavailable';
   }
 

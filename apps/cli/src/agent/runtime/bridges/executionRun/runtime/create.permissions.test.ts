@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createExecutionRunPermissionHandler } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
+import { resolveExecutionRunPermissionInteractionMode } from '@/agent/executionRuns/policy/executionRunPermissionInteractionPolicy';
 import {
   createRunScopedExecutionPermissionHandler,
   readRunScopedExecutionProviderRequestId,
@@ -9,6 +10,41 @@ import {
 const TEST_RECOVERY_BACKEND_ID = `${'recovery'}.${'backend'}`;
 
 describe('execution run permission handler', () => {
+  it.each(['answer', 'cancel'] as const)('routes read-only review questions by run and supports %s without allowing writes', async (completion) => {
+    const published: string[] = [];
+    const makeScope = (runId: string) => createRunScopedExecutionPermissionHandler({
+      runId, controllerOccurrenceId: `${runId}-occurrence`, parentSessionId: null,
+      handler: createExecutionRunPermissionHandler({
+        backendId: 'claude', permissionMode: 'read-only',
+        publishPendingRequest: ({ requestId }) => { published.push(requestId); },
+      }),
+      readInteractionMode: (requestKind) => resolveExecutionRunPermissionInteractionMode({
+        intent: 'review', runClass: 'bounded', ioMode: 'request_response', retentionPolicy: 'ephemeral',
+        permissionMode: 'read-only', parentSessionId: null, interactionTargetAvailable: true, requestKind,
+        backendCapabilities: { canRespondToPermission: true, canSurfaceParentSessionPrompt: true },
+      }),
+    });
+    const scope = makeScope('review-one');
+    const other = makeScope('review-two');
+    const pending = scope.handler.handleToolCall('question', 'AskUserQuestion', {
+      questions: [{ question: 'Which branch?', header: 'Branch', options: [{ label: 'Main', description: 'Main branch' }], multiSelect: false }],
+    });
+    await vi.waitFor(() => expect(published).toHaveLength(1));
+    expect(other.respondToPermissionRequest('question', { decision: 'approved', answers: { Branch: 'Main' } })).toBe(false);
+    await expect(scope.handler.handleToolCall('write', 'write', { path: 'file.ts', content: 'unsafe' })).resolves.toMatchObject({ decision: 'denied' });
+    expect(published).toHaveLength(1);
+    if (completion === 'answer') {
+      expect(await scope.respondToPermissionRequest('question', { decision: 'approved', answers: { Branch: 'Main' } })).toMatchObject({ answers: { Branch: 'Main' } });
+      await expect(pending).resolves.toMatchObject({ answers: { Branch: 'Main' } });
+    } else {
+      await scope.dispose('review stopped');
+      await expect(pending).resolves.toMatchObject({ decision: 'denied' });
+      expect(scope.respondToPermissionRequest('question', true)).toBe(false);
+    }
+    await scope.dispose('done');
+    await other.dispose('done');
+  });
+
   it.each(['auto', 'safe-yolo', 'acceptEdits'])(
     'deterministically approves residual tool calls for the %s Auto alias within its causal ceiling',
     async (permissionMode) => {

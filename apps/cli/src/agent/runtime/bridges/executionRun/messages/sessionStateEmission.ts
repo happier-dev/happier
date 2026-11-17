@@ -22,6 +22,7 @@ import { createExecutionRunCodedError } from '../errors';
 import { EXECUTION_RUN_TASK_RESULT_MAX_CODE_UNITS } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import { createExecutionRunTranscriptCustodyError } from '../executionRunTranscriptPublisher';
 import { projectExecutionRunInputTurn } from '../runOccurrenceWitness';
+import { isAgentStructuredQuestionRequest } from '@/agent/permissions/requestKind';
 
 /**
  * One writer signature, parameterized over its owner's option/result contract.
@@ -352,6 +353,11 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
       const runtimeKind = readNonEmptyString(run.backendId);
       const requestStore = args.getPermissionRequestStore?.() ?? null;
       const mode = resolveExecutionRunPermissionInteractionMode({
+        requestKind: !providerMetadata?.nativeChoices && isAgentStructuredQuestionRequest({
+          toolName,
+          kind: readNonEmptyString(providerMetadata?.kind) ?? undefined,
+          source: readNonEmptyString(providerMetadata?.source),
+        }) ? 'question' : 'permission',
         intent: run.intent,
         runClass: run.runClass,
         ioMode: run.ioMode,
