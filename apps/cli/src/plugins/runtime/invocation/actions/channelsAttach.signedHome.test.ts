@@ -11,7 +11,8 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadActionInputV1Schema,
     PluginAvailabilityIntentReadActionOutputV1Schema,
 } from '@happier-dev/protocol/plugins/availability/actions';
-import { ExternalActionExecutionAuthorizationV1Schema,
+import { ExternalActionActionIdV1Schema, ExternalActionRequestEnvelopeV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
+    EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HTTP_PATH_TEMPLATE_V1,
     EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ExternalActionRequestEnvelopeV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -27,7 +28,7 @@ import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createAuthoredAdmittedPluginRuntimeFixture, requireDaemonEntrypoint } from '@/plugins/testkit/admittedRuntime';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
@@ -39,9 +40,12 @@ import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
 import { createCommittedContributedActionDefinitionLister } from './createCommittedContributedActionDeps';
 import { executeContributedAction } from './executeContributedAction';
+import { projectContributedActionFailure } from './contributedActionFailure';
 import { createHttpCollectionBoundary } from '../../context/accountPluginDataStorage.testkit';
 import { CHANNELS_PLUGIN } from '../../../../../../../packages/plugins/channels/src/manifest';
+import { GITHUB_PLUGIN } from '../../../../../../../packages/plugins/scm-github/src/manifest';
 import { CHANNEL_STATE_COLLECTION } from '../../../../../../../packages/plugins/channels/src/collections';
+import { enableExternalActionHttpBody } from '../../../../../../server/sources/app/api/utils/externalActionHttpBody';
 
 const homeUrl = 'https://channels-signed-home.test';
 const serverIdentityId = 'srv_channels_signed_home';
@@ -54,6 +58,7 @@ const qualifiedActionId = formatQualifiedPluginActionId({ pluginId: CHANNELS_PLU
 const actionId = 'action.invoke';
 const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(21));
 const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId,
+    tokenEpoch: 1,
     provenance: { v: 1, kind: 'terminal', authority: 'account_automation' },
 })).toString('base64url')}.signature`;
 const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
@@ -65,8 +70,10 @@ afterEach(() => {
 
 async function fixture(options: Readonly<{ signingBinding?: boolean }> = {}) {
     const home = fastify();
+    enableExternalActionHttpBody(home.withTypeProvider());
     const paths: string[] = [];
     const signedPaths: string[] = [];
+    const bearerPaths: string[] = [];
     const signedRequests: { path: string; effectActionId: string }[] = [];
     let daemonOrigin: string | undefined;
     let authorization: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse> | undefined;
@@ -82,14 +89,18 @@ async function fixture(options: Readonly<{ signingBinding?: boolean }> = {}) {
     });
     home.addHook('preHandler', async (request, reply) => {
         paths.push(request.url);
-        if (!authorization) {
-            if (!['/v1/account/encryption/currentness', '/v2/account/settings',
+        if (!authorization || request.headers.authorization !== undefined) {
+            if (!['/v1/account/encryption/currentness', '/v1/account/encryption', '/v1/account/profile', '/v2/account/settings',
                 PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'],
-                '/v1/machines/managed/actions/list',
-            ].includes(request.url)) {
+                '/v1/machines/managed/actions/list', `/v1/machines/${machineId}`,
+            ].includes(request.url) && !request.url.startsWith('/v1/actions/')) {
                 throw new Error('Only original CLI Account preparation may precede admission');
             }
             expect(request.headers.authorization).toBe(`Bearer ${token}`);
+            expect(request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBeUndefined();
+            expect(request.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]).toBeUndefined();
+            expect(request.headers[EXTERNAL_ACTION_EFFECT_ACTION_HEADER]).toBeUndefined();
+            bearerPaths.push(request.url);
             return;
         }
         const signature = request.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER];
@@ -98,7 +109,7 @@ async function fixture(options: Readonly<{ signingBinding?: boolean }> = {}) {
         expect(typeof signature).toBe('string');
         if (typeof signature !== 'string') throw new Error('Missing Machine signature');
         const effectActionId = request.headers[EXTERNAL_ACTION_EFFECT_ACTION_HEADER];
-        if (effectActionId !== actionId) throw new Error('Signed HTTP must retain the admitted root Action');
+        if (effectActionId !== authorization.binding.actionId) throw new Error('Signed HTTP must retain the admitted root Action');
         expect(verifyExternalActionMachineRequestV1({
             authorizationToken: authorization.token, effectActionId,
             target: authorization.binding.target, installationId, requestId: authorization.binding.requestId,
@@ -114,6 +125,31 @@ async function fixture(options: Readonly<{ signingBinding?: boolean }> = {}) {
         }
     });
     home.get('/v1/account/encryption/currentness', async () => currentness);
+    home.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
+    home.get('/v1/account/profile', async () => ({ id: accountId }));
+    home.get(`/v1/machines/${machineId}`, async () => ({ machine: {
+        id: machineId, kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
+        installationId, installationPublicKey: Buffer.from(keys.publicKey).toString('base64'),
+        access: { custodian: { accountId, displayName: 'Channels owner' }, role: 'manage',
+            resourceMode: 'plain', accessState: 'ready' },
+    } }));
+    home.post<{ Params: { actionId: string } }>(EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HTTP_PATH_TEMPLATE_V1, async request => {
+        const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.body);
+        if (body.envelope.v !== 1) throw new Error('The plain requester must retain its plain Action envelope');
+        return issueAuthorization(body.envelope, ExternalActionActionIdV1Schema.parse(request.params.actionId));
+    });
+    home.post<{ Params: { actionId: string } }>('/v1/actions/:actionId', async request => {
+        const admitted = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(request.body);
+        const envelope = admitted.success ? admitted.data.envelope : ExternalActionRequestEnvelopeV1Schema.parse(request.body);
+        if (!daemonOrigin || envelope.v !== 1) throw new Error('Expected the current plain daemon delivery');
+        if (admitted.success) expect(admitted.data.executionAuthorization?.binding).toEqual(authorization?.binding);
+        const response = await nativeFetch(`${daemonOrigin}${SIGNED_ROOT_ACTION_EXECUTE_PATH}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'channels-daemon-control' },
+            body: JSON.stringify({ actionId: request.params.actionId, input: envelope.input,
+                actionRequestId: envelope.requestId, target: envelope.target, surface: 'cli' }),
+        });
+        return { v: 1, actionId: request.params.actionId, requestId: envelope.requestId, execution: await response.json() };
+    });
     home.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: {} }, version: 1 }));
     // This ordinary Machine has no managed power resource.
     home.post('/v1/machines/managed/actions/list', async () => ({ machines: [] }));
@@ -164,21 +200,24 @@ async function fixture(options: Readonly<{ signingBinding?: boolean }> = {}) {
         resolveCurrentMachineId: () => machineId,
         resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId, machineId }),
     };
-    const packageRoot = resolve(import.meta.dirname, '../../../../../../../packages/plugins/channels');
-    const resources = normalizePluginManifestV2(CHANNELS_PLUGIN.manifest).contributes.resources;
-    const files: Record<string, string | Uint8Array> = {
-        '.happier-plugin/daemon.js': 'export function activate() {}',
-    };
-    await Promise.all(resources.map(async resource => {
-        if ('path' in resource && typeof resource.path === 'string') {
-            files[resource.path] = await readFile(resolve(packageRoot, resource.path));
-        }
+    const plugins = await Promise.all([
+        { plugin: CHANNELS_PLUGIN, directory: 'channels' },
+        { plugin: GITHUB_PLUGIN, directory: 'scm-github' },
+    ].map(async ({ plugin, directory }) => {
+        const packageRoot = resolve(import.meta.dirname, '../../../../../../../packages/plugins', directory);
+        const resources = normalizePluginManifestV2(plugin.manifest).contributes.resources;
+        const files: Record<string, string | Uint8Array> = {
+            [requireDaemonEntrypoint(plugin.manifest)]: 'export function activate() {}',
+        };
+        await Promise.all(resources.map(async resource => {
+            if ('path' in resource && typeof resource.path === 'string') {
+                files[resource.path] = await readFile(resolve(packageRoot, resource.path));
+            }
+        }));
+        return { manifest: plugin.manifest, files, instantiateCommittedModule: () => ({ activate: plugin.activate }) };
     }));
     const runtime = await runWithServerHttpBaseUrl(homeUrl, () => createAuthoredAdmittedPluginRuntimeFixture({
-        plugins: [{ manifest: CHANNELS_PLUGIN.manifest,
-            files,
-            instantiateCommittedModule: () => ({ activate: CHANNELS_PLUGIN.activate }),
-        }],
+        plugins,
         async resolveContributes(happyHomeDir) {
             return createResolvedContributionRegistry(projectLoadedPluginContributes({
                 loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'first_party',
@@ -189,24 +228,28 @@ async function fixture(options: Readonly<{ signingBinding?: boolean }> = {}) {
     await runtime.registry.activateContributionsOnDemand([{ pluginId: CHANNELS_PLUGIN.manifest.id,
         family: 'actions', localId,
     }]);
-    function admit(input: ExternalActionRequestEnvelopeV1['input'], requesterAccountId: string, requestId: string) {
-        const target = { kind: 'machine' as const, machineId };
+    function issueAuthorization(envelope: ExternalActionRequestEnvelopeV1, admittedActionId = actionId, requesterAccountId = accountId) {
         authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1,
             token: 'synthetic-home-admission-proof', binding: {
                 accountId: requesterAccountId, custodianAccountId: accountId,
                 authentication: { kind: 'terminal', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
-                serverIdentityId, machineId, installationId, actionId, requestId, target,
-                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId, target,
-                    input: { action: { pluginId: CHANNELS_PLUGIN.manifest.id, localId }, input },
-                }),
+                serverIdentityId, machineId, installationId, actionId: admittedActionId,
+                requestId: envelope.requestId, target: envelope.target,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
             },
         });
+        return authorization;
+    }
+    function admit(input: ExternalActionRequestEnvelopeV1['input'], requesterAccountId: string, requestId: string) {
+        const target = { kind: 'machine' as const, machineId };
+        issueAuthorization({ v: 1, requestId, target, input: { action: { pluginId: CHANNELS_PLUGIN.manifest.id, localId }, input } },
+            actionId, requesterAccountId);
         return { authority: 'account_automation' as const, serverId: serverIdentityId,
             serverIdentityId, actionRequestId: requestId, externalActionExecutionAuthorization: authorization,
             externalActionTarget: target };
     }
     return {
-        paths, signedPaths, signedRequests, collection,
+        paths, signedPaths, bearerPaths, signedRequests, collection,
         denySession() { denySession = true; },
         allowDaemonOrigin(origin: string) { daemonOrigin = origin; },
         listContributedActionDefinitions: createCommittedContributedActionDefinitionLister({
@@ -266,7 +309,8 @@ describe('signed Home Session PR attachment through the admitted CLI Channels ru
                     expect(input.action).toEqual({ pluginId: CHANNELS_PLUGIN.manifest.id, localId });
                     const attempt = await subject.invokeAdmittedAction(input.input, root.actionRequestId ?? randomUUID());
                     if (!attempt.matched) throw new Error('CLI Action did not match the committed Channels contribution');
-                    return attempt.result;
+                    // The daemon projects private plugin failures into the public Action envelope.
+                    return attempt.result.ok ? attempt.result : projectContributedActionFailure(attempt.result);
                 });
                 try {
                 const origin = await daemon.listen({ port: 0, host: '127.0.0.1' });
@@ -292,9 +336,10 @@ describe('signed Home Session PR attachment through the admitted CLI Channels ru
                     });
                     expect(output.json(), JSON.stringify({ output: output.json(), paths: subject.paths, received, daemonErrors })).toMatchObject({ ok: false,
                         error: { code: 'channels_pr_link_checkout_not_verified' } });
+                    // This inline schema reuses initial discovery before the actual invocation.
                     expect(received).toEqual([
-                        expect.objectContaining({ actionId: 'action.spec.get' }),
-                        expect.objectContaining({ actionId: 'action.spec.get' }),
+                        expect.objectContaining({ actionId: 'action.spec.get',
+                            input: { id: qualifiedActionId, includeOutputSchema: true } }),
                         expect.objectContaining({ actionId: 'action.invoke',
                             actionRequestId: 'channels-cli-attach', target: { kind: 'machine', machineId } }),
                     ]);
@@ -318,7 +363,11 @@ describe('signed Home Session PR attachment through the admitted CLI Channels ru
                 pullRequestUrl: 'https://github.com/acme/widgets/pull/12' });
             expect(result, JSON.stringify({ result, paths: subject.paths })).toMatchObject({ status: 'failed', code: 'channels_pr_link_checkout_not_verified' });
             expect(subject.paths.some(path => path.startsWith(`/v1/sessions/${sessionId}/messages?`))).toBe(true);
-            expect(subject.signedPaths).toEqual(subject.paths);
+            // The GitHub observer starts independently and reads its own Account
+            // policy/identity. Every contributed invocation read remains signed.
+            const observerAccountPaths = ['/v2/account/settings', '/v1/account/profile'];
+            expect(subject.bearerPaths).toEqual(observerAccountPaths);
+            expect(subject.signedPaths).toEqual(subject.paths.filter(path => !observerAccountPaths.includes(path)));
             expect(subject.collection.capturedMutationRequests).toEqual([]);
             expect(JSON.stringify(result)).not.toContain(token);
             expect(JSON.stringify(result)).not.toContain('synthetic-home-admission-proof');
@@ -353,7 +402,10 @@ describe('signed Home Session PR attachment through the admitted CLI Channels ru
         try {
             const readsBefore = [...subject.collection.capturedReadPaths];
             const result = await subject.invoke({ kind: 'list', sessionId });
-            expect(result).toMatchObject({ status: 'failed', code: 'not_authenticated' });
+            expect(result, JSON.stringify({ result, paths: subject.paths })).toMatchObject({ status: 'failed', code: 'action_failed',
+                data: { details: { authorizationRefusalReason: 'signing_key_missing' },
+                    failureCause: { phase: 'execution_authorization' } },
+            });
             expect(subject.paths).toEqual([]);
             expect(subject.collection.capturedReadPaths).toEqual(readsBefore);
             expect(subject.collection.capturedMutationRequests).toEqual([]);
