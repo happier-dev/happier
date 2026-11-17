@@ -80,22 +80,25 @@ describe('UI Session authoring preparation', () => {
         });
         expect(prepared.input.sessionPlacement).toEqual(sessionPlacement);
     });
-    it('keeps the already acquired managed target and its Project file choice', async () => {
+    it.each([false, true])('keeps the already acquired managed target with optional placement carrier=%s', async withPlacement => {
         const unexpectedRead = async (): Promise<never> => { throw new Error('captured defaults must not reread'); };
         const prepare = createUiPrepareSessionSpawnNewInput({ readSettings: unexpectedRead,
             createLoader: () => ({ readPersonalDefaults: unexpectedRead, readSource: unexpectedRead, readTeam: unexpectedRead, readHome: unexpectedRead }),
             resolveDefaultAgentTarget: unexpectedRead });
         const sessionPlacement = { kind: 'managed', projectFiles: { kind: 'copy_once' } } as const;
         const prepared = await prepare({ executionTarget, agentTarget: authoredAgent,
-            directory: { kind: 'path', path: '/project' }, sessionPlacement,
+            directory: { kind: 'path', path: '/project' }, ...(withPlacement ? { sessionPlacement } : {}),
             managedCreation: { homeId: 'home', managedId: 'acquired' } }, {
             surface: 'ui', sessionCreationDefaults: {
                 context: buildManagedSessionDefaultsContext({ personalDefaultsRow: { placement: { kind: 'machine', target: projectTarget } } }),
-                authoredChoices: { agentTarget: authoredAgent },
+                authoredChoices: { agentTarget: authoredAgent,
+                    sessionPlacement: { kind: 'preset', homeId: 'home', presetId: 'previously-selected' } },
             },
         });
         expect(prepared.input.executionTarget).toEqual(executionTarget);
-        expect(prepared.input.sessionPlacement).toEqual(sessionPlacement);
+        expect(prepared.input.sessionPlacement).toEqual(withPlacement ? sessionPlacement : { kind: 'machine', target: executionTarget });
+        expect(prepared.input.managedCreation).toEqual({ homeId: 'home', managedId: 'acquired' });
+        expect(prepared.defaults.managedPresetAcquisition).toBeUndefined();
     });
     it.each([false, true])('uses the captured Project context and preserves authored Agent choice=%s before native admission', async explicit => {
         // The capture already admitted the selected records. These I/O ports

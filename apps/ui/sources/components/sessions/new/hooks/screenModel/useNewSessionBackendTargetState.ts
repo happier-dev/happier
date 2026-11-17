@@ -53,11 +53,15 @@ export function useNewSessionBackendTargetState(params: Readonly<{
     persistedBackendTarget?: unknown;
     tempBackendTarget?: unknown;
     tempAgentType?: unknown;
+    /** Resolver-owned Project choice; catalog availability never substitutes another Agent. */
+    managedBackendTarget?: PersistedBackendTargetRefV2 | null;
+    fallbackBackendTarget?: PersistedBackendTargetRefV2 | null;
     isSending?: boolean;
     projectionPhase?: 'idle' | 'loading' | 'ready' | 'unsupported' | 'error';
     machineTarget?: Readonly<{ machineId: string | null; serverId: string; load?: boolean; inventoryDemanded?: boolean }>;
 }>): Readonly<{
     backendTarget: PersistedBackendTargetRefV2;
+    authoredBackendTarget: PersistedBackendTargetRefV2 | null;
     setBackendTarget: React.Dispatch<React.SetStateAction<PersistedBackendTargetRefV2>>;
     selectedCatalogAgentId: AgentId | null;
     selectedRuntimeCarrierAgentId: string | null;
@@ -70,10 +74,18 @@ export function useNewSessionBackendTargetState(params: Readonly<{
         const parsed = PersistedBackendTargetRefV2Schema.safeParse(params.routeBackendTarget);
         return parsed.success ? parsed.data : null;
     }, [params.routeBackendTarget]);
+    const explicitDraftTarget = React.useMemo(() => {
+        for (const candidate of [params.tempBackendTarget, params.persistedBackendTarget]) {
+            const parsed = PersistedBackendTargetRefV2Schema.safeParse(candidate);
+            if (parsed.success) return parsed.data;
+        }
+        return null;
+    }, [params.tempBackendTarget, params.persistedBackendTarget]);
     const rememberedDefaults = useLastUsedBackendSelection(!hasExplicitUserSelection && !explicitRouteTarget);
     const { lastUsedAgent, lastUsedBackendTarget } = rememberedDefaults;
     const followsAccountPurposeDefault = !hasExplicitUserSelection && !explicitRouteTarget
-        && !params.tempBackendTarget && !params.persistedBackendTarget && !params.tempAgentType;
+        && !params.tempBackendTarget && !params.persistedBackendTarget && !params.tempAgentType
+        && !params.managedBackendTarget && !params.fallbackBackendTarget;
     const { binding } = useServerCredentialAccountScopeBinding(params.machineTarget?.serverId ?? expectedSettingsScope?.serverId);
     const purposeCatalog = useConnectedAccountCatalog('purposes', binding?.scope ?? null, {
         sourceMachineId: params.machineTarget?.machineId,
@@ -104,6 +116,10 @@ export function useNewSessionBackendTargetState(params: Readonly<{
     ]);
     const initialBackendTarget = React.useMemo(() => {
         if (explicitRouteTarget) return explicitRouteTarget;
+        if (explicitDraftTarget) return explicitDraftTarget;
+        if (isBundledAgentId(params.tempAgentType)) return { kind: 'backend' as const, backendId: params.tempAgentType };
+        if (params.managedBackendTarget) return params.managedBackendTarget;
+        if (params.fallbackBackendTarget) return params.fallbackBackendTarget;
         const availableBackendTargets = params.entries.map((entry) => entry.backendTarget);
         const purposeBindings = purposeCatalog.value;
         // A credential-purpose default expresses Account intent. Native probes
@@ -129,12 +145,15 @@ export function useNewSessionBackendTargetState(params: Readonly<{
         params.entries,
         params.configuredCatalogReady,
         explicitRouteTarget,
+        explicitDraftTarget,
         lastUsedAgent,
         lastUsedBackendTarget,
         params.persistedBackendTarget,
         params.routeBackendTarget,
         params.tempBackendTarget,
         params.tempAgentType,
+        params.managedBackendTarget,
+        params.fallbackBackendTarget,
         preservedPluginTarget,
         followsAccountPurposeDefault,
         purposeCatalog.value,
@@ -143,7 +162,7 @@ export function useNewSessionBackendTargetState(params: Readonly<{
     // A saved selection can arrive after mount. Hydrate it before committing
     // authoring effects; a matching fallback catalog row is not authored intent.
     if (!hasExplicitUserSelection && !params.isSending
-        && (explicitRouteTarget || params.tempBackendTarget || params.persistedBackendTarget || params.tempAgentType)
+        && (explicitRouteTarget || params.tempBackendTarget || params.persistedBackendTarget || params.tempAgentType || params.managedBackendTarget)
         && !backendTargetKeysMatch(backendTarget, initialBackendTarget)) {
         setBackendTargetState(initialBackendTarget);
     }
@@ -169,18 +188,22 @@ export function useNewSessionBackendTargetState(params: Readonly<{
     });
     const configuredTargetUnavailable = isConfiguredTarget(backendTarget)
         && (params.configuredCatalogReady === false || matched === null);
+    const previousDefaultTargets = React.useRef([params.managedBackendTarget ?? null, params.fallbackBackendTarget ?? null]);
 
     React.useEffect(() => {
         // Catalog/default hydration cannot replace authored intent. Missing
         // availability is handled by launch admission, not by choosing an Agent.
         if (params.isSending || hasExplicitUserSelection) return;
+        const currentDefaultTargets = [params.managedBackendTarget ?? null, params.fallbackBackendTarget ?? null];
+        const managedChoiceChanged = !sameStrictJsonValue(previousDefaultTargets.current, currentDefaultTargets);
+        previousDefaultTargets.current = currentDefaultTargets;
         const purposeDefaultChanged = purposeCatalog.value !== null
             && !sameStrictJsonValue(previousPurposeBindings.current, purposeCatalog.value);
         // A catalog refresh or an acknowledgement of the same defaults is not
         // new selection intent. Keep a pending default change through Send.
         if (purposeCatalog.value) previousPurposeBindings.current = purposeCatalog.value;
         if (explicitRouteTarget && backendTargetKeysMatch(explicitRouteTarget, backendTarget)) return;
-        if (!followsAccountPurposeDefault || !purposeDefaultChanged) {
+        if (!managedChoiceChanged && (!followsAccountPurposeDefault || !purposeDefaultChanged)) {
             if (configuredTargetUnavailable || matched) return;
             const shouldKeepExplicitRoutePluginTarget = explicitRoutePluginTarget
                 && backendTargetKeysMatch(explicitRoutePluginTarget, backendTarget);
@@ -190,7 +213,7 @@ export function useNewSessionBackendTargetState(params: Readonly<{
         }
         if (backendTargetKeysMatch(backendTarget, initialBackendTarget)) return;
         setBackendTargetState(initialBackendTarget);
-    }, [backendTarget, configuredTargetUnavailable, explicitRoutePluginTarget, explicitRouteTarget, followsAccountPurposeDefault, hasExplicitUserSelection, initialBackendTarget, matched, params.entries, params.isSending, params.projectionPhase, purposeCatalog.value]);
+    }, [backendTarget, configuredTargetUnavailable, explicitRoutePluginTarget, explicitRouteTarget, followsAccountPurposeDefault, hasExplicitUserSelection, initialBackendTarget, matched, params.entries, params.isSending, params.projectionPhase, params.managedBackendTarget, params.fallbackBackendTarget, purposeCatalog.value]);
 
     const selectedCatalogAgentId = React.useMemo<AgentId | null>(() => {
         if (matched?.catalogAgentId && isBundledAgentId(matched.catalogAgentId)) {
@@ -252,6 +275,8 @@ export function useNewSessionBackendTargetState(params: Readonly<{
 
     return {
         backendTarget,
+        authoredBackendTarget: hasExplicitUserSelection || explicitRouteTarget || explicitDraftTarget || isBundledAgentId(params.tempAgentType)
+            ? backendTarget : null,
         setBackendTarget,
         selectedCatalogAgentId,
         selectedRuntimeCarrierAgentId,

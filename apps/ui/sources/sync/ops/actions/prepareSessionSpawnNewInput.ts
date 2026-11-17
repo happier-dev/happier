@@ -52,12 +52,13 @@ export function createUiPrepareSessionSpawnNewInput(ports: PreparationPorts): No
             ...(input.sessionPlacement ? { sessionPlacement: input.sessionPlacement } : {}),
         };
         const authoredPlacement = authoredChoices.sessionPlacement;
-        const acquiredPlacement = input.managedCreation && input.sessionPlacement?.kind === 'managed' ? input.sessionPlacement : null;
-        if (acquiredPlacement && !input.executionTarget) return unavailable('machine_target_unavailable');
+        const acquiredCreation = input.managedCreation !== undefined;
+        const acquiredPlacement = acquiredCreation && input.sessionPlacement?.kind === 'managed' ? input.sessionPlacement : null;
+        if (acquiredCreation && !input.executionTarget) return unavailable('machine_target_unavailable');
         const selected = resolveManagedSessionDefaults({ ...defaultsContext,
             agentTargetKey: input.agentTarget ? buildBackendTargetKeyV2(input.agentTarget) : '',
             explicitChoices: { ...(authoredChoices.agentTarget ? { defaultAgentTarget: authoredChoices.agentTarget } : {}),
-                ...(acquiredPlacement && input.executionTarget ? { placement: { kind: 'machine', target: input.executionTarget } }
+                ...(acquiredCreation && input.executionTarget ? { placement: { kind: 'machine', target: input.executionTarget } }
                     : authoredPlacement && authoredPlacement.kind !== 'managed' ? { placement: authoredPlacement }
                         : authoredChoices.executionTarget ? { placement: { kind: 'machine', target: authoredChoices.executionTarget } } : {}) } });
         let executionTarget = input.executionTarget;
@@ -96,7 +97,8 @@ export function createUiPrepareSessionSpawnNewInput(ports: PreparationPorts): No
         } : input.configuration;
         const exact = admitSessionSpawnNewActionInputV2({ ...authoredInput, executionTarget, agentTarget,
             ...(acquiredPlacement ? { sessionPlacement: acquiredPlacement }
-                : selected.placement.source === 'explicit' && authoredPlacement ? { sessionPlacement: authoredPlacement }
+                : acquiredCreation && selected.placement.source === 'explicit' && selected.placement.value ? { sessionPlacement: selected.placement.value }
+                    : selected.placement.source === 'explicit' && authoredPlacement ? { sessionPlacement: authoredPlacement }
                     : selected.placement.value ? { sessionPlacement: selected.placement.value } : {}),
             ...(modelSelectionInput && modelRef ? { modelSelection: { v: 1, ref: modelRef, updatedAt: modelSelectionInput.updatedAt } } : {}),
             ...(configuration ? { configuration } : {}), ...(connectedServices ? { connectedServices } : {}),

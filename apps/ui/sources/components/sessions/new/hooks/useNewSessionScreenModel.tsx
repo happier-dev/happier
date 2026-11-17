@@ -4,7 +4,7 @@ import { resolveApprovalProfileMachineDefault, useApprovalProfiles } from '@/hoo
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { readMachineIsolationV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
-import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
+import { projectAccountManagedSessionDefaults } from '@/sync/ops/teams/managedSessionDefaults';
 import { sanitizeNewSessionConfigOverridesForModelSelection } from '@/components/sessions/new/modules/newSessionConfigOptionOverrideSanitization';
 import { normalizeSessionConfigOptionValueId } from '@/sync/domains/sessionControl/configOptionsControl';
 import { agentReceivesUserMcpServersV1 } from '@happier-dev/protocol/plugins/contributions/v2';
@@ -155,6 +155,8 @@ import type {
 } from '@happier-dev/protocol/teams';
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
 import { useManagedSessionDefaults } from '@/hooks/teams/useManagedSessionDefaults';
+import type { ProjectSessionDefaultsContextSelectionV1 } from '@happier-dev/protocol/projects/loadManagedSessionDefaultsContextV1';
+import { buildManagedSessionDefaultsContext, resolveManagedSessionDefaults } from '@happier-dev/protocol/teams/managedDefaults';
 import { useNewSessionCapabilitiesChip } from '@/components/sessions/capabilities/useSessionCapabilitiesChip';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
 import { useNewSessionAvailabilityState } from '@/components/sessions/new/hooks/screenModel/useNewSessionAvailabilityState';
@@ -484,6 +486,8 @@ export type TemporaryComputerCreatorDependencies = Readonly<{
 }>;
 
 export function useNewSessionScreenModel(input?: Readonly<{
+    /** Exact selected Project identity; directories never infer project authority. */
+    projectContext?: ProjectSessionDefaultsContextSelectionV1 | null;
     composerTopContent?: React.ReactNode;
     composerBottomContent?: React.ReactNode;
     draftId: string;
@@ -790,14 +794,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const secrets = useSavedSecretCatalogPersonalSecrets();
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useCurrentSecretBindingsByProfileIdMutable();
     const sessionDefaultPermissionModeByTargetKey = useSetting('sessionDefaultPermissionModeByTargetKey');
-    const memberSessionDefaults = React.useMemo(() => ({
-        // Managed defaults carry permission intents; account settings keep provider-native aliases.
-        permissionModeByAgentTargetKey: Object.fromEntries(Object.entries(sessionDefaultPermissionModeByTargetKey)
-            .flatMap(([targetKey, mode]) => {
-                const intent = parseAgentPermissionIntentV1Alias(mode);
-                return intent ? [[targetKey, intent] as const] : [];
-            })),
-        modelByAgentTargetKey: providerDefaultModelSelectionsByAgentTargetKeyV1,
+    const memberSessionDefaults = React.useMemo(() => projectAccountManagedSessionDefaults({
+        sessionDefaultPermissionModeByTargetKey,
+        providerDefaultModelSelectionsByAgentTargetKeyV1,
     }), [providerDefaultModelSelectionsByAgentTargetKeyV1, sessionDefaultPermissionModeByTargetKey]);
     const homeViewSelectionSettings = useHomeViewSelectionSettings();
     const executionRunsEnabled = resolveLocalFeaturePolicyEnabled('execution.runs', useFeatureLocalPolicySettings());
@@ -931,6 +930,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
             : null;
     }, [scopedPersistedDraft]);
     const approvalProfileDraftKey = JSON.stringify([draftScope?.serverId, draftScope?.accountId, draftId, dataId]);
+    const projectContext = input?.projectContext !== undefined ? input.projectContext
+        : hydratedTempAuthoringDraft?.projectContext !== undefined ? hydratedTempAuthoringDraft.projectContext
+        : hydratedPersistedAuthoringDraft?.projectContext;
     const [approvalProfileEdit, setApprovalProfileEdit] = React.useState<Readonly<{
         key: string; value: string | null | undefined;
     }> | null>(null);
@@ -1200,6 +1202,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         serverId: targetServerId ?? '',
         teamId: accessDraftState.primaryTeamId,
         access: accessDraftState.access,
+        projectContext,
         memberDefaults: memberSessionDefaults,
         agentTargetKey: resolveBackendTargetKeyV2(routeBackendTarget ?? hydratedTempBackendTarget
             ?? hydratedPersistedBackendTarget ?? { kind: 'backend', backendId: DEFAULT_AGENT_ID }),
@@ -1409,6 +1412,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const [agentInventoryDemanded, setAgentInventoryDemanded] = React.useState(false);
     const {
         backendTarget,
+        authoredBackendTarget,
         setBackendTarget,
         selectedCatalogAgentId: staticAgentId,
         selectedRuntimeCarrierAgentId,
@@ -1417,19 +1421,34 @@ export function useNewSessionScreenModel(input?: Readonly<{
     } = useNewSessionBackendTargetState({
         entries: resolvedBackendEntries,
         configuredCatalogReady: acpCatalogReady,
+        managedBackendTarget: managedSessionDefaults.read.status === 'ready'
+            ? managedSessionDefaults.read.defaults.agentTarget.value : null,
         isSending: isCreating || temporaryComputerLaunchActive,
         routeBackendTarget,
         persistedBackendTarget: hydratedPersistedBackendTarget,
         tempBackendTarget: routeBackendTarget
             ?? hydratedTempBackendTarget
             ?? tempSessionData?.backendTarget
-            ?? implicitProfileBackendTarget,
+            ?? null,
+        fallbackBackendTarget: implicitProfileBackendTarget,
         tempAgentType: agentTypeParam,
         projectionPhase: daemonMergedProjection.phase,
         machineTarget: { machineId: selectedMachineId, serverId: capabilityServerId, load: hostDemanded,
             inventoryDemanded: agentInventoryDemanded },
     });
     const selectedBackendTargetKey = React.useMemo(() => resolveBackendTargetKeyV2(backendTarget), [backendTarget]);
+    const approvalProfiles = useApprovalProfiles(approvalProfileId, targetServerId, { demand: false, machineId: selectedMachineId });
+    const approvalProfileMachineDefault = React.useMemo(() => resolveApprovalProfileMachineDefault(approvalProfiles, selectedMachineId),
+        [approvalProfiles.displayProfiles, approvalProfiles.machineApprovalProfiles, selectedMachineId]); // eslint-disable-line react-hooks/exhaustive-deps
+    const creationDefaultsContext = React.useMemo(() => buildManagedSessionDefaultsContext({
+        context: managedSessionDefaults.read.context,
+        creationMachineApprovalProfileId: selectedMachineId ? approvalProfiles.machineApprovalProfiles[selectedMachineId] : undefined,
+    }), [managedSessionDefaults.read.context, selectedMachineId, approvalProfiles.machineApprovalProfiles]);
+    const approvalProfileDecision = React.useMemo(() => resolveManagedSessionDefaults({
+        ...creationDefaultsContext,
+        agentTargetKey: selectedBackendTargetKey,
+        ...(approvalProfileId === undefined ? {} : { explicitChoices: { approvalProfileId } }),
+    }).approvalProfileId, [creationDefaultsContext, selectedBackendTargetKey, approvalProfileId]);
     const teamCredentialCatalog = useHomeTeamCredentialModelCatalog({
         serverId: targetServerId,
         machineId: selectedMachineId,
@@ -2985,7 +3004,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         organizationPlacement: organizationPlacementState.placement,
         spaceMembership: organizationPlacementState.spaceMembership,
         access: accessDraftState.access,
-        primaryTeamId: accessDraftState.primaryTeamId,
+        primaryTeamId: managedSessionDefaults.read.context.primaryTeamId ?? accessDraftState.primaryTeamId,
+        projectContext,
         teamCredentialBindings,
         selectedMachine,
         selectedMachineSpawnReadiness,
@@ -2995,7 +3015,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         promptStore,
         staticAgentId,
         backendTarget: operationalBackendTarget,
-        agentTarget: canonicalAgentTarget,
+        agentTarget: authoredBackendTarget ? canonicalAgentTarget : null,
         transcriptStorage,
         useProfiles,
         selectedProfileId,
@@ -4069,6 +4089,15 @@ export function useNewSessionScreenModel(input?: Readonly<{
         cancelManagedMachineCreation: abortManagedMachineCreation,
     } = useNewSessionCreateSessionAction({
         teamCredentialPresentation,
+        managedDefaultsContext: creationDefaultsContext,
+        managedDefaultsUnavailable: managedSessionDefaults.projectRead.data?.unavailableDefaults,
+        managedDefaultsAuthoredChoices: {
+            ...(placementForPersistence.placementExplicit === true && placementForPersistence.executionTarget?.kind === 'machine'
+                ? { executionTarget: placementForPersistence.executionTarget.target } : {}),
+            ...(placementForPersistence.placementExplicit === true && effectiveCurrentAuthoringDraft.sessionPlacement
+                ? { sessionPlacement: effectiveCurrentAuthoringDraft.sessionPlacement } : {}),
+            ...(authoredBackendTarget && canonicalAgentTarget ? { agentTarget: canonicalAgentTarget } : {}),
+        },
         onStartAnother: input?.onStartAnother,
         authoringOrigin: persistedDraft?.authoringOrigin,
         spaceMembership: organizationPlacementState.spaceMembership,
@@ -4422,10 +4451,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         bridge: instructionsChipBridge,
     }) : null, [draftServerId, instructionsCreation, isBotDraft, sessionNameStore.getPrompt, instructionsChipBridge]);
     // The approval profile is one chip of the row (UI refinements 21:36Z), offering the field's own choices.
-    const approvalProfiles = useApprovalProfiles(approvalProfileId, targetServerId, { demand: false, machineId: selectedMachineId });
     // "Machine default" names the profile the chosen Machine gives my Sessions there (OWNER Q4).
-    const approvalProfileMachineDefault = React.useMemo(() => resolveApprovalProfileMachineDefault(approvalProfiles, selectedMachineId),
-        [approvalProfiles.displayProfiles, approvalProfiles.machineApprovalProfiles, selectedMachineId]); // eslint-disable-line react-hooks/exhaustive-deps
     const approvalProfileChip = React.useMemo(() => createApprovalProfileComposerChip({
         value: approvalProfileId, profiles: approvalProfiles.displayProfiles, machineDefault: approvalProfileMachineDefault,
         ready: approvalProfiles.ready, displayReady: approvalProfiles.ready || approvalProfiles.selectedDescriptor !== undefined,
@@ -4756,7 +4782,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         machineName: simplePanelProps.machineName ?? undefined,
     }), [wizardFooterProps, simplePanelProps.machineName]);
 
-    return buildNewSessionScreenVariantModel({
+    return { ...buildNewSessionScreenVariantModel({
         creationReview: { draft: effectiveCurrentAuthoringDraft, serverId: targetServerId ?? null, teamCredentialPresentation },
         spaceMembership: organizationPlacementState.spaceMembership,
         setSpaceMembership: organizationPlacementState.setSpaceMembership,
@@ -4798,5 +4824,14 @@ export function useNewSessionScreenModel(input?: Readonly<{
         wizardAgentProps,
         wizardMachineProps,
         wizardFooterProps: destinationWizardFooterProps,
-    });
+    }), managedDefaults: {
+        context: creationDefaultsContext,
+        unavailableDefaults: managedSessionDefaults.projectRead.data?.unavailableDefaults,
+        agentTarget: resolveManagedSessionDefaults({ ...managedSessionDefaults.read.context,
+            agentTargetKey: selectedBackendTargetKey,
+            ...(authoredBackendTarget && canonicalAgentTarget ? { explicitChoices: { defaultAgentTarget: canonicalAgentTarget } } : {}),
+        }).agentTarget,
+        approvalProfileId: approvalProfileDecision,
+        projectRead: managedSessionDefaults.projectRead,
+    } };
 }

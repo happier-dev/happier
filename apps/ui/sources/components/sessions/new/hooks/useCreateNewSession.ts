@@ -296,6 +296,11 @@ type LaunchErrorScopeParams = Readonly<{
     useProfiles: boolean;
     selectedProfileId: string | null;
     authoringDraft?: SessionAuthoringDraft | null;
+    /** Canonical creation context already read by the mounted authoring owner. */
+    managedDefaultsContext?: NonNullable<ActionExecutorContext['sessionCreationDefaults']>['context'];
+    managedDefaultsUnavailable?: NonNullable<ActionExecutorContext['sessionCreationDefaults']>['unavailableDefaults'];
+    /** Original authored choices, before automatic placement and Agent defaults. */
+    managedDefaultsAuthoredChoices?: NonNullable<ActionExecutorContext['sessionCreationDefaults']>['authoredChoices'];
     modelMode: ModelMode;
 }>;
 
@@ -1658,6 +1663,7 @@ export function useCreateNewSession(params: Readonly<{
                 organizationPlacement: preparedOrganizationPlacement,
                 access: current.authoringDraft?.access,
                 primaryTeamId: current.authoringDraft?.primaryTeamId,
+                projectContext: current.authoringDraft?.projectContext,
                 teamCredentialBindings: current.authoringDraft?.teamCredentialBindings,
                 initialTriggers: current.authoringDraft?.initialTriggers,
                 prompt: normalizedSessionPrompt,
@@ -1895,6 +1901,11 @@ export function useCreateNewSession(params: Readonly<{
                         }
                         const execution = await executeManualSessionSpawnNewAction(spawnInput, {
                             surface: 'ui',
+                            ...(current.managedDefaultsContext ? { sessionCreationDefaults: {
+                                context: current.managedDefaultsContext,
+                                ...(current.managedDefaultsUnavailable ? { unavailableDefaults: current.managedDefaultsUnavailable } : {}),
+                                authoredChoices: current.managedDefaultsAuthoredChoices ?? {},
+                            } } : {}),
                             teamCredentialPresentation: current.teamCredentialPresentation,
                             actionRequestId: launchAttempt.attemptId,
                             signal: sourceDraftCancellation.signal,

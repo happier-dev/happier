@@ -371,6 +371,13 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     defaultSurface: 'hidden',
     defaultEditabilityByContext: { newSession: 'editable', liveSession: 'editable', automationNewSession: 'editable', automationExistingSession: 'inherited' },
   },
+  projectContext: {
+    schema: z.optional(SessionAuthoringSelectionFieldsV1.projectContext),
+    description: 'Exact selected Project and linked Source used for new Session defaults.',
+    storageClass: 'template', draftStorage: 'sync', contexts: [...ALL_AUTHORING_CONTEXTS],
+    defaultSurface: 'hidden',
+    defaultEditabilityByContext: { newSession: 'editable', liveSession: 'inherited', automationNewSession: 'editable', automationExistingSession: 'inherited' },
+  },
   profileId: {
     schema: SessionAuthoringSelectionFieldsV1.profileId,
     description: 'Selected profile id to apply when the authored session starts.',

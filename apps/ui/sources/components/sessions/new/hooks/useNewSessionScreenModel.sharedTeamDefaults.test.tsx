@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, createMachineFixture, renderHook, standardCleanup, teamSummaryFixture, teamPolicyFixture, teamCapabilitiesFixture } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { createAccountSettingsHttpBoundary } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -40,6 +41,79 @@ afterEach(async () => { standardCleanup(); resetTeamsDirectoryEngineForTests(); 
 afterAll(() => network.dispose());
 
 describe('shared Team defaults through New Session', () => {
+    it.each([false, true])('captures effective Machine approval defaults with inherited placement=%s without rereading settings', async inherited => {
+        const home = await network.addHome('https://machine-approval-capture.test', 'member');
+        const targetMachineId = inherited ? 'machine-2' : 'machine-1';
+        const profileId = inherited ? 'approval-inherited-machine' : 'approval-machine';
+        const team = teamSummaryFixture({ policy: teamPolicyFixture({ managedDefaults: { team: {
+            placement: { kind: 'machine', target: { serverId: home.id, machineId: 'machine-2' } },
+        }, groups: {} }, managedDefaultsStatus: 'available' }) });
+        const settings = { ...settingsDefaults, useEnhancedSessionWizard: false,
+            actionsSettingsV1: { ...settingsDefaults.actionsSettingsV1,
+                machineApprovalProfiles: { 'machine-1': 'approval-machine', 'machine-2': 'approval-inherited-machine' } } };
+        const accountSettings = createAccountSettingsHttpBoundary({ serverUrl: home.serverUrl,
+            initialAccounts: [{ accountId: 'member', snapshot: { content: { t: 'plain', v: settings }, version: 1 } }] });
+        network.setHttpResponder(async (input, init) => {
+            const settingsResponse = accountSettings.handle(input, init);
+            if (settingsResponse) return settingsResponse;
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ features: { teams: { enabled: true } } }));
+            if (path === '/v1/teams/list') return Response.json({ items: [team], nextCursor: null });
+            if (path === '/v1/teams/get') return Response.json(team);
+            return null;
+        });
+        await upsertAndActivateServer({ serverUrl: home.serverUrl });
+        await restoreConnectionToActiveServer({ token: home.token });
+        const scope = { serverId: home.id, accountId: 'member' };
+        await vi.waitFor(() => expect(storage.getState().settingsScope).toEqual(scope));
+        // Publish through Settings' persistence owner so scoped subscribers
+        // observe the same preference as the admitted Home HTTP baseline.
+        storage.getState().applySettingsLocal(settings);
+        storage.getState().applyMachines(['machine-1', 'machine-2'].map(id => createMachineFixture({ id, active: true, storageMode: 'plain' })), false,
+            { sourceServerId: home.id });
+        storage.getState().applyAuthoringMemory({ recentMachinePaths: [{ machineId: 'machine-1', path: '/repo' }] });
+        const model = await renderHook(() => useNewSessionScreenModel({ draftId: 'machine-approval-capture' }));
+        try {
+            const simple = () => {
+                const current = model.getCurrent();
+                if (current.variant !== 'simple') throw new Error('Expected Home composer');
+                return current.simpleProps;
+            };
+            if (inherited) {
+                applyTeamProjection({ scope, address: { serverId: home.id, teamId: team.id }, observedAt: 1, team });
+                await act(async () => { await vi.waitFor(() => expect(simple().agentInputExtraActionChips
+                    ?.some(chip => chip.key === 'session-access')).toBe(true)); });
+                const render = simple().agentInputExtraActionChips?.find(chip => chip.key === 'session-access')?.collapsedContentPopover?.renderContent;
+                if (typeof render !== 'function') throw new Error('Expected access editor');
+                const editor = render({ requestClose: () => {}, maxHeight: 600 });
+                if (!React.isValidElement<SessionAccessEditorProps>(editor)) throw new Error('Expected access editor element');
+                await act(async () => editor.props.actions.addPrincipal({ kind: 'team', teamId: team.id }));
+            }
+            await act(async () => { await vi.waitFor(() => {
+                expect(simple().selectedMachineId).toBe(targetMachineId);
+                expect(model.getCurrent().managedDefaults?.approvalProfileId.value).toBe(profileId);
+            }); });
+            const captured = model.getCurrent().managedDefaults;
+            if (!captured) throw new Error('Expected captured creation defaults');
+            const { createUiPrepareSessionSpawnNewInput } = await import('@/sync/ops/actions/prepareSessionSpawnNewInput');
+            const { resolveManagedSessionDefaults } = await import('@happier-dev/protocol/teams/managedDefaults');
+            // These ports are the settings/network boundary: the admitted UI
+            // capture must serve preparation without another context read.
+            const unexpectedRead = async (): Promise<never> => { throw new Error('captured defaults must not reread'); };
+            const prepare = createUiPrepareSessionSpawnNewInput({ readSettings: unexpectedRead,
+                createLoader: () => ({ readPersonalDefaults: unexpectedRead, readSource: unexpectedRead,
+                    readTeam: unexpectedRead, readHome: unexpectedRead }), resolveDefaultAgentTarget: unexpectedRead });
+            const agentTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } as const;
+            const executionTarget = { serverId: home.id, machineId: targetMachineId };
+            const prepared = await prepare({ executionTarget, agentTarget, directory: { kind: 'path', path: '/repo' } }, {
+                surface: 'ui', sessionCreationDefaults: { context: captured.context,
+                    authoredChoices: { executionTarget, agentTarget } },
+            });
+            expect(resolveManagedSessionDefaults({ ...prepared.defaults.context, agentTargetKey: '' }).approvalProfileId)
+                .toMatchObject({ value: profileId, source: 'machine' });
+            expect(prepared.input.approvalProfileId).toBeUndefined();
+        } finally { await model.unmount(); }
+    });
     it.each<{ late: boolean; override: boolean; blank?: boolean }>([{ late: false, override: true }, { late: true, override: true },
         { late: false, override: false }, { late: true, override: false },
         { late: false, override: false, blank: true }])('restores explicit placement=$override and Team label with late snapshot=$late blank=$blank', async ({ late, override, blank }) => {

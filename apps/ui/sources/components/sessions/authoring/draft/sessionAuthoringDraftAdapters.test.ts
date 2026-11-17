@@ -10,6 +10,7 @@ import {
     SessionServerStartSpawnDraftV1Schema} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
+import { buildConfiguredAcpAgentSelectionV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
 import {
@@ -23,6 +24,7 @@ import {
     buildSessionServerStartSpawnDraftV1FromAuthoringDraft,
     applySessionServerStartSpawnDraftEdits,
     buildPersistedNewSessionDraftFromAuthoringDraft,
+    applyWorkflowSelectionToServerStartSpawnDraftV1,
     buildSessionSpawnNewInputV2FromAuthoringDraft,
     buildExecutableModelParticipantSelectionFromAuthoringDraft,
     buildManagedAcquireAgentStartV1FromAuthoringDraft,
@@ -279,6 +281,24 @@ describe('sessionAuthoringDraftAdapters', () => {
         expect(executionTarget.machineId).toBe('enrolled');
         expect(continuation).toEqual(spawnAuthoring);
     });
+    it('retains qualified Project context through reopen and both Session admission paths', () => {
+        const projectContext = { projectRef: { serverId: 'server-1', projectKey: 'project-key' }, sourceRef: { serverId: 'server-1', sourceId: 'source-id' } };
+        const draft = buildNewSessionAuthoringDraftFromTempData({ prompt: 'Start here', directory: '/workspace/project',
+            executionTarget: { kind: 'machine', target: { serverId: 'server-1', machineId: 'machine-1' } },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, projectContext });
+        expect(buildNewSessionAuthoringDraftFromTempData(buildNewSessionTempDataFromAuthoringDraft({ draft, machineId: 'machine-1' }))).toMatchObject({ projectContext });
+        const persisted = buildPersistedNewSessionDraftFromAuthoringDraft({ draft, machineId: 'machine-1', updatedAt: 1,
+            selectedSecretId: null, selectedSecretIdByProfileIdByEnvVarName: {},
+            sessionOnlySecretValueEncByProfileIdByEnvVarName: {}, backendNewSessionOptionStateByTargetKey: {} });
+        const reopened = buildNewSessionAuthoringDraftFromPersistedDraft(persisted);
+        expect(reopened).toMatchObject({ projectContext });
+        const params = { draft: reopened, creationKey: 'project-context-creation', permissionMode: 'default', configurationUpdatedAtMs: 1 };
+        expect(buildSessionSpawnNewInputV2FromAuthoringDraft(params)).toMatchObject({ projectContext });
+        expect(buildManagedAcquireAgentStartV1FromAuthoringDraft(params)).toMatchObject({ projectContext });
+        const nativeSpawn = buildSessionServerStartSpawnDraftV1FromAuthoringDraft(params);
+        expect(applyWorkflowSelectionToServerStartSpawnDraftV1({ spawn: nativeSpawn, selection: {},
+            configurationUpdatedAtMs: 2 })).toMatchObject({ kind: 'available', spawn: { projectContext } });
+    });
     it('preserves a qualified Team model through draft storage and both launch carriers', () => {
         const modelSelection = { v: 2 as const, updatedAt: 1, ref: { source: 'team_resource' as const,
             teamId: 'team-a', resourceId: 'resource-a', expectedResourceRevision: 7,
@@ -294,6 +314,22 @@ describe('sessionAuthoringDraftAdapters', () => {
         const params = { draft: reopened, creationKey: 'team-model-creation', permissionMode: 'default', configurationUpdatedAtMs: 1 };
         expect(buildSessionSpawnNewInputV2FromAuthoringDraft(params).modelSelection).toEqual(modelSelection);
         expect(buildManagedAcquireAgentStartV1FromAuthoringDraft(params).modelSelection).toEqual(modelSelection);
+    });
+    it('keeps an inherited Agent omitted at Action admission and through draft hydration', () => {
+        const projectContext = { projectRef: { serverId: 'server-1', projectKey: 'project-key' } };
+        const draft = buildNewSessionAuthoringDraftFromTempData({ prompt: 'Start here', directory: '/workspace/project',
+            executionTarget: { kind: 'machine', target: { serverId: 'server-1', machineId: 'machine-1' } },
+            agentTarget: null, projectContext });
+        const persisted = buildPersistedNewSessionDraftFromAuthoringDraft({ draft, machineId: 'machine-1', updatedAt: 1,
+            selectedSecretId: null, selectedSecretIdByProfileIdByEnvVarName: {},
+            sessionOnlySecretValueEncByProfileIdByEnvVarName: {}, backendNewSessionOptionStateByTargetKey: {} });
+        expect(buildNewSessionAuthoringDraftFromPersistedDraft(persisted).agentTarget).toBeNull();
+        expect(buildSessionSpawnNewInputV2FromAuthoringDraft({ draft, creationKey: 'inherited-agent-creation',
+            permissionMode: 'default', configurationUpdatedAtMs: 1 })).not.toHaveProperty('agentTarget');
+        expect(buildManagedAcquireAgentStartV1FromAuthoringDraft({ draft, creationKey: 'inherited-agent-creation',
+            permissionMode: 'default', configurationUpdatedAtMs: 1 })).not.toHaveProperty('agentTarget');
+        expect(() => buildSessionServerStartSpawnDraftV1FromAuthoringDraft({ draft,
+            permissionMode: 'default', configurationUpdatedAtMs: 1 })).toThrow();
     });
     it('retains Project files with its placement through reopen and both Session admission paths', () => {
         const sessionPlacement = { kind: 'machine' as const,
@@ -1320,6 +1356,7 @@ describe('sessionAuthoringDraftAdapters', () => {
     });
 
     it('hydrates an existing-session authoring draft from a live session snapshot', () => {
+        const configuredAgent = buildConfiguredAcpAgentSelectionV1('review-bot');
         const draft = buildExistingSessionAuthoringDraftFromSessionSnapshot({
             session: {
                 id: 'session-1',
@@ -1329,13 +1366,8 @@ describe('sessionAuthoringDraftAdapters', () => {
                     host: 'qa-host',
                     homeDir: '/tmp',
                     profileId: 'profile-1',
-                    flavor: 'codex',
-                    codexSessionId: 'codex-session-1',
-                    runtimeDescriptorV1: {
-                        v: 1,
-                        agentId: 'codex',
-                        agent: { backendMode: 'acp' },
-                    },
+                    flavor: configuredAgent.agentId,
+                    runtimeDescriptorV1: configuredAgent.runtimeDescriptorV1,
                     permissionMode: 'read-only',
                     permissionModeUpdatedAt: 10,
                     acpConfiguredBackendV1: {
@@ -1365,17 +1397,13 @@ describe('sessionAuthoringDraftAdapters', () => {
             directory: '/tmp/project',
             prompt: 'Send the daily summary',
             displayText: 'Send the daily summary',
-            agentTarget: null,
+            agentTarget: configuredAgent.agentTarget,
             profileId: 'profile-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
             modelSelection: modelSelection('agent:happier.agent.custom-acp/custom-acp:definition:review-bot'),
             terminal: { mode: 'tmux', tmux: { sessionName: 'happy-dev' } },
-            runtimeDescriptorV1: {
-                v: 1,
-                agentId: 'codex',
-                agent: { backendMode: 'acp' },
-            },
+            runtimeDescriptorV1: configuredAgent.runtimeDescriptorV1,
             existingSessionId: 'session-1',
             sessionEncryptionMode: 'e2ee',
             sessionEncryptionKeyBase64: 'dek-base64',

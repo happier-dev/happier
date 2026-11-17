@@ -131,7 +131,7 @@ function publishMachinePathSnapshot(snapshot: Partial<ReturnType<typeof storage.
 }
 
 describe('useNewSessionMachinePathState', () => {
-    it.each(['home', 'team', 'group'] as const)('falls back to the member choice when a %s Machine default is not in the member inventory', async layer => {
+    it.each(['home', 'team', 'group'] as const)('retains a %s Machine default absent from inventory for the destination owner to explain', async layer => {
         const props: HookParams = {
             machines: toMachines({ id: 'member-machine' }), recentMachinePaths: [],
             machineIdParam: undefined, pathParam: undefined,
@@ -144,7 +144,9 @@ describe('useNewSessionMachinePathState', () => {
         };
         const hook = await renderMachinePathState(props);
         try {
-            expect(hook.getCurrent().selectedMachineId).toBe('member-machine');
+            expect(hook.getCurrent().selectedMachineId).toBe('admin-only-machine');
+            expect(hook.getCurrent().executionTarget).toEqual({ kind: 'machine',
+                target: { serverId: 'server-a', machineId: 'admin-only-machine' } });
             expect(hook.getCurrent().managedPlacementPreset).toBeNull();
         } finally { await hook.unmount(); }
     });

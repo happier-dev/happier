@@ -11,7 +11,7 @@ import {
     parseConnectedServicesBindingsByServiceIdFromAgentOptionState,
 } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { SessionCreationKeyV1Schema, type SessionCreationKeyV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
-import { SessionServerStartSpawnDraftV1Schema, SessionSpawnNewInputV2Schema, type SessionServerStartSpawnDraftV1, type SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SessionServerStartSpawnDraftV1Schema, projectSessionSpawnNewActionAuthoringInputV2, type SessionServerStartSpawnDraftV1, type SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { ManagedAcquireAgentStartV1Schema, type ManagedAcquireAgentStartV1 } from '@happier-dev/protocol/machines/managed/agentStartV1';
 import { RawIngressStructuredInputV1Schema, type RawIngressStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { buildSessionConfigOptionOverridesFromServerStart } from '@happier-dev/protocol/workflows/workflowSessionAuthoringV1';
@@ -84,8 +84,9 @@ type ExistingSessionAuthoringSnapshotSession = Pick<
 
 export type { ExistingSessionAuthoringSnapshotSession };
 
-type StrictSessionSpawnNewInputV2 = SessionSpawnNewInputV2 & Readonly<{
+type StrictSessionSpawnNewInputV2 = Omit<SessionSpawnNewInputV2, 'agentTarget'> & Readonly<{
     creationKey: SessionCreationKeyV1;
+    agentTarget?: AgentExecutionTargetV1;
 }>;
 
 // Execution APIs retain exact-Machine shapes; authoring and reentry retain
@@ -303,7 +304,7 @@ function buildCanonicalDraftModelSelection(params: Readonly<{
     const targetKey = params.agentTarget ? buildBackendTargetKeyV2(params.agentTarget) : null;
     if (params.modelSelection) {
         const selection = SessionModelSelectionSchema.parse(params.modelSelection);
-        if (!targetKey || selection.ref.agentTargetKey !== targetKey) {
+        if (targetKey && selection.ref.agentTargetKey !== targetKey) {
             throw new Error('Session authoring model selection target mismatch');
         }
         return selection;
@@ -400,6 +401,7 @@ export function buildNewSessionAuthoringDraft(params: NewSessionAuthoringDraftPa
         organizationPlacement: normalizeOrganizationPlacement(params.organizationPlacement),
         ...(params.access !== undefined ? { access: params.access } : {}),
         ...(params.primaryTeamId !== undefined ? { primaryTeamId: params.primaryTeamId } : {}),
+        ...(params.projectContext !== undefined ? { projectContext: params.projectContext } : {}),
         ...(params.teamCredentialBindings !== undefined ? { teamCredentialBindings: params.teamCredentialBindings } : {}),
         ...(params.initialTriggers !== undefined ? { initialTriggers: params.initialTriggers } : {}),
         prompt: params.prompt.trim(),
@@ -449,6 +451,7 @@ type ResolvedNewSessionAuthoringDraftInputs = Readonly<{
     organizationPlacement?: SessionAuthoringDraft['organizationPlacement'];
     access?: SessionAuthoringDraft['access'];
     primaryTeamId?: SessionAuthoringDraft['primaryTeamId'];
+    projectContext?: SessionAuthoringDraft['projectContext'];
     teamCredentialBindings?: SessionAuthoringDraft['teamCredentialBindings'];
     initialTriggers?: SessionAuthoringDraft['initialTriggers'];
     prompt: string;
@@ -495,6 +498,7 @@ export function buildNewSessionAuthoringDraftFromResolvedInputs(
         organizationPlacement: params.organizationPlacement ?? { folderId: null, tagIds: [] },
         ...(params.access !== undefined ? { access: params.access } : {}),
         ...(params.primaryTeamId !== undefined ? { primaryTeamId: params.primaryTeamId } : {}),
+        ...(params.projectContext !== undefined ? { projectContext: params.projectContext } : {}),
         ...(params.teamCredentialBindings !== undefined ? { teamCredentialBindings: params.teamCredentialBindings } : {}),
         ...(params.initialTriggers !== undefined ? { initialTriggers: params.initialTriggers } : {}),
         prompt: params.prompt,
@@ -588,6 +592,7 @@ function buildNewSessionAuthoringDraftFromSource(source: NewSessionAuthoringDraf
         organizationPlacement: source.source.organizationPlacement ?? { folderId: null, tagIds: [] },
         ...(source.source.access !== undefined ? { access: source.source.access } : {}),
         ...(source.source.primaryTeamId !== undefined ? { primaryTeamId: source.source.primaryTeamId } : {}),
+        ...(source.source.projectContext !== undefined ? { projectContext: source.source.projectContext } : {}),
         ...(source.source.initialTriggers !== undefined ? { initialTriggers: source.source.initialTriggers } : {}),
         // Only the persisted draft carries device-local Team credential slot
         // intents; the temp-data handoff has no such field to project.
@@ -1037,6 +1042,8 @@ export function buildSessionAuthoringDraftFromServerStartSpawnDraftV1(params: Re
                 ...authoringDirectoryFieldsFromIntent(spawn.directory),
                 checkoutCreationDraft: spawn.checkoutCreationDraft ?? null,
                 organizationPlacement: spawn.organizationPlacement ?? { folderId: null, tagIds: [] },
+                projectContext: spawn.projectContext,
+                primaryTeamId: spawn.primaryTeamId,
                 prompt: params.prompt,
                 displayText: params.displayText ?? params.prompt,
                 agentTarget: resolvedAgentTarget.entry.agentTarget,
@@ -1173,20 +1180,18 @@ function resolveSessionAuthoringSpawnInput(params: SessionServerStartSpawnDraftF
     const terminal = buildStrictV2TerminalFromAuthoringDraft(params.draft);
     const options = buildServerStartConfigurationOptions(fields.sessionConfigOptionOverrides ?? null);
 
-    if (!params.draft.agentTarget) {
-        throw new Error('New Session authoring draft requires agentTarget');
-    }
     return {
         ...(params.draft.sessionPlacement === undefined ? {} : { sessionPlacement: params.draft.sessionPlacement }),
         ...(fields.sessionName ? { title: fields.sessionName } : {}),
         ...(fields.initialSessionFacts === undefined ? {} : { identity: fields.initialSessionFacts }),
         ...(fields.memoryEnabled === undefined ? {} : { memoryEnabled: fields.memoryEnabled }),
         ...(params.draft.primaryTeamId ? { primaryTeamId: params.draft.primaryTeamId } : {}),
+        ...(params.draft.projectContext === undefined ? {} : { projectContext: params.draft.projectContext }),
         ...buildSessionAuthoringCredentialOperands(params.draft),
         ...(fields.promptStack === undefined ? {} : { promptStack: fields.promptStack }),
         directory: fields.directory,
         organizationPlacement: normalizeOrganizationPlacement(params.draft.organizationPlacement),
-        agentTarget: params.draft.agentTarget,
+        ...(params.draft.agentTarget ? { agentTarget: params.draft.agentTarget } : {}),
         ...(fields.modelSelection ? { modelSelection: fields.modelSelection } : {}),
         ...(fields.profileId ? { profileId: fields.profileId } : {}),
         ...(fields.approvalProfileId === undefined ? {} : { approvalProfileId: fields.approvalProfileId }),
@@ -1269,6 +1274,8 @@ export function applyWorkflowSelectionToServerStartSpawnDraftV1(params: Readonly
             : authoringDirectoryFieldsFromIntent(params.spawn.directory)),
         checkoutCreationDraft: params.spawn.checkoutCreationDraft ?? null,
         organizationPlacement: params.spawn.organizationPlacement ?? { folderId: null, tagIds: [] },
+        projectContext: params.spawn.projectContext,
+        primaryTeamId: params.spawn.primaryTeamId,
         prompt: '',
         displayText: '',
         agentTarget,
@@ -1371,11 +1378,18 @@ function resolveSessionAuthoringCreationInput(params: SessionSpawnNewInputFromAu
 export function buildSessionSpawnNewInputV2FromAuthoringDraft(
     params: SessionSpawnNewInputFromAuthoringParams,
 ): StrictSessionSpawnNewInputV2 {
-    return { ...SessionSpawnNewInputV2Schema.parse({
-        ...buildSessionServerStartSpawnDraftV1FromAuthoringDraft(params),
+    if (!params.draft.executionTarget) throw new Error('New Session authoring draft requires executionTarget');
+    const executionTarget = requireMachineAuthoringTarget(params.draft.executionTarget);
+    const authored = {
+        ...resolveSessionAuthoringSpawnInput(params),
+        executionTarget: executionTarget.target,
+        ...(executionTarget.selectionOrigin ? { placementOrigin: executionTarget.selectionOrigin } : {}),
         ...resolveSessionAuthoringCreationInput(params),
         ...(params.draft.isolationOverride === undefined ? {} : { isolationOverride: params.draft.isolationOverride }),
-    }), creationKey: SessionCreationKeyV1Schema.parse(params.creationKey) };
+    };
+    const { organizationPlacement: _sectionPlacement, ...selection } = projectSessionSpawnNewActionAuthoringInputV2(authored);
+    return { ...selection, executionTarget: executionTarget.target, organizationPlacement: authored.organizationPlacement,
+        creationKey: SessionCreationKeyV1Schema.parse(params.creationKey) };
 }
 
 /** Managed acquire admits submitted Session authoring before a Machine exists. */
@@ -1437,6 +1451,7 @@ export function buildNewSessionTempDataFromAuthoringDraft(params: Readonly<{
         organizationPlacement: params.draft.organizationPlacement,
         ...(params.draft.access !== undefined ? { access: params.draft.access } : {}),
         ...(params.draft.primaryTeamId !== undefined ? { primaryTeamId: params.draft.primaryTeamId } : {}),
+        ...(params.draft.projectContext !== undefined ? { projectContext: params.draft.projectContext } : {}),
         ...(params.draft.teamCredentialBindings !== undefined ? { teamCredentialBindings: params.draft.teamCredentialBindings } : {}),
         ...(params.draft.initialTriggers !== undefined ? { initialTriggers: params.draft.initialTriggers } : {}),
         checkoutCreationDraft: params.draft.checkoutCreationDraft,
@@ -1537,6 +1552,7 @@ export function buildPersistedNewSessionDraftFromAuthoringDraft(params: Readonly
         organizationPlacement: params.draft.organizationPlacement,
         ...(params.draft.access !== undefined ? { access: params.draft.access } : {}),
         ...(params.draft.primaryTeamId !== undefined ? { primaryTeamId: params.draft.primaryTeamId } : {}),
+        ...(params.draft.projectContext !== undefined ? { projectContext: params.draft.projectContext } : {}),
         ...(params.draft.teamCredentialBindings !== undefined ? { teamCredentialBindings: params.draft.teamCredentialBindings } : {}),
         ...(params.draft.initialTriggers !== undefined ? { initialTriggers: params.draft.initialTriggers } : {}),
         ...(targetServerId ? { targetServerId } : {}),

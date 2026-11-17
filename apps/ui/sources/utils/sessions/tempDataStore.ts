@@ -67,6 +67,7 @@ export interface NewSessionData {
     access?: SessionInitialAccessDraftV1 | null;
     initialTriggers?: SessionInitialTriggerV1[];
     primaryTeamId?: string | null;
+    projectContext?: import('@happier-dev/protocol/projects/loadManagedSessionDefaultsContextV1').ProjectSessionDefaultsContextSelectionV1 | null;
     replacePersistedDraftSelections?: boolean;
     checkoutCreationDraft?: NewSessionCheckoutCreationDraft | null;
     agentType?: AgentId;

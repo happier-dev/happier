@@ -349,16 +349,9 @@ export function useNewSessionMachinePathState(params: Readonly<{
     // Temporary computers and one-off reviewed configurations have no managed-default wire shape.
     const preservesExplicitTarget = hasExplicitPlacement && placementDecision.lock === null
         && authoredExecutionTarget?.kind !== 'machine' && authoredPreset === null;
-    const managedMachineDefault = placementDecision.value?.kind === 'machine' ? placementDecision.value : null;
-    const isMemberManagedPlacement = placementDecision.source === 'home' || placementDecision.source === 'team' || placementDecision.source === 'group';
-    const managedMachineDefaultIsVisible = !isMemberManagedPlacement
-        || managedMachineDefault === null
-        || readMachines().length === 0
-        || readMachines().some(machine => machine.id === managedMachineDefault.target.machineId);
-    // A stored Home/Team/Group default is intent only. If its Machine is absent from
-    // this member's inventory, let the member's own choice remain effective.
-    const effectivePlacement = preservesExplicitTarget || !managedMachineDefaultIsVisible
-        ? undefined : placementDecision.value;
+    // Destination availability explains an unavailable inherited choice. Inventory
+    // membership cannot select a different placement or defaults source.
+    const effectivePlacement = preservesExplicitTarget ? undefined : placementDecision.value;
     const matchingReviewedPreset = effectivePlacement?.kind === 'preset'
         && authoredPreset?.homeId === effectivePlacement.homeId && authoredPreset.id === effectivePlacement.presetId;
     const executionTarget = effectivePlacement?.kind === 'machine'

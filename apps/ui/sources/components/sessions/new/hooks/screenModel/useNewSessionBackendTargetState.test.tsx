@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilities';
+import { buildConfiguredAcpAgentSelectionV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { createMachineFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
@@ -102,6 +103,27 @@ const configuredPreferredEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
 ];
 
 describe('useNewSessionBackendTargetState', () => {
+    it('follows the Project Agent before Account fallback, retains unavailable targets, and lets authored picks win', async () => {
+        const projectTarget = buildConfiguredAcpAgentSelectionV1('team-review').agentTarget;
+        let managedBackendTarget: typeof projectTarget | null = null;
+        const hook = await renderHook(() => useNewSessionBackendTargetState({ entries: configuredPreferredEntries,
+            projectionPhase: 'ready', managedBackendTarget }));
+        expect(resolveBackendTargetKeyV2(hook.getCurrent().backendTarget)).toBe('agent:happier.agent.codex/codex');
+        managedBackendTarget = projectTarget;
+        await hook.rerender();
+        expect(hook.getCurrent().backendTarget).toEqual(projectTarget);
+        expect(hook.getCurrent().authoredBackendTarget).toBeNull();
+        managedBackendTarget = null;
+        await hook.rerender();
+        expect(resolveBackendTargetKeyV2(hook.getCurrent().backendTarget)).toBe('agent:happier.agent.codex/codex');
+        managedBackendTarget = projectTarget;
+        await hook.rerender();
+        await act(async () => hook.getCurrent().setBackendTarget({ kind: 'backend', backendId: 'codex' }));
+        managedBackendTarget = null;
+        await hook.rerender();
+        expect(resolveBackendTargetKeyV2(hook.getCurrent().authoredBackendTarget!)).toBe('agent:happier.agent.codex/codex');
+        await hook.unmount();
+    });
     it.each(['warm', 'delayed'] as const)('reopens the owned draft Agent, model and account after %s hydration', async (hydration) => {
         const scope = { serverId: 'draft-home', accountId: 'draft-owner' };
         const draftId = '00000000-0000-4000-8000-000000001104';
@@ -439,7 +461,7 @@ describe('useNewSessionBackendTargetState', () => {
         });
     });
 
-    it('falls back to an available last-used built-in target when temp agent params point to an unavailable built-in agent', async () => {
+    it('preserves the authored temp Agent when its catalog entry is unavailable', async () => {
         const fallbackEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
             resolvedEntryFixture({
                 backendTarget: { kind: 'backend', backendId: 'codex' },
@@ -467,7 +489,8 @@ describe('useNewSessionBackendTargetState', () => {
         await renderScreen(React.createElement(Probe));
 
         expect(observed).not.toBeNull();
-        expect(resolveBackendTargetKeyV2(observed!.backendTarget)).toBe('agent:happier.agent.codex/codex');
+        expect(resolveBackendTargetKeyV2(observed!.backendTarget)).toBe('agent:happier.agent.claude/claude');
+        expect(resolveBackendTargetKeyV2(observed!.authoredBackendTarget!)).toBe('agent:happier.agent.claude/claude');
     });
 
     it('keeps the Account Agent default ahead of an unrelated configured definition', async () => {

@@ -219,6 +219,7 @@ export interface NewSessionDraft {
     spaceMembership?: SessionSpaceMembershipTargetV1 | null;
     access?: SessionInitialAccessDraftV1 | null;
     primaryTeamId?: string | null;
+    projectContext?: SessionAuthoringValueV1['projectContext'];
     /** Device-local complete slot list of exact resource revision intents; never cached credentials. */
     teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
     windowsRemoteSessionLaunchModeOverride?: Readonly<{
@@ -691,6 +692,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
         const sessionPlacement = SessionAuthoringValueV1Schema.shape.sessionPlacement.safeParse(parsed.sessionPlacement);
         const checkoutDraft = readPersistedNewSessionCheckoutDraft(parsed);
         const selectedProfileId = typeof parsed.selectedProfileId === 'string' ? parsed.selectedProfileId : null;
+        const projectContext = SessionAuthoringValueV1Schema.shape.projectContext.safeParse(parsed.projectContext);
         const approvalProfile = SessionAuthoringValueV1Schema.shape.approvalProfileId.safeParse(parsed.approvalProfileId);
         const selectedSecretId = typeof parsed.selectedSecretId === 'string' ? parsed.selectedSecretId : null;
         const selectedSecretIdByProfileIdByEnvVarName = parseDraftNestedRecord(
@@ -703,6 +705,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
         );
         const backendTarget = (() => {
             try {
+                if (parsed.agentTarget === null) return undefined;
                 if (explicitAgentTarget) {
                     return readBackendTargetRefV2(explicitAgentTarget);
                 }
@@ -723,7 +726,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
                 return undefined;
             }
         })();
-        const agentTarget = explicitAgentTarget ?? (() => {
+        const agentTarget = parsed.agentTarget === null ? null : explicitAgentTarget ?? (() => {
             if (!backendTarget) return null;
             const persistedTarget = writePersistedBackendTargetRefV2(backendTarget);
             return persistedTarget.kind === 'agent' ? persistedTarget : null;
@@ -863,11 +866,12 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             ...(checkoutDraft.checkoutCreationDraft ? { checkoutCreationDraft: checkoutDraft.checkoutCreationDraft } : {}),
             selectedProfileId,
             ...(approvalProfile.success && approvalProfile.data !== undefined ? { approvalProfileId: approvalProfile.data } : {}),
+            ...(projectContext.success && projectContext.data !== undefined ? { projectContext: projectContext.data } : {}),
             selectedSecretId,
             selectedSecretIdByProfileIdByEnvVarName,
             sessionOnlySecretValueEncByProfileIdByEnvVarName,
             agentType,
-            ...(agentTarget ? { agentTarget } : {}),
+            ...(parsed.agentTarget === null || agentTarget ? { agentTarget } : {}),
             ...(backendTarget ? { backendTarget } : {}),
             ...(transcriptStorage ? { transcriptStorage } : {}),
             permissionMode,
@@ -920,7 +924,7 @@ export function saveNewSessionDraft(draft: NewSessionDraft, scope?: ServerAccoun
             authoringOrigin: PluginUiNewSessionSeedOriginV1Schema.parse(canonicalDraft.authoringOrigin),
         }),
         ...(canonicalDraft.agentTarget ? { agentTarget: canonicalDraft.agentTarget } : {}),
-        ...(!canonicalDraft.agentTarget ? { agentType: canonicalDraft.agentType } : {}),
+        ...(canonicalDraft.agentTarget === undefined ? { agentType: canonicalDraft.agentType } : {}),
         modelSelection,
     }));
 }
