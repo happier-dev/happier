@@ -83,7 +83,7 @@ it('TS.E.nativeGh keeps real device output in the requester terminal and cancels
     serverId: ui.serverId, actionCaller: { kind: 'host' as const } };
   const agentId = 'happier.scm.forge.github/gh';
   const opened = await ui.executeConfirmed('machines.agents.signIn.start', {
-    machineId, agentId, method: 'native', launchId: 'device_code',
+    machineId, agentId, method: 'native',
   }, context);
   expect(opened, opened.ok ? undefined : opened.errorCode)
     .toMatchObject({ ok: true, result: { terminalId: expect.any(String) } });
@@ -180,6 +180,10 @@ it('TS.E.machineRows and TS.E.ambient retain ordered script rows through native 
     entry.snapshot.operationId === native.operationId && entry.snapshot.originRunId === receipt.runId
       && entry.snapshot.state === 'succeeded' && entry.snapshot.domainRef?.kind === 'machineSetup'
       && entry.snapshot.domainRef.steps?.every(step => step.state === 'succeeded')), { timeoutMs: 60_000 });
-  expect(actionOperationSelectors.selectActivitySummary(actionOperationStore.getSnapshot()))
+  const finalActivity = actionOperationStore.getSnapshot();
+  const activeOperations = actionOperationSelectors.selectActive(finalActivity)
+    .filter(operation => operation.observation === 'available')
+    .map(({ snapshot }) => ({ operationId: snapshot.operationId, actionId: snapshot.actionId, state: snapshot.state }));
+  expect(actionOperationSelectors.selectActivitySummary(finalActivity), JSON.stringify({ activeOperations }))
     .toMatchObject({ activeCount: 0, hasAttention: true });
 });

@@ -130,6 +130,7 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
 `, { mode: 0o700 });
     fixture = await startTeamSetupFFixture({ testDir: directory });
     account = await fixture.createAccount('github-owner');
+    await fixture.claimHomeOwner(account);
     machine = await fixture.enrollDaemon(account, { env: { ...isolated.env, NODE_OPTIONS: `${fixture.sourceOptions} ${github.env.NODE_OPTIONS}`, HAPPIER_CLAUDE_PATH: provider } });
     // P04: refusal and missing-feature outcomes count only after this actual
     // Action → PostgreSQL → daemon → Session admitted control succeeds.
@@ -283,7 +284,7 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
       serverId: ui!.serverId, actionCaller: { kind: 'host' as const } };
     const opened = await ui!.executeConfirmed('machines.terminal.open', { ...machine.target, sessionId,
       cwd: machine.workspaceDir, terminalKey: `github-bound-${randomUUID()}`,
-      launch: { kind: 'shell_command', command: 'gh auth status --hostname github.com && git ls-remote https://github.com/team-setup/fixture.git && printf "TEAM_GH_TERMINAL_OK\\n"' },
+      launch: { kind: 'shell_command', command: 'gh auth status --hostname github.com && git ls-remote https://github.com/team-setup/fixture.git && printf "TEAM_GH_TERMINAL_OK\\n"; exit $?' },
     }, context);
     if (!opened.ok) throw new Error(`Associated GitHub terminal refused (${opened.errorCode})`);
     const terminal = DaemonTerminalEnsureResponseSchema.parse(opened.result);

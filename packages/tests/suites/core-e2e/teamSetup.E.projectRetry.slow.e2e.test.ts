@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import { connectUiActionClient } from '@happier-tests/ui-action-client';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
+import { ClientActionFailureDetailsV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionOperationGetV1ResponseSchema, ActionOperationListV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
@@ -55,7 +56,9 @@ async function action(id: string, input: unknown, confirmed = false) {
   if (!ui) throw new Error('UI Action client not started');
   const result = await (confirmed ? ui.executeConfirmed : ui.execute)(id as Parameters<typeof ui.execute>[0], input,
     { surface: 'ui', authority: 'present_user', serverId: ui.serverId, actionCaller: { kind: 'host' } });
-  expect(result.ok).toBe(true);
+  const publicDetails = !result.ok ? ClientActionFailureDetailsV1Schema.safeParse(result.details) : null;
+  expect(result.ok, result.ok ? undefined : JSON.stringify({ actionId: id, errorCode: result.errorCode,
+    failureCause: result.failureCause, details: publicDetails?.success ? publicDetails.data : 'opaque_details_omitted' })).toBe(true);
   if (!result.ok) throw new Error(result.errorCode);
   return result.result;
 }
