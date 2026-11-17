@@ -78,6 +78,8 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     routeParams = { selection: JSON.stringify(reference) };
     let listingCommits = 0;
     const countListing = () => { listingCommits++; };
+    let barCommits = 0;
+    const countBar = () => { barCommits++; };
     const closeListing = () => {};
     const listingSurface = (presented: boolean, presentation: 'pane' | 'page' = 'pane', currentReference = reference) => <>
         <PluginSurfaceFocusEligibilityProvider active={presented}>
@@ -85,7 +87,7 @@ it('opens one theme acquisition through the shared listing body and retries Keep
                 <StoreListingBody reference={currentReference} presentation={presentation} onClose={closeListing} />
             </React.Profiler>
         </PluginSurfaceFocusEligibilityProvider>
-        <ThemeTryBarHost />
+        <React.Profiler id="theme-try-bar" onRender={countBar}><ThemeTryBarHost /></React.Profiler>
     </>;
     const screen = await renderScreen(listingSurface(true));
     const view = () => screen.findAllByType(StoreThemeListing)[0]?.props;
@@ -94,6 +96,30 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     expect(view()?.facts.map(fact => fact.key)).toEqual(['includes', 'changes', 'worksOn', 'licence']);
     const faces = (await getThemeRegistryLifecycle().prepareStorePreview({ sourceId, itemId: 'palette' },
         { expectedScope: storage.getState().settingsScope })).item.payload.themes;
+    await act(async () => { getThemeTryOnOwner().begin({ document: faces[0]!.document, mode: faces[0]!.mode,
+        origin: { kind: 'store', listing: { sourceId, itemId: 'palette' } } }); });
+    barCommits = 0;
+    for (let index = 1; index <= 10; index++) {
+        const face = faces[index % faces.length]!;
+        await act(async () => { getThemeTryOnOwner().begin({ document: face.document, mode: face.mode,
+            origin: { kind: 'store', listing: { sourceId, itemId: 'palette' } } }); });
+    }
+    expect(barCommits, 'the hidden shell bar ignores the focused listing preview').toBe(0);
+    routeParams = {};
+    await screen.update(listingSurface(true));
+    expect(screen.findAllByType(ThemeTryBar)[0]?.props).toMatchObject({ visible: true, faceName: faces[10 % faces.length]!.document.profile.name });
+    routeParams = { selection: JSON.stringify(reference) };
+    await screen.update(listingSurface(true));
+    expect(screen.findAllByType(ThemeTryBar)[0]?.props.visible).toBe(false);
+    await act(async () => { getThemeTryOnOwner().begin({ document: faces[0]!.document, mode: faces[0]!.mode,
+        origin: { kind: 'store', listing: { sourceId, itemId: 'another-listing' } } }); });
+    listingCommits = 0;
+    for (let index = 1; index <= 10; index++) {
+        const face = faces[index % faces.length]!;
+        await act(async () => { getThemeTryOnOwner().begin({ document: face.document, mode: face.mode,
+            origin: { kind: 'store', listing: { sourceId, itemId: 'another-listing' } } }); });
+    }
+    expect(listingCommits, 'the open listing ignores another listing preview').toBe(0);
     await screen.update(listingSurface(false));
     listingCommits = 0;
     for (let index = 1; index <= 10; index++) {

@@ -28,13 +28,18 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
     const scope = useAccountSettingsScope();
     const { execute, ready } = useMountedActionExecution(scope);
     const owner = getThemeTryOnOwner();
+    const { sourceId, itemId } = props.listing;
     const subscribePreview = React.useCallback((listener: () => void) => presented ? owner.subscribe(listener) : () => {}, [presented, owner]);
-    const preview = React.useSyncExternalStore(subscribePreview, owner.read, owner.read);
+    const readPreview = React.useCallback(() => {
+        const current = owner.read();
+        return current?.origin.kind === 'store' && current.origin.listing.sourceId === sourceId
+            && current.origin.listing.itemId === itemId ? current : null;
+    }, [owner, sourceId, itemId]);
+    const matching = React.useSyncExternalStore(subscribePreview, readPreview, readPreview);
     const library = useThemeLibraryInventory(presented);
     const sources = useRegistrySources('theme', presented);
     const preference = useLocalSetting('themePreference');
     const mode = resolveThemeRuntimeVisualTheme(preference, useColorScheme());
-    const { sourceId, itemId } = props.listing;
     const listing = React.useMemo(() => ({ sourceId, itemId }), [sourceId, itemId]);
     const [opened, setOpened] = React.useState<Opened | null>(null);
     const [failed, setFailed] = React.useState<string | null>(null);
@@ -56,8 +61,6 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
             getThemeRegistryLifecycle().releaseOpened(listing, { expectedScope: scope });
         };
     }, [execute, ready, listing, scope]);
-    const matching = preview?.origin.kind === 'store' && preview.origin.listing.sourceId === sourceId
-        && preview.origin.listing.itemId === itemId ? preview : null;
     const faces = React.useMemo(() => opened?.faces.flatMap(document => {
         const source = document.profile.source;
         if (source?.kind !== 'store') return [];
