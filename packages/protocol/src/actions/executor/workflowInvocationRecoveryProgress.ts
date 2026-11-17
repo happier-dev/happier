@@ -12,9 +12,12 @@ type RecoveryInput = { kind: 'original' } | { kind: 'replacement'; value: Workfl
 export function normalizeWorkflowInvocationRecoveryInput(
   progress: WorkflowProgressEnvelopeV1,
   input: RecoveryInput,
-): { kind: 'replacement'; value: WorkflowAuthoredInputV1 } | undefined {
+): RecoveryInput | undefined {
   if (progress.blockKind !== 'step') return undefined;
   if (input.kind === 'replacement') return input;
+  // No-input steps intentionally have no frozen authored input. Retain the
+  // original selection and conversation choice without fabricating content.
+  if (progress.input === undefined) return input;
   const prepared = createStoredReadSchema(WorkflowAuthoredInputV1Schema).safeParse(progress.input);
   if (!prepared.success) throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
   return { kind: 'replacement' as const, value: prepared.data };
@@ -51,7 +54,7 @@ export function createRecoveredWorkflowInvocationProgress(params: Readonly<{
     previousAttemptRecordId: params.priorRecordId,
     ...(params.prior.container ? { container: resetRecoveredContainer(params.prior.container) } : {}),
     ...(input ? {
-      input: StrictJsonValueSchema.parse(input.value),
+      ...(input.kind === 'replacement' ? { input: StrictJsonValueSchema.parse(input.value) } : {}),
       recovery: {
         conversation: params.conversation, input,
         ...(params.acknowledgeUncertainPriorEffects !== undefined
