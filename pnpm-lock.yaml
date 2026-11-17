@@ -1354,6 +1354,9 @@ importers:
       '@happier-dev/connection-supervisor':
         specifier: 0.0.0
         version: link:../../packages/connection-supervisor
+      '@happier-dev/database-protocol':
+        specifier: 0.0.0
+        version: link:../../packages/database-protocol
       '@happier-dev/deployment-protocol':
         specifier: 0.0.0
         version: link:../../packages/deployment-protocol
