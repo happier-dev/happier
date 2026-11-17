@@ -37,7 +37,7 @@ export function useDetailPageTabsPosition(pageKind: string, enabled = true): 'to
 export function useDetailPageTabsPositionActionWriter(pageKind: string) {
     const writeSetting = useSettingActionWriter();
     return React.useCallback(async (position: 'top' | 'bottom'): Promise<boolean> => {
-        const outcome = await writeSetting({ anchor: 'appearance.navigationPlacements' }, { pageTabs: { [pageKind]: position } });
+        const outcome = await writeSetting({ anchor: 'appearance.navigationPlacements' }, { pageTabs: { [pageKind]: position } }, { confirmed: true });
         return outcome.ok;
     }, [pageKind, writeSetting]);
 }
@@ -47,7 +47,7 @@ export function useNavigationSurfacePlacementActionWriter(surfaceId: NavigationP
     const writeSetting = useSettingActionWriter();
     return React.useCallback(async (preferences: NavigationPlacementPreferences): Promise<boolean> => {
         const value = NavigationSurfacePlacementsV1Schema.parse(navigationPlacementPatch(surfaceId, preferences));
-        const outcome = await writeSetting({ anchor: 'appearance.navigationPlacements' }, value);
+        const outcome = await writeSetting({ anchor: 'appearance.navigationPlacements' }, value, { confirmed: true });
         return outcome.ok;
     }, [surfaceId, writeSetting]);
 }
