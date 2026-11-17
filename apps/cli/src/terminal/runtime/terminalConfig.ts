@@ -1,7 +1,7 @@
 import { posix as pathPosix } from 'node:path';
 import type { SessionAuthoringTerminalV1 } from '@happier-dev/protocol/sessions/authoring/creationFieldsV1';
 
-export type TerminalMode = 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console';
+export type TerminalMode = 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | 'pty';
 
 export type TerminalTmuxSpawnOptions = {
   /**

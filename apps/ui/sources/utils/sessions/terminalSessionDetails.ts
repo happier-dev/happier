@@ -12,6 +12,8 @@ export function getAttachCommandForSession(params: {
         if (!terminal.windows?.windowId) return null;
     } else if (terminal.mode === 'windows_console') {
         if (terminal.windows?.host !== 'console') return null;
+    } else if (terminal.mode === 'pty') {
+        if (terminal.pty?.host !== 'holder') return null;
     } else {
         return null;
     }

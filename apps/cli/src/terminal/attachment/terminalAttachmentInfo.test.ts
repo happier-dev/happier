@@ -686,6 +686,28 @@ describe('terminalAttachmentInfo', () => {
     }
   });
 
+  it('round-trips a holder-terminal (pty) host descriptor', async () => {
+    const dir = tmp.dirSync({ unsafeCleanup: true });
+    const sessionId = 'session-pty';
+    try {
+      const attachment = await writeTerminalHostAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+        handle: {
+          attachmentId: 'attachment-pty' as NonNullable<TerminalHostHandle['attachmentId']>,
+          kind: 'windows_console',
+          sessionName: 'happier-claude-pty',
+          paneId: 'happier-claude-pty',
+          attachMetadata: { attachStrategy: 'terminal_host', topology: 'shared', locality: 'same_machine', liveProbe: 'required' },
+        },
+      });
+      await expect(readTerminalHostAttachmentInfo({ happyHomeDir: dir.name, sessionId }))
+        .resolves.toMatchObject({ attachmentId: attachment.attachmentId, handle: { kind: 'windows_console', sessionName: 'happier-claude-pty' } });
+    } finally {
+      dir.removeCallback();
+    }
+  });
+
   it('reads windows terminal attachment info', async () => {
     const dir = tmp.dirSync({ unsafeCleanup: true });
     try {

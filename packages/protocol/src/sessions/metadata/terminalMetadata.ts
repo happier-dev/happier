@@ -14,13 +14,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+/** Realized hosts the released ui-web-v0.2.12 terminal enum rejects; flat wire metadata carries them as `plain` + `hostKind`. */
+const WIRE_PROJECTED_HOST_MODES: readonly unknown[] = ['herdr', 'pty'];
+
 function normalizeTerminalWireSelectors(value: unknown): unknown {
   if (!isRecord(value)) return value;
   const { hostKind, requestedHostKind, ...terminal } = value;
   return {
     ...terminal,
-    ...(hostKind === 'herdr'
-      ? (terminal.mode === 'plain' ? { mode: 'herdr' } : {})
+    ...(WIRE_PROJECTED_HOST_MODES.includes(hostKind)
+      ? (terminal.mode === 'plain' ? { mode: hostKind } : {})
       : (hostKind === undefined ? {} : { hostKind })),
     ...(requestedHostKind === 'herdr'
       ? (terminal.requested === 'plain' ? { requested: 'herdr' } : {})
@@ -55,7 +58,8 @@ function createTerminalObjectSchema(zod: typeof z, context: TerminalMetadataCont
   // metadata remains a round-trip custodian with permissive presentation fields.
   const string = (ownerMax: number) => context === 'owner' ? zod.string().check(zod.maxLength(ownerMax)) : zod.string();
   const object = <T extends z.core.$ZodShape>(shape: T) => context === 'owner' ? zod.strictObject(shape) : zod.object(shape);
-  const terminalModeSchema = zod.enum(['plain', 'tmux', 'zellij', 'herdr', 'windows_terminal', 'windows_console']);
+  // `pty`: the Agent runs in a Session-holder terminal (POSIX pty or Windows ConPTY), attached by Session id.
+  const terminalModeSchema = zod.enum(['plain', 'tmux', 'zellij', 'herdr', 'windows_terminal', 'windows_console', 'pty']);
   const requestedModeSchema = zod.enum(['plain', 'tmux', 'zellij', 'herdr', ...WINDOWS_REMOTE_SESSION_LAUNCH_MODES]);
   return zod.object({
       mode: zod.optional(terminalModeSchema),
@@ -72,6 +76,7 @@ function createTerminalObjectSchema(zod: typeof z, context: TerminalMetadataCont
         socketDirV1: zod.optional(string(100_000)),
       })),
       herdr: zod.optional(createHerdrTerminalMetadataSchema(zod, context)),
+      pty: zod.optional(object({ host: zod.enum(['holder']) })),
       windows: zod.optional(object({
         host: zod.enum(['windows_terminal', 'console']),
         windowId: zod.optional(string(2_000)),
@@ -123,7 +128,7 @@ export function projectSessionMetadataForWire(metadata: unknown): unknown {
     ...metadata,
     terminal: {
       ...terminal,
-      ...(terminal.mode === 'herdr' ? { mode: 'plain', hostKind: 'herdr' } : {}),
+      ...(WIRE_PROJECTED_HOST_MODES.includes(terminal.mode) ? { mode: 'plain', hostKind: terminal.mode } : {}),
       ...(terminal.requested === 'herdr' ? { requested: 'plain', requestedHostKind: 'herdr' } : {}),
     },
   };

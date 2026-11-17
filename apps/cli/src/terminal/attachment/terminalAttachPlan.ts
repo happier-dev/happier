@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 export type TerminalAttachPlan =
   | { type: 'not-attachable'; reason: string }
+  /** The Agent runs in its Session holder's terminal: attached by Session id through the runner. */
+  | { type: 'pty' }
   | {
       type: 'windows_terminal_host';
       windowId: string;
@@ -72,6 +74,12 @@ export function createTerminalAttachPlan(params: {
       type: 'windows_terminal_host',
       windowId,
     };
+  }
+
+  if (params.terminal.mode === 'pty') {
+    return params.terminal.pty?.host === 'holder'
+      ? { type: 'pty' }
+      : { type: 'not-attachable', reason: 'Session does not include its holder terminal.' };
   }
 
   if (params.terminal.mode === 'windows_console') {

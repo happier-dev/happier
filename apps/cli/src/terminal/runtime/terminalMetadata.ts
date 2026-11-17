@@ -138,15 +138,11 @@ export function buildTerminalMetadataFromHostHandle(
     };
   }
 
+  // The PTY terminal host: its Agent runs in the Session holder's terminal (POSIX pty or
+  // Windows ConPTY) on every OS and is attached by Session id. Sessions written before keep
+  // their `windows_console` metadata.
   if (handle.kind === 'windows_console') {
-    return {
-      ...binding,
-      mode: 'windows_console',
-      windows: {
-        host: 'console',
-        ...(handle.paneId ? { windowId: handle.paneId } : {}),
-      },
-    };
+    return { ...binding, mode: 'pty', pty: { host: 'holder' } };
   }
 
   if (handle.kind === 'herdr') {
@@ -182,7 +178,7 @@ export function buildTerminalMetadataFromRuntimeFlags(
   if (!flags) return undefined;
 
   const mode = flags.mode;
-  if (mode !== 'plain' && mode !== 'tmux' && mode !== 'zellij' && mode !== 'herdr' && mode !== 'windows_terminal' && mode !== 'windows_console') return undefined;
+  if (mode !== 'plain' && mode !== 'tmux' && mode !== 'zellij' && mode !== 'herdr' && mode !== 'windows_terminal' && mode !== 'windows_console' && mode !== 'pty') return undefined;
 
   const terminal: NonNullable<Metadata['terminal']> = {
     mode,
@@ -234,6 +230,8 @@ export function buildTerminalMetadataFromRuntimeFlags(
       ...(flags.zellijSocketDir?.trim() ? { socketDirV1: flags.zellijSocketDir.trim() } : {}),
     };
   }
+
+  if (mode === 'pty') terminal.pty = { host: 'holder' };
 
   if (mode === 'windows_terminal' || mode === 'windows_console') {
     terminal.windows = {

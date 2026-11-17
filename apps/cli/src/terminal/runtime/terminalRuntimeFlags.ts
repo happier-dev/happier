@@ -26,6 +26,7 @@ function parseTerminalMode(value: string | undefined): TerminalMode | undefined 
     || value === 'herdr'
     || value === 'windows_terminal'
     || value === 'windows_console'
+    || value === 'pty'
   ) return value;
   return undefined;
 }

@@ -78,6 +78,15 @@ describe('createTerminalAttachPlan', () => {
     });
   });
 
+  it('attaches a holder-terminal (pty) Session by its id, and keeps old console values as they were', () => {
+    expect(createTerminalAttachPlan({ terminal: { mode: 'pty', requested: 'console', pty: { host: 'holder' } }, insideTmux: false }))
+      .toEqual({ type: 'pty' });
+    expect(createTerminalAttachPlan({ terminal: { mode: 'pty', pty: { host: 'holder' } }, insideTmux: true })).toEqual({ type: 'pty' });
+    // Written before `pty`: the in-runner console host without a pid stays honestly not attachable.
+    expect(createTerminalAttachPlan({ terminal: { mode: 'windows_console', requested: 'console', windows: { host: 'console', windowId: 'happier-1' } }, insideTmux: false }))
+      .toEqual({ type: 'not-attachable', reason: 'Session does not include a Windows console process id.' });
+  });
+
   it('returns not-attachable when tmux mode has no target', () => {
     const terminal: NonNullable<Metadata['terminal']> = { mode: 'tmux' };
     const plan = createTerminalAttachPlan({ terminal, insideTmux: false });

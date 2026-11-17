@@ -247,18 +247,14 @@ describe('buildTerminalMetadataFromHostHandle', () => {
       paneId: '9',
       attachMetadata,
     })).toEqual({ mode: 'zellij', zellij: { sessionName: 'native-zellij', paneId: '9' } });
+    // The PTY terminal host (its selector kind stays `windows_console`) on every OS: the Agent
+    // runs in its Session holder's terminal, attached by Session id.
     expect(buildTerminalMetadataFromHostHandle({
       kind: 'windows_console',
       sessionName: 'native-console',
       paneId: 'window-7',
       attachMetadata,
-    })).toEqual({
-      mode: 'windows_console',
-      windows: {
-        host: 'console',
-        windowId: 'window-7',
-      },
-    });
+    })).toEqual({ mode: 'pty', pty: { host: 'holder' } });
   });
 });
 
@@ -275,5 +271,6 @@ describe('buildTerminalHostProbeHandleFromMetadata', () => {
     }));
     expect(buildTerminalHostProbeHandleFromMetadata({ mode: 'zellij' })).toBeNull();
     expect(buildTerminalHostProbeHandleFromMetadata({ mode: 'windows_console' })).toBeNull();
+    expect(buildTerminalHostProbeHandleFromMetadata({ mode: 'pty', pty: { host: 'holder' } })).toBeNull();
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as protocol from './terminalMetadata.js';
+import { z } from '../../zodRuntimePolicy.js';
 import { SessionTerminalMetadataSchema as ReleasedUiTerminalSchema } from './fixtures/uiWeb0212TerminalMetadata.js';
 
 describe('sessionMetadata terminal metadata', () => {
@@ -30,6 +31,28 @@ describe('sessionMetadata terminal metadata', () => {
     expect(domain).toEqual({ ...metadata, name: 'renamed' });
     expect(protocol.projectSessionMetadataForWire(domain)).toEqual({ ...wire, name: 'renamed' });
     expect(metadata.name).toBe('original');
+  });
+
+  it('round-trips a holder-terminal (pty) host through the ui-web-v0.2.12 reader and the owner schema', () => {
+    const metadata = { path: '/repo', name: 'original', terminal: { mode: 'pty' as const, requested: 'console' as const, pty: { host: 'holder' as const } } };
+    const wire = protocol.projectSessionMetadataForWire(metadata);
+    expect(wire).toEqual({ ...metadata, terminal: { mode: 'plain', hostKind: 'pty', requested: 'console', pty: { host: 'holder' } } });
+    if (!wire || typeof wire !== 'object' || !('terminal' in wire)) throw new Error('Missing terminal projection');
+    const releasedMutation = { ...metadata, name: 'renamed', terminal: ReleasedUiTerminalSchema.parse(wire.terminal) };
+    expect(protocol.normalizeSessionMetadataForRead(releasedMutation)).toEqual({ ...metadata, name: 'renamed' });
+    const owner = protocol.createSessionTerminalMetadataSchema(z, 'owner');
+    expect(owner.parse(metadata.terminal)).toEqual(metadata.terminal);
+    expect(owner.safeParse({ ...metadata.terminal, pty: { host: 'holder', extra: 1 } }).success).toBe(false);
+    expect(owner.safeParse({ ...metadata.terminal, pty: { host: 'runner' } }).success).toBe(false);
+    // Values written before `pty` keep parsing and projecting unchanged.
+    for (const terminal of [
+      { mode: 'windows_console', requested: 'console', windows: { host: 'console', windowId: 'happier-1' } },
+      { mode: 'windows_console', requested: 'console', windows: { host: 'console', pid: 456 } },
+      { mode: 'tmux', requested: 'tmux', tmux: { target: 'work:1' } },
+    ] as const) {
+      expect(ReleasedUiTerminalSchema.parse((protocol.projectSessionMetadataForWire({ terminal }) as { terminal: unknown }).terminal)).toEqual(terminal);
+      expect(protocol.SessionTerminalMetadataSchema.parse(terminal)).toEqual(terminal);
+    }
   });
 
   it('removes recognized wire selectors before a canonical host change is written', () => {

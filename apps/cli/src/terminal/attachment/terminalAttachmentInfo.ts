@@ -229,7 +229,8 @@ export function terminalMetadataMatchesHostHandle(
   if (handle.kind === 'windows_console') {
     // PTY metadata has no reconstructible host geometry; its committed ID is the binding.
     const attachmentId = knownAttachmentId?.trim();
-    return terminal.mode === 'windows_console' && terminal.windows?.host === 'console'
+    return (terminal.mode === 'pty' ? terminal.pty?.host === 'holder'
+      : terminal.mode === 'windows_console' && terminal.windows?.host === 'console')
       && Boolean(attachmentId) && attachmentId === handle.attachmentId;
   }
   return false;
@@ -482,6 +483,7 @@ function parseTerminalAttachmentInfo(
       && terminal.mode !== 'herdr'
       && terminal.mode !== 'windows_terminal'
       && terminal.mode !== 'windows_console'
+      && terminal.mode !== 'pty'
     ) {
       return null;
     }

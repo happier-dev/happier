@@ -43,6 +43,10 @@ describe('terminalSessionDetails', () => {
         } as any)).toBe('happier attach s1');
     });
 
+    it('returns an attach command for a Session whose Agent runs in its holder terminal (pty)', () => {
+        expect(getAttachCommandForSession({ sessionId: 's1', terminal: { mode: 'pty', pty: { host: 'holder' } } })).toBe('happier attach s1');
+    });
+
     it('returns tmux target when present', () => {
         expect(getTmuxTargetForSession({
             mode: 'tmux',

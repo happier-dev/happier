@@ -90,8 +90,8 @@ function resolveRetiredTerminalMode(
   if (attachmentInfo.handle.kind === 'windows_console') {
     const windowsModes = new Set(
       actualTerminalModes.filter(
-        (mode): mode is 'windows_terminal' | 'windows_console' =>
-          mode === 'windows_terminal' || mode === 'windows_console',
+        (mode): mode is 'windows_terminal' | 'windows_console' | 'pty' =>
+          mode === 'windows_terminal' || mode === 'windows_console' || mode === 'pty',
       ),
     );
     return windowsModes.size === 1 ? Array.from(windowsModes)[0]! : null;
@@ -119,6 +119,7 @@ function readActualTerminalMode(
     || mode === 'herdr'
     || mode === 'windows_terminal'
     || mode === 'windows_console'
+    || mode === 'pty'
     ? mode
     : undefined;
 }
@@ -431,7 +432,7 @@ export function createStopSession(params: Readonly<{
         return incompleteStopSession('missing_topology_proof');
       }
       const matchedTerminalHost = terminalModes.some((mode) =>
-        mode === 'tmux' || mode === 'zellij' || mode === 'herdr' || mode === 'windows_terminal' || mode === 'windows_console');
+        mode === 'tmux' || mode === 'zellij' || mode === 'herdr' || mode === 'windows_terminal' || mode === 'windows_console' || mode === 'pty');
       if (
         !attachmentInfo
         && matchedTerminalHost
@@ -440,7 +441,7 @@ export function createStopSession(params: Readonly<{
       ) {
         for (const [index, mode] of terminalModes.entries()) {
           if (mode !== 'tmux' && mode !== 'zellij' && mode !== 'herdr'
-            && mode !== 'windows_terminal' && mode !== 'windows_console') continue;
+            && mode !== 'windows_terminal' && mode !== 'windows_console' && mode !== 'pty') continue;
           const pid = pidsToStop[index]!;
           const expected = expectedTrackedSessionsByPid.get(pid);
           // No unknown host is signalled or disposed. A positively dead runner
