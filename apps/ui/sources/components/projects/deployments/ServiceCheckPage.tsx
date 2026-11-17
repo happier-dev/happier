@@ -65,16 +65,14 @@ export function ServiceCheckPage() {
           (!family || family.result.coverage === 'loading');
         return (
           <ItemList testID="services.check.page">
-            {row ? <CheckPageHeader row={row} /> : (
+            {row ? <ServiceCheckPageBody row={row} /> : (
               <MainScreenHeader
                 testID="services.check.page.header"
                 title={t('projects.deployments.services.checkPageTitle')}
                 alwaysShowTitle
               />
             )}
-            {row ? (
-              <ServiceCheckDetail row={row} metaInHeader />
-            ) : reading ? (
+            {row ? null : reading ? (
               <ItemGroup surface="none" testID="services.check.page.loading">
                 <SkeletonRows rows={4} />
               </ItemGroup>
@@ -98,6 +96,16 @@ export function ServiceCheckPage() {
  * The Check page header (lab A3): named by what it checks, as the row the person pressed is, with what it is (kind,
  * cadence, Machine) as its description, right under the name.
  */
+/** A found Check as its page shows it: its header (name and what it is), then the one detail body. */
+export function ServiceCheckPageBody(props: Readonly<{ row: ManagedConfiguredCheckRow }>) {
+  return (
+    <>
+      <CheckPageHeader row={props.row} />
+      <ServiceCheckDetail row={props.row} metaInHeader />
+    </>
+  );
+}
+
 function CheckPageHeader(props: Readonly<{ row: ManagedConfiguredCheckRow }>) {
   const meta = useServiceCheckMeta(props.row);
   const title = props.row.definitionFacts.kind === 'loading'

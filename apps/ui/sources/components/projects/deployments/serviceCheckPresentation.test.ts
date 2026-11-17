@@ -129,6 +129,7 @@ describe('A Check’s settings come from its saved source (the edit seed), as sa
       address: 'https://n8n.example',
       expectStatus: 200,
       keyword: 'n8n',
+      keyFlow: null,
       periodMs: 300_000,
       failuresBeforeAlert: 2,
       alertChannels: 2,
@@ -408,5 +409,54 @@ describe('Monitoring: what needs the person, and the counts that say it', () => 
     expect([...summary.needsYou]).toEqual([]);
     expect(serviceCheckStale(row('a', 'up', true, 'build-01') as never, offline)).toBe(true);
     expect(serviceCheckStale(row('d', 'up', false, 'build-01') as never, offline)).toBe(false);
+  });
+});
+
+// J5 / D33 (R2-B): a Key flow check's bars, uptime and recent results stay the persisted check results; its
+// response trend is the collector's selected history, never the retained check timings.
+describe('a Key flow check names its routes and reads its trend from the collector', () => {
+  const keyFlow = {
+    environmentId: 'env-prod', serviceName: 'billing-api',
+    measure: { kind: 'route', routes: [{ method: 'POST', route: '/checkout' }, { method: 'GET', route: '/api/cart' }], statistic: 'p95' },
+    windowMs: 600_000, threshold: { operator: 'above', value: 800 },
+  };
+  const source = {
+    v: 1, subject: { kind: 'environment', environmentId: 'env-prod' },
+    checks: [{ checkId: 'Checkout', kind: { pluginId: 'happier.telemetry', localId: 'key-flow' }, binding: { kind: 'healthCheck' },
+      config: keyFlow, periodMs: 60_000, consecutiveFailuresBeforeAlerting: 3 }],
+  };
+
+  it('names the flow by its routes and keeps its saved selection', () => {
+    const [definition] = readServiceCheckDefinitions({ sourceConfig: source, displayLabel: 'Checkout' })!;
+    expect(definition).toMatchObject({ checkId: 'Checkout', targetLabel: 'POST /checkout, GET /api/cart', keyFlow });
+  });
+
+  it('a Key flow row draws no retained timing; it carries the collector, its saved flow and the newest result as the window end', async () => {
+    const { serviceCheckListFacts } = await import('./serviceCheckPresentation');
+    const at = (hoursAgo: number, latencyMs: number) =>
+      ({ status: 'up', observedAt: today - hoursAgo * 3_600_000, latencyMs, evidence: { kind: 'none' } }) as never;
+    const facts = serviceCheckListFacts({
+      native: { name: 'Checkout' },
+      definitionFacts: { kind: 'available', observerMachineId: 'collector-b', checks: [{ checkId: 'Checkout', name: 'Key flow',
+        targetLabel: 'POST /checkout, GET /api/cart', periodMs: 60_000, domainId: null, keyFlow }] },
+      lastResults: { kind: 'available', checks: [{ checkId: 'Checkout', result: at(0, 412),
+        recentResults: [at(2, 380), at(1, 395), at(0, 412)], recentResultsCoverage: 'complete' }] },
+    } as never);
+    expect(facts.response24h).toEqual([]);
+    expect(facts.collectorTrend).toEqual({ collectorMachineId: 'collector-b', config: keyFlow, until: today });
+  });
+
+  it('every other check keeps its retained response and has no collector trend', async () => {
+    const { serviceCheckListFacts } = await import('./serviceCheckPresentation');
+    const facts = serviceCheckListFacts({
+      native: { name: 'Shop' },
+      definitionFacts: { kind: 'available', observerMachineId: 'web-01', checks: [{ checkId: 'c1', name: 'HTTP',
+        targetLabel: 'shop.example', periodMs: 60_000, domainId: null, keyFlow: null }] },
+      lastResults: { kind: 'available', checks: [{ checkId: 'c1', result: { status: 'up', observedAt: today, latencyMs: 140,
+        evidence: { kind: 'none' } } as never, recentResults: [{ status: 'up', observedAt: today - 60_000, latencyMs: 120, evidence: { kind: 'none' } },
+        { status: 'up', observedAt: today, latencyMs: 140, evidence: { kind: 'none' } }] as never, recentResultsCoverage: 'complete' }] },
+    } as never);
+    expect(facts.collectorTrend).toBeNull();
+    expect(facts.response24h).toHaveLength(2);
   });
 });

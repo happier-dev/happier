@@ -52,9 +52,11 @@ import {
   serviceCheckStatusWord,
   type ServiceCheckSettings,
   formatServiceCheckLatency,
+  formatServiceCheckPeriod,
   formatServiceCheckUnit,
 } from './serviceCheckPresentation';
 import { ServiceCheckBars, type ServiceCheckBarCell } from './ServiceCheckBars';
+import { ServiceCheckKeyFlowSection } from './ServiceCheckKeyFlowSection';
 
 const k = 'projects.deployments.services' as const;
 const m = 'projects.deployments.monitoring' as const;
@@ -177,6 +179,7 @@ export function ServiceCheckDetail(
     serverId,
     settings?.observerMachineId ?? null,
   );
+  const collectorLabel = useServerScopedMachineLabel(serverId, serviceCheckListFacts(row).collectorTrend?.collectorMachineId ?? null);
   const [pausing, setPausing] = React.useState(false);
   const openEditor = React.useCallback(
     () =>
@@ -266,6 +269,9 @@ export function ServiceCheckDetail(
       detail: t(`${m}.uptimeDays`),
     },
   ];
+  const keyFlow = definition?.keyFlow ?? settings?.keyFlow ?? null;
+  // A Key flow's trend and routes come from the collector that runs it (D33); its bars and uptime stay the persisted results.
+  const collectorTrend = serviceCheckListFacts(row).collectorTrend;
   const expect = settings?.expectStatus
     ? settings.keyword
       ? t(`${k}.expectStatusKeyword`, {
@@ -325,7 +331,10 @@ export function ServiceCheckDetail(
             narrow={factsWidth !== null && factsWidth < stripFacts.length * FACT_MIN_WIDTH_PX} />
         </View>
       </ItemGroup>
-      {latencies.length >= 2 ? (
+      {collectorTrend ? (
+        <ServiceCheckKeyFlowSection scope={row.scope} trend={collectorTrend} collectorLabel={collectorLabel} failing={failing} />
+      ) : null}
+      {latencies.length >= 2 && !keyFlow ? (
         <ItemGroup title={t(`${m}.responseTime`)} action={<Text variant="meta" style={styles.captionText}>
           {t(`${m}.responseSpan`, { count: latencies.length })}</Text>} surface="none" testID="services.check.response">
           <StackedSeriesChart
@@ -395,6 +404,9 @@ export function ServiceCheckDetail(
               subtitle={[
                 formatClock(result.observedAt),
                 result.cause?.httpStatus === undefined ? null : String(result.cause.httpStatus),
+                // A measured check (a Key flow) says its error share beside its time (lab p7Flows detail).
+                result.measurements?.errorRate === undefined ? null
+                  : t(`${m}.keyFlowErrorShare`, { percent: `${Math.round(result.measurements.errorRate * 1000) / 10}%` }),
                 observer ? t(`${k}.resultFrom`, { machine: observer }) : null,
               ]
                 .filter(Boolean)
@@ -425,12 +437,20 @@ export function ServiceCheckDetail(
         {definition?.targetLabel ? (
           <Item
             testID="services.check.settings.address"
-            title={t(`${k}.address`)}
+            title={keyFlow ? t(`${m}.keyFlowRoutes`) : t(`${k}.address`)}
             subtitle={
               <Text variant="meta" style={styles.mono}>
                 {definition.targetLabel}
               </Text>
             }
+            onPress={openEditor}
+          />
+        ) : null}
+        {keyFlow ? (
+          <Item
+            testID="services.check.settings.failsWhen"
+            title={t(`${m}.keyFlowFailsWhen`)}
+            subtitle={keyFlowRuleText(keyFlow)}
             onPress={openEditor}
           />
         ) : null}
@@ -493,6 +513,21 @@ export function ServiceCheckDetail(
       </ItemGroup>
     </View>
   );
+}
+
+/** A Key flow's saved rule in words: "p95 above 800 ms, over 10 min". */
+function keyFlowRuleText(config: NonNullable<ServiceCheckSettings['keyFlow']>): string {
+  const measure = config.measure;
+  const errors = measure.kind === 'route' && measure.statistic === 'errorRate';
+  const value = errors ? `${Math.round(config.threshold.value * 1000) / 10}%`
+    : measure.kind === 'route' ? formatLatency(config.threshold.value) : String(config.threshold.value);
+  return t(`${m}.keyFlowRule`, {
+    measure: measure.kind === 'route' ? (errors ? t(`${m}.keyFlowErrors`) : measure.statistic)
+      : measure.kind === 'runtime' ? measure.metricName : t(`${m}.keyFlowSpend`),
+    operator: t(config.threshold.operator === 'above' ? `${m}.keyFlowAbove` : `${m}.keyFlowBelow`),
+    value,
+    window: formatServiceCheckPeriod(config.windowMs),
+  });
 }
 
 /** Check now runs the saved kind's public Action through the ordinary front door (policy, approval, Machine). */

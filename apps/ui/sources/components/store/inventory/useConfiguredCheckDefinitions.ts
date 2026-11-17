@@ -17,7 +17,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 
 export type ConfiguredCheckDefinitionFacts =
     | Readonly<{ kind: 'loading' | 'unavailable' }>
-    | Readonly<{ kind: 'available'; checks: readonly Pick<ServiceCheckDefinitionFacts, 'checkId' | 'name' | 'targetLabel' | 'periodMs' | 'domainId'>[];
+    | Readonly<{ kind: 'available'; checks: readonly Pick<ServiceCheckDefinitionFacts, 'checkId' | 'name' | 'targetLabel' | 'periodMs' | 'domainId' | 'keyFlow'>[];
         /** The Machine assigned to run the source's checks; null until assigned, or when results arrive by webhook. */
         observerMachineId: string | null }>;
 export const CONFIGURED_CHECK_DEFINITION_LOADING: ConfiguredCheckDefinitionFacts = Object.freeze({ kind: 'loading' });
@@ -101,8 +101,8 @@ export function useConfiguredCheckDefinitions(lifetime: ServerAccountScopeLifeti
                 const declaration = manifest?.contributes.healthCheckKinds?.find(candidate => candidate.id === kind.localId);
                 return declaration ? resolvePluginLocalizedText({ projection, pluginId: kind.pluginId, value: declaration.title }) : null;
             } });
-            return [entry.key, checks ? { kind: 'available', checks: checks.map(({ checkId, name, targetLabel, periodMs, domainId }) =>
-                ({ checkId, name, targetLabel, periodMs, domainId })),
+            return [entry.key, checks ? { kind: 'available', checks: checks.map(({ checkId, name, targetLabel, periodMs, domainId, keyFlow }) =>
+                ({ checkId, name, targetLabel, periodMs, domainId, keyFlow })),
                 observerMachineId: entry.observation?.kind === 'durablePush' ? null : entry.observation?.watcher?.machineId ?? null } : UNAVAILABLE];
         }));
     }, [base, domains, reader]);

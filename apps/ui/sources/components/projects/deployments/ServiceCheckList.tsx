@@ -306,7 +306,7 @@ export function ServiceCheckList(
           priority: 1,
           align: 'end',
           listColumn: true,
-          render: (row) => <CheckResponse facts={factsOf(row)} />,
+          render: (row) => <CheckResponse facts={factsOf(row)} scope={row.scope} />,
         },
         {
           key: 'uptime',
@@ -331,7 +331,7 @@ export function ServiceCheckList(
         headerRight: state,
         // D36 2B: the response area and its latest value with 30-day uptime, then the last checks.
         body: {
-          render: (row) => <CheckCardBody facts={factsOf(row)} bars={bars(row)} />,
+          render: (row) => <CheckCardBody facts={factsOf(row)} scope={row.scope} bars={bars(row)} />,
           heightAtNormalText: HAPPIER_DATA_METRICS.plotHeightPx + HAPPIER_DATA_METRICS.blockGapPx + 24,
         },
         // The value and uptime sit beside the trend in the body, so the card has no facts line. Without this the
@@ -407,7 +407,7 @@ const CheckRowBars = React.memo(function CheckRowBars(
 });
 
 /** Response · 24 h (D36 2A): the retained responses as a small line, then the latest. */
-function CheckResponse(props: Readonly<{ facts: ServiceCheckListFacts }>) {
+function CheckResponse(props: Readonly<{ facts: ServiceCheckListFacts; scope: ManagedConfiguredCheckRow['scope'] }>) {
   const { theme } = useUnistyles();
   if (props.facts.latencyMs === null) return null;
   const tone =
@@ -416,7 +416,7 @@ function CheckResponse(props: Readonly<{ facts: ServiceCheckListFacts }>) {
       : theme.colors.text.secondary;
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
-      <ServiceCheckResponseTrend facts={props.facts} form="line" label={t(`${m}.columnResponse24h`)} />
+      <ServiceCheckResponseTrend facts={props.facts} scope={props.scope} form="line" label={t(`${m}.columnResponse24h`)} />
       <Text
       style={{
         ...Typography.variant('meta'),
@@ -453,16 +453,16 @@ function CheckUptime(props: Readonly<{ facts: ServiceCheckListFacts }>) {
 }
 
 /** A card's response area beside its latest value and 30-day uptime (D36 2B); a kind without response times keeps the facts. */
-function CheckCardBody(props: Readonly<{ facts: ServiceCheckListFacts; bars: React.ReactNode }>) {
+function CheckCardBody(props: Readonly<{ facts: ServiceCheckListFacts; scope: ManagedConfiguredCheckRow['scope']; bars: React.ReactNode }>) {
   return (
     <View style={{ gap: HAPPIER_DATA_METRICS.blockGapPx }}>
-      <CheckCardFacts facts={props.facts} />
+      <CheckCardFacts facts={props.facts} scope={props.scope} />
       {props.bars}
     </View>
   );
 }
 
-function CheckCardFacts(props: Readonly<{ facts: ServiceCheckListFacts }>) {
+function CheckCardFacts(props: Readonly<{ facts: ServiceCheckListFacts; scope: ManagedConfiguredCheckRow['scope'] }>) {
   const { theme } = useUnistyles();
   const uptime = serviceCheckUptimeText(props.facts.uptimePercent);
   const value = props.facts.latencyMs === null ? null : formatServiceCheckLatency(props.facts.latencyMs);
@@ -475,7 +475,7 @@ function CheckCardFacts(props: Readonly<{ facts: ServiceCheckListFacts }>) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: theme.space.s12, minHeight: HAPPIER_DATA_METRICS.plotHeightPx }}>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <ServiceCheckResponseTrend facts={props.facts} form="area" label={t(`${m}.columnResponse24h`)} />
+        <ServiceCheckResponseTrend facts={props.facts} scope={props.scope} form="area" label={t(`${m}.columnResponse24h`)} />
       </View>
       <View style={{ alignItems: 'flex-end' }}>
         {value ? (

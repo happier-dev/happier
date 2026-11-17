@@ -11,6 +11,11 @@ import { readDeploymentDomainHostnameV1, type DeploymentDomainContentV1 } from '
 import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_KINDS_V1, type HealthCheckKindV1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 
 import type { HealthCheckSubjectV1 } from '@happier-dev/protocol/deployments/healthCheckSubjectV1';
+import {
+  TELEMETRY_KEY_FLOW_HEALTH_KIND_V1,
+  TelemetryKeyFlowConfigV1Schema,
+  type TelemetryKeyFlowConfigV1,
+} from '@happier-dev/database-protocol';
 import type { TriageFailureSubjectV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { ConfiguredHealthResultsState } from '@/components/store/inventory/configuredHealthResults';
@@ -114,6 +119,8 @@ export type ServiceCheckSettings = Readonly<{
   address: string | null;
   expectStatus: number | null;
   keyword: string | null;
+  /** A Key flow check's saved flow (its routes, window and threshold); null for every other kind. */
+  keyFlow: TelemetryKeyFlowConfigV1 | null;
   periodMs: number;
   failuresBeforeAlert: number;
   alertChannels: number;
@@ -138,6 +145,8 @@ export type ServiceCheckDefinitionFacts = Readonly<{
   address: string | null;
   expectStatus: number | null;
   keyword: string | null;
+  /** A Key flow check's saved flow; its trend is read from the collector that runs it (D33). */
+  keyFlow: TelemetryKeyFlowConfigV1 | null;
 }>;
 export type ServiceCheckDefinitionReadOptions = Readonly<{
   kindName?: (kind: HealthCheckDefinitionV1['kind']) => string | null;
@@ -150,6 +159,13 @@ const storedHealthSource = createStoredReadSchema(HealthCheckSourceConfigV1Schem
 const storedHttpConfig = createStoredReadSchema(HealthCheckServiceHttpConfigV1Schema);
 const storedTcpConfig = createStoredReadSchema(HealthCheckTcpConfigV1Schema);
 const storedDnsConfig = createStoredReadSchema(HealthCheckDnsConfigV1Schema);
+
+/** What a Key flow checks, in its own words: its routes ("POST /checkout, GET /api/cart"), else its metric. */
+function keyFlowTargetLabel(config: TelemetryKeyFlowConfigV1): string | null {
+  const measure = config.measure;
+  return measure.kind === 'route' ? measure.routes.map((route) => `${route.method} ${route.route}`).join(', ')
+    : measure.kind === 'runtime' ? measure.metricName : null;
+}
 
 /** Saved definition facts are independent of results. Domain targets come from the current Domain projection. */
 export function readServiceCheckDefinitions(
@@ -166,6 +182,8 @@ export function readServiceCheckDefinitions(
       ? storedHttpConfig.safeParse(check.config) : null;
     const tcp = builtin && check.kind.localId === 'tcp' ? storedTcpConfig.safeParse(check.config) : null;
     const dns = builtin && check.kind.localId === 'dns' ? storedDnsConfig.safeParse(check.config) : null;
+    const keyFlow = check.kind.pluginId === TELEMETRY_KEY_FLOW_HEALTH_KIND_V1.pluginId
+      && check.kind.localId === TELEMETRY_KEY_FLOW_HEALTH_KIND_V1.localId ? TelemetryKeyFlowConfigV1Schema.safeParse(check.config) : null;
     const binding = check.binding;
     const domainId = binding.kind === 'healthCheck' ? null : binding.domainId;
     const domain = binding.kind !== 'healthCheck' && source.subject.kind === 'environment'
@@ -179,10 +197,12 @@ export function readServiceCheckDefinitions(
     if (labelUrl) { labelUrl.search = ''; labelUrl.hash = ''; }
     return {
       checkId: check.checkId, name: options.kindName?.(check.kind) ?? saved.displayLabel,
-      targetLabel: labelUrl ? formatDeploymentLiveAddress(labelUrl.href) : address ?? (dns?.success ? `${dns.data.recordType} ${dns.data.hostname}` : null),
+      targetLabel: labelUrl ? formatDeploymentLiveAddress(labelUrl.href) : address ?? (dns?.success ? `${dns.data.recordType} ${dns.data.hostname}`
+        : keyFlow?.success ? keyFlowTargetLabel(keyFlow.data) : null),
       periodMs: check.periodMs, domainId, address,
       expectStatus: target?.expectStatus ?? null,
       keyword: http?.success ? http.data.keyword ?? null : null,
+      keyFlow: keyFlow?.success ? keyFlow.data : null,
     };
   });
 }
@@ -211,6 +231,7 @@ export function readServiceCheckSettings(
     address: facts?.address ?? null,
     expectStatus: facts?.expectStatus ?? null,
     keyword: facts?.keyword ?? null,
+    keyFlow: facts?.keyFlow ?? null,
     periodMs: check.periodMs,
     failuresBeforeAlert: check.consecutiveFailuresBeforeAlerting,
     alertChannels: source.alerts?.channels.length ?? 0,
@@ -469,6 +490,12 @@ type ListedCheck = Readonly<{
 /** A row's recent results: the lab's "Last 30 checks" (MONITOR-LAB-1115 Q1, row size). */
 export const SERVICE_CHECK_ROW_BARS = 30;
 
+export type ServiceCheckCollectorTrend = Readonly<{
+  collectorMachineId: string;
+  config: TelemetryKeyFlowConfigV1;
+  until: number;
+}>;
+
 export type ServiceCheckListFacts = Readonly<{
   title: string;
   kind: string | null;
@@ -482,6 +509,11 @@ export type ServiceCheckListFacts = Readonly<{
   latencyMs: number | null;
   /** The shown target's retained responses over the 24 hours before its newest result, oldest first (D36 2A/2B). */
   response24h: readonly Readonly<{ observedAt: number; latencyMs: number | null }>[];
+  /**
+   * A Key flow's response trend is the collector's selected history, not its retained check timings (D33, R2-B): the
+   * collector that runs it, its saved flow, and the newest result as the window's end. Null for every other kind.
+   */
+  collectorTrend: ServiceCheckCollectorTrend | null;
   /** The shown target's usual response: the average over its passing results in the bars' window. */
   usualMs: number | null;
   uptimePercent: number | null;
@@ -505,6 +537,12 @@ export function serviceCheckListFacts(row: ListedCheck, slots: number = SERVICE_
   const recent = shown ? readServiceCheckRecent(shown) : null;
   const window = recent?.results.slice(0, slots) ?? [];
   const usual = window.flatMap((result) => (result.status === 'up' && result.latencyMs !== undefined ? [result.latencyMs] : []));
+  const observerMachineId = row.definitionFacts.kind === 'available' ? row.definitionFacts.observerMachineId : null;
+  const keyFlow = row.definitionFacts.kind === 'available'
+    ? (row.definitionFacts.checks.find((check) => check.checkId === shown?.checkId) ?? definition)?.keyFlow ?? null : null;
+  const newest = recent?.results[0]?.observedAt;
+  const collectorTrend = keyFlow && observerMachineId !== null && newest !== undefined
+    ? { collectorMachineId: observerMachineId, config: keyFlow, until: newest } : null;
   return {
     title: definition?.targetLabel ?? row.native.name,
     kind: definition?.name ?? null,
@@ -515,11 +553,12 @@ export function serviceCheckListFacts(row: ListedCheck, slots: number = SERVICE_
     status: facts.status,
     recent: serviceCheckRecentBars(recent, slots),
     latencyMs: shown?.result.latencyMs ?? null,
-    response24h: recent ? serviceCheckResponseSeries(recent, SERVICE_CHECK_RESPONSE_WINDOW_MS) : [],
+    response24h: recent && !keyFlow ? serviceCheckResponseSeries(recent, SERVICE_CHECK_RESPONSE_WINDOW_MS) : [],
+    collectorTrend,
     usualMs: usual.length === 0 ? null : usual.reduce((sum, value) => sum + value, 0) / usual.length,
     uptimePercent: facts.uptimePercent,
     failingSince: recent?.failingSince ?? null,
     causeText: shown && serviceCheckStatusTone(shown.result.status) !== null ? serviceCheckCauseText(shown.result.cause) : null,
-    observerMachineId: row.definitionFacts.kind === 'available' ? row.definitionFacts.observerMachineId : null,
+    observerMachineId,
   };
 }
