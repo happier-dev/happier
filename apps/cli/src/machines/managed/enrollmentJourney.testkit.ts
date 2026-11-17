@@ -1,5 +1,12 @@
+import { guestCliExecutable } from './enrollmentPayload.testkit';
+import packageJson from '../../../package.json';
+import { machineProvisionerAuthorFixture } from '../../../../../packages/plugin-sdk/fixtures/authoring-inference/machineProvisioners';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { activateContributionModule } from '@/plugins/runtime/lifecycle/activation/activateContributionModule';
+import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
+import type { TargetActionInvocationRegistration } from '@/plugins/runtime/invocation/targetActionRegistry';
 import { isRecord } from '@happier-dev/protocol/common/records';
-import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { execFile, execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { request as httpRequest } from 'node:http';
 import { Readable } from 'node:stream';
@@ -7,7 +14,7 @@ import { appendFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promise
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { isDeepStrictEqual } from 'node:util';
+import { isDeepStrictEqual, promisify } from 'node:util';
 import { expect, onTestFinished, vi } from 'vitest';
 import { machineSetup } from '@happier-dev/cli-common';
 import { callSocketRpc } from '@happier-dev/sync-client';
@@ -31,7 +38,7 @@ import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions
 import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createConnectedAccountPurposeBindingOwner, createActiveAccountSettingsConnectedAccountPurposeBindingStore } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
-import { fixture as nativeFixture } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
+import { fixture as nativeFixture, roles, roleActionId } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
 import { MachineEffectInternalRequestSchema } from '@/machines/setup/effectInternalProtocol';
 import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
 import { decodeBase64, encodeBase64 } from '@/api/encryption';
@@ -110,6 +117,8 @@ export async function acquireEnrollmentJourneyGuest<T extends Home>(controller: 
     /** The provisioner and guest OS are the external boundary, never Home admission. */
     native?: Readonly<{
         manifest?: NativeFixtureOptions['fixtureManifest'];
+        /** Use the public SDK author's actual activation and handlers. */
+        publicAuthor?: boolean;
         payloadRoot?: string | null;
         execute?(role: Parameters<NativeRoleExecution>[0],
             input: JsonValue | undefined, context: Parameters<NativeRoleExecution>[2],
@@ -133,7 +142,10 @@ export async function acquireEnrollmentJourneyGuest<T extends Home>(controller: 
     const resultPath = join(directory, 'enrolled.json');
     await mkdir(guestHome, { recursive: true });
     await mkdir(payload);
-    await writeFile(join(payload, 'happier'), '#!/bin/sh\nexit 0\n');
+    await writeFile(join(payload, 'happier'), ports.native?.publicAuthor
+        ? guestCliExecutable(`if [ "$1" = "--version" ]; then printf '%s\\n' '${packageJson.version}'; else printf 'public-author-installed\\n'; fi\n`)
+        : '#!/bin/sh\nexit 0\n');
+    if (ports.native?.publicAuthor) await writeFile(join(payload, 'author-module.js'), 'export const authorPayload = true;\n');
     vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', ports.native?.payloadRoot === null ? undefined : ports.native?.payloadRoot ?? payload);
     if (!requester.encryption) throw new Error('The enrollment journey requires its requester E2EE credential');
     const descriptor = { v: 1 as const, homeServerIdentityId: controller.serverId,
@@ -252,6 +264,11 @@ lines.close(); process.stdin.destroy();\n`);
     const nativeResults: NonNullable<NativeFixtureOptions['nativeRoleResults']> = {};
     const executeNativeRole: NativeRoleExecution = async (role, body, context) => {
             observed.nativePhase = role;
+            if (role === 'putFile' && ports.native?.publicAuthor) {
+                if (!isRecord(body) || typeof body.guestPath !== 'string' || typeof body.bytesBase64 !== 'string') throw new Error('Missing native payload');
+                await mkdir(dirname(body.guestPath), { recursive: true });
+                await writeFile(body.guestPath, Buffer.from(body.bytesBase64, 'base64'));
+            }
             if (role !== 'exec') return;
             if (!isRecord(body) || !Array.isArray(body.argv)) throw new Error('Missing native guest command');
             const command = body.argv[2];
@@ -265,6 +282,16 @@ lines.close(); process.stdin.destroy();\n`);
             if (command.includes('uname -s')) stdout = command.includes('uname -m') ? `Linux\nx86_64\n${guestHome}\n` : 'Linux\n';
             else if (command.includes('/etc/os-release')) stdout = 'ubuntu\nnoble\namd64\n';
             else if (command === 'id -u happier') stdout = '1001\n';
+            else if (ports.native?.publicAuthor && (command.includes('managed_guest_cli_absent') || command.includes('mkdir -p')
+                || command.startsWith('umask 077;') || command.startsWith('cat -- ') || command.startsWith('mv -- ')
+                || command.includes('mktemp') || command.includes('version_path')
+                || command.includes('tar ') || command.includes('__install-payload') || command.includes('rm -'))) {
+                // Install and promotion run in a real, private host HOME. System
+                // account/service configuration remains the native OS boundary.
+                const result = await promisify(execFile)('/bin/sh', ['-c', command], {
+                    env: { ...process.env, HOME: guestHome }, signal: context.signal });
+                stdout = result.stdout;
+            }
             else if (command.includes('mktemp')) stdout = '/tmp/happier-bootstrap-transfer.s0\n';
             else if (command.includes('version_path')) stdout = 'current=\nprevious=\n';
             else if (command.includes('effect-internal')) {
@@ -311,8 +338,36 @@ lines.close(); process.stdin.destroy();\n`);
             nativeResults.exec = { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
                 stdoutBase64: Buffer.from(stdout).toString('base64'), stderrBase64: '', stdoutTruncated: false, stderrTruncated: false };
         };
+    let authorHandlers: ReadonlyMap<string, TargetActionInvocationRegistration['handler']> | undefined;
+    const authorManifest = ports.native?.publicAuthor ? normalizePluginManifestV2(machineProvisionerAuthorFixture.manifest) : undefined;
+    if (authorManifest) {
+        const activated = await activateContributionModule({ pluginId: authorManifest.id,
+            occurrenceId: createPluginRuntimeOccurrenceId(authorManifest.id), isOccurrenceCurrent: () => true,
+            manifest: authorManifest, moduleNamespace: { activate: machineProvisionerAuthorFixture.activate } });
+        onTestFinished(() => activated.dispose());
+        expect(activated.status).toBe('active');
+        authorHandlers = new Map(activated.registrations.filter(entry => entry.family === 'actions').map(entry => [entry.localId,
+            async (body: Parameters<TargetActionInvocationRegistration['handler']>[0], context: Parameters<TargetActionInvocationRegistration['handler']>[1]) => {
+                // The author owns every role. Only its native guest command
+                // transport is replaced by this journey's OS/process boundary.
+                let authored: unknown;
+                const execute = async () => {
+                    authored = await Reflect.apply(entry.value, undefined, [body, context]);
+                    if (entry.localId === 'exec' || entry.localId === 'put-file') {
+                        await executeNativeRole(entry.localId === 'exec' ? 'exec' : 'putFile', body, context);
+                        if (entry.localId === 'exec') authored = nativeResults.exec;
+                    }
+                };
+                const role = roles.find(role => roleActionId(role) === entry.localId);
+                if (role && ports.native?.execute) {
+                    const result = await ports.native.execute(role, body, context, execute);
+                    if (result !== undefined) return result;
+                } else await execute();
+                return authored;
+            }]));
+    }
     const native = nativeFixture({ privateNative: true, credentialPurposes: [], supportedIntents: ['start', 'stop', 'delete'],
-        fixtureManifest: ports.native?.manifest, nativeRoleResults: nativeResults,
+        fixtureManifest: authorManifest ?? ports.native?.manifest, actionHandlers: authorHandlers, nativeRoleResults: nativeResults,
         onNativeRole: async (role, body, context) => {
             const result = ports.native?.execute
                 ? await ports.native.execute(role, body, context, async () => { await executeNativeRole(role, body, context); })
@@ -468,6 +523,13 @@ lines.close(); process.stdin.destroy();\n`);
         })}`);
         if (!observed.guest) throw new Error('Retained enrollment did not produce the target Machine');
         expect(observed.guest.machineId).not.toBe(controller.machineId);
+        if (ports.native?.publicAuthor) {
+            expect(await readFile(join(guestHome, '.happier/cli/current/author-module.js'), 'utf8'))
+                .toBe('export const authorPayload = true;\n');
+            const installed = await promisify(execFile)(join(guestHome, '.happier/cli/current/happier'), ['--author-install-marker'],
+                { env: { ...process.env, HOME: guestHome } });
+            expect(installed.stdout).toBe('public-author-installed\n');
+        }
         if (actionInput.enrollmentIdentity.kind === 'dedicatedDaemonUser') {
             expect(rootSteps).toEqual(expect.arrayContaining(['bootstrap-isolation-packages', 'agent-account']));
         }

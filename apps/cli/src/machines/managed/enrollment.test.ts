@@ -1,11 +1,11 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { guestCliExecutable } from './enrollmentPayload.testkit';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
 import { MACHINE_PROVISIONER_PUT_FILE_BASE64_MAX_LENGTH_V1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
@@ -35,16 +35,6 @@ const machine = ManagedMachineV1Schema.parse({
 const target = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: correlation.homeId, canonicalServerUrl: 'https://home.example.test', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example.test' }] }, authority: 'trusted_enrollment' });
 const carrier = { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 } };
 
-/** Fake only the installed executable's unrelated commands; payload promotion stays real. */
-function guestCliExecutable(body: string): string {
-  const installer = [
-    'import { installVersionedPayload } from "@happier-dev/cli-common/firstPartyRuntime";',
-    'const args = process.argv.slice(1); const value = flag => args[args.indexOf(flag) + 1];',
-    'await installVersionedPayload({ componentId: value("--component"), channel: value("--channel"), versionId: value("--version"), payloadRoot: value("--payload-root"), processEnv: process.env, selectAsDefaultReleaseChannel: true });',
-  ].join('\n');
-  return `#!/bin/sh\nif [ "$1 $2" = "self __install-payload" ]; then exec ${safeBashSingleQuote(process.execPath)} --conditions=happier-source --import ${safeBashSingleQuote(createRequire(import.meta.url).resolve('tsx'))} --input-type=module -e ${safeBashSingleQuote(installer)} "$@"; fi\n${body}`;
-}
-
 async function withReleaseMirror(run: (releases: string[]) => Promise<void>) {
   const releases: string[] = [];
   // GitHub is the external boundary; enrollment, task composition and HTTP selection stay real.
@@ -68,6 +58,19 @@ async function withReleaseMirror(run: (releases: string[]) => Promise<void>) {
 }
 
 describe('runManagedMachineEnrollment', () => {
+  beforeEach(() => {
+    const fetch = globalThis.fetch;
+    // Home HTTP is external; keep the real guest-source selection beneath it.
+    vi.spyOn(globalThis, 'fetch').mockImplementation((request, init) => {
+      const url = request instanceof Request ? request.url : String(request);
+      if (url === 'https://home.example.test/v1/features') {
+        return Promise.resolve(Response.json({ capabilities: { guestCli: {
+          source: 'home-payload', line: '0.3', channel: 'stable',
+        } } }));
+      }
+      return fetch(request, init);
+    });
+  });
   afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
   it('retains the original typed installation failure through the local task wait', async () => {
@@ -223,6 +226,7 @@ describe('runManagedMachineEnrollment', () => {
         async exec(request) {
           requests.push(request);
           const ok = (stdout = '') => ({ status: 0, stdout, stderr: '' });
+          if (request.command.includes('managed_guest_cli_absent')) return ok('managed_guest_cli_absent\n');
           if (request.command.includes('uname -s') && !request.command.includes('uname -m')) return ok('Linux\n');
           if (request.command.includes('uname -m')) return ok('Linux\naarch64\n/home/bootstrap\n');
           if (request.command.includes('/etc/os-release')) return ok('ubuntu\nnoble\narm64\n');
@@ -385,6 +389,7 @@ describe('runManagedMachineEnrollment', () => {
         } }),
         native: { async exec({ command }) {
           commands.push(command);
+          if (command.includes('managed_guest_cli_absent')) return { status: 0, stdout: 'managed_guest_cli_absent\n', stderr: '' };
           if (command.includes('effect-internal') || command.includes('useradd')) throw new Error('Creation authority must not replay after enrollment');
           if (/\bdaemon\b.*\bstatus\b.*--json/u.test(command)) return { status: 0, stderr: '', stdout: JSON.stringify({
             daemon: { running: serviceInstalled, healthy: ++readyReads >= 2, ...(!serviceInstalled ? { pid: 314 } : {}) }, service: { installed: serviceInstalled },
@@ -524,7 +529,8 @@ describe('runManagedMachineEnrollment', () => {
         await expect(runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier }, {
           readCurrentManagedRow: async () => machine,
           native: {
-            exec: async () => ({ status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' }),
+            exec: async ({ command }) => ({ status: 0, stdout: command.includes('managed_guest_cli_absent')
+              ? 'managed_guest_cli_absent\n' : 'Linux\nx86_64\n/home/guest\n', stderr: '' }),
             putFile: async () => { throw new Error('Invalid payload must not be delivered'); },
           },
         })).rejects.toMatchObject({ code: 'guest_payload_missing' });
@@ -596,6 +602,7 @@ describe('runManagedMachineEnrollment', () => {
           enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } }),
         native: { async exec({ command }) {
           commands.push(command);
+          if (command.includes('managed_guest_cli_absent')) return { status: 0, stdout: 'managed_guest_cli_absent\n', stderr: '' };
           if (/\bdaemon\b.*\bservice\b/u.test(command)) return { status: 1, stdout: '', stderr: 'User services unavailable' };
           if (command.includes('uname -m')) return { status: 0, stdout: 'Linux\nx86_64\n/home/sandbox\n', stderr: '' };
           if (/\bdaemon\b.*\bstatus\b/u.test(command)) return { status: 0, stderr: '', stdout: JSON.stringify({
