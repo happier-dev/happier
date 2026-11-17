@@ -107,7 +107,7 @@ describe('file-browser failures across the scoped network boundary', () => {
         [{ ok: false, error: "EPERM: operation not permitted, scandir 'C:\\private\\project'" }, 'EPERM', 'errors.permissionDenied'],
         [{ ok: false, error: 'private daemon diagnostic', errorCode: 'ENOENT' }, 'ENOENT', 'errors.fileNotFound'],
         [{ ok: false, error: 'ENOENT: misleading diagnostic', errorCode: 'EACCES' }, 'EACCES', 'errors.permissionDenied'],
-        [{ ok: false, error: 'ENOENT: misleading diagnostic', errorCode: 'future_filesystem_failure' }, 'future_filesystem_failure', 'errors.operationFailed'],
+        [{ ok: false, error: 'ENOENT: misleading diagnostic', errorCode: 'future_filesystem_failure' }, 'future_filesystem_failure', null],
     ] as const)('carries a daemon listing failure code through the tree without its diagnostic path (%j)', async (failure, code, reasonKey) => {
         const { useWorkspaceRepositoryTreeBrowser } = await import('@/hooks/workspaces/files/useWorkspaceRepositoryTreeBrowser');
         boundary.setRpcResponder(async request => {
@@ -123,7 +123,7 @@ describe('file-browser failures across the scoped network boundary', () => {
         try {
             await vi.waitFor(() => expect(hook.getCurrent().rootLoading).toBe(false));
             expect(hook.getCurrent().rootError).toBe(code);
-            expect(resolveFilesystemErrorReason(hook.getCurrent().rootError)).toBe(t(reasonKey));
+            expect(resolveFilesystemErrorReason(hook.getCurrent().rootError)).toBe(reasonKey ? t(reasonKey) : undefined);
             expect(boundary.requests.length - requestsBeforeTree).toBe(1);
         } finally {
             await hook.unmount();
@@ -294,9 +294,13 @@ describe('file-browser failures across the scoped network boundary', () => {
     });
 
     it('classifies a failed socket connection as unreachable without disclosing its exception', async () => {
-        boundary.setSocketConfigurator(({ socket, trigger }) => {
+        const refuseConnection: Parameters<typeof boundary.setSocketConfigurator>[0] = ({ socket, trigger }) => {
             socket.connect.mockImplementation(() => trigger('connect_error', new Error('private transport details')));
-        });
+            socket.disconnect();
+        };
+        // Home preparation can already own the active Account socket.
+        boundary.socketBoundaries.forEach(refuseConnection);
+        boundary.setSocketConfigurator(refuseConnection);
         const result = await machineFilesystemListRoots('machine-1', { serverId: home.id });
         expect(result).toEqual({ ok: false, error: 'MACHINE_RPC_UNREACHABLE', errorCode: 'MACHINE_RPC_UNREACHABLE' });
         if (!result.ok) expect(resolveFilesystemErrorReason(result.error)).toBe(t('errors.networkError'));

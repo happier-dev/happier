@@ -6,6 +6,9 @@ import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccoun
 import { prepareMachineRows, readMachineRows, type PreparedMachineRows } from './machineRowsApi';
 import { fetchMachineRows } from '@/sync/engine/machines/syncMachines';
 import { createLightSqliteHarness, type LightSqliteHarness } from '../../../../../server/sources/testkit/lightSqliteHarness';
+import { setEligibleMachineAccessGrantInTx } from '../../../../../server/sources/testkit/machineAccessGrant.testkit';
+import { removeMachineAccessGrantInTx } from '../../../../../server/sources/app/machines/machineAccess';
+import { inTx } from '../../../../../server/sources/storage/inTx';
 import { createAuthenticatedTestApp } from '../../../../../server/sources/app/api/testkit/sqliteFastify';
 import { db } from '../../../../../server/sources/storage/db';
 import { machinesRoutes } from '../../../../../server/sources/app/api/routes/machines/machinesRoutes';
@@ -107,15 +110,20 @@ describe('selected Machine reads through the real Home admission owner', () => {
                 const refused = await readMachineRows({ readTransport: next.readTransport, machineIds: ids });
                 expect([...refused.values()]).toEqual([null, null, null]);
                 expect(requests()).toHaveLength(3);
-                await db.machineAccountGrant.create({ data: { machineId: ids[0]!, accountId: foreign.id,
-                    accessLevel: 'view', createdByAccountId: owner.id } });
+                expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
+                    actorAccountId: owner.id, machineId: ids[0]!,
+                    principal: { kind: 'account', accountId: foreign.id }, level: 'view',
+                }))).toMatchObject({ kind: 'saved' });
                 // One absent member must not withdraw a different admitted Machine.
                 const pendingKey = await readMachineRows({ readTransport: next.readTransport, machineIds: ids.slice(0, 2) });
                 expect(pendingKey.get(ids[0]!)).toMatchObject({ metadata: null, daemonState: null, dataEncryptionKey: null,
                     access: { role: 'use', accessState: 'key_pending' } });
                 expect(pendingKey.has(ids[1]!)).toBe(true);
                 expect(pendingKey.get(ids[1]!)).toBeNull();
-                await db.machineAccountGrant.deleteMany({ where: { machineId: ids[0]!, accountId: foreign.id } });
+                expect(await inTx(tx => removeMachineAccessGrantInTx(tx, {
+                    actorAccountId: owner.id, machineId: ids[0]!,
+                    principal: { kind: 'account', accountId: foreign.id },
+                }))).toMatchObject({ kind: 'removed' });
                 const withdrawn = await readMachineRows({ readTransport: next.readTransport, machineIds: [ids[0]!] });
                 expect(withdrawn.get(ids[0]!)).toBeNull();
                 expect(requests()).toHaveLength(5);
