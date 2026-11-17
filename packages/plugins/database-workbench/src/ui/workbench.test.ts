@@ -53,6 +53,17 @@ it('reads only demanded catalogue pages, retains held row identity, and scopes o
         await instance.page(location).demand();
         expect(page.get().data).toBe(held);
         expect(calls).toEqual(before);
+        const change = { targetKey, relation, rowKey: 'row', label: 'Row', change: {
+            kind: 'delete' as const, key: [{ column: 'id', value: { type: 'integer' as const, value: '1' } }],
+        } };
+        instance.drafts.stage(instance.draftKey(change), change);
+        const apply = instance.apply(relation);
+        await apply.controller.prepare({ signal: new AbortController().signal });
+        apply.controller.onSettled({ ok: true, result: { ok: true, operation: 'edits.apply',
+            status: 'committed', inserted: '0', updated: '0', deleted: '1' } });
+        await page.demand();
+        expect(calls, 'Apply settlement waits for the same own-write push as every other workbench').toEqual(before);
+        expect(page.get().data).toBe(held);
         ownWrite?.({ target: descriptor.target, relation });
         await page.demand();
         expect(calls.slice(before.length)).toEqual(['relation.structure', 'rows.read']);

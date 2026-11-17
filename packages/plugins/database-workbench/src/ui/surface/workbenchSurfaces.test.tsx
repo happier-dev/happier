@@ -12,6 +12,7 @@ import {
 } from '@happier-dev/database-protocol';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { computeSha256HexDigest } from '@happier-dev/plugin-sdk';
 import {
   createPluginUiTestkit,
   createSurfaceContextFixture,
@@ -61,6 +62,19 @@ const scope =
         throw new Error('fixture is a worktree target');
       })();
 const invoices = { schema: 'public', name: 'invoices' };
+
+/** The mounted Resource transport supplies the selected connection's admitted snapshot. */
+function connectionResourceHandlers() {
+  const text = JSON.stringify({ descriptor, ownWriteRevision: 0, relationRevisions: [] });
+  const digest = `sha256:${computeSha256HexDigest(text)}`;
+  return {
+    readResource: async () => ({ contentType: 'application/json', digest, bytes: new TextEncoder().encode(text) }),
+    watchResource: async () => ({ digest }),
+    deviceState: () => ({ status: 'ready' as const, value: null }),
+    notify: () => {},
+    setUnsavedChanges: async () => {},
+  };
+}
 
 /** The daemon's Action results for a small Postgres database; the host Action boundary is the only fake. */
 function daemonAnswers(targets: readonly DatabaseDescriptorV1[]) {
@@ -272,6 +286,7 @@ describe('Database workbench surfaces', () => {
       }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: {
+        ...connectionResourceHandlers(),
         executeAction,
         setUnsavedChanges: async () => {},
         replacePageLocation: async ({ subPath }) => subPath,

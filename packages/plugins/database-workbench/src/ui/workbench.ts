@@ -254,8 +254,6 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
                 held = createApplyControl({ drafts, draftKey, target, isClosed: () => closed,
                     onOutcome: outcome => {
                         applyOutcomes.set(controlKey, outcome);
-                        // Committed rows are this relation's new truth; the held page and structure re-read on demand.
-                        if (outcome?.kind === 'applied') invalidate(targetKey, relation);
                     } }, targetKey, relation);
                 applyControls.set(controlKey, held);
             }

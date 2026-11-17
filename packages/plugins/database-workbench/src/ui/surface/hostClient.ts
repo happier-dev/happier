@@ -1,11 +1,17 @@
 import {
+  DATABASE_CONNECTION_RESOURCE_ID_V1,
+  DatabaseDemandSnapshotV1Schema,
   DATABASE_OPERATION_ACTION_ID_V1,
   DATABASE_TARGETS_LIST_ACTION_ID_V1,
+  type DatabaseDemandSnapshotV1,
   type DatabaseOperationResultV1,
+  type DatabaseTargetV1,
   type DatabaseTargetsListResultV1,
 } from '@happier-dev/database-protocol';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import { createPluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import { encodeWorkbenchSubPath } from './subPath.js';
 import type { WorkbenchClient } from '../models.js';
 
@@ -15,13 +21,79 @@ type HostOptions = Readonly<{
 }>;
 
 /**
- * The renderer's binding of the workbench client to its mount's host API. Reads are ordinary
- * Action invocations; committing effects never pass through here (they are Action.Control bindings).
+ * The renderer borrows its mounted Resource's connection demand for read Actions.
+ * Committing effects use Action.Control bindings and publish through that same Resource owner.
  */
 export function createHostWorkbenchClient(
   hostApi: PluginUiHostApi,
   options: HostOptions,
 ): WorkbenchClient {
+  const listeners = new Set<Parameters<WorkbenchClient['subscribeOwnWrites']>[0]>();
+  const demands = new Map<string, Readonly<{ ready: Promise<void>; subscriptionId(): string; dispose(): void }>>();
+  function demand(target: DatabaseTargetV1) {
+    const targetKey = JSON.stringify(target);
+    const held = demands.get(targetKey);
+    if (held) return held;
+    const input = projectNativeJsonValueForTransport({ operation: 'describe', target });
+    let subscriptionId: string;
+    let previous: DatabaseDemandSnapshotV1 | undefined;
+    let resolveReady!: () => void;
+    let rejectReady!: (error: unknown) => void;
+    const ready = new Promise<void>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+    let admission: ReturnType<PluginUiHostApi['watchResource']>;
+    const store = createPluginUiResourceStore({ client: {
+      watchResource(resource, listener, requestOptions) {
+        const selected = { ...requestOptions, input };
+        admission = hostApi.watchResource(resource, listener, selected).then(handle => {
+          subscriptionId = handle.subscriptionId;
+          changed();
+          return handle;
+        }, error => { rejectReady(error); throw error; });
+        return admission;
+      },
+      async readResource(resource, requestOptions) {
+        // Snapshot and invoke use the same admitted producer, including its selected target.
+        await admission;
+        const selected = { ...requestOptions, input };
+        return await hostApi.readResource(resource, selected);
+      },
+    } });
+    const selected = store.getEntry(DATABASE_CONNECTION_RESOURCE_ID_V1).select({
+      decode(content) {
+        return DatabaseDemandSnapshotV1Schema.parse(JSON.parse(new TextDecoder().decode(content.bytes)));
+      },
+    }, snapshot => snapshot);
+    function changed() {
+      const snapshot = selected.getSnapshot();
+      if (snapshot.error) rejectReady(new PluginError({ code: snapshot.error.code ?? 'action_failed',
+        message: snapshot.error.message, retryable: snapshot.error.retryable, details: snapshot.error.details }));
+      const next = snapshot.value;
+      if (!next || next === previous) return;
+      const before = previous;
+      previous = next;
+      if (subscriptionId) resolveReady();
+      if (!before) return;
+      if (before.ownWriteRevision !== next.ownWriteRevision) {
+        for (const listener of listeners) listener({ target });
+        return;
+      }
+      const revisions = new Map(before.relationRevisions.map(item => [JSON.stringify(item.relation), item]));
+      for (const item of next.relationRevisions) {
+        const relationKey = JSON.stringify(item.relation);
+        if (revisions.get(relationKey)?.revision !== item.revision) {
+          for (const listener of listeners) listener({ target, relation: item.relation });
+        }
+        revisions.delete(relationKey);
+      }
+      for (const item of revisions.values()) {
+        for (const listener of listeners) listener({ target, relation: item.relation });
+      }
+    }
+    const unsubscribe = selected.subscribe(changed, true);
+    const value = { ready, subscriptionId: () => subscriptionId, dispose() { unsubscribe(); store.dispose(); } };
+    demands.set(targetKey, value);
+    return value;
+  }
   return {
     async targets(input, signal) {
       const result = await hostApi.executeAction(
@@ -33,9 +105,12 @@ export function createHostWorkbenchClient(
       return result as unknown as DatabaseTargetsListResultV1;
     },
     async operation(input, signal) {
+      const held = demand(input.target);
+      await held.ready;
+      signal.throwIfAborted();
       const result = await hostApi.executeAction(
         DATABASE_OPERATION_ACTION_ID_V1[input.operation],
-        projectNativeJsonValueForTransport(input),
+        projectNativeJsonValueForTransport({ ...input, subscriptionId: held.subscriptionId() }),
         { signal },
       );
       // The SDK admitted the result against DatabaseOperationResultV1ProtocolSchema.
@@ -46,9 +121,14 @@ export function createHostWorkbenchClient(
     async access() {
       throw new Error('Database access details are not available yet');
     },
-    // R4 own-write push has no producer yet; a committed Apply invalidates its relation in the instance.
-    subscribeOwnWrites() {
-      return () => {};
+    subscribeOwnWrites(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size) return;
+        for (const held of demands.values()) held.dispose();
+        demands.clear();
+      };
     },
     async navigate(location) {
       if (!options.pageLocation) return;
@@ -57,7 +137,7 @@ export function createHostWorkbenchClient(
       });
     },
     async setUnsavedChanges(value) {
-      if (options.pageLocation) await hostApi.setUnsavedChanges(value);
+      await hostApi.setUnsavedChanges(value);
     },
     presentDeviceStorageError(error) {
       void hostApi.notify(
