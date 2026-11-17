@@ -12,7 +12,7 @@ import { editWorkflowTriggerDraft, type WorkflowTriggerDraft } from './workflowT
  * What a saved trigger reads as. A run event is created from the run it follows and a Session's
  * pull-request trigger from that Session; the card lists them but does not author them.
  */
-export type WorkflowTriggerStart = 'schedule' | 'pluginEvent' | 'sessionEvent' | 'runEvent' | 'sessionPullRequest';
+export type WorkflowTriggerStart = 'schedule' | 'pluginEvent' | 'sessionEvent' | 'runEvent' | 'sessionPullRequest' | 'action';
 
 /** A session that already exists cannot start again, so "A session starts" is not offered for a chosen Session. */
 export const WORKFLOW_SESSION_EVENT_KINDS = ['turnEnds', 'needsYou', 'sessionArchived'] as const;
@@ -22,6 +22,7 @@ export function readWorkflowTriggerStart(when: TriggerWhenValue): WorkflowTrigge
     switch (when.kind) {
         case 'schedule':
         case 'pluginEvent':
+        case 'action':
             return when.kind;
         case 'turnEnds':
         case 'needsYou':
@@ -67,6 +68,9 @@ export type WorkflowTriggerStartContext = Readonly<{
 }>;
 
 const SCHEDULE_ID = 'schedule';
+const ACTION_PHASES = ['before', 'after'] as const;
+type ActionPhase = (typeof ACTION_PHASES)[number];
+const actionStartId = (phase: ActionPhase) => `action:${phase}`;
 const sessionId = (kind: SessionEventKind) => `session:${kind}`;
 const eventId = (eventRef: Readonly<{ pluginId: string; localId: string }>) => `event:${eventRef.pluginId}/${eventRef.localId}`;
 
@@ -84,6 +88,8 @@ export function readWorkflowTriggerStartId(when: TriggerWhenValue): string | nul
         case 'sessionArchived':
         case 'sessionStarts':
             return sessionId(when.kind);
+        case 'action':
+            return actionStartId(when.phase);
         default:
             return null;
     }
@@ -91,8 +97,8 @@ export function readWorkflowTriggerStartId(when: TriggerWhenValue): string | nul
 
 /**
  * Every start in menu order, decided once here. Built-in triggers come first, grouped by resource kind in
- * the approved fixed order (Time, Sessions, Projects, Machines, Deployments, Health checks, Databases and
- * backups, Sites, Workflows, Accounts, Actions; today Happier ships Time and Sessions), then each plugin's
+ * the approved fixed order (Time, Actions, Sessions, Deployments, Health checks, Machines, Databases and
+ * backups, Workflows; lab `actrig:v:amenu`; today Happier ships Time, Actions and Sessions), then each plugin's
  * Events grouped by plugin and sorted by plugin name, in declaration order within a plugin. A resource
  * context moves its own starts to the front under its name. `current` keeps a saved start that the
  * catalog no longer offers (an Event whose plugin is gone, "A session starts") choosable as it is.
@@ -106,6 +112,11 @@ export function buildWorkflowTriggerStartOptions(
         ? [...WORKFLOW_SESSION_EVENT_KINDS, 'sessionStarts'] : WORKFLOW_SESSION_EVENT_KINDS;
     const options: WorkflowTriggerStartOption[] = [
         { id: SCHEDULE_ID, group: t('workflows.triggers.card.groupTime'), section: 'builtin', title: t('workflows.triggers.card.schedule'), glyph: 'clock' },
+        // Before and after an Action (PROGRAM D1–D3): the Action and its subject are chosen on the trigger's own rows.
+        { id: actionStartId('before'), group: t('workflows.triggers.card.groupActions'), section: 'builtin',
+            title: t('workflows.triggers.card.actionBefore'), glyph: ACTION_PHASE_GLYPHS.before },
+        { id: actionStartId('after'), group: t('workflows.triggers.card.groupActions'), section: 'builtin',
+            title: t('workflows.triggers.card.actionAfter'), glyph: ACTION_PHASE_GLYPHS.after },
         ...sessionKinds.map((kind): WorkflowTriggerStartOption => ({
             id: sessionId(kind), group: t('workflows.triggers.card.groupSessions'), section: 'builtin',
             title: t(`workflows.triggers.card.sessionStart.${kind}`), glyph: TRIGGER_LIFECYCLE_GLYPHS[kind],
@@ -134,9 +145,27 @@ export function buildWorkflowTriggerStartOptions(
     return [...led, ...options.filter((option) => !resource.startIds.includes(option.id))];
 }
 
-/** The When a newly chosen start begins with; a session event keeps a Session already chosen. */
+/** The relation glyph of an Action trigger: before (into the Action) and after (out of it). */
+export const ACTION_PHASE_GLYPHS = { before: 'sign-in', after: 'sign-out' } as const satisfies Record<ActionPhase, IconName>;
+
+/**
+ * The When a newly chosen start begins with; a session event keeps a Session already chosen. An Action
+ * trigger keeps the Action and subject already chosen; before starts waiting for its result (the
+ * consequential default, said on its row), and after carries no wait policy.
+ */
 export function createWorkflowTriggerStartWhen(id: string, previous?: TriggerWhenValue | null): TriggerWhenValue | null {
     if (id === SCHEDULE_ID) return createDefaultWhen('schedule');
+    const phase = ACTION_PHASES.find((candidate) => id === actionStartId(candidate));
+    if (phase !== undefined) {
+        const kept = previous?.kind === 'action' ? previous : null;
+        return {
+            kind: 'action',
+            phase,
+            actionIds: kept?.actionIds ?? [],
+            ...(kept?.subject === undefined ? {} : { subject: kept.subject }),
+            ...(phase === 'before' ? { mode: 'wait' as const } : {}),
+        };
+    }
     if (id.startsWith('session:')) {
         const kind = id.slice('session:'.length);
         if (!(WORKFLOW_SESSION_EVENT_KINDS as readonly string[]).includes(kind) && kind !== 'sessionStarts') return null;

@@ -34,6 +34,8 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
     ]);
     expect(options.map((option) => [option.id, option.group])).toEqual([
       ['schedule', t('workflows.triggers.card.groupTime')],
+      ['action:before', t('workflows.triggers.card.groupActions')],
+      ['action:after', t('workflows.triggers.card.groupActions')],
       ['session:turnEnds', t('workflows.triggers.card.groupSessions')],
       ['session:needsYou', t('workflows.triggers.card.groupSessions')],
       ['session:sessionArchived', t('workflows.triggers.card.groupSessions')],
@@ -55,6 +57,8 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
     ]);
     expect(options.map((option) => [option.section, option.group, option.id])).toEqual([
       ['builtin', t('workflows.triggers.card.groupTime'), 'schedule'],
+      ['builtin', t('workflows.triggers.card.groupActions'), 'action:before'],
+      ['builtin', t('workflows.triggers.card.groupActions'), 'action:after'],
       ['builtin', t('workflows.triggers.card.groupSessions'), 'session:turnEnds'],
       ['builtin', t('workflows.triggers.card.groupSessions'), 'session:needsYou'],
       ['builtin', t('workflows.triggers.card.groupSessions'), 'session:sessionArchived'],
@@ -74,10 +78,28 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
       ['resource', 'Production · happier-web', 'event:happier.deploy/failed'],
       ['resource', 'Production · happier-web', 'session:needsYou'],
       ['builtin', t('workflows.triggers.card.groupTime'), 'schedule'],
+      ['builtin', t('workflows.triggers.card.groupActions'), 'action:before'],
+      ['builtin', t('workflows.triggers.card.groupActions'), 'action:after'],
       ['builtin', t('workflows.triggers.card.groupSessions'), 'session:turnEnds'],
       ['builtin', t('workflows.triggers.card.groupSessions'), 'session:sessionArchived'],
       ['plugins', 'GitHub', 'event:happier.github/pr-opened'],
     ]);
+  });
+
+  it('starts before an Action waiting for its result, keeps the chosen Action across phases, and is set up only once an Action is chosen', () => {
+    const before = start('action:before');
+    expect(before).toEqual({ kind: 'action', phase: 'before', actionIds: [], mode: 'wait' });
+    expect(buildTriggerDefinition({ when: before, enabled: true, sessionId: null })).toBeNull();
+    expect(commitWorkflowTriggerWhen({ draft: EMPTY_WORKFLOW_TRIGGER_DRAFT, row: { kind: 'new', clientId: 'c1' }, when: before, enabled: true })).toBeNull();
+
+    const chosen: TriggerWhenValue = { kind: 'action', phase: 'before', actionIds: ['deployments.deploy'], mode: 'wait', onFailure: 'ask' };
+    const draft = commitWorkflowTriggerWhen({ draft: EMPTY_WORKFLOW_TRIGGER_DRAFT, row: { kind: 'new', clientId: 'c1' }, when: chosen, enabled: true });
+    expect(draft?.adds).toEqual([expect.objectContaining({ clientId: 'c1', trigger: { ...chosen, enabled: true } })]);
+
+    // After keeps the Action but never a wait policy (P02: after Actions do not wait for a check).
+    expect(start('action:after', chosen)).toEqual({ kind: 'action', phase: 'after', actionIds: ['deployments.deploy'] });
+    expect(readWorkflowTriggerStartId(chosen)).toBe('action:before');
+    expect(readWorkflowTriggerStart(chosen)).toBe('action');
   });
 
   it('joins the triggers into one sentence: every summary after the first starts lowercase, a name keeps its capitals', () => {

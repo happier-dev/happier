@@ -212,8 +212,14 @@ function readDeclaredEventTitle(trigger: Extract<TriggerSummarySource, { kind: '
 
 export function formatTriggerSummary(trigger: TriggerSummarySource, context?: TriggerSummaryContext): string {
     switch (trigger.kind) {
-        case 'action':
-            return joinList(readActionTriggerSummaryFacts(trigger, context).actions.map(action => action.title));
+        case 'action': {
+            // The trigger block's sentence (lab `actrig:v:before`): before waits or starts beside, after follows.
+            const facts = readActionTriggerSummaryFacts(trigger, context);
+            if (facts.actions.length === 0) return t(facts.phase === 'before' ? 'workflows.triggers.card.actionBefore' : 'workflows.triggers.card.actionAfter');
+            const action = joinList(facts.actions.map(entry => entry.title));
+            if (facts.phase === 'after') return t('workflows.triggers.card.actionSentence.after', { action });
+            return t(facts.mode === 'notify' ? 'workflows.triggers.card.actionSentence.beforeNotify' : 'workflows.triggers.card.actionSentence.beforeWait', { action });
+        }
         case 'schedule':
             if (trigger.schedule.kind === 'once') return t('workflows.triggers.once.at', {
                 time: formatWithCachedDateTimeFormatter(trigger.schedule.scheduledAt, getPreferredLanguage(), {

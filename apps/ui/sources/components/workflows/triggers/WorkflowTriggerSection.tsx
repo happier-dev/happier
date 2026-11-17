@@ -124,6 +124,11 @@ function rowWhen(row: WorkflowTriggerRowModel, set: WorkflowTriggerSetV1 | null,
     if (input?.kind === 'pluginEvent' && 'sourceInstanceId' in input) {
         return { kind: 'pluginEvent', value: { ...input, enabled: row.enabled } };
     }
+    // A drafted before/after Action trigger is its own When.
+    if (input?.kind === 'action' && 'phase' in input) {
+        const { enabled: _enabled, ...when } = input;
+        return when;
+    }
     // A drafted session event (the card only drafts Account kinds; schedules are read above).
     if (input?.kind === 'sessionLifecycle') {
         const kind = readSessionLifecycleKind(input.events);
@@ -202,6 +207,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     const placement = { machineId: runsOn?.machineId ?? null, serverId };
     const rowWhens = rows.map((row) => edits[row.key] ?? rowWhen(row, props.set, props.draft));
     const showsEvent = [...rowWhens, ...pending.map((item) => item.when)].some((when) => when?.kind === 'pluginEvent');
+    const runsBeforeActions = rowWhens.some((when) => when?.kind === 'action' && when.phase === 'before');
     const catalog = useWorkflowTriggerEventOptions({ ...placement, enabled: catalogDemanded || showsEvent });
     const startOptions = React.useMemo(() => buildWorkflowTriggerStartOptions(catalog.events, undefined, props.startContext),
         [catalog.events, props.startContext]);
@@ -466,7 +472,9 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                                     <Text style={styles.addLabel}>{t('workflows.triggers.card.add')}</Text>
                                 </HappierPressable>
                                 {/* A phone has no room beside the action: the reminder would only crowd it. */}
-                                {rows.length > 0 && !compact ? <Text style={styles.addNote}>{t('workflows.triggers.card.runNowToo')}</Text> : null}
+                                {/* A before-trigger says where it applies (D6): only Actions started from Happier wait for it. */}
+                                {rows.length > 0 && !compact ? <Text style={styles.addNote}>{t(runsBeforeActions
+                                    ? 'workflows.triggers.card.startedFromHappier' : 'workflows.triggers.card.runNowToo')}</Text> : null}
                             </View>
                         )}
                     />

@@ -179,7 +179,9 @@ export function buildTriggerDefinition(params: Readonly<{
     sessionId: string | null;
 }>): AutomationTriggerDefinitionInput | null {
     const { when, enabled } = params;
-    if (when.kind === 'runLifecycle' || when.kind === 'action') return { ...when, enabled };
+    // An Action trigger is set up once its Action is chosen.
+    if (when.kind === 'action') return when.actionIds.length === 0 ? null : { ...when, enabled };
+    if (when.kind === 'runLifecycle') return { ...when, enabled };
     if (when.kind === 'pluginEvent') return when.value === null ? null : { ...when.value, enabled };
     if (when.kind === 'schedule') {
         if (when.once !== undefined) {

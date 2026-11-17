@@ -36,12 +36,14 @@ import {
 import { workflowSessionOptionRow } from '@/components/workflows/presentation/workflowSessionOptionRow';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { useWorkflowActionCatalog } from '@/components/workflows/presentation/useWorkflowActionCatalog';
 import { t } from '@/text';
 
 import {
   formatNextScheduledRunTime,
   formatTriggerInterval,
   formatTriggerSummary,
+  readActionTriggerSummaryFacts,
   readNextScheduledRunRefreshAtMs,
   weekdayName,
 } from './formatTriggerSummary';
@@ -107,6 +109,7 @@ type SessionEventWhen = Extract<
   Readonly<{ kind: SessionEventKind }>
 >;
 type ScheduleWhen = Extract<TriggerWhenValue, Readonly<{ kind: 'schedule' }>>;
+type ActionWhen = Extract<TriggerWhenValue, Readonly<{ kind: 'action' }>>;
 
 /** One label/value row on the card's label track (the step cards' `WorkflowFieldPair`). */
 function TrackRow(
@@ -291,6 +294,15 @@ export function WorkflowTriggerBlock(
           )}
         />
       ) : null}
+      {when?.kind === 'action' ? (
+        <ActionTrackRows
+          testID={props.testID}
+          when={when}
+          machineId={props.machineId}
+          serverId={props.serverId}
+          onChange={props.onChangeWhen}
+        />
+      ) : null}
       {when !== null &&
       (when.kind === 'turnEnds' ||
         when.kind === 'needsYou' ||
@@ -310,6 +322,122 @@ export function WorkflowTriggerBlock(
       ) : null}
       {props.history ?? null}
     </View>
+  );
+}
+
+/**
+ * Before or after an Action (lab `actrig:v:before|notify|override|after`): **Action** from the catalog
+ * owner's before/after choices; before adds **While it runs** (Wait for its result · Just notify) and,
+ * while it waits, **If it fails** (Refuse · Let a person approve), each with the one line that says what
+ * it does. After carries no wait policy (P02).
+ */
+function ActionTrackRows(
+  props: Readonly<{
+    testID: string;
+    when: ActionWhen;
+    machineId: string | null;
+    serverId: string | null;
+    onChange: (next: TriggerWhenValue) => void;
+  }>,
+) {
+  const { theme } = useUnistyles();
+  const { when } = props;
+  const catalog = useWorkflowActionCatalog(
+    { kind: 'machine', machineId: props.machineId, serverId: props.serverId },
+    when.phase,
+  );
+  const selectedId = when.actionIds.length === 1 ? (when.actionIds[0] ?? null) : null;
+  const items = React.useMemo<ValueFieldSelectItem[]>(() => {
+    const offered = catalog.specs.map((spec) => ({
+      id: spec.id,
+      title: spec.title,
+      ...(spec.plugin ? { category: spec.plugin.title } : {}),
+      icon: (
+        <Icon
+          name={spec.icon ?? 'lightning'}
+          size={ICON_SIZE.xs}
+          color={theme.colors.text.secondary}
+        />
+      ),
+    }));
+    // A saved Action this catalog no longer offers stays choosable as it is.
+    if (selectedId === null || offered.some((item) => item.id === selectedId)) return offered;
+    const title = readActionTriggerSummaryFacts({ phase: when.phase, actionIds: [selectedId] }).actions[0]?.title ?? selectedId;
+    return [{ id: selectedId, title }, ...offered];
+  }, [catalog.specs, selectedId, theme.colors.text.secondary, when.phase]);
+  const waits = when.phase === 'before' && when.mode !== 'notify';
+  const asks = when.onFailure === 'ask';
+  return (
+    <>
+      <TrackRow
+        label={t('workflows.triggers.card.action')}
+        trackKey={`${props.testID}-action`}
+      >
+        <View style={styles.selectBox}>
+          <ValueFieldSelect
+            testID={`${props.testID}-action`}
+            label={t('workflows.triggers.card.action')}
+            items={items}
+            selectedId={selectedId}
+            placeholder={t('workflows.triggers.card.chooseAction')}
+            searchPlaceholder={t('workflows.page.blocks.actionSearch')}
+            emptyLabel={catalog.phase === 'loading'
+              ? t('workflows.triggers.card.actionsLoading')
+              : t('workflows.triggers.card.noActions')}
+            onSelect={(id) => props.onChange({ ...when, actionIds: [id] })}
+          />
+        </View>
+      </TrackRow>
+      {when.phase === 'before' ? (
+        <TrackRow
+          label={t('workflows.triggers.card.whileItRuns')}
+          trackKey={`${props.testID}-mode`}
+        >
+          <SegmentedTabBar<'wait' | 'notify'>
+            tabs={[
+              { id: 'wait', label: t('workflows.triggers.card.modeWait') },
+              { id: 'notify', label: t('workflows.triggers.card.modeNotify') },
+            ]}
+            activeTabId={waits ? 'wait' : 'notify'}
+            onSelectTab={(mode) => {
+              // Only a wait check has a failure decision (P02 schema).
+              const { onFailure: _dropped, ...rest } = when;
+              props.onChange({ ...rest, mode });
+            }}
+            segmentSizing="content"
+            role="radiogroup"
+            accessibilityLabel={t('workflows.triggers.card.whileItRuns')}
+            testIDPrefix={`${props.testID}-mode`}
+          />
+          {/* The consequence sits under its choice, as the editor's "Runs in" does. */}
+          <Text style={styles.note}>
+            {t(waits ? 'workflows.triggers.card.waitNote' : 'workflows.triggers.card.notifyNote')}
+          </Text>
+        </TrackRow>
+      ) : null}
+      {waits ? (
+        <TrackRow
+          label={t('workflows.triggers.card.ifItFails')}
+          trackKey={`${props.testID}-on-failure`}
+        >
+          <SegmentedTabBar<'refuse' | 'ask'>
+            tabs={[
+              { id: 'refuse', label: t('workflows.triggers.card.failRefuse') },
+              { id: 'ask', label: t('workflows.triggers.card.failAsk') },
+            ]}
+            activeTabId={asks ? 'ask' : 'refuse'}
+            onSelectTab={(onFailure) => props.onChange({ ...when, onFailure })}
+            segmentSizing="content"
+            role="radiogroup"
+            accessibilityLabel={t('workflows.triggers.card.ifItFails')}
+            testIDPrefix={`${props.testID}-on-failure`}
+          />
+          <Text style={styles.note}>
+            {t(asks ? 'workflows.triggers.card.askNote' : 'workflows.triggers.card.refuseNote')}
+          </Text>
+        </TrackRow>
+      ) : null}
+    </>
   );
 }
 
