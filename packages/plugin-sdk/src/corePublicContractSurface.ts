@@ -105,6 +105,8 @@ type _ServiceIdsMustBeExact = AssertTrue<Equal<
     | 'managedServices'
     | 'deploymentSource'
     | 'deploymentExecEnv'
+    | 'deploymentTelemetry'
+    | 'deploymentDatabases'
     | 'machineProvisioners'
     | 'sessions'
     | 'resources'
