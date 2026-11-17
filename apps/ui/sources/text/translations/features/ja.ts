@@ -16461,7 +16461,7 @@ const japanese: TeamsTranslationRoot = {
                 presetsDetail: '実行前に確認するマシン設定',
                 repositories: ({ count }: { count: number }) => `リポジトリ ${count} 件`,
                 keys: ({ count }: { count: number }) => `キー ${count} 件`,
-                keysDetail: ({ team }: { team: string }) => `${team} が共有。値を表示せずに使えます`,
+                keysDetail: ({ team }: { team: string }) => `${team} が共有`,
                 unavailable: '今は読み込めませんでした',
                 sessionsUnavailable: '共有セッション',
                 machinePresetsUnavailable: 'マシン設定',

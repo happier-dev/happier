@@ -16537,7 +16537,7 @@ const catalan: TeamsTranslationRoot = {
                 presetsDetail: 'Una configuració de màquina, revisada abans d’executar-se',
                 repositories: ({ count }: { count: number }) => (count === 1 ? `${count} repositori` : `${count} repositoris`),
                 keys: ({ count }: { count: number }) => (count === 1 ? `${count} clau` : `${count} claus`),
-                keysDetail: ({ team }: { team: string }) => `Compartides per ${team}, s’usen sense mostrar el valor`,
+                keysDetail: ({ team }: { team: string }) => `Compartides per ${team}`,
                 unavailable: 'No s’ha pogut llegir ara',
                 sessionsUnavailable: 'Sessions compartides',
                 machinePresetsUnavailable: 'Configuració de màquina',

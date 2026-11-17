@@ -787,7 +787,7 @@ export const english = {
                 presetsDetail: 'A machine setup, reviewed before it runs',
                 repositories: ({ count }: { count: number }) => (count === 1 ? `${count} repository` : `${count} repositories`),
                 keys: ({ count }: { count: number }) => (count === 1 ? `${count} key` : `${count} keys`),
-                keysDetail: ({ team }: { team: string }) => `Shared by ${team}, used without showing the value`,
+                keysDetail: ({ team }: { team: string }) => `Shared by ${team}`,
                 unavailable: 'Couldn’t be read right now',
                 sessionsUnavailable: 'Shared sessions',
                 machinePresetsUnavailable: 'Machine setup',

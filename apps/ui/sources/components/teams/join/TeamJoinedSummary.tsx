@@ -99,8 +99,7 @@ export const TeamJoinedSummaryView = React.memo(function TeamJoinedSummaryView(p
         <Item
           key={row.kind}
           testID={`${props.testID}-${row.kind}`}
-          density="tight"
-          icon={<Icon name={ICONS[row.kind]} size={18} color={theme.colors.text.secondary} />}
+          icon={<Icon name={ICONS[row.kind]} size={20} color={theme.colors.text.secondary} />}
           title={row.title}
           subtitle={row.detail ?? undefined}
           detail={row.count === undefined ? undefined : String(row.count)}

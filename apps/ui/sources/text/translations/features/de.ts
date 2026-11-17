@@ -16336,7 +16336,7 @@ const german: TeamsTranslationRoot = {
                 presetsDetail: 'Ein Rechner-Setup, vor dem Ausführen geprüft',
                 repositories: ({ count }: { count: number }) => (count === 1 ? `${count} Repository` : `${count} Repositories`),
                 keys: ({ count }: { count: number }) => (count === 1 ? `${count} Schlüssel` : `${count} Schlüssel`),
-                keysDetail: ({ team }: { team: string }) => `Von ${team} geteilt, nutzbar ohne den Wert zu sehen`,
+                keysDetail: ({ team }: { team: string }) => `Von ${team} geteilt`,
                 unavailable: 'Konnte gerade nicht gelesen werden',
                 sessionsUnavailable: 'Geteilte Sitzungen',
                 machinePresetsUnavailable: 'Rechner-Setup',

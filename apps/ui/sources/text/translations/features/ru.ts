@@ -16552,7 +16552,7 @@ const russian: TeamsTranslationRoot = {
                 presetsDetail: 'Настройка машины, проверяемая до запуска',
                 repositories: ({ count }: { count: number }) => (count === 1 ? `${count} репозиторий` : `${count} репозиториев`),
                 keys: ({ count }: { count: number }) => (count === 1 ? `${count} ключ` : `${count} ключей`),
-                keysDetail: ({ team }: { team: string }) => `Общие от ${team}, используются без показа значения`,
+                keysDetail: ({ team }: { team: string }) => `Общие от ${team}`,
                 unavailable: 'Сейчас не удалось прочитать',
                 sessionsUnavailable: 'Общие сессии',
                 machinePresetsUnavailable: 'Настройка машины',

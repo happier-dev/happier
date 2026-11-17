@@ -16550,7 +16550,7 @@ const polish: TeamsTranslationRoot = {
                 presetsDetail: 'Konfiguracja maszyny, sprawdzana przed uruchomieniem',
                 repositories: ({ count }: { count: number }) => (count === 1 ? `${count} repozytorium` : `${count} repozytoriów`),
                 keys: ({ count }: { count: number }) => (count === 1 ? `${count} klucz` : `${count} kluczy`),
-                keysDetail: ({ team }: { team: string }) => `Udostępnione przez ${team}, używane bez pokazywania wartości`,
+                keysDetail: ({ team }: { team: string }) => `Udostępnione przez ${team}`,
                 unavailable: 'Nie udało się teraz odczytać',
                 sessionsUnavailable: 'Udostępnione sesje',
                 machinePresetsUnavailable: 'Konfiguracja maszyny',

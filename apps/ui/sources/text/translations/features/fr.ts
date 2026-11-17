@@ -16580,7 +16580,7 @@ const french: TeamsTranslationRoot = {
                 presetsDetail: 'Une configuration de machine, vérifiée avant de s’exécuter',
                 repositories: ({ count }: { count: number }) => (count === 1 ? `${count} dépôt` : `${count} dépôts`),
                 keys: ({ count }: { count: number }) => (count === 1 ? `${count} clé` : `${count} clés`),
-                keysDetail: ({ team }: { team: string }) => `Partagées par ${team}, utilisées sans afficher la valeur`,
+                keysDetail: ({ team }: { team: string }) => `Partagées par ${team}`,
                 unavailable: 'Lecture impossible pour le moment',
                 sessionsUnavailable: 'Sessions partagées',
                 machinePresetsUnavailable: 'Configuration de machine',

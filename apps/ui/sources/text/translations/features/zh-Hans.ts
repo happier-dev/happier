@@ -16406,7 +16406,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
                 presetsDetail: '运行前会先审阅的机器设置',
                 repositories: ({ count }: { count: number }) => `${count} 个代码库`,
                 keys: ({ count }: { count: number }) => `${count} 个密钥`,
-                keysDetail: ({ team }: { team: string }) => `由 ${team} 共享，使用时不显示其值`,
+                keysDetail: ({ team }: { team: string }) => `由 ${team} 共享`,
                 unavailable: '暂时无法读取',
                 sessionsUnavailable: '共享会话',
                 machinePresetsUnavailable: '机器设置',

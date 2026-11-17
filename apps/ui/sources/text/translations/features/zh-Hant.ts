@@ -16405,7 +16405,7 @@ const traditionalChinese: TeamsTranslationRoot = {
                 presetsDetail: '執行前會先審閱的機器設定',
                 repositories: ({ count }: { count: number }) => `${count} 個程式庫`,
                 keys: ({ count }: { count: number }) => `${count} 個金鑰`,
-                keysDetail: ({ team }: { team: string }) => `由 ${team} 共享，使用時不顯示其值`,
+                keysDetail: ({ team }: { team: string }) => `由 ${team} 共享`,
                 unavailable: '暫時無法讀取',
                 sessionsUnavailable: '共享工作階段',
                 machinePresetsUnavailable: '機器設定',

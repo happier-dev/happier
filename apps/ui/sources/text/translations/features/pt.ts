@@ -16509,7 +16509,7 @@ const portuguese: TeamsTranslationRoot = {
                 presetsDetail: 'Uma configuração de máquina, revisada antes de rodar',
                 repositories: ({ count }: { count: number }) => (count === 1 ? `${count} repositório` : `${count} repositórios`),
                 keys: ({ count }: { count: number }) => (count === 1 ? `${count} chave` : `${count} chaves`),
-                keysDetail: ({ team }: { team: string }) => `Compartilhadas por ${team}, usadas sem mostrar o valor`,
+                keysDetail: ({ team }: { team: string }) => `Compartilhadas por ${team}`,
                 unavailable: 'Não foi possível ler agora',
                 sessionsUnavailable: 'Sessões compartilhadas',
                 machinePresetsUnavailable: 'Configuração de máquina',
