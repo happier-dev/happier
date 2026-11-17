@@ -137,7 +137,7 @@ test.describe('Project Open recovery and native Form authoring', () => {
       await expect(page.getByTestId('project-shell-header.checkout')).toBeVisible({ timeout: 120_000 });
       expect(openRequests).toBe(1);
       expect(await readFile(join(interruptedPath, 'unfinished.bin'))).toEqual(Buffer.from([0, 255, 13, 10, 128]));
-    } catch (error) { throw appendBrowserDiagnostics(error, diagnostics); }
+    } catch (error) { throw appendBrowserDiagnostics(error, diagnostics()); }
   });
 
   test('imports a native task through the mounted Form, saves its reference, and reloads an exact-byte conflict', async ({ page }) => {
@@ -191,6 +191,6 @@ test.describe('Project Open recovery and native Form authoring', () => {
       expect(await readFile(manifestPath, 'utf8')).toBe(externalBytes);
       await page.getByTestId('project-manifest-editor.back').click();
       await expect(page.getByTestId('project-scripts-screen.script:journey-task')).toBeVisible({ timeout: 120_000 });
-    } catch (error) { throw appendBrowserDiagnostics(error, diagnostics); }
+    } catch (error) { throw appendBrowserDiagnostics(error, diagnostics()); }
   });
 });

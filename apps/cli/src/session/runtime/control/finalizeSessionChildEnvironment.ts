@@ -31,7 +31,7 @@ type FinalizeSessionChildEnvironmentOptions = Readonly<{
 
 export function finalizeSessionChildEnvironment(params: FinalizeSessionChildEnvironmentOptions & Readonly<{
   environment: Record<string, string>;
-}>): Record<string, string>;
+}>): NodeJS.ProcessEnv & Record<string, string>;
 export function finalizeSessionChildEnvironment(params: FinalizeSessionChildEnvironmentOptions): NodeJS.ProcessEnv;
 export function finalizeSessionChildEnvironment(params: FinalizeSessionChildEnvironmentOptions): NodeJS.ProcessEnv {
   const env = stripNestedSessionDetectionEnv(

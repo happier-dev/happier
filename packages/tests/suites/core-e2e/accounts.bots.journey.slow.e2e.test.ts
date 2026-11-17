@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import { ConnectedAccountAttemptResponseSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
+import { PluginConnectedAccountAuthenticationV2Schema } from '@happier-dev/protocol/connect/pluginConnectedAccountAuthenticationV2';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
 import { PROFILE_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/profiles/profileActionsV1';
 import { LaunchProfileV2Schema } from '@happier-dev/protocol/profiles/v2/schema';
@@ -69,7 +70,7 @@ describe('Account and Bot uninterrupted journeys through signed-in UI Actions', 
         packageName: string }>): Promise<unknown>;
     };
     const descriptor = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors?.find(value => value.id === 'claude-subscription');
-    const target = descriptor?.authentication.account;
+    const target = PluginConnectedAccountAuthenticationV2Schema.parse(descriptor?.authentication).account;
     if (!target) throw new Error('Claude Account authentication artifact is missing');
     await prepareAuthenticationInventory(packaged, { manifest: PLUGIN_MANIFEST, target,
       projectPath: 'packages/plugins/claude', entryPath: 'packages/plugins/claude/src/connectedAccounts/account.ts',

@@ -14,7 +14,8 @@ function gatewaySource(): ProviderManagedCatalogSource {
     implementationIdentity,
     managedRuntime: resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity, managedRuntime: definition.managedRuntime }),
     purposeBindings: { v: 1, bindings: [] }, endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses',
-    sourceRegistryVersion: definition.catalog?.sourceRegistryVersion ?? '', publicHeaders: {},
+    sourceRegistryVersion: definition.catalog && 'sourceRegistryVersion' in definition.catalog
+      ? definition.catalog.sourceRegistryVersion ?? '' : '', publicHeaders: {},
   };
 }
 

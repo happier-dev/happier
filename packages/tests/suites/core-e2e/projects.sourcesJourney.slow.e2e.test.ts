@@ -99,7 +99,7 @@ it('Open imports a native task, preserves dirty work, and retains its receipt ac
   const inspect = async (kind: 'editor' | 'imports') => ProjectDefinitionInspectOutputSchema.parse(
     await action(owner, 'projects.inspect', { workspace: opened.workspace, read: { kind } }));
   const imports = await inspect('imports');
-  const nativeTask = imports.importCandidates.find(row => row.usage === 'script'
+  const nativeTask = imports.importCandidates.find(row => row.usage === 'script' && row.source.kind === 'native'
     && row.source.tool === 'make' && row.source.target === 'journey-task');
   expect(nativeTask).toMatchObject({ availability: 'available' });
   if (!nativeTask) throw new Error('Native Make target was not offered for import');

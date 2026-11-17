@@ -62,8 +62,8 @@ it('runs Account provisioner options and acquire, then refuses both roles when t
     // Keep the mounted picker while its parent withdraws the explicit Home.
     // The available choice comes from the real signed-in UI profile owner.
     const picker = (serverId: string) => createElement(ModalProvider, null,
-      createElement(ListPresentationProvider, { value: 'page' },
-        createElement(MachineProvisionerPicker, { serverId, presetOnly: true })));
+      createElement(ListPresentationProvider, { value: 'page',
+        children: createElement(MachineProvisionerPicker, { serverId, presetOnly: true }) }));
     const screen = await renderScreen(picker(ui.serverId));
     try {
       expect(screen.findByTestId(homeChoiceId)).toBeNull();

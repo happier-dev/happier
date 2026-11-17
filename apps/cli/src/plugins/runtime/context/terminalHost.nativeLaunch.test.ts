@@ -75,8 +75,9 @@ describe('terminal host final native launch', () => {
                 await input.prepareLaunch?.();
                 return { kind: 'tmux' as const, sessionName: input.sessionName, paneId: 'fixture-pane' };
             });
+            const { nativePreambleTransport: _nativePreambleTransport, ...tmuxBaseAdapter } = ptyAdapter;
             const adapter: TerminalHostAdapter = transport === 'pty' ? ptyAdapter
-                : { ...ptyAdapter, kind: 'tmux', nativePreambleTransport: undefined, createOrAttachHost: tmuxCreate };
+                : { ...tmuxBaseAdapter, kind: 'tmux', createOrAttachHost: tmuxCreate };
             const service = createPluginTerminalHostService({ hasCapability: () => true,
                 resolveTerminalHost: () => ({ status: 'resolved', adapter, reason: 'windows_console_forced' }),
                 resolveAgentCliLaunch: () => ({ command: '/fixture/claude', args: [] }),

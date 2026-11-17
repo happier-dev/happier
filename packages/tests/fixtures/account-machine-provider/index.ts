@@ -49,24 +49,24 @@ const plugin = definePlugin({
       } }) },
     bootstrap: { ...defaults, title: 'Bootstrap fixture', dangerLevel: 'writesRemote',
       confirmation: { title: 'Bootstrap the local fixture guest?' }, inputSchema: roles.bootstrapInput,
-      resultSchema: MachineProvisionerBootstrapCarrierV1Schema, run: async () => ({ kind: 'native', transport: {
-        contributionRef: contribution, schemaVersion: 1,
+      resultSchema: MachineProvisionerBootstrapCarrierV1Schema, run: async () => ({ kind: 'native' as const, transport: {
+        contributionRef: contribution, schemaVersion: 1 as const,
       } }) },
     inspect: { ...defaults, title: 'Inspect fixture', dangerLevel: 'safe', inputSchema: roles.resourceInput,
       resultSchema: MachineProvisionerObservationV1Schema,
       run: async (_input, context) => ({ observedAt: context.invokedAtMs, availability: 'present', storage: 'retained' }) },
     power: { ...defaults, title: 'Power fixture', dangerLevel: 'safe', inputSchema: roles.powerInput,
-      resultSchema: MachineProvisionerPowerResultV1Schema, run: async () => ({ kind: 'confirmed' }) },
+      resultSchema: MachineProvisionerPowerResultV1Schema, run: async () => ({ kind: 'confirmed' as const }) },
     destroy: { ...defaults, title: 'Delete fixture', dangerLevel: 'safe', inputSchema: reconciliation.destroyInput,
-      resultSchema: reconciliation.destroyResult, run: async () => ({ kind: 'confirmed' }) },
+      resultSchema: reconciliation.destroyResult, run: async () => ({ kind: 'confirmed' as const }) },
     exec: { ...defaults, title: 'Execute fixture', dangerLevel: 'safe', inputSchema: roles.execInput,
       resultSchema: MachineProvisionerNativeExecResultV1Schema, run: async () => ({
         stdoutBase64: '', stderrBase64: '', stdoutTruncated: false, stderrTruncated: false,
         // Allocation is exercised here; the fixture deliberately cannot install a guest.
-        termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } },
+        termination: { observed: { kind: 'exit' as const, exitCode: 1 }, requestedBy: { kind: 'none' as const } },
       }) },
     'put-file': { ...defaults, title: 'Write fixture', dangerLevel: 'safe', inputSchema: roles.putFileInput,
-      resultSchema: MachineProvisionerPutFileResultV1Schema, run: async () => ({ kind: 'confirmed' }) },
+      resultSchema: MachineProvisionerPutFileResultV1Schema, run: async () => ({ kind: 'confirmed' as const }) },
   },
 });
 export const manifest = plugin.manifest;

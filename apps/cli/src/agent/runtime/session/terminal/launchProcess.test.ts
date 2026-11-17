@@ -21,6 +21,7 @@ import { logger } from '@/ui/logger';
 import { createTerminalRuntimeProcessService as createTerminalRuntimeProcessServiceOwner } from './launchProcess';
 import { captureAgentNativeLaunchAuthorityForHost, createStablePluginExecService, issueAgentNativeLaunchQualifierForHost } from '@/plugins/runtime/invocation/services/exec';
 import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
+import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
 
 const nativeLifetimes: AbortController[] = [];
 afterEach(() => { for (const controller of nativeLifetimes.splice(0)) controller.abort(); });
@@ -61,7 +62,7 @@ describe('createTerminalRuntimeProcessService', () => {
         const source = join(root, 'mcp.json');
         await writeFile(source, '{"mcpServers":{"fixture":{"env":{"TOKEN":"synthetic-private-config"}}}}');
         const sessionMcpContext = { v: 1, socketPath: join(root, 'mcp.sock'), bearerToken: 'synthetic-terminal-token' } as const;
-        const snapshot = (currentContext: typeof sessionMcpContext | undefined) => ({ enabled: true,
+        const snapshot = (currentContext: SessionMcpLocalContext | undefined) => ({ enabled: true,
             status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } as const,
             workspaceRoots: [root], localTransport: { agentUid: 2402, agentGid: 2402 }, launch: {
                 managedHappierBinaryPath: '/fixture/happier', runtimeHome: join(root, 'runtime'),
@@ -87,7 +88,7 @@ describe('createTerminalRuntimeProcessService', () => {
         let actualCommand: string | undefined;
         const deps = { verifyExecutableGrant: () => true, readNativeLaunchAuthority: () => authority,
             spawn(command: string) { actualCommand = command; return child; },
-            createManagedChildProcess: () => ({ pid: child.pid, waitForTermination: async () => ({ type: 'exited' as const, code: 0, signal: null }) }),
+            createManagedChildProcess: () => ({ pid: child.pid ?? null, waitForTermination: async () => ({ type: 'exited' as const, code: 0, signal: null }) }),
             terminateProcessTree: async () => { if (writeFailure === 'epipe-stop') throw stopError; },
         };
         const service = createTerminalRuntimeProcessService(deps);
