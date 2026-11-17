@@ -82,7 +82,9 @@ export const ProjectManifestV1Schema = z.strictObject({
   toolchain: z.optional(ProjectToolchainSelectionV1Schema),
   devcontainer: z.optional(ProjectDevcontainerSelectionV1Schema),
   worktreePorts: z.optional(ProjectWorktreePortsV1Schema),
-  environmentVariables: z.optional(z.array(lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(EnvVarRequirementSchema)))),
+  environmentVariables: z.optional(z.array(lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(EnvVarRequirementSchema)))
+    .check(z.refine(requirements => new Set(requirements.map(requirement => requirement.name)).size === requirements.length,
+      'Environment requirement names must be unique'))),
   workspace: z.optional(z.strictObject({
     setup: z.optional(z.array(finiteSource)), teardown: z.optional(z.array(finiteSource)),
     setupInputs: z.optional(z.array(containedPath)), memoryDemand: z.optional(ProjectMemoryDemandV1Schema),

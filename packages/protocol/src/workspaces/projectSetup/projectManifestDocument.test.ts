@@ -28,6 +28,22 @@ describe('project manifest documents', () => {
       expect(ProjectManifestV1Schema.safeParse({ version: 1, worktreePorts: { enabled: true, slots: 2 }, services }).success).toBe(false);
     }
   });
+  it('accepts distinct authored environment names without changing their identity', () => {
+    const manifest = { version: 1, environmentVariables: [
+      { name: 'TOKEN', kind: 'secret', required: true },
+      { name: 'TOKEN_URL', kind: 'config', required: false },
+    ] };
+    expect(ProjectManifestV1Schema.parse(manifest).environmentVariables).toEqual(manifest.environmentVariables);
+    expect(readProjectManifestDocument(JSON.stringify(manifest)).status).toBe('valid');
+  });
+  it('rejects duplicate authored environment names instead of selecting an arbitrary requirement', () => {
+    const manifest = { version: 1, environmentVariables: [
+      { name: 'TOKEN', kind: 'secret', required: true },
+      { name: 'TOKEN', kind: 'config', required: false },
+    ] };
+    expect(ProjectManifestV1Schema.safeParse(manifest).success).toBe(false);
+    expect(readProjectManifestDocument(JSON.stringify(manifest)).status).toBe('invalid');
+  });
   it('explains invalid fields with their location and required value instead of schema jargon', () => {
     const document = readProjectManifestDocument('{"version":2,"scripts":{"test":{"execution":false,"source":{"kind":"command","command":"echo ok"}}}}');
     expect(document.status).toBe('invalid');
