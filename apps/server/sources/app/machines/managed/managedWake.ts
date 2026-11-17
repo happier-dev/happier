@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import type { Server } from 'socket.io';
 import { ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/socketRpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, ActionOperationAcceptedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveEffectiveMachineRoleInTx, resolveCurrentMachineRecipientAccountIdsInTx, resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
 import { auth } from '@/app/auth/auth';
 import { ACCOUNT_DISPLAY_PROFILE_SELECT, resolveAccountDisplayLabelV1 } from '@/app/account/profile/accountDisplayProfile';
@@ -133,11 +133,13 @@ export async function prepareManagedFiniteActionWake(input: Readonly<{
     input.signal.addEventListener('abort', cancel, { once: true });
     let unknown = false;
     try {
-        const result = await (input.forwardRpc ?? forwardRpcCall)({ io: input.io, targetUserId: controller.custodianAccountId,
+        const callController = (observation?: Readonly<{ operationId?: string }>) => (input.forwardRpc ?? forwardRpcCall)({ io: input.io, targetUserId: controller.custodianAccountId,
             method: `${controllerBinding.machineId}:${MANAGED_FINITE_WAKE_RPC_METHOD}`,
-            callParams: ManagedFiniteWakeRequestV1Schema.parse({ target: wakeTarget, actionOrigin: input.actionOrigin }),
+            callParams: ManagedFiniteWakeRequestV1Schema.parse({ target: wakeTarget, actionOrigin: input.actionOrigin,
+                ...(observation ? { observation } : {}) }),
             authorization: ACTION_API_SERVER_ORIGIN,
-            // The invoking HTTP/socket request owns cancellation throughout wake.
+            // The caller owns this observation; admitted native work retains
+            // the existing host operation's independent cancellation lifetime.
             timeoutMs: null,
             cancellation: { targetRequestId: requestId, signal: input.signal, onTargetSelected: candidate => { targetSocketId = candidate.id; } },
             onSubmittedUnknown: () => { unknown = true; },
@@ -150,6 +152,19 @@ export async function prepareManagedFiniteActionWake(input: Readonly<{
                 },
             },
         });
+        let result = await callController();
+        if (input.signal.aborted) return { kind: 'unavailable' };
+        const accepted = result.ok && result.result && typeof result.result === 'object'
+            && 'ok' in result.result && result.result.ok === true && 'result' in result.result
+            ? ActionOperationAcceptedResultSchema.safeParse(result.result.result) : null;
+        if (accepted?.success) {
+            if (accepted.data.machineId !== controllerBinding.machineId) return { kind: 'submitted-unknown' };
+            result = await callController({ operationId: accepted.data.operationId });
+        } else if (!result.ok && unknown) {
+            // The write is never replayed. Its retained root identity locates
+            // the already admitted operation when transport lost the first ACK.
+            result = await callController({});
+        }
         if (!result.ok) return { kind: unknown ? 'submitted-unknown' : 'unavailable' };
         const failure = ActionExecuteFailureSchema.safeParse(result.result);
         if (failure.success) return ['outcome_uncertain', 'native_intent_unconfirmed'].includes(failure.data.errorCode)

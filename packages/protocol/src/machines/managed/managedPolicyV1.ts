@@ -10,6 +10,7 @@ import { ManagedWakeTargetV1Schema } from './managedIntentV1.js';
 import { ManagedResourceV1Schema, ManagedNativeOperationReferenceV1Schema, type ManagedResourceV1, type ManagedNativeOperationReferenceV1 } from './providerFactsV1.js';
 import { ManagedControllerV1Schema, ManagedMachineV1Schema, type ManagedControllerV1 } from './managedMachineV1.js';
 import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionExecutionAuthorizationV1 } from '../../actions/externalActionApi.js';
+import { ActionOperationIdentifierV1Schema } from '../../actions/operations/identifierV1.js';
 
 export const MANAGED_POLICY_PROOF_HEADER = 'x-happier-managed-policy-proof';
 /** Advisory Account policy invalidation; the signed census and native driver retain authority. */
@@ -23,6 +24,8 @@ export const MANAGED_FINITE_WAKE_RPC_METHOD = 'managed.wake.finite.v1';
 export const ManagedFiniteWakeRequestV1Schema = lazyZodSchema(() => z.strictObject({
   target: ManagedWakeTargetV1Schema,
   actionOrigin: ExternalActionExecutionAuthorizationV1Schema,
+  /** Observe the original admitted host receipt; omission of its id recovers a lost admission ACK. */
+  observation: z.optional(z.strictObject({ operationId: z.optional(ActionOperationIdentifierV1Schema) })),
 }).check(z.refine(value => value.target.origin.kind === 'finite-command'
   && value.target.origin.actionRequestId === value.actionOrigin.binding.requestId)));
 /** A host-owned policy purpose, never an external caller's Action authority. */

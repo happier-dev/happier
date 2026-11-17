@@ -13137,6 +13137,16 @@ dependency could still start the unit; no dependency graph is inferred.
 
 ## Machine managed-resource classification (unreleased 0.3)
 
+The private `managed.wake.finite.v1` request accepts an optional `observation`
+object, with an optional `operationId`, to observe its original admitted host
+operation. Without an id, the original request identity selects that operation.
+The signed original root and
+exact retained operation correspondence select that read; observing does not
+admit another wake. Initial admission returns the existing Action operation
+acceptance shape. Matching development Home, Protocol and daemon readers reload
+together; older strict development readers reject the observation member. This
+changes no persisted format or released 0.2 contract.
+
 Home's finite-wake authorization carries the admitted controller and installation
 key. CLI and UI consume that result without requiring requester access to the
 controller inventory. Optional `managedFiniteWake.requesterCredentialDisclosure`

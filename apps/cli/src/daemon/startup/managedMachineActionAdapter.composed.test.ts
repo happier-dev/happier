@@ -1044,12 +1044,15 @@ describe('daemon managed Machine Action factory', () => {
         }
         expect(nativeEffects).toEqual([]);
     });
-    it.each(['cleanup', 'rearmed-wake', 'stale-running-wake', 'denied-wake', 'retired-wake', 'reconnected-wake', 'cleanup-native-refused'] as const)(
+    it.each(['cleanup', 'rearmed-wake', 'stale-running-wake', 'denied-wake', 'retired-wake', 'reconnected-wake', 'cleanup-native-refused',
+        'finite-disconnected-wake', 'finite-cancelled-wake'] as const)(
         'resumes %s through the remote app replay adapter and actual live operation', async purpose => {
         const wake = !purpose.startsWith('cleanup');
         const denied = purpose === 'denied-wake';
         const retired = purpose === 'retired-wake';
         const reconnected = purpose === 'reconnected-wake';
+        const finite = purpose.startsWith('finite-');
+        const finiteCancelled = purpose === 'finite-cancelled-wake';
         const nativeRefused = purpose === 'cleanup-native-refused';
         const nativeDetails = { kind: 'managedNative', nativeCause: { httpStatusClass: '4xx', code: 'forbidden' } } as const;
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
@@ -1085,7 +1088,8 @@ describe('daemon managed Machine Action factory', () => {
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: wake });
         const target = ManagedWakeTargetV1Schema.parse({ homeId: machine.homeId, managedId: machine.id, enrolledMachineId: 'guest',
             controller, expectedIntentRevision: 1, reason: 'admitted-work',
-            origin: { kind: 'session-input', session: { homeId: machine.homeId, sessionId: 'retained-session' },
+            origin: finite ? { kind: 'finite-command', actionRequestId: 'original-finite' }
+                : { kind: 'session-input', session: { homeId: machine.homeId, sessionId: 'retained-session' },
                 pendingRequestId: 'original-input', requestedAt: Date.now() } });
         let rearmed = false;
         let failedActivation: ReturnType<typeof PendingActivationAuthorizationV1Schema.parse> | undefined;
@@ -1247,7 +1251,15 @@ describe('daemon managed Machine Action factory', () => {
             managedProviderOperationAuthority: authority,
             resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({ serverUrl, resolveCurrentMachineId: () => 'controller' }),
             acquireRuntimeRegistryLease: async () => ({ registry: native.runtimeRegistry, source: 'active', durableRevision: 1, release: async () => {} }),
-            observeActionExecution: request => operations.observeExecution(request),
+            observeActionExecution: async request => {
+                const observed = await operations.observeExecution(request);
+                // The original reply socket can retire after host admission,
+                // before even the admission acknowledgement gets back to Home.
+                if (finite) rpc.onSocketDisconnect();
+                return observed;
+            },
+            waitForActionOperationCompletion: (...args) => operations.runner.waitForCompletion(...args),
+            findActionOperationByRequestIdentity: (...args) => operations.store.findByRequestIdentity(...args),
             executeManagedPolicyAction: async (current, context, runApproved, purpose) => {
                 try { return await executeManagedMachinePolicyAction({ machine: current, purpose, runApproved,
                 context: wake ? context : { ...context, surface: 'cli', runtimeAccountId: 'account', serverIdentityId: 'srv_home', defaultSessionMachineId: 'controller' },
@@ -1265,12 +1277,41 @@ describe('daemon managed Machine Action factory', () => {
         const app = createActionExecutor({ ...createCliActionDeps(executorParams),
             isApprovalExecutionOriginCurrent: currentness });
         let execution: Promise<ActionExecuteResult> = Promise.resolve({ ok: true, result: null });
-        const runtime = wake ? createDaemonManagedMachinePolicyRuntime({
+        const runtime = wake && !finite ? createDaemonManagedMachinePolicyRuntime({
             readCensus: signal => readManagedMachinePolicyCensus({ homeId: machine.homeId, controller,
                 custodianAccountId: 'account', privateKey: signing.secretKey, token, serverUrl, signal }),
             executePolicy: request => { execution = managed.executePolicy(request); return execution; },
         }) : null;
-        if (runtime) {
+        const rpc = new RpcHandlerManager({ scopePrefix: 'controller', encryptionMode: 'plain', logger: () => {} });
+        if (finite) {
+            onTestFinished(async () => { await operations.handlers.cancel({ operationId: 'cleanup-operation' }); });
+            const actionOrigin = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-issued-finite-origin', binding: {
+                accountId: 'account', custodianAccountId: 'account', authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+                machineId: 'guest', installationId: 'guest-installation', serverIdentityId: 'srv_home', actionId: 'session.message.send',
+                machineRuntimeDemand: 'required',
+                requestId: 'original-finite', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'session', sessionId: 'retained-session' },
+            } });
+            registerManagedFiniteWake(rpc, { readCurrent: async () => machine, executePolicy: managed.executePolicy,
+                observePolicy: managed.observePolicy });
+            const submitted = rpc.handleRequest({ method: `controller:${MANAGED_FINITE_WAKE_RPC_METHOD}`, params: { target, actionOrigin },
+                authorization: ACTION_API_SERVER_ORIGIN });
+            // Admission is returned while the real approval remains held. Native
+            // completion belongs to the operation, independently of this RPC.
+            expect(await Promise.race([submitted, held.then(() => 'waiting-for-native')])).toMatchObject({ ok: true,
+                result: { status: 'accepted', operationId: 'cleanup-operation', machineId: 'controller' } });
+            const observation = { target, actionOrigin,
+                observation: finiteCancelled ? { operationId: 'cleanup-operation' } : {} };
+            expect(await rpc.handleRequest({ method: `controller:${MANAGED_FINITE_WAKE_RPC_METHOD}`, params: { ...observation,
+                actionOrigin: { ...actionOrigin, binding: { ...actionOrigin.binding, accountId: 'another-account' } } },
+                authorization: ACTION_API_SERVER_ORIGIN })).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+            execution = rpc.handleRequest({ method: `controller:${MANAGED_FINITE_WAKE_RPC_METHOD}`, params: observation,
+                authorization: ACTION_API_SERVER_ORIGIN }).then(async result => {
+                expect(await rpc.handleRequest({ method: `controller:${MANAGED_FINITE_WAKE_RPC_METHOD}`, params: { ...observation,
+                    target: { ...target, managedId: 'another-managed' } },
+                    authorization: ACTION_API_SERVER_ORIGIN })).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+                return result;
+            });
+        } else if (runtime) {
             // Home HTTP is the boundary: the failed authorization has no wake
             // target until the original input is explicitly rearmed.
             runtime.notifyChanged();
@@ -1300,11 +1341,13 @@ describe('daemon managed Machine Action factory', () => {
                     operationId: 'cleanup-operation', executionRequestId: asked.v === 2 ? asked.executionOriginV1.requestId : undefined,
                     signalMatchesHostLifetime: true,
                 }));
-                const later = Date.now() + 180_000;
-                vi.spyOn(Date, 'now').mockReturnValue(later);
-                runtime!.notifyChanged();
-                await vi.waitFor(() => expect(controllerPaths.filter(path => path.endsWith('/policies'))).toHaveLength(3));
-                expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(artifact.id)).toBe(1);
+                if (runtime) {
+                    const later = Date.now() + 180_000;
+                    vi.spyOn(Date, 'now').mockReturnValue(later);
+                    runtime.notifyChanged();
+                    await vi.waitFor(() => expect(controllerPaths.filter(path => path.endsWith('/policies'))).toHaveLength(3));
+                    expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(artifact.id)).toBe(1);
+                }
             }
             const decisionContext = {
                 surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: 'account',
@@ -1321,16 +1364,16 @@ describe('daemon managed Machine Action factory', () => {
                 rearmed = false;
                 runtime!.notifyChanged();
             }
-            const replay = reconnected ? undefined : retired ? await operations.handlers.cancel({ operationId: 'cleanup-operation' })
+            const replay = reconnected ? undefined : retired || finiteCancelled ? await operations.handlers.cancel({ operationId: 'cleanup-operation' })
                 : denied ? await app.execute('approval.request.decide', { artifactId: artifact.id, decision: 'reject' }, decisionContext)
                     : await replayLiveCliApproval({ artifactId: artifact.id, request: asked, decision: 'approve',
                         context: decisionContext, account: approvingAccount });
-            if (!retired && !reconnected) expect(replay, JSON.stringify(replay)).toMatchObject({ ok: true });
+            if (!retired && !reconnected && !finiteCancelled) expect(replay, JSON.stringify(replay)).toMatchObject({ ok: true });
             const outcome = await settled;
-            expect(outcome, JSON.stringify({ outcome, effects, controllerPaths })).toMatchObject({ result: retired || reconnected ? { ok: false, errorCode: 'cancelled' }
+            expect(outcome, JSON.stringify({ outcome, effects, controllerPaths })).toMatchObject({ result: retired || reconnected || finiteCancelled ? { ok: false, errorCode: 'cancelled' }
                 : denied ? { ok: false, errorCode: 'approval_rejected' }
                     : nativeRefused ? { ok: false, errorCode: 'provider_unavailable', details: nativeDetails } : { ok: true } });
-            expect(effects).toEqual(denied || retired || reconnected ? [] : wake ? ['power', 'bootstrap'] : ['destroy']);
+            expect(effects).toEqual(denied || retired || reconnected || finiteCancelled ? [] : wake ? ['power', 'bootstrap'] : ['destroy']);
             if (!wake && !nativeRefused) {
                 expect(readRetirementApproval('matching-delete-approval')).toMatchObject({ status: 'canceled' });
                 expect(readRetirementApproval('other-delete-approval')).toMatchObject({ status: 'open' });
@@ -1338,11 +1381,11 @@ describe('daemon managed Machine Action factory', () => {
             if (wake && (denied || retired)) {
                 expect(failedActivation).toMatchObject({ status: 'failed', failureCode: denied ? 'managed_start_denied' : 'managed_start_failed' });
             } else expect(failedActivation).toBeUndefined();
-            if (!retired && !reconnected) expect(storedApproval()).toMatchObject(denied ? { status: 'rejected' }
+            if (!retired && !reconnected && !finiteCancelled) expect(storedApproval()).toMatchObject(denied ? { status: 'rejected' }
                 : nativeRefused ? { status: 'failed', execution: { ok: false, errorCode: 'provider_unavailable' } }
                     : { status: 'executed', execution: { ok: true } });
             expect(await operations.handlers.getV2({ operationId: 'cleanup-operation', waitForTerminal: true }))
-                .toMatchObject({ kind: 'found', operation: { state: retired || reconnected ? 'cancelled' : denied || nativeRefused ? 'failed' : 'succeeded',
+                .toMatchObject({ kind: 'found', operation: { state: retired || reconnected || finiteCancelled ? 'cancelled' : denied || nativeRefused ? 'failed' : 'succeeded',
                     ...(nativeRefused ? { error: { errorCode: 'provider_unavailable', details: nativeDetails } } : {}) } });
         } finally {
             await operations.handlers.cancel({ operationId: 'cleanup-operation' });

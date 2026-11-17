@@ -1204,6 +1204,10 @@ export class ApiMachineClient {
         return this.actionOperationRuntime.runner.waitForCompletion(...args);
     }
 
+    findActionOperationByRequestIdentity(...args: Parameters<HostActionOperationRuntime['store']['findByRequestIdentity']>) {
+        return this.actionOperationRuntime.store.findByRequestIdentity(...args);
+    }
+
     runActionOperation(request: Parameters<HostActionOperationRuntime['runActionOperation']>[0]) {
         return runHostActionOperation(observed => this.observeActionExecution(observed), request);
     }
@@ -1544,8 +1548,10 @@ export class ApiMachineClient {
         return generation === this.activeTransportGeneration;
     }
 
-    private handleTransportSocketDisconnect(socket: Socket<ServerToDaemonEvents, DaemonToServerEvents>, generation: number): void {
-        logger.debug('[API MACHINE] Disconnected from server');
+    private handleTransportSocketDisconnect(socket: Socket<ServerToDaemonEvents, DaemonToServerEvents>, generation: number, reason: string): void {
+        // Socket.IO supplies its disconnect reason; omit the optional transport
+        // description, which may contain request details.
+        logger.debug('[API MACHINE] Disconnected from server', { reason, transportGeneration: generation });
         if (!this.isActiveTransportGeneration(generation) || this.socket !== socket) {
             return;
         }
@@ -5791,8 +5797,8 @@ export class ApiMachineClient {
                         transportGeneration,
                         params,
                     );
-                    socket.on('disconnect', () => {
-                        this.handleTransportSocketDisconnect(socket, transportGeneration);
+                    socket.on('disconnect', (reason) => {
+                        this.handleTransportSocketDisconnect(socket, transportGeneration, reason);
                     });
                     return transport;
                 },

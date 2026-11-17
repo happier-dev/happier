@@ -1772,7 +1772,7 @@ describe('startDaemonSessionControlRuntime', () => {
         } finally { await runtime.stopControlServer(); }
     });
     async function runPrivateManagedRequesterFixture(finiteWake = false, refreshRequesterPolicy = false,
-        finiteRpc?: 'allow' | 'ask' | 'revoked' | 'changed-root' | 'revoked-after-ask' | 'reviewer-retired-after-ask',
+        finiteRpc?: 'allow' | 'ask' | 'revoked' | 'changed-root' | 'revoked-after-ask' | 'reviewer-retired-after-ask' | 'disconnect-after-admission',
         automaticSetup?: 'signed' | 'local' | 'retired-after-plan' | 'effects-changed', managedCodec?: 'plain' | 'e2ee', freshAcquisition = false) {
         const keyFreeCreation = !finiteWake && !managedCodec && automaticSetup !== 'local';
         if (!fetchAccountEncryptionCurrentnessActual.current) throw new Error('Account currentness HTTP owner unavailable');
@@ -2350,7 +2350,8 @@ describe('startDaemonSessionControlRuntime', () => {
                 installationPublicKey: decodeBase64(installation.publicKey, 'base64url'), randomBytes: tweetnacl.randomBytes });
             if (finiteRpc) {
                 apiMachine!.registerManagedFiniteWake({ readCurrent: async () => enrolled,
-                    executePolicy: runtime.managedMachinePolicyAdapter.executePolicy });
+                    executePolicy: runtime.managedMachinePolicyAdapter.executePolicy,
+                    observePolicy: runtime.managedMachinePolicyAdapter.observePolicy });
                 if (finiteRpc === 'revoked') requesterCurrent = false;
                 const actionOrigin = finiteRpc === 'changed-root' ? { ...controllerCarrier,
                     binding: { ...controllerCarrier.binding, requestEnvelopeDigest: 'b'.repeat(43) } } : controllerCarrier;
@@ -2359,7 +2360,21 @@ describe('startDaemonSessionControlRuntime', () => {
                 let rpcResult: unknown;
                 const execution = new Promise<unknown>(resolve => machineSocket.trigger(SOCKET_RPC_EVENTS.REQUEST,
                     { method: `${machineId}:${MANAGED_FINITE_WAKE_RPC_METHOD}`, params: { target: wakeTarget, actionOrigin },
-                        authorization: ACTION_API_SERVER_ORIGIN }, resolve)).then(value => { rpcResult = value; return value; });
+                        authorization: ACTION_API_SERVER_ORIGIN }, resolve)).then(async value => {
+                    if (finiteRpc === 'revoked' || finiteRpc === 'changed-root') return value;
+                    expect(value).toMatchObject({ ok: true, result: { status: 'accepted', machineId } });
+                    const result = value && typeof value === 'object' ? Reflect.get(value, 'result') : null;
+                    const operationId = result && typeof result === 'object' ? Reflect.get(result, 'operationId') : null;
+                    if (typeof operationId !== 'string') throw new Error('Missing admitted finite wake operation');
+                    if (finiteRpc === 'disconnect-after-admission') {
+                        machineSocket.connected = false;
+                        machineSocket.trigger('disconnect', 'transport close');
+                        machineSocket.connect();
+                    }
+                    return await new Promise<unknown>(resolve => machineSocket.trigger(SOCKET_RPC_EVENTS.REQUEST,
+                        { method: `${machineId}:${MANAGED_FINITE_WAKE_RPC_METHOD}`, params: { target: wakeTarget, actionOrigin, observation: { operationId } },
+                            authorization: ACTION_API_SERVER_ORIGIN }, resolve));
+                }).then(value => { rpcResult = value; return value; });
                 if (finiteRpc === 'ask' || finiteRpc === 'revoked-after-ask' || finiteRpc === 'reviewer-retired-after-ask') {
                     const first = await Promise.race([approvalCreated.then(artifactId => ({ kind: 'approval' as const, artifactId })),
                         execution.then(result => ({ kind: 'settled' as const, result }))]);
@@ -2608,7 +2623,7 @@ describe('startDaemonSessionControlRuntime', () => {
     it('refreshes changed Bob policy inside actual admitted controller custody before the later native effect', async () => {
         await runPrivateManagedRequesterFixture(true, true);
     });
-    it.each(['allow', 'ask', 'reviewer-retired-after-ask', 'revoked', 'changed-root', 'revoked-after-ask'] as const)('runs shared finite wake RPC with requester custody (%s)', async scenario => {
+    it.each(['allow', 'ask', 'reviewer-retired-after-ask', 'revoked', 'changed-root', 'revoked-after-ask', 'disconnect-after-admission'] as const)('runs shared finite wake RPC with requester custody (%s)', async scenario => {
         await runPrivateManagedRequesterFixture(true, false, scenario);
     });
     async function runManagedPolicyFixture(policy: 'disabled' | 'approve' | 'reject' | 'cancel' | 'changed-policy' | 'explicit-delete-waiver' | 'event-driven-policy' | 'creation-cleanup' | 'resource-replacement' | 'wake-native-refused' | 'wake-native-unknown' | 'wake-approved-replay' | 'guard-cleanup-ask' | 'deferred-acquire', nativeExecEnvironment = false) {

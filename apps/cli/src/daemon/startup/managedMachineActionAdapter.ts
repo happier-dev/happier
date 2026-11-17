@@ -20,7 +20,9 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { logger } from '@/ui/logger';
 import { ManagedMachineControllerError, ManagedRetentionWaitSuperseded } from '@/machines/managed/controllerErrors';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import { ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
+import { ManagedIntentResultSchema, type ManagedWakeTargetV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
+import { waitForObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
+import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { ManagedMachineOperationSettlementContext } from '@/machines/managed/managedIntentReconciler';
 
 import { prepareInstalledWorkflowActionAuthorization } from '@/api/installedWorkflowActionAuthorization';
@@ -74,17 +76,19 @@ type ManagedMachineActionAdapterParams = Readonly<{
     managedGuestLocalStop?: ManagedGuestLocalStop;
     observeActionExecution?: ApiMachineClient['observeActionExecution'];
     waitForActionOperationCompletion?: ApiMachineClient['waitForActionOperationCompletion'];
+    findActionOperationByRequestIdentity?: ApiMachineClient['findActionOperationByRequestIdentity'];
     readPolicyCurrent?: (managedId: string, signal?: AbortSignal) => Promise<ManagedMachineV1 | null>;
     prepareTeamCredentialNativeSource?: RuntimeProviderModelManagementServices['prepareTeamCredentialNativeSource'];
     subscribeManagedMachineChanges?: ApiMachineClient['onManagedMachinePolicyInvalidated'];
     executeManagedPolicyAction?: <Machine extends ManagedMachineReadSnapshotV1>(machine: Machine, context: ActionExecutorContext,
-        runApproved: (context: ActionExecutorContext) => Promise<Machine>, purpose: ManagedPolicyPurposeV1) => Promise<Machine>;
+        runApproved: (context: ActionExecutorContext) => Promise<Machine>, purpose: ManagedPolicyPurposeV1,
+        actionOrigin?: ExternalActionExecutionAuthorizationV1) => Promise<Machine>;
     prepareRequesterAccountContext?: PrepareExternalActionRequesterAccountContext;
     acquireRuntimeRegistryLease(): Promise<PluginRuntimeRegistryLease>;
 }>;
 
 export type ManagedMachinePolicyRequest = Readonly<{ machine: ManagedMachineV1; purpose: ManagedPolicyPurposeV1; signal?: AbortSignal; actionOrigin?: ExternalActionExecutionAuthorizationV1;
-    retentionContinuationRequestId?: string }>;
+    retentionContinuationRequestId?: string; response?: 'admission' }>;
 
 export const MANAGED_MACHINE_POLICY_RETENTION_SATISFIED_ABORT = Object.freeze({
     kind: 'managed_machine_policy_abort',
@@ -482,6 +486,24 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                 withBoundDriver(params, signal, driver => driver.reconcileNativeCredentials(machine, {
                     requestId: randomUUID(), signal,
                 }))),
+        observePolicy: async (request: Readonly<{ target: ManagedWakeTargetV1; actionOrigin: ExternalActionExecutionAuthorizationV1;
+            operationId?: string; signal: AbortSignal }>): Promise<ActionExecuteResult> => {
+            const refused = { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+            const { target, actionOrigin } = request;
+            const binding = actionOrigin.binding;
+            if (request.signal.aborted || !params.findActionOperationByRequestIdentity || !params.waitForActionOperationCompletion
+                || target.origin.kind !== 'finite-command' || target.origin.actionRequestId !== binding.requestId
+                || target.homeId !== binding.serverIdentityId || target.enrolledMachineId !== binding.machineId
+                || target.controller?.machineId !== params.machineId
+                || target.controller.installationId !== params.installationIdentity?.installationId) return refused;
+            const scope = { accountId: binding.accountId, machineId: params.machineId };
+            const operation = params.findActionOperationByRequestIdentity(scope, 'machines.managed.power.set', binding.requestId);
+            if (!operation || request.operationId && operation.operationId !== request.operationId
+                || operation.domainRef?.kind !== 'managedMachine' || operation.domainRef.id !== target.managedId) return refused;
+            const completed = await waitForObservation(params.waitForActionOperationCompletion(scope, operation.operationId), request.signal);
+            return completed ? readActionOperationTerminalResultV1(completed)
+                ?? { ok: false, errorCode: 'action_outcome_unknown', error: 'action_outcome_unknown' } : refused;
+        },
         executePolicy: async (request: ManagedMachinePolicyRequest): Promise<ActionExecuteResult> => {
             if (!params.observeActionExecution || !params.executeManagedPolicyAction) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
             request.signal?.throwIfAborted();
@@ -499,38 +521,45 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
             const actionId = request.purpose.kind === 'creation-cleanup'
                 || (request.purpose.kind === 'retention' && request.machine.retention.kind !== 'until-delete'
                     && request.machine.retention.effect === 'delete') ? 'machines.managed.delete' : 'machines.managed.power.set';
-            const requestId = randomUUID();
+            const finiteRequestId = request.purpose.kind === 'accepted-input-start' && request.purpose.target.origin.kind === 'finite-command'
+                ? request.purpose.target.origin.actionRequestId : undefined;
+            const requestId = finiteRequestId ?? randomUUID();
+            const schedulerSignal = finiteRequestId === undefined ? request.signal : undefined;
             let completion: Promise<ActionExecuteResult> | undefined;
             const observed = await params.observeActionExecution({ actionId, input: { managedId: request.machine.id, purpose: request.purpose },
+                ...(request.response ? { response: request.response } : {}),
                 actionRequestId: requestId, execute: operation => {
                     operation.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: request.machine.id } });
                     completion = (async () => {
-                        const lifetime = new AbortController();
+                        // Scheduler withdrawal retires scheduler work. Finite RPC
+                        // transport retirement only detaches its observer.
+                        const lifetime = schedulerSignal ? AbortSignal.any([operation.signal, schedulerSignal]) : operation.signal;
                         const cancel = () => {
-                            if (lifetime.signal.aborted) return;
                             try { logger.warnLocalFile('[managed-policy.operation-abort]', { managedId: request.machine.id,
                                 operationId: operation.operationAcceptance?.operationId,
                                 reasonCode: operation.signal.aborted ? 'operation_cancelled' : 'policy_scheduler_aborted' }); } catch { /* Diagnostic only. */ }
-                            lifetime.abort(operation.signal.aborted ? operation.signal.reason : request.signal?.reason);
                         };
-                        operation.signal.addEventListener('abort', cancel, { once: true });
-                        request.signal?.addEventListener('abort', cancel, { once: true });
-                        if (operation.signal.aborted || request.signal?.aborted) cancel();
+                        lifetime.addEventListener('abort', cancel, { once: true });
+                        if (lifetime.aborted) cancel();
+                        let retained: Awaited<ReturnType<NonNullable<NonNullable<ReturnType<typeof readRequesterAccountActionContext>>['retainForOperation']>>> | undefined;
                         try {
-                            const context = { ...operation, signal: lifetime.signal };
-                            const result = await withBoundDriver(params, lifetime.signal, async driver => await driver.executePolicy(
-                                request.machine, request.purpose, { requestId, context, signal: lifetime.signal,
-                                    policySchedulerSignal: request.signal,
+                            const requester = finiteRequestId === undefined ? null : readRequesterAccountActionContext(request.actionOrigin);
+                            retained = await requester?.retainForOperation?.(lifetime);
+                            const actionOrigin = retained?.authorization ?? request.actionOrigin;
+                            const context = { ...operation, signal: lifetime };
+                            const result = await withBoundDriver(params, lifetime, async driver => await driver.executePolicy(
+                                request.machine, request.purpose, { requestId, context, signal: lifetime,
+                                    policySchedulerSignal: schedulerSignal,
                                     ...(request.retentionContinuationRequestId ? { retentionContinuationRequestId: request.retentionContinuationRequestId } : {}),
-                                    ...(request.actionOrigin ? { actionOrigin: request.actionOrigin } : {}),
-                                    runPolicyAction: (machine, runApproved) => params.executeManagedPolicyAction!(machine, context, runApproved, request.purpose) },
+                                    ...(actionOrigin ? { actionOrigin } : {}),
+                                    runPolicyAction: (machine, runApproved) => params.executeManagedPolicyAction!(machine, context, runApproved, request.purpose, actionOrigin) },
                             ));
                             return { ok: true as const, result };
                         } catch (error) {
                             const actionFailure = error && typeof error === 'object' && 'actionFailure' in error
                                 ? ActionExecuteFailureSchema.safeParse(error.actionFailure) : null;
-                            if (!lifetime.signal.aborted && actionFailure?.success) return actionFailure.data;
-                            if (isManagedMachinePolicyRetentionSatisfiedAbort(lifetime.signal.reason)
+                            if (!lifetime.aborted && actionFailure?.success) return actionFailure.data;
+                            if (isManagedMachinePolicyRetentionSatisfiedAbort(lifetime.reason)
                                 && operation.operationAcceptance?.operationId) {
                                 return { ok: true as const, result: ManagedIntentResultSchema.parse({
                                     kind: 'accepted', managedId: request.machine.id,
@@ -543,22 +572,22 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                                 try { logger.warnLocalFile('[managed-policy.wait-superseded]', { managedId: request.machine.id,
                                     operationId: operation.operationAcceptance?.operationId, reasonCode: error.code }); } catch { /* Diagnostic only. */ }
                             }
-                            const code = lifetime.signal.aborted || supersededWait ? 'cancelled'
+                            const code = lifetime.aborted || supersededWait ? 'cancelled'
                                 : readRpcErrorCode(error)
                                     ?? (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'managed_controller_request_failed');
                             return { ok: false as const, errorCode: code, error: code,
                                 ...(error instanceof ManagedMachineControllerError && error.code === code && error.details
                                     ? { details: error.details } : {}) };
                         } finally {
-                            operation.signal.removeEventListener('abort', cancel);
-                            request.signal?.removeEventListener('abort', cancel);
+                            lifetime.removeEventListener('abort', cancel);
+                            await retained?.dispose();
                         }
                     })();
                     return completion;
                 } });
-            // The UI may observe acceptance early; the native preparation
-            // caller stays within this same real host operation's lifetime.
-            return completion ? await completion : observed;
+            // Finite RPC acknowledges admission; scheduler callers continue
+            // awaiting this same host operation's terminal result.
+            return request.response === 'admission' ? observed : completion ? await completion : observed;
         },
     });
 }

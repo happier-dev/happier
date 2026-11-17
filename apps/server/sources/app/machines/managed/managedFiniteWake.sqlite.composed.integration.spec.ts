@@ -1525,31 +1525,73 @@ describe('finite managed wake original Action authority (real storage)', () => {
         await expect(test.check(origin)).rejects.toMatchObject({ code: 'admission_unavailable' });
     });
 
-    it('retains the original HTTP Action across exact-controller wake and freshly admits the guest once', async () => {
+    it.each(['ready', 'reconnect', 'lost-admission-ack', 'failed', 'cancelled'] as const)('retains the original HTTP Action through admitted wake observation (%s)', async disposition => {
         const test = await setup();
+        const cancel = new AbortController();
         const envelope = { v: 1 as const, requestId: test.requestId,
             target: { kind: 'machine' as const, machineId: test.guest.id }, input: { preserved: 'opaque original input' } };
         const methods: string[] = [];
-        const dispatch = createExternalActionDaemonDispatcher({ io: new Server(), forwardRpc: async request => {
-            methods.push(request.method);
-            if (request.method.startsWith(`${test.controller.id}:`)) {
-                const wake = request.callParams as { target: typeof test.target; actionOrigin: ExternalActionExecutionAuthorizationV1 };
+        let powerEffects = 0;
+        let observations = 0;
+        let replacement = false;
+        const wakeMethod = `${test.controller.id}:${MANAGED_FINITE_WAKE_RPC_METHOD}`;
+        const guestMethod = `${test.guest.id}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`;
+        const controller = (id: string) => ({ id, data: { clientType: 'machine-scoped', userId: test.account.id,
+            machineId: test.controller.id, verifiedMachineInstallationId: test.controller.installationId }, timeout: () => ({
+            emitWithAck: async (_event: string, request: { method: string; timeoutMs?: number | null; params: unknown }) => {
+                methods.push(request.method);
+                expect(request.timeoutMs).toBeNull();
+                const wake = ManagedFiniteWakeRequestV1Schema.parse(request.params);
+                if (!wake.observation) {
+                    powerEffects++;
+                    await test.check(wake.actionOrigin);
+                    if (disposition === 'lost-admission-ack') {
+                        replacement = true;
+                        throw Object.assign(new Error('Controller transport retired before admission ACK'), { code: 'SOCKET_DISCONNECTED' });
+                    }
+                    return { ok: true, result: { status: 'accepted', machineId: test.controller.id, operationId: 'native-policy' } };
+                }
+                expect(wake.observation).toEqual(disposition === 'lost-admission-ack' ? {} : { operationId: 'native-policy' });
                 expect(wake.target.origin).toEqual(test.target.origin);
                 expect(wake.actionOrigin.binding.machineId).toBe(test.guest.id);
-                await test.check(wake.actionOrigin);
+                observations++;
+                if (disposition === 'reconnect' && !replacement) {
+                    replacement = true;
+                    throw Object.assign(new Error('Controller transport retired'), { code: 'SOCKET_DISCONNECTED' });
+                }
+                if (disposition === 'cancelled') cancel.abort();
+                if (disposition === 'failed' || disposition === 'cancelled') return { ok: false, errorCode: 'native_intent_failed', error: 'native_intent_failed' };
                 await db.machine.update({ where: { id: test.guest.id }, data: { active: true } });
-                return { ok: true, result: { ok: true, result: { kind: 'accepted', managedId: test.row.id, intentRevision: 1, operation: { operationId: 'native-policy' } } } };
-            }
-            expect(request.method).toBe(`${test.guest.id}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`);
-            expect((request.callParams as { envelope: unknown }).envelope).toBe(envelope);
-            return { ok: true, result: createExternalActionDaemonDispatchResponseV1(prepareExternalActionResponseEnvelopeV1({
-                v: 1, actionId: 'projects.script.run', requestId: test.requestId, execution: { ok: true, result: { ran: true } },
-            })) };
-        } });
-        await expect(dispatch({ actionId: 'projects.script.run', envelope,
+                return { ok: true, result: { kind: 'accepted', managedId: test.row.id, intentRevision: 1, operation: { operationId: 'native-policy' } } };
+            },
+        }) });
+        const initialController = controller('finite-controller-initial');
+        const replacementController = controller('finite-controller-replacement');
+        const guest = { id: 'finite-guest', data: { clientType: 'machine-scoped', userId: test.account.id,
+            machineId: test.guest.id, verifiedMachineInstallationId: test.guest.installationId }, timeout: () => ({
+            emitWithAck: async (_event: string, request: { method: string; params: unknown }) => {
+                methods.push(request.method);
+                expect(ExternalActionDaemonDispatchRequestSchema.parse(request.params).envelope).toEqual(envelope);
+                return createExternalActionDaemonDispatchResponseV1(prepareExternalActionResponseEnvelopeV1({
+                    v: 1, actionId: 'projects.script.run', requestId: test.requestId, execution: { ok: true, result: { ran: true } },
+                }));
+            },
+        }) };
+        for (const socket of [initialController, replacementController, guest]) qualifyCurrentAccountStoredContentSocket(socket);
+        const io = createSocketRoomDiscoveryHarness(async room => {
+            const current = replacement ? replacementController : initialController;
+            return room === `rpc:${test.account.id}:${wakeMethod}` || room === current.id ? [current]
+                : room === `rpc:${test.account.id}:${guestMethod}` || room === guest.id ? [guest] : [];
+        });
+        const dispatch = createExternalActionDaemonDispatcher({ io });
+        const result = await dispatch({ actionId: 'projects.script.run', envelope,
             principal: { accountId: test.account.id, authority: 'present_user', authentication: { kind: 'account', tokenEpoch: test.account.tokenEpoch } },
-        })).resolves.toMatchObject({ kind: 'response' });
-        expect(methods).toHaveLength(2);
+        }, { signal: cancel.signal });
+        expect(result.kind).toBe(disposition === 'failed' || disposition === 'cancelled' ? 'placement_error' : 'response');
+        if (disposition === 'failed') expect(result).toMatchObject({ failureCause: { nativeErrorReason: 'native_intent_failed' } });
+        expect(powerEffects).toBe(1);
+        expect(observations).toBe(disposition === 'reconnect' ? 2 : 1);
+        expect(methods.filter(method => method === guestMethod)).toHaveLength(disposition === 'failed' || disposition === 'cancelled' ? 0 : 1);
     });
 
     it.each(['cancel', 'unknown', 'credential-retired'] as const)('preserves local wake cancellation and next-destination admission (%s)', async disposition => {
@@ -1568,6 +1610,8 @@ describe('finite managed wake original Action authority (real storage)', () => {
                 return { ok: false, error: 'authorization_refused' };
             }
             expect(request.method.startsWith(`${test.controller.id}:`)).toBe(true);
+            const wake = ManagedFiniteWakeRequestV1Schema.parse(request.callParams);
+            expect(wake.observation).toEqual(disposition === 'unknown' && methods.length === 2 ? {} : undefined);
             if (disposition === 'cancel') cancel.abort();
             if (disposition === 'credential-retired') {
                 await db.account.update({ where: { id: test.account.id }, data: { tokenEpoch: { increment: 1 } } });
@@ -1581,7 +1625,7 @@ describe('finite managed wake original Action authority (real storage)', () => {
             principal: { accountId: test.account.id, authority: 'present_user', authentication: { kind: 'account', tokenEpoch: test.account.tokenEpoch } },
         }, { signal: cancel.signal });
         expect(result.kind).toBe(disposition === 'unknown' ? 'submitted_unknown' : 'placement_error');
-        expect(methods).toHaveLength(disposition === 'credential-retired' ? 2 : 1);
+        expect(methods).toHaveLength(disposition === 'cancel' ? 1 : 2);
     });
 
     it.each([

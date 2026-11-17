@@ -11560,6 +11560,11 @@ export async function startDaemonSessionControlRuntime(
       }
       return await currentApiMachine.waitForActionOperationCompletion(...args);
     },
+    findActionOperationByRequestIdentity: (...args: Parameters<ApiMachineClient['findActionOperationByRequestIdentity']>) => {
+      const currentApiMachine = params.getApiMachineForSessions();
+      if (!currentApiMachine) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+      return currentApiMachine.findActionOperationByRequestIdentity(...args);
+    },
     observeActionExecution: async (request) => {
       const currentApiMachine = params.getApiMachineForSessions();
       if (!currentApiMachine) {
@@ -11663,11 +11668,14 @@ export async function startDaemonSessionControlRuntime(
                         rpcContext: requesterAccountOperationContext(apiMachine, admitted, 'manage', signal),
                       });
                     },
-                    executeManagedPolicyAction: (machine, context, runApproved, purpose) => executeManagedMachinePolicyAction({
-                      machine, purpose, context, runApproved, serverId: params.serverId,
-                      createExecutor: overrides => createExternalActionExecutor(admitted.credentials,
-                        undefined, undefined, undefined, undefined, overrides, admitted),
-                    }),
+                    executeManagedPolicyAction: (machine, context, runApproved, purpose, actionOrigin) => {
+                      const requester = readRequesterAccountActionContext(actionOrigin) ?? admitted;
+                      return executeManagedMachinePolicyAction({
+                        machine, purpose, context, runApproved, serverId: params.serverId,
+                        createExecutor: overrides => createExternalActionExecutor(requester.credentials,
+                          undefined, undefined, undefined, undefined, overrides, requester),
+                      });
+                    },
                   });
                   executeManagedFiniteWake = async request => {
                     const refused = { ok: false as const, errorCode: 'requester_account_context_unavailable', error: 'requester_account_context_unavailable' };

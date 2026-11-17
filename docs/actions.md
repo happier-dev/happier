@@ -11467,6 +11467,14 @@ opener checks the declaration against the
 original Action spec. Invocation-private child ports
 never travel to another host.
 
+Finite wake acknowledges the existing host Action operation before waiting for
+approval or native power. Home observes that operation's terminal result before
+dispatching the original input. A controller reconnect repeats only the read of
+the admitted operation; it does not repeat native power or message delivery.
+The operation owns execution cancellation after admission. Scheduler-owned
+wakes retain their scheduler lifetime, and explicit operation cancellation
+continues to stop admitted work.
+
 The shared native power owner inspects vendor power before Start or Resume.
 Confirmed-running resources skip native power and retain the existing guest
 daemon startup path. A stored running observation cannot hide a vendor-side stop.

@@ -4698,6 +4698,7 @@ export async function startDaemon(
             attemptedApiMachineForSessions.registerManagedFiniteWake({
               readCurrent: readCurrentManagedMachinePolicy,
               executePolicy: managedMachinePolicyAdapter.executePolicy,
+              observePolicy: managedMachinePolicyAdapter.observePolicy,
             });
             attemptedManagedMachinePolicyRuntime = createDaemonManagedMachinePolicyRuntime({
               apiMachine: attemptedApiMachineForSessions,

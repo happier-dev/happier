@@ -11,6 +11,8 @@ import { type AnyClientUpgradeRequiredV1 } from '@happier-dev/protocol/clientCom
 import { isSocketIoAckTimeoutError, MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
+import { MANAGED_FINITE_WAKE_RPC_METHOD, ManagedFiniteWakeRequestV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { isSocketRpcActionApiServerOriginAuthorizationContext } from '@happier-dev/protocol/socketRpc';
 import { type SocketRpcAuthorizationContext } from '@happier-dev/protocol/socketRpc';
 import {
     SOCKET_RPC_EVENTS,
@@ -140,13 +142,16 @@ function rpcLogCorrelation(params: Readonly<{
     } : null;
 }
 
-export async function forwardRpcCall(params: Omit<Parameters<typeof executeRpcForwardCall>[0], 'observationReconnectGraceMs'>): Promise<RpcForwardResult> {
-    // Only the retained Run observer is replayable. Effects keep their original
+export async function forwardRpcCall(params: Omit<Parameters<typeof executeRpcForwardCall>[0], 'observationReconnectGraceMs' | 'retainedObservation'>): Promise<RpcForwardResult> {
+    // Only retained observations are replayable. Effects keep their original
     // disconnect/unknown contract; no inbound flag can opt a write into replay.
-    const observation = isRetainedRunObservation(params.method);
+    const observation = isRetainedObservation(params);
     const timeoutMs = resolveRpcForwardTimeoutMs(params.timeoutMs);
     const deadlineAtMs = timeoutMs === null ? null : Date.now() + timeoutMs;
-    let reconnecting = false;
+    // Finite wake is already admitted before its first read. Publication may
+    // still be absent after the admission ACK was lost, so that read owns the
+    // original invocation's remaining lifetime too.
+    let reconnecting = observation && params.method.slice(params.method.indexOf(':') + 1) === MANAGED_FINITE_WAKE_RPC_METHOD;
     let result: RpcForwardResult;
     for (;;) {
         const remainingMs = deadlineAtMs === null ? null : Math.max(0, deadlineAtMs - Date.now());
@@ -155,7 +160,7 @@ export async function forwardRpcCall(params: Omit<Parameters<typeof executeRpcFo
             break;
         }
         try {
-            result = await executeRpcForwardCall({ ...params, ...(observation ? {
+            result = await executeRpcForwardCall({ ...params, retainedObservation: observation, ...(observation ? {
                 timeoutMs: remainingMs,
                 ...(reconnecting ? { observationReconnectGraceMs: remainingMs } : {}),
             } : {}) });
@@ -178,8 +183,13 @@ export async function forwardRpcCall(params: Omit<Parameters<typeof executeRpcFo
     return result;
 }
 
-function isRetainedRunObservation(method: string): boolean {
-    return method.slice(method.indexOf(':') + 1) === SESSION_RPC_METHODS.EXECUTION_RUN_WAIT;
+function isRetainedObservation(params: Readonly<{ method: string; callParams: unknown; authorization?: SocketRpcAuthorizationContext }>): boolean {
+    const method = params.method.slice(params.method.indexOf(':') + 1);
+    if (method === SESSION_RPC_METHODS.EXECUTION_RUN_WAIT) return true;
+    if (method !== MANAGED_FINITE_WAKE_RPC_METHOD
+        || !isSocketRpcActionApiServerOriginAuthorizationContext(params.authorization)) return false;
+    const request = ManagedFiniteWakeRequestV1Schema.safeParse(params.callParams);
+    return request.success && request.data.observation !== undefined;
 }
 
 async function executeRpcForwardCall(params: Readonly<{
@@ -192,6 +202,7 @@ async function executeRpcForwardCall(params: Readonly<{
     timeoutMs?: number | null;
     /** Internal replay discovery consumes the original observation's remaining lifetime. */
     observationReconnectGraceMs?: number | null;
+    retainedObservation: boolean;
     authorization?: SocketRpcAuthorizationContext;
     /** Home-owned current Machine routing facts; never copied from inbound fields. */
     machineAdmission?: SocketRpcMachineAdmissionContextV1;
@@ -433,9 +444,9 @@ async function executeRpcForwardCall(params: Readonly<{
             throw new Error("RPC request cancelled by caller");
         }
         const requestedTimeoutMs = resolveRpcForwardTimeoutMs(params.timeoutMs);
-        const timeoutMs = isRetainedRunObservation(params.method)
+        const timeoutMs = params.retainedObservation
             && requestedTimeoutMs !== null ? Math.max(0, requestedTimeoutMs - (Date.now() - callStartedAt)) : requestedTimeoutMs;
-        if (isRetainedRunObservation(params.method) && timeoutMs === 0) {
+        if (params.retainedObservation && timeoutMs === 0) {
             return { ok: false, error: 'operation has timed out', errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE };
         }
         const targetRequestId = params.cancellation?.targetRequestId
@@ -590,7 +601,7 @@ async function executeRpcForwardCall(params: Readonly<{
                 : {}),
         };
     } catch (error) {
-        if (isRetainedRunObservation(params.method)
+        if (params.retainedObservation
             && !params.cancellation?.signal.aborted
             && error instanceof Error && 'code' in error && error.code === 'SOCKET_DISCONNECTED') throw error;
         if (requestSubmitted) params.onSubmittedUnknown?.();
