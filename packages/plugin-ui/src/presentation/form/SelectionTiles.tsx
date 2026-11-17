@@ -824,8 +824,9 @@ function ActionSelectionCards<T extends string, I extends string>(props: Happier
                   ? props.renderText({ role: 'badge', text: option.badge, selected: false, compact: false, numberOfLines: 1 })
                   : null}
               </View>
+              {/* The description is what the card offers: it is read whole, never clipped; the row's cards share its height. */}
               {option.subtitle
-                ? props.renderText({ role: 'actionSubtitle', text: option.subtitle, selected: false, compact: false, numberOfLines: 3 })
+                ? props.renderText({ role: 'actionSubtitle', text: option.subtitle, selected: false, compact: false, numberOfLines: 0 })
                 : null}
               <View style={styles.actionFooter}>{footer}</View>
             </View>

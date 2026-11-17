@@ -199,6 +199,7 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
         const title = titleOf(provisioner);
         return [{ id, title,
             description: provisioner.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : '',
+            ...(provisioner.descriptor.kindTitle ? { kind: localized(provisioner.contribution.pluginId, provisioner.descriptor.kindTitle) } : {}),
             location: local ? 'local' : 'cloud', enrollmentRole: provisioner.descriptor.enrollmentRole,
             acquire: placement.executionTarget,
             canSetUpHere: placement.available && !placement.requiresController

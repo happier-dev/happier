@@ -238,7 +238,9 @@ function ProvisionerGroup(
           <Item
             testID={`${props.testID}.${card.id}`}
             title={card.title}
-            subtitle={quiet(card) ? undefined : card.status.label}
+            // Lab m-add-Ap: a cloud row says what it creates, then its state ("Server · No account yet").
+            subtitle={[cloudKindLabel(card), quiet(card) ? undefined : card.status.label]
+              .filter(Boolean).join(' · ') || undefined}
             subtitleLeading={
               card.status.tone === 'none' || quiet(card) ? undefined : (
                 <StatusDot color={toneColor(theme, card.status.tone)} />
@@ -271,6 +273,8 @@ function ProvisionerGroup(
           id: card.id,
           title: card.title,
           subtitle: card.description,
+          // Four local cards across leave no room for a kind (lab m-add); cloud cards name theirs ("Server").
+          ...(cloudKindLabel(card) ? { badge: cloudKindLabel(card) } : {}),
           mark: card.mark(MANAGED_PROVISIONER_MARK_SIZE.tile),
         }))}
         onPress={(id) => { const action = byId.get(id)?.action; if (action && !action.disabled) action.onPress(); }}
@@ -291,6 +295,12 @@ function ProvisionerGroup(
   );
 }
 
+/** What a cloud card creates, in sentence case ("Server"); none when its name already says it ("Maritime Sandbox"). */
+function cloudKindLabel(card: ManagedProvisionerCard): string | undefined {
+  if (card.location !== 'cloud' || !card.kind || card.title.toLocaleLowerCase().includes(card.kind.toLocaleLowerCase())) return undefined;
+  return card.kind.charAt(0).toLocaleUpperCase() + card.kind.slice(1);
+}
+
 function ProvisionerFooter(
   props: Readonly<{ card: ManagedProvisionerCard; testID: string }>,
 ) {
@@ -298,28 +308,30 @@ function ProvisionerFooter(
   const { card } = props;
   return (
     <View style={styles.footer}>
-      {/* Every card reads the same at every width: the status line, then its button beneath it on
-          the text column. A status never truncates and never decides the button's place. */}
-      <View style={styles.statusGroup}>
-        {card.status.tone === 'none' ? null : (
-          <View style={styles.statusDot}>
-            <StatusDot color={toneColor(theme, card.status.tone)} />
-          </View>
+      {/* Lab m-add: the provider's state on the left, its one step on the right. A long status wraps
+          beside the button; it never truncates and never pushes the button off the card's floor. */}
+      <View style={styles.footerRow}>
+        <View style={styles.statusGroup}>
+          {card.status.tone === 'none' ? null : (
+            <View style={styles.statusDot}>
+              <StatusDot color={toneColor(theme, card.status.tone)} />
+            </View>
+          )}
+          {card.status.label ? <Text style={styles.status}>{card.status.label}</Text> : null}
+        </View>
+        {/* No step to take means no button: the status, or the catalog's one line with its Retry, says why. */}
+        {card.action.disabled ? null : (
+          <RoundButton
+            testID={`${props.testID}.action`}
+            size="small"
+            // A card has one action, so it has one treatment: Choose, Connect and Get the app alike (lab af-add W).
+            display="secondary"
+            title={card.action.label}
+            accessibilityLabel={`${card.action.label}, ${card.title}`}
+            onPress={card.action.onPress}
+          />
         )}
-        {card.status.label ? <Text style={styles.status}>{card.status.label}</Text> : null}
       </View>
-      {/* No step to take means no button: the status, or the catalog's one line with its Retry, says why. */}
-      {card.action.disabled ? null : (
-        <RoundButton
-          testID={`${props.testID}.action`}
-          size="small"
-          // A card has one action, so it has one treatment: Choose, Connect and Get the app alike (lab af-add W).
-          display="secondary"
-          title={card.action.label}
-          accessibilityLabel={`${card.action.label}, ${card.title}`}
-          onPress={card.action.onPress}
-        />
-      )}
       {card.repairFailure ? <ManagedProvisionerRepairFailureNotice failure={card.repairFailure}
         testID={`${props.testID}.repairFailure`} /> : null}
     </View>
@@ -363,15 +375,21 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.space.s10,
   },
   footer: {
-    alignItems: 'flex-start',
+    alignSelf: 'stretch',
     gap: theme.space.s10,
+  },
+  footerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s8,
   },
   statusGroup: {
     flexDirection: 'row',
     // A status that wraps ("Not installed · get it from cua.ai") keeps its dot on the first line.
     alignItems: 'flex-start',
     gap: theme.space.s6,
-    alignSelf: 'stretch',
+    flex: 1,
+    minWidth: 0,
   },
   statusDot: {
     height: happierPageTextMetrics('meta').lineHeight,

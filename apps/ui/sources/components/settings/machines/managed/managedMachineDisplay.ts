@@ -25,6 +25,8 @@ export type ManagedProvisionerCard = Readonly<{
   id: string;
   title: string;
   description: string;
+  /** What it creates, from its declaration ("server", "sandbox"): a cloud card names it beside the provider. */
+  kind?: string;
   /** The provisioner's mark at the size its slot draws it (a tile's, a row's). */
   mark: (size: number) => React.ReactNode;
   location: 'local' | 'cloud';
