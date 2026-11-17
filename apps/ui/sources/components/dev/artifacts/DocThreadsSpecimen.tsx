@@ -340,7 +340,7 @@ export function DocThreadsSpecimen(): React.ReactElement {
           style={styles.frame}
           testID={`dev-doc-threads.${frame.key}`}
         >
-          <Text variant="label" emphasis="semiBold">
+          <Text variant="label" emphasis="semiBold" style={styles.title}>
             {frame.title}
             <Text
               variant="label"
@@ -364,7 +364,7 @@ export function DocThreadsSpecimen(): React.ReactElement {
         </View>
       ))}
       <View style={styles.frame} testID="dev-doc-threads.loading">
-        <Text variant="label" emphasis="semiBold">
+        <Text variant="label" emphasis="semiBold" style={styles.title}>
           Loading thread
           <Text variant="label" style={styles.note}>
             {' '}
@@ -387,5 +387,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'flex-start',
   },
   frame: { width: DOC_PASSAGE_MARGIN_WIDTH, gap: theme.space.s8 },
+  title: { color: theme.colors.text.primary },
   note: { color: theme.colors.text.tertiary },
 }));
