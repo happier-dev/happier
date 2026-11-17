@@ -1,6 +1,7 @@
 import { join } from 'node:path';
+import { FIRST_PARTY_INSTALL_HOME_ENV_KEY } from '@happier-dev/cli-common/firstPartyRuntime';
 import { logger } from '@/utils/logger';
-import { resolveAuthoritativePackagedRuntimeCustody } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
+import { resolveAuthoritativePackagedRuntimeCustody, type RuntimeAuthorityParams } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS, BUNDLED_FIRST_PARTY_PLUGIN_METADATA } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 import { createBundledActivationSourceResolver, resolvePackagedBundledActivationPaths } from '@/plugins/runtime/bundledActivationSource';
@@ -9,6 +10,13 @@ import { activateContributionModule } from '@/plugins/runtime/lifecycle/activati
 import { projectAgentAccountSettingsCatalogEntry } from '@/plugins/projection/registry/agentAccountSettingsCatalogEntry';
 import { AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH, type AgentLaunchPayload } from './agentLaunchFrame';
 import packageJson from '../../../package.json' with { type: 'json' };
+
+/** The shim's sudo environment is scrubbed; custody resolves from the install home the daemon's frame carries. */
+export function resolveAgentLaunchRuntimeCustody(payload: AgentLaunchPayload, authority: RuntimeAuthorityParams = {}) {
+  const installHome = payload.environment[FIRST_PARTY_INSTALL_HOME_ENV_KEY];
+  return resolveAuthoritativePackagedRuntimeCustody(installHome === undefined ? authority
+    : { ...authority, processEnv: { ...(authority.processEnv ?? process.env), [FIRST_PARTY_INSTALL_HOME_ENV_KEY]: installHome } });
+}
 
 /** Private same-build bundled code only; no Account credentials, store, or module locator crosses the frame. */
 export async function applyAgentLaunchAccountSettings(payload: AgentLaunchPayload, signal?: AbortSignal): Promise<void> {
@@ -24,7 +32,7 @@ export async function applyAgentLaunchAccountSettings(payload: AgentLaunchPayloa
     || !declaration.manifest.contributes.agents.some(agent => agent.id === input.localAgentId && agent.accountSettings)) {
     unavailable(); return;
   }
-  const packaged = resolveAuthoritativePackagedRuntimeCustody();
+  const packaged = resolveAgentLaunchRuntimeCustody(payload);
   const paths = packaged ? resolvePackagedBundledActivationPaths({ runtimeRoot: packaged.root,
     activationTargets: [declaration], metadata: BUNDLED_FIRST_PARTY_PLUGIN_METADATA,
     locators: BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS }) : null;

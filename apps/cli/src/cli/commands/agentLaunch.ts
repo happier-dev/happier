@@ -2,6 +2,7 @@ import { constants, userInfo } from 'node:os';
 import type { CommandHandler } from '../commandRegistry';
 import { AGENT_LAUNCH_TERMINAL_READY, AGENT_LAUNCH_TERMINAL_ACCEPTED, AgentLaunchFrameError, readAgentLaunchFrame } from '../../daemon/agentIsolation/agentLaunchFrame';
 import { executeAgentLaunchPayload } from '../../daemon/agentIsolation/agentLaunchShim';
+import { classifySpawnFailure } from '../../processes/spawnFailure/classifySpawnFailure';
 import { AgentLaunchDiagnosticError } from '../../daemon/agentIsolation/agentLaunchDiagnostics';
 import { observeCurrentAgentIsolationLaunchIdentity } from '../../daemon/agentIsolation/agentIsolationNativeIdentity';
 
@@ -92,7 +93,12 @@ export const handleAgentLaunchCliCommand: CommandHandler = async context => {
     const code = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
     const publicCodes = ['agent_launch_identity_unavailable', 'agent_launch_frame_invalid', 'agent_launch_material_invalid',
       'agent_launch_transport_unavailable'];
-    process.stderr.write(`${typeof code === 'string' && publicCodes.includes(code) ? code : 'agent_launch_failed'}\n`);
+    // Anything else failed while preparing the launch; keep its typed code or errno, never its message.
+    const errno = classifySpawnFailure(error).errno;
+    const prepareFailure = typeof code === 'string' && publicCodes.includes(code) ? undefined : {
+      stage: 'prepare' as const, ...(errno ? { errno } : {}),
+      ...(errno === undefined && typeof code === 'string' && /^[A-Z][A-Z0-9_]{1,63}$/u.test(code) ? { code } : {}) };
+    process.stderr.write(`${prepareFailure ? new AgentLaunchDiagnosticError(prepareFailure).message : code}\n`);
     process.exitCode = 1;
   }
 };

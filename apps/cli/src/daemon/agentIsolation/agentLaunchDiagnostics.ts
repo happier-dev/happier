@@ -7,10 +7,12 @@ import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import type { AgentLaunchPayload } from './agentLaunchFrame';
 import type { SpawnFailure } from '@/processes/spawnFailure/classifySpawnFailure';
 
-export type AgentLaunchFailureStage = 'exec' | 'child_exit' | 'stdin' | 'stdout' | 'stderr' | 'caller_cancelled';
+export type AgentLaunchFailureStage = 'prepare' | 'exec' | 'child_exit' | 'stdin' | 'stdout' | 'stderr' | 'caller_cancelled';
 export type AgentLaunchFailure = Readonly<{
   stage: AgentLaunchFailureStage;
   errno?: SpawnFailure['errno'];
+  /** Typed machine code of a failure before exec; never a message. */
+  code?: string;
   exitCode?: number | null;
   signal?: NodeJS.Signals | null;
 }>;
@@ -27,6 +29,7 @@ export class AgentLaunchDiagnosticError extends Error {
     const code = failure.stage === 'caller_cancelled' ? 'agent_launch_cancelled' : 'agent_launch_failed';
     const heading = `${code} stage=${failure.stage}`
       + (failure.errno ? ` errno=${failure.errno}` : '')
+      + (failure.code ? ` code=${failure.code}` : '')
       + (failure.exitCode !== undefined ? ` exitCode=${failure.exitCode}` : '')
       + (failure.signal !== undefined ? ` signal=${failure.signal ?? 'none'}` : '');
     // The existing TURN-FAIL preview is the containing budget. Reserve its

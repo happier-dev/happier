@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { spawnSync } from 'node:child_process';
@@ -179,7 +179,7 @@ describe.skipIf(process.platform !== 'linux')('Agent launch initiating diagnosti
   });
 
   for (const runtime of ['node', 'bun'] as const) {
-  it.skipIf(process.getuid?.() === 0 || runtime === 'bun' && !hasBun).each(['child_exit', 'inaccessible cwd'] as const)(
+  it.skipIf(process.getuid?.() === 0 || runtime === 'bun' && !hasBun).each(['child_exit', 'inaccessible cwd', 'unusable cache'] as const)(
     `retains the final %s through the real ${runtime} shim without forced process exit`, async kind => {
     const payload = await launch(['-e', `
       require('node:fs').writeSync(2, 'old diagnostic '.repeat(2000));
@@ -188,6 +188,8 @@ describe.skipIf(process.platform !== 'linux')('Agent launch initiating diagnosti
     `], { PROVIDER_API_KEY: 'synthetic-private-provider-key' });
     const privateDirectory = join(payload.cwd, 'private-cwd');
     if (kind === 'inaccessible cwd') { await mkdir(privateDirectory); await chmod(privateDirectory, 0); }
+    // The Agent HOME is the mocked userInfo homedir (payload.cwd); a file there fails identity-cache preparation before any exec.
+    if (kind === 'unusable cache') await writeFile(join(payload.cwd, '.cache'), '');
     const entry = join(payload.cwd, 'shim.cjs');
     // OS identity is the sole simulated boundary. The actual frame, command,
     // supervisor, native child, redaction and issue projection remain real.
@@ -214,11 +216,12 @@ describe.skipIf(process.platform !== 'linux')('Agent launch initiating diagnosti
         ? result.termination.observed.exitCode : null, signal: null }, Buffer.from(result.stderr).toString());
       const failure = createCodexAppServerTurnFailure({ phase: 'client_start', value: error });
       const cause = readCodexAppServerFailureCause(failure);
-      expect(cause.providerErrorMessage).toContain(kind === 'inaccessible cwd' ? 'stage=exec errno=EACCES' : 'stage=child_exit');
+      const stage = { child_exit: 'stage=child_exit', 'inaccessible cwd': 'stage=exec errno=EACCES', 'unusable cache': 'stage=prepare errno=ENOTDIR' }[kind];
+      expect(cause.providerErrorMessage).toContain(stage);
       if (kind === 'child_exit') expect(cause.providerErrorMessage).toContain('native-startup-refused [REDACTED]');
       expect(cause.providerErrorMessage).not.toContain(payload.environment.PROVIDER_API_KEY);
       const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex', error: failure });
-      expect(issue.sanitizedPreview).toContain(kind === 'inaccessible cwd' ? 'stage=exec errno=EACCES' : 'native-startup-refused [REDACTED]');
+      expect(issue.sanitizedPreview).toContain(kind === 'child_exit' ? 'native-startup-refused [REDACTED]' : stage);
     } finally {
       await supervised.dispose();
       if (kind === 'inaccessible cwd') await chmod(privateDirectory, 0o700);

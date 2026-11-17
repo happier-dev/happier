@@ -248,7 +248,7 @@ function resolveModuleRuntimeAuthority(
   return null;
 }
 
-type RuntimeAuthorityParams = Readonly<{
+export type RuntimeAuthorityParams = Readonly<{
   moduleUrl?: string;
   argv?: readonly string[];
   currentExecPath?: string;
