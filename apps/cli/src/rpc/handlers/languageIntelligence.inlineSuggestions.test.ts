@@ -31,6 +31,7 @@ import { createAccountProviderActionExecuteV1 } from '@happier-dev/protocol/prov
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createProviderActionExecuteV1 } from '@happier-dev/protocol/providers/executeProviderActionV1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 describe('Machine inline suggestion policy', () => {
   const roots: string[] = [];
@@ -73,6 +74,7 @@ describe('Machine inline suggestion policy', () => {
     const rootPath = await mkdtemp(join(tmpdir(), 'happier-inline-http-'));
     roots.push(rootPath);
     const requests: Array<Record<string, unknown>> = [];
+    const requestPaths: string[] = [];
     let providersEnabled = true;
     let managedStarts = 0;
     let respond = (response: ServerResponse) => {
@@ -93,6 +95,7 @@ describe('Machine inline suggestion policy', () => {
       if (request.url === '/health') { response.end('ok'); return; }
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      requestPaths.push(request.url!);
       requests.push(JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>);
       respond(response);
     });
@@ -210,7 +213,7 @@ describe('Machine inline suggestion policy', () => {
         return lease;
       } } : {}),
     } });
-    return { requests, rootPath,
+    return { requests, requestPaths, rootPath,
       callNext: (path = 'a.ts', signal?: AbortSignal) => handlers.get(RPC_METHODS.DAEMON_LSP_QUERY)!({ rootPath, path,
         kind: 'ai.nextEdit', version: 2, position: { line: 0, character: 16 }, languageId: 'typescript',
         nextEdit: { connectionId: 'pc_local', modelId: options.model?.id ?? 'base', document: 'function renamed() {}\r\nold();\r\n',
@@ -396,8 +399,11 @@ describe('Machine inline suggestion policy', () => {
       await f.replaceOperationPath();
       response!.end(JSON.stringify({ response: 'old route', done: true, done_reason: 'stop' }));
       expect(await pending).toMatchObject({ status: 'ok', kind: 'ai.inlineSuggest', text: 'old route' });
-      expect(await f.call()).toEqual({ status: 'error', errorCode: 'model_unavailable' });
-      expect(f.requests).toHaveLength(1);
+      // Destination-only consent survives an operation declaration update.
+      f.setResponder(next => next.end(JSON.stringify({ response: 'new route', done: true, done_reason: 'stop' })));
+      expect(await f.call()).toMatchObject({ status: 'ok', kind: 'ai.inlineSuggest', text: 'new route' });
+      expect(f.requestPaths).toEqual(['/generate', '/changed']);
+      expect(f.requests).toHaveLength(2);
     } finally { await f.close(); }
   });
 
@@ -422,7 +428,8 @@ describe('Machine inline suggestion policy', () => {
     const missing = await fixture('native-fim', { credentialRequired: true });
     try {
       expect(await missing.call('.env.production')).toEqual({ status: 'error', errorCode: 'ai_excluded' });
-      expect(await missing.call()).toEqual({ status: 'error', errorCode: 'signed_out' });
+      expect(await missing.call()).toEqual({ status: 'error', errorCode: 'provider_error',
+        error: createProviderErrorV1('provider_secret_missing', { connectionId: 'pc_local', machineId: 'machine' }) });
       expect(missing.requests).toHaveLength(0);
     } finally { await missing.close(); }
     const ready = await fixture();

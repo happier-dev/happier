@@ -184,12 +184,14 @@ describe('daemon plugin caller execution placement', () => {
         const publisher = definePlugin({ id: 'happier.channels', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' }, events: coreEvents });
         const core = definePlugin({ id: 'happier.channels', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' }, events: coreEvents, actions: {
             [CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList]: { title: 'Current connections', surfaces: ['plugin'], dangerLevel: 'safe',
-                run: async (_input, context) => await listConversationProviderConnectionsForInvocation({}, {
-                    ...context, services: { ...context.services, storage },
-                }) },
-            [CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionRead]: { title: 'Current connection', surfaces: ['plugin'], dangerLevel: 'safe',
                 run: async (_input, context) => {
                     reads++;
+                    return await listConversationProviderConnectionsForInvocation({}, {
+                        ...context, services: { ...context.services, storage },
+                    });
+                } },
+            [CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionRead]: { title: 'Current connection', surfaces: ['plugin'], dangerLevel: 'safe',
+                run: async (_input, context) => {
                     return await readConversationProviderConnectionForInvocation({ connectionId: 'discord-placement' }, {
                         ...context, services: { ...context.services, storage },
                     });
@@ -236,7 +238,9 @@ describe('daemon plugin caller execution placement', () => {
         let adopted: Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>> | undefined;
         try {
             runtime.registry.startAdoptedBackgroundServices?.();
-            await vi.waitFor(() => expect(discoveryFailures).toContain('plugin_action_execution_placement_unavailable'));
+            // The initial publisher declares no provider Actions; the current
+            // registry refuses the missing handler before placement is needed.
+            await vi.waitFor(() => expect(discoveryFailures).toContain('plugin_action_handler_missing'));
             // The daemon publishes a composite around already-prepared peer
             // components; that wrapper owns no new activation component.
             const peerRetained = runtime.controller.retainServingSlots!(new Set());
