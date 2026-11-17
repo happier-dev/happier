@@ -7,6 +7,7 @@ import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSet
 import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { writeDaemonState } from '@/persistence';
 import { configuration } from '@/configuration';
+import { DAEMON_CONTROL_TOKEN_HEADER } from '@/daemon/controlHttp';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 
@@ -29,6 +30,11 @@ for (const provider of ['agent37', 'boat']) {
                 // Real HTTP is the only substituted system: both Action factories and Home transport stay real.
                 const http = createServer(async (req, res) => {
                     res.setHeader('content-type', 'application/json');
+                    if (req.url === '/ping') {
+                        expect(req.method).toBe('POST');
+                        expect(req.headers[DAEMON_CONTROL_TOKEN_HEADER]).toBe('fixture');
+                        res.end(JSON.stringify({ status: 'ok' })); return;
+                    }
                     if (req.url === '/actions/root/execute') {
                         const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
                         requests.push(JSON.parse(Buffer.concat(chunks).toString()));
