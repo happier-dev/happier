@@ -25,6 +25,8 @@ describe('Sentry detail tab declarations', () => {
       expect(tab.retainedState.length, tab.id).toBeGreaterThan(0);
     }
     expect(sentryDetailTabDeclaration('stack-trace').scrollOwner).toBe('list');
+    expect(SENTRY_DETAIL_TABS_V1.map((tab) => tab.id))
+      .toEqual(['overview', 'occurrences', 'stack-trace', 'release', 'activity']);
   });
 
   it('names every tab through a catalog key that exists in every locale it ships', () => {
@@ -61,15 +63,38 @@ describe('Sentry detail tab declarations', () => {
     expect(new Set(keys).size).toBe(keys.length);
     const planes = SENTRY_DETAIL_TABS_V1.map((tab) => tab.readPlane);
     expect(new Set(planes).size).toBe(planes.length);
+    expect(sentryDetailTabDeclaration('release').readPlane).toBe('issueSummary');
+    expect(sentryDetailTabDeclaration('overview').readPlane).toBe('issueTags');
+    expect(sentryDetailTabDeclaration('stack-trace').readPlane).toBe('selectedEvent');
   });
 
-  it('opens on a tab no condition can remove', () => {
-    const bare = sentryVisibleDetailTabs({
+  it('hides conditional tabs without their evidence and keeps selection valid', () => {
+    const without = sentryVisibleDetailTabs({
       hasReleaseAssociation: false,
       hasTraceEvidence: false,
     });
-    expect(bare.some((tab) => tab.id === SENTRY_DEFAULT_DETAIL_TAB_V1)).toBe(true);
-    expect(sentryResolveSelectedTab('stack-trace', bare)).toBe(SENTRY_DEFAULT_DETAIL_TAB_V1);
+    expect(without.map((tab) => tab.id)).toEqual(['overview', 'occurrences', 'activity']);
+    const withEvidence = sentryVisibleDetailTabs({
+      hasReleaseAssociation: true,
+      hasTraceEvidence: true,
+    });
+    expect(withEvidence.map((tab) => tab.id))
+      .toEqual(['overview', 'occurrences', 'stack-trace', 'release', 'activity']);
+
+    expect(without.some((tab) => tab.id === SENTRY_DEFAULT_DETAIL_TAB_V1)).toBe(true);
+    expect(sentryResolveSelectedTab('release', without)).toBe(SENTRY_DEFAULT_DETAIL_TAB_V1);
+    expect(sentryResolveSelectedTab('release', withEvidence)).toBe('release');
+    expect(sentryResolveSelectedTab('activity', without)).toBe('activity');
+    expect(sentryResolveSelectedTab('stack-trace', without)).toBe(SENTRY_DEFAULT_DETAIL_TAB_V1);
     expect(sentryDetailTabDeclaration(SENTRY_DEFAULT_DETAIL_TAB_V1).conditional).toBe(false);
+  });
+
+  it('keeps Release available without exposing an error-specific Stack Trace tab', () => {
+    const traceless = sentryVisibleDetailTabs({
+      hasReleaseAssociation: true,
+      hasTraceEvidence: false,
+    });
+    expect(traceless.map((tab) => tab.id)).not.toContain('stack-trace');
+    expect(traceless.map((tab) => tab.id)).toContain('release');
   });
 });
