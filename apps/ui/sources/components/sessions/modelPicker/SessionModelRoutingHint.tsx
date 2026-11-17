@@ -6,7 +6,7 @@ import type { ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/pr
 import type { ResolvedAgentCatalogEntry } from '@/agents/backendCatalog/agentCatalogProjection';
 import { ConnectedAccountIdentityText } from '@/components/settings/connectedServices/ConnectedAccountIdentityText';
 import { readUsageWidgetSelection } from '@/components/settings/usage/usageWidgetSelectionRead';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_MENU_ROW_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useConnectedAccountPurposeDefaults } from '@/hooks/server/connectedServices/useConnectedAccountPurposeDefaults';
@@ -254,12 +254,11 @@ function RoutingHintBody(
 }
 
 const styles = StyleSheet.create((theme) => ({
+  // A section of the picker's paper on the menu's text edge, not a tile inside the popover (owner 11-16: no grey tiles).
   section: {
     gap: theme.space.s8,
-    paddingHorizontal: theme.space.s12,
+    paddingHorizontal: HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx,
     paddingVertical: theme.space.s10,
-    borderRadius: 12,
-    backgroundColor: theme.colors.surface.inset,
   },
   title: {
     ...Typography.variant('meta', 'semiBold'),

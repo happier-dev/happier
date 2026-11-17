@@ -21,7 +21,8 @@ vi.mock('@/components/ui/text/Text', async () => {
 });
 
 describe('ExecutionRunProfilePicker', () => {
-    it('exposes selected and unavailable profiles through accessibility state', async () => {
+    // Two to four profiles are one segmented choice, the same control as the Permissions decision beside it.
+    it('offers a few profiles as one radio choice, with selected and unavailable states', async () => {
         const screen = await renderScreen(<ExecutionRunProfilePicker
             choices={[
                 { id: 'review.coderabbit/review', intent: 'review', title: 'CodeRabbit', compatibleAgentIds: ['coderabbit'], compatibleAgentId: 'coderabbit', sourceCustody: { kind: 'managed', immutableGenerationId: 'g1', installSource: 'archive' }, available: true, disabled: false, defaults: { retention: 'resumable', runClass: 'bounded', io: 'streaming' } },
@@ -35,9 +36,10 @@ describe('ExecutionRunProfilePicker', () => {
 
         const selected = screen.findByTestId('execution-run-launcher-profile:review.coderabbit/review')?.props;
         const unavailable = screen.findByTestId('execution-run-launcher-profile:review.deepsec/audit')?.props;
-        expect(selected?.['aria-pressed']).toBe(true);
-        expect(selected?.accessibilityState).toMatchObject({ disabled: false });
-        expect(unavailable?.['aria-pressed']).toBe(false);
+        expect(selected?.accessibilityRole).toBe('radio');
+        expect(selected?.['aria-checked']).toBe(true);
+        expect(unavailable?.accessibilityRole).toBe('radio');
+        expect(unavailable?.['aria-checked']).toBe(false);
         expect(unavailable?.accessibilityState).toMatchObject({ disabled: true });
         standardCleanup();
     });

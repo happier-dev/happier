@@ -2,16 +2,12 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Text } from '@/components/ui/text/Text';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { t } from '@/text';
 
 const styles = StyleSheet.create((theme) => ({
-    root: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: theme.space.s16 },
-    title: { textAlign: 'center', marginBottom: theme.space.s8 },
-    description: { textAlign: 'center', color: theme.colors.text.secondary },
-    back: { marginTop: theme.space.s16 },
+    root: { flex: 1, justifyContent: 'center', paddingHorizontal: theme.space.s16 },
 }));
 
 /**
@@ -21,7 +17,7 @@ const styles = StyleSheet.create((theme) => ({
  * editor can fail to appear must say which one happened instead of rendering an empty screen:
  * a Home that does not offer Following is a settled answer, while a Home this device could not
  * reach is a retry. The back target is the exact Session address the link named, never an
- * ambient Home.
+ * ambient Home. Drawn by the shared state composition, so it reads like every other page state.
  */
 export function SessionFollowUnavailableNotice(props: Readonly<{
     onBack: () => void;
@@ -31,33 +27,18 @@ export function SessionFollowUnavailableNotice(props: Readonly<{
     const maxWidthStyle = useLayoutMaxWidthStyle();
     const unreachable = props.reason === 'unreachable';
     const testID = unreachable ? 'session-follow-unreachable' : 'session-follow-unavailable';
+    const back = { testID: `${testID}.back`, label: t('common.back'), onPress: props.onBack };
     return (
-        <View testID={testID} style={[styles.root, maxWidthStyle]}>
-            <Text style={styles.title}>
-                {unreachable ? t('session.follow.unreachableTitle') : t('session.follow.unavailableTitle')}
-            </Text>
-            <Text style={styles.description}>
-                {unreachable
-                    ? t('session.follow.unreachableDescription')
-                    : t('session.follow.unavailableDescription')}
-            </Text>
-            {props.onRetry ? (
-                <RoundButton
-                    title={t('common.retry')}
-                    display="default"
-                    size="normal"
-                    onPress={props.onRetry}
-                    testID={`${testID}.retry`}
-                    style={styles.back}
-                />
-            ) : null}
-            <RoundButton
-                title={t('common.back')}
-                display="inverted"
-                size="normal"
-                onPress={props.onBack}
-                testID={`${testID}.back`}
-                style={styles.back}
+        <View style={[styles.root, maxWidthStyle]}>
+            <SurfaceStateCard
+                testID={testID}
+                kind="unavailable"
+                size="page"
+                title={unreachable ? t('session.follow.unreachableTitle') : t('session.follow.unavailableTitle')}
+                reason={unreachable ? t('session.follow.unreachableDescription') : t('session.follow.unavailableDescription')}
+                // Retry leads when the Home may answer next time; Back stays one quiet step beside it.
+                action={props.onRetry ? { testID: `${testID}.retry`, label: t('common.retry'), onPress: props.onRetry } : back}
+                secondaryAction={props.onRetry ? back : undefined}
             />
         </View>
     );

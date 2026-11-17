@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet as RNStyleSheet, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
@@ -12,14 +12,14 @@ import { t } from '@/text';
 import type { DateTimePickerPopoverProps } from './DateTimePickerPopover';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_MENU_ROW_METRICS, HAPPIER_MENU_ROW_SHAPE, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 const DAY_SIZE = 44;
 export function isDateTimePickerPopoverAvailable(): boolean { return true; }
 
 const TIME_OPTION_HEIGHT = 44;
-const TIME_OPTION_GAP = 2;
-const TIME_OPTION_PITCH = TIME_OPTION_HEIGHT + TIME_OPTION_GAP;
+/** Hour and minute rows are menu rows: they touch, so the pitch is the row (owner 11-16, popovers are full-bleed). */
+export const TIME_OPTION_PITCH = TIME_OPTION_HEIGHT;
 
 /**
  * Scroll offset that brings the selected row into the column, centred when the measured column is
@@ -124,7 +124,7 @@ function CalendarPicker(props: DateTimePickerPopoverProps) {
     </View>;
 }
 
-function TimeColumn(props: Readonly<{ label: string; values: readonly number[]; selected: number; accentColor: string; onSelect: (value: number) => void }>) {
+function TimeColumn(props: Readonly<{ label: string; values: readonly number[]; selected: number; accentColor: string; divided?: boolean; onSelect: (value: number) => void }>) {
     const { theme } = useUnistyles();
     const paintColor = useHappierMaterialColorResolver();
     const scrollRef = React.useRef<React.ElementRef<typeof ScrollView> | null>(null);
@@ -135,7 +135,7 @@ function TimeColumn(props: Readonly<{ label: string; values: readonly number[]; 
             animated: false,
         });
     }, [props.selected, viewportHeight]);
-    return <View style={styles.timeColumn}>
+    return <View style={[styles.timeColumn, props.divided ? { borderLeftWidth: RNStyleSheet.hairlineWidth, borderLeftColor: theme.colors.border.divider } : null]}>
         <Text style={[styles.timeColumnLabel, { color: theme.colors.text.tertiary }]}>{props.label}</Text>
         <ScrollView
             ref={scrollRef}
@@ -163,10 +163,12 @@ function TimePicker(props: DateTimePickerPopoverProps) {
     const selectedHour = props.value.getHours();
     const selectedMinute = props.value.getMinutes();
     return <View testID="date-time-picker-time-picker" style={styles.timePicker}>
-        <PickerHeader title={new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(props.value)} />
+        <View style={styles.timeInset}>
+            <PickerHeader title={new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(props.value)} />
+        </View>
         <View style={styles.timeColumns}>
             <TimeColumn label="HH" values={Array.from({ length: 24 }, (_, value) => value)} selected={selectedHour} accentColor={props.accentColor} onSelect={(hour) => props.onChange(withTimePart(props.value, hour, selectedMinute))} />
-            <TimeColumn label="MM" values={Array.from({ length: 60 }, (_, value) => value)} selected={selectedMinute} accentColor={props.accentColor} onSelect={(minute) => props.onChange(withTimePart(props.value, selectedHour, minute))} />
+            <TimeColumn label="MM" divided values={Array.from({ length: 60 }, (_, value) => value)} selected={selectedMinute} accentColor={props.accentColor} onSelect={(minute) => props.onChange(withTimePart(props.value, selectedHour, minute))} />
         </View>
         <View style={styles.timeFooter}><RoundButton size="small" title={t('common.done')} onPress={props.onDismiss} /></View>
     </View>;
@@ -207,14 +209,16 @@ const styles = StyleSheet.create(() => ({
     dayGrid: { width: DAY_SIZE * 7, alignSelf: 'center', flexDirection: 'row', flexWrap: 'wrap' },
     day: { width: DAY_SIZE, height: DAY_SIZE, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
     dayText: {  ...Typography.variant('body'), fontVariant: ['tabular-nums'] },
-    timePicker: { padding: 12 },
-    timeColumns: { height: 230, flexDirection: 'row', gap: 8 },
+    // The columns run to the popover's edges like every menu; the header and Done keep the inset.
+    timePicker: { paddingVertical: 12 },
+    timeInset: { paddingHorizontal: 12 },
+    timeColumns: { height: 230, flexDirection: 'row' },
     timeColumn: { flex: 1, minWidth: 0 },
-    timeColumnLabel: { paddingHorizontal: 10, paddingBottom: 6, ...Typography.variant('micro', 'semiBold'),  textTransform: 'uppercase', letterSpacing: 0.5 },
+    timeColumnLabel: { paddingHorizontal: HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx, paddingBottom: 6, ...Typography.variant('micro', 'semiBold') },
     timeScroll: { flex: 1 },
-    timeScrollContent: { gap: TIME_OPTION_GAP, paddingBottom: 8 },
-    timeOption: { height: TIME_OPTION_HEIGHT, borderRadius: 10, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    timeScrollContent: { paddingBottom: 8 },
+    timeOption: { ...HAPPIER_MENU_ROW_SHAPE, height: TIME_OPTION_HEIGHT, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     timeOptionText: { ...Typography.variant('label', 'regular'), fontVariant: ['tabular-nums'] },
     selectionDot: { width: 5, height: 5, borderRadius: 3 },
-    timeFooter: { alignItems: 'flex-end', paddingTop: 10 },
+    timeFooter: { alignItems: 'flex-end', paddingTop: 10, paddingHorizontal: 12 },
 }));

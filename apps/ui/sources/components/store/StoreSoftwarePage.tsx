@@ -14,7 +14,7 @@ import {
   type CapabilityListingConfig,
 } from '@/components/capabilities/add/CapabilityAddModal';
 import { CapabilityListingSections } from '@/components/capabilities/add/CapabilityListingSections';
-import { CapabilityFacts } from '@/components/capabilities/facts/CapabilityFacts';
+import { CapabilityDetailHeader } from '@/components/capabilities/detail/CapabilityDetailHeader';
 import { pluginSourceKindLabel } from '@/components/settings/plugins/model/pluginMarketplaceModel';
 import { useStoreDirectoryState } from '@/components/settings/plugins/model/usePluginsOpenItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
@@ -419,37 +419,14 @@ function SoftwareListingBody(
         <ItemGroup surface="none" header="none">
           <BareSectionContent>
             <View style={styles.head}>
-              <View style={styles.title}>
-                <SoftwareMark item={item} pixelSize={30} />
-                <Text
-                  variant="title"
-                  emphasis="semiBold"
-                  style={[
-                    styles.titleText,
-                    { color: theme.colors.text.primary },
-                  ]}
-                  numberOfLines={2}
-                  testID="store.software.listing.title"
-                  accessibilityRole="header"
-                >
-                  {item.label}
-                </Text>
-              </View>
-              <CapabilityFacts
-                presentation="row"
-                extra={[t('capabilities.store.kindWord.software')]}
+              {/* The same detail header as every other Store listing: mark, name, purpose, then its facts. */}
+              <CapabilityDetailHeader
+                testID="store.software.listing.header"
+                mark={<SoftwareMark item={item} pixelSize={30} />}
+                title={item.label}
+                {...(item.description ? { purpose: item.description } : {})}
+                facts={{ extra: [t('capabilities.store.kindWord.software')] }}
               />
-              {item.description ? (
-                <Text
-                  variant="reading"
-                  style={[
-                    styles.purpose,
-                    { color: theme.colors.text.secondary },
-                  ]}
-                >
-                  {item.description}
-                </Text>
-              ) : null}
               {unsupported ? (
                 <Text
                   variant="meta"
@@ -617,7 +594,4 @@ function SoftwareListingBody(
 
 const styles = StyleSheet.create((theme) => ({
   head: { gap: theme.space.s8 },
-  purpose: { marginTop: theme.space.s4 },
-  title: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s12 },
-  titleText: { flexShrink: 1 },
 }));

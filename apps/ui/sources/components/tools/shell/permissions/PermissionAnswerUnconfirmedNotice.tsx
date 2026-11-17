@@ -1,11 +1,7 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { log } from '@/log';
 import { t } from '@/text';
-import { Text } from '@/components/ui/text/Text';
-import { Icon } from '@/components/ui/icons/Icon';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { SessionTranscriptActions } from '@/components/sessions/transcript/source/types';
 import { clearPermissionAnswerUnconfirmedAfterPendingRead } from './permissionActionFailure';
 
@@ -21,7 +17,6 @@ export function PermissionAnswerUnconfirmedNotice(props: Readonly<{
     actions: SessionTranscriptActions | null;
     testIDPrefix: string;
 }>) {
-    const { theme } = useUnistyles();
     const readOutcome = props.actions?.readRequestOutcome;
     const [checking, setChecking] = React.useState(false);
     const [couldNotCheck, setCouldNotCheck] = React.useState(false);
@@ -49,56 +44,22 @@ export function PermissionAnswerUnconfirmedNotice(props: Readonly<{
         }
     };
 
+    // One state line (glyph · sentence · inline recovery), the same composition as every other in-list state: it
+    // wraps on a narrow footer, announces itself, and "Check again" shows its own ring while the read runs.
     return (
-        <View
+        <SurfaceStateCard
             testID={`${props.testIDPrefix}.answer-unconfirmed`}
-            accessibilityRole="alert"
-            style={styles.container}
-        >
-            <View style={styles.message}>
-                <Icon name="clock" size={14} color={theme.colors.state.warning.foreground} />
-                <Text style={styles.text}>
-                    {couldNotCheck ? t('errors.permissionCheckAgainFailed') : t('errors.permissionAnswerUnconfirmed')}
-                </Text>
-            </View>
-            {readOutcome ? (
-                <RoundButton
-                    testID={`${props.testIDPrefix}.check-again`}
-                    size="mini"
-                    display="secondary"
-                    title={t('errors.permissionCheckAgain')}
-                    loading={checking}
-                    onPress={checkAgain}
-                />
-            ) : null}
-        </View>
+            kind="warning"
+            size="line"
+            iconName="clock"
+            accessibilitySemantics="alert"
+            title={couldNotCheck ? t('errors.permissionCheckAgainFailed') : t('errors.permissionAnswerUnconfirmed')}
+            action={readOutcome ? {
+                testID: `${props.testIDPrefix}.check-again`,
+                label: t('errors.permissionCheckAgain'),
+                busy: checking,
+                onPress: () => { void checkAgain(); },
+            } : undefined}
+        />
     );
 }
-
-const styles = StyleSheet.create((theme) => ({
-    container: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        alignItems: 'center',
-        gap: theme.space.s6,
-        alignSelf: 'flex-start',
-        maxWidth: '100%',
-        paddingHorizontal: theme.space.s10,
-        paddingVertical: theme.space.s6,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: theme.colors.state.warning.border,
-        backgroundColor: theme.colors.state.warning.background,
-    },
-    message: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: theme.space.s6,
-        flexShrink: 1,
-    },
-    text: {
-        color: theme.colors.state.warning.textForeground,
-        fontSize: 12,
-        flexShrink: 1,
-    },
-}));

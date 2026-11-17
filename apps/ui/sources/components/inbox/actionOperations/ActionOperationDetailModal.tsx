@@ -14,6 +14,7 @@ import { Text } from '@/components/ui/text/Text';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
@@ -519,65 +520,36 @@ export const ActionOperationDetailModal = React.memo(
           </ItemGroup>
         ) : null}
 
+        {/* Attention and recovery notices are the page's one tinted notice owner, never a local tile. */}
         {detail.warning ? (
-          <View
+          <AttentionBanner
             testID="action-operation-warning"
-            accessibilityLiveRegion="polite"
-            role="status"
-            style={styles.warning}
-          >
-            <Icon
-              name="warning"
-              size={18}
-              color={theme.colors.state.warning.foreground}
-            />
-            <View style={styles.noticeCopy}>
-              <Text style={styles.warningTitle}>
-                {t('inbox.actionOperations.warning.cleanupTitle')}
-              </Text>
-              <Text style={styles.warningBody}>
-                {t('inbox.actionOperations.warning.cleanupDescription')}
-              </Text>
-              <Text style={styles.warningDetail}>{detail.warning.message}</Text>
-            </View>
-          </View>
+            tone="warning"
+            announce="status"
+            title={t('inbox.actionOperations.warning.cleanupTitle')}
+            description={t('inbox.actionOperations.warning.cleanupDescription')}
+            details={[detail.warning.message]}
+          />
         ) : null}
 
         {operation.followUpAttention ? (
-          <View
+          <AttentionBanner
             testID="action-operation-follow-up-attention"
-            accessibilityLiveRegion="polite"
-            role="status"
-            style={styles.warning}
-          >
-            <Icon
-              name="warning"
-              size={18}
-              color={theme.colors.state.warning.foreground}
-            />
-            <View style={styles.noticeCopy}>
-              <Text style={styles.warningTitle}>
-                {operation.followUpAttention}
-              </Text>
-            </View>
-          </View>
+            tone="warning"
+            announce="status"
+            title={operation.followUpAttention}
+          />
         ) : null}
 
         {recoveryDescription ? (
-          <View
+          <AttentionBanner
             testID="action-operation-recovery"
-            accessibilityLiveRegion="polite"
-            role="status"
-            style={styles.recovery}
-          >
-            <Icon name="info" size={18} color={theme.colors.text.secondary} />
-            <View style={styles.noticeCopy}>
-              <Text style={styles.recoveryTitle}>
-                {t('inbox.actionOperations.recovery.title')}
-              </Text>
-              <Text style={styles.recoveryBody}>{recoveryDescription}</Text>
-            </View>
-          </View>
+            tone="neutral"
+            announce="status"
+            iconName="info"
+            title={t('inbox.actionOperations.recovery.title')}
+            description={recoveryDescription}
+          />
         ) : null}
 
         {resumeFeedback ? (
@@ -738,47 +710,6 @@ const styles = StyleSheet.create((theme) => ({
     fontVariant: ['tabular-nums'],
   },
   message: {
-    color: theme.colors.text.secondary,
-  },
-  warning: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: theme.space.s10,
-    padding: theme.space.s16,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: theme.colors.state.warning.border,
-    backgroundColor: theme.colors.state.warning.background,
-  },
-  recovery: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: theme.space.s10,
-    padding: theme.space.s16,
-    borderRadius: 14,
-    backgroundColor: theme.colors.surface.elevated,
-  },
-  noticeCopy: {
-    flex: 1,
-    gap: 3,
-  },
-  warningTitle: {
-    color: theme.colors.state.warning.foreground,
-    fontWeight: '700',
-  },
-  warningBody: {
-    color: theme.colors.text.primary,
-  },
-  warningDetail: {
-    color: theme.colors.text.secondary,
-  },
-  recoveryTitle: {
-    color: theme.colors.text.primary,
-    fontWeight: '700',
-  },
-  recoveryBody: {
     color: theme.colors.text.secondary,
   },
   output: {

@@ -2,15 +2,14 @@ import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorks
 import * as React from 'react';
 import { Stack, useLocalSearchParams, useRouter, type Href } from '@/components/appShell/workspace/destinationRoute';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { openFollowNotificationSettings } from '@/components/sessions/follow/openFollowNotificationSettings';
 import { AccountSessionFollowControl } from '@/components/sessions/follow/AccountSessionFollowControl';
 import { FollowEditorPage } from '@/components/sessions/follow/FollowEditorPage';
 import { SessionFollowUnavailableNotice } from '@/components/sessions/follow/SessionFollowUnavailableNotice';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
-import { EmptyState } from '@/components/ui/empty/EmptyState';
-import { Icon } from '@/components/ui/icons/Icon';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { buildScopedSessionRouteHref, readSessionRouteServerId } from '@/hooks/session/sessionRouteServerScope';
@@ -19,13 +18,12 @@ import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 
 const styles = StyleSheet.create(() => ({
-    pending: { flex: 1 },
+    pending: { flex: 1, justifyContent: 'center' },
 }));
 
 export function SessionFollowScreen() {
     const params = useLocalSearchParams<{ id?: string | string[]; serverId?: string | string[]; archived?: string }>();
     const router = useRouter();
-    const { theme } = useUnistyles();
     const openingSettings = React.useRef(false);
     const sessionId = normalizeSessionId(params.id);
     const serverId = readSessionRouteServerId(params);
@@ -67,11 +65,8 @@ export function SessionFollowScreen() {
     if (!followingDecision || followingDecision.state === 'unknown') {
         return <>
             {followingHeader}
-            <View testID="session-follow-checking" style={styles.pending}>
-                <EmptyState
-                    icon={<Icon name="hourglass" size={48} color={theme.colors.text.secondary} />}
-                    title={t('common.loading')}
-                />
+            <View style={styles.pending}>
+                <SurfaceStateCard testID="session-follow-checking" kind="loading" size="page" title={t('common.loading')} />
             </View>
         </>;
     }

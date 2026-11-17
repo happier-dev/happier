@@ -45,10 +45,9 @@ describe('DateTimePickerPopover.web', () => {
     });
 
     it('scrolls the selected minute into the column instead of past it', async () => {
-        const { resolveTimeColumnScrollOffset } = await import('./DateTimePickerPopover.web');
+        const { resolveTimeColumnScrollOffset, TIME_OPTION_PITCH: pitch } = await import('./DateTimePickerPopover.web');
         const viewportHeight = 207;
         const optionHeight = 44;
-        const pitch = 46;
         for (const selected of [0, 30, 59]) {
             const offset = resolveTimeColumnScrollOffset({ selected, viewportHeight });
             const rowTop = selected * pitch;

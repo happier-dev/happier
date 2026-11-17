@@ -555,7 +555,7 @@ describe('AskUserQuestionView', () => {
             await chooseOptionAndSubmit(screen, 'A');
             return screen;
         }
-        const notices = (screen: Screen) => screen.findAllByProps({ testID: 'ask-user-question.answer-unconfirmed' });
+        const notices = (screen: Screen) => screen.findAllHostsByTestId('ask-user-question.answer-unconfirmed');
         const submitDisabled = (screen: Screen) => screen.findByProps({ testID: 'ask-user-question.submit' }).props.accessibilityState.disabled;
 
         it('withholds the form instead of inviting a resend, with the notice rather than an error alert', async () => {
@@ -602,7 +602,7 @@ describe('AskUserQuestionView', () => {
         await chooseOptionAndSubmit(screen, 'A');
 
         expectNoAlert(screen);
-        expect(screen.findAllByProps({ testID: 'ask-user-question.answer-unconfirmed' })).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('ask-user-question.answer-unconfirmed')).toHaveLength(1);
         readRequestOutcome.mockResolvedValueOnce('pending');
         await pressTestInstanceAsync(screen.findByProps({ testID: 'ask-user-question.check-again' }), 'check again');
 

@@ -1005,18 +1005,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingHorizontal: theme.space.s8,
         paddingTop: theme.space.s4,
     },
-    composerInputLockFeedback: {
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: theme.colors.state.warning.border,
-        backgroundColor: theme.colors.state.warning.background,
-        paddingHorizontal: theme.space.s8,
-        paddingVertical: theme.space.s4,
-    },
-    composerInputLockFeedbackText: {
-        color: theme.colors.state.warning.foreground,
-        ...Typography.variant('meta', 'semiBold'),
-    },
     nativeKeyboardFooterSection: {
         flexShrink: 0,
     },
@@ -3426,9 +3414,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             <>
                 {inputLock === null ? null : (
                     <View testID="agent-input-composer-presentation-effects" style={styles.composerPresentationEffects}>
-                        <View testID="agent-input-composer-lock" style={styles.composerInputLockFeedback}>
-                            <Text style={styles.composerInputLockFeedbackText}>{inputLock.reasons.join(' · ')}</Text>
-                        </View>
+                        {/* The same state line as the dictation recovery beside it, on the field's text edge. */}
+                        <HappierBodyEdgeContext.Provider value>
+                            <SurfaceStateCard testID="agent-input-composer-lock" kind="warning" size="line" iconName="lock"
+                                title={inputLock.reasons.join(' · ')} />
+                        </HappierBodyEdgeContext.Provider>
                     </View>
                 )}
                 {dictationRecovery}
@@ -3437,8 +3427,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     }, [
         dictationRecovery,
         props.composerInputLock,
-        styles.composerInputLockFeedback,
-        styles.composerInputLockFeedbackText,
         styles.composerPresentationEffects,
     ]);
     const hasVariableContentBeforeInput = attachmentRowItems.length > 0 || composerPresentationFeedback !== null;

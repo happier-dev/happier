@@ -30,7 +30,7 @@ import { PermissionDecisionButton } from './PermissionDecisionButton';
 import { PermissionFooterOfferedChoices } from './PermissionFooterOfferedChoices';
 import { PermissionFooterCatalogChoice } from './PermissionFooterCatalogChoice';
 import { isOfferedPermissionChoice, selectPrimaryOfferedChoice } from './offeredChoiceLayout';
-import { Icon } from '@/components/ui/icons/Icon';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import {
     clearPermissionAnswerUnconfirmed,
     isPermissionAnswerUnconfirmed,
@@ -249,24 +249,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     loadingIndicatorAllowRule: {
         color: theme.colors.text.primary,
-    },
-    actionError: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s6,
-        alignSelf: 'flex-start',
-        maxWidth: '100%',
-        paddingHorizontal: theme.space.s10,
-        paddingVertical: theme.space.s6,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: theme.colors.state.danger.border,
-        backgroundColor: theme.colors.state.danger.background,
-    },
-    actionErrorText: {
-        color: theme.colors.state.danger.foreground,
-        fontSize: 12,
-        flexShrink: 1,
     },
     iconApproved: {
         color: theme.colors.permissionButton.allow.text,
@@ -785,16 +767,13 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             testIDPrefix="permission-footer"
         />
     ) : actionFailure && isPending ? (
-        <View
+        <SurfaceStateCard
             testID="permission-footer.action-error"
-            accessibilityRole="alert"
-            style={styles.actionError}
-        >
-            <Icon name="warning-circle" size={14} color={theme.colors.state.danger.foreground} />
-            <Text style={styles.actionErrorText}>
-                {t('errors.operationFailed')} {t('errors.tryAgain')}
-            </Text>
-        </View>
+            kind="error"
+            size="line"
+            accessibilitySemantics="alert"
+            title={`${t('errors.operationFailed')} ${t('errors.tryAgain')}`}
+        />
     ) : null;
 
     if (isApproved && permission.decisionActor?.kind === 'approvalReviewer') {

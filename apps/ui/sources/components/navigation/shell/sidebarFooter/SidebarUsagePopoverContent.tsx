@@ -744,15 +744,13 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.variant('meta'),
         color: theme.colors.state.warning.foreground,
     },
+    /** A quiet fact on the content edge like the scope line above it: no tile (owner 11-16, no grey tiles). */
     nextMove: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
-        marginBottom: theme.space.s6,
-        paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
-        paddingVertical: theme.space.s8,
-        borderRadius: 9,
-        backgroundColor: theme.colors.surface.sectionTint,
+        paddingHorizontal: CONTENT_INSET_PX,
+        paddingBottom: theme.space.s6,
     },
     nextMoveText: {
         flex: 1,

@@ -70,8 +70,13 @@ function findButton(screen: Awaited<ReturnType<typeof renderScreen>>, testID: st
     return button;
 }
 
+function textOf(node: ReactTestInstance | undefined): string {
+    return node ? node.children.map((child) => typeof child === 'string' ? child : textOf(child)).join('') : '';
+}
+
+// Host nodes: the shared state line forwards its testID through composite layers.
 function findActionError(screen: Awaited<ReturnType<typeof renderScreen>>) {
-    return screen.tree.root.findAllByProps({ testID: 'permission-footer.action-error' });
+    return screen.findAllHostsByTestId('permission-footer.action-error');
 }
 
 function makeUnknown() {
@@ -102,7 +107,7 @@ describe('PermissionFooter action error handling', () => {
         await pressTestInstanceAsync(allowButton, 'allow button');
 
         expect(findActionError(screen)).toHaveLength(1);
-        expect(findActionError(screen)[0]?.findAllByType('Text' as any).map((node) => node.props.children).join(' ')).toContain('errors.operationFailed');
+        expect(textOf(findActionError(screen)[0])).toContain('errors.operationFailed');
         expect(allowButton.props.disabled).toBe(false);
         expect(logMock.log).toHaveBeenCalledTimes(1);
         expect(String(logMock.log.mock.calls[0]?.[0] ?? '')).not.toContain('secret-provider-token');
@@ -198,7 +203,7 @@ describe('PermissionFooter action error handling', () => {
             return screen;
         }
         const unconfirmedNotices = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
-            screen.tree.root.findAllByProps({ testID: 'permission-footer.answer-unconfirmed' });
+            screen.findAllHostsByTestId('permission-footer.answer-unconfirmed');
 
         it('asks for the exact request and offers answering again once the read says it is still waiting', async () => {
             const screen = await renderUnknownFooter('p-unknown-pending');
