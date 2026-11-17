@@ -49,9 +49,11 @@ describe('Coordination states specimen', () => {
         screen.findHostByTestId(`session-people-follower-session-${id}`),
       ).not.toBeNull();
     }
-    expect(
-      screen.findHostByTestId('session-people-followers-people'),
-    ).not.toBeNull();
+    // The census only counts the other people, so their row is plain information that promises no list.
+    const people = screen.findHostByTestId('session-people-followers-people');
+    expect(people).not.toBeNull();
+    expect(people?.props.accessibilityRole ?? people?.props.role ?? null).toBeNull();
+    expect(people?.props.onPress ?? people?.props.onClick ?? null).toBeNull();
     expect(screen.getTextContent()).toContain('Daily coordinator');
     await screen.unmount();
   });

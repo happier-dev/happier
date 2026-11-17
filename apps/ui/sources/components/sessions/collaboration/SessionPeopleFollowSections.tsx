@@ -416,7 +416,8 @@ export function SessionPeopleFollowSheet(props: Readonly<{
             ) : people.followersLoading && people.followersError === null
                 ? <Item title={t('common.loading')} loading showChevron={false} mode="info" /> : null}
             {people.census.otherPeople ? (
-                <Item testID="session-people-followers-people" showChevron={false}
+                // The census counts the other people and never names them: plain information, no promised list.
+                <Item testID="session-people-followers-people" mode="info"
                     icon={<FollowerMark name="users" />}
                     title={t('session.collaboration.pane.followersPeople', { count: people.census.otherPeople })}
                     subtitle={t('session.collaboration.pane.followersPeopleNote')} />

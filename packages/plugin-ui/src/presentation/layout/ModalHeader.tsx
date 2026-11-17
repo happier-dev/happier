@@ -118,6 +118,14 @@ function useDefaultModalHeaderText(): HappierModalHeaderTextRender {
   };
 }
 
+/** The heading's line height, so a mark beside a two-line title block centres on the title's own line. */
+function useModalHeaderTitleLineHeight(): number | undefined {
+  const theme = useOptionalHappierUiTheme();
+  const typography = useOptionalHappierUiTypography();
+  const style = theme === null ? resolveUnhostedRoleStyle('heading') : resolveHappierTypeRoleStyle('heading', theme, typography);
+  return typeof style.lineHeight === 'number' ? style.lineHeight : undefined;
+}
+
 function resolveUnhostedRoleStyle(role: 'heading' | 'body'): HappierPortableStyle {
   const step = resolveHappierTypeScale(role, Platform.OS);
   return { fontSize: step.fontSize, lineHeight: step.lineHeight, letterSpacing: step.letterSpacing, fontWeight: HAPPIER_TYPE_WEIGHT[step.weight] };
@@ -141,6 +149,7 @@ function renderSlot(
 export function HappierModalHeader(props: HappierModalHeaderProps) {
   const surfaceBinding = useThemeSurfaceBinding({ surface: 'dialog', part: 'header' });
   const defaultRenderText = useDefaultModalHeaderText();
+  const titleLineHeight = useModalHeaderTitleLineHeight();
   const renderText = props.renderText ?? defaultRenderText;
   const space = props.space ?? HAPPIER_MODAL_HEADER_METRICS.space;
   const title = renderSlot(props.title, 'title', renderText, props.titleTestID);
@@ -259,9 +268,10 @@ export function HappierModalHeader(props: HappierModalHeaderProps) {
     );
   }
 
-  // An identity mark sits on the title line; the subtitle stands beneath on the band's one left edge,
-  // the edge the content below starts on, so no empty column hangs under the mark.
+  // An identity mark sits on the title line; the title and subtitle are one tight pair on the title's text
+  // edge beside it (standing decision 5), and the mark and controls centre on the title's own line.
   if (props.leading && subtitle !== null && props.leadingPlacement !== 'above') {
+    const titleLine = { minHeight: titleLineHeight, justifyContent: 'center' } as const;
     return (
       <View
         testID={testID}
@@ -271,32 +281,28 @@ export function HappierModalHeader(props: HappierModalHeaderProps) {
             paddingHorizontal: space.s16,
             paddingTop: HAPPIER_MODAL_HEADER_METRICS.textTopInsetPx,
             paddingBottom: space.s10,
-            gap: space.s2,
+            flexDirection: 'row',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            gap: space.s12,
           },
           props.style,
           surfaceBinding.style,
         ]}
       >
-        <View
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: space.s12,
-          }}
-        >
-          <View style={leadingWrap}>
-            {props.leading}
-            <View style={titleWrap}>{title}</View>
+        <View style={[leadingWrap, { alignItems: 'flex-start' }]}>
+          <View style={titleLine}>{props.leading}</View>
+          <View style={titleWrap}>
+            {title}
+            {subtitle}
           </View>
-          {hasActions || close !== null ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s10 }}>
-              {props.actions}
-              {close}
-            </View>
-          ) : null}
         </View>
-        {subtitle}
+        {hasActions || close !== null ? (
+          <View style={[titleLine, { flexDirection: 'row', alignItems: 'center', gap: space.s10 }]}>
+            {props.actions}
+            {close}
+          </View>
+        ) : null}
       </View>
     );
   }

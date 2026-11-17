@@ -72,12 +72,15 @@ describe('modal header identity mark', () => {
     return renderer.root;
   }
 
-  it('keeps a mark on the title line and stands the subtitle on the band’s one edge beneath it', () => {
+  it('stands the subtitle on the title’s text edge, in one column beside the mark', () => {
     const root = renderWithMark();
-    const row = sharedRow(root.findByProps({ testID: 'mark' }), root.findByProps({ testID: 'title' }));
+    const mark = root.findByProps({ testID: 'mark' });
+    const title = root.findByProps({ testID: 'title' });
     const subtitle = root.findByProps({ testID: 'subtitle' });
-    expect(row.findAll((node) => node === subtitle)).toHaveLength(0);
-    expect(sharedRow(subtitle, root.findByProps({ testID: 'mark' })).props.testID).toBe('header');
+    // Title and subtitle are one tight pair in a text column the mark is not part of.
+    expect(sharedRow(title, subtitle).findAll((node) => node === mark)).toHaveLength(0);
+    // The mark sits beside that column, not above the subtitle on the band's edge.
+    expect(sharedRow(mark, title).findAll((node) => node === subtitle)).toHaveLength(1);
   });
 
   it('keeps a way-back control beside its title and subtitle on a wide card', () => {
