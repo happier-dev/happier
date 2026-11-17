@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { t } from '@/text';
+
 import { listProjectSetupEffect } from './ProjectSetupReview';
 import { readProjectSetupLayers } from './projectSetupLayers';
 
@@ -57,9 +59,9 @@ describe('project setup layers (plan A L6)', () => {
       services: true,
     });
     expect(lines.map((line) => [line.key, line.origin])).toEqual([
-      ['tools', 'projects.scripts.layer.repository'],
+      ['tools', t('projects.scripts.layer.repository')],
       ['step:0', 'Acme web setup'],
-      ['service:redis', 'projects.scripts.layer.personal'],
+      ['service:redis', t('projects.scripts.layer.personal')],
     ]);
     expect(listProjectSetupEffect(manifest).map((line) => line.key)).toEqual([
       'tools',
@@ -77,7 +79,7 @@ describe('project setup layers (plan A L6)', () => {
     expect(layers.personalChanges).toBe(2);
     expect(layers.sharedSourceId).toBe('src-acme-web');
     expect(layers.originOf(['scripts', 'lint'])).toBe(
-      'projects.scripts.origin.personal',
+      t('projects.scripts.origin.personal'),
     );
     expect(layers.originOf(['scripts', 'test'])).toBeNull();
   });

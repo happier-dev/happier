@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
+import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import {
   projectSharedSetupChangeRowsV1,
   type ProjectSharedSetupChangeRowV1,
@@ -14,6 +15,7 @@ import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { readProjectSetupLayers } from './projectSetupLayers';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -296,12 +298,23 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
             details={[failure]}
           />
         ) : null}
-        <ProjectSetupScopeChoice
-          testID="project-shared-setup-update"
-          scope={scope}
-          onChange={props.onScopeChange}
-          allowSkip={false}
-        />
+        {/* The choice and its note stand on the sections' edge, so the group owns their inset. */}
+        <ItemGroup surface="none" testID="project-shared-setup-update.choice">
+          <View style={styles.choice}>
+            <ProjectSetupScopeChoice
+              testID="project-shared-setup-update"
+              scope={scope}
+              onChange={props.onScopeChange}
+              allowSkip={false}
+            />
+            <View style={styles.note}>
+              <Icon name="lock" size={14} color={theme.colors.text.tertiary} />
+              <Text variant="meta" style={[styles.noteText, { color: theme.colors.text.secondary }]}>
+                {t('projects.scripts.sharedUpdate.nothingRuns')}
+              </Text>
+            </View>
+          </View>
+        </ItemGroup>
       </>
     );
   }
@@ -309,14 +322,6 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
   return (
     <View style={styles.body}>
       {content}
-      {decidable ? (
-        <View style={styles.note}>
-          <Icon name="lock" size={14} color={theme.colors.text.tertiary} />
-          <Text variant="meta" style={[styles.noteText, { color: theme.colors.text.secondary }]}>
-            {t('projects.scripts.sharedUpdate.nothingRuns')}
-          </Text>
-        </View>
-      ) : null}
       <View style={styles.actions}>
         <RoundButton
           size="normal"
@@ -392,16 +397,17 @@ function changeTitle(entry: ProjectSharedSetupChangeRowV1): string {
   }
 }
 
-function changeDetail(entry: ProjectSharedSetupChangeRowV1): string {
+/** The row's second line: the command (mono) when the entry runs one, else the change in words. */
+function changeDetail(entry: ProjectSharedSetupChangeRowV1): Readonly<{ text: string; command: boolean }> {
   const before = entry.op === 'added' ? null : commandText(entry.before);
   const after = entry.op === 'removed' ? null : commandText(entry.after);
   if (entry.op === 'changed')
     return before && after && before !== after
-      ? `${before} → ${after}`
-      : t('projects.scripts.sharedUpdate.changedDetail');
-  if (entry.op === 'added')
-    return after ?? t('projects.scripts.sharedUpdate.addedDetail');
-  return before ?? t('projects.scripts.sharedUpdate.removedDetail');
+      ? { text: `${before} → ${after}`, command: true }
+      : { text: t('projects.scripts.sharedUpdate.changedDetail'), command: false };
+  const command = entry.op === 'added' ? after : before;
+  return command ? { text: command, command: true }
+    : { text: t(entry.op === 'added' ? 'projects.scripts.sharedUpdate.addedDetail' : 'projects.scripts.sharedUpdate.removedDetail'), command: false };
 }
 
 const ChangeRow = React.memo(function ChangeRow(
@@ -417,7 +423,7 @@ const ChangeRow = React.memo(function ChangeRow(
     <Item
       testID={`project-shared-setup-update.change:${props.entry.entry}:${props.entry.key}`}
       // The +, − and ~ marks are glyphs; the row says added, removed or changed in words for screen readers.
-      accessibilityLabel={`${t(`projects.scripts.sharedUpdate.op.${props.entry.op}`)}, ${title}, ${detail}`}
+      accessibilityLabel={`${t(`projects.scripts.sharedUpdate.op.${props.entry.op}`)}, ${title}, ${detail.text}`}
       icon={
         <Icon
           name={OP_ICON[props.entry.op]}
@@ -426,7 +432,8 @@ const ChangeRow = React.memo(function ChangeRow(
         />
       }
       title={title}
-      subtitle={detail}
+      subtitle={detail.text}
+      subtitleStyle={detail.command ? styles.command : undefined}
       subtitleLines={2}
       showChevron={false}
       showDivider={props.showDivider}
@@ -439,7 +446,9 @@ const EMPTY_MANIFEST = { version: 1 } as const;
 
 const styles = StyleSheet.create((theme) => ({
   body: { gap: theme.space.s16, paddingBottom: theme.space.s8 },
+  choice: { gap: theme.space.s12 },
   note: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+  command: { ...Typography.mono(), ...happierPageTextMetrics('rowDescription') },
   noteText: { flex: 1, minWidth: 0 },
   actions: {
     flexDirection: 'row',

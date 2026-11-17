@@ -161,6 +161,10 @@ const SHARED_SEED = { source: { kind: 'command', command: './scripts/seed-dev.sh
 const LAYERED_MANIFEST = { ...MANIFEST, scripts: { ...MANIFEST.scripts, seed: SHARED_SEED,
   lint: { source: { kind: 'command', command: 'yarn lint --fix' } } } };
 const LAYER_ORIGINS = [
+  { path: ['toolchain'], layer: 'repository' as const, overridden: false },
+  { path: ['environmentVariables'], layer: 'repository' as const, overridden: false },
+  { path: ['workspace', 'setup'], layer: 'repository' as const, overridden: false },
+  ...Object.keys(MANIFEST.services).map(name => ({ path: ['services', name], layer: 'repository' as const, overridden: false })),
   ...Object.keys(MANIFEST.scripts).filter(name => name !== 'lint')
     .map(name => ({ path: ['scripts', name], layer: 'repository' as const, overridden: false })),
   { path: ['scripts', 'lint'], layer: 'repository' as const, overridden: true },
@@ -178,9 +182,11 @@ function sharedUpdateSnapshot(state: string): ProjectSharedSetupReviewSnapshot |
   if (state === 'current') return { kind: 'ready', pending: false, change: { kind: 'current', selection }, request: null };
   const before = { ...LAYERED_DEFINITION, effectiveManifest: { ...LAYERED_MANIFEST,
     scripts: { ...LAYERED_MANIFEST.scripts, storybook: { source: pkg('storybook') } } } };
-  const after = { ...LAYERED_DEFINITION, effectiveManifest: { ...LAYERED_MANIFEST,
+  const after = { ...LAYERED_DEFINITION,
+    origins: [...LAYERED_DEFINITION.origins, { path: ['services', 'redis'], layer: 'shared' as const, overridden: false }],
+    effectiveManifest: { ...LAYERED_MANIFEST,
     scripts: { ...LAYERED_MANIFEST.scripts, seed: { source: { kind: 'command', command: './scripts/seed-dev.sh --orders 500' } } },
-    services: { redis: { source: { kind: 'command', command: 'redis-server --port 6380' } } } } };
+    services: { ...LAYERED_MANIFEST.services, redis: { source: { kind: 'command', command: 'redis-server --port 6380' } } } } };
   const change = ProjectSharedSetupChangeV1Schema.parse({ kind: 'changed', selection, before, after,
     setupReadiness: { kind: 'notRequired', reviewedEffectDigest: 'specimen' } });
   if (change.kind !== 'changed') return null;

@@ -56,22 +56,44 @@ export const TeamSharedResourcesSection = React.memo(
       address: context.address,
       enabled: true,
     });
+    const destinationOf = React.useCallback((kind: TeamSharedResourceSummaryRowV1['kind']) => kindDestination(kind, context), [context]);
+    const open = React.useCallback((destination: NonNullable<ReturnType<typeof kindDestination>>) => router.push(destination), [router]);
+    return (
+      <TeamSharedResourcesView teamName={context.team.name} serverId={context.address.serverId} summary={summary}
+        destinationOf={destinationOf} onOpen={open} />
+    );
+  },
+);
+
+type TeamSharedSummaryState = Pick<ReturnType<typeof useTeamSharedResourcesSummary>, 'status' | 'kinds' | 'error' | 'reload'>;
+type KindDestination = NonNullable<ReturnType<typeof kindDestination>>;
+
+/** "Shared with this Team" for one summary state; the specimen mounts it with fixture summaries. */
+export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesView(
+  props: Readonly<{
+    teamName: string;
+    serverId: string;
+    summary: TeamSharedSummaryState;
+    destinationOf: (kind: TeamSharedResourceSummaryRowV1['kind']) => KindDestination | null;
+    onOpen: (destination: KindDestination) => void;
+  }>,
+) {
     const rows = React.useMemo(
       () =>
-        summary.kinds
+        props.summary.kinds
           .filter(isListed)
           .slice()
           .sort(
             (a, b) =>
               TEAM_SHARED_KIND_PRESENTATION[a.kind].order - TEAM_SHARED_KIND_PRESENTATION[b.kind].order,
           ),
-      [summary.kinds],
+      [props.summary.kinds],
     );
-    const settled = summary.status === 'ready';
+    const settled = props.summary.status === 'ready';
     const failedWithNothing =
-      summary.status === 'error' && summary.kinds.length === 0;
+      props.summary.status === 'error' && props.summary.kinds.length === 0;
     const loadingWithNothing =
-      !settled && !failedWithNothing && summary.kinds.length === 0;
+      !settled && !failedWithNothing && props.summary.kinds.length === 0;
     const empty = settled && rows.length === 0;
 
     return (
@@ -79,7 +101,7 @@ export const TeamSharedResourcesSection = React.memo(
         testID="team-overview-shared"
         title={t('teams.overview.shared.title')}
         description={t('teams.overview.shared.description', {
-          team: context.team.name,
+          team: props.teamName,
         })}
       >
         {loadingWithNothing ? (
@@ -94,11 +116,11 @@ export const TeamSharedResourcesSection = React.memo(
             testID="team-overview-shared-failed"
             state={{
               kind: 'failed',
-              reason: summary.error
-                ? teamReadFailureLabel(summary.error)
+              reason: props.summary.error
+                ? teamReadFailureLabel(props.summary.error)
                 : t('teams.overview.shared.failed'),
-              onRetry: summary.reload,
-              homeServerIds: [context.address.serverId],
+              onRetry: props.summary.reload,
+              homeServerIds: [props.serverId],
             }}
           />
         ) : null}
@@ -108,7 +130,7 @@ export const TeamSharedResourcesSection = React.memo(
             kind="empty"
             size="line"
             title={t('teams.overview.shared.emptyTitle', {
-              team: context.team.name,
+              team: props.teamName,
             })}
             reason={t('teams.overview.shared.emptyBody')}
           />
@@ -116,7 +138,7 @@ export const TeamSharedResourcesSection = React.memo(
         {rows.map((row) => {
           const presentation = TEAM_SHARED_KIND_PRESENTATION[row.kind];
           const title = t(presentation.title);
-          const destination = kindDestination(row.kind, context);
+          const destination = props.destinationOf(row.kind);
           const key = teamSharedResourceSummaryRowKeyV1(row);
           if (row.status === 'unavailable') {
             return (
@@ -133,7 +155,7 @@ export const TeamSharedResourcesSection = React.memo(
                   <TextLinkButton
                     testID={`team-overview-shared-retry:${key}`}
                     label={t('common.retry')}
-                    onPress={summary.reload}
+                    onPress={props.summary.reload}
                   />
                 }
                 mode="info"
@@ -154,11 +176,10 @@ export const TeamSharedResourcesSection = React.memo(
               detail={String(row.count)}
               mode={destination ? 'interactive' : 'info'}
               showChevron={destination !== null}
-              onPress={destination ? () => router.push(destination) : undefined}
+              onPress={destination ? () => props.onOpen(destination) : undefined}
             />
           );
         })}
       </ItemGroup>
     );
-  },
-);
+});

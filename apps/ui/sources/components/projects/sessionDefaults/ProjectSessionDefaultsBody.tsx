@@ -20,7 +20,7 @@ import { t } from '@/text';
 
 import { resolveWorkspaceRefDisplayName } from '../resolveWorkspaceRefDisplayName';
 
-type DefaultsScope = 'me' | 'project';
+export type DefaultsScope = 'me' | 'project';
 
 /** The rows the editor shows once read (Machine, Agent, then the Agents), held while it loads (lab L11-loading). */
 const LOADING_ROWS = 7;
@@ -39,7 +39,6 @@ export const ProjectSessionDefaultsBody = React.memo(
     }>,
   ) {
     const testID = props.testID ?? 'project-session-defaults';
-    const { theme } = useUnistyles();
     const projectName = resolveWorkspaceRefDisplayName(props.workspaceRef);
     const projectRef = React.useMemo(() => {
       const { serverId, projectKey } = projectWorkspaceRefV1(
@@ -63,7 +62,52 @@ export const ProjectSessionDefaultsBody = React.memo(
       read,
       scope: scope === 'me' ? 'personal-project' : 'project',
     });
-    const teamName = read.data?.teamName ?? null;
+    return (
+      <ProjectSessionDefaultsView
+        testID={testID}
+        projectName={projectName}
+        serverId={projectRef.serverId}
+        hasSource={sourceRef !== undefined}
+        scope={scope}
+        onScopeChange={setScope}
+        status={read.status}
+        data={read.data}
+        onRetry={read.refresh}
+        defaults={editor.defaults}
+        editable={editor.access.editable}
+        busy={editor.busy}
+        save={editor.save}
+      />
+    );
+  },
+);
+
+type SessionDefaultsRead = ReturnType<typeof useProjectSessionDefaults>;
+type SessionDefaultsEditor = ReturnType<typeof useProjectSessionDefaultsEditor>;
+
+/** What the page shows for one read and editor state; the specimen mounts it with fixture states. */
+export const ProjectSessionDefaultsView = React.memo(function ProjectSessionDefaultsView(
+  props: Readonly<{
+    testID: string;
+    projectName: string;
+    serverId: string;
+    /** Opened from a shared source: the page offers the shared scope. */
+    hasSource: boolean;
+    scope: DefaultsScope;
+    onScopeChange: (scope: DefaultsScope) => void;
+    status: SessionDefaultsRead['status'];
+    data: SessionDefaultsRead['data'];
+    onRetry: SessionDefaultsRead['refresh'];
+    defaults: SessionDefaultsEditor['defaults'];
+    editable: boolean;
+    busy: boolean;
+    save: SessionDefaultsEditor['save'];
+  }>,
+) {
+  const { theme } = useUnistyles();
+  const { testID, projectName, scope } = props;
+  const setScope = props.onScopeChange;
+    const teamName = props.data?.teamName ?? null;
     const sharedLabel = teamName
       ? t('projects.sessionDefaults.scopeTeam', { team: teamName })
       : t('projects.sessionDefaults.scopeShared');
@@ -74,8 +118,8 @@ export const ProjectSessionDefaultsBody = React.memo(
       ],
       [sharedLabel],
     );
-    const settled = read.status === 'ready' || read.status === 'refreshing';
-    const readOnly = scope === 'project' && settled && !editor.access.editable;
+    const settled = props.status === 'ready' || props.status === 'refreshing';
+    const readOnly = scope === 'project' && settled && !props.editable;
     const line =
       scope === 'me'
         ? t('projects.sessionDefaults.lineMe')
@@ -90,7 +134,7 @@ export const ProjectSessionDefaultsBody = React.memo(
                 project: projectName,
               });
 
-    const scopeControl = sourceRef ? (
+    const scopeControl = props.hasSource ? (
       <View style={{ gap: theme.space.s8, alignItems: 'flex-start' }}>
         <SegmentedTabBar
           tabs={tabs}
@@ -130,8 +174,8 @@ export const ProjectSessionDefaultsBody = React.memo(
         {line}
       </Text>
     );
-    const defaults = editor.defaults;
-    const teamId = read.data?.context.primaryTeamId ?? null;
+    const defaults = props.defaults;
+    const teamId = props.data?.context.primaryTeamId ?? null;
 
     return (
       <ItemList testID={testID}>
@@ -144,15 +188,15 @@ export const ProjectSessionDefaultsBody = React.memo(
           details={scopeControl}
           detailsPlacement="column"
         />
-        {read.status === 'error' || read.status === 'unavailable' ? (
+        {props.status === 'error' || props.status === 'unavailable' ? (
           <ItemGroup>
             <ItemLoadStateRows
               testID={`${testID}.failed`}
               state={{
                 kind: 'failed',
                 reason: t('projects.sessionDefaults.loadFailed'),
-                onRetry: read.refresh,
-                homeServerIds: [projectRef.serverId],
+                onRetry: props.onRetry,
+                homeServerIds: [props.serverId],
               }}
             />
           </ItemGroup>
@@ -167,20 +211,19 @@ export const ProjectSessionDefaultsBody = React.memo(
         ) : (
           <ProjectSessionDefaultsSection
             testID={`${testID}.editor`}
-            serverId={projectRef.serverId}
+            serverId={props.serverId}
             teamId={teamId}
             defaults={defaults}
             scope={scope === 'me' ? 'personal-project' : 'project'}
-            context={read.data?.context}
-            source={read.data?.source}
-            teamName={read.data?.teamName}
+            context={props.data?.context}
+            source={props.data?.source}
+            teamName={props.data?.teamName}
             projectName={projectName}
-            editable={editor.access.editable}
-            busy={editor.busy}
-            save={editor.save}
+            editable={props.editable}
+            busy={props.busy}
+            save={props.save}
           />
         )}
       </ItemList>
     );
-  },
-);
+});
