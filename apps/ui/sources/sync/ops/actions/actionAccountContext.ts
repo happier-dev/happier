@@ -23,7 +23,7 @@ import type { HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { areServerProfileIdentifiersEquivalent, buildHomeConnectionDescriptorForProfile, getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { storage } from '@/sync/domains/state/storageStore';
 import { loadAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
@@ -96,6 +96,17 @@ export type ActionAccountRequestAuthorization = (request: Readonly<{
 }>) => Promise<Readonly<Record<string, string>> | undefined>;
 
 export async function captureLazyActionAccountContext(serverIdRaw: string, signal?: AbortSignal,
+    requestAuthorization?: ActionAccountRequestAuthorization, expectedScope?: AccountSettingsScope | null) {
+    if (expectedScope === null) throw new HappyError('Action Account scope changed', false, { code: 'action_account_scope_changed' });
+    const context = await createLazyActionAccountContext(serverIdRaw, signal, requestAuthorization);
+    if (expectedScope !== undefined && !areAccountSettingsScopesEqual(context.accountLifetime.scope, expectedScope)) {
+        context.dispose();
+        throw new HappyError('Action Account scope changed', false, { code: 'action_account_scope_changed' });
+    }
+    return context;
+}
+
+async function createLazyActionAccountContext(serverIdRaw: string, signal?: AbortSignal,
     requestAuthorization?: ActionAccountRequestAuthorization) {
     const embed = isEmbedWindowContext() ? (await import('@/sync/sync')).sync.getEmbedSessionRequestContext() : null;
     if (embed) {

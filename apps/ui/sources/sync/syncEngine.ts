@@ -9778,7 +9778,7 @@ class Sync {
     private themeProfileUndo: Readonly<{ scope: ServerAccountScope; state: ThemeProfileUndoState }> | null = null;
 
     public withThemeProfileContext = async <TResult>(operation: (context: ThemeProfileLibraryContext) => Promise<TResult>,
-        options?: Readonly<{ signal?: AbortSignal; expectedScope?: AccountSettingsScope; artifactIdScopes?: ReadonlyMap<string, ArtifactIdScopeV1> }>,
+        options?: Readonly<{ signal?: AbortSignal; expectedScope?: AccountSettingsScope | null; artifactIdScopes?: ReadonlyMap<string, ArtifactIdScopeV1> }>,
     ): Promise<TResult> => this.withArtifactReadAuthority(options?.signal, async params => {
         const scope = { serverId: params.serverId, accountId: params.accountId };
         if (!this.themeProfileUndo || !areServerAccountScopesEqual(this.themeProfileUndo.scope, scope)) {
@@ -9816,21 +9816,21 @@ class Sync {
     }, options?.expectedScope);
 
     public withThemeProfileLibrary = async <TResult>(operation: (library: ThemeProfileLibrary) => Promise<TResult>,
-        options?: Readonly<{ signal?: AbortSignal; expectedScope?: AccountSettingsScope; artifactIdScopes?: ReadonlyMap<string, ArtifactIdScopeV1> }>,
+        options?: Readonly<{ signal?: AbortSignal; expectedScope?: AccountSettingsScope | null; artifactIdScopes?: ReadonlyMap<string, ArtifactIdScopeV1> }>,
     ): Promise<TResult> => this.withThemeProfileContext(context => operation(createThemeProfileLibrary(context)), options);
 
     public withThemeProfileSourceAdapter = async <TResult>(operation: (adapter: ThemeProfileSourceAdapter) => Promise<TResult>,
-        options?: Readonly<{ signal?: AbortSignal; expectedScope?: AccountSettingsScope }>,
+        options?: Readonly<{ signal?: AbortSignal; expectedScope?: AccountSettingsScope | null }>,
     ): Promise<TResult> => this.withThemeProfileContext(context => operation(createThemeProfileSourceAdapter(context)), options);
 
     private async withArtifactReadAuthority<TResult>(signal: AbortSignal | undefined,
         operation: (params: Omit<Parameters<typeof fetchArtifactForViewFromApi>[0], 'artifactId'> & Readonly<{ serverId: string; accountId: string }>) => Promise<TResult>,
-        expectedScope?: AccountSettingsScope,
+        expectedScope?: AccountSettingsScope | null,
     ): Promise<TResult> {
         if (!this.credentials) throw new Error('Not authenticated');
         const scope = getActiveServerAccountScope();
         if (!scope) throw new Error('Artifact Account scope is unavailable');
-        if (expectedScope && !areServerAccountScopesEqual(scope, expectedScope)) throw new Error('Artifact Account scope changed');
+        if (expectedScope !== undefined && (!expectedScope || !areServerAccountScopesEqual(scope, expectedScope))) throw new Error('Artifact Account scope changed');
         const serverIsCurrent = this.createServerScopeGuard();
         const credentials = this.credentials;
         const encryption = this.encryption;
