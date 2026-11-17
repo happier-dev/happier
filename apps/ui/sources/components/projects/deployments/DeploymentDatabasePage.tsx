@@ -28,6 +28,7 @@ import { usePageBackControl } from '@/components/ui/layout/usePageBackControl';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { StatusWord } from '@/components/ui/status/StatusPill';
@@ -437,6 +438,9 @@ export function DeploymentDatabasePage(
   }) : null;
 
   const lastGood = ready?.history?.lastSuccessfulBackup ?? null;
+  // The data-service read resolves this database's Automation subject once; a binding without one (managed) has no section.
+  const automationSubject = sizes.snapshot.value?.items.find((item) => item.environment.id === detail.environment.id)
+    ?.databaseSubjects?.[props.database];
   // The facts row under the header (pfc-redesign dDb), led by Last backup; each fact only as its owner reports it.
   const measured = database.kind === 'selfHosted'
     ? sizes.snapshot.value?.items.find((item) => item.environment.id === detail.environment.id)
@@ -715,6 +719,11 @@ export function DeploymentDatabasePage(
                 })
               )}
             </ItemGroup>
+          ) : null}
+
+          {automationSubject?.ok ? (
+            <SubjectTriggersSection subject={automationSubject.subject} subjectName={title}
+              accountLifetime={lifetime} />
           ) : null}
 
           <ItemGroup

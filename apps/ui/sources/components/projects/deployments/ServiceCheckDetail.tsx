@@ -20,6 +20,8 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
+import { configuredHealthCheckAutomationSubject } from '@/components/store/inventory/configuredHealthResults';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
@@ -166,6 +168,11 @@ export function ServiceCheckDetail(
     [seed, shown?.checkId, serverIdForSubject],
   );
   const serverId = row.scope.serverId;
+  // The retained health source owns this Check's identity; without it the page has no Automations section.
+  const automationSubject = React.useMemo(
+    () => shown ? configuredHealthCheckAutomationSubject(row.lastResults, shown.checkId, serverId) : null,
+    [row.lastResults, shown, serverId],
+  );
   const observer = useServerScopedMachineLabel(
     serverId,
     settings?.observerMachineId ?? null,
@@ -407,6 +414,9 @@ export function ServiceCheckDetail(
             onPress={() => setResultsShown((count) => count + RESULTS_PAGE)}
           />
         </ItemGroup>
+      ) : null}
+      {automationSubject ? (
+        <SubjectTriggersSection subject={automationSubject} subjectName={definition?.name ?? shown?.checkId ?? row.automationId} />
       ) : null}
       <ItemGroup
         title={t('projects.deployments.tabSettings')}
