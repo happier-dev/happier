@@ -29,7 +29,7 @@ import {
 } from './machineCarrier';
 import { PROVIDER_BROKER_PRIVATE_CLOSE_PATH, PROVIDER_BROKER_CLOSE_REQUEST_ID_HEADER } from '@/providers/broker/providerBrokerPrivateProtocol';
 import { logger } from '@/ui/logger';
-import { providerBrokerApplicationFailureBody, type SessionBrokerApplicationOutcomeRecorder } from '@/providers/broker/providerBrokerApplicationFailure';
+import { providerBrokerApplicationFailureBody, providerBrokerApplicationFailureHeaders, type SessionBrokerApplicationOutcomeRecorder } from '@/providers/broker/providerBrokerApplicationFailure';
 import { SessionRuntimeTeamCredentialDenialDetailsV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { createSessionBrokerHttpObserver, SESSION_BROKER_OBSERVED_RESPONSE_HEADERS } from '@/providers/broker/sessionBrokerHttpObservation';
 
@@ -180,6 +180,7 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
           throw new MachineCarrierError(freshOpen.reasonCode, 'Provider broker authority refresh was rejected.', {
             kind: 'http_refusal',
             responseBody: JSON.stringify(body),
+            responseHeaders: providerBrokerApplicationFailureHeaders(freshOpen),
           });
         }
         const freshAuthority = freshOpen.authority;

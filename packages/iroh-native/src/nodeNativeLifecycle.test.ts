@@ -512,20 +512,25 @@ describeWhenNative('Iroh Node lifecycle binding over the shared native runtime',
     await addon.startMachineAcceptor({ endpointHandle: endpoint.endpointHandle, admissionPort: admission.port });
     const endpointStatus = await addon.getEndpointStatus(endpoint.endpointHandle);
     const events: IrohNodeMachineHttpObservation[] = [];
+    let refuseLocally = false;
     const tunnel = await addon.startMachineHttpTunnel({
       endpointHandle: client.endpointHandle, endpointId: endpoint.endpointId,
       directAddresses: endpointStatus?.directAddresses,
       handshakeJson: JSON.stringify({ v: 1, kind: 'provider_broker' }),
+      handshakeProvider: async () => JSON.stringify(refuseLocally
+        ? { kind: 'http_refusal', responseBody: '{}', responseHeaders: { 'x-broker-code': 'application_refused' } }
+        : { v: 1, kind: 'provider_broker' }),
       observedResponseHeaders: ['x-broker-code'], httpObserver: async event => { events.push(event); },
     });
-    const response = await new Promise<string>((resolve, reject) => {
+    const request = (paths: readonly string[]) => new Promise<string>((resolve, reject) => {
       const socket = connect(tunnel.localPort, '127.0.0.1');
       const chunks: Buffer[] = [];
       socket.on('data', bytes => chunks.push(bytes));
       socket.on('error', reject);
       socket.on('end', () => { socket.end(); resolve(Buffer.concat(chunks).toString('utf8')); });
-      socket.on('connect', () => socket.write([1, 2].map(id => `GET /${id} HTTP/1.1\r\nHost: local\r\nX-Happier-Machine-Local-Capability: ${tunnel.localCapability}\r\n\r\n`).join('')));
+      socket.on('connect', () => socket.write(paths.map(path => `GET /${path} HTTP/1.1\r\nHost: local\r\nX-Happier-Machine-Local-Capability: ${tunnel.localCapability}\r\n\r\n`).join('')));
     });
+    const response = await request(['1', '2']);
     expect(received).toBe(2);
     expect(response).toContain(body);
     expect(response.endsWith('\r\n\r\nno!')).toBe(true);
@@ -534,6 +539,14 @@ describeWhenNative('Iroh Node lifecycle binding over the shared native runtime',
       { kind: 'response', connectionId: '1', requestId: '2', status: 403, headers: { 'x-broker-code': 'team_credential_usage_limit' } },
     ]);
     expect(events.filter(event => event.kind === 'request')).toHaveLength(2);
+    refuseLocally = true;
+    const refused = await request(['refused']);
+    expect(refused).toContain('x-broker-code: application_refused\r\n');
+    expect(events.filter(event => event.kind === 'response').at(-1)).toEqual({
+      kind: 'response', connectionId: '2', requestId: '1', status: 403,
+      headers: { 'x-broker-code': 'application_refused' },
+    });
+    expect(received).toBe(2); // Local refusal opens no application stream.
     await addon.stopMachineTunnel(tunnel.machineTunnelId);
     await addon.stopMachineAcceptor({ endpointHandle: endpoint.endpointHandle });
     await addon.shutdownEndpoint({ endpointHandle: client.endpointHandle });

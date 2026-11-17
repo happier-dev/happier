@@ -24,9 +24,7 @@ import { logger } from '@/ui/logger';
 import { isConnectedAccountSourceReconnectRequiredError } from '@/daemon/connectedServices/purposeBindings/sourceHealth';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { ProviderBrokerApplicationPhaseError } from './providerBrokerApplicationFailureContext';
-import { ProviderBrokerApplicationFailureError, providerBrokerApplicationFailureBody, type ProviderBrokerApplicationFailure } from './providerBrokerApplicationFailure';
-import { PROVIDER_BROKER_APPLICATION_LIMIT_METRIC_HEADER, PROVIDER_BROKER_APPLICATION_LIMIT_REMAINING_HEADER,
-    PROVIDER_BROKER_APPLICATION_LIMIT_RESETS_AT_HEADER } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { ProviderBrokerApplicationFailureError, providerBrokerApplicationFailureBody, providerBrokerApplicationFailureHeaders, type ProviderBrokerApplicationFailure } from './providerBrokerApplicationFailure';
 export { PROVIDER_BROKER_APPLICATION_LIMIT_METRIC_HEADER, PROVIDER_BROKER_APPLICATION_LIMIT_REMAINING_HEADER,
     PROVIDER_BROKER_APPLICATION_LIMIT_RESETS_AT_HEADER } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 export { PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER } from './providerBrokerPrivateProtocol';
@@ -87,12 +85,7 @@ export function writeProviderBrokerApplicationFailure(
     response: ProviderBrokerApplicationFailure,
     resourceId?: string,
 ) {
-    reply.header(PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER, response.reasonCode);
-    if (response.reasonCode === 'team_credential_usage_limit' && response.usageLimit) {
-        reply.header(PROVIDER_BROKER_APPLICATION_LIMIT_METRIC_HEADER, response.usageLimit.metric);
-        reply.header(PROVIDER_BROKER_APPLICATION_LIMIT_REMAINING_HEADER, response.usageLimit.remaining);
-        reply.header(PROVIDER_BROKER_APPLICATION_LIMIT_RESETS_AT_HEADER, response.usageLimit.resetsAtUtc);
-    }
+    for (const [name, value] of Object.entries(providerBrokerApplicationFailureHeaders(response))) reply.header(name, value);
     reply.header('content-type', 'application/json');
     // `broker_unavailable` is the one retryable failure (an unexpected broker
     // fault); every other typed reason is an authority or policy refusal.

@@ -112,6 +112,8 @@ export type IrohNodeMachineHttpHandshakeRefusal = Readonly<{
   kind: 'http_refusal';
   /** JSON serialized by the application admission owner and returned as HTTP 403. */
   responseBody: string;
+  /** Application metadata; native validates HTTP syntax and retains framing ownership. */
+  responseHeaders?: Readonly<Record<string, string>>;
 }>;
 
 export type IrohNodeStartMachineHttpTunnelRequest = IrohNodeStartMachineTunnelRequest & Readonly<{

@@ -22,6 +22,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, watch};
 use tokio::task::{JoinHandle, JoinSet};
+use tokio_tungstenite::tungstenite::http::{header::HeaderName, HeaderValue};
 
 #[path = "machine_http_observation.rs"]
 mod http_observation;
@@ -590,8 +591,9 @@ pub struct MachineTunnelConfig {
 /// The provider is invoked after the local capability is authenticated and
 /// before a QUIC stream is opened. Dropping its future cancels that one
 /// connection without changing tunnel custody. A trusted local provider can
-/// instead return `{"kind":"http_refusal","responseBody":"<JSON>"}` to answer
-/// that HTTP connection locally; this outcome is never a machine handshake.
+/// instead return `{"kind":"http_refusal","responseBody":"<JSON>"}` with
+/// optional `responseHeaders` to answer that HTTP connection locally. Native
+/// retains status and framing ownership; this is never a machine handshake.
 pub type MachineHandshakeProvider =
     Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<String>> + Send>> + Send + Sync>;
 
@@ -1482,7 +1484,9 @@ async fn pump_local(
             return;
         };
         if parsed.get("kind").and_then(serde_json::Value::as_str) == Some("http_refusal") {
-            let Some(outcome) = parsed.as_object().filter(|outcome| outcome.len() == 2) else {
+            let Some(outcome) = parsed.as_object().filter(|outcome| {
+                outcome.keys().all(|key| matches!(key.as_str(), "kind" | "responseBody" | "responseHeaders"))
+            }) else {
                 return;
             };
             let Some(body) = outcome.get("responseBody").and_then(serde_json::Value::as_str) else {
@@ -1491,11 +1495,25 @@ async fn pump_local(
             if serde_json::from_str::<serde_json::Value>(body).is_err() {
                 return;
             }
-            // Only the trusted local admission owner chooses the failure body.
-            // Fixed framing prevents it from supplying status or HTTP headers.
+            // The trusted application owner supplies metadata; native owns HTTP
+            // syntax and framing, without interpreting application error bodies.
+            let mut headers = String::new();
+            if let Some(values) = outcome.get("responseHeaders") {
+                let Some(values) = values.as_object() else { return };
+                for (name, value) in values {
+                    let Ok(name) = HeaderName::from_bytes(name.as_bytes()) else { return };
+                    if matches!(name.as_str(), "content-type" | "content-length" | "connection" | "transfer-encoding") {
+                        return;
+                    }
+                    let Some(value) = value.as_str() else { return };
+                    if HeaderValue::from_str(value).is_err() { return; }
+                    headers.push_str(&format!("{}: {}\r\n", name.as_str(), value));
+                }
+            }
             let head = format!(
-                "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{}\r\n",
                 body.len(),
+                headers,
             );
             if socket.write_all(head.as_bytes()).await.is_ok() {
                 let _ = socket.write_all(body.as_bytes()).await;

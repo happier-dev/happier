@@ -2034,7 +2034,7 @@ The refresh outcome distinguishes an unanswered refresh from an accepted,
 refused or failed refresh. Its elapsed time is the completed refresh duration,
 or the time still pending when discovery fails.
 A refused Home grant refresh, including the first refresh before dial, is retained as
-`broker_refresh_refused` before native transport can turn it into a closed
+`broker_refresh_refused` before older native transport can turn it into a closed
 socket or an HTTP refusal without a broker-code header. Team launch refusals
 keep Home's typed admission code across both forms; only untyped transport
 failures become `provider_endpoint_unavailable`. Account failures also retain these closed cause/status facts in the
@@ -2050,7 +2050,10 @@ host's existing Session failure evidence. The native HTTP carrier pairs each
 request with its response, including reused connections, and reports only the
 broker's closed reason and usage-limit headers. The host captures the current
 turn when the request starts; a delayed response cannot become another turn's
-denial. Accepted Home refreshes do not erase an application refusal. Request
+denial. Local fresh-authority refusals use the same header projection as target
+HTTP refusals, passed through the trusted callback's optional `responseHeaders`.
+Native validates header syntax and owns status and framing; it does not interpret
+the Provider error body. Accepted Home refreshes do not erase an application refusal. Request
 and response bodies stay native, and a vendor HTTP 403 without a recognized
 broker reason remains unclassified. This path requires the matching rebuilt
 Node native addon and daemon source; source changes alone do not update a

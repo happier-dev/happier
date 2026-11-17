@@ -1,11 +1,29 @@
 import type { TeamCredentialUsageLimitDenialV1 } from '@happier-dev/protocol/teams';
 import type { ProviderBrokerRequestHandler } from './providerBrokerRequestHandler';
 import type { SessionRuntimeTeamCredentialDenialDetailsV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import {
+    PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER,
+    PROVIDER_BROKER_APPLICATION_LIMIT_METRIC_HEADER,
+    PROVIDER_BROKER_APPLICATION_LIMIT_REMAINING_HEADER,
+    PROVIDER_BROKER_APPLICATION_LIMIT_RESETS_AT_HEADER,
+} from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 
 /** Host-private recorder captured before a fresh request can outlive its turn. */
 export type SessionBrokerApplicationOutcomeRecorder = (denial: SessionRuntimeTeamCredentialDenialDetailsV1 | null) => void;
 
 export type ProviderBrokerApplicationFailure = Extract<Awaited<ReturnType<ProviderBrokerRequestHandler>>, { ok: false }>;
+
+/** Shared by target HTTP admission and the local fresh-authority refusal. */
+export function providerBrokerApplicationFailureHeaders(response: ProviderBrokerApplicationFailure): Readonly<Record<string, string>> {
+    return {
+        [PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER]: response.reasonCode,
+        ...(response.reasonCode === 'team_credential_usage_limit' && response.usageLimit ? {
+            [PROVIDER_BROKER_APPLICATION_LIMIT_METRIC_HEADER]: response.usageLimit.metric,
+            [PROVIDER_BROKER_APPLICATION_LIMIT_REMAINING_HEADER]: response.usageLimit.remaining,
+            [PROVIDER_BROKER_APPLICATION_LIMIT_RESETS_AT_HEADER]: response.usageLimit.resetsAtUtc,
+        } : {}),
+    };
+}
 
 /** Carries a host refusal through managed-service access to the one HTTP writer. */
 export class ProviderBrokerApplicationFailureError extends Error {

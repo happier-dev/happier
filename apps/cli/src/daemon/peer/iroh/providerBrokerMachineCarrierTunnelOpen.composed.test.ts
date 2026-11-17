@@ -433,9 +433,17 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
     // or frames the callback's refusal as HTTP 403. Host evidence owns both.
     const listener = createServer(async (incoming, response) => {
       if (!request?.handshakeProvider) throw new Error('Missing native admission callback');
+      // The real native HTTP wrapper observes the locally generated refusal as
+      // well as target responses. Keep that response paired with its request.
+      await request.httpObserver?.({ kind: 'request', connectionId: 'local', requestId: '1' });
       const handshake = JSON.parse(await request.handshakeProvider());
       if (nativeRefusal === 'socket_close') incoming.socket.destroy();
-      else response.writeHead(403).end(handshake.responseBody);
+      else {
+        await request.httpObserver?.({ kind: 'response', connectionId: 'local', requestId: '1',
+          status: 403, headers: handshake.responseHeaders ?? {} });
+        response.writeHead(403, handshake.responseHeaders).end(handshake.responseBody);
+      }
+      await request.httpObserver?.({ kind: 'closed', connectionId: 'local' });
     });
     await new Promise<void>(resolve => listener.listen(0, '127.0.0.1', resolve));
     onTestFinished(() => new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve())));

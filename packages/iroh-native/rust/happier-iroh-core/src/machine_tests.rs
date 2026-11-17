@@ -1458,13 +1458,21 @@ async fn machine_http_tunnel_provider_refusal_returns_http_without_opening_a_str
     let refusal = serde_json::json!({
         "kind": "http_refusal",
         "responseBody": response_body,
+        "responseHeaders": { "x-admission-reason": "application_refused" },
     })
     .to_string();
+    let legacy_refusal = serde_json::json!({"kind": "http_refusal", "responseBody": response_body}).to_string();
     let invalid_outcomes = [
         serde_json::json!({"kind": "http_refusal", "responseBody": response_body, "status": 200})
             .to_string(),
         serde_json::json!({"kind": "http_refusal", "responseBody": "not JSON"}).to_string(),
         serde_json::json!({"kind": "http_refusal", "responseBody": {}}).to_string(),
+        serde_json::json!({"kind": "http_refusal", "responseBody": response_body,
+            "responseHeaders": {"x-invalid\r\nname": "value"}}).to_string(),
+        serde_json::json!({"kind": "http_refusal", "responseBody": response_body,
+            "responseHeaders": {"x-reason": "value\r\nInjected: yes"}}).to_string(),
+        serde_json::json!({"kind": "http_refusal", "responseBody": response_body,
+            "responseHeaders": {"content-length": "0"}}).to_string(),
     ];
     let invalid_outcome_count = invalid_outcomes.len();
     let sequence = Arc::new(AtomicUsize::new(0));
@@ -1472,8 +1480,10 @@ async fn machine_http_tunnel_provider_refusal_returns_http_without_opening_a_str
         let attempt = sequence.fetch_add(1, Ordering::SeqCst);
         let outcome = if attempt == 0 {
             refusal.clone()
+        } else if attempt == 1 {
+            legacy_refusal.clone()
         } else {
-            invalid_outcomes.get(attempt - 1).cloned().unwrap_or_else(|| {
+            invalid_outcomes.get(attempt - 2).cloned().unwrap_or_else(|| {
                 r#"{"v":1,"kind":"provider_broker","witness":"recovered"}"#.to_owned()
             })
         };
@@ -1521,7 +1531,7 @@ async fn machine_http_tunnel_provider_refusal_returns_http_without_opening_a_str
         .expect("HTTP refusal response");
     drop(refused);
     let expected = format!(
-        "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nx-admission-reason: application_refused\r\n\r\n{}",
         response_body.len(),
         response_body,
     );
@@ -1530,6 +1540,10 @@ async fn machine_http_tunnel_provider_refusal_returns_http_without_opening_a_str
     assert!(tunnel.status().connection_active);
     assert_eq!(contacts.load(Ordering::Relaxed), 0);
     assert!(handshakes.lock().expect("handshakes").is_empty());
+
+    let legacy = exchange_echo(tunnel.local_addr().expect("HTTP addr"), request.as_bytes()).await;
+    assert_eq!(legacy, expected.replace("x-admission-reason: application_refused\r\n", "").as_bytes());
+    assert_eq!(tunnel.status().streams_opened, 0);
 
     for _ in 0..invalid_outcome_count {
         let rejected =
