@@ -25,7 +25,6 @@ import { parseSessionReadStateActionResponse } from '../../../sessions/readState
 import { type ActionId } from '../../actionIds.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecutorDeps } from '../types.js';
-import { resolveInheritedApprovalProfileIdV1 } from '../../approvalProfiles.js';
 
 
 
@@ -130,8 +129,6 @@ export async function dispatchSessionLifecycle1(inv: Pick<CoreInvocation, 'actio
           const input = parsed.data as SessionContinueWithReplayRpcParams;
           const res = await deps.sessionContinueWithReplay({
             ...input,
-            ...(input.approvalProfileId !== undefined || ctx.approvalProfileId !== undefined
-              ? { approvalProfileId: resolveInheritedApprovalProfileIdV1(input.approvalProfileId, ctx.approvalProfileId) } : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
           return completeActionResult(res);

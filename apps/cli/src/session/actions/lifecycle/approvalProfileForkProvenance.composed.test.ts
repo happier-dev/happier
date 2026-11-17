@@ -56,7 +56,8 @@ afterAll(async () => {
 describe('approval profile provenance through Session lifecycle Actions', () => {
   it.each([
     { family: 'fork', selection: 'omitted' }, { family: 'fork', selection: 'same' }, { family: 'fork', selection: 'none' },
-  ] as ReadonlyArray<{ family: 'fork' | 'continue'; selection: 'omitted' | 'same' | 'none' }>)('keeps inherited policy stricter until an explicit same-id pick ($family, selection=$selection)', async ({ family, selection }) => {
+    { family: 'continue', selection: 'omitted' }, { family: 'continue', selection: 'same' }, { family: 'continue', selection: 'none' },
+  ] as const)('keeps inherited policy stricter until an explicit same-id pick ($family, selection=$selection)', async ({ family, selection }) => {
     const actionId = family === 'fork' ? 'session.fork' : 'session.continue_with_replay';
     const profileId = 'shared-profile';
     const policyActionId = 'daemon.filesystem.readFile';
@@ -134,18 +135,27 @@ describe('approval profile provenance through Session lifecycle Actions', () => 
       stopSession: async () => { throw new Error('Replay must not stop its parent'); },
       requestShutdown: () => undefined,
     };
-    const manager = createRpcHandlerManager({ scopePrefix: machineId, scopeKind: 'machine', localMachineId: machineId,
-      encryptionKey: secret, encryptionVariant: 'legacy', encryptionMode: 'plain',
-      authorizeRequest: request => authorizeMachineRpcRequest(request, {
+    const machineBoundary = {
         machineId, resolveCustodianAccountId: async () => 'fixture-account',
         resolveInstallationId: () => 'installation', resolveHomeServerIdentityId: async () => 'home',
         // The installed identity and authenticated Home verification are system boundaries.
         verifyMachineAdmission: async () => true,
-      }),
+    };
+    const manager = createRpcHandlerManager({ scopePrefix: machineId, scopeKind: 'machine', localMachineId: machineId,
+      encryptionKey: secret, encryptionVariant: 'legacy', encryptionMode: 'plain',
+      authorizeRequest: request => authorizeMachineRpcRequest(request, machineBoundary),
     });
-    machineRpc.mockImplementation(async ({ method, request }) => manager.invokeLocal(method, request,
-      { rpcContext: { machineAdmission: { actorAccountId: 'fixture-account', custodianAccountId: 'fixture-account',
-        machineId, installationId: 'installation', role: 'manage', encryptionMode: 'plain' }, callerAuthority: 'present_user' } }));
+    machineRpc.mockImplementation(async ({ method, request, authorization }) => {
+      const rpcContext = { machineAdmission: { actorAccountId: 'fixture-account', custodianAccountId: 'fixture-account',
+        machineId, installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const },
+        callerAuthority: 'present_user' as const };
+      // Home's network hop retains its Session-write proof. Exercise the real
+      // receiving admission, then give the local handler its admitted result.
+      const admitted = await authorizeMachineRpcRequest({ method: `${machineId}:${method}`, params: request,
+        authorization, ...rpcContext }, machineBoundary, 'authenticated_home_socket');
+      if (!admitted.ok) return admitted;
+      return manager.invokeLocal(method, request, { rpcContext, admissionResult: admitted });
+    });
     const operations = createHostActionOperationRuntime({ machineId, resolveAccountId: async () => 'fixture-account' });
     registerSessionLifecycleRpcHandlers({
       rpcHandlerManager: manager,

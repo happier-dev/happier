@@ -26,6 +26,7 @@ import {
 
 type ForkInheritedSpawnOverrides = {
   approvalProfileId?: string | null;
+  approvalProfileTeamOrGroupDerived?: boolean;
   permissionMode?: PermissionMode;
   permissionModeUpdatedAt?: number;
   agentModeId?: string;
@@ -42,6 +43,7 @@ type ForkInheritedMetadataOverrides = Pick<
   Metadata,
   | 'permissionMode'
   | 'approvalProfileId'
+  | 'approvalProfileTeamOrGroupDerived'
   | 'permissionModeUpdatedAt'
   | 'sessionModesV1'
   | 'sessionModesV2'
@@ -309,8 +311,12 @@ export function resolveForkInheritedOverridesFromMetadata(
   const sourceApprovalProfileId = readSessionStateFieldFromMetadata(metadata ?? {}, 'intent.approvalProfileId');
   if (requestedApprovalProfileId !== undefined || sourceApprovalProfileId !== undefined) {
     const approvalProfileId = resolveInheritedApprovalProfileIdV1(requestedApprovalProfileId, sourceApprovalProfileId);
+    const approvalProfileTeamOrGroupDerived = requestedApprovalProfileId === undefined
+      && metadata?.approvalProfileTeamOrGroupDerived === true;
     spawn.approvalProfileId = approvalProfileId;
+    spawn.approvalProfileTeamOrGroupDerived = approvalProfileTeamOrGroupDerived;
     metadataOverrides.approvalProfileId = approvalProfileId;
+    metadataOverrides.approvalProfileTeamOrGroupDerived = approvalProfileTeamOrGroupDerived;
   }
 
   const displayTitle = resolveInheritedDisplayTitle(metadata);
