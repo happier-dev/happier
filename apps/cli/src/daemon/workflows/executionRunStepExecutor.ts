@@ -409,6 +409,7 @@ function buildNativeAgentRunStartInput(params: Readonly<{
     sessionId,
     intent: 'agent',
     backendTarget: selection.agentTarget,
+    ...(selection.projectContext ? { projectContext: selection.projectContext } : {}),
     instructions: params.instructions,
     localInputId,
     resultContract: executionParams.step.result,

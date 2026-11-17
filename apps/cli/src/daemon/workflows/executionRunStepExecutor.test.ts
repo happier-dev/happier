@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema, buildBackendTargetKeyV2, createActionExecutor, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { readExecutionRunWorkflowObservationSink, type ExecutionRunWorkflowObservationSink } from '@/agent/runtime/bridges/executionRun/executionRunWorkflowObservation';
 import { deriveExecutionRunIdFromActionRequestId } from '@/agent/runtime/bridges/executionRun/startExecutionRun';
+import { ProjectSessionDefaultsContextSelectionV1Schema } from '@happier-dev/protocol/projects/projectSessionDefaultsSelectionV1';
+import { ExecutionRunStartActionRequestSchema } from '@happier-dev/protocol/actions/specs/executionRuns';
 
 import {
   projectWorkflowRetainedRuntimeSelectionV1,
@@ -904,7 +906,7 @@ describe('workflow detached Execution Run step executor', () => {
     { retained: true, source: 'native' },
     { retained: false, source: 'account_provider_connection' },
     { retained: true, source: 'team_resource' },
-  ] as const)('uses the portable Launch Profile and preserves $source selection with frozen input=$retained', async ({ retained, source }) => {
+  ] as const)('uses the portable Launch Profile and preserves $source selection with frozen input=$retained and qualified Project context', async ({ retained, source }) => {
     let localInputId = '';
     // Native daemon transport is the boundary; the Action executor remains real.
     const executionRunStart = vi.fn<NonNullable<ActionExecutorDeps['executionRunStart']>>(async (_sessionId, value: unknown) => {
@@ -929,6 +931,10 @@ describe('workflow detached Execution Run step executor', () => {
     });
 
     const frozenText = 'Original role\n\n<happier_forge_evidence v="1">Original PR comment</happier_forge_evidence>';
+    const projectContext = ProjectSessionDefaultsContextSelectionV1Schema.parse({
+      projectRef: { serverId: 'project-home', projectKey: 'project-1' },
+      sourceRef: { serverId: 'source-home', sourceId: 'source-1' },
+    });
     const beforeInputAdmission = vi.fn(async (_renderedText?: string) => {});
     const legacyRef = baseParams().execution.modelSelection.ref;
     const { providerConnectionId: _providerConnectionId, ...nativeRef } = legacyRef;
@@ -939,12 +945,13 @@ describe('workflow detached Execution Run step executor', () => {
         : source === 'account_provider_connection' ? { ...nativeRef, source, providerConnectionId: 'provider-1' }
           : { ...teamRef, source } };
     const result = await execute(baseParams({
-      execution: { ...baseParams().execution, modelSelection, profileId: 'launch-profile-1' },
+      execution: { ...baseParams().execution, modelSelection, profileId: 'launch-profile-1', projectContext },
       beforeInputAdmission,
       ...(retained ? { input: { ...baseParams().input, renderedText: frozenText } } : {}),
     }));
     expect(result, JSON.stringify(result)).toMatchObject({ kind: 'completed' });
     expect(executionRunStart).toHaveBeenCalledWith(null, expect.objectContaining({
+      projectContext,
       instructions: retained ? frozenText : expect.stringContaining('Frozen reviewer instructions'),
       ...(source === 'team_resource'
         ? { teamCredentialModel: { kind: 'team_credential_provider_model', ...teamRef } }
@@ -957,6 +964,15 @@ describe('workflow detached Execution Run step executor', () => {
     expect(beforeInputAdmission).toHaveBeenCalledWith(start.instructions);
     expect(start).not.toHaveProperty('profileId');
     expect(start).not.toHaveProperty('profileSourceCustody');
+    if (source === 'v1') {
+      // Malformed qualified context is refused at the same real Action boundary before native transport.
+      const startInput = { ...start, sessionId: null };
+      expect(ExecutionRunStartActionRequestSchema.safeParse(startInput).success).toBe(true);
+      await expect(actionExecutor.execute('execution.run.start', {
+        ...startInput,
+        projectContext: { sourceRef: { sourceId: 'source-1' } },
+      }, buildActionContext())).resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    }
     await expect(execute(baseParams({ authorization: { admittedPermissionCeiling: 'read-only', principal: { kind: 'host' } } })))
       .resolves.toMatchObject({ kind: 'failed', code: 'workflow_permission_escalation_denied' });
     expect(executionRunStart).toHaveBeenCalledOnce();

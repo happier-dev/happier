@@ -49,6 +49,7 @@ import { HappierStructuredInputV1Schema } from '../../runtime/input/structuredIn
 import { PluginSourceCustodyV1Schema } from '../../plugins/runtime/sourceCustody.js';
 import { AgentSessionToolPolicyShapeV1 } from '../../runtime/permissionIntentV1.js';
 import { ApprovalProfileIdV1Schema } from '../../actions/approvalProfiles.js';
+import { ProjectSessionDefaultsContextSelectionV1Schema } from '../../projects/projectSessionDefaultsSelectionV1.js';
 
 export const ExecutionRunTeamCredentialSessionBindingConsentV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
@@ -414,6 +415,7 @@ export const ExecutionRunStartRequestBaseSchema = lazyZodSchema(() => z.looseObj
   permissionMode: z.string().check(z.minLength(1)),
   /** Reference only; null explicitly opts out of inherited selection. */
   approvalProfileId: z.optional(z.nullable(ApprovalProfileIdV1Schema)),
+  projectContext: z.optional(ProjectSessionDefaultsContextSelectionV1Schema),
   retentionPolicy: ExecutionRunRetentionPolicySchema,
   runClass: ExecutionRunClassSchema,
   ioMode: ExecutionRunIoModeSchema,
