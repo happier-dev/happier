@@ -4,7 +4,7 @@ import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/c
 import { DaemonVoiceSpeechSynthesizeRequestSchema, DaemonVoiceSpeechTranscribeRequestSchema,
   DaemonVoiceSpeechTranscribeUploadChunkRequestSchema } from '@happier-dev/protocol/daemon/voiceSpeech';
 
-import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -176,10 +176,10 @@ describe('bundled speech selected-daemon client', () => {
     // Admit the real HTTP baseline before publishing app-local target changes.
     // A still-pending bootstrap is allowed to replace that unacknowledged fixture input.
     await waitForTestEvent(storage.subscribe, storage.getState, state => state.settingsScope?.serverId === account!.home.id
-      && state.settingsScope.accountId === 'account-a' && state.settingsVersion === 1);
+      && state.settingsScope?.accountId === 'account-a' && state.settingsVersion === 1);
     expect(storage.getState().settingsScope).toEqual({ serverId: account!.home.id, accountId: 'account-a' });
     expect(storage.getState().settingsVersion).toBe(1);
-    storage.getState().applyMachines(machineIds.map(id => createMachineFixture({ id, activeAt: Date.now() })));
+    storage.getState().applyMachines(machineIds.map(id => createHydratedPlainMachineFixture({ id, accountId: 'account-a', machine: { activeAt: Date.now() } })));
   });
   afterEach(async () => { await account?.dispose(); account = null; });
   it('requests a public speech target catalog without provider-private RPC selection or secret material', async () => {

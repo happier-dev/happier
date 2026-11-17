@@ -1,6 +1,9 @@
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { createDeferred, waitForTestEvent } from '@/dev/testkit';
-import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { fetchAndApplyMachines } from '@/sync/engine/machines/syncMachines';
 
 const network = await installSessionOpsNetworkBoundary();
 import { readFile } from 'node:fs/promises';
@@ -93,13 +96,28 @@ beforeEach(async () => {
   preparationHome = await createPlainArtifactHomeFixture('https://voice-preparation.example', { handleRequest: async (path, init) => createPlainMachineReadHttpResponseFixture(path, init) ??
     await preparationPurposes.handle(new URL(path, 'https://voice-preparation.example'), init)
       ?? (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list` ? response(createPlainProjectAccountRowListFixture())
+      : path === '/v1/machines' ? response([createPlainMachineRowFixture({ id: 'machine-1', accountId: 'artifact-account' })])
       : path === '/v2/account/settings' ? response({ version: 1, content: { t: 'plain', v: {} } })
       : path === PROMPT_LIBRARY_ROWS_ROUTE_V1 ? response({ status: 'listed', rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({
         key, revision: 1, content: key === 'voice' ? { t: 'plain', v: { key, value: { v: 1, scope: { kind: 'voice' }, entries: [] } } } : null,
-      })) }) : null) });
+      })) }) : createEmptyAccountBootstrapHttpResponse(path, init)) });
   await preparationPurposes.hydrate({ serverId: preparationHome.home.id, accountId: 'artifact-account' });
   const machine = createMachineFixture({ activeAt: Date.now() });
   storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [preparationHome.home.id]: [machine] } });
+  const context = await captureLazyActionAccountContext(preparationHome.home.id);
+  try {
+    await fetchAndApplyMachines({ credentials: context.credentials, expectedAccountMode: 'plain', encryption: null,
+      machineDataKeys: new Map(), sourceServerId: preparationHome.home.id, throwOnError: true, replace: true,
+      applyMachines: (machines, replace, rows) => storage.getState().applyMachines(machines, replace, {
+        sourceServerId: preparationHome.home.id,
+        activityUpdates: rows.map(({ id, active, activeAt }) => ({ id, active, activeAt })),
+      }),
+      onListComplete: () => storage.getState().markMachineListSettled(preparationHome.home.id),
+    });
+  } finally { context.dispose(); }
+  await publishMachineInventoryForTest({ serverId: preparationHome.home.id, accountId: 'artifact-account' }, [
+    createHydratedPlainMachineFixture({ id: 'machine-1', accountId: 'artifact-account', machine: { activeAt: Date.now() } }),
+  ]);
 });
 afterEach(async () => { await preparationHome.dispose(); mediatedCredentialMachineRpc.mockReset(); });
 afterAll(() => network.dispose());

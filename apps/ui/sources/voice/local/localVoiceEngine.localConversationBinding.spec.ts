@@ -748,7 +748,16 @@ describe('local voice engine local conversation binding', () => {
             new Error('machine unavailable at /Users/private/repository'),
             { code: 'VOICE_AGENT_BACKEND_TARGET_UNAVAILABLE' },
         );
-        interceptVoiceSpawn(async () => { throw preparationFailure; });
+        const incumbent = machineRpcWithServerScope.getMockImplementation();
+        if (!incumbent) throw new Error('Missing canonical machine Socket boundary');
+        machineRpcWithServerScope.mockImplementation(async (request: MachineRequest) => {
+            if (request.method === RPC_METHODS.SESSION_SPAWN_NEW) {
+                return ActionExecuteFailureSchema.parse({
+                    ok: false, errorCode: preparationFailure.code, error: preparationFailure.message,
+                });
+            }
+            return incumbent(request);
+        });
 
         // Producer-declared Action codes survive failure projection (2b34aa788d7);
         // the Voice boundary keeps that typed cause without private error prose.

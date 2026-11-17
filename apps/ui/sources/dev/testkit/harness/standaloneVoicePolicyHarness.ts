@@ -8,6 +8,8 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { createAccountKvHttpFixture } from '../fixtures/accountKvHttpFixture';
 import { createPlainAccountEncryptionCurrentnessFixture } from '../fixtures/accountEncryptionCurrentness';
 import { createSessionFixture } from '../fixtures/sessionFixtures';
+import type { Machine } from '@/sync/domains/state/storageTypes';
+import { publishMachineInventoryForTest } from './machinePresence';
 import { createCompactSessionListFetchBoundary } from './sessionReadBatchHttpBoundary';
 import { createConnectedPurposeCatalogHttpBoundary } from './connectedAccountCatalogBoundary';
 import type { SettingsWriteDelta } from '@/sync/domains/settings/settings';
@@ -15,6 +17,9 @@ import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createRetainedVoiceAgentActionHttpBoundaries } from './voiceAgentRpcBoundary';
 import { createAccountTokenForTests } from './homeGovernanceHarness';
+import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { V2SessionMessageResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { z } from 'zod/mini';
 
 // Native/OS adapters only: Account, Sync, settings, catalog and launch remain real.
 vi.mock('react-native', async () => {
@@ -102,6 +107,10 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
     /** Additional server-created Sessions for exact target/privacy composition. */
     sessions?: ReadonlyArray<ReturnType<typeof createSessionFixture>>;
     initializeSessionId?: string;
+    /** Deliberate Account preferences for the flow exercised by the caller. */
+    settings?: SettingsWriteDelta;
+    /** Explicit live daemon census; rows retain their own active/inactive truth. */
+    machines?: readonly Machine[];
     /** Additional genuine Home HTTP leaves; core Account and Session routes stay owned above. */
     handleRequest?: (path: string, init?: RequestInit) => Promise<Response | null>;
 }>) {
@@ -137,6 +146,7 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
         const { profileDefaults } = await import('@/sync/domains/profiles/profile');
         const transcriptMemory = createAccountKvHttpFixture();
         const messageRequests: string[] = [];
+        let transcriptSequence = 0;
         const connection = await restoreServerAccountForTest({
             serverUrl: `https://voice-policy-${params.mode}.example.test`,
             serverIdentityId: `srv_voice-policy-${params.mode}-home`,
@@ -160,8 +170,17 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
                 if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
                 if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: 'account-a' });
                 if (path === '/v2/account/settings') return Response.json({ version: 1, content: { t: 'plain', v: baselineSettings } });
+                if (path === ACP_CATALOG_ROWS_ROUTE_V1) return Response.json(AcpCatalogRowReadResponseV1Schema.parse({ status: 'absent' }));
                 if (path.endsWith('/messages')) {
                     messageRequests.push(path);
+                    if (init?.method === 'POST') {
+                        const { localId } = z.object({ localId: z.string() }).parse(JSON.parse(String(init.body)));
+                        transcriptSequence += 1;
+                        return Response.json(V2SessionMessageResponseSchema.parse({ didWrite: true, message: {
+                            id: `voice-policy-message-${transcriptSequence}`, seq: transcriptSequence,
+                            localId, createdAt: Date.now(),
+                        } }));
+                    }
                     return Response.json({ messages: [], hasMore: false });
                 }
                 const sessionResponse = sessionHttp.handle(url, init);
@@ -188,8 +207,8 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
             unsubscribe = storage.subscribe(observeBootstrap);
             observeBootstrap();
         });
-        session = { ...session, serverId: connection.home.id };
-        const sessionScopeId = resolveServerProfileScopeIdForIdentifier(connection.home.id);
+        session = { ...session, serverId: connection.serverId };
+        const sessionScopeId = resolveServerProfileScopeIdForIdentifier(connection.serverId);
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const account = await captureLazyActionAccountContext(connection.home.id);
         try {
@@ -202,9 +221,10 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
         applyPreference({ experiments: true, featureToggles: { voice: true, 'voice.agent': true, 'execution.runs': true },
             voice: { ...storage.getState().settings.voice, providerId: 'local_conversation', assistantLanguage: 'fr-FR', welcome: { ...storage.getState().settings.voice.welcome, enabled: params.mode !== 'off', mode: params.mode === 'on_first_turn' ? params.mode : 'immediate' },
                 providers: { local_conversation: { schemaVersion: 1, config: { agent: { agentSource: 'agent', agentId: 'claude', prewarmOnConnect: false, transcript: { persistenceMode: 'ephemeral', epoch: 0 } }, tts: { autoSpeakReplies: true } } } } } });
-        storage.setState({ sessions: { [session.id]: session, ...Object.fromEntries(extraSessions.map(value => [value.id, { ...value, serverId: connection.home.id }])) }, sessionListRowsByServerId: { [sessionScopeId]: { [session.id]: session } },
+        if (params.settings) applyPreference(params.settings);
+        storage.setState({ sessions: { [session.id]: session, ...Object.fromEntries(extraSessions.map(value => [value.id, { ...value, serverId: connection.serverId }])) }, sessionListRowsByServerId: { [sessionScopeId]: { [session.id]: session } },
             ordinarySessionListMembershipByServerId: { [sessionScopeId]: [session.id] },
-            sessionListIndexByServerId: { [sessionScopeId]: [{ type: 'session', sessionId: session.id, serverId: connection.home.id, serverName: 'Voice' }] } });
+            sessionListIndexByServerId: { [sessionScopeId]: [{ type: 'session', sessionId: session.id, serverId: connection.serverId, serverName: 'Voice' }] } });
         const { sync } = await import('@/sync/sync');
         await sync.refreshSessions({ awaitSessionListHydration: true });
         const { EphemeralUpdateSchema } = await import('@happier-dev/protocol/updates');
@@ -233,6 +253,7 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
                 })}`);
             }
         });
+        if (params.machines) await publishMachineInventoryForTest({ serverId: connection.serverId, accountId: 'account-a' }, params.machines);
         const initialize = () => initializeVoiceAgentHandle({ sessionId: params.initializeSessionId ?? session.id,
             getDaemonVoiceAgentClient: (scope) => new DaemonVoiceAgentClient(scope), setDeferredTargetSessionContext: () => {} });
         const handle = await initialize();
@@ -245,7 +266,7 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
             /** Physical Home message reads, excluding metadata/catalog requests. */
             messageRequests,
             /** Observe genuine outbound SDK namespaces, including lazily created sockets. */
-            get rpcSockets() { return [...(sockets.get(connection.home.serverUrl) ?? [])]; },
+            get rpcSockets(): import('socket.io-client').Socket[] { return [...(sockets.get(connection.home.serverUrl) ?? [])]; },
             /**
              * The real local engine answers Agent activity from this execution owner.
              * This activates the retained Agent conversation without acquiring a microphone.
@@ -269,7 +290,7 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
                 bindVoiceRuntimeAttemptBinding({ owner: bindingOwner, binding: {
                     adapterId: adapter.id, controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
                     conversationSessionId: session.id,
-                    conversationSessionAddress: { serverId: connection.home.id, sessionId: session.id },
+                    conversationSessionAddress: { serverId: connection.serverId, sessionId: session.id },
                     targetSessionAddress, transcriptMode: 'native_session', lifetime: 'runtime_attempt', updatedAt: Date.now(),
                 } });
                 const binding = voiceSessionBindingStore.getState().getByConversationSessionId(session.id);

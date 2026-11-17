@@ -1,5 +1,9 @@
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
-import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { fetchAndApplyMachines } from '@/sync/engine/machines/syncMachines';
 import { createPluginArtifactTransferBoundary, pluginArtifactTransferDaemonState } from '@/dev/testkit/harness/pluginArtifactTransferBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 
@@ -92,11 +96,30 @@ beforeEach(async () => {
   account = await createPlainArtifactHomeFixture('https://projected-voice.example.test', {
     serverFeatures: createRootLayoutFeaturesResponse({ features: { machines: { enabled: true, transfer: { enabled: true, directPeer: { enabled: false }, serverRouted: { enabled: false } } } } }),
     handleRequest: async (path, init) => createPlainMachineReadHttpResponseFixture(path, init, 'artifact-account', { daemonState: pluginArtifactTransferDaemonState }) ?? await purposes.handle(new URL(path, 'https://projected-voice.example.test'), init)
-      ?? answerVoiceRealtimePreparationHttpRequest(new URL(path, 'https://projected-voice.example.test'), storage.getState().settings),
+      ?? answerVoiceRealtimePreparationHttpRequest(new URL(path, 'https://projected-voice.example.test'), storage.getState().settings)
+      ?? (path === '/v1/machines' ? Response.json([createPlainMachineRowFixture({ id: 'machine-1', accountId: 'artifact-account',
+        machine: createMachineFixture({ activeAt: Date.now(), daemonState: pluginArtifactTransferDaemonState }),
+      })]) : null)
+      ?? createEmptyAccountBootstrapHttpResponse(path, init),
   });
   await purposes.hydrate({ serverId: account.home.id, accountId: 'artifact-account' });
   const machine = createMachineFixture({ activeAt: Date.now(), daemonState: pluginArtifactTransferDaemonState });
   storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [account.home.id]: [machine] } });
+  const context = await captureLazyActionAccountContext(account.home.id);
+  try {
+    await fetchAndApplyMachines({ credentials: context.credentials, expectedAccountMode: 'plain', encryption: null,
+      machineDataKeys: new Map(), sourceServerId: account.home.id, throwOnError: true, replace: true,
+      applyMachines: (machines, replace, rows) => storage.getState().applyMachines(machines, replace, {
+        sourceServerId: account.home.id,
+        activityUpdates: rows.map(({ id, active, activeAt }) => ({ id, active, activeAt })),
+      }),
+      onListComplete: () => storage.getState().markMachineListSettled(account.home.id),
+    });
+  } finally { context.dispose(); }
+  await publishMachineInventoryForTest({ serverId: account.home.id, accountId: 'artifact-account' }, [
+    createHydratedPlainMachineFixture({ id: 'machine-1', accountId: 'artifact-account',
+      machine: { activeAt: Date.now(), daemonState: pluginArtifactTransferDaemonState } }),
+  ]);
 });
 afterEach(async () => {
   await account?.dispose();
@@ -550,7 +573,6 @@ describe('projected external Voice provider activation', () => {
       scope: 'account',
       kind: 'apiKey',
       recipientContract,
-      recipientContractDigest: createRecipientContractDigestV1(recipientContract),
     });
     const installedRegistry = createDefaultVoiceProviderRegistry();
     const installedSettingsDescriptor = readBundledSpeechSettingsDescriptorFromEntry(

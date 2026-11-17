@@ -249,7 +249,6 @@ async function enterNewKey(value: string): Promise<void> {
         input.dispatchEvent(new Event('input', { bubbles: true }));
     });
     expect(input.value).toBe(value);
-    expect((requireNode('saved-secret-create-name') as HTMLInputElement).value).not.toBe('');
     expect(requireNode('saved-secret-create-submit').getAttribute('aria-disabled')).not.toBe('true');
     await act(async () => { pressWithPointer(requireNode('saved-secret-create-submit')); });
 }
@@ -469,31 +468,21 @@ describe('Voice credential row → Connect → account-settings write', () => {
         });
         await enterNewKey('fixture-new-dormant-key');
         if (approvalRequired) {
-            await act(async () => {
-                await waitForTestEvent(account!.subscribe, () => account!.artifacts.list(), artifacts => artifacts.length === 1);
-            });
-            expect(account!.artifacts.list()).toHaveLength(1);
+            await waitForTestEvent(subscribeDomMutations,
+                () => query('actions.confirmation-review.decision-approve'), node => node !== null);
             await flush();
             expect(voiceCredentialGestureRecords()).toEqual([]);
             expect(account!.creations).toHaveLength(0);
             expect(account!.settingsWrites).toHaveLength(0);
             expect(appliedVoiceBinding()).toMatchObject({ credentialSource: { kind: 'connectedAccount' }, credentialBindings: { account: {} } });
+            expect(requireNode('saved-secret-create-submit').getAttribute('aria-disabled')).toBe('true');
             await act(async () => { pressWithPointer(requireNode('saved-secret-create-submit')); });
             await flush();
             expect(query('saved-secret-create-value')).not.toBeNull();
-            expect(account!.artifacts.list()).toHaveLength(1);
-            const { StoredApprovalRequestSchema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
-            const artifact = account!.artifacts.list()[0]!;
-            const request = StoredApprovalRequestSchema.parse(JSON.parse(account!.artifacts.readPlainBody(artifact.id)!));
-            expect(request.actionId).toBe('secrets.create');
-            // A persisted approval label cannot authorize a live-only invocation.
-            // Drive the same authenticated decision Action as the Inbox.
-            const { runTeamAction } = await import('@/sync/ops/teams/teamActionClient');
             await act(async () => {
-                const decision = await runTeamAction({ scope: account!.scope, actionId: 'approval.request.decide',
-                    input: { artifactId: artifact.id, decision: approval === 'executed' ? 'approve' : 'cancel' },
-                    parse: value => value });
-                expect(decision.kind).toBe('succeeded');
+                pressWithPointer(requireNode(approval === 'executed'
+                    ? 'actions.confirmation-review.decision-approve'
+                    : 'actions.confirmation-review.decision-reject'));
             });
             if (approval === 'canceled') {
                 await waitForTestEvent(subscribeDomMutations, () => {

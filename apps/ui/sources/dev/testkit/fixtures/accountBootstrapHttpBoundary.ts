@@ -37,10 +37,13 @@ import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/proto
 import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 import { AutomationDefinitionListResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { TaskResourcesListResponseV1Schema } from '@happier-dev/protocol/actions/internalTaskActions';
 import { FeedResponseSchema } from '@/sync/domains/social/feedTypes';
 import type { KvListResponse } from '@/sync/api/account/apiKv';
 import { CHANGES_AFTER_CURSOR_HTTP_HEADER, ChangesResponseSchema, CurrentCursorResponseSchema } from '@happier-dev/protocol/changes';
+import { HomeGovernanceGetInputV1Schema } from '@happier-dev/protocol/home/governance/actionsV1';
+import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
 
 
 /** Explicit empty-Account fixtures only; callers resolve the Home and apply their overrides first. */
@@ -65,6 +68,7 @@ export function createEmptyAccountBootstrapHttpResponse(path: string, init?: Req
         if (pathname === '/v1/kv') return Response.json({ items: [] } satisfies KvListResponse);
         if (pathname === '/v1/machines') return Response.json([] satisfies FetchedMachineRow[]);
         if (pathname === '/v3/automations') return Response.json(AutomationDefinitionListResponseSchema.parse({ automations: [], nextCursor: null }));
+        if (pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return Response.json(ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
         if (pathname === '/v1/feed') return Response.json(FeedResponseSchema.parse({ items: [], hasMore: false }));
         if (pathname === AUTHORING_MEMORY_ROUTE_V1) return Response.json(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
         if (pathname === '/v2/sessions' || pathname === '/v2/sessions/active') {
@@ -84,6 +88,12 @@ export function createEmptyAccountBootstrapHttpResponse(path: string, init?: Req
         }
     }
     if (method === 'POST') {
+        if (pathname === '/v1/home/governance/get') {
+            const input = HomeGovernanceGetInputV1Schema.safeParse(typeof init?.body === 'string' ? JSON.parse(init.body) : {});
+            if (input.success && input.data.projection === 'session_defaults') {
+                return Response.json(HomeSessionDefaultsProjectionV1Schema.parse({ homeDefaults: null }));
+            }
+        }
         // Optional Account material uses the same empty inventory through bulk reads.
         if (pathname === '/v1/kv/bulk') return Response.json({ values: [] });
         // Ordinary Machine input admission reads its managed association; an empty Account has none.

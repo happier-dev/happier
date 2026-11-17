@@ -721,10 +721,15 @@ async function createLocalVoiceAccountHarness() {
             const spawn = await createExternalActionAccountHttpBoundary({
                 serverUrl: 'https://local-voice-actions.example.test', serverIdentityId,
                 accountId: 'account-a', machineId: 'machine-1', actionId: 'session.spawn_new', tokenEpoch: 0,
+                // Native carrier creation has no private invocation; Voice tools
+                // send the retained Run's requester invocation to this same endpoint.
+                requesterInvocation: 'optional',
                 async execute(input) {
-                    const result = await machineRpcWithServerScope({ serverId: localVoiceHomeId, machineId: 'machine-1',
+                    const responding = machineRpcWithServerScope({ serverId: localVoiceHomeId, machineId: 'machine-1',
                         method: RPC_METHODS.SESSION_SPAWN_NEW,
                         payload: admitSessionSpawnNewActionInputV2(SessionSpawnNewActionInputV2Schema.parse(input)) });
+                    publishLocalVoiceBoundaryEvent(`rpc:${RPC_METHODS.SESSION_SPAWN_NEW}`);
+                    const result = await responding;
                     const failed = ActionExecuteFailureSchema.safeParse(result);
                     return failed.success ? failed.data : projectSessionSpawnNewActionResultV1(SessionSpawnNewResultV1Schema.parse(result));
                 },

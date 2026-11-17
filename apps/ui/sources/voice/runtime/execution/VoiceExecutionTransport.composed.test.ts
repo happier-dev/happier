@@ -167,7 +167,7 @@ describe('real Local Voice Agent activation', () => {
         let inventoryUnavailable = false;
         const fixture = await createStandaloneVoicePolicyHarness({ mode: 'off', dispatch: async (method, input) => {
             if (inventoryUnavailable && method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST) {
-                return { ok: false, errorCode: 'target_unavailable', error: 'Target unavailable' };
+                return { ok: false, errorCode: 'execution_run_read_unavailable', error: 'Inventory unavailable' };
             }
             if (inventoryUnavailable && primary === 'terminal' && method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP) {
                 return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Run already ended' };
@@ -188,7 +188,7 @@ describe('real Local Voice Agent activation', () => {
             expect(readVoiceAgentRunMetadataFromSession({ sessionId: fixture.sessionId,
                 serverId: fixture.handle.accountLifetime.scope.serverId })).toBeNull();
             expect(warnings).toHaveBeenCalledWith(expect.stringContaining('[voiceRunRecovery]'),
-                expect.objectContaining({ errorCode: 'target_unavailable' }));
+                expect.objectContaining({ errorCode: 'execution_run_read_unavailable' }));
             expect(transport.isActive(fixture.sessionId)).toBe(false);
         } finally { inventoryUnavailable = false; warnings.mockRestore(); await fixture.dispose(); }
     });
@@ -328,6 +328,7 @@ describe('real Local Voice Agent activation', () => {
 
     it('stops an unanswered activation and permits a new activation on the same session', async () => {
         const daemon = await createRetainedVoiceAgentRpcBoundary();
+        const unanswered = createDeferred<never>();
         let stall = false;
         let entered!: () => void;
         const entering = new Promise<void>(resolve => { entered = resolve; });
@@ -335,7 +336,7 @@ describe('real Local Voice Agent activation', () => {
             if (stall && (method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START
                 || method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1)) {
                 entered();
-                return await new Promise(() => {});
+                return await unanswered.promise;
             }
             return daemon.dispatch(method, input);
         } });
@@ -349,6 +350,9 @@ describe('real Local Voice Agent activation', () => {
             expect(await pending).toBe('cancelled');
             await stopping;
             expect(transport.isActive(fixture.sessionId)).toBe(false);
+            // The remote responder can settle after Fetch has already aborted.
+            // Its late failure must remain observed by the transport boundary.
+            unanswered.reject(new Error('Remote responder failed after cancellation'));
             stall = false;
             await transport.ensureRunning(fixture.sessionId);
             expect(transport.isActive(fixture.sessionId)).toBe(true);
@@ -387,7 +391,7 @@ describe('real Local Voice Agent activation', () => {
     it('makes the hidden bound conversation active through the initializer and daemon transport, then retires its context sink', async () => {
         const daemon = await createRetainedVoiceAgentRpcBoundary();
         const fixture = await createStandaloneVoicePolicyHarness({
-            mode: 'off', initializeSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+            mode: 'off',
             existingSession: createSessionFixture({ id: 'hidden-voice', active: true, metadata: {
                 path: '/voice', host: 'voice.test', flavor: 'claude',
                 ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }),

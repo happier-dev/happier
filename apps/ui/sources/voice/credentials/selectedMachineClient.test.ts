@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred } from '@/dev/testkit';
-import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
@@ -55,7 +55,7 @@ describe('selected Voice machine client', () => {
         return null;
       },
     });
-    storage.getState().applyMachines(machineIds.map(id => createMachineFixture({ id, activeAt: Date.now() })));
+    storage.getState().applyMachines(machineIds.map(id => createHydratedPlainMachineFixture({ id, accountId: 'account-a', machine: { activeAt: Date.now() } })));
     observeMachinePresenceForTest({ serverId: account.home.id, accountId: 'account-a' }, machineIds);
     selectMachine('machine-a');
   });
@@ -96,15 +96,14 @@ describe('selected Voice machine client', () => {
     expect(outcome).toBe('retired');
   });
 
-  it('retains the dispatched answer when automatic recent-machine ordering changes mid-call', async () => {
+  it('retains the dispatched answer when the automatic target changes mid-call', async () => {
     storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({
       voice: { ...storage.getState().settings.voice, executionMachine: { mode: 'auto', machineId: null } },
     }, storage.getState().settings));
-    persistVoiceAutoTargetMachineId(null, storage.getState().settingsScope);
-    storage.getState().applyAuthoringMemory({ recentMachinePaths: [{ machineId: 'machine-a', path: '/repo' }] });
+    persistVoiceAutoTargetMachineId('machine-a', storage.getState().settingsScope);
     expect(resolveVoiceExecutionMachineId()).toBe('machine-a');
     daemonReply = async () => {
-      storage.getState().applyAuthoringMemory({ recentMachinePaths: [{ machineId: 'machine-b', path: '/repo' }] });
+      persistVoiceAutoTargetMachineId('machine-b', storage.getState().settingsScope);
       return { ok: true };
     };
     await expect(createSelectedVoiceMachineClient().invoke('daemon.voice.probe', { v: 1 }))
@@ -128,9 +127,9 @@ describe('selected Voice machine client', () => {
   });
 
   it('follows the real replacement owner for a captured origin rather than the current selection', async () => {
-    storage.getState().applyMachines(machineIds.map(id => createMachineFixture({ id, activeAt: Date.now(),
+    storage.getState().applyMachines(machineIds.map(id => createHydratedPlainMachineFixture({ id, accountId: 'account-a', machine: { activeAt: Date.now(),
       ...(id === 'machine-origin' ? { active: false, replacedByMachineId: 'machine-replacement' } : {}),
-    })));
+    } })));
     observeMachinePresenceForTest({ serverId: account!.home.id, accountId: 'account-a' }, machineIds);
     const operation = createSelectedVoiceMachineClient().bindOperation('  machine-origin  ');
     await operation.invoke('daemon.voice.speech.transcribeUpload.init', {});
@@ -139,9 +138,9 @@ describe('selected Voice machine client', () => {
   });
 
   it('refuses an unreachable captured origin before any transport effect', () => {
-    storage.getState().applyMachines(machineIds.map(id => createMachineFixture({ id,
+    storage.getState().applyMachines(machineIds.map(id => createHydratedPlainMachineFixture({ id, accountId: 'account-a', machine: {
       active: id !== 'machine-origin', activeAt: id === 'machine-origin' ? 1 : Date.now(),
-    })));
+    } })));
     observeMachinePresenceForTest({ serverId: account!.home.id, accountId: 'account-a' }, machineIds);
     recordMachineRequestFailed({ serverId: account!.home.id, accountId: 'account-a', machineId: 'machine-origin' });
     expect(() => createSelectedVoiceMachineClient().bindOperation('machine-origin'))

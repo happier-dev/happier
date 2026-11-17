@@ -11,6 +11,7 @@ import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voic
 import type { VoiceSession } from '@/realtime/types';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { waitForTestEvent } from '@/dev/testkit';
 import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 
 await prepareStandaloneVoicePolicyHarness();
@@ -379,7 +380,7 @@ describe('voiceHooks sink routing', () => {
     expect(localProviderTurns).not.toHaveBeenCalled();
   });
 
-  it('prefers the active local-agent owner over newly selected realtime settings during ready-event routing', () => {
+  it('prefers the active local-agent owner over newly selected realtime settings during ready-event routing', async () => {
     storage.setState((state: any) => ({
       ...state,
       settings: {
@@ -419,7 +420,9 @@ describe('voiceHooks sink routing', () => {
     } as any]);
     // The connected owner's completion is spoken without another Agent turn,
     // including after the selected provider changes.
-    expect(announcementTexts('voice-conversation-1')).toEqual(['The coding assistant finished the review.']);
+    await waitForTestEvent(storage.subscribe, () => {
+      expect(announcementTexts('voice-conversation-1')).toEqual(['The coding assistant finished the review.']);
+    });
     expect(sendTextMessage).not.toHaveBeenCalled();
     expect(sendContextualUpdate).not.toHaveBeenCalled();
   });
@@ -494,7 +497,7 @@ describe('voiceHooks sink routing', () => {
     );
   });
 
-  it('routes active-target assistant replies to local voice as deterministic foreground announcements only', () => {
+  it('routes active-target assistant replies to local voice as deterministic foreground announcements only', async () => {
     voiceSessionBindingStore.getState().bind({
       adapterId: 'local_conversation',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
@@ -514,11 +517,13 @@ describe('voiceHooks sink routing', () => {
     expect(announcementTexts('voice-conversation-1')).toEqual([]);
     voiceHooks.onReady({ serverId: TEST_SERVER_ID, sessionId: 's1' }, completion);
 
-    expect(announcementTexts('voice-conversation-1')).toEqual(expect.arrayContaining([expect.stringContaining('The coding assistant needs approval.')]));
+    await waitForTestEvent(storage.subscribe, () => {
+      expect(announcementTexts('voice-conversation-1')).toEqual(expect.arrayContaining([expect.stringContaining('The coding assistant needs approval.')]));
+    });
     expect(localProviderTurns).not.toHaveBeenCalled();
   });
 
-  it('announces failed sub-agent run summaries immediately in the bound hidden voice conversation', () => {
+  it('announces failed sub-agent run summaries immediately in the bound hidden voice conversation', async () => {
     voiceSessionBindingStore.getState().bind({
       adapterId: 'local_conversation',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
@@ -551,10 +556,12 @@ describe('voiceHooks sink routing', () => {
       },
     } as any]);
 
-    expect(announcementTexts('voice-hidden-s1')).toEqual(expect.arrayContaining([expect.stringContaining('Invalid review output (expected strict JSON).')]));
+    await waitForTestEvent(storage.subscribe, () => {
+      expect(announcementTexts('voice-hidden-s1')).toEqual(expect.arrayContaining([expect.stringContaining('Invalid review output (expected strict JSON).')]));
+    });
   });
 
-  it('mirrors active-target assistant replies into the bound hidden voice conversation for hands-free follow-up', () => {
+  it('mirrors active-target assistant replies into the bound hidden voice conversation for hands-free follow-up', async () => {
     voiceSessionBindingStore.getState().bind({
       adapterId: 'local_conversation',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
@@ -571,11 +578,13 @@ describe('voiceHooks sink routing', () => {
       createdAt: 1,
     } as any]);
 
-    expect(announcementTexts('voice-hidden-s1')).toEqual(expect.arrayContaining([expect.stringContaining('What do you want handled in this workspace?')]));
+    await waitForTestEvent(storage.subscribe, () => {
+      expect(announcementTexts('voice-hidden-s1')).toEqual(expect.arrayContaining([expect.stringContaining('What do you want handled in this workspace?')]));
+    });
     expect(localProviderTurns).not.toHaveBeenCalled();
   });
 
-  it('treats the bound local target session as the primary action session without retaining background context when the target store is stale', () => {
+  it('treats the bound local target session as the primary action session without retaining background context when the target store is stale', async () => {
     useVoiceTargetStore.getState().setPrimaryActionSessionAddress(null);
     useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([]);
     voiceSessionBindingStore.getState().bind({
@@ -594,11 +603,13 @@ describe('voiceHooks sink routing', () => {
       createdAt: 1,
     } as any]);
 
-    expect(announcementTexts('voice-hidden-s1')).toEqual(expect.arrayContaining([expect.stringContaining('Choose one of the onboarding options.')]));
+    await waitForTestEvent(storage.subscribe, () => {
+      expect(announcementTexts('voice-hidden-s1')).toEqual(expect.arrayContaining([expect.stringContaining('Choose one of the onboarding options.')]));
+    });
     expect(localProviderTurns).not.toHaveBeenCalled();
   });
 
-  it('announces permission requests immediately without retaining a second detailed-request queue', () => {
+  it('announces permission requests immediately without retaining a second detailed-request queue', async () => {
     voiceSessionBindingStore.getState().bind({
       adapterId: 'local_conversation',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
@@ -611,11 +622,13 @@ describe('voiceHooks sink routing', () => {
 
     voiceHooks.onAgentRequest({ serverId: TEST_SERVER_ID, sessionId: 's1' }, 'req_1', 'permission', 'Bash', { command: 'rm -rf /tmp/x' });
 
-    expect(announcementTexts('voice-conversation-1')).toEqual(expect.arrayContaining([expect.stringContaining('needs permission')]));
+    await waitForTestEvent(storage.subscribe, () => {
+      expect(announcementTexts('voice-conversation-1')).toEqual(expect.arrayContaining([expect.stringContaining('needs permission')]));
+    });
     expect(localProviderTurns).not.toHaveBeenCalled();
   });
 
-  it('announces non-target user-action requests in the local hidden voice conversation when other-session updates are enabled', () => {
+  it('announces non-target user-action requests in the local hidden voice conversation when other-session updates are enabled', async () => {
     voiceSessionBindingStore.getState().bind({
       adapterId: 'local_conversation',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
@@ -631,7 +644,9 @@ describe('voiceHooks sink routing', () => {
       answers: [{ value: 'circle', title: 'Circle' }, { value: 'square', title: 'Square' }],
     });
 
-    expect(announcementTexts('voice-conversation-1')).toEqual(expect.arrayContaining([expect.stringContaining('needs your input')]));
+    await waitForTestEvent(storage.subscribe, () => {
+      expect(announcementTexts('voice-conversation-1')).toEqual(expect.arrayContaining([expect.stringContaining('needs your input')]));
+    });
     expect(localProviderTurns).not.toHaveBeenCalled();
   });
 

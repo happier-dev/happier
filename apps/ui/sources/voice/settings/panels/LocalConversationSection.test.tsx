@@ -5,6 +5,9 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 import {
   readLocalConversationVoiceSettings,
@@ -20,10 +23,15 @@ import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { t } from '@/text';
 import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsCatalogV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { normalizeCustomProviderTemplateV1 } from '@happier-dev/protocol/providers/connections/normalizeCustomTemplateV1';
+import { refreshProviderCatalog, resetProviderCatalogEngineForTests } from '@/sync/engine/settings/providerCatalogEngine';
+import { resetProviderCatalogSnapshotsForTests } from '@/sync/store/settings/providerCatalogSnapshot';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { resolveVoiceConfiguredAgentTarget } from '@/voice/agent/resolveVoiceConfiguredAgentTarget';
 import { storage } from '@/sync/domains/state/storage';
-import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { fetchAndApplyMachines } from '@/sync/engine/machines/syncMachines';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -49,6 +57,7 @@ import { OverlayPortalHost, OverlayPortalProvider } from '@/components/ui/popove
 import { TeamCredentialResourceCatalogEntryV1Schema, type TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { teamSummaryFixture } from '@/dev/testkit';
+import { teamCredentialDisplayNameFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { readAccountAgentProviderRequirements, readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
@@ -61,12 +70,24 @@ let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined
 let rowDefinitions: readonly unknown[];
 let teamResources: readonly TeamCredentialResourceCatalogEntryV1[] = [];
 const teamCatalogReads: string[] = [];
+let persistedSettings = settingsParse({});
+let providerCatalog = DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1;
+let persistedSettingsVersion = 4;
+const settingsWrites: unknown[] = [];
 async function publishMachineCensus() {
   if (!account) throw new Error('Expected a restored test Account');
   await fetchAndApplyMachines({ credentials: account.credentials, expectedAccountMode: 'plain', encryption: null,
-    machineDataKeys: new Map(), sourceServerId: account.home.id, throwOnError: true, replace: true,
-    applyMachines: (machines, replace) => storage.getState().applyMachines(machines, replace, { sourceServerId: account!.home.id }),
+    machineDataKeys: new Map(), sourceServerId: account.serverId, throwOnError: true, replace: true,
+    applyMachines: (machines, replace, rows) => storage.getState().applyMachines(machines, replace, {
+      sourceServerId: account!.serverId,
+      activityUpdates: rows.map(({ id, active, activeAt }) => ({ id, active, activeAt })),
+    }),
+    onListComplete: () => storage.getState().markMachineListSettled(account!.serverId),
   });
+  await publishMachineInventoryForTest({ serverId: account.serverId, accountId: 'voice-account' },
+    Object.values(storage.getState().machines).map(machine => createHydratedPlainMachineFixture({
+      id: machine.id, accountId: 'voice-account', machine,
+    })));
 }
 
 
@@ -148,7 +169,7 @@ installSessionActionRpcBoundary(async request => {
     capabilitiesCompleted.resolve();
     return response.supported ? response.response : { error: 'Method not found', errorCode: 'RPC_METHOD_NOT_FOUND' };
   }
-  return providerTransport.machineRpc({ machineId, serverId: account?.home.id ?? null,
+  return providerTransport.machineRpc({ machineId, serverId: account?.serverId ?? null,
     accountId: 'voice-account', method, payload: request.params });
 });
 
@@ -270,6 +291,10 @@ beforeEach(async () => {
   rowDefinitions = [];
   teamResources = [];
   teamCatalogReads.length = 0;
+  persistedSettings = settingsParse({ experiments: true, featureToggles: { 'voice.agent': true, 'execution.runs': true } });
+  providerCatalog = DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1;
+  persistedSettingsVersion = 4;
+  settingsWrites.length = 0;
   providerTransport.reset();
   useVoiceTargetStore.setState({ autoTargetMachineByScope: {} });
   clearDaemonMergedProjectionCacheForTests();
@@ -304,6 +329,7 @@ beforeEach(async () => {
       }
       if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
       if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+      if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: 'voice-account' }));
       if (path === '/v1/teams/list') {
         teamCatalogReads.push(path);
         return Response.json({ items: teamResources.length ? [teamSummaryFixture({ id: 'voice-team' })] : [], nextCursor: null });
@@ -312,9 +338,21 @@ beforeEach(async () => {
         teamCatalogReads.push(path);
         return Response.json({ resources: teamResources, nextCursor: null, ...(path.endsWith('/discover') ? { failures: [] } : {}) });
       }
-      if (path === '/v2/account/settings') return Response.json({ version: 4, content: { t: 'plain', v: {
-        experiments: true, featureToggles: { 'voice.agent': true, 'execution.runs': true },
-      } } });
+      if (path === '/v2/account/settings') {
+        if (init?.method === 'POST') {
+          const body = AccountSettingsV2UpdateRequestSchema.parse(JSON.parse(String(init.body)));
+          if (body.expectedVersion !== persistedSettingsVersion) return Response.json({ success: false,
+            error: 'version-mismatch', currentVersion: persistedSettingsVersion,
+            currentContent: { t: 'plain', v: persistedSettings } });
+          if (body.content?.t !== 'plain') throw new Error('Expected plain Account Settings');
+          persistedSettings = settingsParse(body.content.v);
+          settingsWrites.push(body);
+          return Response.json({ success: true, version: ++persistedSettingsVersion });
+        }
+        return Response.json({ version: persistedSettingsVersion, content: { t: 'plain', v: persistedSettings } });
+      }
+      if (path === PROVIDER_CONNECTIONS_ROWS_ROUTE_V1) return Response.json({ status: 'present', revision: 1,
+        content: { t: 'plain', v: providerCatalog } });
       if (path === '/v1/artifacts') return Response.json([]);
       const machineId = path.startsWith('/v1/machines/') ? decodeURIComponent(path.slice('/v1/machines/'.length)) : null;
       const machineRow = (id: string) => {
@@ -335,10 +373,10 @@ beforeEach(async () => {
       if (path === '/v1/account/project-rows/list') return Response.json({ status: 'listed', rows: [], coverage: 'complete' });
       if (path === ACP_CATALOG_ROWS_ROUTE_V1) return Response.json({ status: 'present', revision: 3,
         content: { t: 'plain', v: { v: 1, definitions: rowDefinitions } } });
-      return new Response(null, { status: 404 });
+      return createEmptyAccountBootstrapHttpResponse(path, init) ?? new Response(null, { status: 404 });
     },
   });
-  const scope = { serverId: account.home.id, accountId: 'voice-account' };
+  const scope = { serverId: account.serverId, accountId: 'voice-account' };
   await sync.refreshAccountSettingsFromServer(4, scope);
   await updateEffectiveHomeViewState(() => ({ version: 1, groups: [], activeTargetKind: 'server', activeTargetId: account!.home.id }), { scope: 'device' });
   storage.setState({
@@ -352,7 +390,7 @@ beforeEach(async () => {
   });
   await publishMachineCensus();
   await refreshAcpCatalog(scope);
-  await refreshAuthenticatedServerFeaturesSnapshot({ serverId: account.home.id, credentials: account.credentials });
+  await refreshAuthenticatedServerFeaturesSnapshot({ serverId: account.serverId, credentials: account.credentials });
   storage.getState().applyAuthoringMemory({ recentMachinePaths: [{ machineId: 'machine-1', path: '/tmp/repo' }] });
   resetDynamicModelProbeCacheForTests();
   capabilitiesInvoke.mockReset();
@@ -363,6 +401,8 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   standardCleanup();
+  resetProviderCatalogEngineForTests();
+  resetProviderCatalogSnapshotsForTests();
   resetAcpCatalogEngineForTests();
   resetAcpCatalogSnapshotsForTests();
   await account?.dispose();
@@ -419,7 +459,7 @@ describe('LocalConversationSection', () => {
     const selection = { kind: 'team_credential_provider_model', teamId: 'voice-team', resourceId: 'voice-shared',
       expectedResourceRevision: 4, deliveryMode: 'brokered', agentTargetKey: targetKey, modelId: 'm1' } as const;
     teamResources = [TeamCredentialResourceCatalogEntryV1Schema.parse({ id: selection.resourceId, teamId: selection.teamId,
-      displayName: 'Team Muse', resourceRevision: 4, readiness: { kind: 'available' }, recoveryAction: null,
+      displayName: teamCredentialDisplayNameFixture('Team Muse'), resourceRevision: 4, readiness: { kind: 'available' }, recoveryAction: null,
       mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
       sourcePresentation: { kind: 'connected_service', service },
       connectedServiceSelections: [{ source: 'team_resource', resourceId: selection.resourceId, deliveryMode: 'brokered' }],
@@ -495,7 +535,7 @@ describe('LocalConversationSection', () => {
     const definition = AcpBackendDefinitionV1Schema.parse({ id: 'claude', name: 'configured-claude', title: 'Configured Claude',
       launch: { kind: 'command' as const, command: 'review', args: [] }, capabilities: { supportsLoadSession: true }, createdAt: 1, updatedAt: 1 });
     rowDefinitions = status === 'ready' ? [definition] : [definition, { id: 'malformed-neighbor' }];
-    const scope = { serverId: account!.home.id, accountId: 'voice-account' };
+    const scope = { serverId: account!.serverId, accountId: 'voice-account' };
     await refreshAcpCatalog(scope);
     expect(getAcpCatalogSnapshot(scope)?.catalog.status).toBe(status === 'ready' ? 'ready' : 'partial');
     const { VoiceAgentMemorySection } = await import('./VoiceAgentMemorySection');
@@ -537,7 +577,7 @@ describe('LocalConversationSection', () => {
     }) });
     rowDefinitions = [AcpBackendDefinitionV1Schema.parse({ id: 'row-review', name: 'row-review', title: 'Row review',
       launch: { kind: 'command' as const, command: 'review', args: [] }, createdAt: 1, updatedAt: 1 })];
-    await refreshAcpCatalog({ serverId: account!.home.id, accountId: 'voice-account' });
+    await refreshAcpCatalog({ serverId: account!.serverId, accountId: 'voice-account' });
     const LocalConversationSection = await loadLocalConversationSection();
     const voice = createLocalConversationVoice({ conversationMode: 'agent', agent: { agentSource: 'agent', agentId: 'codex' } });
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={vi.fn()} />);
@@ -978,8 +1018,11 @@ describe('LocalConversationSection', () => {
     expect(screen.findAll((node) => node.type === ItemComponent && node.props?.title === t('settingsVoice.local.chatApiKey'))).toHaveLength(0);
   });
 
-  it.each(['opencode', 'muse'])('asks once for %s and commits both Provider tuples together', async (agentId) => {
+  it.each([{ agentId: 'opencode', confirmed: true, askPolicy: false }, { agentId: 'muse', confirmed: true, askPolicy: true },
+    { agentId: 'opencode', confirmed: false, askPolicy: false }])('asks once for $agentId before changing both Provider tuples (confirmed: $confirmed, Ask: $askPolicy)', async ({ agentId, confirmed, askPolicy }) => {
     const LocalConversationSection = await loadLocalConversationSection();
+    const { Alert } = await import('react-native');
+    const alert = vi.spyOn(Alert, 'alert');
     const declaration = getBundledAgentDeclaration(agentId);
     if (!declaration) throw new Error(`Expected bundled Agent ${agentId}`);
     registryDescribe.mockResolvedValue({ supported: true, projection: PluginProjectionV2Schema.parse({
@@ -987,8 +1030,7 @@ describe('LocalConversationSection', () => {
         [agentId]: { id: agentId, identity: declaration.identity, title: agentId },
       },
     }) });
-    const changed = createDeferred<void>();
-    const setVoice = vi.fn<(voice: VoiceSettings) => void>(() => { changed.resolve(); });
+    const setVoice = vi.fn();
     const voice = createLocalConversationVoice({
       conversationMode: 'agent',
       agent: {
@@ -1006,8 +1048,18 @@ describe('LocalConversationSection', () => {
       },
     });
     storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice }, storage.getState().settings));
+    if (askPolicy) storage.getState().applySettingsLocal({ actionsSettingsV1: {
+      v: 1, actions: { 'settings.set': { approvalRequiredSurfaces: ['ui'] } },
+    } });
+    persistedSettings = storage.getState().settings;
     const agentTargetKey = buildAgentUniverseBackendTargetKey(agentId);
     const connectionId = 'voice-openai-compatible-chat';
+    providerCatalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+      connections: [{ v: 1, id: connectionId, source: { kind: 'custom', template: normalizeCustomProviderTemplateV1({
+        name: 'Imported Voice Chat', protocol: 'openai-chat', baseUrl: 'http://127.0.0.1:11434/v1', catalog: 'manual',
+      }) }, role: 'named', displayName: 'Imported Voice Chat', displayNameMode: 'custom', revision: 1, createdAt: 1, updatedAt: 1 }],
+    });
+    await refreshProviderCatalog({ serverId: account!.serverId, accountId: 'voice-account' });
     providerTransport.setResponse(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION,
       createProviderModelProjectionFixture({ agentTargetKey, groups: [createProviderModelProjectionGroupFixture({ connectionId,
         rows: ['qwen-chat', 'qwen-commit'].map(modelId => ({
@@ -1021,7 +1073,10 @@ describe('LocalConversationSection', () => {
         })),
       })] }));
 
-    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const { ModalProvider } = await import('@/modal/ModalProvider');
+    const screen = await renderSettingsView(<InjectedAuthProvider credentials={account!.credentials}>
+      <ModalProvider><LocalConversationSection voice={voice} setVoice={setVoice} /></ModalProvider>
+    </InjectedAuthProvider>);
     const prompts = screen.findAll((node) => (
       node.type === DropdownMenu
       && node.props?.itemTrigger?.title === t('settingsVoice.local.mediatorAgentId')
@@ -1035,9 +1090,33 @@ describe('LocalConversationSection', () => {
     await act(async () => {
       prompt()!.props.onSelect(agentTargetKey);
     });
-    await changed.promise;
-    expect(setVoice).toHaveBeenCalledTimes(1);
-    const nextVoice = setVoice.mock.calls[0]?.[0] as VoiceSettings;
+    await vi.waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
+    expect(alert.mock.calls[0]?.[2]).toHaveLength(2);
+    expect(settingsWrites).toHaveLength(0);
+    await act(async () => {
+      const button = alert.mock.calls[0]?.[2]?.find(button => confirmed ? button.style !== 'cancel' : button.style === 'cancel');
+      expect(button?.onPress).toEqual(expect.any(Function));
+      button!.onPress!();
+    });
+    if (!confirmed) {
+      await flushHookEffects();
+      expect(settingsWrites).toHaveLength(0);
+      expect(readLocalConversationVoiceSettings(persistedSettings.voice).agent.providerChat?.status).toBe('needs_selection');
+      expect(setVoice).not.toHaveBeenCalled();
+      return;
+    }
+    const settled = await waitForTestEvent(notify => {
+      const stopScreen = screen.subscribe(notify);
+      const stopStorage = storage.subscribe(notify);
+      return () => { stopScreen(); stopStorage(); };
+    }, () => ({ status: readLocalConversationVoiceSettings(persistedSettings.voice).agent.providerChat?.status,
+      secondReview: screen.findAllHostsByTestId('actions.confirmation-review.decision-approve').length }),
+    result => result.status === 'configured' || result.secondReview > 0);
+    expect(settled).toEqual({ status: 'configured', secondReview: 0 });
+    expect(settingsWrites).toHaveLength(1);
+    expect(alert).toHaveBeenCalledTimes(1);
+    expect(setVoice).not.toHaveBeenCalled();
+    const nextVoice = persistedSettings.voice;
     expect(readLocalConversationVoiceSettings(nextVoice).agent).toMatchObject({
       agentSource: 'agent',
       agentId,

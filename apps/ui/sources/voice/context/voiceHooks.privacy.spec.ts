@@ -227,11 +227,11 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
 
   it('redacts tool args in permission requests by default', () => {
     (voiceHooks as any).onAgentRequest({ serverId: TEST_SERVER_ID, sessionId: 's1' }, 'r1', 'permission', 'execute', { secret: 'do_not_leak' });
-    expect(fakeSink.sendTextMessage).toHaveBeenCalledWith(
+    expect(fakeSink.sendTextMessage.mock.calls.map(([text]) => text)).toContainEqual(
       expect.stringContaining('<request_id>r1</request_id>'),
     );
-    expect(fakeSink.sendTextMessage).toHaveBeenCalledWith(expect.stringContaining('<tool_args_redacted>true</tool_args_redacted>'));
-    expect(fakeSink.sendTextMessage).not.toHaveBeenCalledWith(expect.stringContaining('do_not_leak'));
+    expect(fakeSink.sendTextMessage.mock.calls.map(([text]) => text)).toContainEqual(expect.stringContaining('<tool_args_redacted>true</tool_args_redacted>'));
+    expect(fakeSink.sendTextMessage.mock.calls.map(([text]) => text)).not.toContainEqual(expect.stringContaining('do_not_leak'));
   });
 
   it('still redacts tool args when a raw voice privacy blob tries to enable shareToolArgs', () => {
@@ -250,8 +250,8 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     }));
 
     (voiceHooks as any).onAgentRequest({ serverId: TEST_SERVER_ID, sessionId: 's1' }, 'r1', 'permission', 'execute', { secret: 'do_not_leak' });
-    expect(fakeSink.sendTextMessage).toHaveBeenCalledWith(expect.stringContaining('<tool_args_redacted>true</tool_args_redacted>'));
-    expect(fakeSink.sendTextMessage).not.toHaveBeenCalledWith(expect.stringContaining('do_not_leak'));
+    expect(fakeSink.sendTextMessage.mock.calls.map(([text]) => text)).toContainEqual(expect.stringContaining('<tool_args_redacted>true</tool_args_redacted>'));
+    expect(fakeSink.sendTextMessage.mock.calls.map(([text]) => text)).not.toContainEqual(expect.stringContaining('do_not_leak'));
   });
 
   it('forwards user-action requests with question details and answer guidance', () => {
@@ -271,10 +271,10 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
         ],
       },
     );
-    expect(fakeSink.sendTextMessage).toHaveBeenCalledWith(expect.stringContaining('<request_kind>user_action</request_kind>'));
-    expect(fakeSink.sendTextMessage).toHaveBeenCalledWith(expect.stringContaining('Continue with the deployment?'));
-    expect(fakeSink.sendTextMessage).toHaveBeenCalledWith(expect.stringContaining('answerUserActionRequest'));
-    expect(fakeSink.sendTextMessage).not.toHaveBeenCalledWith(expect.stringContaining('processPermissionRequest'));
+    expect(fakeSink.sendTextMessage.mock.calls.map(([text]) => text)).toContainEqual(expect.stringContaining('<request_kind>user_action</request_kind>'));
+    expect(fakeSink.sendTextMessage.mock.calls.map(([text]) => text)).toContainEqual(expect.stringContaining('Continue with the deployment?'));
+    expect(fakeSink.sendTextMessage.mock.calls.map(([text]) => text)).toContainEqual(expect.stringContaining('answerUserActionRequest'));
+    expect(fakeSink.sendTextMessage.mock.calls.map(([text]) => text)).not.toContainEqual(expect.stringContaining('processPermissionRequest'));
   });
 
   it('keeps non-AskUserQuestion user-action requests actionable when tool args are redacted', () => {
@@ -285,10 +285,10 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
       'ExitPlanMode',
       { plan: 'Review changes under /Users/alice/SecretRepo before exiting plan mode.' },
     );
-    expect(fakeSink.sendTextMessage).toHaveBeenCalledWith(expect.stringContaining('<request_kind>user_action</request_kind>'));
-    expect(fakeSink.sendTextMessage).toHaveBeenCalledWith(expect.stringContaining('approve, reject, or request changes'));
-    expect(fakeSink.sendTextMessage).toHaveBeenCalledWith(expect.stringContaining('<request_payload_redacted>true</request_payload_redacted>'));
-    expect(fakeSink.sendTextMessage).not.toHaveBeenCalledWith(expect.stringContaining('/Users/alice/SecretRepo'));
+    expect(fakeSink.sendTextMessage.mock.calls.map(([text]) => text)).toContainEqual(expect.stringContaining('<request_kind>user_action</request_kind>'));
+    expect(fakeSink.sendTextMessage.mock.calls.map(([text]) => text)).toContainEqual(expect.stringContaining('approve, reject, or request changes'));
+    expect(fakeSink.sendTextMessage.mock.calls.map(([text]) => text)).toContainEqual(expect.stringContaining('<request_payload_redacted>true</request_payload_redacted>'));
+    expect(fakeSink.sendTextMessage.mock.calls.map(([text]) => text)).not.toContainEqual(expect.stringContaining('/Users/alice/SecretRepo'));
   });
 
   it('still forwards activity-only message updates when shareRecentMessages is false (no transcript content)', () => {

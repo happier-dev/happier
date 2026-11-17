@@ -1,5 +1,8 @@
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { EXTERNAL_ACTION_RESOLVED_TARGET_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+import { decodeExternalActionResolvedTargetV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { projectSessionSpawnNewActionResultV1, SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
@@ -177,7 +180,9 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
   if (path === '/v2/sessions/read-batch') return null;
   if (path.startsWith('/v1/actions/session.spawn_new')) {
     const body = JSON.parse(String(init?.body));
-    const machineId = body.machineId ?? body.target?.machineId;
+    const signedTarget = new Headers(init?.headers).get(EXTERNAL_ACTION_RESOLVED_TARGET_HEADER);
+    const target = signedTarget ? decodeExternalActionResolvedTargetV1(signedTarget) : body.target;
+    const machineId = body.machineId ?? (target?.kind === 'machine' ? target.machineId : undefined);
     let boundary = spawnHttpBoundaries.get(machineId);
     if (!boundary) {
       boundary = await createExternalActionAccountHttpBoundary({
@@ -199,6 +204,7 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
   if (path === '/v2/cursor') return json({ cursor: 0, changesFloor: 0 });
   if (path === '/v2/changes') return json({ changes: [], nextCursor: 0 });
   if (path === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+  if (path === '/v1/account/profile') return json(AccountProfileSchema.parse({ id: 'account-1' }));
   if (path === '/v2/account/settings') return json({ content: { t: 'plain', v: state.settings }, version: 1 });
   if (path === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture());
   if (path === '/v1/account/entity-rows/connected-accounts/purposes') {
@@ -275,6 +281,7 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
       const target = patch.mode === 'owner_migration' ? patch.target : patch;
       const committed = SessionCurrentProjectionRecordV1Schema.parse({
         ...current, metadataLayoutVersion: 1, metadata: target.sharedMetadata.ciphertext,
+        displayProjectionV1: target.displayProjectionV1 ?? undefined,
         metadataVersion: current.metadataVersion + 1, ownerMetadata: target.ownerMetadata,
         agentState: target.agentState.ciphertext, agentStateVersion: (current.agentStateVersion ?? 0) + 1,
       });
@@ -411,7 +418,7 @@ async function restoreAccount(account: Partial<Pick<Parameters<typeof restoreSer
     serverUrl: 'https://voice-conversation.example.test', accountId: 'account-1',
     credentialScope: 'restored-home', activation: 'switch', request: createSessionReadBatchFetchBoundary(respondToServerRequest),
   });
-  homeId = connection.home.id;
+  homeId = connection.serverId;
   state.settingsScope = { serverId: homeId, accountId: 'account-1' };
   // Finish the real bootstrap census before a case replaces its external
   // Machine rows. A refresh may otherwise join the older bootstrap census.
@@ -813,7 +820,9 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     const { presentSessionStartupFailureCause } = await import('@/components/sessions/presentation/sessionRuntimeIssuePresentation');
     transitionVoiceRuntimeToIdle({ controlSessionId: '__voice_agent__', reason: launchCode, cause: error });
     const snapshot = deriveLocalVoiceSessionSnapshot('local_conversation', 'local', voiceConversationRuntimeMachine.getSnapshot());
-    expect(snapshot.errorFailureCause).toEqual(failureCause);
+    expect(snapshot.errorFailureCause).toEqual(failureCause ?? {
+      phase: 'voice.runtime', errorClass: 'Error', errorCode: launchCode, httpStatus: null,
+    });
     const presentation = projectVoiceAttemptPresentation({
       control: { availability: 'recoverable', live: false, canStart: false, canStop: false, canMute: false,
         muted: false, capturing: false, primaryAction: 'recover', recoveryAvailable: true,
@@ -1483,8 +1492,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
   it.each([false, true])('keeps the connected account diagnostic through carrier creation (retryable=%s)', async retryable => {
     const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
     await connection.dispose();
-    await restoreAccount({ serverIdentityId: 'srv_voice_connected_account',
-      credentials: { token: createAccountTokenForTests('account-1', { currentAccount: true }) } });
+    await restoreAccount({ credentials: { token: createAccountTokenForTests('account-1', { currentAccount: true }) } });
     const { ConnectedServiceUxDiagnosticV1Schema } = await import('@happier-dev/protocol/connect/connectedServiceUxDiagnostics');
     const uxDiagnostic = ConnectedServiceUxDiagnosticV1Schema.parse({
       code: retryable ? 'connected_service_credential_refresh_unavailable' : 'connected_service_credential_reconnect_required',
@@ -1527,7 +1535,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
       () => null,
       (error: unknown) => error,
     );
-    expect(rejection).toMatchObject({ code: 'action_failed', message: 'action_failed' });
+    expect(rejection).toMatchObject({ code: 'VOICE_CONVERSATION_SPAWN_PENDING', message: 'voice_conversation_spawn_pending' });
     expect(rejection).not.toHaveProperty('errorDetail');
     expect(JSON.stringify(rejection)).not.toContain('private connected-service credential refresh transport detail');
   });

@@ -3,7 +3,8 @@ import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SessionResumeRequestV1Schema } from '@happier-dev/protocol/sessions/control/sessionResumeRequestV1';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import {
   createRetainedVoiceAgentRpcBoundary,
   createStandaloneVoicePolicyHarness,
@@ -96,10 +97,10 @@ describe('teleportVoiceAgentToSessionRoot', () => {
       ],
     });
     active = await harness.activateLocalAgent();
-    const machine = createMachineFixture({ id: 'machine-1', activeAt: Date.now(),
-      access: machineRow.access });
-    storage.setState({ machines: { [machine.id]: machine },
-      machineListByServerId: { [active.binding.conversationSessionAddress.serverId]: [machine] } });
+    const machine = createHydratedPlainMachineFixture({ id: 'machine-1', accountId: 'account-a',
+      machine: { activeAt: Date.now(), access: machineRow.access } });
+    await publishMachineInventoryForTest({ serverId: active.binding.conversationSessionAddress.serverId,
+      accountId: 'account-a' }, [machine]);
     setTeleportPolicy({});
     daemon.requests.length = 0;
   });

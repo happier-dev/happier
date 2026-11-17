@@ -28,6 +28,7 @@ export async function publishMachineInventoryForTest(scope: MachineReachabilityS
             storage.setState({ profileScope });
         }
     }
+    publishMachineActivityForTest(machines);
     storage.getState().applyMachines([...machines], true, {
         sourceServerId: scope.serverId,
         sourceAccountId: scope.accountId,

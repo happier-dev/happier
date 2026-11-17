@@ -1,4 +1,5 @@
-import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('socket.io-client', async importOriginal =>
@@ -10,6 +11,9 @@ vi.mock('react-native', async () =>
 // Install Metro's lazy-loader bridge before storage can import its consumers.
 // The helper returns the actual Sync singleton, without replacing its methods.
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import {
   FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import {
@@ -18,9 +22,11 @@ import {
 import {
   SessionCurrentProjectionRecordV1Schema} from '@happier-dev/protocol/sessions/listing/response';
 import {
-  SessionMetadataTuplePatchV1Schema} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
-import {
   SessionSpawnNewInputV2Schema} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SessionSpawnNewResultV1Schema, projectSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { EXTERNAL_ACTION_RESOLVED_TARGET_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+import { decodeExternalActionResolvedTargetV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import {
   type ExecutionRunPublicState,
   ExecutionRunPublicStateSchema} from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -32,26 +38,32 @@ import { AccessibleMachineAccessV1Schema, MachineAccessGrantsListResponseV1Schem
 import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
 import { storage } from '@/sync/domains/state/storage';
+import { settingsParse } from '@/sync/domains/settings/settings';
+import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { parseToken } from '@/utils/auth/parseToken';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { createExistingSessionDirectoryPreflightResult, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createConnectedPurposeCatalogHttpBoundary } from '@/dev/testkit/harness/connectedAccountCatalogBoundary';
 import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
+import { createRetainedVoiceAgentActionHttpBoundaries } from '@/dev/testkit/harness/voiceAgentRpcBoundary';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { encodeBase64StoredJsonContentEnvelope } from '@/sync/encryption/base64StoredJsonContent';
 import { VOICE_TRANSCRIPT_MEMORY_KEY } from '@/voice/persistence/voiceTranscriptMemory';
 
 let homeId = '';
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
 let unsubscribeStorage: (() => void) | undefined;
-const committedSessionRecords = new Map<string, ReturnType<typeof sessionWireRecord>>();
+const publishedSessionIds = new Set<string>();
+let sessionMetadataHttp = createSessionMetadataHttpBoundary(() => ({}));
 const purposes = createConnectedPurposeCatalogHttpBoundary();
 const transcriptMemory = createAccountKvHttpFixture();
+let runActionBoundaries: Awaited<ReturnType<typeof createRetainedVoiceAgentActionHttpBoundaries>> = [];
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -147,7 +159,7 @@ const createVoiceAgentPersistenceTestState = (): any => {
 
   return {
     settingsVersion: 1,
-    settings: {
+    settings: settingsParse({
       experiments: true,
       featureToggles: { voice: true, 'voice.agent': true, 'execution.runs': true },
       voice: {
@@ -155,12 +167,12 @@ const createVoiceAgentPersistenceTestState = (): any => {
         providers: {
           local_conversation: { schemaVersion: 1, config: {
             streaming: { enabled: false },
-            agent: { backend: 'daemon', transcript: { persistenceMode: 'persistent', epoch: 1 } },
+            agent: { backend: 'daemon', agentSource: 'agent', agentId: 'claude', transcript: { persistenceMode: 'persistent', epoch: 1 } },
             networkTimeoutMs: 15_000,
           } },
         },
       },
-    },
+    }),
     sessionListIndexByServerId: {
       [homeId]: [
         { type: 'session', sessionId: 'sys_voice', serverId: homeId, serverName: null },
@@ -175,8 +187,8 @@ const createVoiceAgentPersistenceTestState = (): any => {
     },
     ordinarySessionListMembershipByServerId: { [homeId]: ['sys_voice', 's1'] },
     sessions,
-    machines: {},
-    machineListByServerId: {},
+    machines: { 'voice-persistence-machine': createMachineFixture({ id: 'voice-persistence-machine', activeAt: Date.now() }) },
+    machineListByServerId: { [homeId]: [createMachineFixture({ id: 'voice-persistence-machine', activeAt: Date.now() })] },
     sessionMessages: {},
   };
 };
@@ -201,6 +213,19 @@ function sessionWireRecord(session: ReturnType<typeof createSessionFixture>) {
 // Only the external Home responses are synthetic; metadata parsing, exact Account
 // authority, retries and projection application run through the real Sync owner.
 async function respondToServerRequest(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const url = new URL(String(input));
+  let boundaries: typeof runActionBoundaries = [];
+  if (url.pathname.startsWith('/v1/actions/')) {
+    const body = JSON.parse(String(init?.body));
+    const signedTarget = new Headers(init?.headers).get(EXTERNAL_ACTION_RESOLVED_TARGET_HEADER);
+    const target = signedTarget ? decodeExternalActionResolvedTargetV1(signedTarget) : body.envelope?.target ?? body.target;
+    const machineId = body.machineId ?? (target?.kind === 'machine' ? target.machineId : undefined);
+    boundaries = runActionBoundaries.filter(boundary => boundary.machine.id === machineId);
+  }
+  for (const boundary of boundaries) {
+    const response = await boundary.handle(new URL(String(input)), init);
+    if (response) return response;
+  }
   const memoryResponse = await transcriptMemory.handleFetch(input, init);
   if (memoryResponse) return memoryResponse;
   const purposeResponse = await purposes.handle(input, init);
@@ -217,6 +242,7 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
     pins: [], folders: [], folderAssignments: [], tags: [], tagAssignments: [], orderEntries: [], labels: [],
   } });
   if (path === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+  if (path === '/v1/account/profile') return json(AccountProfileSchema.parse({ id: 'account-a' }));
   if (path === '/v2/account/settings') return json({ content: { t: 'plain', v: state.settings }, version: 1 });
   if (path === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture());
   if (path === ACP_CATALOG_ROWS_ROUTE_V1) return json({ status: 'present', revision: 1,
@@ -238,39 +264,27 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
     if (spawnSession.mock.calls.length > 0) {
       await readSessions();
       for (const session of Object.values(state.sessions) as Array<ReturnType<typeof createSessionFixture>>) {
-        if (!committedSessionRecords.has(session.id)) committedSessionRecords.set(session.id, sessionWireRecord(session));
+        if (!publishedSessionIds.has(session.id)) {
+          sessionMetadataHttp.replaceSession(session.id, sessionWireRecord(session));
+          publishedSessionIds.add(session.id);
+        }
       }
     }
-    return json(createSessionListSourceFixture({ sessions: [...committedSessionRecords.values()], hasNext: false, nextCursor: null }));
+    return sessionMetadataHttp.handle(input, init)!;
   }
   const detail = /^\/v2\/sessions\/([^/]+)$/.exec(path);
   if (detail) {
-    const id = decodeURIComponent(detail[1]);
-    const current = committedSessionRecords.get(id);
-    if (!current) return new Response('{}', { status: 404 });
-    if (init?.method === 'PATCH') {
-      const patch = SessionMetadataTuplePatchV1Schema.parse(JSON.parse(String(init.body)));
-      if (patch.mode !== 'owner_migration' && patch.mode !== 'owner') throw new Error('Expected owner metadata mutation');
-      const target = patch.mode === 'owner_migration' ? patch.target : patch;
-      const committed = SessionCurrentProjectionRecordV1Schema.parse({
-        ...current, metadataLayoutVersion: 1, metadata: target.sharedMetadata.ciphertext,
-        metadataVersion: current.metadataVersion + 1, ownerMetadata: target.ownerMetadata,
-        agentState: target.agentState.ciphertext, agentStateVersion: (current.agentStateVersion ?? 0) + 1,
-      });
-      committedSessionRecords.set(id, committed);
-      return json({ success: true, metadataLayoutVersion: 1,
-        sharedMetadata: { version: committed.metadataVersion }, agentState: { version: committed.agentStateVersion },
-      });
-    }
-    return json({ session: current });
+    return sessionMetadataHttp.handle(input, init)!;
   }
   const machineDetail = /^\/v1\/machines\/([^/]+)$/.exec(path);
   if (path === '/v1/machines' || path === '/v1/machines/read-batch' || machineDetail) {
     await readMachines();
     const rows = Object.values(state.machines as Record<string, Parameters<typeof createMachineFixture>[0]>).map(value => {
       const machine = createMachineFixture(value);
+      const installation = runActionBoundaries.find(boundary => boundary.machine.id === machine.id)?.machine;
       return {
         ...createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a' }),
+        ...(installation ? { installationId: installation.installationId, installationPublicKey: installation.installationPublicKey } : {}),
         seq: machine.seq, createdAt: machine.createdAt, updatedAt: machine.updatedAt,
         active: machine.active, activeAt: machine.activeAt, metadataVersion: machine.metadataVersion,
         daemonStateVersion: machine.daemonStateVersion,
@@ -285,7 +299,7 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
       id => rows.find(machine => machine.id === id) ?? null);
     return json(machineDetail ? { machine: rows.find(machine => machine.id === decodeURIComponent(machineDetail[1])) } : rows);
   }
-  return new Response('{}', { status: 404 });
+  return createEmptyAccountBootstrapHttpResponse(path, init) ?? new Response('{}', { status: 404 });
 }
 
 installDisconnectedServerSocketBoundary((socket) => {
@@ -403,17 +417,41 @@ async function loadVoiceAgentPersistenceHarness() {
   // These client rows are projections of the plain Home census, including its
   // access authority; an ad-hoc id/metadata object is not a spawn target.
   for (const [id, value] of Object.entries(state.machines) as Array<[string, Record<string, unknown>]>) {
-    state.machines[id] = { ...value,
-      metadata: value.metadata ? { ...createMachineFixture().metadata, ...value.metadata as Record<string, unknown> } : null,
-      access: createPlainMachineRowFixture({ id, accountId: 'account-a' }).access,
-    };
+    state.machines[id] = createHydratedPlainMachineFixture({ id, accountId: 'account-a', machine: { ...value,
+      metadata: value.metadata ? { ...createMachineFixture().metadata!, ...value.metadata as Record<string, unknown> } : null,
+    } });
   }
   for (const [serverId, rows] of Object.entries(state.machineListByServerId) as Array<[string, Array<{ id: string }>]>) {
     state.machineListByServerId[serverId] = rows.map(row => state.machines[row.id] ?? row);
   }
+  const fixtureHomeId = homeId;
+  const fixtureStickyMachineId = useVoiceTargetStore.getState().autoTargetMachineByScope[
+    accountSettingsScopeKeySuffix({ serverId: fixtureHomeId, accountId: 'account-a' })];
+  connection = await restoreServerAccountForTest({
+    serverUrl: 'https://voice-persistence.example.test',
+    serverIdentityId: 'srv_voice-persistence-home',
+    credentialScope: 'restored-home',
+    credentials: { token: createAccountTokenForTests('account-a', { currentAccount: true }) },
+    request: createSessionReadBatchFetchBoundary(respondToServerRequest),
+  });
+  homeId = connection.serverId;
+  if (fixtureStickyMachineId) useVoiceTargetStore.getState().rememberAutoTargetMachine(
+    { serverId: homeId, accountId: 'account-a' }, fixtureStickyMachineId);
+  if (fixtureHomeId !== homeId) {
+    for (const field of ['machineListByServerId', 'sessionListRowsByServerId',
+      'ordinarySessionListMembershipByServerId', 'sessionListIndexByServerId'] as const) {
+      if (state[field]?.[fixtureHomeId]) {
+        state[field][homeId] = state[field][fixtureHomeId];
+        delete state[field][fixtureHomeId];
+      }
+    }
+    state.sessionListIndexByServerId[homeId] = state.sessionListIndexByServerId[homeId]?.map(
+      (row: { type: string }) => row.type === 'session' ? { ...row, serverId: homeId } : row);
+  }
   const normalize = (id: string, session: Parameters<typeof createSessionFixture>[0]) =>
     createSessionFixture({ ...session, id, serverId: homeId,
       metadata: { path: '/voice', host: 'voice.test',
+        machineId: 'voice-persistence-machine',
         ...(session?.metadata?.flavor === 'claude' ? { agentRuntimeCapabilitiesV1: { localControl: { supported: true } } } : {}),
         ...session?.metadata },
     });
@@ -425,14 +463,40 @@ async function loadVoiceAgentPersistenceHarness() {
   }
   // The synthetic Home retains full wire records, never reserializes reduced UI list projections.
   for (const [id, session] of Object.entries(state.sessions)) {
-    committedSessionRecords.set(id, sessionWireRecord(state.sessionListRowsByServerId?.[homeId]?.[id] ?? session));
+    sessionMetadataHttp.replaceSession(id, sessionWireRecord(state.sessionListRowsByServerId?.[homeId]?.[id] ?? session));
+    publishedSessionIds.add(id);
   }
-  connection = await restoreServerAccountForTest({
-    serverUrl: 'https://voice-persistence.example.test',
-    credentialScope: 'restored-home',
-    request: createSessionReadBatchFetchBoundary(respondToServerRequest),
-  });
-  storage.setState({ ...state, profileScope: { serverId: homeId, accountId: 'account-a' } });
+  const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+  const account = await captureLazyActionAccountContext(homeId);
+  try {
+    const serverIdentityId = account.serverIdentityId;
+    if (!serverIdentityId) throw new Error('Expected Voice persistence Home identity');
+    runActionBoundaries = (await Promise.all(Object.keys(state.machines).map(async machineId => [
+      ...await createRetainedVoiceAgentActionHttpBoundaries({ serverUrl: account.endpointUrl,
+        serverIdentityId, accountId: account.accountId, machineId,
+        dispatch: async (method, input, context) => {
+          if (method !== SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START) throw new Error(`Unexpected admitted Voice method: ${method}`);
+          const admission = ExecutionRunEnsureOrStartRequestSchema.parse(input);
+          try {
+            return await daemonStart({ ...admission.start, sessionId: context.sessionId,
+              runId: admission.runId, resume: admission.resume });
+          } catch (error) {
+            if (!(error instanceof Error)) throw error;
+            return { ok: false, error: error.message,
+              errorCode: 'rpcErrorCode' in error ? error.rpcErrorCode : 'action_failed',
+              details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') };
+          }
+        },
+      }),
+      await createExternalActionAccountHttpBoundary({ serverUrl: account.endpointUrl,
+        serverIdentityId, accountId: account.accountId, machineId, actionId: 'session.spawn_new',
+        tokenEpoch: 0, requesterInvocation: 'optional', execute: async input => projectSessionSpawnNewActionResultV1(
+          SessionSpawnNewResultV1Schema.parse(await dispatchMachineRpc(RPC_METHODS.SESSION_SPAWN_NEW, input))) }),
+    ]))).flat();
+  } finally { account.dispose(); }
+  storage.setState({ ...state, profileScope: { serverId: homeId, accountId: 'account-a' },
+    settingsScope: { serverId: homeId, accountId: 'account-a' } });
+  await publishMachineInventoryForTest({ serverId: homeId, accountId: 'account-a' }, Object.values(storage.getState().machines));
   state = storage.getState();
   const { flushActivityUpdates } = await import('@/sync/engine/socket/socket');
   unsubscribeStorage = storage.subscribe((current) => {
@@ -447,8 +511,7 @@ async function loadVoiceAgentPersistenceHarness() {
     }));
     if (updates.size) flushActivityUpdates({ updates, applySessions: current.applySessions, sourceServerId: homeId });
   });
-  const [{ useVoiceTargetStore }, { VOICE_AGENT_GLOBAL_SESSION_ID }, { createVoiceExecutionTransport }, { voiceSessionBindingStore }] = await Promise.all([
-    import('@/voice/runtime/voiceTargetStore'),
+  const [{ VOICE_AGENT_GLOBAL_SESSION_ID }, { createVoiceExecutionTransport }, { voiceSessionBindingStore }] = await Promise.all([
     import('@/voice/agent/voiceAgentGlobalSessionId'),
     import('@/voice/runtime/execution/VoiceExecutionTransport'),
     import('@/voice/binding/voiceConversationBindingStore'),
@@ -484,7 +547,9 @@ describe('VoiceExecutionTransport (persistence)', () => {
     });
     vi.useRealTimers();
     await loadSyncSingletonForTests();
-    committedSessionRecords.clear();
+    publishedSessionIds.clear();
+    sessionMetadataHttp = createSessionMetadataHttpBoundary(() => ({}));
+    runActionBoundaries = [];
     daemonStreamSequence = 0;
     daemonStart.mockReset();
     daemonStart.mockImplementation(async (params?: any) => ({ ok: true, runId: params?.runId ?? 'run_1', created: !params?.runId }));
@@ -950,7 +1015,7 @@ describe('VoiceExecutionTransport (persistence)', () => {
       2,
       expect.objectContaining({
         sessionId: 'sys_voice',
-        runId: null,
+        runId: undefined,
       }),
     );
   });
@@ -988,8 +1053,8 @@ describe('VoiceExecutionTransport (persistence)', () => {
       1,
       expect.objectContaining({
         sessionId: 'sys_voice',
-        runId: null,
-        resume: false,
+        runId: undefined,
+        resume: undefined,
       }),
     );
     expect(readSessionOwnerMetadataView(state.sessions.sys_voice)?.voiceAgentRunV1).toMatchObject({
@@ -1020,8 +1085,8 @@ describe('VoiceExecutionTransport (persistence)', () => {
       2,
       expect.objectContaining({
         sessionId: 'sys_voice',
-        runId: null,
-        resume: true,
+        runId: undefined,
+        resume: undefined,
         resumeHandle: expect.objectContaining({ kind: 'provider_session.v1', providerSessionId: 'vs_prev' }),
       }),
     );
@@ -1054,8 +1119,8 @@ describe('VoiceExecutionTransport (persistence)', () => {
       2,
       expect.objectContaining({
         sessionId: 'sys_voice',
-        runId: null,
-        resume: true,
+        runId: undefined,
+        resume: undefined,
         resumeHandle: {
           kind: 'voice_agent_sessions.v1',
           backendId: 'claude',
@@ -1090,7 +1155,7 @@ describe('VoiceExecutionTransport (persistence)', () => {
 
     expect(daemonStart).toHaveBeenCalledTimes(1);
     expect(daemonStart).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionId: 'sys_voice', runId: null, resume: false }),
+      expect.objectContaining({ sessionId: 'sys_voice', runId: undefined, resume: undefined }),
     );
     expect(daemonStart.mock.calls[0]?.[0]).not.toHaveProperty('resumeHandle');
   });
@@ -1206,8 +1271,8 @@ describe('VoiceExecutionTransport (persistence)', () => {
       2,
       expect.objectContaining({
         sessionId: 'sys_voice',
-        runId: null,
-        resume: true,
+        runId: undefined,
+        resume: undefined,
         resumeHandle: expect.objectContaining({ kind: 'provider_session.v1', providerSessionId: 'vs_prev' }),
       }),
     );
@@ -1309,8 +1374,8 @@ describe('VoiceExecutionTransport (persistence)', () => {
       assistantText: 'recovered',
     });
 
-    expect(daemonStart).toHaveBeenNthCalledWith(1, expect.objectContaining({ runId: null }));
-    expect(daemonStart).toHaveBeenNthCalledWith(2, expect.objectContaining({ runId: null }));
+    expect(daemonStart).toHaveBeenNthCalledWith(1, expect.objectContaining({ runId: undefined }));
+    expect(daemonStart).toHaveBeenNthCalledWith(2, expect.objectContaining({ runId: undefined }));
     expect(daemonStart.mock.calls[1]?.[0]).not.toHaveProperty('resumeHandle');
     expect(readSessionOwnerMetadataView(state.sessions.sys_voice)?.voiceAgentRunV1).toMatchObject({
       runId: 'run_fresh',
@@ -1664,7 +1729,7 @@ describe('VoiceExecutionTransport (persistence)', () => {
     expect(nativeConfirmationCount).toBe(2);
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'm_new',
-      directory: '/new/.happier/voice-agent',
+      directory: { kind: 'managed' },
     }));
     expect(daemonStart).toHaveBeenCalledTimes(1);
     expect(daemonStart).toHaveBeenCalledWith(expect.objectContaining({
@@ -1833,7 +1898,7 @@ describe('VoiceExecutionTransport (persistence)', () => {
     expect(nativeConfirmationCount).toBe(2);
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'm_new',
-      directory: '/new/.happier/voice-agent',
+      directory: { kind: 'managed' },
     }));
     expect(useVoiceTargetStore.getState().autoTargetMachineByScope[accountSettingsScopeKeySuffix(state.settingsScope)]).toBe('m_new');
   });
@@ -1842,7 +1907,6 @@ describe('VoiceExecutionTransport (persistence)', () => {
 
 describe('retained global Voice Run authority', () => {
   it('reattaches the retained global Run without stopping it and reads its policy through real RPC', async () => {
-    vi.resetModules();
     let harness: Awaited<ReturnType<typeof import('@/dev/testkit/harness/standaloneVoicePolicyHarness')['createStandaloneVoicePolicyHarness']>> | undefined;
     try {
       const [{ ExecutionRunPublicStateSchema}, { buildVoiceAgentRunMetadataV1, parseVoiceAgentRunMetadataV1}] = await Promise.all([import('@happier-dev/protocol/execution/runs/responseSchemas'), import('@happier-dev/protocol/voice/voiceAgentRunMetadataV1')]);
@@ -1860,26 +1924,31 @@ describe('retained global Voice Run authority', () => {
       const dispatch = vi.fn(async (method: string, _input: unknown): Promise<unknown> => {
         if (method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST) return { runs: [retainedRun] };
         if (method === SESSION_RPC_METHODS.EXECUTION_RUN_GET) return { run: retainedRun };
-        if (method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1) return { ok: true, runId: retainedRun.runId, created: false };
+        if (method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START) return { ok: true, runId: retainedRun.runId, created: false };
         throw new Error(`Unexpected retained Run RPC: ${method}`);
       });
       harness = await createStandaloneVoicePolicyHarness({ mode: 'off', dispatch, initializeSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-        existingSession: { id: 'sys_voice', active: true, metadata: { path: '/voice', host: 'voice.test', flavor: 'claude',
+        machines: [createHydratedPlainMachineFixture({ id: 'voice-machine', accountId: 'account-a', machine: { activeAt: Date.now() } })],
+        settings: { voice: { providers: { local_conversation: { schemaVersion: 1, config: { agent: { rootSessionPolicy: 'continue' } } } } } },
+        handleRequest: async (path, init) => path === '/v1/machines'
+          ? Response.json([createPlainMachineRowFixture({ id: 'voice-machine', accountId: 'account-a' })])
+          : createPlainMachineReadHttpResponseFixture(path, init, 'account-a') ?? createEmptyAccountBootstrapHttpResponse(path, init),
+        existingSession: { id: 'sys_voice', active: true, metadata: { path: '/voice', host: 'voice.test', flavor: 'claude', machineId: 'voice-machine',
           systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true }, voiceAgentRunV1: metadata,
+          voiceConversationScopeV1: { v: 1, kind: 'voice_home' },
           agentRuntimeCapabilitiesV1: { localControl: { supported: true } },
           agentRuntimeFacetsV1: { v: 1, transcriptSource: { supported: true, followLeaseSupported: true } },
         } },
       });
       expect(harness.handle.voiceAgentId).toBe('run_legacy');
       expect(harness.handle.voicePolicy).toEqual(retainedPolicy);
-      const admitted = dispatch.mock.calls.findIndex(([method]) => method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1);
+      const admitted = dispatch.mock.calls.findIndex(([method]) => method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START);
       expect(dispatch.mock.calls[admitted]?.[1]).toMatchObject({ runId: 'run_legacy' });
       expect(dispatch.mock.calls.slice(0, admitted).some(([method]) => method === SESSION_RPC_METHODS.EXECUTION_RUN_GET)).toBe(true);
       expect(dispatch.mock.calls.slice(admitted + 1).some(([method]) => method === SESSION_RPC_METHODS.EXECUTION_RUN_GET)).toBe(true);
       expect(dispatch.mock.calls.some(([method]) => method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toBe(false);
     } finally {
       await harness?.dispose();
-      vi.resetModules();
     }
   });
 });

@@ -453,12 +453,12 @@ describe('imported Voice Chat Agent selection through the real settings gesture'
                 .toBe(authorized ? 'configured' : 'needs_selection');
             return;
         }
-        const [{ LocalConversationSection }, { useVoiceSettingsMutable }] = await Promise.all([
-            import('./LocalConversationSection'), import('../useVoiceSettingsMutable'),
+        const [{ LocalConversationSection }, { useVoiceSettingsMutable }, { ModalProvider }] = await Promise.all([
+            import('./LocalConversationSection'), import('../useVoiceSettingsMutable'), import('@/modal/ModalProvider'),
         ]);
         function Editor() {
             const [current, setVoice] = useVoiceSettingsMutable();
-            return <LocalConversationSection voice={current} setVoice={setVoice} />;
+            return <ModalProvider><LocalConversationSection voice={current} setVoice={setVoice} /></ModalProvider>;
         }
         const container = document.createElement('div');
         document.body.append(container);
@@ -470,6 +470,9 @@ describe('imported Voice Chat Agent selection through the real settings gesture'
         await act(async () => press(trigger));
         await waitForTestEvent(subscribeDom, () => expect(document.querySelector('[data-testid="dropdown-option-agent_happier_agent_opencode_opencode"]')).not.toBeNull());
         await act(async () => press(document.querySelector<HTMLElement>('[data-testid="dropdown-option-agent_happier_agent_opencode_opencode"]')!));
+        await waitForTestEvent(subscribeDom, () => document.querySelector<HTMLElement>('[data-testid="web-modal-confirm"]'), node => node !== null);
+        expect(readLocalConversationVoiceSettings(storage.getState().settings.voice).agent.providerChat?.status).toBe('needs_selection');
+        await act(async () => press(document.querySelector<HTMLElement>('[data-testid="web-modal-confirm"]')!));
         await waitForTestEvent(daemon.subscribe, () => transport.projectionReads,
             reads => reads.some(read => !!read && typeof read === 'object'
                 && 'agentTargetKey' in read && read.agentTargetKey === agentTargetKey && 'mode' in read && read.mode === 'picker'));

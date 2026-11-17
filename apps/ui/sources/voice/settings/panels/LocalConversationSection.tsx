@@ -65,6 +65,7 @@ import { isTeamCredentialProviderModelPickerValue } from '@/components/sessions/
 import { resolveProjectedConnectedAccountServiceKeys } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
 import { VoiceAgentConnectedServicesSchema } from '@happier-dev/protocol/voice/settings/localConversation';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { presentActionApproval } from '@/components/approvals/actionApprovalPresentation';
 import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 
@@ -472,9 +473,12 @@ export function LocalConversationSection(props: {
                   if (result.status === 'cancelled') return;
                   if (result.status !== 'completed') throw new Error('voice_chat_import_failed');
                 } else {
-                  const outcome = await legacyChatActions.execute('settings.set', {
-                    anchor: AGENT_SELECTION_SETTINGS.agent.anchor, value: voiceAgentCatalogSelectionValueV1(entry),
-                  }, { presentUserConfirmation: { actionId: 'settings.set' } });
+                  const input = { anchor: AGENT_SELECTION_SETTINGS.agent.anchor, value: voiceAgentCatalogSelectionValueV1(entry) };
+                  const presentation = presentActionApproval({ actionId: 'settings.set', actionArgs: input, kind: 'confirmation' });
+                  if (!await Modal.confirm(presentation.title ?? t('approvals.untitled'), presentation.summary ?? undefined,
+                    { confirmText: presentation.confirmLabel ?? t('approvals.approve') })) return;
+                  const outcome = await legacyChatActions.execute('settings.set', input,
+                    { confirmed: true });
                   requireActionSuccess(outcome);
                 }
                 setOpenMenu(null);

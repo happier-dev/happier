@@ -1,13 +1,22 @@
-import { describe, expect, it, vi, beforeAll, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, vi, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 vi.mock('socket.io-client', async importOriginal =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { createSessionOwnerMetadataV1, projectSessionSharedMetadataV1, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { ExecutionRunEnsureOrStartRequestSchema} from '@happier-dev/protocol/execution/runs/index';
-import { ExecutionRunPublicStateSchema} from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunPublicStateSchema, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { LlmTaskRunnerConfigV1Schema } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeSchema,
+  EXTERNAL_ACTION_RESOLVED_TARGET_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+import { decodeExternalActionResolvedTargetV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { createServedHomeAccountToken, installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { attachAgentPluginSettings } from '@/agents/registry/agentUiSettingLookup';
 import { createDeferred, flushHookEffects } from '@/dev/testkit';
@@ -20,7 +29,7 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
-import { createRetainedVoiceAgentRpcBoundary } from '@/dev/testkit/harness/voiceAgentRpcBoundary';
+import { createRetainedVoiceAgentActionHttpBoundaries, createRetainedVoiceAgentRpcBoundary } from '@/dev/testkit/harness/voiceAgentRpcBoundary';
 import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -173,8 +182,8 @@ function createVoiceControllerState(options: Readonly<{
   };
 }
 
-function setVoiceControllerState(options?: Parameters<typeof createVoiceControllerState>[0]): void {
-  setControllerState(() => createVoiceControllerState(options));
+async function setVoiceControllerState(options?: Parameters<typeof createVoiceControllerState>[0]): Promise<void> {
+  await setControllerState(() => createVoiceControllerState(options));
 }
 
 
@@ -186,6 +195,7 @@ let hydratedTargetActive = true;
 let installerReply: ((method: string, payload: unknown) => Promise<unknown>) | null = null;
 const daemonEffects: string[] = [];
 let sessionHttp: ReturnType<typeof createSessionMetadataHttpBoundary>;
+let actionHttp: Awaited<ReturnType<typeof createRetainedVoiceAgentActionHttpBoundaries>> = [];
 
 function installSessionHttpSnapshot() {
   sessionHttp = createSessionMetadataHttpBoundary(() => Object.fromEntries(
@@ -197,14 +207,48 @@ function installSessionHttpSnapshot() {
   ));
 }
 
-function setControllerState(read: () => any): void {
+async function setControllerState(read: () => any): Promise<void> {
   const fixture = read();
   const sessions = Object.fromEntries(Object.entries(fixture.sessions ?? {}).map(([id, value]) => [
-    id, createSessionFixture({ ...value as Parameters<typeof createSessionFixture>[0], id, serverId: connection.home.id }),
+    id, createSessionFixture({ ...value as Parameters<typeof createSessionFixture>[0], id, serverId: connection.serverId,
+      metadata: { machineId: 'machine-1', path: '/test', host: 'test',
+        ...(value as NonNullable<Parameters<typeof createSessionFixture>[0]>).metadata } }),
+  ]));
+  const machines = Object.fromEntries(Object.entries(fixture.machines ?? { 'machine-1': {} }).map(([id, value]) => [id,
+    createHydratedPlainMachineFixture({ id, accountId: 'account-a', machine: { activeAt: Date.now(),
+      ...value as Parameters<typeof createHydratedPlainMachineFixture>[0]['machine'] } }),
   ]));
   storage.setState({ ...fixture, settings: settingsParse({ experiments: true,
-    featureToggles: { voice: true, 'voice.agent': true, 'execution.runs': true }, ...fixture.settings }), sessions });
+    featureToggles: { voice: true, 'voice.agent': true, 'execution.runs': true }, ...fixture.settings }), sessions, machines,
+    settingsScope: { serverId: connection.serverId, accountId: 'account-a' } });
+  await publishMachineInventoryForTest({ serverId: connection.serverId, accountId: 'account-a' }, Object.values(machines));
+  storage.setState({ sessions,
+    sessionListRowsByServerId: { [connection.serverId]: sessions },
+    ordinarySessionListMembershipByServerId: { [connection.serverId]: Object.keys(sessions) },
+  });
   installSessionHttpSnapshot();
+}
+
+async function admitRun(targetId: string, method: string, input: unknown) {
+  const admission = ExecutionRunEnsureOrStartRequestSchema.parse(input);
+  daemonEffects.push('admit');
+  let result: Awaited<ReturnType<typeof daemonStart>>;
+  try {
+    result = await daemonStart({ ...admission.start, sessionId: targetId,
+      runId: admission.runId, resume: admission.resume });
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    return { ok: false, error: error.message,
+      errorCode: 'rpcErrorCode' in error ? error.rpcErrorCode : 'action_failed',
+      details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') };
+  }
+  if (result.ok) {
+    const key = `${targetId}:${result.runId}`;
+    const retained = retainedRuns.get(key) ?? await createRetainedVoiceAgentRpcBoundary({ runId: result.runId });
+    await retained.dispatch(method, admission);
+    retainedRuns.set(key, retained);
+  }
+  return result;
 }
 
 installDisconnectedServerSocketBoundary((socket) => {
@@ -223,7 +267,7 @@ installDisconnectedServerSocketBoundary((socket) => {
       const method = request.method.slice(separator + 1);
       const token = typeof socket.auth === 'object' ? socket.auth.token : null;
       if (typeof token !== 'string') throw new Error('Expected authenticated daemon ACK');
-      const scope = { scope: { serverId: connection.home.id, accountId: parseToken(token) } };
+      const scope = { scope: { serverId: connection.serverId, accountId: parseToken(token) } };
       if (installerReply && (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
           || method === RPC_METHODS.CAPABILITIES_DETECT || method === RPC_METHODS.CAPABILITIES_INVOKE)) {
         return { ok: true, result: await installerReply(method, request.params) };
@@ -252,19 +296,7 @@ installDisconnectedServerSocketBoundary((socket) => {
       }
       try {
         if (method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START || method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1) {
-          const admission = ExecutionRunEnsureOrStartRequestSchema.parse(request.params);
-          daemonEffects.push('admit');
-          const result = await daemonStart({ ...admission.start, sessionId: targetId,
-            runId: admission.runId, resume: admission.resume });
-          if (result.ok) {
-            const key = `${targetId}:${result.runId}`;
-            const retained = retainedRuns.get(key) ?? await createRetainedVoiceAgentRpcBoundary({ runId: result.runId });
-            // The daemon retains policy from the accepted admission, never from
-            // whatever settings the UI happens to have during later recovery.
-            await retained.dispatch(method, admission);
-            retainedRuns.set(key, retained);
-          }
-          return { ok: true, result };
+          return { ok: true, result: await admitRun(targetId, method, request.params) };
         }
         const input = request.params as Record<string, unknown>;
         if (method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START || method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2) {
@@ -289,10 +321,12 @@ installDisconnectedServerSocketBoundary((socket) => {
 });
 
 await loadSyncSingletonForTests();
+const restoreActionExecutorModuleLoader = await installRealActionExecutorModuleLoader();
+afterAll(restoreActionExecutorModuleLoader);
 const { buildVoiceInitialContext } = await import('@/voice/context/buildVoiceInitialContext');
 const targetInitialContext = () => {
   const context = buildVoiceInitialContext(VOICE_AGENT_GLOBAL_SESSION_ID, {
-    targetSessionAddress: { serverId: connection.home.id, sessionId: 's1' },
+    targetSessionAddress: { serverId: connection.serverId, sessionId: 's1' },
   });
   if (!context) throw new Error('Expected real target Session context');
   return context;
@@ -314,27 +348,62 @@ describe('VoiceExecutionTransport (streaming)', () => {
     installerReply = null;
     hydratedTargetActive = true;
     installSessionHttpSnapshot();
+    actionHttp = (await Promise.all(['machine-1', 'machine_active', 'machine_stale'].map(machineId =>
+      createRetainedVoiceAgentActionHttpBoundaries({ serverUrl: 'https://voice-streaming.example.test',
+        serverIdentityId: 'srv_voice-streaming', accountId: 'account-a', machineId,
+        dispatch: async (method, input, context) => {
+          if (typeof context.sessionId !== 'string') throw new Error('Expected the Voice conversation anchor');
+          try { return await admitRun(context.sessionId, method, input); }
+          catch (error) {
+            if (!(error instanceof Error)) throw error;
+            return { ok: false, error: error.message,
+              errorCode: 'rpcErrorCode' in error ? error.rpcErrorCode : 'action_failed' };
+          }
+        } }),
+    ))).flat();
     connection = await restoreServerAccountForTest({
       serverUrl: 'https://voice-streaming.example.test',
+      serverIdentityId: 'srv_voice-streaming', accountId: 'account-a', credentialScope: 'restored-home',
+      credentials: { token: createServedHomeAccountToken('account-a', true) },
       request: createSessionReadBatchFetchBoundary(async (url, init) => {
         const memoryResponse = await transcriptMemory.handleFetch(url, init);
         if (memoryResponse) return memoryResponse;
         const path = new URL(String(url)).pathname;
         requestedPaths.push(path);
+        if (path.startsWith('/v1/actions/')) {
+          const body: unknown = JSON.parse(String(init?.body));
+          const authorization = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
+          const encodedTarget = new Headers(init?.headers).get(EXTERNAL_ACTION_RESOLVED_TARGET_HEADER);
+          const target = encodedTarget ? decodeExternalActionResolvedTargetV1(encodedTarget)
+            : ExternalActionRequestEnvelopeSchema.parse(authorization.success ? authorization.data.envelope : body).target;
+          if (target?.kind !== 'machine') throw new Error('Expected a Voice Action Machine');
+          for (const boundary of actionHttp.filter(entry => entry.machine.id === target.machineId)) {
+            const response = await boundary.handle(new URL(String(url)), init);
+            if (response) return response;
+          }
+          throw new Error('Voice Action boundary did not handle its request');
+        }
         const json = (value: unknown) => Response.json(value);
-        if (path === '/v1/features' || path === '/v1/features/authenticated') return json(FeaturesResponseSchema.parse({ features: { voice: { enabled: true } }, capabilities: {} }));
+        if (path === '/v1/features' || path === '/v1/features/authenticated') return json(FeaturesResponseSchema.parse({
+          features: { voice: { enabled: true, agent: { enabled: true } }, execution: { runs: { enabled: true } } }, capabilities: {},
+        }));
+        if (path === ACP_CATALOG_ROWS_ROUTE_V1) return json({ status: 'present', revision: 1,
+          content: { t: 'plain', v: { v: 1, definitions: [] } } });
         if (path === '/health') return json({ status: 'ok' });
         if (path === '/v2/cursor') return json({ cursor: 0, changesFloor: 0 });
         if (path === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+        if (path === '/v1/account/profile') return json(AccountProfileSchema.parse({ id: 'account-a' }));
         if (path === '/v2/account/settings') return json({ content: { t: 'plain', v: storage.getState().settings }, version: 1 });
         if (path === '/v1/machines/read-batch' && init?.method === 'POST') {
           return createMachineReadBatchResponseFixture(init.body,
-            id => createPlainMachineRowFixture({ id, accountId: 'account-a' }));
+            id => actionHttp.find(boundary => boundary.machine.id === id)?.machine
+              ?? createPlainMachineRowFixture({ id, accountId: 'account-a' }));
         }
         const machineDetail = /^\/v1\/machines\/([^/]+)(\/access)?$/.exec(path);
         if (machineDetail) {
           const machineId = decodeURIComponent(machineDetail[1]);
-          const machine = createPlainMachineRowFixture({ id: machineId, accountId: 'account-a' });
+          const machine = actionHttp.find(boundary => boundary.machine.id === machineId)?.machine
+            ?? createPlainMachineRowFixture({ id: machineId, accountId: 'account-a' });
           if (!machine.access) throw new Error('Canonical Machine access missing');
           return json(machineDetail[2] ? MachineAccessGrantsListResponseV1Schema.parse({ machineId,
             custodian: machine.access.custodian, access: machine.access, canManage: true,
@@ -345,10 +414,10 @@ describe('VoiceExecutionTransport (streaming)', () => {
         if (path === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture());
         const sessionResponse = sessionHttp.handle(url, init);
         if (sessionResponse) return sessionResponse;
-        return new Response('{}', { status: 404 });
+        return createEmptyAccountBootstrapHttpResponse(path, init) ?? new Response('{}', { status: 404 });
       }),
     });
-    setVoiceControllerState();
+    await setVoiceControllerState();
     useVoiceTargetStore.setState({ scope: 'global', primaryActionSessionAddress: null, voiceLiveContextSessionAddresses: [], lastFocusedSessionAddress: null } as any);
     daemonRunGet.mockReset();
     daemonRunGet.mockImplementation(async (targetId: string, input: { runId: string }) =>
@@ -407,14 +476,14 @@ describe('VoiceExecutionTransport (streaming)', () => {
       modelMode: 'default',
       metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
     };
-    setControllerState(() => state);
+    await setControllerState(() => state);
     voiceSessionBindingStore.getState().bind({
       adapterId: 'local_conversation',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       conversationSessionId: 'voice-hidden-s1',
-      conversationSessionAddress: { serverId: connection.home.id, sessionId: 'voice-hidden-s1' },
+      conversationSessionAddress: { serverId: connection.serverId, sessionId: 'voice-hidden-s1' },
       transcriptMode: 'native_session',
-      targetSessionAddress: { serverId: connection.home.id, sessionId: 's1' },
+      targetSessionAddress: { serverId: connection.serverId, sessionId: 's1' },
       updatedAt: 1,
     });
 
@@ -463,15 +532,15 @@ describe('VoiceExecutionTransport (streaming)', () => {
       },
       sessionMessages: {},
     };
-    setControllerState(() => state);
+    await setControllerState(() => state);
     hydratedTargetActive = false;
     voiceSessionBindingStore.getState().bind({
       adapterId: 'local_conversation',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       conversationSessionId: 'voice-hidden-s1',
-      conversationSessionAddress: { serverId: connection.home.id, sessionId: 'voice-hidden-s1' },
+      conversationSessionAddress: { serverId: connection.serverId, sessionId: 'voice-hidden-s1' },
       transcriptMode: 'native_session',
-      targetSessionAddress: { serverId: connection.home.id, sessionId: 's1' },
+      targetSessionAddress: { serverId: connection.serverId, sessionId: 's1' },
       updatedAt: 1,
     });
 
@@ -598,7 +667,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
   });
 
   it('surfaces a clear error when starting local voice on an inactive target session', async () => {
-    setVoiceControllerState({
+    await setVoiceControllerState({
       sessions: {
         s1: { id: 's1', active: false, modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
       },
@@ -614,7 +683,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
   });
 
   it('surfaces a clear error when starting local voice on an offline target session', async () => {
-    setVoiceControllerState({
+    await setVoiceControllerState({
       sessions: {
         s1: { id: 's1', active: true, presence: 'offline', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
       },
@@ -630,7 +699,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
   });
 
   it('starts an independently admitted Voice run on a target without terminal control support', async () => {
-    setVoiceControllerState({
+    await setVoiceControllerState({
       sessions: {
         s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'kimi' } },
       },
@@ -643,7 +712,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
   });
 
   it('does not confuse OpenCode ACP terminal support with Voice Execution Run admission', async () => {
-    setVoiceControllerState({
+    await setVoiceControllerState({
       settings: {
         opencodeBackendMode: 'server',
       },
@@ -665,7 +734,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
   });
 
   it('always enables daemon transcript persistence for the hidden voice conversation session', async () => {
-    setVoiceControllerState({
+    await setVoiceControllerState({
       sessions: {
         sys_voice: {
           id: 'sys_voice',
@@ -690,7 +759,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
   });
 
   it('does not inject a local greeting prompt into the first user turn when welcome mode is on_first_turn', async () => {
-    setControllerState(() => ({
+    await setControllerState(() => ({
       settings: {
         voice: {
           providerId: 'local_conversation',
@@ -786,7 +855,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
   });
 
   it('can emit an immediate welcome via ensureRunningAndMaybeWelcome, and does not inject a greeting into the next user turn', async () => {
-    setControllerState(() => ({
+    await setControllerState(() => ({
       settings: {
         voice: {
           providerId: 'local_conversation',
@@ -835,7 +904,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
   });
 
   it('emits an immediate welcome for migrated Provider-backed Chat through the daemon', async () => {
-    setControllerState(() => ({
+    await setControllerState(() => ({
       settings: {
         voice: {
           providerId: 'local_conversation',
@@ -881,7 +950,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
   });
 
   it('does not use ready_handshake bootstrap when immediate welcome is enabled (welcome acts as the bootstrap prompt)', async () => {
-    setControllerState(() => ({
+    await setControllerState(() => ({
       settings: {
         voice: {
           providerId: 'local_conversation',
@@ -925,7 +994,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
   });
 
   it('uses ready_handshake bootstrap when prewarm is enabled but auto-speak is disabled (even if welcome immediate is enabled)', async () => {
-    setControllerState(() => ({
+    await setControllerState(() => ({
       settings: {
         voice: {
           providerId: 'local_conversation',
@@ -968,7 +1037,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
   });
 
   it('prefetches relevant agent installables before starting a daemon voice agent session', async () => {
-    setControllerState(() => ({
+    await setControllerState(() => ({
       settings: {
         codexBackendMode: 'acp',
         voice: {
@@ -1010,8 +1079,6 @@ describe('VoiceExecutionTransport (streaming)', () => {
     // Feed the canonical scoped Account projection, not a catalog or policy stub.
     storage.setState({ settings: attachAgentPluginSettings(storage.getState().settings,
       { account: { codexBackendMode: 'acp' } }),
-      machines: { 'machine-1': createMachineFixture({ id: 'machine-1', activeAt: Date.now(),
-        access: createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' }).access }) },
     });
     const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, agentsById: {}, familiesById: {
       managedDependencies: { family: 'managedDependencies', entriesById: { 'codex-acp': {
@@ -1043,7 +1110,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
   });
 
   it('passes the effective disabled voice action ids into daemon starts', async () => {
-    setControllerState(() => ({
+    await setControllerState(() => ({
       settings: {
         actionsSettingsV1: {
           v: 1,
@@ -1117,7 +1184,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
         done: false,
       };
     });
-    setControllerState(() =>
+    await setControllerState(() =>
       createVoiceControllerState({
         voice: {
           streaming: {
@@ -1198,7 +1265,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
     } = await import('@/sync/domains/settings/voiceSettings');
     const localConversationDefaults = readLocalConversationVoiceSettings(voiceSettingsDefaults);
 
-    setControllerState(() =>
+    await setControllerState(() =>
       createVoiceControllerState({
         voice: {
           streaming: {
@@ -1230,7 +1297,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
   });
 
   it('uses the hidden voice conversation session id when starting the daemon agent for the global agent session', async () => {
-    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: connection.home.id, sessionId: 's1' });
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: connection.serverId, sessionId: 's1' });
 
     const controller = createVoiceExecutionTransport();
 
@@ -1246,9 +1313,9 @@ describe('VoiceExecutionTransport (streaming)', () => {
       adapterId: 'local_conversation',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       conversationSessionId: 'sys_voice',
-      conversationSessionAddress: { serverId: connection.home.id, sessionId: 'sys_voice' },
+      conversationSessionAddress: { serverId: connection.serverId, sessionId: 'sys_voice' },
       transcriptMode: 'native_session',
-      targetSessionAddress: { serverId: connection.home.id, sessionId: 's1' },
+      targetSessionAddress: { serverId: connection.serverId, sessionId: 's1' },
       updatedAt: 1,
     });
 
@@ -1272,19 +1339,29 @@ describe('VoiceExecutionTransport (streaming)', () => {
   });
 
   it.each(['approved', 'denied', 'pending'] as const)('projects the settled target request state before the first model turn (native %s)', async (decision) => {
+    const settings = storage.getState().settings;
+    storage.setState({ settings: settingsParse({ ...settings, voice: { ...settings.voice,
+      privacy: { ...settings.voice.privacy, sharePermissionRequests: true },
+    } }) });
     voiceSessionBindingStore.getState().bind({
       adapterId: 'local_conversation',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       conversationSessionId: 'sys_voice',
-      conversationSessionAddress: { serverId: connection.home.id, sessionId: 'sys_voice' },
+      conversationSessionAddress: { serverId: connection.serverId, sessionId: 'sys_voice' },
       transcriptMode: 'native_session',
-      targetSessionAddress: { serverId: connection.home.id, sessionId: 's1' },
+      targetSessionAddress: { serverId: connection.serverId, sessionId: 's1' },
       updatedAt: 1,
     });
     const request = { tool: 'Bash', arguments: { command: 'printf APPROVED' }, createdAt: 1 };
-    storage.setState(state => ({ sessions: { ...state.sessions, s1: {
-      ...state.sessions.s1!, agentState: { requests: { 'native-write': request }, completedRequests: {} },
-    } } }));
+    const target = storage.getState().sessions.s1!;
+    const owner = createSessionOwnerMetadataV1({ metadata: target.metadata ?? {} });
+    if (!owner.ok) throw new Error('Invalid native request Session owner metadata');
+    const shared = projectSessionSharedMetadataV1({ metadata: target.metadata });
+    storage.getState().applySessions([{
+      ...target, metadataLayoutVersion: 1, metadata: shared,
+      ownerMetadataView: projectSessionOwnerCompatibilityViewV1({ sharedMetadata: shared, ownerMetadata: owner.ownerMetadata }),
+      agentState: { requests: { 'native-write': request }, completedRequests: {} },
+    }]);
     expect(targetInitialContext()).toContain('<request_id>native-write</request_id>');
 
     const controller = createVoiceExecutionTransport();
@@ -1292,11 +1369,10 @@ describe('VoiceExecutionTransport (streaming)', () => {
     // Run the same Action as native permission input; its genuine network boundary
     // publishes the daemon's settlement before the next ordinary utterance.
     if (decision !== 'pending') {
-      const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
-      const execute = createFrontDoorActionExecute();
-      await expect(execute('session.permission.respond', {
-        sessionId: 's1', requestId: 'native-write', decision,
-      }, { surface: 'voice', serverId: connection.home.id })).resolves.toMatchObject({ ok: true });
+      const { createAppSessionTranscriptActions } = await import('@/components/sessions/transcript/source/appSessionTranscriptActions');
+      await createAppSessionTranscriptActions('s1', connection.serverId).respondToPermission({
+        id: 'native-write', approved: decision === 'approved', decision,
+      });
       expect(targetInitialContext()).not.toContain('<request_id>native-write</request_id>');
     }
 
@@ -1319,9 +1395,9 @@ describe('VoiceExecutionTransport (streaming)', () => {
       adapterId: 'local_conversation',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       conversationSessionId: 'sys_voice',
-      conversationSessionAddress: { serverId: connection.home.id, sessionId: 'sys_voice' },
+      conversationSessionAddress: { serverId: connection.serverId, sessionId: 'sys_voice' },
       transcriptMode: 'native_session',
-      targetSessionAddress: { serverId: connection.home.id, sessionId: 's1' },
+      targetSessionAddress: { serverId: connection.serverId, sessionId: 's1' },
       updatedAt: 1,
     });
     daemonCommit.mockRejectedValueOnce(
@@ -1347,9 +1423,9 @@ describe('VoiceExecutionTransport (streaming)', () => {
       adapterId: 'local_conversation',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       conversationSessionId: 'sys_voice',
-      conversationSessionAddress: { serverId: connection.home.id, sessionId: 'sys_voice' },
+      conversationSessionAddress: { serverId: connection.serverId, sessionId: 'sys_voice' },
       transcriptMode: 'native_session',
-      targetSessionAddress: { serverId: connection.home.id, sessionId: 's1' },
+      targetSessionAddress: { serverId: connection.serverId, sessionId: 's1' },
       updatedAt: 1,
     });
     daemonStreamStart.mockRejectedValueOnce(
@@ -1374,9 +1450,9 @@ describe('VoiceExecutionTransport (streaming)', () => {
       adapterId: 'local_conversation',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       conversationSessionId: 'sys_voice',
-      conversationSessionAddress: { serverId: connection.home.id, sessionId: 'sys_voice' },
+      conversationSessionAddress: { serverId: connection.serverId, sessionId: 'sys_voice' },
       transcriptMode: 'native_session',
-      targetSessionAddress: { serverId: connection.home.id, sessionId: 's1' },
+      targetSessionAddress: { serverId: connection.serverId, sessionId: 's1' },
       updatedAt: 1,
     });
 
@@ -1400,7 +1476,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
   });
 
   it('passes the clean user turn separately from wrapped context updates when streaming a daemon voice turn', async () => {
-    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: connection.home.id, sessionId: 's1' });
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: connection.serverId, sessionId: 's1' });
 
     const controller = createVoiceExecutionTransport();
     controller.appendAttemptContextUpdate(VOICE_AGENT_GLOBAL_SESSION_ID, 'Session asks what should be handled in this workspace.');
@@ -1451,7 +1527,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
         },
       },
     };
-    setControllerState(() => sessionState);
+    await setControllerState(() => sessionState);
     daemonStreamRead.mockImplementation(async () => {
       sessionState.sessionMessages.sys_voice = createSessionMessagesFixture({ isLoaded: true,
         messageIdsOldestFirst: ['m-user-1', 'm-agent-1'], messagesById: {
@@ -1479,8 +1555,8 @@ describe('VoiceExecutionTransport (streaming)', () => {
   });
 
   it('keeps the hidden voice conversation session as the global daemon anchor even when another target session is active', async () => {
-    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: connection.home.id, sessionId: 's1' });
-    setControllerState(() => ({
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: connection.serverId, sessionId: 's1' });
+    await setControllerState(() => ({
       settings: {
         voice: {
           providerId: 'local_conversation',
@@ -1537,7 +1613,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
   });
 
   it('does not retry global daemon start on another session when the hidden voice conversation session rejects the payload', async () => {
-    setControllerState(() => ({
+    await setControllerState(() => ({
       settings: {
         voice: {
           providerId: 'local_conversation',
@@ -1595,12 +1671,12 @@ describe('VoiceExecutionTransport (streaming)', () => {
       }] }),
     });
     // Carrier session transcript should be used to seed voice agent context across restarts.
-    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: connection.home.id, sessionId: 's1' });
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: connection.serverId, sessionId: 's1' });
     const summaryRunner = LlmTaskRunnerConfigV1Schema.parse({ v: 1,
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, modelId: 'default', permissionMode: 'no_tools',
     });
 
-    setControllerState(() => ({
+    await setControllerState(() => ({
       settings: {
         voice: {
           providerId: 'local_conversation',
@@ -1675,7 +1751,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
     expect(daemonStart).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'sys_voice',
-        runId: null,
+        runId: undefined,
         retentionPolicy: 'resumable',
         replay: expect.objectContaining({
           kind: 'voice_session.v1',
@@ -1701,9 +1777,9 @@ describe('VoiceExecutionTransport (streaming)', () => {
   });
 
   it('admits provider-resume for a persistent global agent without giving ordinary streamed input recovery intent', async () => {
-    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: connection.home.id, sessionId: 's1' });
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: connection.serverId, sessionId: 's1' });
 
-    setControllerState(() => ({
+    await setControllerState(() => ({
       settings: {
         voice: {
           providerId: 'local_conversation',
@@ -1754,7 +1830,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
 
     expect(daemonStart).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'sys_voice',
-      resume: true,
+      resume: undefined,
       retentionPolicy: 'resumable',
     }));
     expect(daemonStreamStart).toHaveBeenCalledWith(expect.objectContaining({
@@ -1766,9 +1842,9 @@ describe('VoiceExecutionTransport (streaming)', () => {
   });
 
   it('fails closed and does not pass resume=true to stream_start when runtime publication does not expose transcriptSource', async () => {
-    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: connection.home.id, sessionId: 's1' });
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: connection.serverId, sessionId: 's1' });
 
-    setControllerState(() => ({
+    await setControllerState(() => ({
       settings: {
         voice: {
           providerId: 'local_conversation',
@@ -1804,15 +1880,15 @@ describe('VoiceExecutionTransport (streaming)', () => {
 
     expect(daemonStart).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'sys_voice',
-      resume: false,
+      resume: undefined,
     }));
     expect(daemonStart.mock.calls.at(-1)?.[0]).not.toHaveProperty('resumeHandle');
     expect(daemonStreamStart).toHaveBeenCalledWith(expect.not.objectContaining({ resume: true }));
   });
 
   it('fails closed to a fresh daemon start when provider-resume is configured but runtime publication does not expose transcriptSource for a reconciled run', async () => {
-    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: connection.home.id, sessionId: 's1' });
-    setControllerState(() => ({
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: connection.serverId, sessionId: 's1' });
+    await setControllerState(() => ({
       settings: {
         voice: {
           providerId: 'local_conversation',
@@ -1872,8 +1948,8 @@ describe('VoiceExecutionTransport (streaming)', () => {
 
     expect(daemonStart).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'sys_voice',
-      runId: null,
-      resume: false,
+      runId: undefined,
+      resume: undefined,
     }));
     expect(daemonStart.mock.calls.at(-1)?.[0]).not.toHaveProperty('resumeHandle');
   });

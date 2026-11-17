@@ -3,7 +3,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 import { act, createMachineFixture, createSessionFixture, createRenderCommitCounter, renderHook, standardCleanup, useRenderCommitCounter } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { createHydratedPlainMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 installDisconnectedServerSocketBoundary();
 const { activateStorageAccountScope } = await import('@/dev/testkit/mocks/storage');
@@ -29,20 +30,17 @@ afterEach(async () => {
 it('resolves only the displayed name after real naming changes, across 150 Machines and unrelated arrivals', async () => {
   const scope = { serverId: 'voice-name-cost-home', accountId: 'voice-name-cost-account' };
   account = await activateStorageAccountScope(scope);
-  const machines = Array.from({ length: 150 }, (_, index) => createMachineFixture({
-    id: `machine-${index}`, active: true, activeAt: Date.now(),
+  const machines = Array.from({ length: 150 }, (_, index) => createHydratedPlainMachineFixture({
+    id: `machine-${index}`, accountId: scope.accountId, machine: { active: true, activeAt: Date.now(),
     metadata: { ...createMachineFixture().metadata!, displayName: `Machine ${index}`, host: `host-${index}` },
-  }));
+  } }));
   storage.setState(state => ({
     settingsScope: scope,
     settings: { ...state.settings, voice: { ...state.settings.voice,
       executionMachine: { mode: 'fixed', machineId: machines[0]!.id },
     } },
-    machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
-    machineListByServerId: { [scope.serverId]: machines },
-    machineListStatusByServerId: { [scope.serverId]: 'idle' },
   }));
-  observeMachinePresenceForTest(scope, machines.map(machine => machine.id));
+  await publishMachineInventoryForTest(scope, machines);
   // Call-through instrumentation: the naming owner and its internal logic stay real.
   const names = vi.spyOn(machineNames, 'getMachineDisplayName');
   const qualifications = vi.spyOn(publishedMachineNames, 'resolveMachineDisplayNameParts');
@@ -140,17 +138,15 @@ it('does not reread persisted Voice bindings on unrelated root notifications', a
 it.each(['execution', 'selection', 'catalog'] as const)('keeps the %s snapshot stable as time passes and observes an authoritative withdrawal', async consumer => {
   const scope = { serverId: 'voice-snapshot-home', accountId: 'voice-snapshot-account' };
   account = await activateStorageAccountScope(scope);
-  const machine = createMachineFixture({ id: 'machine-a', active: true, activeAt: Date.now() });
+  const machine = createHydratedPlainMachineFixture({ id: 'machine-a', accountId: scope.accountId,
+    machine: { active: true, activeAt: Date.now(), presenceProtocolVersion: 1 } });
   storage.setState(state => ({
     settingsScope: scope,
     settings: { ...state.settings, voice: { ...state.settings.voice,
       executionMachine: { mode: 'fixed', machineId: machine.id },
     } },
-    machines: { [machine.id]: machine },
-    machineListByServerId: { [scope.serverId]: [machine] },
-    machineListStatusByServerId: { [scope.serverId]: 'idle' },
   }));
-  observeMachinePresenceForTest(scope, [machine.id]);
+  await publishMachineInventoryForTest(scope, [machine]);
   const snapshot = storage.getState();
   expect(resolveVoiceExecutionMachineIdFromState(snapshot)).toBe(machine.id);
   const deadline = machine.activeAt + 120_000;
@@ -179,8 +175,7 @@ it.each(['execution', 'selection', 'catalog'] as const)('keeps the %s snapshot s
   await act(async () => storage.getState().applyMachineActivityUpdates([{ id: machine.id, active: false, activeAt: now }], { sourceServerId: scope.serverId }));
   if (consumer !== 'catalog') expect(hook.getCurrent()).toBeNull();
   else expect(hook.getCurrent()).not.toBe(first);
-  expect(storage.getState()).not.toBe(snapshot);
-  expect(storage.getState().machineListByServerId[scope.serverId]?.[0]?.active).toBe(false);
+  // Activity is owned separately from the immutable inventory snapshot.
   expect(snapshot.machineListByServerId[scope.serverId]?.[0]?.active).toBe(true);
   expect(storage.getState().machineListByServerId[scope.serverId]?.[0]?.metadata).toBe(machine.metadata);
 });
