@@ -1698,12 +1698,14 @@ export function createCliActionDeps(params: CliActionDepsParams,
     approvalRequestOutcomePublication: async ({ artifactId, request, context }) => {
       const origin = request.executionOriginV1;
       if (!params.credentials || origin.caller.kind !== 'session') return null;
-      const transport = await resolveTransportForSession(origin.caller.sessionId, context.signal);
+      const transport = await resolveTransportForSession(origin.caller.sessionId, context.signal,
+        { context, actionId: 'session.message.send' });
       if (!transport.ok) return { ok: false, errorCode: transport.code, error: transport.code };
       const retained = await findTranscriptEncryptedMessageByLocalIdV2({
         token: params.credentials.token, serverUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
         sessionId: transport.sessionId, localId: `approval-result:${artifactId}`,
         ...(context.signal ? { signal: context.signal } : {}),
+        resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, 'session.message.send', request),
       });
       if (retained.type === 'not_found') return null;
       if (retained.type !== 'found') throw retained.error;

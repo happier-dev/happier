@@ -2,7 +2,7 @@ import axios from 'axios';
 import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { API_TOKEN_FULL_GRANT_V1, type ActionExecutorContext } from '@happier-dev/protocol';
+import { API_TOKEN_FULL_GRANT_V1, ApprovalRequestV2Schema, type ActionExecutorContext } from '@happier-dev/protocol';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
   EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
@@ -22,6 +22,64 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from
 
 describe('CLI grant source attribution', () => {
   afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
+
+  it('observes a retained approval result using PAT requester headers for every Home read', async () => {
+    const sessionId = 'c' + '7'.repeat(24);
+    const actionId = 'session.message.send';
+    const target = { kind: 'session' as const, sessionId };
+    const envelope = { v: 1 as const, requestId: 'approval-observe', target, input: { sessionId } };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'requester-proof', binding: {
+      accountId: 'requester', principalId: 'principal', credentialId: 'credential', grant: API_TOKEN_FULL_GRANT_V1,
+      serverIdentityId: 'home', machineId: 'reader-machine', custodianAccountId: 'requester', installationId: 'installation',
+      actionId, requestId: envelope.requestId, target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+      accountEncryptionMode: 'plain',
+    } });
+    const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(29));
+    const context: ActionExecutorContext = { surface: 'api', authority: 'account_automation', externalActionTarget: target,
+      externalActionCredential: { accountId: 'requester', principalId: 'principal', credentialId: 'credential', grant: API_TOKEN_FULL_GRANT_V1 },
+      externalActionExecutionAuthorization: authorization };
+    const lookupPath = `/v2/sessions/${sessionId}/messages/by-local-id/${encodeURIComponent('approval-result:approval')}`;
+    const network = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: { session: createSessionRecordFixture({
+        id: sessionId, encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'reader-machine' }),
+      }) } };
+      if (path === lookupPath) throw Object.assign(new axios.AxiosError('Message not found'), {
+        response: { status: 404, data: { error: 'Message not found' } },
+      });
+      throw new Error(`Unexpected approval observation HTTP read: ${path}`);
+    });
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'executed', createdAtMs: 1, updatedAtMs: 2,
+      createdBy: { surface: 'agent' }, requestedSurface: 'agent', approval: { flow: 'deferred', result: 'required' },
+      actionId: 'projects.sources.update', actionArgs: { sourceId: 'source', expectedRevision: 1, patch: { name: 'Edited' } },
+      summary: 'Reviewed change', decision: { kind: 'approve', decidedAtMs: 1, authority: 'present_user' },
+      execution: { executedAtMs: 2, ok: true, result: { ok: true } },
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', accountId: 'requester',
+        serverId: 'home', sessionId, machineId: 'reader-machine', caller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
+        actionId: 'projects.sources.update', requestId: 'original' } });
+    const deps = createCliActionDeps({ token: 'daemon-bearer', credentials: { token: 'daemon-bearer', encryption: null },
+      sessionId: '', mode: 'plain', ctx: null, serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.test',
+      externalActionMachineRequestPrivateKey: keys.secretKey, externalActionMachineInstallationId: 'installation' });
+    expect(await deps.approvalRequestOutcomePublication!({ artifactId: 'approval', request, context })).toBeNull();
+    expect(network.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(expect.arrayContaining([
+      '/v1/account/encryption/currentness', `/v2/sessions/${sessionId}`, lookupPath,
+    ]));
+    for (const [url, config] of network.mock.calls) {
+      const path = new URL(String(url)).pathname;
+      expect(config?.headers).not.toHaveProperty('Authorization');
+      expect(config?.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe(authorization.token);
+      expect(verifyExternalActionMachineRequestV1({ authorizationToken: authorization.token, effectActionId: actionId,
+        target, installationId: 'installation', requestId: envelope.requestId, method: 'GET', path,
+        publicKey: keys.publicKey, signature: String(config?.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]) })).toBe(true);
+    }
+    network.mockClear();
+    await expect(deps.approvalRequestOutcomePublication!({ artifactId: 'approval', request,
+      context: { ...context, externalActionExecutionAuthorization: undefined } })).rejects.toMatchObject({
+        errorCode: 'action_failed', details: { authorizationRefusalReason: 'external_credential_without_authorization' },
+      });
+    expect(network).not.toHaveBeenCalled();
+  });
 
   it('reads the exact Session owner using requester-signed HTTP, never the daemon bearer', async () => {
     const sessionId = 'c' + '1'.repeat(24);
