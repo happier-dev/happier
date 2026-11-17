@@ -6,6 +6,7 @@ import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/pr
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 import { db, getDbProviderFromEnv, initDbPostgres } from '@/storage/db';
+import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
 import { listArtifactHeadersForCallerInTx } from './artifactAccessService';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Artifact inventory PostgreSQL query work', () => {
@@ -94,6 +95,35 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
         }, { isolationLevel: 'RepeatableRead' });
     });
 
+    it('resolves the caller grant candidates in the database for a filtered page and its completeness count', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const bytes = (value: unknown) => privacyKit.decodeBase64(encodePlainArtifactStoredContent(value));
+        const data = (accountId: string, kind: string | null) => ({ id: randomUUID(), accountId, kind,
+            header: bytes({ title: 'Inventory' }), body: bytes({ body: 'Private content' }),
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER), headerVersion: 1, bodyVersion: 1 });
+        const skill = await db.artifact.create({ data: data(owner.id, 'skill') });
+        const legacy = await db.artifact.create({ data: data(owner.id, null) });
+        await db.artifactGrant.createMany({ data: [skill, legacy].map(artifact => ({ principalKind: 'account', artifactId: artifact.id,
+            accountId: recipient.id, accessLevel: 'view' as const, createdByAccountId: owner.id })) });
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            const headers = { 'x-test-user-id': recipient.id,
+                'x-happier-account-stored-content-protocol': String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION) };
+            // Count the real Prisma requests the route issues; all IO stays real.
+            let grantCandidateReads = 0;
+            const stop = observePrismaRequests(db, { before(request) {
+                if (request.model === 'ArtifactGrant' && request.action === 'findMany') grantCandidateReads += 1;
+            } });
+            let filtered;
+            try { filtered = await app.inject({ method: 'GET', url: '/v1/artifacts?kind=skill&limit=50', headers }); } finally { stop(); }
+            expect(filtered.statusCode, filtered.body).toBe(200);
+            // The received legacy row still marks the page partial through the same admission.
+            expect(filtered.json()).toMatchObject({ items: [{ id: skill.id, kind: 'skill' }], hasUnclassified: true });
+            // Each grant arm is a semi-join inside the page queries; no grant row reaches the server.
+            expect(grantCandidateReads).toBe(0);
+        });
+    });
+
     it('keeps a populated page near batched relation work when PostgreSQL compiles the access query', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const other = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -111,7 +141,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
         let variant: Variant = 'owner';
         const durations: Record<Variant, number[]> = { owner: [], 'batched-control': [] };
         const measured = db.$extends({ query: { artifact: { async findMany({ args, query }) {
-            const page = args.take !== undefined;
+            // The content page, not the id-only received-arm positions.
+            const page = args.take !== undefined && args.select?.header === true;
             const started = performance.now();
             const rows = await query({ ...args, ...(page && variant === 'batched-control'
                 ? { relationLoadStrategy: 'query' as const } : {}) });

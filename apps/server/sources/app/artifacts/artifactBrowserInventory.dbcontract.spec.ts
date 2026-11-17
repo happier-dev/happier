@@ -14,7 +14,7 @@ import { listArtifactHeadersV1 } from '@happier-dev/protocol/artifacts/artifactL
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 import { db, getDbProviderFromEnv, initDbMysql, initDbPostgres, prismaRuntime } from '@/storage/db';
-import { listArtifactHeadersForCallerInTx, readArtifactCandidateWhereInTx } from './artifactAccessService';
+import { listArtifactHeadersForCallerInTx, readArtifactCandidateAccess } from './artifactAccessService';
 import { observePrismaReads } from '@/testkit/observePrismaReads';
 import { createArtifact } from './artifactWriteService';
 import * as resourceGrants from '@/app/teams/resourceGrantAccess';
@@ -237,7 +237,8 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')(`browser Artifa
                 SELECT a.id FROM ${table} a WHERE a.id IN (${prismaRuntime.join(allIds)})
                 AND ${resourceGrants.resourceGrantAccessSqlPredicate({ actorAccountId: reader.id,
                     resourceTablePrefix: 'Artifact', resourceIdColumn: 'artifactId' })}`);
-            const canonical = await tx.artifact.findMany({ where: { id: { in: allIds }, ...await readArtifactCandidateWhereInTx(tx, reader.id) }, select: { id: true } });
+            const access = readArtifactCandidateAccess(reader.id);
+            const canonical = await tx.artifact.findMany({ where: { id: { in: allIds }, OR: [access.owned!, ...access.received] }, select: { id: true } });
             expect(new Set(candidates.map(row => row.id))).toEqual(new Set(expectedIds));
             expect(new Set(canonical.map(row => row.id))).toEqual(new Set(expectedIds));
             // Candidate discovery never replaces current private-content admission.

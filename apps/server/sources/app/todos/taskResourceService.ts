@@ -9,8 +9,9 @@ import { assertAccountJsonKvStoredContentMatchesAccountMode, assertAccountJsonKv
 import { acquireAccountEncryptionTransitionFenceInTx } from '@/app/encryption/accountEncryptionTransition';
 import { deriveAccountRecipientEnvelopeReadinessFromRow, type AccountRecipientEnvelopeReadiness } from '@/app/encryption/accountRecipientEnvelopeReadiness';
 import { RECIPIENT_READINESS_SELECT, type RecipientReadinessRow } from '@/app/session/encryption/sessionDataKeyRecipientProjection';
-import { resolveResourceGrantPageAccessWhere, resolveResourceGrantAccessFromFacts, projectResourceRecipientEnvelope,
+import { mergeResourceGrantArmPages, resourceGrantPageAccessArms, resolveResourceGrantAccessFromFacts, projectResourceRecipientEnvelope,
     readResourceGrantPrincipalAudienceInTx, type ResourceGrantAccess } from '@/app/teams/resourceGrantAccess';
+import type { Prisma } from '@prisma/client';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
 import { ACCOUNT_DISPLAY_PROFILE_SELECT, projectAccountDisplayProfileV1, resolveAccountDisplayLabelV1 } from '@/app/account/profile/accountDisplayProfile';
@@ -93,20 +94,20 @@ export async function readTaskResourceInTx(tx: Tx, input: TaskActorInput): Promi
 /** Candidate selection and one captured readiness row avoid per-task database reads. */
 export async function listTaskResourcesInTx(tx: Tx, actorAccountId: string, selection?: TaskResourceSelectionV1): Promise<TaskResult<TaskResourcesListResponseV1>> {
     if (selection?.tasks.length === 0) return { ok: true, value: { tasks: [], selectionApplied: true } };
-    const access = await resolveResourceGrantPageAccessWhere(actorAccountId, async grants => (await Promise.all([
-        tx.taskGrant.findMany({ where: grants.account, select: { taskId: true } }),
-        tx.taskGrant.findMany({ where: grants.team, select: { taskId: true } }),
-        tx.taskGrant.findMany({ where: grants.group, select: { taskId: true } }),
-    ])).map(rows => rows.map(row => row.taskId)));
+    const access = resourceGrantPageAccessArms(actorAccountId, (_arm, grantWhere): Prisma.UserKVStoreWhereInput =>
+        ({ grants: { some: grantWhere } }));
     const byOwner = new Map<string, string[]>();
     for (const task of selection?.tasks ?? []) {
         const keys = byOwner.get(task.ownerAccountId) ?? [];
         keys.push(`todo.${task.taskId}`);
         byOwner.set(task.ownerAccountId, keys);
     }
-    const rows = await tx.userKVStore.findMany({ where: { ...taskRowsWhere, AND: [access,
-        ...(selection === undefined ? [] : [{ OR: [...byOwner].map(([accountId, keys]) => ({ accountId, key: { in: keys } })) }]) ] },
-        select: taskReadSelect(actorAccountId), orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }] });
+    // The whole visible set is the response: each access arm reads its own rows through its own index.
+    const rows = mergeResourceGrantArmPages(await Promise.all([access.owned, ...access.received].map(arm => tx.userKVStore.findMany({
+        where: { ...taskRowsWhere, AND: [arm,
+            ...(selection === undefined ? [] : [{ OR: [...byOwner].map(([accountId, keys]) => ({ accountId, key: { in: keys } })) }]) ] },
+        select: { ...taskReadSelect(actorAccountId), updatedAt: true }, orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }] }))),
+        (left, right) => right.updatedAt.getTime() - left.updatedAt.getTime() || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
     const actor = rows.some(row => row.account.encryptionMode === 'e2ee')
         ? await readTaskCallerInTx(tx, actorAccountId) : null;
     const readiness = actor?.readiness;

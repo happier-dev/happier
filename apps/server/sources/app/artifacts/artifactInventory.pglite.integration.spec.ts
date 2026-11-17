@@ -16,7 +16,7 @@ import { resourceGrantAccessSqlPredicate, resourceGrantArmWheres } from '@/app/t
 import { readMachineAudienceAccountIdsInTx, readMachineRecipientWorkInTx } from '@/app/machines/machineRecipientWork';
 import { createSavedSecretResourceInTx, listSavedSecretResourceMaterialsForAccountInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { inTx } from '@/storage/inTx';
-import { readArtifactCandidateWhereInTx } from './artifactAccessService';
+import { readArtifactCandidateAccess } from './artifactAccessService';
 import { artifactPageReadCaptureSql, materializeArtifactPageRead, type ArtifactPageReadCapture } from './artifactPageReadCapture';
 import { projectArtifactSourceReadersFromFacts } from './artifactSourceReaders';
 import { createProjectSourceInTx, resolveProjectSourceAccessInTx } from '@/app/projects/sources/projectSourceService';
@@ -504,8 +504,9 @@ describe('Artifact inventory through PostgreSQL wire protocol', () => {
                     SELECT a.id FROM "Artifact" a WHERE a.id IN (${prismaRuntime.join(artifacts.map(row => row.id))})
                     AND ${resourceGrantAccessSqlPredicate({ actorAccountId: reader.id,
                         resourceTablePrefix: 'Artifact', resourceIdColumn: 'artifactId' })}`);
+                const access = readArtifactCandidateAccess(reader.id);
                 const admitted = await db.artifact.findMany({ where: { id: { in: artifacts.map(row => row.id) },
-                    ...await readArtifactCandidateWhereInTx(db, reader.id) }, select: { id: true } });
+                    OR: [access.owned!, ...access.received] }, select: { id: true } });
                 expect(new Set(candidates.map(row => row.id))).toEqual(new Set(admitted.map(row => row.id)));
                 const result = await app.inject({ method: 'GET', url: '/v1/artifacts?kind=skill&limit=3', headers: {
                     'x-test-user-id': reader.id,

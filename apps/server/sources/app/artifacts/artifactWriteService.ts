@@ -45,6 +45,7 @@ import {
 } from "./artifactClassification";
 import {
     readArtifactForCallerInTx,
+    readArtifactRecipientPublicationsInTx,
     resolveArtifactAccessInTx,
     resolveArtifactAudienceInTx,
     acquireArtifactPublicationLocksInTx,
@@ -1550,19 +1551,14 @@ export async function updateArtifactTx(
     if (params.transcriptVisualPublication && ownerAccountId === params.actorUserId) await settleSessionTranscriptApprovalVisualPublicationInTx(tx, {
         accountId: ownerAccountId, artifactId: params.artifactId, publication: params.transcriptVisualPublication,
     });
-    const recipientUpdates = [];
-    for (const cursor of recipientCursors) {
-        const { accountId } = cursor;
-        // The access owner projects current recipient custody, never the writer's wrap.
-        const read = await readArtifactForCallerInTx(tx, { actorAccountId: accountId, artifactId: params.artifactId,
-            ...(kindOnly ? { projection: 'headers' as const } : {}) });
-        if (read.ok) {
-            recipientUpdates.push({ accountId, cursor, provenance: read.artifact.provenance,
-                provenanceDataEncryptionKey: read.artifact.provenanceDataEncryptionKey });
-        } else if (accountId === ownerAccountId) {
-            throw new Error("Artifact owner cannot read its committed update");
-        }
-    }
+    // The access owner projects current recipient custody, never the writer's wrap.
+    const publications = await readArtifactRecipientPublicationsInTx(tx, { artifactId: params.artifactId,
+        accountIds: recipientCursors.map(cursor => cursor.accountId) });
+    if (!publications.has(ownerAccountId)) throw new Error("Artifact owner cannot read its committed update");
+    const recipientUpdates = recipientCursors.flatMap(cursor => {
+        const publication = publications.get(cursor.accountId);
+        return publication ? [{ accountId: cursor.accountId, cursor, ...publication }] : [];
+    });
     const cursor = recipientCursors.find((recipient) => recipient.accountId === params.actorUserId);
     if (cursor === undefined) throw new Error("Artifact writer is missing from its authorized audience");
     const ownerCursor = recipientCursors.find((recipient) => recipient.accountId === ownerAccountId);

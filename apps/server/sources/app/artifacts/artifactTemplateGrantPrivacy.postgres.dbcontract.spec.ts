@@ -75,7 +75,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
             } finally { await measuredClient.$disconnect(); }
         })();
         expect(observed.result.map(row => row.id)).toEqual([artifact.id]);
-        expect(observed.reads.filter(row => row.model === 'artifact').map(row => row.count)).toEqual([1]);
+        // Each received grant arm transfers at most one page position; no owned row is read.
+        expect(new Set(observed.reads.filter(row => row.model === 'artifact').flatMap(row => row.ids))).toEqual(new Set([artifact.id]));
+        expect(Math.max(...observed.reads.filter(row => row.model === 'artifact').map(row => row.count))).toBe(1);
         expect(observed.result[0]).not.toHaveProperty('body');
         await withAuthenticatedTestApp(artifactsRoutes, async app => {
             const received = await app.inject({ method: 'GET',

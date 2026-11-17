@@ -31,6 +31,7 @@ export default defineConfig({
             "sources/app/teams/credentials/resourceActivity.sqlite.integration.spec.ts",
             "sources/app/session/access/sessionAccessMembershipImpact.sqlite.integration.spec.ts",
             "sources/app/auth/providers/accountIdentityChange.sqlite.integration.spec.ts",
+            "sources/app/artifacts/artifactGrantedListCost.sqlite.integration.spec.ts",
             resolve(__dirname, '../../packages/tests/suites/db-contract/**/*.dbcontract.spec.{ts,mjs}'),
             ...(process.env.HAPPIER_DB_PROVIDER === 'postgres' ? [
                 resolve(__dirname, '../cli/src/deployments/deploymentComposeJourney.composed.integration.spec.ts'),

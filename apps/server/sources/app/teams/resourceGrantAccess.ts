@@ -188,24 +188,33 @@ export function resourceGrantArmWheres(actorAccountId: string, sharedWithTeamId?
     };
 }
 
+export type ResourceGrantPrincipalArm = 'account' | 'team' | 'group';
+
 /**
- * The same grant policy for an ordered candidate page: a correlated grant EXISTS
- * inside the access OR cannot use any resource index, so PostgreSQL scanned every
- * Account's resources. The adapter reads each grant arm through its principal
- * index in the caller's snapshot; the page then combines the owner index with
- * exact resource ids.
+ * The same grant policy for ordered candidate pages and their counts, as separately
+ * index-servable arms. A grant sublink inside the access OR cannot use any resource
+ * index (PostgreSQL scanned every Account's resources), and materializing every
+ * granted id into `id IN (…)` made each page read and re-bind the caller's whole
+ * received inventory (and exceeded SQLite's bind limit at 1,000 shares). Instead the
+ * owner index is one arm and each grant principal is one semi-join arm, read through
+ * its principal index. Received arms exclude the caller's own resources, so they are
+ * disjoint from `owned`; they may overlap each other. Callers apply their selection,
+ * keyset and LIMIT to every arm and merge (`mergeResourceGrantArmPages`). Resource
+ * adapters still own visibility and final private-content admission.
  */
-export async function resolveResourceGrantPageAccessWhere(actorAccountId: string,
-    readGrantedResourceIds: (grants: ReturnType<typeof resourceGrantArmWheres>) => Promise<readonly (readonly string[])[]>) {
-    return { OR: [{ accountId: actorAccountId }, await resolveReceivedResourceGrantWhere(actorAccountId, readGrantedResourceIds)] };
+export function resourceGrantPageAccessArms<Where extends object>(actorAccountId: string,
+    grantedThrough: (arm: ResourceGrantPrincipalArm, grantWhere: ReturnType<typeof resourceGrantArmWheres>[ResourceGrantPrincipalArm]) => Where,
+    sharedWithTeamId?: string): Readonly<{ owned: Readonly<{ accountId: string }>; received: readonly (Where & Readonly<{ accountId: { not: string } }>)[] }> {
+    const grants = resourceGrantArmWheres(actorAccountId, sharedWithTeamId);
+    return { owned: { accountId: actorAccountId }, received: (['account', 'team', 'group'] as const).map(arm =>
+        ({ accountId: { not: actorAccountId }, ...grantedThrough(arm, grants[arm]) })) };
 }
 
-/** The non-owner arm alone, for lists that already exclude the caller's own resources. */
-export async function resolveReceivedResourceGrantWhere(actorAccountId: string,
-    readGrantedResourceIds: (grants: ReturnType<typeof resourceGrantArmWheres>) => Promise<readonly (readonly string[])[]>,
-    sharedWithTeamId?: string) {
-    const granted = await readGrantedResourceIds(resourceGrantArmWheres(actorAccountId, sharedWithTeamId));
-    return { id: { in: [...new Set(granted.flat())] } };
+/** The first `limit` rows of the union lie within the union of each arm's first `limit` rows. */
+export function mergeResourceGrantArmPages<Row extends Readonly<{ id: string }>>(pages: readonly (readonly Row[])[],
+    compare: (left: Row, right: Row) => number, limit?: number): Row[] {
+    const merged = [...new Map(pages.flat().map(row => [row.id, row])).values()].sort(compare);
+    return limit === undefined ? merged : merged.slice(0, limit);
 }
 
 /** SQL projection of the effective-membership owner, shared by resource adapters. */

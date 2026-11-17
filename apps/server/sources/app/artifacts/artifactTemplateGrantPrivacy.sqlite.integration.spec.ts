@@ -80,7 +80,9 @@ describe('Template grant privacy through Artifact HTTP (real SQLite)', () => {
                 return { rows, transferred: observed.rows };
             });
             expect(query.rows.map(row => row.id)).toEqual([artifact.id]);
-            expect(query.transferred.filter(row => row.model === 'artifact').map(row => row.count)).toEqual([1]);
+            // Each received grant arm transfers at most one page position; no owned row is read.
+            expect(new Set(query.transferred.filter(row => row.model === 'artifact').flatMap(row => row.ids))).toEqual(new Set([artifact.id]));
+            expect(Math.max(...query.transferred.filter(row => row.model === 'artifact').map(row => row.count))).toBe(1);
             const grants = async (accountId: string) => {
                 const result = await app.inject({ method: 'GET', url: `/v1/artifacts/${artifact.id}/access/grants`, headers: headers(accountId) });
                 expect(result.statusCode, result.body).toBe(200);

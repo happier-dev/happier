@@ -590,6 +590,47 @@ describe("Artifact document grants (real SQLite)", () => {
         expect(bodies).toBe(0);
     });
 
+    it('projects every recipient publication from one bodyless read, whatever the audience size', async () => {
+        const owner = await plainAccount();
+        const update = async (recipientCount: number) => {
+            const artifact = await plainArtifact(owner.id);
+            const recipients = await Promise.all(Array.from({ length: recipientCount }, () => plainAccount()));
+            await db.artifactGrant.createMany({ data: recipients.map(recipient => ({ principalKind: 'account', artifactId: artifact.id,
+                accountId: recipient.id, accessLevel: 'view' as const, createdByAccountId: owner.id })) });
+            const reads = { operations: 0, bodies: 0 };
+            const result = await inTx(tx => {
+                const observed = new Proxy(tx, { get(target, property, receiver) {
+                    const value: unknown = Reflect.get(target, property, receiver);
+                    if (typeof value === 'function') return value.bind(target);
+                    if (value === null || typeof value !== 'object') return value;
+                    return new Proxy(value, { get(delegate, operation, delegateReceiver) {
+                        const query: unknown = Reflect.get(delegate, operation, delegateReceiver);
+                        if (typeof query !== 'function' || typeof operation !== 'string' || !operation.startsWith('find')) return query;
+                        return async (...args: unknown[]) => {
+                            reads.operations++;
+                            const selection = args[0];
+                            if (property === 'artifact' && selection && typeof selection === 'object' && 'select' in selection
+                                && selection.select && typeof selection.select === 'object'
+                                && 'body' in selection.select && selection.select.body === true) reads.bodies++;
+                            return Reflect.apply(query, delegate, args);
+                        };
+                    } });
+                } });
+                return updateArtifactTx(observed, { actorUserId: owner.id, artifactId: artifact.id,
+                    body: { bytes: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ value: 'next' })), expectedVersion: 1 } });
+            });
+            if (!result.ok) throw new Error('update failed');
+            expect(new Set(result.recipientUpdates.map(recipient => recipient.accountId)))
+                .toEqual(new Set([owner.id, ...recipients.map(recipient => recipient.id)]));
+            return reads;
+        };
+        const small = await update(2);
+        const large = await update(8);
+        // Only the writer's own current row carries a body; recipient custody adds no per-recipient reads.
+        expect(large).toEqual(small);
+        expect(small.bodies).toBe(1);
+    });
+
     it('selects exact kinds before paging and repairs only owner legacy headers without selecting bodies', async () => {
         const owner = await plainAccount();
         const foreign = await plainAccount();

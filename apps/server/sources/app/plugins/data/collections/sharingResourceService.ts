@@ -7,7 +7,7 @@ import type { PluginCollectionContentEnvelopeV1 } from '@happier-dev/protocol/pl
 import { assertPluginCollectionContentEnvelopeForModeV1, PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import type { Tx } from '@/storage/inTx';
 import { inReadSnapshot, inTx } from '@/storage/inTx';
-import { resolveResourceGrantAccessFromFacts, resolveReceivedResourceGrantWhere } from '@/app/teams/resourceGrantAccess';
+import { mergeResourceGrantArmPages, resolveResourceGrantAccessFromFacts, resourceGrantPageAccessArms } from '@/app/teams/resourceGrantAccess';
 import { resolveGrantableTeamForActorInTx } from '@/app/teams/queries';
 import { collectionAccessFactsSelect, collectionGrantFacts } from './sharingStorage';
 import { projectResourceRecipientEnvelope } from '@/app/teams/resourceGrantAccess';
@@ -96,14 +96,16 @@ export function putSharedCollectionResource(actorAccountId: string, request: Plu
     });
 }
 
-/** Counts and pages share one candidate predicate; scope is independent of read admission. */
+/** Counts and pages share the candidate access arms; scope is independent of read admission.
+ * A selected Team is one arm bounded by its exact rows; otherwise each received grant arm
+ * is its own index-servable query and callers merge them. */
 async function sharedCollectionCandidatesInTx(tx: Tx, actorAccountId: string, sharedWithTeamId?: string): Promise<Readonly<{
-    where: Prisma.PluginCollectionRowWhereInput; scopes: ReadonlyMap<string, ResourceTeamShareScopeV1>; groupIds: ReadonlySet<string | null>;
+    arms: readonly Prisma.PluginCollectionRowWhereInput[]; scopes: ReadonlyMap<string, ResourceTeamShareScopeV1>; groupIds: ReadonlySet<string | null>;
 }>> {
     const scopes = new Map<string, ResourceTeamShareScopeV1>();
     const groupIds = new Set<string | null>();
     if (sharedWithTeamId && !await resolveGrantableTeamForActorInTx(tx, { actorAccountId, teamId: sharedWithTeamId })) {
-        return { where: { id: { in: [] } }, scopes, groupIds };
+        return { arms: [], scopes, groupIds };
     }
     const selected = sharedWithTeamId ? await Promise.all([
         tx.pluginCollectionGrant.findMany({ where: { principalKind: 'team', teamId: sharedWithTeamId }, select: { rowDbId: true } }),
@@ -117,24 +119,22 @@ async function sharedCollectionCandidatesInTx(tx: Tx, actorAccountId: string, sh
         const scope = resourceTeamShareScopeV1({ team: teamRows.has(id), group: groupRows.has(id) });
         if (scope) scopes.set(id, scope);
     }
-    if (selected && ids.length === 0) return { where: { id: { in: [] } }, scopes, groupIds };
+    if (selected && ids.length === 0) return { arms: [], scopes, groupIds };
     // A selected Team never enumerates the reader's grants to unrelated rows.
     const candidateRows = selected ? { rowDbId: { in: ids } } : {};
-    const received = await resolveReceivedResourceGrantWhere(actorAccountId, async grants => (await Promise.all([
-        tx.pluginCollectionGrant.findMany({ where: { principalKind: 'account', ...grants.account, ...candidateRows }, select: { rowDbId: true } }),
-        tx.pluginCollectionGrant.findMany({ where: { principalKind: 'team', ...grants.team, ...candidateRows }, select: { rowDbId: true } }),
-        tx.pluginCollectionGrant.findMany({ where: { principalKind: 'group', ...grants.group, ...candidateRows }, select: { rowDbId: true } }),
-    ])).map(rows => rows.map(row => row.rowDbId)));
-    return { scopes, groupIds, where: sharedWithTeamId ? { deletedAt: null, id: { in: ids }, OR: [{ accountId: actorAccountId }, received] }
-        : { deletedAt: null, accountId: { not: actorAccountId }, AND: [received] } };
+    const access = resourceGrantPageAccessArms(actorAccountId, (arm, grantWhere): Prisma.PluginCollectionRowWhereInput =>
+        ({ grants: { some: { principalKind: arm, ...grantWhere, ...candidateRows } } }));
+    return { scopes, groupIds, arms: sharedWithTeamId ? [{ deletedAt: null, id: { in: ids }, OR: [access.owned, ...access.received] }]
+        : access.received.map(arm => ({ deletedAt: null, ...arm })) };
 }
 
 /** Existing Collection rows/grants own discovery; no declaration or inventory registry is read. */
 export async function countTeamSharedCollectionsInTx(tx: Tx, input: Readonly<{ actorAccountId: string; sharedWithTeamId: string }>): Promise<Readonly<{
     ok: true; collections: readonly Readonly<{ collection: Pick<PluginCollectionSharingAddressV1, 'pluginId' | 'collectionId'>; count: number }>[];
 }>> {
-    const rows = await tx.pluginCollectionRow.groupBy({ by: ['pluginId', 'collectionId'],
-        where: (await sharedCollectionCandidatesInTx(tx, input.actorAccountId, input.sharedWithTeamId)).where, _count: { _all: true } });
+    // A selected Team is a single bounded arm.
+    const [where] = (await sharedCollectionCandidatesInTx(tx, input.actorAccountId, input.sharedWithTeamId)).arms;
+    const rows = where ? await tx.pluginCollectionRow.groupBy({ by: ['pluginId', 'collectionId'], where, _count: { _all: true } }) : [];
     return { ok: true as const, collections: rows.map(row => ({ collection: { pluginId: row.pluginId, collectionId: row.collectionId }, count: row._count._all })) };
 }
 
@@ -144,9 +144,14 @@ export function listSharedCollectionResources(actorAccountId: string, request: P
         if (request.cursor && !/^[A-Za-z0-9_-]+$/.test(request.cursor)) throw new CollectionSharingError('collection_cursor_invalid');
         const limit = request.limit ?? PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1;
         const candidates = await sharedCollectionCandidatesInTx(tx, actorAccountId, request.sharedWithTeamId);
-        const rows = await tx.pluginCollectionRow.findMany({ where: { pluginId: request.pluginId, collectionId: request.collectionId,
-            ...(request.cursor ? { id: { gt: request.cursor } } : {}),
-            AND: [candidates.where] }, select: collectionSharingReadSelect(actorAccountId), orderBy: { id: 'asc' }, take: limit + 1 });
+        const pageWhere = { pluginId: request.pluginId, collectionId: request.collectionId, ...(request.cursor ? { id: { gt: request.cursor } } : {}) };
+        // Several arms merge their page-sized keyset positions before one content read.
+        const positions = candidates.arms.length <= 1 ? null : mergeResourceGrantArmPages(await Promise.all(candidates.arms.map(arm =>
+            tx.pluginCollectionRow.findMany({ where: { ...pageWhere, AND: [arm] }, select: { id: true }, orderBy: { id: 'asc' }, take: limit + 1 }))),
+        (left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0, limit + 1);
+        const scope = positions === null ? candidates.arms[0] : positions.length ? { id: { in: positions.map(row => row.id) } } : undefined;
+        const rows = scope ? await tx.pluginCollectionRow.findMany({ where: { ...pageWhere, AND: [scope] },
+            select: collectionSharingReadSelect(actorAccountId), orderBy: { id: 'asc' }, take: limit + 1 }) : [];
         const page = rows.slice(0, limit);
         const caller = page.some(row => row.account.encryptionMode === 'e2ee')
             ? await tx.account.findUnique({ where: { id: actorAccountId }, select: RECIPIENT_READINESS_SELECT }) : null;

@@ -48,11 +48,19 @@ Home does not load Source bodies, setup resources, Machines, or vault material.
 | Managed GitHub identity runtime and directory reads | `apps/server/sources/app/integrations/github/githubManagedIdentityProvider.ts` and `githubManagedDirectory.ts` |
 | Membership, roles, history horizons | `admitTeamMemberInTx` and the membership owner |
 | Who a new share may name (every shareable resource) | `apps/server/sources/app/teams/shareEligibility.ts` |
+| Received-resource list access (Artifacts, Tasks, shared Collection rows) | `resourceGrantPageAccessArms` in `apps/server/sources/app/teams/resourceGrantAccess.ts` |
 | Invalidation | `apps/server/sources/app/teams/teamChanges.ts` |
 | Wire contracts | `packages/protocol/src/teams/` |
 
 Every route, provisioning adapter, and operator adapter calls these services. Nothing else
 writes a `Team` row.
+
+Lists of resources shared with the caller read access as separate index-servable arms: the
+owner index, and one grant-principal semi-join each for the Account, Team and Group arms. Each
+arm applies the list's selection, keyset and limit in the database, and a page merges at most
+one page of positions per arm. No list materializes the caller's granted ids, so a page binds
+and transfers the same amount however many resources are shared with the caller; the joined
+arms still visit their principal's grants inside the database.
 
 In 0.3 development source, the existing Team summary also carries `directoryMembership`
 for viewers who can read the Team's authentication facts. It is `null` when no directory

@@ -1,5 +1,5 @@
 import { automationSubjectKeyV1, type AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
-import { readArtifactCandidateWhereInTx, resolveArtifactAccessInTx } from '@/app/artifacts/artifactAccessService';
+import { readArtifactCandidateAccess, resolveArtifactAccessInTx } from '@/app/artifacts/artifactAccessService';
 import { projectDeploymentSourceAdmission, type DeploymentAuthentication } from '@/app/deployments/deploymentAdmission';
 import { loadDeploymentEnvironmentInTx, projectDeploymentEnvironmentHeader } from '@/app/deployments/deploymentEnvironmentService';
 import { listMachineCandidatesInTx, resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
@@ -45,8 +45,9 @@ export async function resolveAutomationActionReachInTx(tx: Tx, input: Readonly<{
         if (subjectKey && subjectKind === 'approvalProfile') {
             const serverId = await readCurrentServerIdentityId(process.env, tx);
             if (serverId) {
-                const where = await readArtifactCandidateWhereInTx(tx, input.accountId);
-                const candidates = await tx.artifact.findMany({ where, select: { id: true } });
+                const access = readArtifactCandidateAccess(input.accountId);
+                const candidates = (await Promise.all([access.owned!, ...access.received].map(where =>
+                    tx.artifact.findMany({ where, select: { id: true } })))).flat();
                 const profile = candidates.find(({ id: profileId }) => automationSubjectKeyV1({ kind: 'approvalProfile', serverId, profileId }) === subjectKey);
                 if (profile) {
                     const access = await resolveArtifactAccessInTx(tx, { actorAccountId: input.accountId, artifactId: profile.id });
