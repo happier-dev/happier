@@ -112,6 +112,11 @@ Sources without a minimum retain their existing behavior, and compatible
 system installations retain priority. Cua's local and remote operations share
 the declared 0.27.5 prerequisite and its managed installation path.
 
+Local Cua Sandbox and Space options report an unavailable prerequisite when the
+controller has no usable Cua CLI. If the managed dependency host can install it,
+the prerequisite offers the existing **Install Cua** Action. After installation,
+retry options on the same controller to read its native runtime and image choices.
+
 Matching Protocol, SDK projection, plugin declaration and daemon readers reload
 together under the unpublished 0.3 direct cut. Older strict development readers
 reject the new executable-declaration field; existing declarations can omit it.

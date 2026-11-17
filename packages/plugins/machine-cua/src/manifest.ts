@@ -10,14 +10,22 @@ import { CuaLocalLaunchV1Schema, CuaLocalOptionsQueryV1Schema, CuaLocalResourceV
     type CuaLocalLaunchV1, type CuaLocalResourceV1, type CuaLocalOptionsQueryV1 } from './machine/schemas.js';
 import type { CuaLocalProvisionerId } from './machine/localProvisioner.js';
 import { remoteAccounts, remoteProvisioner, remoteRoles } from './machine/remoteDeclarations.js';
-import { CUA_DEPENDENCY_ID as dependencyId, CUA_CLI_MINIMUM_VERSION, resolveCuaExecutable } from './machine/nativeDependency.js';
+import { CUA_DEPENDENCY_ID as dependencyId, CUA_CLI_MINIMUM_VERSION, CuaCliUnavailable, resolveCuaExecutable } from './machine/nativeDependency.js';
 import { CUA_CLI_ARCHIVE_SOURCE } from './machine/nativeInstall.js';
 import { defineProtocolLiteral } from '@happier-dev/plugin-sdk/protocol';
 import { CuaPreparationInput, CuaPreparationReference, CuaPreparationSchemas, createCuaPreparation } from './machine/preparation.js';
 
 const pluginId = 'happier.machine.cua';
 const processAccess = 'cua-native-process';
+const installAction = 'install';
+const cliRequirement = { kind: 'managedDependency', id: { pluginId, localId: dependencyId } } as const;
 const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: [processAccess] } as const;
+
+function unavailableCliPrerequisite(error: CuaCliUnavailable) {
+    return { requirement: cliRequirement, status: 'unavailable' as const, ...(error.installable ? {
+        repairAction: { action: { pluginId, localId: installAction }, input: {} },
+    } : {}) };
+}
 
 async function nativeClient(context: PluginInvocationContext) {
     const executable = await resolveCuaExecutable(context);
@@ -72,19 +80,12 @@ function roles(id: CuaLocalProvisionerId) {
         check: { ...defaults, title: 'Check Cua local runtime', dangerLevel: 'safe' as const,
             inputSchema: schemas.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
             async run(_input: Readonly<Record<string, never>>, context: PluginInvocationContext) {
-                const requirement = { kind: 'managedDependency' as const, id: { pluginId, localId: dependencyId } };
-                try { return machineCheckPresentation({ ...await (await provider(id, context)).check(), prerequisites: [{ requirement, status: 'available' as const }] }); }
+                try { return machineCheckPresentation({ ...await (await provider(id, context)).check(), prerequisites: [{ requirement: cliRequirement, status: 'available' as const }] }); }
                 catch (error) {
                     // Only a definitive answer about the CLI is a check result. A failed, aborted or timed-out read
                     // propagates as a failed check, so the surface offers Retry instead of claiming "Not installed".
-                    const code = error instanceof Error ? error.message : '';
-                    if (code !== 'cua_native_outdated' && code !== 'cua_native_unavailable') throw error;
-                    return machineCheckPresentation({ available: false, prerequisites: [{ requirement, status: 'unavailable' as const,
-                        // ensure preserves installed system binaries; it cannot
-                        // repair an outdated user installation by replacing it.
-                        ...(code === 'cua_native_unavailable' ? {
-                            repairAction: { action: { pluginId, localId: 'install' }, input: {} },
-                        } : {}) }], code });
+                    if (!(error instanceof CuaCliUnavailable)) throw error;
+                    return machineCheckPresentation({ available: false, prerequisites: [unavailableCliPrerequisite(error)], code: error.code });
                 }
             } },
         options: { ...defaults, title: 'Read Cua local image and runtime choices', dangerLevel: 'safe' as const,
@@ -98,7 +99,15 @@ function roles(id: CuaLocalProvisionerId) {
                 ...(id === 'local-space' ? [{ path: 'size.diskBytes', role: 'disk' as const, title: configurationLabel('diskBytes'), widget: 'integer' as const, unit: 'bytes' as const }] : []),
             ] },
             async run(input: CuaLocalOptionsQueryV1, context: PluginInvocationContext) {
-                return (await provider(id, context)).options(input);
+                try { return await (await provider(id, context)).options(input); }
+                catch (error) {
+                    if (!(error instanceof CuaCliUnavailable)) throw error;
+                    return {
+                        base: { launch: {}, available: false, prerequisites: [unavailableCliPrerequisite(error)],
+                            unavailableReason: { code: error.code, status: machinePresentationLabel(error.code) } },
+                        dimensions: { size: [], image: [], location: [], network: [], duration: [] },
+                    };
+                }
             } },
         acquire: { ...defaults, title: 'Create Cua local machine', dangerLevel: 'writesLocal' as const,
             confirmation: { title: 'Create this Cua local machine?' },
@@ -235,7 +244,7 @@ export const CUA_PLUGIN = definePlugin({
     machineProvisioners: { 'local-sandbox': provisioner('local-sandbox'), 'local-space': provisioner('local-space'),
         byoc: remoteProvisioner() },
     actions: {
-        install: { scopes: ['machine'], surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], execution: { target: 'daemon' },
+        [installAction]: { scopes: ['machine'], surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], execution: { target: 'daemon' },
             title: 'Install Cua', dangerLevel: 'writesLocal',
             confirmation: { title: 'Install Cua on this computer?',
                 body: 'Download the verified official Cua CLI release for this computer. Native runtime dependencies and their licenses remain separate; this does not elevate privileges or configure virtualization.', confirmLabel: 'Install' },

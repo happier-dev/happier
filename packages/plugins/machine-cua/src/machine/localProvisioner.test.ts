@@ -11,7 +11,7 @@ import { createCuaLocalProvisioner } from './localProvisioner.js';
 import { CUA_PLUGIN } from '../manifest.js';
 import { CuaLocalLaunchV1Schema } from './schemas.js';
 import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
-import { MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1,
+import { MachineProvisionerCheckResultV1Schema, MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1,
     type MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { localAcquireOperation } from './localProvisionerSchemas.js';
 
@@ -299,6 +299,51 @@ describe('consumed Cua local provisioner roles', () => {
         }) as unknown as PluginProcessHandle });
         await expect(h.action('sandbox-stream')({ resource, argv: ['happier', 'stdio'] }, h.context)).rejects.toBe(aborted);
         expect(dispose).toHaveBeenCalledOnce();
+    });
+    it.each(['sandbox', 'space'] as const)('returns the same managed CLI repair from %s options and check', async prefix => {
+        const h = await activated(false);
+        const check = MachineProvisionerCheckResultV1Schema.parse(await h.action(`${prefix}-check`)({}, h.context));
+        expect(check).toMatchObject({ available: false, prerequisites: [{
+            repairAction: { action: { pluginId: CUA_PLUGIN.manifest.id, localId: 'install' }, input: {} },
+        }] });
+        const options = MachineProvisionerOptionsResultV1Schema.parse(
+            await h.action(`${prefix}-options`)({ runtimeId: 'runc' }, h.context));
+        expect(options.base).toMatchObject({ available: false, unavailableReason: { code: 'cua_native_unavailable' },
+            prerequisites: check.prerequisites });
+        expect(options.dimensions.image).toEqual([]);
+        expect(h.requests).toEqual([]);
+    });
+    it('retries options after running the repair offered on a fresh controller', async () => {
+        const native = harness();
+        let installed = false;
+        const dependencies = {
+            status: async (): Promise<ManagedDependencyStatus> => installed ? {
+                state: 'ready', id: 'cua-cli', version: '0.27.5', sourceId: 'pinnedArchive',
+                executable: { kind: 'managedDependency', id: { pluginId: CUA_PLUGIN.manifest.id, localId: 'cua-cli' } },
+            } : { state: 'missing', id: 'cua-cli', supported: true },
+            async ensure() {
+                installed = true;
+                const status = await dependencies.status();
+                if (status.state !== 'ready') throw new Error('Fixture installation did not become ready');
+                return status;
+            },
+        };
+        const h = await activated(true, native.run);
+        const kit = await createPluginTestkit({ manifest: CUA_PLUGIN.manifest, module: CUA_PLUGIN, services: {
+            ...h.context.services, managedServices: { ...h.context.services.managedServices, dependencies },
+        } as unknown as PluginTestServicesFixture });
+        try {
+            const selectors = { runtimeId: 'qemu', size: { cpu: size.cpu, memoryBytes: size.memoryBytes } };
+            const readOptions = async () => MachineProvisionerOptionsResultV1Schema.parse(
+                await kit.invokeAction('sandbox-options', selectors, { surface: 'plugin' }));
+            const missing = await readOptions();
+            const repair = missing.base?.prerequisites?.[0]?.repairAction;
+            expect(repair?.action.pluginId).toBe(CUA_PLUGIN.manifest.id);
+            if (!repair) throw new Error('Missing CLI repair');
+            expect(installed).toBe(false);
+            await kit.invokeAction(repair.action.localId, repair.input, { surface: 'plugin' });
+            expect(select(await readOptions())).toMatchObject({ kind: 'ready', launch });
+        } finally { await kit.dispose(); }
     });
     it.each(['sandbox', 'space'] as const)('repairs a missing CLI inline before checking %s again', async prefix => {
         const h = await activated(false);
