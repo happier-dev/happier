@@ -64,6 +64,7 @@ export type UniversalSearchNativeHostProps = Readonly<{
     /** Controlled query owned by the universal controller. */
     query: string;
     onChangeQuery: (next: string) => void;
+    onActiveStepChange?: (step: SelectionListStep) => void;
     onSelect: (id: string, option: SelectionListOption) => void;
     onCommandSelect?: (id: string, option: SelectionListOption) => void;
     /** Close the route. Activation-driven navigation is the controller's business, not the host's. */
@@ -220,6 +221,7 @@ export function UniversalSearchNativeHost(props: UniversalSearchNativeHostProps)
                         autoFocusInputOnNative
                         inputValue={props.query}
                         onChangeInputValue={props.onChangeQuery}
+                        onActiveStepChange={props.onActiveStepChange}
                         onSelect={props.onSelect}
                         onCommandSelect={props.onCommandSelect}
                         onRequestClose={requestClose}

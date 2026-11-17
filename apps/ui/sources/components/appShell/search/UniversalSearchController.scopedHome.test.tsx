@@ -389,6 +389,28 @@ function pluginSearchProjection(input: Readonly<{ pluginId: string; title: strin
 }
 
 describe('UniversalSearchController exact Home scope', () => {
+    it('clears command queries on nested navigation while preserving mount and same-step input', async () => {
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        const screen = await renderScreen(<UniversalSearchController
+            commands={[{ id: 'change-theme', title: 'Change theme', action: async () => {},
+                loadCommands: async () => [{ id: 'warm-paper', title: 'Warm Paper', action: async () => {} }] }]}
+            initialQuery="Change theme" presentation="modal" onRequestClose={vi.fn()} />);
+
+        expect(selectionListProps()?.inputValue).toBe('Change theme');
+        await screen.pressByTestIdAsync('command-palette:option:change-theme');
+        await flushHookEffects();
+
+        expect(selectionListProps()?.inputValue).toBe('');
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(screen.findByTestId('command-palette:option:warm-paper')).not.toBeNull();
+        });
+        await act(async () => { selectionListProps()?.onChangeInputValue?.('Paper'); });
+        expect(selectionListProps()?.inputValue).toBe('Paper');
+        await screen.pressByTestIdAsync('selection-list:header:leading:back-chip');
+        expect(selectionListProps()?.inputValue).toBe('');
+    });
+
     it.each(['', 'Needle'])('hides tagged cached Session recents/matches for query %j before the recent limit, preserving other Homes', async (query) => {
         const { UniversalSearchController } = await import('./UniversalSearchController');
         await renderScreen(<UniversalSearchController commands={[]} initialQuery={query}

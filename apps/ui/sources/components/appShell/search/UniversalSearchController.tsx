@@ -1399,6 +1399,14 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
     }), [replaceModel, reviewActive]));
 
     const activeRootStep = terminalJump?.step ?? rootStep;
+    const activeStepIdRef = React.useRef<string | null>(null);
+    const handleActiveStepChange = useEventCallback((step: SelectionListStep) => {
+        const previousStepId = activeStepIdRef.current;
+        activeStepIdRef.current = step.id;
+        // The controller owns the query. Mount and content refreshes retain it;
+        // navigating to another step starts that step's own search.
+        if (previousStepId !== null && previousStepId !== step.id) changeQuery('');
+    });
     // Find lab G1s: Text in files is a scope token that × (or ⌫ on an empty field) removes; Search over
     // everything shows no source chip. The way in is the "All matches" row, ⌘⇧F, or its command.
     const sourceFilters = React.useMemo<readonly SelectionListFilter[]>(() => source ? [{
@@ -1495,11 +1503,11 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
         />;
     }
     if (Platform.OS !== 'web' && props.presentation === 'route') {
-        return <UniversalSearchNativeHost rootStep={activeRootStep} query={query} onChangeQuery={changeQuery} onSelect={activeSelect} onCommandSelect={activeCommandSelect} onRequestClose={requestClose} selectedOptionId={selectedOptionId} listAccessibilityLabel={listAccessibilityLabel} filters={activeFilters} inputSuffix={inputSuffix} inputAccessoryRow={replaceField} bodyHeader={replaceSummary} footerAction={replaceFooter} inputBehavior={terminalJump ? terminalScopeChrome.inputBehavior : sourceInputBehavior} dynamicSectionCache={dynamicSectionCache} />;
+        return <UniversalSearchNativeHost rootStep={activeRootStep} query={query} onChangeQuery={changeQuery} onActiveStepChange={handleActiveStepChange} onSelect={activeSelect} onCommandSelect={activeCommandSelect} onRequestClose={requestClose} selectedOptionId={selectedOptionId} listAccessibilityLabel={listAccessibilityLabel} filters={activeFilters} inputSuffix={inputSuffix} inputAccessoryRow={replaceField} bodyHeader={replaceSummary} footerAction={replaceFooter} inputBehavior={terminalJump ? terminalScopeChrome.inputBehavior : sourceInputBehavior} dynamicSectionCache={dynamicSectionCache} />;
     }
     return (
         <View style={styles.root} testID="universal-search-host">
-            <SelectionList rootStep={activeRootStep} selectionMark="enter" optionPresentation="menu" inputValue={query} onChangeInputValue={changeQuery} onSelect={activeSelect} onCommandSelect={activeCommandSelect} onRequestClose={requestClose} selectedOptionId={selectedOptionId} listAccessibilityLabel={listAccessibilityLabel} filters={activeFilters} inputSuffix={bandSuffix} inputAccessoryRow={replaceField} bodyHeader={replaceSummary} footerAction={replaceFooter} inputBehavior={terminalJump ? terminalScopeChrome.inputBehavior : sourceInputBehavior} autoFocusInputOnWeb fillAvailableSpace dynamicSectionCache={dynamicSectionCache}
+            <SelectionList rootStep={activeRootStep} selectionMark="enter" optionPresentation="menu" inputValue={query} onChangeInputValue={changeQuery} onActiveStepChange={handleActiveStepChange} onSelect={activeSelect} onCommandSelect={activeCommandSelect} onRequestClose={requestClose} selectedOptionId={selectedOptionId} listAccessibilityLabel={listAccessibilityLabel} filters={activeFilters} inputSuffix={bandSuffix} inputAccessoryRow={replaceField} bodyHeader={replaceSummary} footerAction={replaceFooter} inputBehavior={terminalJump ? terminalScopeChrome.inputBehavior : sourceInputBehavior} autoFocusInputOnWeb fillAvailableSpace dynamicSectionCache={dynamicSectionCache}
                 // Lab G1s: the code preview column belongs to the Text in files scope; inline hits open their context in the row (G1).
                 {...((source === 'fileContent' || source === 'files' || source === 'symbols') && !terminalJump ? { detailPane: COMMAND_SURFACE_DETAIL_PANE } : {})} />
         </View>
