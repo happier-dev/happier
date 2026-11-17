@@ -2,14 +2,19 @@ import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ActionExecuteFailureSchema } from '../actions/actionExecutionResult.js';
 import { ProjectAccountOrganizationV1Schema } from './projectAccountRowsV1.js';
-import { WorkspaceRefV1WriteSchema } from '../workspaces/workspaceRefV1.js';
+import { ManagedWorkspaceRefV2WriteSchema, WorkspaceRefV2MachineWriteSchema } from '../workspaces/workspaceRefV1.js';
 
 const IdSchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.refine(value => value === value.trim())));
-const WorkspaceAcknowledgementV1Schema = lazyZodSchema(() => z.strictObject({
-  ...WorkspaceRefV1WriteSchema.shape,
-  label: z.optional(z.nullable(z.string().check(z.minLength(1)))),
-  lastOpenedAtMs: z.optional(z.nullable(z.number().check(z.nonnegative()))),
-}));
+const WorkspaceAcknowledgementV1Schema = lazyZodSchema(() => {
+  const acknowledgement = {
+    label: z.optional(z.nullable(z.string().check(z.minLength(1)))),
+    lastOpenedAtMs: z.optional(z.nullable(z.number().check(z.nonnegative()))),
+  };
+  return z.union([
+    z.strictObject({ ...WorkspaceRefV2MachineWriteSchema.shape, ...acknowledgement }),
+    z.strictObject({ ...ManagedWorkspaceRefV2WriteSchema.shape, ...acknowledgement }),
+  ]);
+});
 
 /** Metadata edits only: accepted checkout identity and its root are never Action input. */
 export const ProjectWorkspaceUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({

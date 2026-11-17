@@ -3,6 +3,25 @@ import { computeWorkspaceSyncPolicyDigest, getWorkspaceSyncWorkerCopyV1 } from '
 import { assertProjectAccountSnapshotTransition, parseProjectAccountSnapshotV1, ProjectAccountSnapshotV1Schema } from './projectAccountSnapshotV1.js';
 
 describe('ProjectAccountSnapshotV1', () => {
+  it('retains the full managed target identity across metadata edits and forbids rebinding it', () => {
+    const native = { v: 2 as const, kind: 'managed' as const, id: 'native', serverId: 'home', managedId: 'guest',
+      controller: { machineId: 'host', installationId: 'current' }, rootPath: '/repo', createdAtMs: 1 };
+    const previous = { workspaceRefs: [native], relationships: [] };
+    expect(parseProjectAccountSnapshotV1(previous)).toEqual(previous);
+    expect(() => assertProjectAccountSnapshotTransition(previous, { ...previous, workspaceRefs: [{ ...native, label: 'Renamed' }] }))
+      .not.toThrow();
+    for (const replacement of [
+      { ...native, managedId: 'other-guest' },
+      { ...native, controller: { ...native.controller, machineId: 'other-host' } },
+      { ...native, controller: { ...native.controller, installationId: 'replaced' } },
+      { ...native, rootPath: '/other' },
+      { id: native.id, serverId: native.serverId, machineId: 'host', rootPath: native.rootPath, createdAtMs: 1 },
+    ]) {
+      expect(() => assertProjectAccountSnapshotTransition(previous, { ...previous, workspaceRefs: [replacement] }))
+        .toThrow(expect.objectContaining({ code: 'workspace_ref_in_use' }));
+    }
+  });
+
   it('preserves bound worker-copy provenance while older or unknown provenance remains ordinary Sync', () => {
     const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
     const relationship = {

@@ -176,6 +176,7 @@ export type ProjectWorkersActionInputById = {
                 extraIgnorePatterns: readonly string[];
                 extraIncludePatterns: readonly string[];
                 policyDigest: string;
+                contentOnly?: true | undefined;
             };
             enabled: boolean;
             createdAtMs: number;
@@ -209,6 +210,7 @@ export type ProjectWorkersActionInputById = {
                 extraIgnorePatterns: readonly string[];
                 extraIncludePatterns: readonly string[];
                 policyDigest: string;
+                contentOnly?: true | undefined;
             };
             enabled: boolean;
             createdAtMs: number;

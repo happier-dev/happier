@@ -7,6 +7,7 @@ import {
 import * as sessionSpawnInput from './sessionSpawnNewInputV2.js';
 import { SessionRequesterBootstrapRpcRequestV1Schema } from './sessionRequesterBootstrapV1.js';
 import { SessionPromptStackV1Schema } from '../context/sessionContextV1.js';
+import { ManagedAcquireAgentStartV1Schema } from '../../machines/managed/agentStartV1.js';
 import { SessionSpawnNewInputV2Schema as preObservationInputSchema } from './testFixtures/sessionSpawnInputBeforeCommitObservation.js';
 
 const { SessionSpawnNewInputV2Schema } = sessionSpawnInput;
@@ -21,6 +22,26 @@ const input = {
 } as const;
 
 describe('SessionSpawnNewInputV2Schema', () => {
+  it.each([
+    ['ordinary', sessionSpawnInput.SessionSpawnNewInputV2Schema],
+    ['Action', sessionSpawnInput.SessionSpawnNewActionInputV2Schema],
+    ['Voice', sessionSpawnInput.SessionSpawnNewActionVoiceInputV2Schema],
+    ['server-start', sessionSpawnInput.SessionServerStartSpawnDraftV1Schema],
+  ] as const)('refuses an authored Machine placement that contradicts the admitted execution target at %s admission', (_name, schema) => {
+    const selected = { kind: 'machine', target: { serverId: 'server-1', machineId: 'other-machine' },
+      projectFiles: { kind: 'copy_once' } };
+    expect(schema.safeParse({ ...input, sessionPlacement: selected }).success).toBe(false);
+    expect(schema.safeParse({ ...input,
+      sessionPlacement: { ...selected, target: input.executionTarget } }).success).toBe(true);
+  });
+  it('keeps pending managed placement in acquire authoring and requires managed provenance at Session spawn', () => {
+    const sessionPlacement = { kind: 'managed', projectFiles: { kind: 'copy_once' } };
+    const { executionTarget: _pendingTarget, ...pending } = input;
+    expect(ManagedAcquireAgentStartV1Schema.safeParse({ ...pending, sessionPlacement }).success).toBe(true);
+    expect(SessionSpawnNewInputV2Schema.safeParse({ ...input, sessionPlacement }).success).toBe(false);
+    expect(SessionSpawnNewInputV2Schema.safeParse({ ...input, sessionPlacement,
+      managedCreation: { homeId: 'server-1', managedId: 'managed-1' } }).success).toBe(true);
+  });
   it('admits install selections without removal, app operands, updates or caller-selected planning modes', () => {
     const machineSetupPlanInput = { homeId: 'home', machineId: 'machine-1' };
     expect(SessionSpawnNewInputV2Schema.parse({ ...input, machineSetupPlanInput })).toMatchObject({ machineSetupPlanInput });

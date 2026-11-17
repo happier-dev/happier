@@ -2,7 +2,7 @@ import { z } from '../../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { ScmComparisonFileSchema } from '../../../scm/comparison.js';
 import { WorkspaceAddressV1Schema } from '../../../workspaces/workspaceRefV1.js';
-import { WorkspaceManifestSchema } from '../../../workspaces/manifestSchema.js';
+import { WorkspaceManifestSchema, WorkspaceManifestRelativePathSchema } from '../../../workspaces/manifestSchema.js';
 import { SESSION_WORKSPACE_RETURN_ACTION_IDS_V1, SESSION_WORKSPACE_RETURN_PREPARE_ACTION_ID_V1,
   SESSION_WORKSPACE_RETURN_APPLY_ACTION_ID_V1, SESSION_WORKSPACE_RETURN_CAPTURE_ACTION_ID_V1 } from '../../sessionWorkspaceReturnActionIdsV1.js';
 import type { PreNormalizedActionSpec } from '../definition.js';
@@ -15,6 +15,7 @@ export const SessionWorkspaceReturnPrepareInputV1Schema = lazyZodSchema(() => z.
 export const SessionWorkspaceReturnCaptureInputV1Schema = SessionWorkspaceReturnPrepareInputV1Schema;
 export const SessionWorkspaceReturnCaptureResultV1Schema = lazyZodSchema(() => z.strictObject({
   workspace: WorkspaceAddressV1Schema, baseline: z.optional(WorkspaceManifestSchema),
+  excludedPaths: z.optional(z.readonly(z.array(WorkspaceManifestRelativePathSchema))),
 }));
 export type SessionWorkspaceReturnCaptureResultV1 = z.infer<typeof SessionWorkspaceReturnCaptureResultV1Schema>;
 export const SessionWorkspaceReturnApplyInputV1Schema = lazyZodSchema(() => z.strictObject({

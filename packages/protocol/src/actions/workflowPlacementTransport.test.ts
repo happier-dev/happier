@@ -9,7 +9,8 @@ describe('Workflow preset preparation transport', () => {
   it.each(['plain', 'e2ee'] as const)('binds the selected revision and pool controller to the %s root', mode => {
     const actionId = 'workflow.run.start';
     const target = { kind: 'machine' as const, machineId: 'controller', project: { machineId: 'controller', directory: '/workspace',
-      sessionPlacement: { kind: 'preset' as const, homeId: 'home', presetId: 'preset' } } };
+      sessionPlacement: { kind: 'preset' as const, homeId: 'home', presetId: 'preset',
+        projectFiles: { kind: 'sync' as const, mode: 'keep_synced' as const } } } };
     const binding = { serverIdentityId: 'srv_home', accountId: 'person', authentication: { kind: 'account' as const, tokenEpoch: 1 },
       actionId, requestId: 'start', target };
     const input = { runId: 'run', source: { kind: 'saved', definitionId: 'definition', revision: 1 } };

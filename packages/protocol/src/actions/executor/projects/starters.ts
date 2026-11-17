@@ -5,6 +5,7 @@ import type { ProjectStarterCreateInputV1, ProjectStarterCreateOutputV1 } from '
 import { ScmHostingRepositoryDescribePublishTargetsResponseSchema, ScmHostingRepositoryPublishResponseSchema, ScmHostingRepositorySummarySchema, ScmRepositoryInitResponseSchema } from '../../../scm/repositoryProvisioning.js';
 import { ProjectSourcesCreateOutputV1Schema, projectSourceRepositorySelectorFromHostingSummaryV1, type ProjectSourceRepositorySelectorV1 } from '../../../projects/sources/projectSourceV1.js';
 import { OpenProjectResultV1Schema } from '../../../projects/openProjectV1.js';
+import { isManagedWorkspaceRefV2 } from '../../../workspaces/workspaceRefV1.js';
 import { DaemonFilesystemListDirectoryResponseSchema } from '../../../machines/fileBrowser.js';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1, FilesystemMutationOutputSchema } from '../../filesystemActionFamily.js';
 import type { ActionId } from '../../actionIds.js';
@@ -134,6 +135,7 @@ export async function createProjectFromStarter(input: ProjectStarterCreateInputV
   if (!attached.ok) return failed(attached.errorCode);
   const accepted = OpenProjectResultV1Schema.parse(attached.result);
   if (accepted.kind !== 'opened') return failed(accepted.kind === 'refused' ? accepted.code : accepted.kind);
+  if (isManagedWorkspaceRefV2(accepted.workspace)) return failed('invalid_action_output');
   workspace = accepted.workspace;
   const opened = await execute('projects.open', { serverId: input.serverId, machineId: input.machineId,
     source: { kind: 'source', id: sourceId, revision: source.source.revision, selector, defaultRef: 'main', checkout: workspace },
@@ -141,6 +143,7 @@ export async function createProjectFromStarter(input: ProjectStarterCreateInputV
   if (!opened.ok) return failed(opened.errorCode);
   const project = OpenProjectResultV1Schema.parse(opened.result);
   if (project.kind !== 'opened') return failed(project.kind === 'refused' ? project.code : project.kind);
+  if (isManagedWorkspaceRefV2(project.workspace)) return failed('invalid_action_output');
   if (!project.facts?.projectKey) return failed('invalid_action_output');
   return { ok: true, result: { kind: 'created', projectId: project.facts.projectKey, sourceId, repositoryUrl,
     ...(!scratch && starterId ? { starterId } : {}), ...(resolvedCommit ? { commit: resolvedCommit } : {}), workspace: project.workspace,

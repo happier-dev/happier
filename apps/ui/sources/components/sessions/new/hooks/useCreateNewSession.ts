@@ -1645,6 +1645,7 @@ export function useCreateNewSession(params: Readonly<{
                 sessionName: submittedSessionName,
                 initialSessionFacts: current.authoringDraft?.initialSessionFacts,
                 memoryEnabled: current.authoringDraft?.memoryEnabled,
+                sessionPlacement: current.authoringDraft?.sessionPlacement,
                 ...(submittedPromptStack !== undefined ? { promptStack: submittedPromptStack } : {}),
                 executionTarget: selectedMachineId ? {
                     kind: 'machine',

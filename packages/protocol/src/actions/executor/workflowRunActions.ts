@@ -1072,6 +1072,10 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       assertRunResourceRestriction(args.context, { machineId: admittedTarget.machineId, project: admittedTarget }, deps.normalizeAbsolutePath);
     }
     const input = args.input;
+    // The controller opens private preset content after the signed authored Run.
+    // Only its exact host-issued continuation can add that runtime default.
+    if (input.managedProjectFiles && readHostReviewedChildOperationV1(args.context,
+      args.actionId, input)?.parent.actionId !== args.actionId) throw workflowError('run_access_denied');
     const replayRequest = input.source.kind === 'inline' ? input.source.replay : undefined;
     if (replayRequest?.runId === input.runId) throw workflowError('invalid_input');
     const replaySource = replayRequest ? await readAccepted(replayRequest.runId, args.context.signal) : undefined;
@@ -1365,6 +1369,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       ...actionStartTargetUnavailableV1(args.context, 'workflow_workspace', 'workspace_unavailable').details,
       errorCode: preparedWorkspace.code,
     });
+    const projectFiles = preparedWorkspace.workspaceTarget.sessionPlacement?.projectFiles
+      ?? preparedWorkspace.workspaceTarget.projectFiles ?? input.managedProjectFiles;
     const controller = currentControllerAuthorization(args, combined !== undefined);
     materialization = { ...materialization, effects: { ...materialization.effects,
       admitSessionAuthority: async target => {
@@ -1460,7 +1466,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       actionCaller: args.context.actionCaller ?? { kind: 'host' },
       ...(metadata ? { metadata } : {}), source, inputs: resolvedInputs, machineId: projectTarget.machineId,
       executionTarget,
-      workspaceTarget: preparedWorkspace.workspaceTarget,
+      workspaceTarget: { ...preparedWorkspace.workspaceTarget, ...(projectFiles ? { projectFiles } : {}) },
       origin: { kind: 'direct', ...(originSessionId ? { originSessionId } : {}),
         ...(discussionOrigin ? { discussion: discussionOrigin } : {}),
         ...(authenticatedStarter ? { authenticatedStarterV1: authenticatedStarter } : {}),

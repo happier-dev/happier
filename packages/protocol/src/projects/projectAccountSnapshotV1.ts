@@ -8,7 +8,7 @@ import {
   WorkspaceSyncRelationshipV1Schema,
   type WorkspaceSyncRelationshipV1,
 } from '../sessions/control/handoff/workspaceSyncSchemas.js';
-import { WorkspaceRefV1Schema, type WorkspaceRefV1, type QualifiedProjectKeyV1 } from '../workspaces/workspaceRefV1.js';
+import { isManagedWorkspaceRefV2, WorkspaceRefV1Schema, type WorkspaceRefV1, type QualifiedProjectKeyV1 } from '../workspaces/workspaceRefV1.js';
 import { resolveWorkspaceRefV1 } from '../workspaces/workspaceRefResolutionV1.js';
 import { projectProjectListV1 } from './projectListProjectionV1.js';
 import { deriveWorkspaceSyncTopology } from '../workspaces/workspaceSyncTopology.js';
@@ -91,9 +91,14 @@ export function assertProjectAccountSnapshotTransition(
   for (const previousRef of previous.workspaceRefs) {
     const nextResolution = resolveWorkspaceRefV1(next.workspaceRefs, { id: previousRef.id, serverId: previousRef.serverId });
     // A checkout's Project may change (owner 11-08: Group/Separate, or its repository first arriving); its exact
-    // Machine and root never do, and an explicit Project key is never dropped.
+    // execution target and root never do, and an explicit Project key is never dropped.
     if (nextResolution.kind === 'resolved'
-      && (nextResolution.ref.machineId !== previousRef.machineId
+      && (isManagedWorkspaceRefV2(previousRef) !== isManagedWorkspaceRefV2(nextResolution.ref)
+        || (isManagedWorkspaceRefV2(previousRef) && isManagedWorkspaceRefV2(nextResolution.ref)
+          ? nextResolution.ref.managedId !== previousRef.managedId
+            || nextResolution.ref.controller.machineId !== previousRef.controller.machineId
+            || nextResolution.ref.controller.installationId !== previousRef.controller.installationId
+          : nextResolution.ref.machineId !== previousRef.machineId)
         || nextResolution.ref.rootPath !== previousRef.rootPath
         || (previousRef.projectKey !== undefined && nextResolution.ref.projectKey === undefined))) {
       throw Object.assign(new Error('Workspace identity cannot be rebound'), { code: 'workspace_ref_in_use' });

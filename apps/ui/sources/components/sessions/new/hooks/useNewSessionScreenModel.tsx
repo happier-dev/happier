@@ -44,6 +44,7 @@ import { useSettingsValues } from '@/sync/store/settingsReadHooks';
 import { useFeatureLocalPolicySettings } from '@/hooks/server/useFeatureLocalPolicySettings';
 import { projectCurrentSecretBindingsByProfileId } from '@/sync/domains/settings/secretBindings';
 import { useCurrentRoutePathname } from '@/components/appShell/workspace/currentRouteLocation';
+import { useNewSessionProjectFilesPlacement } from '@/components/sessions/new/hooks/screenModel/useNewSessionProjectFilesPlacement';
 import { useNewSessionPlacementSessions } from '@/components/sessions/new/hooks/screenModel/useNewSessionPlacementSessions';
 import { useNewSessionPlacementMachines } from '@/components/sessions/new/hooks/screenModel/useNewSessionPlacementMachines';
 import {
@@ -1210,6 +1211,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         })
         : null;
     const {
+        projectFilesSource,
         executionTarget,
         managedMachineSelection,
         managedPlacementPreset,
@@ -1247,6 +1249,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         persistedPlacementExplicit: persistedDraft?.placementExplicit,
         persistedManagedMachineSelection: persistedTargetMatches ? persistedDraft?.managedMachineSelection : null,
         requestedManagedMachineSelection: tempSessionData?.managedMachineSelection,
+        persistedProjectFilesSource: hydratedTempAuthoringDraft?.sessionPlacement?.projectFilesSource
+            ?? hydratedPersistedAuthoringDraft?.sessionPlacement?.projectFilesSource,
         persistedExecutionTarget: hydratedTempAuthoringDraft?.executionTarget ?? hydratedPersistedAuthoringDraft?.executionTarget ?? undefined,
         executionTargetRequestKey: hydratedTempAuthoringDraft?.executionTarget !== undefined || tempSessionData?.managedMachineSelection
             ? (typeof dataId === 'string' ? dataId : null)
@@ -2898,6 +2902,13 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const changeIsolationOverride = React.useCallback((value: 'directly' | undefined) => {
         setIsolationEdit({ key: approvalProfileDraftKey, value });
     }, [approvalProfileDraftKey]);
+    const projectFilesPlacement = useNewSessionProjectFilesPlacement({
+        draftKey: approvalProfileDraftKey,
+        executionTarget,
+        managedMachineSelection,
+        hydratedPlacement: hydratedTempAuthoringDraft?.sessionPlacement ?? hydratedPersistedContentAuthoringDraft?.sessionPlacement,
+        projectFilesSource,
+    });
     const draftInitialSessionFacts = React.useMemo(
         () => withNewBotDraftFaceSeed(hydratedInitialSessionFacts, draftId),
         [hydratedInitialSessionFacts, draftId],
@@ -2923,6 +2934,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         initialSessionFacts: draftInitialSessionFacts,
         memoryEnabled: hydratedTempAuthoringDraft?.memoryEnabled ?? hydratedPersistedAuthoringDraft?.memoryEnabled,
         isolationOverride,
+        sessionPlacement: projectFilesPlacement.sessionPlacement,
         approvalProfileId,
         authoringOrigin: persistedDraft?.authoringOrigin,
         automationDraft,
@@ -4722,6 +4734,11 @@ export function useNewSessionScreenModel(input?: Readonly<{
             serverId: targetServerId ?? null, machineName: simplePanelProps.machineName ?? null,
             offline: selectedMachineReachability !== 'unknown' && selectedMachineOnline === false,
             override: isolationOverride, progress: managedMachineCreationProgress,
+            projectFilesOverride: projectFilesPlacement.projectFilesOverride,
+            projectFilesOutcome: projectFilesPlacement.projectFilesOutcome,
+            projectFilesFieldKeys: projectFilesPlacement.projectFilesFieldKeys,
+            projectFilesConflictMode: projectFilesPlacement.projectFilesConflictMode,
+            onProjectFilesChange: projectFilesPlacement.onProjectFilesChange,
             ...(!hostSpawnExecutor && selectedMachine && canManageMachine(selectedMachine) ? { onOverrideChange: changeIsolationOverride } : {}) },
         requesterIsolation: ownIsolation,
         instructionsCreation,

@@ -1,4 +1,5 @@
-import type { ProjectKeyV1, QualifiedProjectKeyV1, WorkspaceAddressV1, WorkspaceProjectFactsV1, WorkspaceRefV1 } from './workspaceRefV1.js';
+import type { MachineWorkspaceRefV1, ManagedWorkspaceLocatorV2, ManagedWorkspaceRefV2, ProjectKeyV1, QualifiedProjectKeyV1, WorkspaceAddressV1, WorkspaceAddressV2, WorkspaceProjectFactsV1, WorkspaceRefV1 } from './workspaceRefV1.js';
+import { isManagedWorkspaceRefV2 } from './workspaceRefV1.js';
 import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '../scm/hostingRepositoryIdentity.js';
 import { resolveSessionWorkspaceRootForMachine } from '../sessions/metadata/sessionWorkspaceLocationV1.js';
 import { readSessionDirectoryKind } from '../sessions/metadata/sessionDirectoryV1.js';
@@ -60,7 +61,15 @@ export function isWorkspacePathWithinRootV1(directory: string, root: string, pla
 
 /** One exact checkout decision. An unqualified id preserves all Homes as candidates. */
 export function resolveWorkspaceRefV1<T extends WorkspaceRefV1>(
-  refs: readonly T[], target: ProjectKeyV1 | WorkspaceAddressV1,
+  refs: readonly T[], target: (WorkspaceAddressV1 | Extract<ProjectKeyV1, { machineId: string }>) & { kind?: never },
+  context?: WorkspaceRefResolutionContextV1,
+): WorkspaceRefResolutionV1<Extract<T, MachineWorkspaceRefV1>>;
+export function resolveWorkspaceRefV1<T extends WorkspaceRefV1>(
+  refs: readonly T[], target: ProjectKeyV1 | WorkspaceAddressV2 | ManagedWorkspaceLocatorV2,
+  context?: WorkspaceRefResolutionContextV1,
+): WorkspaceRefResolutionV1<T>;
+export function resolveWorkspaceRefV1<T extends WorkspaceRefV1>(
+  refs: readonly T[], target: ProjectKeyV1 | WorkspaceAddressV2 | ManagedWorkspaceLocatorV2,
   context: WorkspaceRefResolutionContextV1 = {},
 ): WorkspaceRefResolutionV1<T> {
   if ('projectKey' in target) return { kind: 'invalid', reason: 'A Project anchor does not select an exact checkout' };
@@ -68,18 +77,26 @@ export function resolveWorkspaceRefV1<T extends WorkspaceRefV1>(
   const id = 'workspaceId' in target ? target.workspaceId.trim() : 'id' in target ? target.id.trim() : null;
   const serverId = target.serverId === undefined ? null : server(target.serverId);
   const hasRoot = 'rootPath' in target;
+  const managedTarget = isManagedWorkspaceRefV2(target) ? target : null;
   const normalizeRoot = context.normalizeRootPath ?? ((path: string) => normalizeWorkspaceRootPathV1(path));
   const rootPath = hasRoot ? normalizeRoot(target.rootPath) : null;
-  const machineId = hasRoot ? target.machineId.trim() : null;
+  const machineId = hasRoot && !isManagedWorkspaceRefV2(target) ? target.machineId.trim() : null;
   if ((id !== null && !id) || (target.serverId !== undefined && !serverId)
-      || (hasRoot && (!serverId || !rootPath || !machineId))) {
+      || (hasRoot && (!serverId || !rootPath || (managedTarget
+        ? !managedTarget.managedId.trim() || !managedTarget.controller.machineId.trim() || !managedTarget.controller.installationId.trim()
+        : !machineId)))) {
     return { kind: 'invalid', reason: 'Workspace address is incomplete' };
   }
   const candidates = refs.filter(ref => {
+    const identity: WorkspaceRefV1 = ref;
     if (serverId !== null && server(ref.serverId) !== serverId) return false;
     if (id !== null && ref.id.trim() !== id) return false;
     if (!hasRoot) return true;
-    if (ref.machineId.trim() !== machineId) return false;
+    if (managedTarget) {
+      if (!isManagedWorkspaceRefV2(ref) || ref.managedId.trim() !== managedTarget.managedId.trim()
+        || ref.controller.machineId.trim() !== managedTarget.controller.machineId.trim()
+        || ref.controller.installationId.trim() !== managedTarget.controller.installationId.trim()) return false;
+    } else if (isManagedWorkspaceRefV2(identity) || identity.machineId.trim() !== machineId) return false;
     return context.rootsEqual
       ? context.rootsEqual(normalizeRoot(ref.rootPath, ref) ?? ref.rootPath, rootPath!)
       : normalizeRoot(ref.rootPath, ref) === rootPath;
@@ -165,8 +182,11 @@ export function createWorkspaceRefResolverV1<T extends WorkspaceRefV1>(
     if (previous) previous.push(ref); else index.set(key, [ref]);
   };
   for (const ref of refs ?? []) {
+    const identity: WorkspaceRefV1 = ref;
     append(byId, JSON.stringify([home(ref.serverId.trim()), ref.id.trim()]), ref);
-    append(byRoot, JSON.stringify([home(ref.serverId.trim()), ref.machineId.trim(), normalizeRoot(ref.rootPath, ref)]), ref);
+    if (!isManagedWorkspaceRefV2(identity)) {
+      append(byRoot, JSON.stringify([home(ref.serverId.trim()), identity.machineId.trim(), normalizeRoot(ref.rootPath, ref)]), ref);
+    }
   }
   return (target) => {
     const candidates = 'id' in target
@@ -230,8 +250,21 @@ function resolveSessionProjectKeyUsingV1<T extends WorkspaceRefV1>(
   return { kind: 'resolved', projectKey: { ...projectKey, serverId: home(projectKey.serverId) }, ref: resolved.ref };
 }
 
-export function workspaceAddressFromRefV1(ref: WorkspaceRefV1): WorkspaceAddressV1 {
+type WorkspaceAddressIdentityV2 = Pick<MachineWorkspaceRefV1, 'id' | 'serverId' | 'machineId' | 'rootPath'>
+  | Pick<ManagedWorkspaceRefV2, 'v' | 'kind' | 'id' | 'serverId' | 'managedId' | 'controller' | 'rootPath'>;
+
+export function workspaceAddressFromRefV1(ref: WorkspaceAddressIdentityV2): WorkspaceAddressV1 {
+  if (isManagedWorkspaceRefV2(ref)) {
+    throw Object.assign(new Error('A managed workspace is not a Machine workspace address'), { code: 'workspace_managed_target_required' });
+  }
   return { serverId: ref.serverId, workspaceId: ref.id, machineId: ref.machineId, rootPath: ref.rootPath };
+}
+
+export function workspaceAddressFromRefV2(ref: WorkspaceAddressIdentityV2): WorkspaceAddressV2 {
+  return isManagedWorkspaceRefV2(ref) ? {
+    v: 2, kind: 'managed', serverId: ref.serverId, workspaceId: ref.id,
+    managedId: ref.managedId, controller: ref.controller, rootPath: ref.rootPath,
+  } : workspaceAddressFromRefV1(ref);
 }
 
 /**

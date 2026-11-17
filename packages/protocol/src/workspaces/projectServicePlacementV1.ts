@@ -5,7 +5,7 @@ import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { DaemonLocalServiceLauncherSnapshotRequestV1Schema, DaemonLocalServiceLauncherSnapshotResponseV1Schema,
   LocalServiceLaunchTargetV1Schema, type DaemonLocalServiceLauncherSnapshotRequestV1 } from '../local/services/launcher/v1.js';
 import { getWorkspaceSyncWorkerCopyV1, type WorkspaceSyncRelationshipV1 } from '../sessions/control/handoff/workspaceSyncSchemas.js';
-import type { WorkspaceRefV1 } from './workspaceRefV1.js';
+import { isManagedWorkspaceRefV2, type WorkspaceRefV1 } from './workspaceRefV1.js';
 import { deriveWorkspaceSyncTopology, resolveWorkspaceSyncEndpoint,
   type WorkspaceSyncChildMachineFacts } from './workspaceSyncTopology.js';
 import { resolveWorkspaceRefV1, type WorkspaceRefResolutionContextV1 } from './workspaceRefResolutionV1.js';
@@ -113,6 +113,7 @@ export async function observeProjectServicePlacementActualV1(input: Readonly<{
   if (!await input.isCurrent()) return unavailable('observation_changed');
   const source = resolveWorkspaceRefV1(input.workspaceRefs, { serverId: input.workspace.serverId, id: input.workspace.refId }, input.context);
   if (source.kind !== 'resolved') return unavailable('workspace_unavailable');
+  if (isManagedWorkspaceRefV2(source.ref)) return unavailable('external_observation_unsupported');
   try {
     const sourceFacts = input.readChildMachines ? await input.readChildMachines([source.ref.machineId]) : input.childMachines;
     if (!await input.isCurrent()) return unavailable('observation_changed');
@@ -135,7 +136,8 @@ export async function observeProjectServicePlacementActualV1(input: Readonly<{
     const scopedRefs = input.workspaceRefs.filter(ref => physicalIds.has(ref.id)
       && server(ref.serverId) === server(source.ref.serverId));
     const childMachines = input.readChildMachines ? [...(sourceFacts ?? []), ...await input.readChildMachines(
-      [...new Set(scopedRefs.map(ref => ref.machineId))].filter(machineId => machineId !== source.ref.machineId))] : input.childMachines;
+      [...new Set(scopedRefs.flatMap(ref => isManagedWorkspaceRefV2(ref) ? [] : [ref.machineId]))]
+        .filter(machineId => machineId !== source.ref.machineId))] : input.childMachines;
     if (!await input.isCurrent()) return unavailable('observation_changed');
     const ids = new Set<string>();
     for (const workspace of scopedRefs) {
@@ -149,6 +151,10 @@ export async function observeProjectServicePlacementActualV1(input: Readonly<{
       if (!await input.isCurrent()) return unavailable('observation_changed');
       const ref = resolveWorkspaceRefV1(input.workspaceRefs, { serverId: input.workspace.serverId, id }, input.context);
       if (ref.kind !== 'resolved') return unavailable('workspace_unavailable');
+      if (isManagedWorkspaceRefV2(ref.ref)) {
+        unreadable ??= unavailable('external_observation_unsupported');
+        continue;
+      }
       const request = DaemonLocalServiceLauncherSnapshotRequestV1Schema.parse({ machineId: ref.ref.machineId,
         scope: 'workspace', workspaceRoot: ref.ref.rootPath, projection: 'managed_bindings' });
       let raw: unknown;

@@ -3,6 +3,7 @@ import type { SessionSpaceMembershipTargetV1 } from '@happier-dev/protocol/actio
 import type { SessionAuthoringExecutionTargetV2, TemporaryComputerActivationRefV1 } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
 import { z } from 'zod/mini';
 import { SessionAuthoringValueV1Schema, type SessionAuthoringValueV1 } from '@happier-dev/protocol/sessions/authoring/index';
+import { SessionAuthoringValueV1Schema, type SessionAuthoringValueV1 } from '@happier-dev/protocol/sessions/authoring/index';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { array, nullable, optional } from 'zod/mini';
 import type { Settings } from '../settings/settings';
@@ -177,6 +178,7 @@ export interface NewSessionDraft {
     input: string;
     sessionName?: string;
     initialSessionFacts?: SessionIdentityAdditions;
+    sessionPlacement?: SessionAuthoringValueV1['sessionPlacement'];
     memoryEnabled?: boolean;
     promptStack?: SessionPromptStackV1;
     instructionsDraft?: SessionInstructionsAuthoringDraft | null;
@@ -686,6 +688,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             (parsed as any).windowsRemoteSessionLaunchModeOverride,
         );
         const entryIntent = parseDraftEntryIntent((parsed as any).entryIntent);
+        const sessionPlacement = SessionAuthoringValueV1Schema.shape.sessionPlacement.safeParse(parsed.sessionPlacement);
         const checkoutDraft = readPersistedNewSessionCheckoutDraft(parsed);
         const selectedProfileId = typeof parsed.selectedProfileId === 'string' ? parsed.selectedProfileId : null;
         const approvalProfile = SessionAuthoringValueV1Schema.shape.approvalProfileId.safeParse(parsed.approvalProfileId);
@@ -838,6 +841,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
 
         return {
             input,
+            ...(sessionPlacement.success && sessionPlacement.data !== undefined ? { sessionPlacement: sessionPlacement.data } : {}),
             ...(typeof parsed.sessionName === 'string' ? { sessionName: parsed.sessionName } : {}),
             ...(initialSessionFacts.success ? { initialSessionFacts: initialSessionFacts.data } : {}),
             ...(typeof parsed.memoryEnabled === 'boolean' ? { memoryEnabled: parsed.memoryEnabled } : {}),

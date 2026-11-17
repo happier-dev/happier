@@ -124,6 +124,13 @@ describe('a workflow placed on a cloud preset (J6)', () => {
     it('saves the chosen preset with the workflow and keeps its folder', () => {
         expect(setWorkflowProjectSessionPlacement(current, preset)).toEqual({ ...current, sessionPlacement: preset });
     });
+    it('retains the source Machine before workflow preset routing changes the Run host', () => {
+        expect(setWorkflowProjectSessionPlacement(current, preset, 'source-home')).toMatchObject({
+            sessionPlacement: { ...preset, projectFilesSource: {
+                target: { serverId: 'source-home', machineId: current.machineId }, directory: current.directory,
+            } },
+        });
+    });
 
     it('goes back to the Machine when one is chosen again, even the same one', () => {
         const placed = setWorkflowProjectSessionPlacement(current, preset);

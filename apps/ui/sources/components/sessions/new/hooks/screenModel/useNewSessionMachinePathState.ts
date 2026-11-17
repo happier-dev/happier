@@ -77,6 +77,8 @@ function readPersistedPathForMachine(input: Readonly<{
     return normalizePathParam(input.persistedPath);
 }
 
+type ProjectFilesSource = import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionProjectFilesSourceV1;
+
 export type NewSessionPlacementForPersistence = Readonly<{
     placementExplicit?: boolean;
     executionTarget: SessionAuthoringExecutionTargetV2 | null | undefined;
@@ -146,6 +148,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
     requestedManagedMachineSelection?: ManagedMachineSelectionDraft | null;
     persistedExecutionTarget?: SessionAuthoringExecutionTargetV2 | null;
     persistedPlacementExplicit?: boolean;
+    persistedProjectFilesSource?: ProjectFilesSource;
     /** Fresh one-shot handoff identity for an explicit rich picker target. */
     executionTargetRequestKey?: string | null;
     routeSelectionOrigin?: MachinePoolSelectionOriginV1;
@@ -169,6 +172,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
     cacheScopeKey?: string | null;
 }>): Readonly<{
     executionTarget: SessionAuthoringExecutionTargetV2 | null;
+    projectFilesSource: ProjectFilesSource | undefined;
     /** Autosave keeps authored choices so reopening can resolve current managed defaults. */
     placementForPersistence: NewSessionPlacementForPersistence;
     /** A preset must pass through the existing configurator before it has a reviewed creation receipt. */
@@ -478,6 +482,12 @@ export function useNewSessionMachinePathState(params: Readonly<{
             : initialPlacement.path
     ));
     const selectedPathDraftRef = React.useRef<string>(selectedPath);
+    const [retainedProjectFilesSource, setRetainedProjectFilesSource] = React.useState<ProjectFilesSource | undefined>(params.persistedProjectFilesSource);
+    const projectFilesSource = React.useMemo<ProjectFilesSource | undefined>(() => {
+        if (managedMachineSelection) return retainedProjectFilesSource;
+        return executionTarget?.kind === 'machine' && directoryKind === 'path' && selectedPath.trim()
+            ? { target: executionTarget.target, directory: selectedPath } : undefined;
+    }, [directoryKind, executionTarget, managedMachineSelection, retainedProjectFilesSource, selectedPath]);
     const hasUserEditedPathRef = React.useRef(Boolean(params.isBot && normalizePathParam(params.persistedPath)
         && formatPathRelativeToHome(normalizePathParam(params.persistedPath),
             readMachines().find(machine => machine.id === (initialPlacement.machineId
@@ -581,9 +591,15 @@ export function useNewSessionMachinePathState(params: Readonly<{
         hasUserSelectedMachineRef.current = true;
         hasCommittedExactTargetRef.current = true;
         managedSelectionServerRef.current = serverId ?? params.serverId;
+        if (!managedMachineSelection) {
+            const sourceTarget = executionTargetRef.current;
+            const directory = selectedPathDraftRef.current.trim() ? selectedPathDraftRef.current : selectedPath;
+            setRetainedProjectFilesSource(sourceTarget?.kind === 'machine' && directoryKindRef.current === 'path' && directory.trim()
+                ? { target: sourceTarget.target, directory } : undefined);
+        }
         setManagedMachineSelection(draft);
         setExecutionTarget(null);
-    }, [params.serverId]);
+    }, [managedMachineSelection, params.serverId, selectedPath]);
     const adoptManagedMachineTarget = React.useCallback((machineId: string) => {
         hasUserSelectedMachineRef.current = true;
         hasCommittedExactTargetRef.current = true;
@@ -960,6 +976,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
 
     return {
         executionTarget,
+        projectFilesSource,
         placementForPersistence,
         managedPlacementPreset,
         managedPlacementSource: managedPlacementPreset ? placementDecision.source : null,

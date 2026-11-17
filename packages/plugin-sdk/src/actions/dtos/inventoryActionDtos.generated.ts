@@ -503,12 +503,22 @@ export type InventoryActionInputById = {
             destinationParentPath: string;
             destinationDirectoryName: string;
             kind: 'clone';
+            authentication?: 'connected_account' | undefined;
             initialCheckout?: undefined | {
                 branch: 'main' | null;
                 commit: string;
             } | {
                 branch: 'main';
                 revision: 'latest-stable';
+            } | {
+                branch: string;
+            };
+            gitAccount?: undefined | {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
             };
         } | {
             kind: 'attach';
@@ -523,7 +533,9 @@ export type InventoryActionInputById = {
                     extraIgnorePatterns: readonly string[];
                     extraIncludePatterns: readonly string[];
                     policyDigest: string;
+                    contentOnly?: true | undefined;
                 };
+                exclusionCandidates?: readonly string[] | undefined;
             } | {
                 kind: 'create_relationship';
                 mode: 'keep_both_in_sync' | 'keep_synced' | 'mirror_exactly';
@@ -533,6 +545,7 @@ export type InventoryActionInputById = {
                     extraIgnorePatterns: readonly string[];
                     extraIncludePatterns: readonly string[];
                     policyDigest: string;
+                    contentOnly?: true | undefined;
                 };
                 flushBeforeCommit: true;
             } | {
@@ -543,6 +556,13 @@ export type InventoryActionInputById = {
                 kind: 'relationship';
                 relationshipId: string;
                 flushBeforeCommit: boolean;
+            };
+            targetManaged?: undefined | {
+                managedId: string;
+                controller: {
+                    machineId: string;
+                    installationId: string;
+                };
             };
         } | {
             kind: 'worktree';
@@ -868,6 +888,7 @@ export type InventoryActionResultById = {
             createdAtMs: number;
             label?: null | string | undefined;
             lastOpenedAtMs?: null | number | undefined;
+            kind?: undefined;
             projectKey?: string | undefined;
             repositoryIdentity?: undefined | {
                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -887,11 +908,56 @@ export type InventoryActionResultById = {
                 };
                 applications: {
                     file: string;
-                    framework: null | string;
                     runtime: null | {
                         name: string;
                         version: string;
                     };
+                    framework: null | string;
+                }[];
+                source: {
+                    sourceId: string;
+                    revision: number;
+                };
+            };
+        } | {
+            v: 2;
+            kind: 'managed';
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            id: string;
+            serverId: string;
+            rootPath: string;
+            createdAtMs: number;
+            label?: null | string | undefined;
+            lastOpenedAtMs?: null | number | undefined;
+            machineId?: undefined;
+            projectKey?: string | undefined;
+            repositoryIdentity?: undefined | {
+                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                deployment: string;
+                repository: string;
+            };
+            source?: undefined | {
+                sourceId: string;
+                revision: number;
+            };
+            repositoryObservation?: undefined | {
+                observedAtMs: number;
+                coverage: 'complete' | 'partial';
+                rootFiles: {
+                    dockerfile: 'absent' | 'present' | 'unknown';
+                    compose: 'absent' | 'present' | 'unknown';
+                };
+                applications: {
+                    file: string;
+                    runtime: null | {
+                        name: string;
+                        version: string;
+                    };
+                    framework: null | string;
                 }[];
                 source: {
                     sourceId: string;
@@ -1010,11 +1076,11 @@ export type InventoryActionResultById = {
                 };
                 applications: {
                     file: string;
-                    framework: null | string;
                     runtime: null | {
                         name: string;
                         version: string;
                     };
+                    framework: null | string;
                 }[];
                 source: {
                     sourceId: string;
@@ -1029,6 +1095,19 @@ export type InventoryActionResultById = {
             workspaceId: string;
             machineId: string;
             rootPath: string;
+            kind?: undefined;
+        } | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+            machineId?: undefined;
         };
         directory: string;
         setup: 'approvalRequired' | 'failed' | 'notRequired' | 'prepared';
@@ -1044,6 +1123,24 @@ export type InventoryActionResultById = {
                 revision: number;
             };
         };
+        copyOnceBaseline?: undefined | {
+            entries: ({
+                relativePath: string;
+                kind: 'directory';
+            } | {
+                relativePath: string;
+                kind: 'file';
+                digest: string;
+                sizeBytes: number;
+                executable: boolean;
+            } | {
+                relativePath: string;
+                kind: 'symlink';
+                target: string;
+            })[];
+            fingerprint?: string | undefined;
+        };
+        copyOnceExcludedPaths?: readonly string[] | undefined;
     } | {
         kind: 'outcomeUnknown';
         operationId?: string | undefined;

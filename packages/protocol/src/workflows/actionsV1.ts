@@ -3,6 +3,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { WorkflowDestinationsV1Schema } from './workflowDestinationsV1.js';
 import { SessionManagedCreationV1Schema } from '../sessions/creation/sessionCreationCorrespondenceV1.js';
+import { SessionProjectFilesV1Schema } from '../sessions/creation/sessionPlacementSelectionV1.js';
 import {
   WorkflowTriggerListRequestV1Schema, WorkflowTriggerAddRequestV1Schema,
   WorkflowSubjectsListRequestV1Schema, WorkflowSubjectsListResultV1Schema,
@@ -168,6 +169,8 @@ export const WorkflowRunSourceV1Schema = lazyZodSchema(() => z.discriminatedUnio
 export const WorkflowRunStartRequestV1Schema = lazyZodSchema(() => z.strictObject({
   runId: WorkflowDirectRunAdmissionIdV1Schema,
   /** Immutable, content-free relationship admitted with the durable Run. */
+  /** Opened private preset default; admitted only by the verified controller's reviewed continuation. */
+  managedProjectFiles: z.optional(SessionProjectFilesV1Schema),
   managedCreation: z.optional(SessionManagedCreationV1Schema),
   source: WorkflowRunSourceV1Schema,
   /** Optional authored display metadata; admission freezes its absence as null. */

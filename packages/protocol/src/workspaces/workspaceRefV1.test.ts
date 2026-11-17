@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { ProjectKeyV1Schema, WorkspaceRefV1Schema, WorkspaceRefV1WriteSchema, WorkspaceAddressV1Schema, WorkspaceAddressV2Schema } from './workspaceRefV1.js';
 import { matchSessionProjectFilterV1 } from '../sessions/listFilter/sessionListFilterV1.js';
-import { resolveWorkspaceRefV1, enrichWorkspaceRefV1, projectWorkspaceRefV1, resolveSessionProjectKeyV1, createSessionProjectKeyResolverV1, resolveWorkspaceProjectKeyV1, resolveWorkspaceGroupingV1 } from './workspaceRefResolutionV1.js';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { resolveWorkspaceRefV1, workspaceAddressFromRefV2, enrichWorkspaceRefV1, projectWorkspaceRefV1, resolveSessionProjectKeyV1, createSessionProjectKeyResolverV1, resolveWorkspaceProjectKeyV1, resolveWorkspaceGroupingV1 } from './workspaceRefResolutionV1.js';
 
 describe('workspaceRefV1', () => {
   it('keeps native addresses distinct from host Machine addresses', () => {
@@ -15,6 +16,34 @@ describe('workspaceRefV1', () => {
     expect(WorkspaceAddressV2Schema.safeParse({ ...native, machineId: 'controller' }).success).toBe(false);
     expect(WorkspaceAddressV2Schema.safeParse({ ...machine, kind: 'managed' }).success).toBe(false);
     expect(WorkspaceAddressV2Schema.safeParse({ ...native, controller: { machineId: 'controller' } }).success).toBe(false);
+  });
+  it('retains a native managed target without interpreting its guest root as a Machine root', () => {
+    const native = { v: 2, kind: 'managed', id: 'guest-checkout', serverId: 'home',
+      managedId: 'sandbox', controller: { machineId: 'controller', installationId: 'installation' },
+      rootPath: '/home/guest/repo', createdAtMs: 1 };
+    // The earlier stored reader derives from the unchanged Machine V1 writer.
+    // Its required Machine identity prevents silently discarding native routing.
+    expect(createStoredReadSchema(WorkspaceRefV1WriteSchema).safeParse(native).success).toBe(false);
+    expect(WorkspaceRefV1Schema.parse(native)).toEqual(expect.objectContaining(native));
+    expect(WorkspaceRefV1Schema.safeParse({ ...native, machineId: 'controller' }).success).toBe(false);
+    expect(WorkspaceRefV1Schema.safeParse({ ...native, kind: 'unknown-native', machineId: 'controller' }).success).toBe(false);
+    const machine = { id: 'host-checkout', serverId: 'home', machineId: 'controller',
+      rootPath: native.rootPath, createdAtMs: 1 };
+    const refs = [WorkspaceRefV1Schema.parse(native), WorkspaceRefV1Schema.parse(machine)];
+    expect(resolveWorkspaceRefV1(refs, { serverId: 'home', machineId: 'controller', rootPath: native.rootPath }))
+      .toMatchObject({ kind: 'resolved', ref: { id: 'host-checkout' } });
+    expect(resolveWorkspaceRefV1(refs, { serverId: 'home', id: native.id }))
+      .toMatchObject({ kind: 'resolved', ref: native });
+    const address = workspaceAddressFromRefV2(refs[0]!);
+    expect(resolveWorkspaceRefV1(refs, address)).toMatchObject({ kind: 'resolved', ref: native });
+    if ('kind' in address && address.kind === 'managed') {
+      for (const target of [
+        { ...address, managedId: 'other-guest' },
+        { ...address, controller: { ...address.controller, installationId: 'replaced' } },
+        { ...address, controller: { ...address.controller, machineId: 'other-host' } },
+        { ...address, workspaceId: machine.id },
+      ]) expect(resolveWorkspaceRefV1(refs, target)).toEqual({ kind: 'missing' });
+    }
   });
   it('keeps repository observations optional, closes publication and projects additive stored facts recursively', () => {
     const ref = { id: 'checkout', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };

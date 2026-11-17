@@ -62,6 +62,12 @@ function legacyDraft(target: Parameters<typeof projectLegacyAutomationRecipeToEd
 }
 
 describe('legacy Automation recipe → shared Workflow draft', () => {
+    it('retains explicit Project files placement when opening a Session recipe in workflows', () => {
+        const sessionPlacement = { kind: 'machine' as const, target: { serverId: 'server-1', machineId: 'machine-1' },
+            projectFiles: { kind: 'sync' as const, mode: 'keep_synced' as const } };
+        expect(legacyDraft(spawnTarget({ sessionPlacement })).project)
+            .toMatchObject({ machineId: 'machine-1', directory: '/repo', sessionPlacement });
+    });
     it('retains a managed directory without fabricating a project path', () => {
         expect(legacyDraft(spawnTarget({ directory: { kind: 'managed' } })).project)
             .toEqual({ machineId: 'machine-1', directory: { kind: 'managed' } });

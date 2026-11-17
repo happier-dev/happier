@@ -147,13 +147,14 @@ describe('requester bootstrap installation confidentiality', () => {
     expect(bootstrap.ExternalActionRequesterInvocationV1Schema.safeParse({ ...invocation,
       reviewedParent: { actionId: 'action.invoke', input: {} } }).success).toBe(false);
   });
-  it('opens a managed creation child only under its exact Home continuation and invocation digest', () => {
+  it.each(['machines.managed.acquire', 'workflow.run.start'] as const)('opens a managed creation child only under its exact Home continuation and invocation digest (%s)', parentActionId => {
     const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
     const parent = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'parent-home-proof', binding: {
       accountId: 'requester', custodianAccountId: 'company', authentication: { kind: 'account', tokenEpoch: 1 },
       serverIdentityId: 'srv_home', machineId: 'controller', installationId: 'controller-installation', accountEncryptionMode: 'e2ee',
-      actionId: 'machines.managed.acquire', requestId: 'create', requestEnvelopeDigest: 'a'.repeat(43),
-      target: { kind: 'machine', machineId: 'controller' },
+      actionId: parentActionId, requestId: 'create', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'controller',
+        ...(parentActionId === 'workflow.run.start' ? { project: { machineId: 'controller', directory: '/repo' } } : {}) },
     } });
     const material = { type: 'dataKey' as const, machineKey: tweetnacl.randomBytes(32) };
     const binding = { serverIdentityId: 'srv_home', accountId: 'requester', authentication: { kind: 'account' as const, tokenEpoch: 1 },

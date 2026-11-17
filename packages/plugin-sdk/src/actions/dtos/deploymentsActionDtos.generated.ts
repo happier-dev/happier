@@ -789,6 +789,9 @@ export type DeploymentsActionInputById = {
                 };
                 definitionId?: string | undefined;
             };
+            profileId?: string | undefined;
+            title?: string | undefined;
+            allowedTools?: string[] | undefined;
             identity?: undefined | {
                 bot?: undefined | {
                     kind: 'bot';
@@ -819,9 +822,6 @@ export type DeploymentsActionInputById = {
                 };
                 createdAsBot?: true | undefined;
             };
-            title?: string | undefined;
-            profileId?: string | undefined;
-            allowedTools?: string[] | undefined;
             terminal?: undefined | {
                 mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
                 tmux?: undefined | {
@@ -913,11 +913,220 @@ export type DeploymentsActionInputById = {
                     };
                 }> | undefined;
             };
-            configuration?: unknown;
+            checkoutCreationDraft?: null | undefined | {
+                kind: 'git_worktree';
+                displayName: string;
+                baseRef: null | string;
+                branchMode?: 'existing' | 'new' | undefined;
+            };
+            transcriptStorage?: 'direct' | 'persisted' | undefined;
             permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+            configuration?: unknown;
             approvalProfileId?: null | string | undefined;
+            sessionPlacement?: undefined | {
+                kind: 'machine';
+                target: {
+                    serverId: string;
+                    machineId: string;
+                };
+                projectFiles?: undefined | {
+                    kind: 'copy_once';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                } | {
+                    kind: 'git_clone';
+                    source: {
+                        provider: {
+                            id: string;
+                            kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                            displayName: string;
+                            baseUrl: string;
+                        };
+                        repository: {
+                            nameWithOwner: string;
+                            defaultBranch?: null | string | undefined;
+                            visibility?: 'internal' | 'private' | 'public' | undefined;
+                            webUrl?: string | undefined;
+                            cloneUrl?: string | undefined;
+                            sshUrl?: string | undefined;
+                        };
+                        protocol: 'auto' | 'https' | 'ssh';
+                    };
+                    branch: string;
+                    gitAccount?: undefined | {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'sync';
+                    mode: 'keep_both_in_sync' | 'keep_synced';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                };
+                projectFilesSource?: undefined | {
+                    target: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                    directory: string;
+                };
+                configuredSandbox?: undefined | {
+                    kind: 'sandbox';
+                    configuredSandboxId: string;
+                    lifecycle: 'fresh' | 'shared-kept';
+                    provisioner: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    presetId: string;
+                };
+            } | {
+                kind: 'managed';
+                projectFiles?: undefined | {
+                    kind: 'copy_once';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                } | {
+                    kind: 'git_clone';
+                    source: {
+                        provider: {
+                            id: string;
+                            kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                            displayName: string;
+                            baseUrl: string;
+                        };
+                        repository: {
+                            nameWithOwner: string;
+                            defaultBranch?: null | string | undefined;
+                            visibility?: 'internal' | 'private' | 'public' | undefined;
+                            webUrl?: string | undefined;
+                            cloneUrl?: string | undefined;
+                            sshUrl?: string | undefined;
+                        };
+                        protocol: 'auto' | 'https' | 'ssh';
+                    };
+                    branch: string;
+                    gitAccount?: undefined | {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'sync';
+                    mode: 'keep_both_in_sync' | 'keep_synced';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                };
+                projectFilesSource?: undefined | {
+                    target: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                    directory: string;
+                };
+            } | {
+                kind: 'preset';
+                homeId: string;
+                presetId: string;
+                projectFiles?: undefined | {
+                    kind: 'copy_once';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                } | {
+                    kind: 'git_clone';
+                    source: {
+                        provider: {
+                            id: string;
+                            kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                            displayName: string;
+                            baseUrl: string;
+                        };
+                        repository: {
+                            nameWithOwner: string;
+                            defaultBranch?: null | string | undefined;
+                            visibility?: 'internal' | 'private' | 'public' | undefined;
+                            webUrl?: string | undefined;
+                            cloneUrl?: string | undefined;
+                            sshUrl?: string | undefined;
+                        };
+                        protocol: 'auto' | 'https' | 'ssh';
+                    };
+                    branch: string;
+                    gitAccount?: undefined | {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'sync';
+                    mode: 'keep_both_in_sync' | 'keep_synced';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                };
+                projectFilesSource?: undefined | {
+                    target: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                    directory: string;
+                };
+            };
             manager?: undefined | {
                 sessionId: string;
+            };
+            sourceContext?: undefined | {
+                v: 1;
+                kind: 'session_replay';
+                sourceSessionId: string;
+                forkPoint: {
+                    type: 'latest';
+                } | {
+                    type: 'seq';
+                    upToSeqInclusive: number;
+                };
             };
             primaryTeamId?: null | string | undefined;
             organizationPlacement?: undefined | {
@@ -962,12 +1171,6 @@ export type DeploymentsActionInputById = {
                     installationId: string;
                 };
             };
-            checkoutCreationDraft?: null | undefined | {
-                kind: 'git_worktree';
-                displayName: string;
-                baseRef: null | string;
-                branchMode?: 'existing' | 'new' | undefined;
-            };
             discussionParticipant?: undefined | {
                 discussionId: string;
                 participantSlotId: string;
@@ -981,7 +1184,6 @@ export type DeploymentsActionInputById = {
             };
             agentModeId?: string | undefined;
             unlistedTools?: 'ask' | 'deny' | undefined;
-            transcriptStorage?: 'direct' | 'persisted' | undefined;
             placementOrigin?: undefined | {
                 kind: 'machine_pool';
                 poolId: string;
@@ -1064,6 +1266,7 @@ export type DeploymentsActionInputById = {
                 managedId: string;
                 workspaceRoot: string;
             };
+            isolationOverride?: 'directly' | undefined;
             agentInstallConsent?: undefined | {
                 vendorRecipe: boolean;
             };
@@ -1459,10 +1662,7 @@ export type DeploymentsActionInputById = {
                                 };
                             })[] | undefined;
                             permissionModeUpdatedAt?: number | undefined;
-                            launchEnvironment?: undefined | {
-                                values: Record<string, string>;
-                                unset: string[];
-                            };
+                            environmentVariables?: Record<string, string> | undefined;
                             providerSessionResume?: undefined | {
                                 kind: 'provider_session.v1';
                                 providerSessionId: string;
@@ -1539,29 +1739,6 @@ export type DeploymentsActionInputById = {
                             };
                             roleId?: string | undefined;
                             engine?: undefined | {
-                                agentTarget: {
-                                    kind: 'agent';
-                                    identity: {
-                                        pluginId: string;
-                                        localId: string;
-                                    };
-                                    definitionId?: string | undefined;
-                                };
-                                modelSelection?: null | undefined | {
-                                    v: 1;
-                                    ref: {
-                                        agentTargetKey: string;
-                                        providerConnectionId: null;
-                                        modelId: string;
-                                    } | {
-                                        agentTargetKey: string;
-                                        providerConnectionId: string;
-                                        modelId: string;
-                                    };
-                                    updatedAt: number;
-                                };
-                                effort?: string | undefined;
-                            } | {
                                 kind: 'input';
                                 name: string;
                                 path?: (number | string)[] | undefined;
@@ -1569,8 +1746,6 @@ export type DeploymentsActionInputById = {
                                 kind: 'item';
                                 field: 'value';
                                 path?: (number | string)[] | undefined;
-                            } | {
-                                role: string;
                             };
                             participant?: undefined | {
                                 kind: 'input';
@@ -1720,17 +1895,6 @@ export type DeploymentsActionInputById = {
                 id: string;
                 revision: number;
             }> | undefined;
-            sourceContext?: undefined | {
-                v: 1;
-                kind: 'session_replay';
-                sourceSessionId: string;
-                forkPoint: {
-                    type: 'latest';
-                } | {
-                    type: 'seq';
-                    upToSeqInclusive: number;
-                };
-            };
         };
         importFrom?: undefined | {
             tool: string;

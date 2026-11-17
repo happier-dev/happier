@@ -28,6 +28,8 @@ import { SessionSectionPlacementV1Schema } from './sessionSpawnNewResultV1.js';
 import { PluginUiNewSessionSeedOriginV1Schema } from '../../plugins/ui/newSessionSeedOrigin.js';
 import { MachineSetupPlanInputV1Schema } from '../../machines/managed/actionsV1.js';
 import { AgentInstallJobConsentSchema } from '../../daemon/agentInstallJobs.js';
+import { SessionPlacementSelectionV1Schema } from './sessionPlacementSelectionV1.js';
+import type { SessionExecutionTargetV1 } from './sessionExecutionTargetV1.js';
 export { SessionAttestedContextV1Schema, type SessionAttestedContextV1 } from './sessionAttestedContextV1.js';
 
 /**
@@ -81,6 +83,8 @@ export const SessionSpawnNewInputV2BaseSchema = lazyZodSchema(() => z.strictObje
   managedTargetPlacement: z.optional(SessionManagedTargetPlacementV1Schema),
   /** One Session only; receiving admission requires interactive Manage intent. */
   isolationOverride: z.optional(z.literal('directly')),
+  /** Explicit placement and Project files intent; absent follows the selected Machine's policy. */
+  sessionPlacement: z.optional(SessionPlacementSelectionV1Schema),
   /** Create's consent for the chosen Agent's existing reviewed install Action. */
   agentInstallConsent: z.optional(AgentInstallJobConsentSchema),
   /** Transport observer preference; send only after negotiating Session-spawn epoch three. */
@@ -130,8 +134,23 @@ function refineDiscussionParticipantSpawn(input: {
     message: 'A Discussion participant is prepared without starting a trigger', input: context.value, continue: true });
 }
 
+function refineSessionPlacementSpawn(input: {
+  executionTarget?: SessionExecutionTargetV1;
+  sessionPlacement?: z.infer<typeof SessionPlacementSelectionV1Schema>;
+  managedCreation?: unknown;
+}, context: z.core.$RefinementCtx): void {
+  const placement = input.sessionPlacement;
+  if (placement?.kind === 'machine' && input.executionTarget
+    && (placement.target.serverId !== input.executionTarget.serverId || placement.target.machineId !== input.executionTarget.machineId)) {
+    context.addIssue({ code: 'custom', path: ['sessionPlacement'], message: 'Session placement must match its execution target' });
+  }
+  if (placement?.kind === 'managed' && input.managedCreation === undefined) {
+    context.addIssue({ code: 'custom', path: ['sessionPlacement'], message: 'Managed placement requires this Session managed creation' });
+  }
+}
+
 export const SessionSpawnNewInputV2Schema = lazyZodSchema(() => SessionSpawnNewInputV2BaseSchema.check(
-  z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn),
+  z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn), z.superRefine(refineSessionPlacementSpawn),
 ));
 
 export type SessionSpawnNewInputV2 = z.infer<typeof SessionSpawnNewInputV2Schema>;
@@ -142,14 +161,14 @@ export const SessionSpawnNewActionInputV2BaseSchema = lazyZodSchema(() => z.stri
   organizationPlacement: z.optional(SessionSectionPlacementV1Schema),
 }));
 export const SessionSpawnNewActionInputV2Schema = lazyZodSchema(() => SessionSpawnNewActionInputV2BaseSchema.check(
-  z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn),
+  z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn), z.superRefine(refineSessionPlacementSpawn),
 ));
 export type SessionSpawnNewActionInputV2 = z.infer<typeof SessionSpawnNewActionInputV2Schema>;
 
 /** Voice's host binds the catalog default before ordinary creation admission. */
 export const SessionSpawnNewActionVoiceInputV2Schema = lazyZodSchema(() => z.partial(SessionSpawnNewActionInputV2BaseSchema, {
   agentTarget: true,
-}).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn)));
+}).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn), z.superRefine(refineSessionPlacementSpawn)));
 
 export function admitSessionSpawnNewActionInputV2(input: SessionSpawnNewActionInputV2): SessionSpawnNewInputV2 {
   const { organizationPlacement, ...selection } = input;
@@ -168,13 +187,13 @@ export function projectSessionSpawnNewActionInputV2(input: SessionSpawnNewInputV
 export const SessionSpawnNewActionAgentAuthoringInputV2Schema = lazyZodSchema(() => z.partial(z.omit(SessionSpawnNewActionInputV2BaseSchema, { observeSessionCommit: true, isolationOverride: true }), {
   executionTarget: true,
   agentTarget: true,
-}).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn)));
+}).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn), z.superRefine(refineSessionPlacementSpawn)));
 
 /** Session Agents may inherit these choices; the start owner resolves them before creation admission. */
 export const SessionSpawnNewAgentAuthoringInputV2Schema = lazyZodSchema(() => z.partial(z.omit(SessionSpawnNewInputV2BaseSchema, { observeSessionCommit: true, isolationOverride: true }), {
   executionTarget: true,
   agentTarget: true,
-}).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn)));
+}).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn), z.superRefine(refineSessionPlacementSpawn)));
 
 /**
  * Browser-safe omission of host-sealed creation facts. The daemon-only
@@ -189,7 +208,7 @@ export const SessionServerStartSpawnDraftV1Schema = lazyZodSchema(() => (<T exte
   agentArgs: true,
   attestedContext: true,
   authoringOrigin: true,
-})).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn)));
+})).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn), z.superRefine(refineSessionPlacementSpawn)));
 
 export type SessionServerStartSpawnDraftV1 = Omit<
   SessionSpawnNewInputV2,

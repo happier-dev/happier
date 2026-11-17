@@ -1,5 +1,5 @@
 import type { WorkspaceSyncRelationshipV1 } from '../sessions/control/handoff/workspaceSyncSchemas.js';
-import type { WorkspaceRefV1 } from './workspaceRefV1.js';
+import { isManagedWorkspaceRefV2, type ManagedWorkspaceRefV2, type MachineWorkspaceRefV1, type WorkspaceRefV1 } from './workspaceRefV1.js';
 import { resolveWorkspaceRefV1, type WorkspaceRefResolutionContextV1 } from './workspaceRefResolutionV1.js';
 import { isManagedDevcontainerChildProjectionCurrentV1,
   type DevcontainerChildProjectionV1 } from '../machines/managed/devcontainerV1.js';
@@ -26,7 +26,18 @@ type WorkspaceSyncEndpointContext = Readonly<{
   purpose?: 'physical_sync' | 'admitted_mapping';
 }>;
 type WorkspaceSyncEndpointUnavailable = Readonly<{ ok: false; code: 'workspace_sync_child_unavailable' }>;
-type WorkspaceSyncNamespace = Pick<WorkspaceRefV1, 'serverId' | 'machineId' | 'rootPath' | 'projectKey'>;
+export type WorkspaceSyncNamespace = Pick<MachineWorkspaceRefV1, 'serverId' | 'machineId' | 'rootPath' | 'projectKey'>
+  | Pick<ManagedWorkspaceRefV2, 'v' | 'kind' | 'managedId' | 'controller' | 'machineId' | 'serverId' | 'rootPath' | 'projectKey'>;
+
+export function isManagedWorkspaceSyncNamespaceV2(namespace: WorkspaceSyncNamespace): namespace is Extract<WorkspaceSyncNamespace, { kind: 'managed' }> {
+  return isManagedWorkspaceRefV2(namespace);
+}
+
+/** The installed daemon that executes effects; a native guest never becomes a Machine. */
+export function resolveWorkspaceSyncExecutionMachineIdV1(namespace: Pick<MachineWorkspaceRefV1, 'machineId'>
+  | Pick<ManagedWorkspaceRefV2, 'kind' | 'controller'>): string {
+  return isManagedWorkspaceRefV2(namespace) ? namespace.controller.machineId : namespace.machineId;
+}
 
 /** Current retained child identity, shared by transport and endpoint resolution. */
 function readCurrentWorkspaceSyncChild(input: Readonly<{
@@ -37,6 +48,7 @@ function readCurrentWorkspaceSyncChild(input: Readonly<{
 }>): Readonly<{ ok: true; fact?: WorkspaceSyncChildMachineFacts }> | WorkspaceSyncEndpointUnavailable {
   const workspace = input.namespace;
   const unavailable = { ok: false as const, code: 'workspace_sync_child_unavailable' as const };
+  if (isManagedWorkspaceSyncNamespaceV2(workspace)) return { ok: true };
   const facts = input.childMachines?.filter(fact => fact.serverId === workspace.serverId && fact.machineId === workspace.machineId) ?? [];
   if (facts.length === 0) return { ok: true };
   if (facts.length !== 1) return unavailable;
@@ -52,7 +64,10 @@ export function resolveWorkspaceSyncTransportAddress(input: Readonly<{
   namespace: WorkspaceSyncNamespace;
   childMachines?: readonly WorkspaceSyncChildMachineFacts[];
   context?: WorkspaceRefResolutionContextV1;
-}>): Readonly<{ ok: true; address: Readonly<{ machineId: string; installationId?: string }> }> | WorkspaceSyncEndpointUnavailable {
+}>): Readonly<{ ok: true; address: Readonly<{ machineId: string; installationId?: string; managedId?: string }> }> | WorkspaceSyncEndpointUnavailable {
+  if (isManagedWorkspaceSyncNamespaceV2(input.namespace)) return { ok: true, address: {
+    ...input.namespace.controller, managedId: input.namespace.managedId,
+  } };
   const current = readCurrentWorkspaceSyncChild(input);
   if (!current.ok) return current;
   const fact = current.fact;
@@ -73,6 +88,12 @@ export function resolveWorkspaceSyncEndpoint(input: WorkspaceSyncEndpointContext
   const workspace = 'workspace' in input ? input.workspace : input.namespace;
   const unavailable = { ok: false as const, code: 'workspace_sync_child_unavailable' as const };
   const unchanged = 'workspace' in input ? { ok: true as const, workspace: input.workspace, endpoint: input.workspace } : unavailable;
+  if (isManagedWorkspaceSyncNamespaceV2(workspace)) {
+    if ('workspace' in input) return unchanged;
+    const { projectKey: _projectKey, ...locator } = workspace;
+    const native = resolveWorkspaceRefV1(input.workspaceRefs, locator, input.context);
+    return native.kind === 'resolved' ? { ok: true, endpoint: native.ref } : unavailable;
+  }
   const current = readCurrentWorkspaceSyncChild({ namespace: workspace, childMachines: input.childMachines, context: input.context,
     ...('workspace' in input ? { workspace: input.workspace } : {}) });
   if (!current.ok) return current;
@@ -237,7 +258,7 @@ export function resolveWorkspaceSyncReadControllerV1(input: Readonly<{
     }
     // An enrolled checkout with no links still has a valid empty list. Its
     // Machine answers membership; it does not create a relationship or route.
-    resolvedController = set?.controllerMachineId ?? member.ref.machineId;
+    resolvedController = set?.controllerMachineId ?? resolveWorkspaceSyncExecutionMachineIdV1(member.ref);
   }
   if (input.relationshipId) {
     const relationship = input.relationships.find(entry => entry.relationshipId === input.relationshipId);
@@ -313,8 +334,8 @@ export function deriveWorkspaceSyncTopology(input: Readonly<{
       const roles = resolveWorkspaceSyncRelationshipEndpointRoles({
         mode: relationship.mode,
         controllerMachineId: relationship.controllerMachineId,
-        alphaMachineId: alpha!.machineId,
-        betaMachineId: beta!.machineId,
+        alphaMachineId: resolveWorkspaceSyncExecutionMachineIdV1(alpha!),
+        betaMachineId: resolveWorkspaceSyncExecutionMachineIdV1(beta!),
       });
       return { relationship, roles };
     });

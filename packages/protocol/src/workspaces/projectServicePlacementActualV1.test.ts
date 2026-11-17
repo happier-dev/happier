@@ -4,6 +4,24 @@ import type { WorkspaceSyncChildMachineFacts } from './workspaceSyncTopology.js'
 import { computeWorkspaceSyncPolicyDigest, type WorkspaceSyncRelationshipV1 } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 
 describe('actual service placement through admitted Sync endpoints', () => {
+  it.each(['host', 'guest'] as const)('names unsupported daemon-free service observation from %s without addressing its guest root on the host', async source => {
+    const host = { id: 'host', serverId: 'home', machineId: 'host-machine', rootPath: '/repo', createdAtMs: 1 };
+    const guest = { v: 2 as const, kind: 'managed' as const, id: 'guest', serverId: 'home', managedId: 'guest',
+      controller: { machineId: host.machineId, installationId: 'current' }, rootPath: host.rootPath, createdAtMs: 1 };
+    const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const snapshots: string[] = [];
+    const childReads: string[] = [];
+    expect(await observeProjectServicePlacementActualV1({ workspace: { serverId: 'home', refId: source }, serviceName: 'web',
+      workspaceRefs: [host, guest], relationships: [{ v: 1, relationshipId: 'link', controllerMachineId: host.machineId,
+        alphaWorkspaceRefId: host.id, betaWorkspaceRefId: guest.id, mode: 'keep_synced', enabled: true,
+        contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, createdAtMs: 1, updatedAtMs: 1 }],
+      isCurrent: () => true, readChildMachines: async ids => { childReads.push(...ids); return []; },
+      readSnapshot: async request => { snapshots.push(request.machineId); return { protocolVersion: 1,
+        snapshot: { v: 1, machineId: host.machineId, updatedAt: 1, targets: [] } }; },
+    })).toEqual({ status: 'unavailable', reasonCode: 'external_observation_unsupported' });
+    expect(snapshots).toEqual(source === 'host' ? [host.machineId] : []);
+    expect(childReads.every(id => id === host.machineId)).toBe(true);
+  });
   it.each([
     ['currentness', 'observation_changed'],
     ['workspace', 'workspace_unavailable'],

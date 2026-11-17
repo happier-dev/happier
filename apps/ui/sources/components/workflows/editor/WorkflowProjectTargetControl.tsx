@@ -447,8 +447,8 @@ function useWorkflowWhereChoices(props: WorkflowWhereInput) {
         // Only a saved preset is a placement a workflow can keep; a one-off machine belongs to one Session.
         if (!onChange || target === null || draft.selection.kind !== 'preset') return;
         onChange(setWorkflowProjectSessionPlacement(target,
-            { kind: 'preset', homeId: draft.selection.homeId, presetId: draft.selection.id }));
-    }, [onChange, target]);
+            { kind: 'preset', homeId: draft.selection.homeId, presetId: draft.selection.id }, serverId));
+    }, [onChange, serverId, target]);
     const latest = React.useRef({ target, serverId, workspaceRefs, onChange });
     latest.current = { target, serverId, workspaceRefs, onChange };
     const moveToDirectory = React.useCallback((openedFor: WorkflowAuthoringTarget, directory: string) => {

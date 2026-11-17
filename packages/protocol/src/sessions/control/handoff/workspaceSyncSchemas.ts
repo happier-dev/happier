@@ -7,6 +7,7 @@ import { HandoffTargetReplacementApprovalV1Schema } from './handoffTargetReplace
 import { MachineInstallationPublicIdentityV1Schema } from '../../../machines/identity/installationKeySchemas.js';
 import { WorkspaceRefV1Schema } from '../../../workspaces/workspaceRefV1.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../../json/storedReadSchema.js';
+import { WorkspaceManifestSchema, WorkspaceManifestRelativePathSchema } from '../../../workspaces/manifestSchema.js';
 
 const MAX_RELATIONSHIP_ID_LENGTH = 256;
 const MAX_MACHINE_ID_LENGTH = 256;
@@ -37,6 +38,7 @@ export type WorkspaceSyncPersistentModeV1 = z.infer<typeof WorkspaceSyncPersiste
 const WorkspaceContentPolicyV1FieldsSchema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   selection: z.enum(['git_worktree', 'all_files']),
+  contentOnly: z.optional(z.literal(true)),
   extraIgnorePatterns: z.readonly(z.array(z.string().check(z.trim(), z.minLength(1), z.maxLength(WORKSPACE_SYNC_MAX_PATTERN_BYTES), z.refine((value) => utf8ToBytes(value).byteLength <= WORKSPACE_SYNC_MAX_PATTERN_BYTES, 'pattern exceeds UTF-8 byte limit'))).check(z.maxLength(WORKSPACE_SYNC_MAX_PATTERNS))),
   extraIncludePatterns: z.readonly(z.array(z.string().check(z.trim(), z.minLength(1), z.maxLength(WORKSPACE_SYNC_MAX_PATTERN_BYTES), z.refine((value) => utf8ToBytes(value).byteLength <= WORKSPACE_SYNC_MAX_PATTERN_BYTES, 'pattern exceeds UTF-8 byte limit'), z.refine((value) => !value.startsWith('!'), 'include patterns must be positive'))).check(z.maxLength(WORKSPACE_SYNC_MAX_PATTERNS))),
   policyDigest: z.string().check(z.regex(/^[a-f0-9]{64}$/u)),
@@ -55,6 +57,7 @@ export const WorkspaceSyncSeedExportPrepareV1Schema = lazyZodSchema(() => z.stri
   sourceWorkspaceRefId: z.string().check(z.minLength(1)),
   targetMachineId: z.string().check(z.minLength(1)),
   contentPolicy: WorkspaceContentPolicyV1Schema,
+  exclusionCandidates: z.optional(z.readonly(z.array(WorkspaceManifestRelativePathSchema))),
 }));
 export type WorkspaceSyncSeedExportPrepareV1 = z.infer<typeof WorkspaceSyncSeedExportPrepareV1Schema>;
 
@@ -74,6 +77,7 @@ export function computeWorkspaceSyncPolicyDigest(
     // authorization/endpoint fingerprint.
     extraIgnorePatterns: [...policy.extraIgnorePatterns],
     extraIncludePatterns: [...policy.extraIncludePatterns],
+    ...(policy.contentOnly ? { contentOnly: true } : {}),
   });
   return bytesToHex(sha256(utf8ToBytes(canonical)));
 }
@@ -192,6 +196,7 @@ export const WorkspaceSyncCopyOnceV1Schema = lazyZodSchema(() => z.strictObject(
   alphaWorkspaceRefId: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_WORKSPACE_REF_ID_LENGTH)),
   betaWorkspaceRefId: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_WORKSPACE_REF_ID_LENGTH)),
   contentPolicy: WorkspaceContentPolicyV1Schema,
+  exclusionCandidates: z.optional(z.readonly(z.array(WorkspaceManifestRelativePathSchema))),
 }));
 export type WorkspaceSyncCopyOnceV1 = z.infer<typeof WorkspaceSyncCopyOnceV1Schema>;
 
@@ -676,9 +681,9 @@ export const WorkspaceSyncTargetBootstrapPrepareV1Schema = lazyZodSchema(() => z
    * stolen proof, which would make the binding prove nothing.
    */
   targetReplacementApproval: z.optional(HandoffTargetReplacementApprovalV1Schema),
-  /** Durable Protocol Action artifact authorizing the exact proof and input below. */
+  /** Present for durable approval; signed SOURCE admission also carries native consent. */
   targetReplacementApprovalReceiptId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_RELATIONSHIP_ID_LENGTH))),
-  /** Exact canonical approved Action input stored in the approving artifact. */
+  /** Exact canonical Action input admitted by the common review owner. */
   targetReplacementApprovalActionInput: z.optional(z.unknown()),
 }).check(z.superRefine((value, context) => {
   const transient = value.transientRelationship;
@@ -708,15 +713,15 @@ export const WorkspaceSyncTargetBootstrapPrepareV1Schema = lazyZodSchema(() => z
   }
   const replacementAuthorityParts = [
     value.targetReplacementApproval,
-    value.targetReplacementApprovalReceiptId,
     value.targetReplacementApprovalActionInput,
   ];
-  if (replacementAuthorityParts.some((part) => part !== undefined)
+  if ((value.targetReplacementApprovalReceiptId !== undefined && value.targetReplacementApproval === undefined)
+    || replacementAuthorityParts.some((part) => part !== undefined)
     && replacementAuthorityParts.some((part) => part === undefined)) {
     context.addIssue({
       code: "custom",
       path: ['targetReplacementApprovalReceiptId'],
-      message: 'target replacement approval requires its Action receipt and exact approved input',
+      message: 'target replacement approval requires its exact admitted input',
     });
   }
   if (!transient) return;
@@ -759,6 +764,8 @@ export const WorkspaceSyncTargetBootstrapPrepareResultV1Schema = lazyZodSchema((
   physicalEndpoint: z.optional(MachineInstallationPublicIdentityV1Schema),
   /** Existing physical owner row for binding an admitted finite effect. */
   targetWorkspace: z.optional(WorkspaceRefV1Schema),
+  copyOnceBaseline: z.optional(WorkspaceManifestSchema),
+  copyOnceExcludedPaths: z.optional(z.readonly(z.array(WorkspaceManifestRelativePathSchema))),
 }));
 export type WorkspaceSyncTargetBootstrapPrepareResultV1 = z.infer<typeof WorkspaceSyncTargetBootstrapPrepareResultV1Schema>;
 
@@ -1355,8 +1362,8 @@ export type WorkspaceSyncRelationshipCreateResultV1 = z.infer<
 
 /**
  * Source-controller transport for the same operation. The admitted Action input
- * travels verbatim so the target daemon replays exactly the bytes the approving
- * artifact stored; there is no second copy of the approved input to keep in
+ * travels verbatim so the target daemon consumes the exact admitted input;
+ * there is no second copy of the approved input to keep in
  * step. `operationId` is the admitted Action request identity, never a
  * caller-minted relationship id.
  */
@@ -1367,12 +1374,12 @@ export const WorkspaceSyncRelationshipCreateRpcRequestV1Schema = lazyZodSchema((
   targetReplacementApproval: z.optional(HandoffTargetReplacementApprovalV1Schema),
   targetReplacementApprovalReceiptId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_RELATIONSHIP_ID_LENGTH))),
 }).check(z.superRefine((value, context) => {
-  if ((value.targetReplacementApproval === undefined)
-    !== (value.targetReplacementApprovalReceiptId === undefined)) {
+  if (value.targetReplacementApprovalReceiptId !== undefined
+    && value.targetReplacementApproval === undefined) {
     context.addIssue({
       code: "custom",
       path: ['targetReplacementApprovalReceiptId'],
-      message: 'target replacement approval requires its Action receipt',
+      message: 'an Action receipt requires its target replacement approval',
     });
   }
 })));
@@ -1501,6 +1508,7 @@ export const HandoffWorkspaceActionV1Schema = lazyZodSchema(() => z.discriminate
   z.strictObject({
     kind: z.literal('copy_once'),
     contentPolicy: WorkspaceContentPolicyV1Schema,
+    exclusionCandidates: z.optional(z.readonly(z.array(WorkspaceManifestRelativePathSchema))),
   }),
   z.strictObject({
     kind: z.literal('create_relationship'),
@@ -1606,6 +1614,8 @@ export const WorkspaceSyncHandoffPreparedV1Schema = lazyZodSchema(() => z.strict
   relationshipId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_RELATIONSHIP_ID_LENGTH))),
   relationshipCreated: z.optional(z.boolean()),
   action: HandoffWorkspaceActionV1Schema,
+  copyOnceBaseline: z.optional(WorkspaceManifestSchema),
+  copyOnceExcludedPaths: z.optional(z.readonly(z.array(WorkspaceManifestRelativePathSchema))),
   status: z.optional(WorkspaceSyncStatusV1Schema),
   traversed: z.optional(z.readonly(z.array(WorkspaceSyncTraversedRelationshipV1Schema).check(z.maxLength(2)))),
 }).check(z.refine(value => value.kind === value.action.kind)));

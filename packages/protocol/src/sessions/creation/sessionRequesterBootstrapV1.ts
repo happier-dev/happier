@@ -12,7 +12,7 @@ import { isValidEd25519PublicKey, ED25519_SECRET_KEY_BYTES } from '../../crypto/
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { SessionHandoffPrepareTargetPrivateRequestV1Schema, SessionHandoffExistingStateCheckRequestV3Schema } from '../control/handoff/handoffSchemas.js';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionManagedContinuationV1Schema, ExternalActionRequestEnvelopeSchema, ExternalActionTargetV1Schema,
-  isExternalActionRequestVersionAllowedForAccountModeV1,
+  isExternalActionRequestVersionAllowedForAccountModeV1, externalActionTargetsEqualV1,
   type ExternalActionExecutionAuthorizationV1, type ExternalActionManagedAdmissionV1, type ReviewedActionChildHttpProofV1,
   type ExternalActionRequestEnvelope, type ExternalActionRequestEnvelopeV2 } from '../../actions/externalActionApi.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '../../actions/externalActionExecutionAuthorization.js';
@@ -34,7 +34,7 @@ import { DeploymentChildRpcV1Schema, readDeploymentChildRpcV1 } from '../../depl
 import { MachineSetupPlanInputV1Schema, isMachineSetupPlanRpcChildV1 } from '../../machines/managed/actionsV1.js';
 import { WorkflowApprovedOperationParentV1Schema } from '../../actions/approvedOperationV1.js';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1, isManagedCreationContinuationRootV1, isManagedCreationMutationActionIdV1 } from '../../machines/managed/actionIdsV1.js';
-import { ActionIdSchema } from '../../actions/actionIds.js';
+import { ActionIdSchema, WORKFLOW_RUN_START_ACTION_ID_V1 } from '../../actions/actionIds.js';
 import { getActionSpec } from '../../actions/actionSpecs.js';
 import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '../../local/services/actionIdsV1.js';
 import { isPresentUserHostInvocation, isPluginActionInvokeConfirmationV1 } from '../../actions/invocationAuthority.js';
@@ -340,6 +340,19 @@ export function openManagedCreationActionCodecV1(input: OpenManagedCreationActio
       || createCanonicalJsonSigningInput(plaintext.purpose.continuation) !== createCanonicalJsonSigningInput(root.managedContinuation)
       || plaintext.reviewedParent && plaintext.reviewedParent.actionId !== parent.actionId
       || plaintext.purpose.requestEnvelopeDigest !== computeExternalActionRequestEnvelopeDigestV1(baseEnvelope)) return null;
+    if (parent.actionId === WORKFLOW_RUN_START_ACTION_ID_V1) {
+      if (parent.target.kind !== 'machine' || !parent.target.project) return null;
+      // Setup and enrollment children are Machine-scoped; the canonical
+      // continuation declaration above already admitted their exact Action.
+      // The continued Run alone retains the original signed Project binding.
+      if (root.actionId === WORKFLOW_RUN_START_ACTION_ID_V1) {
+        const { workspaceRefId: _previousWorkspace, ...project } = parent.target.project;
+        const expected = { kind: 'machine' as const, machineId: input.machineId,
+          project: { ...project, machineId: input.machineId } };
+        if (!externalActionTargetsEqualV1(expected, root.target)
+          || !externalActionTargetsEqualV1(expected, envelope.target)) return null;
+      }
+    }
     const needsCodecMaterial = parent.accountEncryptionMode === 'e2ee' && parent.accountId !== parent.custodianAccountId;
     if (parent.accountEncryptionMode !== root.accountEncryptionMode || needsCodecMaterial !== Boolean(plaintext.codec)) return null;
     const material: ManagedControllerCodecMaterial | null = plaintext.codec

@@ -41,6 +41,32 @@ const relationship = (
 });
 
 describe('workspaceSyncTopology', () => {
+  it('routes a daemon-free native endpoint through its controller without aliasing its host root', () => {
+    const host = { id: 'host', serverId: 'home', machineId: 'host-machine', rootPath: '/repo', createdAtMs: 1 };
+    const native = { v: 2 as const, kind: 'managed' as const, id: 'native', serverId: 'home', managedId: 'guest',
+      controller: { machineId: 'host-machine', installationId: 'host-current' }, rootPath: '/repo', createdAtMs: 1 };
+    const link = relationship('native-link', host.id, native.id, host.machineId, 'keep_synced');
+    const input = { workspaceRefs: [host, native], relationships: [link] };
+    expect(deriveWorkspaceSyncTopology(input)).toEqual({ issues: [], sets: [{
+      hubWorkspaceRefId: host.id, controllerMachineId: host.machineId, relationships: [link],
+    }] });
+    expect(resolveWorkspaceSyncEndpoint({ ...input, workspace: native })).toEqual({ ok: true, workspace: native, endpoint: native });
+    expect(resolveWorkspaceSyncEndpoint({ ...input, namespace: native })).toEqual({ ok: true, endpoint: native });
+    for (const namespace of [
+      { ...native, managedId: 'other-guest' },
+      { ...native, controller: { ...native.controller, installationId: 'replaced' } },
+      { ...native, controller: { ...native.controller, machineId: 'other-host' } },
+    ]) {
+      expect(resolveWorkspaceSyncEndpoint({ ...input, namespace })).toEqual({ ok: false, code: 'workspace_sync_child_unavailable' });
+    }
+    expect(resolveWorkspaceSyncTransportAddress({ namespace: native })).toEqual({ ok: true,
+      address: { machineId: 'host-machine', installationId: 'host-current', managedId: 'guest' } });
+    expect(resolveWorkspaceSyncReadControllerV1({ ...input, serverId: 'home', workspaceRefId: native.id,
+      relationships: [] })).toBe(host.machineId);
+    expect(resolveWorkspaceSyncTransferRoute({ ...input, serverId: 'home', sourceWorkspaceRefId: host.id,
+      targetWorkspaceRefId: native.id })).toMatchObject({ ok: true, kind: 'direct', relationships: [link] });
+  });
+
   it('routes reads of an unlinked workspace to its owning Machine without accepting invalid linked topology', () => {
     const input = { serverId: 'server', workspaceRefs: refs, relationships: [] };
     expect(resolveWorkspaceSyncReadControllerV1({ ...input, workspaceRefId: 'a' })).toBe('machine-a');

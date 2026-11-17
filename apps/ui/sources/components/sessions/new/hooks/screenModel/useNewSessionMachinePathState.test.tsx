@@ -348,6 +348,26 @@ describe('useNewSessionMachinePathState', () => {
         } finally { await hook.unmount(); }
     });
 
+    it('retains the chosen Project files source before preset selection clears the execution target', async () => {
+        const draft = createManagedMachineSelectionDraft({
+            selection: { kind: 'preset', homeId: 'home-a', id: 'preset-a', revision: 1 },
+            receipt: { launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+                controller: { machineId: 'other-controller', installationId: 'installation' }, optionStatus: 'current', prerequisites: [],
+                billing: { location: 'local', stoppedBilling: 'not-billed' }, retentionCapabilities: { supportedIntents: ['delete'] },
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+        });
+        const hook = await renderMachinePathState({ machines: toMachines({ id: 'host' }, { id: 'enrolled' }), recentMachinePaths: [],
+            machineIdParam: 'host', pathParam: '/source/with-edits' });
+        try {
+            await act(async () => hook.getCurrent().setDraftSelectedPath('/source/typed-before-preset'));
+            await act(async () => hook.getCurrent().setManagedMachineTarget(draft));
+            expect(hook.getCurrent().executionTarget).toBeNull();
+            const projectFilesSource = { target: { serverId: 'server-a', machineId: 'host' }, directory: '/source/typed-before-preset' };
+            expect(hook.getCurrent()).toMatchObject({ projectFilesSource });
+            await act(async () => hook.getCurrent().adoptManagedMachineTarget('enrolled'));
+            expect(hook.getCurrent()).toMatchObject({ projectFilesSource });
+        } finally { await hook.unmount(); }
+    });
     it('uses the reviewed locked preset through enrollment without discarding its creation receipt', async () => {
         const draft = createManagedMachineSelectionDraft({
             selection: { kind: 'preset', homeId: 'home-a', id: 'preset-a', revision: 1 },

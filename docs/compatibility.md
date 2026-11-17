@@ -12915,3 +12915,29 @@ development readers reject the variant and old admissions must be reminted.
 The inspected `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf`
 has no corresponding deployment-native schema or working changes at that path.
 This uses the unpublished 0.3 direct cut; no migration, adapter or gate is added.
+
+Project files authoring (unreleased 0.3) uses the existing private preset content
+envelope for its default and the closed Session placement selection for its
+override. Copy once and the existing Replica/Editable-copy modes carry the
+existing workspace content policy for Included (content selection and include/ignore
+patterns); their source Folder remains the placement's workspace source. Git clone
+carries a credential-free repository/branch selector and an optional qualified
+connected-account reference for Git account. Credentials never enter either
+the preset content or the Session recipe. Two-way sync exposes the existing
+Workspace sync conflict review; this authoring format adds no conflict policy.
+Omitted private defaults retain the Copy once intent. This authoring contract
+requires matching development readers and writers: an older strict placement
+reader rejects the new field, and older private-content projections cannot be
+used to execute its meaning. It establishes no support for mixed 0.3 development
+versions and adds no predecessor shim or feature gate. The scoped-clean 0.2
+frontier inspected at `87aaa83f6b81c92a4ceee5816df2e566ed429bc7` has neither
+of the affected preset-content or placement modules. The immutable Session recipe
+retains the effective choice, and enrolled copies retain their original workspace
+addresses for reviewed return. Native managed workspaces use a closed V2 reference
+rather than adding optional native locators to Machine V1 references: old readers
+must reject an unsupported target instead of treating its guest path as a host path.
+Return review consumes the existing SCM comparison owner and carries file-content
+changes only; Git internals/history and ignored files remain in the sandbox.
+Both-changed paths preserve the host by default, with explicit conflict replacement.
+Runtime transfer and loaded journey evidence remain separate from acceptance of
+the authored choice.

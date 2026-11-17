@@ -1,6 +1,7 @@
 import type { ProjectAccountOrganizationV1, ProjectAccountRowKeyV1 } from './projectAccountRowsV1.js';
 import type { QualifiedProjectKeyV1, WorkspaceRefV1 } from '../workspaces/workspaceRefV1.js';
-import { projectWorkspaceRefV1, workspaceAddressFromRefV1 } from '../workspaces/workspaceRefResolutionV1.js';
+import { projectWorkspaceRefV1, workspaceAddressFromRefV2 } from '../workspaces/workspaceRefResolutionV1.js';
+import { resolveWorkspaceSyncExecutionMachineIdV1 } from '../workspaces/workspaceSyncTopology.js';
 import { QualifiedProjectKeyV1Schema } from '../workspaces/workspaceRefV1.js';
 
 export type ProjectListOrganizationV1 = Readonly<{
@@ -67,7 +68,8 @@ export function projectProjectListV1(input: Readonly<{
       projectKey: { serverId: input.serverId, projectKey: anchor },
       hidden: organization?.hidden === true, pinned: organization?.pinned === true,
       listed: organization ? organization.hidden !== true : refs.some(ref => ref.lastOpenedAtMs != null || ref.source !== undefined),
-      items: refs.sort((a, b) => a.machineId.localeCompare(b.machineId) || compareProjectWorkspaceRefsV1(a, b)),
+      items: refs.sort((a, b) => resolveWorkspaceSyncExecutionMachineIdV1(a).localeCompare(resolveWorkspaceSyncExecutionMachineIdV1(b))
+        || compareProjectWorkspaceRefsV1(a, b)),
     };
   }).sort((a, b) => Number(b.pinned) - Number(a.pinned)
     || (lastOpenedByProject.get(b.projectKey.projectKey) ?? -1) - (lastOpenedByProject.get(a.projectKey.projectKey) ?? -1)
@@ -82,7 +84,7 @@ export function projectProjectListV1(input: Readonly<{
     .filter(group => input.listing !== 'listed' || group.listed || group.hidden).flatMap(group => group.items
     .filter(ref => input.machineId === undefined || ref.machineId === input.machineId)
     .map(ref => ({ ref, project: group.projectKey, projectKey: { serverId: ref.serverId, id: ref.id },
-      workspaceAddress: workspaceAddressFromRefV1(ref), hidden: group.hidden, pinned: group.pinned, listed: group.listed })));
+      workspaceAddress: workspaceAddressFromRefV2(ref), hidden: group.hidden, pinned: group.pinned, listed: group.listed })));
   const items = input.limit === undefined ? leaves : leaves.slice(0, input.limit);
   const truncated = items.length < leaves.length || (input.coverage ?? 'complete') !== 'complete';
   return { projectGroups, hiddenProjectGroups, listedProjectGroups, unlistedProjectGroups, items, truncated,

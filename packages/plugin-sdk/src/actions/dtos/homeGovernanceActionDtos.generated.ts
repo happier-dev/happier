@@ -147,10 +147,122 @@ export type HomeGovernanceActionInputById = {
                     serverId: string;
                     machineId: string;
                 };
+                projectFiles?: undefined | {
+                    kind: 'copy_once';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                } | {
+                    kind: 'git_clone';
+                    source: {
+                        provider: {
+                            id: string;
+                            kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                            displayName: string;
+                            baseUrl: string;
+                        };
+                        repository: {
+                            nameWithOwner: string;
+                            defaultBranch?: null | string | undefined;
+                            visibility?: 'internal' | 'private' | 'public' | undefined;
+                            webUrl?: string | undefined;
+                            cloneUrl?: string | undefined;
+                            sshUrl?: string | undefined;
+                        };
+                        protocol: 'auto' | 'https' | 'ssh';
+                    };
+                    branch: string;
+                    gitAccount?: undefined | {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'sync';
+                    mode: 'keep_both_in_sync' | 'keep_synced';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                };
+                projectFilesSource?: undefined | {
+                    target: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                    directory: string;
+                };
             } | {
                 kind: 'preset';
                 homeId: string;
                 presetId: string;
+                projectFiles?: undefined | {
+                    kind: 'copy_once';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                } | {
+                    kind: 'git_clone';
+                    source: {
+                        provider: {
+                            id: string;
+                            kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                            displayName: string;
+                            baseUrl: string;
+                        };
+                        repository: {
+                            nameWithOwner: string;
+                            defaultBranch?: null | string | undefined;
+                            visibility?: 'internal' | 'private' | 'public' | undefined;
+                            webUrl?: string | undefined;
+                            cloneUrl?: string | undefined;
+                            sshUrl?: string | undefined;
+                        };
+                        protocol: 'auto' | 'https' | 'ssh';
+                    };
+                    branch: string;
+                    gitAccount?: undefined | {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'sync';
+                    mode: 'keep_both_in_sync' | 'keep_synced';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                };
+                projectFilesSource?: undefined | {
+                    target: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                    directory: string;
+                };
             };
             permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
             modelByAgentTargetKey?: Record<string, {
@@ -240,7 +352,6 @@ export type HomeGovernanceActionInputById = {
                     groupId: string;
                 };
                 teamResource: null | {
-                    teamId: string;
                     selection: {
                         source: 'team_resource';
                         resourceId: string;
@@ -257,6 +368,7 @@ export type HomeGovernanceActionInputById = {
                             accountId: string;
                         };
                     };
+                    teamId: string;
                 };
             }[]> | undefined;
         };
@@ -318,10 +430,122 @@ export type HomeGovernanceActionResultById = {
                     serverId: string;
                     machineId: string;
                 };
+                projectFiles?: undefined | {
+                    kind: 'copy_once';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                } | {
+                    kind: 'git_clone';
+                    source: {
+                        provider: {
+                            id: string;
+                            kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                            displayName: string;
+                            baseUrl: string;
+                        };
+                        repository: {
+                            nameWithOwner: string;
+                            defaultBranch?: null | string | undefined;
+                            visibility?: 'internal' | 'private' | 'public' | undefined;
+                            webUrl?: string | undefined;
+                            cloneUrl?: string | undefined;
+                            sshUrl?: string | undefined;
+                        };
+                        protocol: 'auto' | 'https' | 'ssh';
+                    };
+                    branch: string;
+                    gitAccount?: undefined | {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'sync';
+                    mode: 'keep_both_in_sync' | 'keep_synced';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                };
+                projectFilesSource?: undefined | {
+                    target: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                    directory: string;
+                };
             } | {
                 kind: 'preset';
                 homeId: string;
                 presetId: string;
+                projectFiles?: undefined | {
+                    kind: 'copy_once';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                } | {
+                    kind: 'git_clone';
+                    source: {
+                        provider: {
+                            id: string;
+                            kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                            displayName: string;
+                            baseUrl: string;
+                        };
+                        repository: {
+                            nameWithOwner: string;
+                            defaultBranch?: null | string | undefined;
+                            visibility?: 'internal' | 'private' | 'public' | undefined;
+                            webUrl?: string | undefined;
+                            cloneUrl?: string | undefined;
+                            sshUrl?: string | undefined;
+                        };
+                        protocol: 'auto' | 'https' | 'ssh';
+                    };
+                    branch: string;
+                    gitAccount?: undefined | {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'sync';
+                    mode: 'keep_both_in_sync' | 'keep_synced';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                };
+                projectFilesSource?: undefined | {
+                    target: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                    directory: string;
+                };
             };
             permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
             modelByAgentTargetKey?: Record<string, {
@@ -411,7 +635,6 @@ export type HomeGovernanceActionResultById = {
                     groupId: string;
                 };
                 teamResource: null | {
-                    teamId: string;
                     selection: {
                         source: 'team_resource';
                         resourceId: string;
@@ -428,6 +651,7 @@ export type HomeGovernanceActionResultById = {
                             accountId: string;
                         };
                     };
+                    teamId: string;
                 };
             }[]> | undefined;
         };
@@ -503,10 +727,122 @@ export type HomeGovernanceActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
+                    projectFiles?: undefined | {
+                        kind: 'copy_once';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    } | {
+                        kind: 'git_clone';
+                        source: {
+                            provider: {
+                                id: string;
+                                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                displayName: string;
+                                baseUrl: string;
+                            };
+                            repository: {
+                                nameWithOwner: string;
+                                defaultBranch?: null | string | undefined;
+                                visibility?: 'internal' | 'private' | 'public' | undefined;
+                                webUrl?: string | undefined;
+                                cloneUrl?: string | undefined;
+                                sshUrl?: string | undefined;
+                            };
+                            protocol: 'auto' | 'https' | 'ssh';
+                        };
+                        branch: string;
+                        gitAccount?: undefined | {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        kind: 'sync';
+                        mode: 'keep_both_in_sync' | 'keep_synced';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    };
+                    projectFilesSource?: undefined | {
+                        target: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        directory: string;
+                    };
                 } | {
                     kind: 'preset';
                     homeId: string;
                     presetId: string;
+                    projectFiles?: undefined | {
+                        kind: 'copy_once';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    } | {
+                        kind: 'git_clone';
+                        source: {
+                            provider: {
+                                id: string;
+                                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                displayName: string;
+                                baseUrl: string;
+                            };
+                            repository: {
+                                nameWithOwner: string;
+                                defaultBranch?: null | string | undefined;
+                                visibility?: 'internal' | 'private' | 'public' | undefined;
+                                webUrl?: string | undefined;
+                                cloneUrl?: string | undefined;
+                                sshUrl?: string | undefined;
+                            };
+                            protocol: 'auto' | 'https' | 'ssh';
+                        };
+                        branch: string;
+                        gitAccount?: undefined | {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        kind: 'sync';
+                        mode: 'keep_both_in_sync' | 'keep_synced';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    };
+                    projectFilesSource?: undefined | {
+                        target: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        directory: string;
+                    };
                 };
                 permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
                 modelByAgentTargetKey?: Record<string, {
@@ -596,7 +932,6 @@ export type HomeGovernanceActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
-                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -613,6 +948,7 @@ export type HomeGovernanceActionResultById = {
                                 accountId: string;
                             };
                         };
+                        teamId: string;
                     };
                 }[]> | undefined;
             };
@@ -1824,10 +2160,122 @@ export type HomeGovernanceActionResultById = {
                     serverId: string;
                     machineId: string;
                 };
+                projectFiles?: undefined | {
+                    kind: 'copy_once';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                } | {
+                    kind: 'git_clone';
+                    source: {
+                        provider: {
+                            id: string;
+                            kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                            displayName: string;
+                            baseUrl: string;
+                        };
+                        repository: {
+                            nameWithOwner: string;
+                            defaultBranch?: null | string | undefined;
+                            visibility?: 'internal' | 'private' | 'public' | undefined;
+                            webUrl?: string | undefined;
+                            cloneUrl?: string | undefined;
+                            sshUrl?: string | undefined;
+                        };
+                        protocol: 'auto' | 'https' | 'ssh';
+                    };
+                    branch: string;
+                    gitAccount?: undefined | {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'sync';
+                    mode: 'keep_both_in_sync' | 'keep_synced';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                };
+                projectFilesSource?: undefined | {
+                    target: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                    directory: string;
+                };
             } | {
                 kind: 'preset';
                 homeId: string;
                 presetId: string;
+                projectFiles?: undefined | {
+                    kind: 'copy_once';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                } | {
+                    kind: 'git_clone';
+                    source: {
+                        provider: {
+                            id: string;
+                            kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                            displayName: string;
+                            baseUrl: string;
+                        };
+                        repository: {
+                            nameWithOwner: string;
+                            defaultBranch?: null | string | undefined;
+                            visibility?: 'internal' | 'private' | 'public' | undefined;
+                            webUrl?: string | undefined;
+                            cloneUrl?: string | undefined;
+                            sshUrl?: string | undefined;
+                        };
+                        protocol: 'auto' | 'https' | 'ssh';
+                    };
+                    branch: string;
+                    gitAccount?: undefined | {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'sync';
+                    mode: 'keep_both_in_sync' | 'keep_synced';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                };
+                projectFilesSource?: undefined | {
+                    target: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                    directory: string;
+                };
             };
             permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
             modelByAgentTargetKey?: Record<string, {
@@ -1917,7 +2365,6 @@ export type HomeGovernanceActionResultById = {
                     groupId: string;
                 };
                 teamResource: null | {
-                    teamId: string;
                     selection: {
                         source: 'team_resource';
                         resourceId: string;
@@ -1934,6 +2381,7 @@ export type HomeGovernanceActionResultById = {
                             accountId: string;
                         };
                     };
+                    teamId: string;
                 };
             }[]> | undefined;
         };

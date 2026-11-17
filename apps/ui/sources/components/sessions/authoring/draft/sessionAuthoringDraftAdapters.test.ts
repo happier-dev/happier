@@ -279,6 +279,24 @@ describe('sessionAuthoringDraftAdapters', () => {
         expect(executionTarget.machineId).toBe('enrolled');
         expect(continuation).toEqual(spawnAuthoring);
     });
+    it('retains Project files with its placement through reopen and both Session admission paths', () => {
+        const sessionPlacement = { kind: 'machine' as const,
+            target: { serverId: 'server-1', machineId: 'machine-1' },
+            projectFiles: { kind: 'sync' as const, mode: 'keep_both_in_sync' as const } };
+        const draft = buildNewSessionAuthoringDraftFromTempData({ prompt: 'Start here', directory: '/workspace/project',
+            executionTarget: { kind: 'machine', target: sessionPlacement.target },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            ...{ sessionPlacement } });
+        const temp = buildNewSessionTempDataFromAuthoringDraft({ draft, machineId: 'machine-1' });
+        expect(buildNewSessionAuthoringDraftFromTempData(temp)).toMatchObject({ sessionPlacement });
+        const persisted = buildPersistedNewSessionDraftFromAuthoringDraft({ draft, machineId: 'machine-1', updatedAt: 1,
+            selectedSecretId: null, selectedSecretIdByProfileIdByEnvVarName: {},
+            sessionOnlySecretValueEncByProfileIdByEnvVarName: {}, backendNewSessionOptionStateByTargetKey: {} });
+        const reopened = buildNewSessionAuthoringDraftFromPersistedDraft(persisted);
+        const params = { draft: reopened, creationKey: 'project-files-creation', permissionMode: 'default', configurationUpdatedAtMs: 1 };
+        expect(buildSessionSpawnNewInputV2FromAuthoringDraft(params)).toMatchObject({ sessionPlacement });
+        expect(buildManagedAcquireAgentStartV1FromAuthoringDraft(params)).toMatchObject({ sessionPlacement });
+    });
     it('retains a one-Session Directly override through draft reopen and submits it only to ordinary Session admission', () => {
         const draft = buildNewSessionAuthoringDraftFromTempData({ prompt: 'Start here', directory: '/workspace/project',
             executionTarget: { kind: 'machine', target: { serverId: 'server-1', machineId: 'machine-1' } },

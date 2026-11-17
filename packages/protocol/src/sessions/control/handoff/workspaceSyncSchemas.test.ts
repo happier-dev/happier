@@ -53,6 +53,14 @@ const contentPolicyInput = {
 const contentPolicy = { ...contentPolicyInput, policyDigest: computeWorkspaceSyncPolicyDigest(contentPolicyInput) };
 
 describe('workspace sync protocol schemas', () => {
+  it('binds content-only return exports into the signed content policy', () => {
+    const input = { ...contentPolicyInput, contentOnly: true as const };
+    const policy = { ...input, policyDigest: computeWorkspaceSyncPolicyDigest(input) };
+    expect(WorkspaceContentPolicyV1Schema.parse(policy)).toEqual(policy);
+    expect(policy.policyDigest).not.toBe(contentPolicy.policyDigest);
+    expect(WorkspaceContentPolicyV1Schema.safeParse({ ...contentPolicy, contentOnly: true }).success).toBe(false);
+  });
+
   it('carries a nonblocking preserved-state diagnostic without implying a quarantine', () => {
     const preserved = { status: 'preserved', path: '/home/example/workspace-replication' };
     expect(WorkspaceSyncLegacyStateInspectionV1Schema.parse(preserved)).toEqual(preserved);
@@ -865,7 +873,7 @@ describe('workspace sync protocol schemas', () => {
     expect(WorkspaceSyncTargetBootstrapPrepareV1Schema.safeParse({
       ...request,
       targetReplacementApprovalReceiptId: undefined,
-    }).success).toBe(false);
+    }).success).toBe(true);
     expect(WorkspaceSyncTargetBootstrapPrepareV1Schema.safeParse({
       ...request,
       targetReplacementApprovalActionInput: undefined,

@@ -23,6 +23,7 @@ import { SessionInitialTriggerV1Schema } from '../../workflows/triggers/workflow
 import { SessionAuthoringSelectionFieldsV1 } from './selectionFieldsV1.js';
 import { SessionIdentityAdditionsV1Schema } from '../identity/sessionBotV1.js';
 import { SessionPromptStackV1Schema } from '../context/sessionContextV1.js';
+import { SessionPlacementSelectionV1Schema } from '../creation/sessionPlacementSelectionV1.js';
 
 type SessionAuthoringJsonPrimitive = null | string | number | boolean;
 export interface SessionAuthoringJsonObject {
@@ -212,6 +213,15 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     contexts: ['newSession'],
     defaultSurface: 'hidden',
     defaultEditabilityByContext: { newSession: 'editable' },
+  },
+  sessionPlacement: {
+    schema: z.optional(SessionPlacementSelectionV1Schema),
+    description: 'Explicit Session placement with Project files intent; absent follows the selected Machine policy or preset default.',
+    storageClass: 'template',
+    draftStorage: 'sync',
+    contexts: ['newSession', 'automationNewSession'],
+    defaultSurface: 'hidden',
+    defaultEditabilityByContext: { newSession: 'editable', automationNewSession: 'editable' },
   },
   temporaryComputerActivationRef: {
     schema: z.optional(z.nullable(TemporaryComputerActivationRefV1Schema)),

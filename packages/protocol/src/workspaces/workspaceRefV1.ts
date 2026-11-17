@@ -29,8 +29,38 @@ export const WorkspaceRefV1WriteSchema = lazyZodSchema(() => z.strictObject({
     repositoryObservation: z.optional(WorkspaceRepositoryObservationV1Schema),
     ...WorkspaceProjectFactsV1Schema.shape,
   }));
-export const WorkspaceRefV1Schema = createStoredReadSchema(WorkspaceRefV1WriteSchema);
-export type WorkspaceRefV1 = z.infer<typeof WorkspaceRefV1WriteSchema>;
+export type MachineWorkspaceRefV1 = z.infer<typeof WorkspaceRefV1WriteSchema>;
+
+/** V2 names a daemon-free guest's own filesystem. It deliberately has no
+ * Machine identity, so the V1 stored reader cannot interpret its root on the host. */
+export const ManagedWorkspaceRefV2WriteSchema = lazyZodSchema(() => {
+  const { machineId: _machineId, ...fields } = WorkspaceRefV1WriteSchema.shape;
+  return z.strictObject({ ...fields, v: z.literal(2), kind: z.literal('managed'),
+    machineId: z.optional(z.never()),
+    managedId: StoredNonEmptyStringSchema,
+    controller: z.strictObject({ machineId: StoredNonEmptyStringSchema, installationId: StoredNonEmptyStringSchema }),
+  });
+});
+export type ManagedWorkspaceRefV2 = z.infer<typeof ManagedWorkspaceRefV2WriteSchema>;
+/** Current Machine arm keeps native tags visible to stored-read validation. */
+export const WorkspaceRefV2MachineWriteSchema = lazyZodSchema(() => z.strictObject({
+  ...WorkspaceRefV1WriteSchema.shape, kind: z.optional(z.never()),
+}));
+export const WorkspaceRefV2WriteSchema = lazyZodSchema(() => z.union([
+  // A stored projection must never erase a native discriminator and choose the
+  // legacy Machine branch, even when malformed native input also carries machineId.
+  WorkspaceRefV2MachineWriteSchema,
+  ManagedWorkspaceRefV2WriteSchema,
+]));
+export const WorkspaceRefV2Schema = createStoredReadSchema(WorkspaceRefV2WriteSchema);
+/** Current reader retains V1 Machine references alongside explicitly versioned native references. */
+export const WorkspaceRefV1Schema = WorkspaceRefV2Schema;
+export type WorkspaceRefV1 = MachineWorkspaceRefV1 | ManagedWorkspaceRefV2;
+
+/** Discriminates already-admitted full refs and their typed routing projections. */
+export function isManagedWorkspaceRefV2<T extends object>(ref: T): ref is Extract<T, { kind: 'managed' }> {
+  return 'kind' in ref && ref.kind === 'managed';
+}
 
 const ProjectKeyByIdV1Schema = lazyZodSchema(() => z.strictObject({
     id: LookupNonEmptyStringSchema,

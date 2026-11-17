@@ -24,6 +24,10 @@ export {
   ProjectKeyV1Schema,
   WorkspaceRefV1Schema,
   WorkspaceRefV1WriteSchema,
+  WorkspaceRefV2WriteSchema,
+  WorkspaceRefV2Schema,
+  ManagedWorkspaceRefV2WriteSchema,
+  isManagedWorkspaceRefV2,
   ManagedWorkspaceAddressV2Schema,
   WorkspaceAddressV2Schema,
   WorkspaceAddressV1Schema,
@@ -31,6 +35,8 @@ export {
   QualifiedProjectKeyV1Schema,
   type WorkspaceAddressV1,
   type WorkspaceAddressV2,
+  type MachineWorkspaceRefV1,
+  type ManagedWorkspaceRefV2,
   type WorkspaceProjectFactsV1,
   type QualifiedProjectKeyV1,
   type ProjectKeyV1,
@@ -46,12 +52,15 @@ export { projectProjectListV1, projectScopeKeysV1, compareProjectWorkspaceRefsV1
 } from '../projects/projectListProjectionV1.js';
 
 export { resolveWorkspaceRefV1, normalizeWorkspaceRootPathV1, isWorkspacePathWithinRootV1, projectWorkspaceRefV1,
-  workspaceAddressFromRefV1, enrichWorkspaceRefV1, resolveWorkspaceProjectKeyV1, resolveWorkspaceGroupingV1, createProjectAnchorOfKeyV1, resolveSessionProjectKeyV1, createSessionProjectKeyResolverV1,
+  workspaceAddressFromRefV1, workspaceAddressFromRefV2, enrichWorkspaceRefV1, resolveWorkspaceProjectKeyV1, resolveWorkspaceGroupingV1, createProjectAnchorOfKeyV1, resolveSessionProjectKeyV1, createSessionProjectKeyResolverV1,
   type WorkspaceRefResolutionV1, type WorkspaceRefResolutionContextV1, type SessionProjectKeyResolutionV1,
 } from './workspaceRefResolutionV1.js';
 
 export {
   deriveWorkspaceSyncTopology,
+  resolveWorkspaceSyncExecutionMachineIdV1,
+  isManagedWorkspaceSyncNamespaceV2,
+  type WorkspaceSyncNamespace,
   resolveWorkspaceSyncTransferRoute,
   resolveWorkspaceSyncRelationshipEndpointRoles,
   resolveWorkspaceSyncRelationshipTransferDirection,

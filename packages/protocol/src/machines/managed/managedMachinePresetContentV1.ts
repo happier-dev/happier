@@ -38,6 +38,7 @@ import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.
 import { MachineProvisionerDestroyResultV1Schema, MachineProvisionerPowerResultV1Schema,
   MachineProvisionerRebuildResultV1Schema, MachineProvisionerResizeResultV1Schema } from '../../plugins/contributions/machineProvisioners.js';
 import { MachinePoolIdV1Schema } from '../pools/v1.js';
+import { SessionProjectFilesV1Schema } from '../machineIsolationV1.js';
 import { DevcontainerEffectReviewV1Schema } from './devcontainerV1.js';
 import type { MachineProvisionerSelectionProjectionV1 } from '../../plugins/contributions/machineProvisioners.js';
 import { z } from '../../zodRuntimePolicy.js';
@@ -128,6 +129,7 @@ export function createManagedMachinePresetContentV1Schema<Choices extends z.core
     /** Target-captured Retry facts; never a reusable author declaration. */
     setupSourceFacts: z.optional(MachineSetupSourceFactsMapV1Schema),
     controllerDisplayName: z.optional(id()),
+    projectFiles: z.optional(SessionProjectFilesV1Schema),
     preparation: z.optional(ManagedMachinePresetPreparationV1Schema),
     /** Provider-owned build/artifact identity; never an author or per-acquire override. */
     prepared: z.optional(ManagedMachinePresetPreparedV1Schema),

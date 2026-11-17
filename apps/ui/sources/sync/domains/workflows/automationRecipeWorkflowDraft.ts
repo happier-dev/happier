@@ -32,7 +32,8 @@ function legacyProject(
     if (target.kind === 'newSession') {
         const machineId = target.spawn.executionTarget.machineId;
         return target.spawn.directory.kind === 'path'
-            ? { machineId, directory: target.spawn.directory.path }
+            ? { machineId, directory: target.spawn.directory.path,
+                ...(target.spawn.sessionPlacement === undefined ? {} : { sessionPlacement: target.spawn.sessionPlacement }) }
             : { machineId, directory: target.spawn.directory };
     }
     return target.kind === 'executionRun' && machineId !== null && target.request.cwd

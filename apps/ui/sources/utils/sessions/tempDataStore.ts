@@ -48,6 +48,7 @@ export interface NewSessionData {
     initialSessionFacts?: SessionIdentityAdditions;
     memoryEnabled?: boolean;
     isolationOverride?: 'directly';
+    sessionPlacement?: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionPlacementSelectionV1;
     promptStack?: SessionPromptStackV1;
     instructionsDraft?: SessionInstructionsAuthoringDraft | null;
     prompt?: string;

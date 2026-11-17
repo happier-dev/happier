@@ -129,6 +129,7 @@ export function readNewSessionDraftProjectionFromRepository(input: Readonly<{
         ...(initialSessionFacts ? { initialSessionFacts } : {}),
         ...(typeof memoryEnabled === 'boolean' ? { memoryEnabled } : {}),
         ...(localState?.isolationOverride === 'directly' ? { isolationOverride: localState.isolationOverride } : {}),
+        ...(authoring.sessionPlacement === undefined ? {} : { sessionPlacement: authoring.sessionPlacement }),
         ...(promptStack ? { promptStack } : {}),
         ...(instructionsDraft === undefined ? {} : { instructionsDraft }),
         input: typeof snapshot.composer.text.value === 'string'

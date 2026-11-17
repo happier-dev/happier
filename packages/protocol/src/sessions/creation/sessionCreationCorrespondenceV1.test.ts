@@ -10,6 +10,7 @@ import {
 import { openSessionOwnerMetadataEnvelopeV1 } from '../metadata/sessionMetadataEnvelopesV1.js';
 import { sealAccountScopedBlobCiphertext } from '../../crypto/accountScopedCipher.js';
 import { ExternalActionExecutionAuthorizationV1Schema } from '../../actions/externalActionApi.js';
+import { computeWorkspaceSyncPolicyDigest } from '../control/handoff/workspaceSyncSchemas.js';
 
 const correspondence = {
   v: 1,
@@ -63,6 +64,49 @@ const retainedCorrespondence = {
 } as const;
 
 describe('SessionCreationCorrespondenceV1', () => {
+  it('compares the authored source while retaining derived copy endpoints without changing retry intent', () => {
+    const projectFilesSource = { target: { serverId: 'home', machineId: 'source-machine' }, directory: '/chosen/project' };
+    const intended = { ...correspondence, recipe: { ...correspondence.recipe, projectFilesSource } };
+    const materialized = { ...intended, recipe: { ...intended.recipe, projectFilesOrigin: {
+      sourceWorkspace: { serverId: 'home', machineId: 'source-machine', workspaceId: 'source', rootPath: '/chosen/project' },
+      targetWorkspace: { serverId: 'home', machineId: 'machine-1', workspaceId: 'target', rootPath: '/remote/project' },
+    } } };
+    expect(SessionCreationCorrespondenceV1Schema.parse(intended)).toEqual(intended);
+    expect(sessionCreationCorrespondenceMatchesV1(intended, materialized)).toBe(true);
+    expect(sessionCreationCorrespondenceMatchesV1(materialized, { ...intended, recipe: { ...intended.recipe,
+      projectFilesSource: { ...projectFilesSource, directory: '/different/project' } } })).toBe(false);
+  });
+  it('retains exact remote copy endpoints in the owning Session metadata for reviewed return', () => {
+    const projectFilesOrigin = {
+      sourceWorkspace: { serverId: 'home', workspaceId: 'original', machineId: 'original-machine', rootPath: '/chosen/project' },
+      targetWorkspace: { serverId: 'home', workspaceId: 'copy', machineId: 'machine-1', rootPath: '/remote/copy' },
+    };
+    const selected = { ...correspondence, recipe: { ...correspondence.recipe, projectFilesOrigin } };
+    expect(SessionCreationCorrespondenceV1Schema.parse(selected)).toEqual(selected);
+    expect(SessionCreationCorrespondenceV1ReadSchema.parse(selected)).toEqual(selected);
+  });
+  it('retains a native target namespace and its copied baseline without inventing a guest Machine', () => {
+    const policy = { v: 1 as const, selection: 'all_files' as const,
+      extraIgnorePatterns: ['private/**'], extraIncludePatterns: ['build/result.txt'] };
+    const projectFilesOrigin = {
+      sourceWorkspace: { serverId: 'home', workspaceId: 'original', machineId: 'original-machine', rootPath: '/chosen/project' },
+      targetWorkspace: { v: 2 as const, kind: 'managed' as const, serverId: 'home', workspaceId: 'copy', managedId: 'guest',
+        controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/workspace/project' },
+      baseline: { entries: [{ kind: 'file' as const, relativePath: 'base.txt', digest: 'a'.repeat(64), sizeBytes: 1, executable: false }] },
+      contentPolicyDigest: computeWorkspaceSyncPolicyDigest(policy),
+    };
+    const selected = { ...correspondence, recipe: { ...correspondence.recipe, projectFilesOrigin } };
+    expect(SessionCreationCorrespondenceV1Schema.parse(selected)).toEqual(selected);
+    expect(SessionCreationCorrespondenceV1ReadSchema.parse(selected)).toEqual(selected);
+    expect(sessionCreationCorrespondenceMatchesV1(correspondence, selected)).toBe(true);
+  });
+  it('retains the resolved Project files choice as immutable Session birth meaning', () => {
+    const selected = { ...correspondence, recipe: { ...correspondence.recipe,
+      projectFiles: { kind: 'sync', mode: 'keep_both_in_sync' } } };
+    expect(SessionCreationCorrespondenceV1Schema.parse(selected)).toEqual(selected);
+    expect(SessionCreationCorrespondenceV1ReadSchema.parse(selected)).toEqual(selected);
+    expect(sessionCreationCorrespondenceMatchesV1(selected, correspondence)).toBe(false);
+  });
   it('retains authored checkout intent before its selected Machine can realize it', () => {
     const checkoutCreationDraft = { kind: 'git_worktree' as const, displayName: 'bot', baseRef: 'main', branchMode: 'new' as const };
     const selected = { ...correspondence, recipe: { ...correspondence.recipe, checkoutCreationDraft } };

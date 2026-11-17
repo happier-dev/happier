@@ -1,5 +1,6 @@
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { SESSION_WORKSPACE_RETURN_ACTION_SPECS_V1 } from './projectFilesReturn.js';
+import { sessionProjectFilesOpenChildrenV1 } from '../../../sessions/creation/sessionProjectFilesOpenV1.js';
 import { selectTeamCredentialSourcesForApproval } from '../teamCredentialApproval.js';
 import { projectSessionSpawnNewActionInputV2 } from '../../../sessions/creation/sessionSpawnNewInputV2.js';
 import { SessionSpawnNewResultV1Schema, SessionSpawnNewActionResultV1Schema, readSessionSpawnNewActionResultV1 } from '../../../sessions/creation/sessionSpawnNewResultV1.js';
@@ -712,14 +713,20 @@ function createSessionSpawnActionSpecs(): readonly [SessionSpawnActionSpec] {
   return Object.freeze([
   {
     id: 'session.spawn_new', executionPlacement: 'machine', originalExecution: { accountRoot: 'allowed', terminalRoot: 'host' }, approval: {result: 'optional',flow: 'deferred'},
-    requesterAccountContentDemandForInput: input => Boolean(readRecord(input).machineSetupPlanInput),
+    requesterAccountContentDemandForInput: input => {
+      const parsed = SessionSpawnNewInputSchema.parse(input);
+      return Boolean(parsed.machineSetupPlanInput) || sessionProjectFilesOpenChildrenV1(parsed).length > 0;
+    },
     projectObservationInput: projectSessionSpawnNewObservationInput,
     approvalPresentation: { summary: () => null, teamCredentialSources: selectTeamCredentialSourcesForApproval,
       projectInput: projectSessionSpawnNewObservationInput, inputSchema: SessionSpawnNewInputSchema },
     hostReviewedChildren: normalizedInput => {
-      const setup = SessionSpawnNewInputSchema.parse(normalizedInput).machineSetupPlanInput;
-      if (!setup) return [];
+      const parsed = SessionSpawnNewInputSchema.parse(normalizedInput);
+      const setup = parsed.machineSetupPlanInput;
+      const projectFiles = sessionProjectFilesOpenChildrenV1(parsed);
+      if (!setup) return projectFiles;
       return [
+        ...projectFiles,
         { ...SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.plan, input: StrictJsonValueSchema.parse({ ...setup, mode: 'effects' }) },
         { ...SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply, scopeInput: { homeId: setup.homeId, machineId: setup.machineId } },
       ];

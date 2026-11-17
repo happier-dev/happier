@@ -387,6 +387,7 @@ export function buildNewSessionAuthoringDraft(params: NewSessionAuthoringDraftPa
         }),
         ...(params.memoryEnabled === undefined ? {} : { memoryEnabled: params.memoryEnabled }),
         ...(params.isolationOverride === undefined ? {} : { isolationOverride: params.isolationOverride }),
+        ...(params.sessionPlacement === undefined ? {} : { sessionPlacement: params.sessionPlacement }),
         ...(params.promptStack === undefined ? {} : { promptStack: SessionPromptStackV1Schema.parse(params.promptStack) }),
         ...(params.instructionsDraft === undefined ? {} : { instructionsDraft: readSessionInstructionsAuthoringDraft(params.instructionsDraft) }),
         executionTarget: SessionAuthoringValueV1Schema.shape.executionTarget.parse(params.executionTarget ?? null),
@@ -437,6 +438,7 @@ type ResolvedNewSessionAuthoringDraftInputs = Readonly<{
     initialSessionFacts?: SessionAuthoringDraft['initialSessionFacts'];
     memoryEnabled?: SessionAuthoringDraft['memoryEnabled'];
     isolationOverride?: SessionAuthoringDraft['isolationOverride'];
+    sessionPlacement?: SessionAuthoringDraft['sessionPlacement'];
     promptStack?: SessionAuthoringDraft['promptStack'];
     instructionsDraft?: SessionAuthoringDraft['instructionsDraft'];
     executionTarget?: SessionAuthoringDraft['executionTarget'];
@@ -482,6 +484,7 @@ export function buildNewSessionAuthoringDraftFromResolvedInputs(
         initialSessionFacts: params.initialSessionFacts,
         memoryEnabled: params.memoryEnabled,
         isolationOverride: params.isolationOverride,
+        sessionPlacement: params.sessionPlacement,
         promptStack: params.promptStack,
         instructionsDraft: params.instructionsDraft,
         executionTarget: params.executionTarget ?? null,
@@ -566,6 +569,7 @@ function buildNewSessionAuthoringDraftFromSource(source: NewSessionAuthoringDraf
         initialSessionFacts: source.source.initialSessionFacts,
         memoryEnabled: source.source.memoryEnabled,
         isolationOverride: source.source.isolationOverride,
+        sessionPlacement: source.source.sessionPlacement,
         promptStack: source.source.promptStack,
         instructionsDraft: source.source.instructionsDraft,
         executionTarget: source.source.executionTarget !== undefined ? source.source.executionTarget : fromExactMachineTarget(
@@ -1174,6 +1178,7 @@ function resolveSessionAuthoringSpawnInput(params: SessionServerStartSpawnDraftF
         throw new Error('New Session authoring draft requires agentTarget');
     }
     return {
+        ...(params.draft.sessionPlacement === undefined ? {} : { sessionPlacement: params.draft.sessionPlacement }),
         ...(fields.sessionName ? { title: fields.sessionName } : {}),
         ...(fields.initialSessionFacts === undefined ? {} : { identity: fields.initialSessionFacts }),
         ...(fields.memoryEnabled === undefined ? {} : { memoryEnabled: fields.memoryEnabled }),
@@ -1419,6 +1424,7 @@ export function buildNewSessionTempDataFromAuthoringDraft(params: Readonly<{
         ...(params.draft.memoryEnabled === undefined ? {} : { memoryEnabled: params.draft.memoryEnabled }),
         ...(params.draft.isolationOverride === undefined ? {} : { isolationOverride: params.draft.isolationOverride }),
         ...(params.draft.promptStack === undefined ? {} : { promptStack: params.draft.promptStack }),
+        ...(params.draft.sessionPlacement === undefined ? {} : { sessionPlacement: params.draft.sessionPlacement }),
         ...(params.draft.instructionsDraft === undefined ? {} : { instructionsDraft: params.draft.instructionsDraft }),
         ...(params.draft.executionTarget?.kind === 'machine'
             ? { machineId: params.draft.executionTarget.target.machineId }
@@ -1505,6 +1511,7 @@ export function buildPersistedNewSessionDraftFromAuthoringDraft(params: Readonly
         ...(params.draft.initialSessionFacts === undefined ? {} : { initialSessionFacts: params.draft.initialSessionFacts }),
         ...(params.draft.memoryEnabled === undefined ? {} : { memoryEnabled: params.draft.memoryEnabled }),
         ...(params.draft.isolationOverride === undefined ? {} : { isolationOverride: params.draft.isolationOverride }),
+        ...(params.draft.sessionPlacement === undefined ? {} : { sessionPlacement: params.draft.sessionPlacement }),
         ...(params.draft.promptStack === undefined ? {} : { promptStack: params.draft.promptStack }),
         ...(params.draft.instructionsDraft === undefined ? {} : { instructionsDraft: params.draft.instructionsDraft }),
         ...(params.composerAttachments && params.composerAttachments.length > 0

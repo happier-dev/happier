@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { projectProjectListV1, projectScopeKeysV1, resolveProjectContextSourceV1 } from './projectListProjectionV1.js';
+import { WorkspaceAddressV1Schema, WorkspaceAddressV2Schema } from '../workspaces/workspaceRefV1.js';
 
 describe('qualified Project context Source association', () => {
   it('uses accepted anchors, refuses unknown or competing Sources, and retains personal Projects', () => {
@@ -22,6 +23,28 @@ describe('curated Projects list (owner 11-08)', () => {
   const ref = (id: string, extra: Record<string, unknown> = {}) => ({ id, serverId: 'home', machineId: 'm', rootPath: `/${id}`, createdAtMs: 1, ...extra });
   const organization = (projectKey: string, value: Record<string, unknown>) => ({
     key: { kind: 'project-organization' as const, serverId: 'home', projectKey }, value });
+
+  it('keeps native and host checkouts distinct in one Project and retains the native list address', () => {
+    const native = { v: 2 as const, kind: 'managed' as const, id: 'native', serverId: 'home', projectKey: 'project',
+      managedId: 'guest', controller: { machineId: 'host', installationId: 'current' }, rootPath: '/repo', createdAtMs: 1 };
+    const host = { id: 'host', serverId: 'home', projectKey: 'project', machineId: 'host', rootPath: '/repo', createdAtMs: 1 };
+    const projection = projectProjectListV1({ serverId: 'home', workspaceRefs: [native, host] });
+    expect(projection.projectGroups[0]?.items).toHaveLength(2);
+    expect(projection.items.find(item => item.ref.id === native.id)?.workspaceAddress).toEqual({
+      v: 2, kind: 'managed', serverId: 'home', workspaceId: 'native', managedId: 'guest',
+      controller: native.controller, rootPath: native.rootPath,
+    });
+    const nativeAddress = projection.items.find(item => item.ref.id === native.id)!.workspaceAddress;
+    expect(WorkspaceAddressV2Schema.parse(nativeAddress)).toEqual(nativeAddress);
+    expect(WorkspaceAddressV1Schema.safeParse(nativeAddress).success).toBe(false);
+    expect(projection.items.find(item => item.ref.id === host.id)?.workspaceAddress).toEqual({
+      serverId: 'home', workspaceId: 'host', machineId: 'host', rootPath: '/repo',
+    });
+    expect(projectProjectListV1({ serverId: 'home', machineId: 'host', workspaceRefs: [native, host] }).items.map(item => item.ref.id))
+      .toEqual(['host']);
+    expect(resolveProjectContextSourceV1({ projectRef: { serverId: 'home', projectKey: 'project' },
+      workspaceRefs: [native, host], organizationPresent: false })).toEqual({ kind: 'personal' });
+  });
 
   it('lists only Projects the person added: an organization row decides, else opened or a Source', () => {
     const projection = projectProjectListV1({ serverId: 'home', listing: 'listed', workspaceRefs: [

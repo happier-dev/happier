@@ -1,12 +1,35 @@
 import { describe, expect, it } from 'vitest';
 import { OpenProjectInputV1Schema, OpenProjectResultV1Schema, ProjectOpenSyncMaterializationResultV1Schema, WorkspaceActivationRequestV1Schema } from './openProjectV1.js';
+import { computeWorkspaceSyncPolicyDigest } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 
 describe('OpenProject V1 wire admission', () => {
+  it('binds a native sync destination to its actual installed controller', () => {
+    const input = { serverId: 'home', machineId: 'controller',
+      source: { kind: 'workspace', workspaceId: 'original', checkout: {
+        serverId: 'home', workspaceId: 'original', machineId: 'source', rootPath: '/source' } },
+      materialization: { kind: 'sync', targetPath: '/guest/repo',
+        targetManaged: { managedId: 'guest', controller: { machineId: 'controller', installationId: 'installed-controller' } },
+        workspaceAction: { kind: 'copy_once', contentPolicy: { v: 1, selection: 'all_files', extraIgnorePatterns: [], extraIncludePatterns: [],
+          policyDigest: computeWorkspaceSyncPolicyDigest({ v: 1, selection: 'all_files', extraIgnorePatterns: [], extraIncludePatterns: [] }) } } } };
+    expect(OpenProjectInputV1Schema.parse(input)).toEqual(input);
+    expect(OpenProjectInputV1Schema.safeParse({ ...input, machineId: 'another-controller' }).success).toBe(false);
+  });
+  it('returns the native accepted destination without fabricating a guest Machine address', () => {
+    const opened = { kind: 'opened', workspace: { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'native-ref',
+      managedId: 'guest', controller: { machineId: 'controller', installationId: 'installed-controller' }, rootPath: '/guest/repo' },
+      directory: '/guest/repo', setup: 'notRequired' };
+    expect(OpenProjectResultV1Schema.parse(opened)).toEqual(opened);
+    expect(OpenProjectResultV1Schema.safeParse({ ...opened, workspace: { ...opened.workspace, machineId: 'guest-machine' } }).success).toBe(false);
+  });
   it('admits connected clone authentication without accepting credential material', () => {
     const materialization = { kind: 'clone', destinationParentPath: '/workspaces', destinationDirectoryName: 'project',
-      initialCheckout: { branch: 'feature/files' }, authentication: 'connected_account' };
+      initialCheckout: { branch: 'feature/files' }, authentication: 'connected_account',
+      gitAccount: { service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' }, accountId: 'work' } };
     expect(WorkspaceActivationRequestV1Schema.parse(materialization)).toEqual(materialization);
     expect(WorkspaceActivationRequestV1Schema.safeParse({ ...materialization, token: 'private' }).success).toBe(false);
+    expect(WorkspaceActivationRequestV1Schema.safeParse({ ...materialization,
+      gitAccount: { ...materialization.gitAccount, token: 'private' } }).success).toBe(false);
+    expect(WorkspaceActivationRequestV1Schema.safeParse({ ...materialization, authentication: undefined }).success).toBe(false);
   });
   it('carries only the own destination review fact without granting checkout authority', () => {
     const destinationReview = { accountId: 'member', serverId: 'canonical-home', machineId: 'machine',

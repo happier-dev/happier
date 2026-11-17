@@ -121,7 +121,10 @@ export function setWorkflowProjectDirectory(input: Readonly<{
         });
     return withWorkspaceRefId({ machineId: input.current.machineId, directory: input.directory,
         ...(isWorkflowProjectTarget(input.current) && input.current.sessionPlacement !== undefined
-            ? { sessionPlacement: input.current.sessionPlacement } : {}),
+            ? { sessionPlacement: input.current.sessionPlacement.projectFilesSource?.target.machineId === input.current.machineId
+                ? { ...input.current.sessionPlacement, projectFilesSource: {
+                    ...input.current.sessionPlacement.projectFilesSource, directory: input.directory,
+                } } : input.current.sessionPlacement } : {}),
     }, workspaceRefId);
 }
 
@@ -130,9 +133,12 @@ export function setWorkflowProjectDirectory(input: Readonly<{
  * with the workflow (`sessionPlacement`), or none (the Machine and its own policy). The folder and checkout stay.
  */
 export function setWorkflowProjectSessionPlacement(current: WorkflowAuthoringTarget,
-    placement: WorkflowProjectTargetV1['sessionPlacement']): WorkflowAuthoringTarget {
+    placement: WorkflowProjectTargetV1['sessionPlacement'], sourceServerId?: string | null): WorkflowAuthoringTarget {
     if (!isWorkflowProjectTarget(current)) return current;
     const { sessionPlacement: previous, ...rest } = current;
     if (placement === undefined) return previous === undefined ? current : rest;
-    return { ...rest, sessionPlacement: placement };
+    return { ...rest, sessionPlacement: sourceServerId && !placement.projectFilesSource
+        ? { ...placement, projectFilesSource: {
+            target: { serverId: sourceServerId, machineId: current.machineId }, directory: current.directory,
+        } } : placement };
 }

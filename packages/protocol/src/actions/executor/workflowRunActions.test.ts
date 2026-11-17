@@ -47,6 +47,48 @@ import { WorkflowDefinitionCaptureResultV1Schema } from '../../workflows/workflo
 import { DiscussionOpenedMessageV1Schema } from '../../discussions/actions.js';
 
 const runId = '11111111-1111-4111-8111-111111111111';
+it('admits a private Project files default only with the exact host-issued Workflow continuation', async () => {
+  let acceptedEnvelope = '';
+  const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
+    if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+    if (operation.operation === 'admit') {
+      acceptedEnvelope = String(operation.acceptedEnvelope);
+      return { ...runSnapshot(), kind: 'created' };
+    }
+    throw new Error('unexpected_storage_operation');
+  } }),
+    resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+    prepareWorkspace: async ({ projectTarget }) => {
+      const { sessionPlacement, ...project } = projectTarget;
+      return { ok: true, workspaceTarget: { project: { ...project, checkoutRootPath: project.directory }, sessionPlacement } };
+    },
+  });
+  const original = WorkflowRunStartRequestV1Schema.parse({ runId, source: { kind: 'inline', definition } });
+  const input = { ...original,
+    managedCreation: { homeId: 'home', managedId: 'managed', controller: { machineId: 'controller', installationId: 'installation' } },
+    managedProjectFiles: { kind: 'copy_once' as const } };
+  const context: ActionExecutorContext = { surface: 'cli', authority: 'present_user', callerPermissionMode: 'default',
+    actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'workflow.run.start': ['cli'] } }),
+    externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo',
+      sessionPlacement: { kind: 'preset', homeId: 'home', presetId: 'private-preset' } } },
+  };
+  const executor = createActionExecutor({ workflowAction: createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, runs: owner }) });
+  await expect(executor.execute('workflow.run.start', input, context)).resolves.toMatchObject({ ok: false, errorCode: 'run_access_denied' });
+  expect(acceptedEnvelope).toBe('');
+  const { invokeHostReviewedChildV1 } = await import('./deploymentRoleChild.js');
+  const admitted = await invokeHostReviewedChildV1({ parent: { actionId: 'workflow.run.start', input: original }, context,
+    child: { action: 'workflow.run.start', role: 'workflow.run.start', input }, reviewAdmitted: true,
+    execute: (value, issued) => executor.execute('workflow.run.start', value, issued) });
+  expect(admitted).toMatchObject({ ok: true, result: { admission: 'created' } });
+  const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+    binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId },
+    envelope: parseWorkflowStoredContentEnvelopeV1(acceptedEnvelope) });
+  expect(opened).toMatchObject({ kind: 'available', content: { workspaceTarget: {
+    sessionPlacement: context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget.project?.sessionPlacement : undefined,
+    projectFiles: input.managedProjectFiles,
+  } } });
+});
+
 it('retains validation field paths when admission storage throws a schema error', async () => {
   const validation = z.object({ actionContract: z.object({ inputSchema: z.string() }) }).safeParse({ actionContract: { inputSchema: 7 } });
   if (validation.success) throw new Error('invalid_fixture');

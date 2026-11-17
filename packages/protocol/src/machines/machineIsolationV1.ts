@@ -6,17 +6,18 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ScmCredentialFreeRepositorySelectorV1Schema } from '../scm/repositoryClone.js';
 import { ScmBranchSourceRefSchema } from '../scm/remoteNormalization.js';
-import { WorkspaceSyncPersistentModeV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
+import { WorkspaceContentPolicyV1Schema, WorkspaceSyncPersistentModeV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
+import { QualifiedConnectedAccountRefSchema } from '../connect/qualifiedConnectedAccountPersistence.js';
 
 /** Project content intent; credentials are acquired by SCM, never retained here. */
 export const SessionProjectFilesV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('copy_once') }),
+  z.strictObject({ kind: z.literal('copy_once'), contentPolicy: z.optional(WorkspaceContentPolicyV1Schema) }),
   z.strictObject({ kind: z.literal('git_clone'), source: ScmCredentialFreeRepositorySelectorV1Schema,
-    branch: ScmBranchSourceRefSchema }),
+    branch: ScmBranchSourceRefSchema, gitAccount: z.optional(asProtocolZod(QualifiedConnectedAccountRefSchema)) }),
   // Project files offers Replica and Editable copy, not exact-mirror deletion.
   z.strictObject({ kind: z.literal('sync'), mode: z.enum(
     WorkspaceSyncPersistentModeV1Schema.options.filter(mode => mode !== 'mirror_exactly'),
-  ) }),
+  ), contentPolicy: z.optional(WorkspaceContentPolicyV1Schema) }),
 ]));
 export type SessionProjectFilesV1 = z.infer<typeof SessionProjectFilesV1Schema>;
 

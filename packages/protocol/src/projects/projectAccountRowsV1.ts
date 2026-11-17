@@ -2,7 +2,7 @@ import * as z from '../zodRuntimePolicy.js';
 import { lazyDefinition } from '../lazyZodSchema.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { isAccountScopedBlobCiphertextForKind } from '../crypto/accountScopedCipherEnvelope.js';
-import { WorkspaceRefV1WriteSchema } from '../workspaces/workspaceRefV1.js';
+import { ManagedWorkspaceRefV2WriteSchema, WorkspaceRefV2MachineWriteSchema } from '../workspaces/workspaceRefV1.js';
 import { WorkspaceSyncRelationshipV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 import { PromptStackEntryV1Schema } from '../prompts/library/promptStacksV1.js';
 import { SecretReferenceOverlayV1Schema } from '../profiles/secretReferenceOverlayV1.js';
@@ -51,8 +51,10 @@ export const ProjectAccountServicesOrganizationV1Schema = lazyDefinition(() => z
 export type ProjectAccountServicesOrganizationV1 = z.infer<typeof ProjectAccountServicesOrganizationV1Schema>;
 /** Navigation recency lives in authoring memory, outside structural row revisions. */
 export const ProjectAccountWorkspaceRefV1Schema = lazyDefinition(() => {
-    const { lastOpenedAtMs: _lastOpenedAtMs, ...structuralFields } = WorkspaceRefV1WriteSchema.shape;
-    return z.strictObject({ ...structuralFields, label: z.optional(z.nullable(z.string().check(z.minLength(1)))) });
+    const { lastOpenedAtMs: _lastOpenedAtMs, ...machineFields } = WorkspaceRefV2MachineWriteSchema.shape;
+    const { lastOpenedAtMs: _managedLastOpenedAtMs, ...managedFields } = ManagedWorkspaceRefV2WriteSchema.shape;
+    const label = z.optional(z.nullable(z.string().check(z.minLength(1))));
+    return z.union([z.strictObject({ ...machineFields, label }), z.strictObject({ ...managedFields, label })]);
 });
 export type ProjectAccountWorkspaceRefV1 = z.infer<typeof ProjectAccountWorkspaceRefV1Schema>;
 export const ProjectAccountRowPayloadV1Schema = lazyDefinition(() => z.union([

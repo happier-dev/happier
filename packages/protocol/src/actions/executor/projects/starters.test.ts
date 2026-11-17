@@ -33,6 +33,25 @@ const snapshot = ScmWorkingSnapshotSchema.parse({
 });
 
 describe('starter creation public Action', () => {
+  it.each([1, 2])('refuses a native checkout from ordinary starter attachment %s without handing off its guest path', async nativeAt => {
+    const source = { id: 'source', revision: 1, name: 'bakery', repository: starterSelector,
+      defaultRef: 'main', audience: [], createdByAccountId: 'alice' };
+    let opens = 0;
+    const executor = createActionExecutor({
+      projectSourcesRead: async () => ({ ok: true, canManage: true, source }),
+      projectsOpen: async () => ({ kind: 'opened', directory: '/projects/bakery', setup: 'notRequired',
+        workspace: ++opens === nativeAt ? { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'native',
+          managedId: 'guest', controller: { machineId: 'machine', installationId: 'installation' }, rootPath: '/guest/bakery' }
+          : { serverId: 'home', machineId: 'machine', workspaceId: 'workspace', rootPath: '/projects/bakery' },
+        facts: { projectKey: 'project' } }),
+    });
+    const result = await executor.execute('projects.starters.create', { ...input, resume: {
+      directory: '/projects/bakery', repositoryUrl: 'https://github.com/alice/bakery', repository: starterSelector, sourceId: 'source',
+    } }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+    expect(result).toEqual({ ok: true, result: expect.objectContaining({ kind: 'partial', phase: 'project', code: 'invalid_action_output' }) });
+    expect(result).not.toHaveProperty('result.sessionHandoff');
+  });
+
   it.each([{ parent: '/projects', expected: '/projects/bakery' },
     { parent: '/projects/my\\folder', expected: '/projects/my\\folder/bakery' },
     { parent: '/projects/myfolder\\', expected: '/projects/myfolder\\/bakery' },

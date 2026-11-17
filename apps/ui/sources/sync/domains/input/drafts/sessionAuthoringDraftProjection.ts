@@ -119,6 +119,7 @@ export function projectNewSessionDraftSyncedAuthoringFields(params: Readonly<{
         memoryEnabled: draft.memoryEnabled ?? null,
         promptStack: draft.promptStack ?? null,
         executionTarget,
+        ...(draft.sessionPlacement === undefined ? {} : { sessionPlacement: draft.sessionPlacement }),
         ...(draft.temporaryComputerActivationRef !== undefined
             ? { temporaryComputerActivationRef: draft.temporaryComputerActivationRef }
             : {}),

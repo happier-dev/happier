@@ -192,6 +192,19 @@ describe('newSessionDraftRepositoryAdapter', () => {
         writeNewSessionAuthoringDraftToRepository({ scope, draftId, draft: projected });
         expect(cataloguedNewSessionAuthoring(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId }))?.agentTarget?.value).toBeNull();
     });
+    it('reopens Project files from synchronized authoring with the selected placement', async () => {
+        const draftId = '00000000-0000-4000-8000-000000001136';
+        const address = { kind: 'newSession' as const, draftId };
+        const sessionPlacement = { kind: 'machine' as const, target: { serverId: 'server-a', machineId: 'machine-b' },
+            projectFiles: { kind: 'copy_once' as const } };
+        writeNewSessionDraftToRepository({ scope, draftId, draft: { ...authoringDraft(), sessionPlacement } });
+        await flushSessionDraft({ scope, address });
+        resetSessionDraftRepositoryForTests();
+        const reopened = readNewSessionDraftFromRepository({ scope, draftId });
+        expect(reopened).toMatchObject({ sessionPlacement });
+        expect(NewSessionDraftDocumentV2Schema.parse(getSessionDraftSnapshot(scope, address)!.document).target.authoring)
+            .toMatchObject({ sessionPlacement: { value: sessionPlacement } });
+    });
     it('keeps one-Session Directly intent device-local when reopening the authoring draft', async () => {
         const draftId = '00000000-0000-4000-8000-000000001125';
         const address = { kind: 'newSession' as const, draftId };

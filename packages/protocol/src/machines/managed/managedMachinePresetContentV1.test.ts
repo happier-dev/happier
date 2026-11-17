@@ -6,6 +6,7 @@ import { openEncryptedDataKeyEnvelopeV1 } from '../../crypto/encryptedDataKeyEnv
 import { computeContentPublicKeyFingerprint } from '../identity/contentPublicKeyFingerprint.js';
 import { SavedSecretResourceEnvelopeCensusRecipientV1Schema, SavedSecretResourceRecipientEnvelopeV1Schema } from '../../account/settings/savedSecretCatalogV1.js';
 import { ManagedConfigurationFactsV1Schema } from './managedConfigurationV1.js';
+import { computeWorkspaceSyncPolicyDigest } from '../../sessions/control/handoff/workspaceSyncSchemas.js';
 import * as managedPresetContent from './managedMachinePresetContentV1.js';
 import { createManagedMachinePresetAcquireOverrideV1, createManagedMachinePresetEnrollmentIdentityOverrideV1,
   createManagedMachinePresetLaunchNameOverrideV1,
@@ -57,6 +58,46 @@ describe('Project files private preset default', () => {
     const sealed = sealManagedMachinePresetContentV1({ presetId, mode: 'plain', content: authored });
     expect(openManagedMachinePresetContentV1({ presetId, mode: 'plain', content: sealed.content }))
       .toMatchObject({ projectFiles: authored.projectFiles });
+  });
+});
+
+describe('Project files private preset default', () => {
+  const presetId = 'project-files-preset';
+  const policy = { v: 1 as const, selection: 'all_files' as const,
+    extraIgnorePatterns: ['private/**'], extraIncludePatterns: ['build/result.txt'] };
+  const contentPolicy = { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) };
+  it('keeps the choice inside encrypted preset content', () => {
+    const key = new Uint8Array(32).fill(47);
+    const projectFiles = { kind: 'copy_once' as const, contentPolicy };
+    const sealed = sealManagedMachinePresetContentV1({ presetId, mode: 'e2ee',
+      content: { ...content, projectFiles }, randomBytes: randomBytesFactory(100),
+      recipientCensus: [recipientCensus('author', key)] });
+    expect(sealed.content.t).toBe('encrypted');
+    expect(openManagedMachinePresetContentV1({ presetId, mode: 'e2ee', content: sealed.content,
+      recipients: sealed.recipients, accountId: 'author', accountKey: key }))
+      .toMatchObject({ projectFiles });
+  });
+
+  it('retains an authored two-way choice through the existing plain envelope', () => {
+    const authored = { ...content, projectFiles: { kind: 'sync', mode: 'keep_both_in_sync', contentPolicy } };
+    const sealed = sealManagedMachinePresetContentV1({ presetId, mode: 'plain', content: authored });
+    expect(openManagedMachinePresetContentV1({ presetId, mode: 'plain', content: sealed.content }))
+      .toMatchObject({ projectFiles: authored.projectFiles });
+  });
+
+  it.each(['plain', 'e2ee'] as const)('retains a qualified Git account reference in the %s envelope', mode => {
+    const key = new Uint8Array(32).fill(48);
+    const projectFiles = { kind: 'git_clone' as const, branch: 'feature/work',
+      source: { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+        repository: { nameWithOwner: 'owner/project' }, protocol: 'https' as const },
+      gitAccount: { service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' }, accountId: 'work' } };
+    const sealed = mode === 'plain' ? sealManagedMachinePresetContentV1({ presetId, mode, content: { ...content, projectFiles } })
+      : sealManagedMachinePresetContentV1({ presetId, mode, content: { ...content, projectFiles },
+        randomBytes: randomBytesFactory(110), recipientCensus: [recipientCensus('author', key)] });
+    const opened = mode === 'plain' ? openManagedMachinePresetContentV1({ presetId, mode, content: sealed.content })
+      : openManagedMachinePresetContentV1({ presetId, mode, content: sealed.content, recipients: sealed.recipients,
+        accountId: 'author', accountKey: key });
+    expect(opened).toMatchObject({ projectFiles });
   });
 });
 

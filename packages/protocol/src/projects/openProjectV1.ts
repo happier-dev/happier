@@ -1,13 +1,16 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 import type { ActionExecuteFailure } from '../actions/executor/types.js';
 import { ScmRepositoryCloneInputSchema, ScmRepositoryContainedSubdirV1Schema } from '../scm/repositoryClone.js';
+import { QualifiedConnectedAccountRefSchema } from '../connect/qualifiedConnectedAccountPersistence.js';
 import { SessionAuthoringCheckoutCreationDraftV1Schema } from '../sessions/authoring/creationFieldsV1.js';
 import { HandoffWorkspaceActionV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
-import { WorkspaceAddressV1Schema, WorkspaceRefV1WriteSchema, WorkspaceProjectFactsV1Schema } from '../workspaces/workspaceRefV1.js';
+import { WorkspaceAddressV1Schema, WorkspaceAddressV2Schema, ManagedWorkspaceRefV2WriteSchema, WorkspaceRefV1WriteSchema, WorkspaceProjectFactsV1Schema } from '../workspaces/workspaceRefV1.js';
 import { ProjectSourceRepositorySelectorV1Schema } from './sources/projectSourceV1.js';
 import { ScmRepositoryProvisioningFailureResponseSchema, ScmRepositoryProvisioningRemediationSchema } from '../scm/repositoryProvisioning.js';
+import { WorkspaceManifestSchema, WorkspaceManifestRelativePathSchema } from '../workspaces/manifestSchema.js';
 
 const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const PathSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.refine(value => !value.includes('\0'))));
@@ -22,13 +25,18 @@ export const WorkspaceActivationRequestV1Schema = lazyZodSchema(() => z.discrimi
   }),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.pick(ScmRepositoryCloneInputSchema, { destinationParentPath: true, destinationDirectoryName: true, initialCheckout: true, authentication: true }), {
     kind: z.literal('clone'),
+    /** An account reference only; host-side selection materializes credentials. */
+    gitAccount: z.optional(asProtocolZod(QualifiedConnectedAccountRefSchema)),
   })),
   z.strictObject({
     kind: z.literal('sync'),
     targetPath: PathSchema,
+    targetManaged: z.optional(z.pick(ManagedWorkspaceRefV2WriteSchema, { managedId: true, controller: true })),
     workspaceAction: HandoffWorkspaceActionV1Schema.check(z.refine(action => action.kind !== 'none')),
   }),
-]));
+]).check(z.refine(value => value.kind !== 'clone'
+  || value.gitAccount === undefined
+  || value.authentication === 'connected_account')));
 export type WorkspaceActivationRequestV1 = z.infer<typeof WorkspaceActivationRequestV1Schema>;
 
 export const OpenProjectInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -49,6 +57,10 @@ export const OpenProjectInputV1Schema = lazyZodSchema(() => z.strictObject({
   subdir: z.optional(ScmRepositoryContainedSubdirV1Schema),
   materialization: WorkspaceActivationRequestV1Schema,
 }).check(z.superRefine((input, context) => {
+  if (input.materialization.kind === 'sync' && input.materialization.targetManaged
+    && input.materialization.targetManaged.controller.machineId !== input.machineId) {
+    context.addIssue({ code: "custom", path: ['materialization', 'targetManaged'], message: 'Native sync destination must match its controller Machine' });
+  }
   if ((input.source.kind === 'workspace' || input.source.kind === 'source') && input.source.checkout) {
     if (input.source.checkout.serverId !== input.serverId
       || input.source.kind === 'workspace' && input.source.checkout.workspaceId !== input.source.workspaceId) {
@@ -74,9 +86,11 @@ export const OpenProjectRefusalV1Schema = lazyZodSchema(() => z.strictObject({
 
 export const OpenProjectResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({
-    kind: z.literal('opened'), workspace: WorkspaceAddressV1Schema, directory: PathSchema,
+    kind: z.literal('opened'), workspace: WorkspaceAddressV2Schema, directory: PathSchema,
     setup: z.enum(['notRequired', 'approvalRequired', 'prepared', 'failed']),
     facts: z.optional(WorkspaceProjectFactsV1Schema),
+    copyOnceBaseline: z.optional(WorkspaceManifestSchema),
+    copyOnceExcludedPaths: z.optional(z.readonly(z.array(WorkspaceManifestRelativePathSchema))),
   }),
   z.strictObject({ kind: z.literal('ambiguous'), candidates: z.array(WorkspaceRefV1WriteSchema) }),
   OpenProjectRefusalV1Schema,
@@ -95,7 +109,8 @@ export function projectOpenProjectRefusalV1(result: z.infer<typeof OpenProjectRe
 
 /** Private source-host acknowledgement; target Open still validates and accepts its local directory. */
 export const ProjectOpenSyncMaterializationResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('materialized') }),
+  z.strictObject({ kind: z.literal('materialized'), copyOnceBaseline: z.optional(WorkspaceManifestSchema),
+    copyOnceExcludedPaths: z.optional(z.readonly(z.array(WorkspaceManifestRelativePathSchema))) }),
   z.strictObject({ kind: z.literal('refused'), code: IdSchema }),
   z.strictObject({ kind: z.literal('outcomeUnknown') }),
 ]));

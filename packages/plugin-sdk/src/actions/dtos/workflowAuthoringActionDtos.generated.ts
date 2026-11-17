@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue, PluginJsonValueV2 } from '../../identity.js';
-import type { WorkflowSelectionEdit } from './pluginActionDtoSupport.generated.js';
+import type { PluginJsonSchemaV2, WorkflowSelectionEdit } from './pluginActionDtoSupport.generated.js';
 
 export type WorkflowAuthoringActionInputById = {
     readonly "workflow.authoring.conversation.bind": {
@@ -186,6 +186,7 @@ export type WorkflowAuthoringActionInputById = {
                 folderId: null | string;
                 tagIds: string[];
             };
+            memoryEnabled?: boolean | undefined;
             secretReferenceOverlay?: undefined | {
                 v: 1;
                 bindings: Record<string, {
@@ -193,7 +194,6 @@ export type WorkflowAuthoringActionInputById = {
                     revision?: number | undefined;
                 }>;
             };
-            memoryEnabled?: boolean | undefined;
             teamCredentialBindings?: ({
                 v: 1;
                 slot: {
@@ -482,6 +482,7 @@ export type WorkflowAuthoringActionInputById = {
                 folderId: null | string;
                 tagIds: string[];
             };
+            memoryEnabled?: boolean | undefined;
             secretReferenceOverlay?: undefined | {
                 v: 1;
                 bindings: Record<string, {
@@ -489,7 +490,6 @@ export type WorkflowAuthoringActionInputById = {
                     revision?: number | undefined;
                 }>;
             };
-            memoryEnabled?: boolean | undefined;
             teamCredentialBindings?: ({
                 v: 1;
                 slot: {
@@ -782,6 +782,62 @@ export type WorkflowAuthoringActionInputById = {
                         serverId: string;
                         machineId: string;
                     };
+                    projectFiles?: undefined | {
+                        kind: 'copy_once';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    } | {
+                        kind: 'git_clone';
+                        source: {
+                            provider: {
+                                id: string;
+                                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                displayName: string;
+                                baseUrl: string;
+                            };
+                            repository: {
+                                nameWithOwner: string;
+                                defaultBranch?: null | string | undefined;
+                                visibility?: 'internal' | 'private' | 'public' | undefined;
+                                webUrl?: string | undefined;
+                                cloneUrl?: string | undefined;
+                                sshUrl?: string | undefined;
+                            };
+                            protocol: 'auto' | 'https' | 'ssh';
+                        };
+                        branch: string;
+                        gitAccount?: undefined | {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        kind: 'sync';
+                        mode: 'keep_both_in_sync' | 'keep_synced';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    };
+                    projectFilesSource?: undefined | {
+                        target: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        directory: string;
+                    };
                     configuredSandbox?: undefined | {
                         kind: 'sandbox';
                         configuredSandboxId: string;
@@ -793,9 +849,123 @@ export type WorkflowAuthoringActionInputById = {
                         presetId: string;
                     };
                 } | {
+                    kind: 'managed';
+                    projectFiles?: undefined | {
+                        kind: 'copy_once';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    } | {
+                        kind: 'git_clone';
+                        source: {
+                            provider: {
+                                id: string;
+                                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                displayName: string;
+                                baseUrl: string;
+                            };
+                            repository: {
+                                nameWithOwner: string;
+                                defaultBranch?: null | string | undefined;
+                                visibility?: 'internal' | 'private' | 'public' | undefined;
+                                webUrl?: string | undefined;
+                                cloneUrl?: string | undefined;
+                                sshUrl?: string | undefined;
+                            };
+                            protocol: 'auto' | 'https' | 'ssh';
+                        };
+                        branch: string;
+                        gitAccount?: undefined | {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        kind: 'sync';
+                        mode: 'keep_both_in_sync' | 'keep_synced';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    };
+                    projectFilesSource?: undefined | {
+                        target: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        directory: string;
+                    };
+                } | {
                     kind: 'preset';
                     homeId: string;
                     presetId: string;
+                    projectFiles?: undefined | {
+                        kind: 'copy_once';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    } | {
+                        kind: 'git_clone';
+                        source: {
+                            provider: {
+                                id: string;
+                                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                displayName: string;
+                                baseUrl: string;
+                            };
+                            repository: {
+                                nameWithOwner: string;
+                                defaultBranch?: null | string | undefined;
+                                visibility?: 'internal' | 'private' | 'public' | undefined;
+                                webUrl?: string | undefined;
+                                cloneUrl?: string | undefined;
+                                sshUrl?: string | undefined;
+                            };
+                            protocol: 'auto' | 'https' | 'ssh';
+                        };
+                        branch: string;
+                        gitAccount?: undefined | {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        kind: 'sync';
+                        mode: 'keep_both_in_sync' | 'keep_synced';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    };
+                    projectFilesSource?: undefined | {
+                        target: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        directory: string;
+                    };
                 };
             };
             executionTarget?: 'detached_run' | 'session' | undefined;
@@ -806,6 +976,70 @@ export type WorkflowAuthoringActionInputById = {
                         triggerId?: string | undefined;
                     };
                     trigger: null | {
+                        kind: 'action';
+                        consentFor: {
+                            automationId: string;
+                            triggerId: string;
+                        };
+                        consentedWorkflowRevision: number;
+                        enabled: boolean;
+                    } | {
+                        kind: 'action';
+                        phase: 'after' | 'before';
+                        actionIds: string[];
+                        enabled: boolean;
+                        subject?: undefined | {
+                            checkId: string;
+                            sourceInstanceId: string;
+                            kind: 'healthCheck';
+                            serverId: string;
+                        } | {
+                            kind: 'app';
+                            serverId: string;
+                            projectSourceId: string;
+                        } | {
+                            kind: 'approvalProfile';
+                            serverId: string;
+                            profileId: string;
+                        } | {
+                            kind: 'backup';
+                            serverId: string;
+                            environmentId: string;
+                        } | {
+                            kind: 'database';
+                            serverId: string;
+                            target: {
+                                kind: 'environment';
+                                environmentId: string;
+                                service: string;
+                                database: string;
+                            };
+                        } | {
+                            kind: 'environment';
+                            serverId: string;
+                            environmentId: string;
+                        } | {
+                            kind: 'plugin';
+                            serverId: string;
+                            pluginId: string;
+                            subjectKindId: string;
+                            identity: unknown;
+                        } | {
+                            kind: 'session';
+                            serverId: string;
+                            sessionId: string;
+                        } | {
+                            serverId: string;
+                            machineId: string;
+                            kind: 'machine';
+                        } | {
+                            serverId: string;
+                            projectKey: string;
+                            kind: 'project';
+                        };
+                        mode?: 'notify' | 'wait' | undefined;
+                        onFailure?: 'ask' | 'refuse' | undefined;
+                    } | {
                         kind: 'ciFailed' | 'prComment';
                         pullRequest: {
                             repository: string;
@@ -988,8 +1222,26 @@ export type WorkflowAuthoringActionInputById = {
                         };
                         kind: 'sessionLifecycle';
                         enabled: boolean;
+                    } | {
+                        triggerDefinitionEnvelope: {
+                            t: 'encrypted';
+                            c: string;
+                        } | {
+                            t: 'plain';
+                            v: unknown;
+                        };
+                        kind: 'action';
+                        phase: 'after' | 'before';
+                        actionIds: string[];
+                        enabled: boolean;
+                        reachesOthers?: boolean | undefined;
+                        subjectKind?: string | undefined;
+                        subjectKey?: string | undefined;
+                        mode?: 'notify' | 'wait' | undefined;
+                        onFailure?: 'ask' | 'refuse' | undefined;
                     };
                     enabled: boolean;
+                    payloadSchema?: unknown;
                 }[];
                 project: null | {
                     machineId: string;
@@ -1000,6 +1252,62 @@ export type WorkflowAuthoringActionInputById = {
                         target: {
                             serverId: string;
                             machineId: string;
+                        };
+                        projectFiles?: undefined | {
+                            kind: 'copy_once';
+                            contentPolicy?: undefined | {
+                                v: 1;
+                                selection: 'all_files' | 'git_worktree';
+                                extraIgnorePatterns: readonly string[];
+                                extraIncludePatterns: readonly string[];
+                                policyDigest: string;
+                                contentOnly?: true | undefined;
+                            };
+                        } | {
+                            kind: 'git_clone';
+                            source: {
+                                provider: {
+                                    id: string;
+                                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                    displayName: string;
+                                    baseUrl: string;
+                                };
+                                repository: {
+                                    nameWithOwner: string;
+                                    defaultBranch?: null | string | undefined;
+                                    visibility?: 'internal' | 'private' | 'public' | undefined;
+                                    webUrl?: string | undefined;
+                                    cloneUrl?: string | undefined;
+                                    sshUrl?: string | undefined;
+                                };
+                                protocol: 'auto' | 'https' | 'ssh';
+                            };
+                            branch: string;
+                            gitAccount?: undefined | {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            kind: 'sync';
+                            mode: 'keep_both_in_sync' | 'keep_synced';
+                            contentPolicy?: undefined | {
+                                v: 1;
+                                selection: 'all_files' | 'git_worktree';
+                                extraIgnorePatterns: readonly string[];
+                                extraIncludePatterns: readonly string[];
+                                policyDigest: string;
+                                contentOnly?: true | undefined;
+                            };
+                        };
+                        projectFilesSource?: undefined | {
+                            target: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            directory: string;
                         };
                         configuredSandbox?: undefined | {
                             kind: 'sandbox';
@@ -1012,9 +1320,123 @@ export type WorkflowAuthoringActionInputById = {
                             presetId: string;
                         };
                     } | {
+                        kind: 'managed';
+                        projectFiles?: undefined | {
+                            kind: 'copy_once';
+                            contentPolicy?: undefined | {
+                                v: 1;
+                                selection: 'all_files' | 'git_worktree';
+                                extraIgnorePatterns: readonly string[];
+                                extraIncludePatterns: readonly string[];
+                                policyDigest: string;
+                                contentOnly?: true | undefined;
+                            };
+                        } | {
+                            kind: 'git_clone';
+                            source: {
+                                provider: {
+                                    id: string;
+                                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                    displayName: string;
+                                    baseUrl: string;
+                                };
+                                repository: {
+                                    nameWithOwner: string;
+                                    defaultBranch?: null | string | undefined;
+                                    visibility?: 'internal' | 'private' | 'public' | undefined;
+                                    webUrl?: string | undefined;
+                                    cloneUrl?: string | undefined;
+                                    sshUrl?: string | undefined;
+                                };
+                                protocol: 'auto' | 'https' | 'ssh';
+                            };
+                            branch: string;
+                            gitAccount?: undefined | {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            kind: 'sync';
+                            mode: 'keep_both_in_sync' | 'keep_synced';
+                            contentPolicy?: undefined | {
+                                v: 1;
+                                selection: 'all_files' | 'git_worktree';
+                                extraIgnorePatterns: readonly string[];
+                                extraIncludePatterns: readonly string[];
+                                policyDigest: string;
+                                contentOnly?: true | undefined;
+                            };
+                        };
+                        projectFilesSource?: undefined | {
+                            target: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            directory: string;
+                        };
+                    } | {
                         kind: 'preset';
                         homeId: string;
                         presetId: string;
+                        projectFiles?: undefined | {
+                            kind: 'copy_once';
+                            contentPolicy?: undefined | {
+                                v: 1;
+                                selection: 'all_files' | 'git_worktree';
+                                extraIgnorePatterns: readonly string[];
+                                extraIncludePatterns: readonly string[];
+                                policyDigest: string;
+                                contentOnly?: true | undefined;
+                            };
+                        } | {
+                            kind: 'git_clone';
+                            source: {
+                                provider: {
+                                    id: string;
+                                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                    displayName: string;
+                                    baseUrl: string;
+                                };
+                                repository: {
+                                    nameWithOwner: string;
+                                    defaultBranch?: null | string | undefined;
+                                    visibility?: 'internal' | 'private' | 'public' | undefined;
+                                    webUrl?: string | undefined;
+                                    cloneUrl?: string | undefined;
+                                    sshUrl?: string | undefined;
+                                };
+                                protocol: 'auto' | 'https' | 'ssh';
+                            };
+                            branch: string;
+                            gitAccount?: undefined | {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            kind: 'sync';
+                            mode: 'keep_both_in_sync' | 'keep_synced';
+                            contentPolicy?: undefined | {
+                                v: 1;
+                                selection: 'all_files' | 'git_worktree';
+                                extraIgnorePatterns: readonly string[];
+                                extraIncludePatterns: readonly string[];
+                                policyDigest: string;
+                                contentOnly?: true | undefined;
+                            };
+                        };
+                        projectFilesSource?: undefined | {
+                            target: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            directory: string;
+                        };
                     };
                 };
                 inputs: Record<string, unknown>;
@@ -1142,6 +1564,62 @@ export type WorkflowAuthoringActionResultById = {
                             serverId: string;
                             machineId: string;
                         };
+                        projectFiles?: undefined | {
+                            kind: 'copy_once';
+                            contentPolicy?: undefined | {
+                                v: 1;
+                                selection: 'all_files' | 'git_worktree';
+                                extraIgnorePatterns: readonly string[];
+                                extraIncludePatterns: readonly string[];
+                                policyDigest: string;
+                                contentOnly?: true | undefined;
+                            };
+                        } | {
+                            kind: 'git_clone';
+                            source: {
+                                provider: {
+                                    id: string;
+                                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                    displayName: string;
+                                    baseUrl: string;
+                                };
+                                repository: {
+                                    nameWithOwner: string;
+                                    defaultBranch?: null | string | undefined;
+                                    visibility?: 'internal' | 'private' | 'public' | undefined;
+                                    webUrl?: string | undefined;
+                                    cloneUrl?: string | undefined;
+                                    sshUrl?: string | undefined;
+                                };
+                                protocol: 'auto' | 'https' | 'ssh';
+                            };
+                            branch: string;
+                            gitAccount?: undefined | {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            kind: 'sync';
+                            mode: 'keep_both_in_sync' | 'keep_synced';
+                            contentPolicy?: undefined | {
+                                v: 1;
+                                selection: 'all_files' | 'git_worktree';
+                                extraIgnorePatterns: readonly string[];
+                                extraIncludePatterns: readonly string[];
+                                policyDigest: string;
+                                contentOnly?: true | undefined;
+                            };
+                        };
+                        projectFilesSource?: undefined | {
+                            target: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            directory: string;
+                        };
                         configuredSandbox?: undefined | {
                             kind: 'sandbox';
                             configuredSandboxId: string;
@@ -1153,9 +1631,123 @@ export type WorkflowAuthoringActionResultById = {
                             presetId: string;
                         };
                     } | {
+                        kind: 'managed';
+                        projectFiles?: undefined | {
+                            kind: 'copy_once';
+                            contentPolicy?: undefined | {
+                                v: 1;
+                                selection: 'all_files' | 'git_worktree';
+                                extraIgnorePatterns: readonly string[];
+                                extraIncludePatterns: readonly string[];
+                                policyDigest: string;
+                                contentOnly?: true | undefined;
+                            };
+                        } | {
+                            kind: 'git_clone';
+                            source: {
+                                provider: {
+                                    id: string;
+                                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                    displayName: string;
+                                    baseUrl: string;
+                                };
+                                repository: {
+                                    nameWithOwner: string;
+                                    defaultBranch?: null | string | undefined;
+                                    visibility?: 'internal' | 'private' | 'public' | undefined;
+                                    webUrl?: string | undefined;
+                                    cloneUrl?: string | undefined;
+                                    sshUrl?: string | undefined;
+                                };
+                                protocol: 'auto' | 'https' | 'ssh';
+                            };
+                            branch: string;
+                            gitAccount?: undefined | {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            kind: 'sync';
+                            mode: 'keep_both_in_sync' | 'keep_synced';
+                            contentPolicy?: undefined | {
+                                v: 1;
+                                selection: 'all_files' | 'git_worktree';
+                                extraIgnorePatterns: readonly string[];
+                                extraIncludePatterns: readonly string[];
+                                policyDigest: string;
+                                contentOnly?: true | undefined;
+                            };
+                        };
+                        projectFilesSource?: undefined | {
+                            target: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            directory: string;
+                        };
+                    } | {
                         kind: 'preset';
                         homeId: string;
                         presetId: string;
+                        projectFiles?: undefined | {
+                            kind: 'copy_once';
+                            contentPolicy?: undefined | {
+                                v: 1;
+                                selection: 'all_files' | 'git_worktree';
+                                extraIgnorePatterns: readonly string[];
+                                extraIncludePatterns: readonly string[];
+                                policyDigest: string;
+                                contentOnly?: true | undefined;
+                            };
+                        } | {
+                            kind: 'git_clone';
+                            source: {
+                                provider: {
+                                    id: string;
+                                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                    displayName: string;
+                                    baseUrl: string;
+                                };
+                                repository: {
+                                    nameWithOwner: string;
+                                    defaultBranch?: null | string | undefined;
+                                    visibility?: 'internal' | 'private' | 'public' | undefined;
+                                    webUrl?: string | undefined;
+                                    cloneUrl?: string | undefined;
+                                    sshUrl?: string | undefined;
+                                };
+                                protocol: 'auto' | 'https' | 'ssh';
+                            };
+                            branch: string;
+                            gitAccount?: undefined | {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            kind: 'sync';
+                            mode: 'keep_both_in_sync' | 'keep_synced';
+                            contentPolicy?: undefined | {
+                                v: 1;
+                                selection: 'all_files' | 'git_worktree';
+                                extraIgnorePatterns: readonly string[];
+                                extraIncludePatterns: readonly string[];
+                                policyDigest: string;
+                                contentOnly?: true | undefined;
+                            };
+                        };
+                        projectFilesSource?: undefined | {
+                            target: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            directory: string;
+                        };
                     };
                 };
                 executionTarget: 'detached_run' | 'session';
@@ -1166,6 +1758,70 @@ export type WorkflowAuthoringActionResultById = {
                             triggerId?: (string) | undefined;
                         };
                         trigger: null | {
+                            kind: 'action';
+                            consentFor: {
+                                automationId: string;
+                                triggerId: string;
+                            };
+                            consentedWorkflowRevision: number;
+                            enabled: boolean;
+                        } | {
+                            kind: 'action';
+                            phase: 'after' | 'before';
+                            actionIds: string[];
+                            enabled: boolean;
+                            subject?: undefined | {
+                                checkId: string;
+                                sourceInstanceId: string;
+                                kind: 'healthCheck';
+                                serverId: string;
+                            } | {
+                                kind: 'app';
+                                serverId: string;
+                                projectSourceId: string;
+                            } | {
+                                kind: 'approvalProfile';
+                                serverId: string;
+                                profileId: string;
+                            } | {
+                                kind: 'backup';
+                                serverId: string;
+                                environmentId: string;
+                            } | {
+                                kind: 'database';
+                                serverId: string;
+                                target: {
+                                    kind: 'environment';
+                                    environmentId: string;
+                                    service: string;
+                                    database: string;
+                                };
+                            } | {
+                                kind: 'environment';
+                                serverId: string;
+                                environmentId: string;
+                            } | {
+                                kind: 'plugin';
+                                serverId: string;
+                                pluginId: string;
+                                subjectKindId: string;
+                                identity: JsonValue;
+                            } | {
+                                kind: 'session';
+                                serverId: string;
+                                sessionId: string;
+                            } | {
+                                serverId: string;
+                                machineId: string;
+                                kind: 'machine';
+                            } | {
+                                serverId: string;
+                                projectKey: string;
+                                kind: 'project';
+                            };
+                            mode?: 'notify' | 'wait' | undefined;
+                            onFailure?: 'ask' | 'refuse' | undefined;
+                        } | {
                             kind: 'ciFailed' | 'prComment';
                             pullRequest: {
                                 repository: string;
@@ -1348,8 +2004,26 @@ export type WorkflowAuthoringActionResultById = {
                             };
                             kind: 'sessionLifecycle';
                             enabled: boolean;
+                        } | {
+                            triggerDefinitionEnvelope: {
+                                t: 'encrypted';
+                                c: string;
+                            } | {
+                                t: 'plain';
+                                v: PluginJsonValueV2;
+                            };
+                            kind: 'action';
+                            phase: 'after' | 'before';
+                            actionIds: string[];
+                            enabled: boolean;
+                            reachesOthers?: boolean | undefined;
+                            subjectKind?: string | undefined;
+                            subjectKey?: string | undefined;
+                            mode?: 'notify' | 'wait' | undefined;
+                            onFailure?: 'ask' | 'refuse' | undefined;
                         };
                         enabled: boolean;
+                        payloadSchema?: PluginJsonSchemaV2 | null | undefined;
                     }[];
                     project: null | {
                         machineId: string;
@@ -1360,6 +2034,62 @@ export type WorkflowAuthoringActionResultById = {
                             target: {
                                 serverId: string;
                                 machineId: string;
+                            };
+                            projectFiles?: undefined | {
+                                kind: 'copy_once';
+                                contentPolicy?: undefined | {
+                                    v: 1;
+                                    selection: 'all_files' | 'git_worktree';
+                                    extraIgnorePatterns: readonly string[];
+                                    extraIncludePatterns: readonly string[];
+                                    policyDigest: string;
+                                    contentOnly?: true | undefined;
+                                };
+                            } | {
+                                kind: 'git_clone';
+                                source: {
+                                    provider: {
+                                        id: string;
+                                        kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                        displayName: string;
+                                        baseUrl: string;
+                                    };
+                                    repository: {
+                                        nameWithOwner: string;
+                                        defaultBranch?: null | string | undefined;
+                                        visibility?: 'internal' | 'private' | 'public' | undefined;
+                                        webUrl?: string | undefined;
+                                        cloneUrl?: string | undefined;
+                                        sshUrl?: string | undefined;
+                                    };
+                                    protocol: 'auto' | 'https' | 'ssh';
+                                };
+                                branch: string;
+                                gitAccount?: undefined | {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            } | {
+                                kind: 'sync';
+                                mode: 'keep_both_in_sync' | 'keep_synced';
+                                contentPolicy?: undefined | {
+                                    v: 1;
+                                    selection: 'all_files' | 'git_worktree';
+                                    extraIgnorePatterns: readonly string[];
+                                    extraIncludePatterns: readonly string[];
+                                    policyDigest: string;
+                                    contentOnly?: true | undefined;
+                                };
+                            };
+                            projectFilesSource?: undefined | {
+                                target: {
+                                    serverId: string;
+                                    machineId: string;
+                                };
+                                directory: string;
                             };
                             configuredSandbox?: undefined | {
                                 kind: 'sandbox';
@@ -1372,9 +2102,123 @@ export type WorkflowAuthoringActionResultById = {
                                 presetId: string;
                             };
                         } | {
+                            kind: 'managed';
+                            projectFiles?: undefined | {
+                                kind: 'copy_once';
+                                contentPolicy?: undefined | {
+                                    v: 1;
+                                    selection: 'all_files' | 'git_worktree';
+                                    extraIgnorePatterns: readonly string[];
+                                    extraIncludePatterns: readonly string[];
+                                    policyDigest: string;
+                                    contentOnly?: true | undefined;
+                                };
+                            } | {
+                                kind: 'git_clone';
+                                source: {
+                                    provider: {
+                                        id: string;
+                                        kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                        displayName: string;
+                                        baseUrl: string;
+                                    };
+                                    repository: {
+                                        nameWithOwner: string;
+                                        defaultBranch?: null | string | undefined;
+                                        visibility?: 'internal' | 'private' | 'public' | undefined;
+                                        webUrl?: string | undefined;
+                                        cloneUrl?: string | undefined;
+                                        sshUrl?: string | undefined;
+                                    };
+                                    protocol: 'auto' | 'https' | 'ssh';
+                                };
+                                branch: string;
+                                gitAccount?: undefined | {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            } | {
+                                kind: 'sync';
+                                mode: 'keep_both_in_sync' | 'keep_synced';
+                                contentPolicy?: undefined | {
+                                    v: 1;
+                                    selection: 'all_files' | 'git_worktree';
+                                    extraIgnorePatterns: readonly string[];
+                                    extraIncludePatterns: readonly string[];
+                                    policyDigest: string;
+                                    contentOnly?: true | undefined;
+                                };
+                            };
+                            projectFilesSource?: undefined | {
+                                target: {
+                                    serverId: string;
+                                    machineId: string;
+                                };
+                                directory: string;
+                            };
+                        } | {
                             kind: 'preset';
                             homeId: string;
                             presetId: string;
+                            projectFiles?: undefined | {
+                                kind: 'copy_once';
+                                contentPolicy?: undefined | {
+                                    v: 1;
+                                    selection: 'all_files' | 'git_worktree';
+                                    extraIgnorePatterns: readonly string[];
+                                    extraIncludePatterns: readonly string[];
+                                    policyDigest: string;
+                                    contentOnly?: true | undefined;
+                                };
+                            } | {
+                                kind: 'git_clone';
+                                source: {
+                                    provider: {
+                                        id: string;
+                                        kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                        displayName: string;
+                                        baseUrl: string;
+                                    };
+                                    repository: {
+                                        nameWithOwner: string;
+                                        defaultBranch?: null | string | undefined;
+                                        visibility?: 'internal' | 'private' | 'public' | undefined;
+                                        webUrl?: string | undefined;
+                                        cloneUrl?: string | undefined;
+                                        sshUrl?: string | undefined;
+                                    };
+                                    protocol: 'auto' | 'https' | 'ssh';
+                                };
+                                branch: string;
+                                gitAccount?: undefined | {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            } | {
+                                kind: 'sync';
+                                mode: 'keep_both_in_sync' | 'keep_synced';
+                                contentPolicy?: undefined | {
+                                    v: 1;
+                                    selection: 'all_files' | 'git_worktree';
+                                    extraIgnorePatterns: readonly string[];
+                                    extraIncludePatterns: readonly string[];
+                                    policyDigest: string;
+                                    contentOnly?: true | undefined;
+                                };
+                            };
+                            projectFilesSource?: undefined | {
+                                target: {
+                                    serverId: string;
+                                    machineId: string;
+                                };
+                                directory: string;
+                            };
                         };
                     };
                     inputs: Record<string, JsonValue>;

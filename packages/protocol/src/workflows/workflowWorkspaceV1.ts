@@ -5,7 +5,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { preservedBoundedNfcString } from '../strings/preservedBoundedNfcString.js';
 import { WorkflowAuthoredProducerRefSchema } from './workflowReferenceV1.js';
 import { MachinePoolSelectionOriginV1Schema } from '../machines/pools/v1.js';
-import { SessionPlacementSelectionV1Schema } from '../sessions/creation/sessionPlacementSelectionV1.js';
+import { SessionPlacementSelectionV1Schema, SessionProjectFilesV1Schema } from '../sessions/creation/sessionPlacementSelectionV1.js';
 
 /**
  * Authored workspace **selection** for a workflow definition (SPACE §3.2).
@@ -112,6 +112,8 @@ export type WorkflowWorkspaceDescriptorV1 = z.infer<typeof WorkflowWorkspaceDesc
 export const WorkflowAcceptedWorkspaceTargetV1Schema = lazyZodSchema(() => z.strictObject({
   project: WorkflowWorkspaceDescriptorV1Schema,
   sessionPlacement: z.optional(SessionPlacementSelectionV1Schema),
+  /** Effective authored override or trusted private preset default, frozen at admission. */
+  projectFiles: z.optional(SessionProjectFilesV1Schema),
   originalCommittedRevision: z.optional(WorkflowCommittedRevisionV1Schema),
 }));
 export type WorkflowAcceptedWorkspaceTargetV1 = z.infer<typeof WorkflowAcceptedWorkspaceTargetV1Schema>;

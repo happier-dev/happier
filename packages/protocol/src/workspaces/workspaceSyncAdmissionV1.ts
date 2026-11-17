@@ -12,7 +12,8 @@ import { ProjectServiceRelocateInputV1Schema } from './projectServiceRelocationV
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '../actions/externalActionApi.js';
 import type { OpenProjectInputV1 } from '../projects/openProjectV1.js';
 import type { WorkspaceSyncRelationshipCreateActionInputV1 } from '../sessions/control/handoff/workspaceSyncSchemas.js';
-import type { WorkspaceAddressV1 } from './workspaceRefV1.js';
+import type { HandoffWorkspaceActionV1 } from '../sessions/control/handoff/workspaceSyncSchemas.js';
+import type { ManagedWorkspaceRefV2, WorkspaceAddressV1 } from './workspaceRefV1.js';
 
 /** The incumbent relationship identity, shared by its issuer and both endpoints. */
 export function deriveWorkspaceSyncRelationshipId(operationId: string): string {
@@ -56,11 +57,26 @@ export function buildWorkspaceSyncDestinationOpenInputV1(input: Readonly<{
   source: WorkspaceAddressV1;
   link: Pick<WorkspaceSyncRelationshipCreateActionInputV1, 'targetMachineId' | 'targetPath' | 'mode' | 'contentPolicy'>;
 }>): OpenProjectInputV1 {
+  return buildWorkspaceSyncMaterializationOpenInputV1({ serverId: input.serverId, source: input.source,
+    targetMachineId: input.link.targetMachineId, targetPath: input.link.targetPath,
+    workspaceAction: { kind: 'create_relationship', mode: input.link.mode,
+      contentPolicy: input.link.contentPolicy, flushBeforeCommit: true } });
+}
+
+/** The same source-checkout envelope admits finite Session copies and persistent Project links. */
+export function buildWorkspaceSyncMaterializationOpenInputV1(input: Readonly<{
+  serverId: string;
+  source: WorkspaceAddressV1;
+  targetMachineId: string;
+  targetManaged?: Pick<ManagedWorkspaceRefV2, 'managedId' | 'controller'>;
+  targetPath: string;
+  workspaceAction: Extract<HandoffWorkspaceActionV1, { kind: 'copy_once' | 'create_relationship' | 'relationship' }>;
+}>): OpenProjectInputV1 {
   return OpenProjectInputV1Schema.parse({
-    serverId: input.serverId, machineId: input.link.targetMachineId,
+    serverId: input.serverId, machineId: input.targetMachineId,
     source: { kind: 'workspace', workspaceId: input.source.workspaceId, checkout: input.source },
-    materialization: { kind: 'sync', targetPath: input.link.targetPath, workspaceAction: { kind: 'create_relationship',
-      mode: input.link.mode, contentPolicy: input.link.contentPolicy, flushBeforeCommit: true } },
+    materialization: { kind: 'sync', targetPath: input.targetPath, workspaceAction: input.workspaceAction,
+      ...(input.targetManaged ? { targetManaged: input.targetManaged } : {}) },
   });
 }
 
