@@ -182,12 +182,12 @@ export async function writeSourceRevisionDescriptor({ repoDir, identity, outputD
       for (const file of inputs.files) files.add(file);
       for (const dir of inputs.workspaceDirs) if (dir) owners.add(`${dir.replaceAll('\\', '/')}/`);
     }
-    for (const path of files) if (Object.hasOwn(tree, path) && !Object.hasOwn(identity.overlay, path)) revisionFiles.add(path);
-    for (const path of nulList(await git(repoDir, ['diff', '--name-only', '-z', '--no-renames', identity.revision, '--']))) {
-      if (!Object.hasOwn(tree, path) || Object.hasOwn(identity.overlay, path)) continue;
-      if (files.has(path) || ([...owners].some(owner => path.startsWith(owner)) && await readCheckoutBytes(join(repoDir, path)) === null)) {
-        revisionFiles.add(path);
-      }
+    // A host's live input walk can admit paths the controller's walk omits
+    // (including tracked fixtures). Ship their Git bytes within the selected
+    // workspace owners too: a mirror has no Git objects to repair them later.
+    for (const path of Object.keys(tree)) {
+      if (!Object.hasOwn(identity.overlay, path)
+        && (files.has(path) || [...owners].some(owner => path.startsWith(owner)))) revisionFiles.add(path);
     }
   }
   // A later commit served as base + its diff (source revision trees): ship the

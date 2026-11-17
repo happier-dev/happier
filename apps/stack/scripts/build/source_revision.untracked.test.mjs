@@ -100,3 +100,38 @@ test('historical captures use revision manifests for shipped outputs and omit la
     });
   }
 });
+
+test('a mirror capture restores tracked fixtures from the revision and drops untracked fixtures', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-revision-mirror-' });
+  const repoDir = fixture.path('repo');
+  const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
+  const put = async (root, path, content) => {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), content);
+  };
+  await mkdir(repoDir);
+  await gitIn('init', '--quiet');
+  await gitIn('config', 'user.email', 'test@example.invalid');
+  await gitIn('config', 'user.name', 'test');
+  await put(repoDir, 'package.json', JSON.stringify({ workspaces: ['apps/*'] }));
+  await put(repoDir, 'apps/cli/package.json', JSON.stringify({ name: '@happier-dev/cli', type: 'module' }));
+  await put(repoDir, 'apps/cli/src/index.ts', 'export const value = 1;');
+  const tracked = 'apps/cli/src/fixtures/effective-access-before.json';
+  const untracked = 'apps/cli/src/fixtures/uncommitted.json';
+  await put(repoDir, tracked, '{"revision":true}');
+  await gitIn('add', '-A');
+  await gitIn('commit', '--quiet', '-m', 'selected revision');
+  await put(repoDir, tracked, '{"dirty":true}');
+  await put(repoDir, untracked, '{"otherLane":true}');
+  const revision = await resolveSourceRevision({ repoDir, outputDir: fixture.path('revisions'), components: ['daemon'] });
+  const descriptor = await readSourceRevisionDescriptor(revision.descriptorPath);
+  // The execution host's input walk can admit a fixture omitted by the controller's
+  // walk. Its mirror has no Git objects; the descriptor must supply revision bytes.
+  const captureDir = fixture.path('mirror-capture');
+  const files = ['apps/cli/package.json', 'apps/cli/src/index.ts', tracked, untracked];
+  for (const path of files) await put(captureDir, path, await readFile(join(repoDir, path)));
+  const captured = await applySourceRevision({ captureDir, sourceDir: captureDir, files, ownerDirs: ['apps/cli'], descriptor });
+  assert.equal(await readFile(join(captureDir, tracked), 'utf8'), '{"revision":true}');
+  assert.equal(captured.includes(tracked), true);
+  assert.equal(existsSync(join(captureDir, untracked)), false);
+});

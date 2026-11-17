@@ -529,6 +529,16 @@ test('shared database preflight refuses missing migrations before producer build
   const database = new DatabaseSync(databasePath);
   database.exec('CREATE TABLE _prisma_migrations (migration_name TEXT, checksum TEXT, finished_at TEXT, rolled_back_at TEXT)');
   database.close();
+  // A mirror may contain another lane's untracked migration after HEAD was
+  // described. Only the selected revision's catalog belongs to this reload.
+  const git = (...args) => execFileSync('git', ['-C', repoDir, ...args]);
+  git('init', '--quiet');
+  await writeFile(join(repoDir, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n');
+  git('add', 'package.json', 'pnpm-lock.yaml');
+  git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'base');
+  const { resolveSourceRevision } = await import('./source_revision.mjs');
+  const sourceRevision = await resolveSourceRevision({ repoDir, rev: 'HEAD', overlay: ['pnpm-lock.yaml'],
+    fullTree: true, outputDir: files.path('revisions') });
   let admissions = 0;
   for (const method of ['spawn', 'fork']) t.mock.method(childProcess, method, () => {
     admissions += 1;
@@ -538,17 +548,20 @@ test('shared database preflight refuses missing migrations before producer build
   try {
     const request = { repoDir, stackBaseDir: files.path('stacks/qa'),
       components: [{ component: 'server', dbProvider: 'sqlite' }],
-      env: { HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'repo-producer',
+      env: { HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'repo-producer', HAPPIER_STACK_SOURCE_MIRROR: '1',
         HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'source-owner', HAPPIER_DB_PROVIDER: 'sqlite',
         DATABASE_URL: `file:${databasePath}` } };
     await assert.rejects(prepareSourceRuntimeProducer(request), error =>
       error.code === 'ESHAREDDBMIGRATIONSMISSING' && error.missingMigrations.includes(migration));
     assert.equal(admissions, 0, 'a known missing migration queues no producer work');
+    await assert.rejects(prepareSourceRuntimeProducer({ ...request, sourceRevision }), error =>
+      error.reason === 'EPROBEADMISSION');
+    assert.equal(admissions, 1, 'an untracked checkout migration cannot refuse a revision plus overlay before capture');
     const applied = new DatabaseSync(databasePath);
     applied.prepare('INSERT INTO _prisma_migrations VALUES (?, ?, ?, ?)').run(migration, '', 'done', null);
     applied.close();
     await assert.rejects(prepareSourceRuntimeProducer(request), error => error.reason === 'EPROBEADMISSION');
-    assert.equal(admissions, 1, 'an applied catalog permits the real build admission');
+    assert.equal(admissions, 2, 'an applied catalog permits the real build admission');
   } finally {
     t.mock.restoreAll();
     syncBuiltinESMExports();

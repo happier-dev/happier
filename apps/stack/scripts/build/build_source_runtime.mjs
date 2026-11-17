@@ -949,10 +949,10 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
     revision = sourceRevision || !requireCurrentSource ? await resolveProducerRevision({ repoDir, sourceRevision, env: context.env }) : null;
     if (!revision && !requireCurrentSource) logger.error('[source-bundle] capture source=checkout: no revision descriptor reached this host; other lanes\' uncommitted edits can enter this capture');
     const completed = await adopt();
-    if (components.some(component => component.component === 'server')) {
-      // The server host has already projected its shared database environment.
-      // Refuse known migration gaps before queuing any compiler work, including
-      // when a compatible completed capture needs no build admission at all.
+    if (!revision && components.some(component => component.component === 'server')) {
+      // Checkout captures can preflight their live catalog before build admission.
+      // Revision captures use the selected server's catalog at migration admission;
+      // another lane's untracked checkout migrations do not belong to that runtime.
       await assertSharedDatabaseMigrationsApplied({ serverDir: join(repoDir, 'apps/server'), env });
     }
     if (completed) return report(completed);

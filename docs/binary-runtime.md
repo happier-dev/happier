@@ -1892,7 +1892,7 @@ of the controller's (a `.git` there, such as one holding Session checkpoints, is
 unrelated history; the controller marks mirror Stacks and producers with
 `HAPPIER_STACK_SOURCE_MIRROR=1` and `canResolveSourceRevisions` never reads it),
 so the controller writes a finite revision description (revision tree listing,
-HEAD blobs for changed paths the capture can contain, untracked authored paths,
+Git blobs for tracked paths within the selected workspace owners, untracked authored paths,
 overlay digests), and each host's worker deletes it after use. Every host keeps
 its existing capture (installed dependencies and ignored generated outputs
 unchanged) and then applies the description: tracked paths must equal the
@@ -1917,10 +1917,13 @@ locks. A non-overlay build also becomes the producer's current candidate (the
 only while its Stack references it. The producer's own development Stack keeps
 following its live checkout unless a revision is requested.
 
-On the server host, producer preparation checks the consumer's shared-database
-migration catalog against the source ledger before requesting build admission.
-A missing migration refuses with `ESHAREDDBMIGRATIONSMISSING` without queuing
-compiler work. Completed captures still adopt without build admission.
+On the server host, checkout-based producer preparation checks the checkout's
+shared-database migration catalog before requesting build admission. Revision-bound
+preparation leaves migration admission to the existing server launch owner, which
+checks the selected capture's catalog against the source ledger before spawning.
+Untracked migrations in the live mirror cannot refuse a revision reload. A required
+migration missing from that ledger refuses with `ESHAREDDBMIGRATIONSMISSING`.
+Completed captures still adopt without build admission.
 
 `--source-after=<ISO timestamp>` remains accepted as an additional capture-time
 boundary, forwarded unchanged to every execution host and any explicit UI
