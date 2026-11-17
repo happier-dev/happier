@@ -56,13 +56,13 @@ export function useAutomationSubjectPicker(input: AutomationSubjectPickerInput):
     const subjectKinds = 'subjectKinds' in input ? input.subjectKinds : undefined;
     // Inputs are typed JSON. Equal inline kind/page objects name the same sequence
     // and must not restart acquisition on an unrelated render.
-    const key = JSON.stringify({ kind: input.kind, ...('page' in input ? { page: input.page }
+    const key = JSON.stringify({ kind: input.kind, subjectKinds, ...('page' in input ? { page: input.page }
         : 'databaseScope' in input ? { databaseScope: input.databaseScope }
             : { query: 'query' in input ? input.query : undefined, limit: 'limit' in input ? input.limit : undefined }) });
     const session = React.useMemo(() => ({ input, active: false, request: null as AbortController | null,
         state: input.demanded && input.lifetime && !hasActionReader(input)
             ? { ...IDLE, status: 'unsupported' as const } : IDLE }),
-    [key, input.lifetime, input.demanded, input.context, subjectKinds]);
+    [key, input.lifetime, input.demanded, input.context]);
     const [published, setPublished] = React.useState({ session, state: session.state });
     const publish = React.useCallback((state: PickerState) => {
         session.state = state;

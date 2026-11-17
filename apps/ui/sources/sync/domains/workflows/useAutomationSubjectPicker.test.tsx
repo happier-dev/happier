@@ -168,13 +168,13 @@ it.each([{ query: 'fix' }, { query: 'fix', limit: 3 }])('uses contributed page d
     try {
         const context = { externalActionTarget: { kind: 'machine' as const, machineId } };
         const subjectKinds = [entry];
-        const hook = await renderHook((props: { demanded: boolean }) => useAutomationSubjectPicker({
-            kind: { kind: 'plugin', pluginId, subjectKindId: 'ticket' }, page, subjectKinds,
+        const hook = await renderHook((props: { demanded: boolean; subjectKinds: typeof subjectKinds }) => useAutomationSubjectPicker({
+            kind: { kind: 'plugin', pluginId, subjectKindId: 'ticket' }, page, subjectKinds: props.subjectKinds,
             lifetime: account.accountLifetime, demanded: props.demanded, context,
-        }), { initialProps: { demanded: false } });
+        }), { initialProps: { demanded: false, subjectKinds } });
         expect(hook.getCurrent().status).toBe('idle');
         expect(pages).toHaveLength(0);
-        await hook.rerender({ demanded: true });
+        await hook.rerender({ demanded: true, subjectKinds });
         await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'ready', error: null }));
         expect(hook.getCurrent()).toMatchObject({ hasMore: true, items: [
             { label: 'First ticket', subject: { kind: 'plugin', serverId: home.homes.addressed!.id,
@@ -187,6 +187,13 @@ it.each([{ query: 'fix' }, { query: 'fix', limit: 3 }])('uses contributed page d
             { label: 'Second ticket', subject: { kind: 'plugin', serverId: home.homes.addressed!.id,
                 pluginId, subjectKindId: 'ticket', identity: { ticketId: 'ticket-b' } } },
         ] });
+        expect(pages).toEqual([page, { ...page, cursor: 'next-ticket' }]);
+        // A refreshed projection can allocate equal declarations. It must not discard
+        // the second page or issue another list read for an unchanged picker demand.
+        const loaded = hook.getCurrent().items;
+        await hook.rerender({ demanded: true, subjectKinds: structuredClone(subjectKinds) });
+        expect(hook.getCurrent()).toMatchObject({ status: 'ready', hasMore: false });
+        expect(hook.getCurrent().items).toBe(loaded);
         expect(pages).toEqual([page, { ...page, cursor: 'next-ticket' }]);
         await hook.unmount();
     } finally { withdraw(); account.dispose(); await home.dispose(); }
