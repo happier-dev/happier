@@ -24,6 +24,15 @@ connections, and directory provisioning.
 
 ## Canonical owners
 
+In 0.3 development source, Home setup offers are selected by
+`useTeamSetupOffers` from the latest known membership join on each viewed Home.
+The Team summary's optional `viewerJoinedAt` comes from that viewer's existing
+membership `createdAt`; missing timestamps do not create unsolicited offers.
+Selection happens before the existing Home Artifact dismissal is applied, so
+dismissing an offer does not reveal older memberships. Manual setup re-entry from
+a Team's Source remains available. Home does not load setup resources, Machines,
+or vault contents to decide which offer to show.
+
 | Decision or fact | Owner |
 |---|---|
 | Team identity, name, description, archived state | `apps/server/sources/app/teams/lifecycle.ts` |
