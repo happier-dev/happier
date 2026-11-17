@@ -294,7 +294,7 @@ export function createNativeComposeImageIdentity(input: Readonly<{
         } finally { await rm(file, { force: true }); }
     };
     /** Only declared/admitted lookup aliases; never scan the image inventory.
-     * Every result is stabilized to native Id after portable CONFIG proof. */
+     * Every result is stabilized to an immutable alias after portable CONFIG proof. */
     const locate = async (references: readonly string[], image: DeploymentImageV1) => {
         for (const reference of new Set(references)) {
             const existing = proven.get(JSON.stringify([reference, image.configDigest, image.manifestDigest, image.platform]));

@@ -18,7 +18,7 @@ export type MachineNetworkExposureInput = Readonly<{
 type DomainObservation = DeploymentDomainReadItemV1['domain']['networkExposure'];
 type DomainFact = Readonly<{
   domainId: string; environmentId: string; installationId: string; nativeServer: string;
-  hostname: string; targetService: string; targetPort: number; provider: AccessProviderRefV1 | null;
+  hostname: string; targetService: string | null; targetPort: number | null; provider: AccessProviderRefV1 | null;
   observedAtMs: number | null; observation: DeploymentDomainNetworkExposureV1;
 }> & (Readonly<{ state: 'ready'; localOrigin: boolean; fallback: boolean }>
   | Readonly<{ state: 'unavailable'; reason: string }>);
@@ -71,8 +71,8 @@ export function projectMachineNetworkExposureFacts(input: MachineNetworkExposure
       const observation = capture.observation;
       const provider = item.content.ingress?.provider ?? null;
       domains!.push({ domainId: item.domain.id, environmentId: item.domain.environmentId, installationId: capture.installationId,
-        nativeServer: capture.nativeServer, hostname: item.content.hostname, targetService: target.service,
-        targetPort: target.containerPort, provider, observedAtMs: item.domain.observedAtMs ?? null, observation,
+        nativeServer: capture.nativeServer, hostname: item.content.hostname, targetService: target.service ?? null,
+        targetPort: target.containerPort ?? null, provider, observedAtMs: item.domain.observedAtMs ?? null, observation,
         ...(observation.kind === 'ready' ? { state: 'ready', localOrigin: observation.localOrigin, fallback: observation.fallback } as const
           : { state: 'unavailable', reason: observation.reason } as const) });
       if (observation.kind !== 'ready') continue;

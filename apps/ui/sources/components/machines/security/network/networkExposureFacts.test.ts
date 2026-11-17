@@ -66,6 +66,15 @@ describe('Network joins admitted service, membership and installed Domain facts'
       .toMatchObject({ domains: [], services: [{ domainIds: [] }] });
   });
 
+  it('retains telemetry Domain exposure without inventing a workload service or port', () => {
+    const telemetryContent = DeploymentDomainContentV1Schema.parse({
+      hostname: 'collector.example.test', target: { kind: 'telemetry' }, ingress: selection,
+    });
+    expect(projectMachineNetworkExposureFacts({ ...input, domains: [{ domain, content: telemetryContent, title: 'Collector domain' }] }))
+      .toMatchObject({ domains: [{ targetService: null, targetPort: null }], services: [{ domainIds: [] }],
+        ports: expect.arrayContaining([expect.objectContaining({ domainId: 'shop', port: 9443 })]) });
+  });
+
   it('retains unavailable and fallback observations without turning local-origin or desired policy into public reachability', () => {
     const unavailable = { ...domain, networkExposure: domain.networkExposure!.map(entry => ({ ...entry,
       observation: { kind: 'unavailable' as const, reason: 'route_absent' } })) };

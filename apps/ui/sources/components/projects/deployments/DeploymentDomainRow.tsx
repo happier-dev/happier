@@ -280,7 +280,7 @@ function DomainRowEnd(props: Readonly<{ item: DomainRowItem; context: DomainRowC
 function DomainReaches(props: Readonly<{ item: DomainItem }>) {
   const { theme } = useUnistyles();
   const { target } = props.item.content;
-  if (target.kind === 'provider') return null;
+  if (target.kind === 'provider' || target.kind === 'telemetry') return null;
   const text = target.redirectTo ? `→ ${target.redirectTo}` : `${target.service}:${target.containerPort} ${target.path ?? '/'}`;
   return <Text variant="meta" numberOfLines={1} style={[Typography.mono(), { color: theme.colors.text.secondary }]}>{text}</Text>;
 }
@@ -483,7 +483,7 @@ export function domainRouteMachineIds(
 /** Where the address leads: a redirect, or the service and port (and path, when it is not every path). */
 function domainRoute(content: DomainItem['content']): string | null {
   const { target } = content;
-  if (target.kind === 'provider') return null;
+  if (target.kind === 'provider' || target.kind === 'telemetry') return null;
   if (target.redirectTo)
     return t('projects.deployments.domainRedirect', {
       target: target.redirectTo,

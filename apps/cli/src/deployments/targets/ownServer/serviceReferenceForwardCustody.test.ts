@@ -3,6 +3,29 @@ import { getEventListeners, once } from 'node:events';
 import { expect, it } from 'vitest';
 import { createServiceReferenceForwardCustody } from './serviceReferenceForwardCustody';
 
+it('retains a host-local collector bridge through the same consuming service lifetime', async () => {
+    const bridge = createServer();
+    bridge.listen(0, '127.0.0.1');
+    await once(bridge, 'listening');
+    const address = bridge.address();
+    if (!address || typeof address === 'string') throw new Error('TCP listener required');
+    const host = new AbortController();
+    const consumer = new AbortController();
+    const custody = createServiceReferenceForwardCustody({ signal: host.signal,
+        async acquire() { throw new Error('Local collector must not acquire a peer transport'); } });
+    try {
+        custody.adopt({ host: '127.0.0.1', port: address.port, observedPath: 'direct',
+            close: () => new Promise<void>((resolve, reject) => bridge.close(error => error ? reject(error) : resolve())) });
+        custody.retain([consumer.signal]);
+        await custody.release();
+        expect(bridge.listening).toBe(true);
+        const closed = once(bridge, 'close');
+        consumer.abort();
+        await closed;
+        expect(bridge.listening).toBe(false);
+    } finally { host.abort(); if (bridge.listening) await new Promise<void>(resolve => bridge.close(() => resolve())); }
+});
+
 it('keeps the acquired listener after launch release until every consuming service retires', async () => {
     const server = createServer();
     server.listen(0, '127.0.0.1');

@@ -9,7 +9,7 @@ import {
   createDeploymentReceiptDetailV1,
   createDeploymentTargetLinkHeaderV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
-import { OwnServerDeploymentInputBasisV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { DeploymentDomainContentV1Schema, OwnServerDeploymentInputBasisV1Schema } from '@happier-dev/deployment-protocol/v1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import {
   act,
@@ -1081,6 +1081,18 @@ describe('Environment → Domains: whether the address reaches this Machine (#2)
       expect(row).not.toBeNull();
       expect(screen.findByTestId('project-deployments.environment.domains.elsewhere.checkAgain')).not.toBeNull();
       expect(screen.getTextContent()).not.toContain('Needs a look');
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('shows a telemetry address without inventing a workload service route', async () => {
+    const detail = createDeploymentEnvironmentDetailV1();
+    const known = domain('collector', 'collector.example.com');
+    const item = { ...known, content: DeploymentDomainContentV1Schema.parse({ ...known.content, target: { kind: 'telemetry' } }) };
+    const { screen, controller, settle } = await renderDomains(detail, [item], domainActions(detail));
+    try {
+      expect(await settle('project-deployments.environment.domains.collector')).not.toBeNull();
+      expect(screen.getTextContent()).toContain('collector.example.com');
+      expect(screen.getTextContent()).not.toContain('undefined:undefined');
     } finally { await screen.unmount(); controller.retire(); }
   });
 

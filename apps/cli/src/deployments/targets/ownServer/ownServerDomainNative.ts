@@ -303,7 +303,7 @@ export function createOwnServerDomainNative(host: Readonly<{
                 const networkId = caddy.networkNames[0];
                 const acquireEndpoint = lease?.registry.acquireTelemetryCollectorDomainEndpoint;
                 if (!networkId || !acquireEndpoint) return serviceUnavailable(job, 'route_upstreams');
-                telemetryBridge = await acquireEndpoint({ docker, engine: { id: docker.engineId, kind: docker.engineKind }, networkId });
+                telemetryBridge = await acquireEndpoint({ docker, engine: { id: docker.engineId, kind: docker.engineKind ?? 'unknown' }, networkId });
             }
             return { identity, signal, environmentContent, members, domain: opened.content, docker, run, caddy,
                 get topology() { return DeploymentDomainMachineTopologyV1Schema.parse({ machineId: host.machineId,

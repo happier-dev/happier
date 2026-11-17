@@ -10,7 +10,7 @@ export function createServiceReferenceForwardCustody(input: Readonly<{
     signal: AbortSignal;
     acquire(admission: Admission, signal: AbortSignal): Promise<ServiceExportMachineForward>;
 }>) {
-    const forwards = new Map<string, { forward: Promise<ServiceExportMachineForward>; failure?: ActionExecuteFailure }>();
+    const forwards = new Map<string | ServiceExportMachineForward, { forward: Promise<ServiceExportMachineForward>; failure?: ActionExecuteFailure }>();
     const keyFor = (admission: Admission) => JSON.stringify([admission.machineId, admission.serviceExport]);
     const currentFailure = () => [...forwards.values()].find(entry => entry.failure)?.failure;
     const lifetime = new AbortController();
@@ -34,6 +34,11 @@ export function createServiceReferenceForwardCustody(input: Readonly<{
     input.signal.addEventListener('abort', retire, { once: true });
     return {
         retire,
+        adopt(forward: ServiceExportMachineForward) {
+            signal.throwIfAborted();
+            forwards.set(forward, { forward: Promise.resolve(forward) });
+            return forward;
+        },
         reportFailure(admission: Admission, value: ActionExecuteFailure | null) {
             const entry = forwards.get(keyFor(admission));
             if (!entry) return;
