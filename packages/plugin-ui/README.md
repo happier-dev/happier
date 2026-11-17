@@ -94,6 +94,54 @@ Subpath exports are available for narrower imports:
 import { usePluginHostApi, usePluginResource } from '@happier-dev/plugin-ui';
 ```
 
+### Themes and CSS surfaces (0.3 development source)
+
+Read the mounted theme with `usePluginTheme()`. Its colours, radii and typography
+follow the person's active theme, including its corner shape and typeface.
+Spacing, text size, glass and motion keep their existing Appearance owners;
+contributing a theme does not override those preferences. `defineUiSurface`
+already subscribes to context changes, so authors need no theme poll or second
+provider.
+
+Shared controls bind the host's stable CSS surface addresses. For a custom
+composition, use the public `SurfaceAddress` type and a component's
+`themeSurface` prop:
+
+```tsx
+import { Surface, Text, usePluginTheme } from '@happier-dev/plugin-ui';
+
+function ThemeSummary() {
+  const theme = usePluginTheme();
+  return (
+    <Surface themeSurface={{ surface: 'dialog', part: 'body' }} padding="medium">
+      <Text value={`Current accent: ${theme.colors.accent}`} />
+    </Surface>
+  );
+}
+```
+
+The root also exports `THEME_SURFACE_REGISTRY`, `getThemeSurfaceReference()` and
+`themeSurfaceDataSet()` from `@happier-dev/plugin-sdk/ui`. Use those exports to
+discover or emit addresses rather than copying a selector list. Native shared
+components consume the host's prepared surface styles; web and desktop use the
+CSS cascade. Unsupported native declarations remain web-only, so check the
+theme editor's coverage before relying on a reshape across platforms. Reading
+the theme in author-owned React code can rerender that code when it changes.
+
+Hosted-web frames receive the theme through their existing context bridge. The
+bootstrap maintains semantic `--happier-plugin-*` variables and one sanitized
+theme stylesheet inside the frame; app-document CSS cannot cross into it.
+Custom HTML can use `var(--happier-plugin-color-accent)` and the public surface
+attributes. For a standalone document that owns its context binding, the SDK's
+`buildPluginUiThemeCssVariables()` and `applyPluginUiThemeCssVariables()` project
+the same semantic variables. Reuse the existing context watch rather than
+introducing another subscription or sanitizer.
+
+To contribute theme data, see the maintained
+[theme authoring example](../plugin-sdk/examples/public-authoring/themes.ts) and
+the [theme contribution guide](https://docs.happier.dev/plugins/manifest/contributions#theme-packs-03-development-source).
+This is a Developer Preview source contract, not released package availability.
+
 ### Primary pointer (0.3 development source)
 
 Render-time pointer choices subscribe through the environment hook:

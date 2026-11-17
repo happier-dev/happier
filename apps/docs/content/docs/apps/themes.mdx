@@ -10,6 +10,11 @@ window — so a theme is not just the chat background.
 
 Find them under **Settings → Appearance**.
 
+In the **0.3 development client**, open **Settings → Appearance → Themes** for
+your library. Themes can also carry corner shape, typeface and CSS. The workflows
+below marked 0.3 describe development source; they do not establish availability
+in a released client.
+
 ## Layout (0.3 development)
 
 The unreleased 0.3 client adds **Session first** and **Editor first** under
@@ -53,6 +58,51 @@ Two things worth knowing while editing:
 A theme also declares whether it uses light or dark app assets, which is what
 keeps icons and images legible against the palette you chose.
 
+In 0.3, **Add theme → New theme** opens the editor. Start from an existing
+theme, adjust its canvas and accent seeds or individual colours, and choose
+corner shape and typeface under **Style**. **Save and use** saves your theme
+and selects it on this device. Density, text size, glass and motion remain
+separate Appearance preferences.
+
+The **CSS** view lets a theme reshape app surfaces as well as recolour them.
+Target the app's stable `data-surface`, `data-part` and `data-state` hooks so
+supported rules can work on native too.
+Web and desktop use the sanitized stylesheet; phones apply the supported native
+subset. The coverage fact and **Which …?** link identify web-only rules and
+reveal their lines. Rules that fetch external content are stripped before the
+theme is painted. If a theme hides an app area, the library's warning offers
+**Use a built-in theme** to recover.
+
+## Finding and trying themes (0.3 development)
+
+The library has separate **Light** and **Dark** selections. Choose a mode and
+press a theme tile to use it here. The in-use slots show both selections; their
+**Use on other devices…** menu lets you choose other connected clients. Devices
+that are disconnected are not listed, and changes are not queued for them.
+
+Open the **Store** link below the library to browse themes, including Open VSX
+editor themes. Filter by source or light/dark mode, then open a listing for its
+included themes, changes, platform coverage and licence. **Try on** previews a
+theme on this device without saving it. **Install** adds the listing's themes
+to your library and selects the one you tried; **Revert** returns to the previous
+selection. Closing a listing
+leaves the try-on bar available so you can decide after looking around the app.
+
+Themes supplied by installed plugins show the plugin's name as their source.
+Built-in, Store and plugin themes are read-only: duplicate one to make an
+editable copy. Removing a contributing plugin removes its themes; a selected
+theme that is no longer available falls back to the built-in theme. Your own
+duplicate stays in the library.
+
+An agent can also propose a theme or several options. Its result card tries
+the draft here before saving it. Choose an option to preview it, then **Keep**
+the one you want or undo the preview. After Keep, the card offers the same
+connected-device picker. Agents proposing CSS through try-on or save request
+approval under the normal Action policy.
+
+The command palette includes **Change theme**, a built-in-theme recovery
+choice, **Undo last theme change** and **Edit current CSS**.
+
 ## Moving themes around
 
 In the unreleased 0.3 development client, custom themes synchronize through your
@@ -77,6 +127,15 @@ In a browser, select the parent JSON files together with the main theme; the fir
 selected file is imported as the main theme. Native imports read accessible files
 relative to the chosen theme. A missing parent or an include cycle stops the
 import with an error, leaving your library unchanged.
+
+### Share as a plugin (0.3 development)
+
+Save your editable theme, then choose **Share as plugin** from its library or
+editor menu. Choose a connected machine and a new project path. Happier creates
+editable plugin source and packs it on that machine; the result gives you the
+project path, archive path and digest. Sharing does not install or publish the
+plugin. Those are separate choices through the ordinary
+[plugin development tools](/plugins/packaging/authoring-cli).
 
 ## Surface finish (0.3 development)
 
