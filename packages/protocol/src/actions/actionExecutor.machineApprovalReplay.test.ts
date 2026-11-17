@@ -1,12 +1,79 @@
+import { prepareHostReviewedChildPolicyV1 } from './executor/deploymentRoleApproval.js';
+import { SessionSpawnNewInputV2Schema } from '../sessions/creation/sessionSpawnNewInputV2.js';
+import { SessionSpawnNewResultV1Schema } from '../sessions/creation/sessionSpawnNewResultV1.js';
+import { ExternalActionExecutionAuthorizationV1Schema } from './externalActionApi.js';
+import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1, verifyExternalActionApprovalInputV1 } from './externalActionExecutionAuthorization.js';
+import tweetnacl from 'tweetnacl';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it } from 'vitest';
 
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
-import { createActionExecutor } from './actionExecutor.js';
+import { buildApprovalExecutionOriginV1, createActionExecutor } from './actionExecutor.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './executor/types.js';
 
 describe('Machine approval replay composition', () => {
+  it.each([false, true])('restores the signed Session requester policy for native children (required=%s)', async required => {
+    const keys = tweetnacl.sign.keyPair();
+    const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'signed-spawn', executionTarget: { serverId: 'home', machineId: 'controller' },
+      directory: { kind: 'path', path: '/workspace' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, memoryEnabled: false,
+      configuration: { mode: { value: null, updatedAtMs: 1 },
+        model: { value: null, updatedAtMs: 1, selectionSource: 'inherited' },
+        permissionIntent: { value: null, updatedAtMs: 1 }, options: {} } });
+    const envelope = { v: 1 as const, requestId: 'signed-spawn', input, target: { kind: 'machine' as const, machineId: 'controller' } };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-admission', binding: {
+      serverIdentityId: 'srv_home', accountId: 'owner', custodianAccountId: 'owner',
+      authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+      machineId: 'controller', installationId: 'installation', actionId: 'session.spawn_new',
+      requestId: 'signed-spawn', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target: { kind: 'machine', machineId: 'controller' },
+    } });
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: required
+      ? { 'action.invoke': { approvalRequiredSurfaces: ['cli'] } } : {} });
+    const context: ActionExecutorContext = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+      runtimeAccountId: 'owner', serverId: 'home', serverIdentityId: 'srv_home', actionRequestId: 'signed-spawn',
+      externalActionExecutionAuthorization: authorization, externalActionTarget: authorization.binding.target,
+      originalActionEnvelope: envelope,
+      signExternalActionApprovalInput: request => signExternalActionApprovalInputV1({ ...request,
+        authorizationToken: authorization.token, privateKey: keys.secretKey }),
+    };
+    let stored = ApprovalRequestV2Schema.parse({ v: 2, status: 'approved', createdAtMs: 1, updatedAtMs: 2,
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli', summary: 'Start Session',
+      actionId: 'session.spawn_new', actionArgs: input, decision: { kind: 'approve', decidedAtMs: 2 },
+      executionOriginV1: buildApprovalExecutionOriginV1({ actionId: 'session.spawn_new', input, context, targetSessionId: null }),
+    });
+    let nativeEffects = 0;
+    const policies: (ReturnType<typeof prepareHostReviewedChildPolicyV1>)[] = [];
+    const executor = createActionExecutor({
+      // Artifact storage, Home admission restoration and the native Session host
+      // are process boundaries; the signed origin, replay and child policy stay real.
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+      isApprovalExecutionOriginCurrent: async ({ origin, request }) => verifyExternalActionApprovalInputV1({
+        authorizationToken: authorization.token, actionId: request.actionId, input: request.actionArgs,
+        target: authorization.binding.target, publicKey: keys.publicKey, signature: origin.externalActionInputSignature ?? '',
+      }),
+      prepareApprovalExecutionAuthorization: async () => ({ authorization, actionsSettings: settings }),
+      sessionSpawnNew: async args => {
+        const policy = prepareHostReviewedChildPolicyV1({ action: { pluginId: 'acme.compute', localId: 'acquire' }, role: 'acquire' }, args.context!);
+        policies.push(policy);
+        if (!policy || policy.requiredActionIds.length > 0) return SessionSpawnNewResultV1Schema.parse({
+          type: 'error', code: 'spawn_failed', retryable: false });
+        nativeEffects++;
+        return SessionSpawnNewResultV1Schema.parse({ type: 'success', disposition: 'created', sessionId: 'created',
+          executionTarget: input.executionTarget, organizationPlacement: { folderId: null, tagIds: [] },
+          initialInput: { status: 'notRequested' } });
+      },
+    });
+    const result = await executor.replayApprovedApprovalRequest({ artifactId: 'signed-spawn-approval', callerAuthority: 'present_user',
+      // A deciding caller's permissive policy must not replace the original requester's.
+      currentAccount: { accountId: 'owner', serverId: 'home', serverIdentityId: 'srv_home',
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }) } });
+    expect(policies).toEqual([expect.objectContaining({ requiredActionIds: required ? ['action.invoke'] : [] })]);
+    expect(nativeEffects).toBe(required ? 0 : 1);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: required ? 'failed' : 'executed', execution: { ok: !required } } });
+  });
+
   it.each(['standalone-cli', 'controller-without-externalActionClient'] as const)(
     'forwards an agent Goal approval without checking the origin in the %s decider', async placement => {
       let stored = ApprovalRequestV2Schema.parse({

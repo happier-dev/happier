@@ -2111,8 +2111,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         if (prepared) executionContext = { ...executionContext, externalActionExecutionAuthorization: prepared.authorization,
           ...(prepared.signExternalActionApprovalInput ? { signExternalActionApprovalInput: prepared.signExternalActionApprovalInput } : {}),
-          ...((executionContext.approvedActionReplay?.hostReviewedChildren || executionContext.callerSurface) && prepared.actionsSettings
-            ? { actionsSettings: prepared.actionsSettings } : {}) };
+          ...(prepared.actionsSettings ? { actionsSettings: prepared.actionsSettings } : {}) };
         if (args.privateActionInputContinuation) {
           if (!deps.confidentialActionInputs) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
           const privateResult = await deps.confidentialActionInputs({ continuation: args.privateActionInputContinuation,
