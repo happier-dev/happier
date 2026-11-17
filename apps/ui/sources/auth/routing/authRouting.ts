@@ -201,6 +201,16 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
   )
     return true;
 
+  // The Session defaults (loading, failed) and Team "Shared with this Team" specimens draw their real
+  // views with fixture states and inert callbacks, no account or machine data. Exact dev/debug routes only.
+  if (
+    isDevRouteEnabled() &&
+    first === 'dev' &&
+    (normalized[1] === 'session-defaults' || normalized[1] === 'team-shared') &&
+    normalized.length === 2
+  )
+    return true;
+
   // Static real-component surface QA has no Account data, RPCs or persisted callbacks.
   if (
     isDevRouteEnabled() &&

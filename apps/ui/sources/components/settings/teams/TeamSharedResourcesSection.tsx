@@ -12,7 +12,6 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useTeamSharedResourcesSummary } from '@/hooks/teams/useTeamSharedResourcesSummary';
 import { t } from '@/text';
 
@@ -125,14 +124,16 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
           />
         ) : null}
         {empty ? (
-          <SurfaceStateCard
+          // The lab's empty row (L12 empty): what isn't here yet and where sharing starts, as a row of the group.
+          <Item
             testID="team-overview-shared-empty"
-            kind="empty"
-            size="line"
+            icon={<Icon name="users" />}
             title={t('teams.overview.shared.emptyTitle', {
               team: props.teamName,
             })}
-            reason={t('teams.overview.shared.emptyBody')}
+            subtitle={t('teams.overview.shared.emptyBody')}
+            mode="info"
+            showChevron={false}
           />
         ) : null}
         {rows.map((row) => {

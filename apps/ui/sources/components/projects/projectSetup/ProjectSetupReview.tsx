@@ -120,6 +120,7 @@ export function listProjectSetupEffect(
       value: names.join(' · '),
       note: t('projects.scripts.setup.valuesNote'),
       mono: false,
+      ...(layerOf ? { origin: layerOf(['environmentVariables']) } : {}),
     });
   }
   return lines;
@@ -160,6 +161,8 @@ export const ProjectSetupEffectLines = React.memo(function ProjectSetupEffectLin
   props: Readonly<{ testID: string; lines: readonly EffectLine[]; framed?: boolean }>,
 ) {
   const { theme } = useUnistyles();
+  // A phone keeps the command's width: the layer word moves under it instead of taking a column.
+  const phone = useDeviceType() === 'phone';
   return (
       <View style={props.framed ? styles.effectSheet : styles.effect}>
         {props.lines.map((line, index) => (
@@ -176,23 +179,28 @@ export const ProjectSetupEffectLines = React.memo(function ProjectSetupEffectLin
             >
               {line.label}
             </Text>
-            <Text
-              style={[
-                styles.effectValue,
-                { color: theme.colors.text.secondary },
-              ]}
-            >
+            <View style={styles.effectValueColumn}>
               <Text
                 style={[
-                  line.mono ? styles.mono : styles.body,
-                  { color: theme.colors.text.primary },
+                  styles.effectValue,
+                  { color: theme.colors.text.secondary },
                 ]}
               >
-                {line.value}
+                <Text
+                  style={[
+                    line.mono ? styles.mono : styles.body,
+                    { color: theme.colors.text.primary },
+                  ]}
+                >
+                  {line.value}
+                </Text>
+                {line.note ? `  ${line.note}` : ''}
               </Text>
-              {line.note ? `  ${line.note}` : ''}
-            </Text>
-            {line.origin ? (
+              {phone && line.origin ? (
+                <Text numberOfLines={1} style={[styles.effectOriginBelow, { color: theme.colors.text.tertiary }]}>{line.origin}</Text>
+              ) : null}
+            </View>
+            {!phone && line.origin ? (
               <Text numberOfLines={1} style={[styles.effectOrigin, { color: theme.colors.text.tertiary }]}>{line.origin}</Text>
             ) : null}
           </View>
@@ -477,6 +485,8 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   // The layer word sits at the line's end in the meta role; it gives way before the command does.
+  effectValueColumn: { flex: 1, minWidth: 0 },
+  effectOriginBelow: { ...Typography.default(), ...happierPageTextMetrics('meta') },
   effectOrigin: { ...Typography.default(), ...happierPageTextMetrics('meta'), flexShrink: 1, textAlign: 'right' },
   provenance: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   shared: {

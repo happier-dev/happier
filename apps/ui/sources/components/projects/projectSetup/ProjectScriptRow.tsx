@@ -216,7 +216,8 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
           <RowStatusLine
             // Phone rows omit command text but keep their source badge (plan 30 phone composition).
             lead={props.compact || phone ? null : props.command}
-            text={[props.origin, statusText].filter(Boolean).join(' · ')}
+            context={props.origin ?? null}
+            text={statusText}
             tone={projectRunStatusTone(tone)}
             // The row's run glyph already carries the state.
             marked

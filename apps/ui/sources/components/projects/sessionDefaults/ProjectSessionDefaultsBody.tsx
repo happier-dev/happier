@@ -140,6 +140,8 @@ export const ProjectSessionDefaultsView = React.memo(function ProjectSessionDefa
           tabs={tabs}
           activeTabId={scope}
           onSelectTab={setScope}
+          // Two scopes hug their names (lab L11), so a long Team name never stretches "For me".
+          segmentSizing="content"
           testIDPrefix={`${testID}.scope`}
         />
         <View

@@ -434,7 +434,8 @@ const ChangeRow = React.memo(function ChangeRow(
       title={title}
       subtitle={detail.text}
       subtitleStyle={detail.command ? styles.command : undefined}
-      subtitleLines={2}
+      // A changed command shows both sides whole; the part that changed is usually at the end.
+      subtitleLines={3}
       showChevron={false}
       showDivider={props.showDivider}
     />

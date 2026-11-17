@@ -128,6 +128,9 @@ describe('isPublicRouteForUnauthenticated', () => {
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'media', 'other'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'native-approvals'])).toBe(true);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'native-approvals', 'other'])).toBe(false);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'session-defaults'])).toBe(true);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'team-shared'])).toBe(true);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'team-shared', 'other'])).toBe(false);
                 // Only the exact fixture specimens: other dev screens read the signed-in account.
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'logs'])).toBe(false);
             });
@@ -143,6 +146,8 @@ describe('isPublicRouteForUnauthenticated', () => {
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'soft-surfaces'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'media'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'native-approvals'])).toBe(false);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'session-defaults'])).toBe(false);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'team-shared'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'stage-dperf'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'terminal-qa'])).toBe(false);
             });
