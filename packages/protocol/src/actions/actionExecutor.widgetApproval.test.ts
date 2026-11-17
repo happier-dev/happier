@@ -338,17 +338,21 @@ describe('contextual widget approval at the Action executor', () => {
       .toMatchObject({ ok: false, errorCode: 'approval_canceled' });
     expect(confirmations).toBe(1);
     expect((await state.artifact.read()).items).toEqual(before);
-    expect(await state.executor.prepare('widgets.item.remove', {
+    const prepared = await state.executor.prepare('widgets.item.remove', {
       ref: { surface: state.surface, instanceId: 'group' },
-    }, { surface: 'ui', authority: 'present_user' }))
-      .toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'action_interactive_review_required' } });
+    }, { surface: 'ui', authority: 'present_user' });
+    expect(prepared.kind).toBe('ready');
     expect(confirmations).toBe(1);
+    expect((await state.artifact.read()).items).toEqual(before);
+    if (prepared.kind !== 'ready') throw new Error('Expected the retained native review');
+    expect(await prepared.invocation.run()).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+    expect(confirmations).toBe(2);
     expect((await state.artifact.read()).items).toEqual(before);
     approved = true;
     expect(await state.executor.execute('widgets.item.remove', {
       ref: { surface: state.surface, instanceId: 'group' },
     }, { surface: 'ui', authority: 'present_user' })).toMatchObject({ ok: true, result: { ref: { surface: state.surface, instanceId: 'group' }, instance: null } });
-    expect(confirmations).toBe(2);
+    expect(confirmations).toBe(3);
     approved = false;
     const applied = (await state.artifact.read()).items;
     expect(applied.some(item => item.kind === 'group' && item.id === 'group')).toBe(false);
@@ -358,7 +362,7 @@ describe('contextual widget approval at the Action executor', () => {
       actions: { 'widgets.item.rename': { approvalRequiredSurfaces: ['ui'] } },
       approvalWaivedSurfaces: { 'widgets.item.rename': ['ui'] },
     }) })).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
-    expect(confirmations).toBe(3);
+    expect(confirmations).toBe(4);
     expect((await state.artifact.read()).items).toEqual(applied);
   });
 

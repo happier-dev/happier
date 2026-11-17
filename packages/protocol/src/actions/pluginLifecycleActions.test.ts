@@ -61,13 +61,18 @@ describe('plugin lifecycle administration admission', () => {
     })).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
     expect(stored).toBeUndefined();
     expect(effects).toEqual([]);
-    await expect(ask.execute('plugins.disable', { machineId: 'machine-1', pluginId: 'acme.plugin' }, {
+    let confirmations = 0;
+    const reviewed = createActionExecutor({ pluginsDevLoopAction: port,
+      presentUserActionConfirmation: async () => { confirmations += 1; return true; },
+    } as ActionExecutorDeps);
+    await expect(reviewed.execute('plugins.disable', { machineId: 'machine-1', pluginId: 'acme.plugin' }, {
       surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
-      actionsSettings, presentUserConfirmation: { actionId: 'plugins.disable' },
+      actionsSettings,
     })).resolves.toMatchObject({ ok: true });
     expect(effects).toEqual([expect.objectContaining({
       input: { machineId: 'machine-1', pluginId: 'acme.plugin' },
     })]);
+    expect(confirmations).toBe(1);
     expect(stored).toBeUndefined();
   });
 });

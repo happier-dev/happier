@@ -15,13 +15,10 @@ describe('desktop.notch.set', () => {
     expect(isApprovalRequiredByActionsSettings(id, ActionsSettingsV1Schema.parse({ v: 1,
       actions: { [id]: { approvalRequiredSurfaces: ['mcp'] } },
     }), { surface: 'mcp', authority: 'account_automation' })).toBe(true);
-    let admitted = 0;
     const received: unknown[] = [];
     const executor = createActionExecutor({
-      readActionsSettings: (context) => {
-        admitted += 1;
-        return ActionsSettingsV1Schema.parse({ v: 1 });
-      },
+      // Availability and approval both consume Settings; neither read counts an admission.
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }),
       desktopNotchSet: async ({ input }) => { received.push(input); return { applied: true }; },
     } as ActionExecutorDeps);
     for (const input of [{ state: 'pinned' }, { state: 'rest' }, { position: 0.25 }, { state: 'open', position: { x: 0.2, y: 0.8 } }]) {
@@ -29,7 +26,6 @@ describe('desktop.notch.set', () => {
         .toEqual({ ok: true, result: { applied: true } });
     }
     expect(received).toEqual([{ state: 'pinned' }, { state: 'rest' }, { position: 0.25 }, { state: 'open', position: { x: 0.2, y: 0.8 } }]);
-    expect(admitted).toBe(4);
     expect(spec.inputSchema.safeParse({ state: 'expanded' }).success).toBe(false);
     expect(spec.inputSchema.safeParse({ position: { x: 0.5 } }).success).toBe(false);
   });

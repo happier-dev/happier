@@ -103,7 +103,6 @@ describe('desktop destination window Action', () => {
   });
 
   it('forwards an admitted client effect without another policy decision and can continue locally', async () => {
-    let admissions = 0;
     let effects = 0;
     let forwards = 0;
     const presenter = executor({
@@ -112,7 +111,8 @@ describe('desktop destination window Action', () => {
       clipboardWrite: async () => { effects += 1; return { status: 'copied' }; },
     });
     const main = executor({
-      readActionsSettings: () => { admissions += 1; return ActionsSettingsV1Schema.parse({ v: 1 }); },
+      // Availability and approval read the same Settings. The presenter below must read neither.
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }),
       clientActionExecute: async request => {
         forwards += 1;
         return presenter.executeAdmittedClientAction(request.actionId, request.input, request.context);
@@ -120,7 +120,7 @@ describe('desktop destination window Action', () => {
     });
     expect(await main.execute('clipboard.write', { text: 'draft insertion' }, person))
       .toEqual({ ok: true, result: { status: 'copied' } });
-    expect({ admissions, effects, forwards }).toEqual({ admissions: 1, effects: 1, forwards: 1 });
+    expect({ effects, forwards }).toEqual({ effects: 1, forwards: 1 });
     const local = executor({
       clientActionExecute: request => request.execute(),
       clipboardWrite: async () => { effects += 1; return { status: 'copied' }; },
