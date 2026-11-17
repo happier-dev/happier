@@ -43,6 +43,17 @@ const leaf = (facts: AgentStartFactsV1 = {}): MaterializedWorkflowLeafV1 => ({ b
 const spawn = (facts: AgentStartFactsV1 = {}): AgentStartRequestV1 => ({ kind: 'spawn_new', facts });
 
 describe('admitAgentStartV1', () => {
+  it('retains the exact Team model source and rejects changing it to an identically named native model', () => {
+    const selection = { v: 2 as const, updatedAt: 1, ref: { source: 'team_resource' as const, teamId: 'team', resourceId: 'resource',
+      expectedResourceRevision: 2, deliveryMode: 'direct' as const, agentTargetKey: engine.agentTargetKey, modelId: engine.modelId } };
+    const context = { ...baseline, baseline: { ...baseline.baseline, configuration: { ...baseline.baseline.configuration, modelSelection: selection } } };
+    const policy = { ...DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, allowModelOverride: false };
+    expect(admitAgentStartV1(policy, spawn({ modelSelection: selection }), context)).toMatchObject({ ok: true });
+    expect(admitAgentStartV1(policy, spawn({ modelSelection }), context)).toMatchObject({ ok: false,
+      refusal: { code: 'policy_denied_field', field: 'modelSelection' } });
+    expect(admitAgentStartV1(policy, { ...spawn(), roleId: 'builder' }, context)).toMatchObject({ ok: true });
+  });
+
   it('refuses definition and trigger permission ceilings even without Agent-start leaves', () => {
     for (const kind of ['definition_write', 'trigger_write'] as const) {
       const request = kind === 'definition_write'

@@ -356,3 +356,18 @@ describe('SessionCreationCorrespondenceV1', () => {
     })).toBe(false);
   });
 });
+
+it('matches a Team creation retry regardless of model selection timestamp while retaining source identity', () => {
+  const modelSelection = { v: 2 as const, updatedAt: 42, ref: { source: 'team_resource' as const,
+    agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-model', resourceId: 'resource-1',
+    teamId: 'team-1', expectedResourceRevision: 4, deliveryMode: 'brokered' as const } };
+  const selected = SessionCreationCorrespondenceV1Schema.parse({ ...correspondence,
+    recipe: { ...correspondence.recipe, modelSelection } });
+  expect(selected.recipe.modelSelection).toEqual(modelSelection);
+  const retry = { ...selected, recipe: { ...selected.recipe,
+    modelSelection: { ...modelSelection, updatedAt: 99 } } };
+  expect(sessionCreationCorrespondenceMatchesV1(selected, retry)).toBe(true);
+  expect(sessionCreationCorrespondenceMatchesV1(selected, { ...retry, recipe: { ...retry.recipe,
+    modelSelection: { ...modelSelection, ref: { ...modelSelection.ref, resourceId: 'other-resource' } } } })).toBe(false);
+  expect(SessionCreationCorrespondenceV1Schema.parse(correspondence).recipe.modelSelection).toBeNull();
+});

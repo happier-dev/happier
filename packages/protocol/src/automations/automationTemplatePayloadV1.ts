@@ -8,7 +8,7 @@ import { RuntimeDescriptorV1Schema, readRuntimeDescriptorV1 } from '../sessions/
 import { SessionAuthoringCheckoutCreationDraftV1Schema } from '../sessions/authoring/creationFieldsV1.js';
 import { SessionExecutionTargetV1Schema } from '../sessions/creation/sessionExecutionTargetV1.js';
 import { SessionOrganizationPlacementV1Schema } from '../sessions/creation/sessionSpawnNewResultV1.js';
-import { SessionModelSelectionV1Schema } from '../providers/selection/v1.js';
+import { SessionModelSelectionSchema } from '../providers/selection/v2.js';
 import { readCapabilitySelectionCarrierV1, SessionCapabilitySelectionAuthoringV1Schema } from '../reach/sessionCapabilitySelectionV1.js';
 import { WindowsRemoteSessionLaunchModeSchema } from '../sessions/metadata/windowsRemoteSessionLaunchMode.js';
 import { WindowsTerminalWindowNameSchema } from '../sessions/metadata/windowsTerminalWindowName.js';
@@ -31,7 +31,7 @@ export const AutomationTemplatePayloadV1Schema = lazyZodSchema(() => z.strictObj
     resume: z.optional(z.string()),
     permissionMode: z.optional(z.string()),
     permissionModeUpdatedAt: z.optional(z.number().check(z.int())),
-    modelSelection: z.optional(z.nullable(SessionModelSelectionV1Schema)),
+    modelSelection: z.optional(z.nullable(SessionModelSelectionSchema)),
     modelId: z.optional(z.string()),
     modelUpdatedAt: z.optional(z.number().check(z.int())),
     sessionConfigOptionOverrides: z.optional(AcpConfigOptionOverridesV1Schema),

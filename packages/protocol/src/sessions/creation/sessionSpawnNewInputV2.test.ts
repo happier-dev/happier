@@ -22,6 +22,17 @@ const input = {
 } as const;
 
 describe('SessionSpawnNewInputV2Schema', () => {
+  it('retains the exact Team model source alongside retained V1 and omitted controls', () => {
+    const modelSelection = { v: 2 as const, updatedAt: 42, ref: { source: 'team_resource' as const,
+      agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-model', resourceId: 'resource-1',
+      teamId: 'team-1', expectedResourceRevision: 4, deliveryMode: 'brokered' as const } };
+    expect(SessionSpawnNewInputV2Schema.parse({ ...input, modelSelection }).modelSelection).toEqual(modelSelection);
+    const legacy = { v: 1 as const, updatedAt: 1,
+      ref: { agentTargetKey: modelSelection.ref.agentTargetKey, providerConnectionId: null, modelId: 'legacy' } };
+    expect(SessionSpawnNewInputV2Schema.parse({ ...input, modelSelection: legacy }).modelSelection).toEqual(legacy);
+    expect(SessionSpawnNewInputV2Schema.parse(input).modelSelection).toBeUndefined();
+    expect(SessionSpawnNewInputV2Schema.safeParse({ ...input, modelSelection: null }).success).toBe(false);
+  });
   it.each([
     ['ordinary', sessionSpawnInput.SessionSpawnNewInputV2Schema],
     ['Action', sessionSpawnInput.SessionSpawnNewActionInputV2Schema],

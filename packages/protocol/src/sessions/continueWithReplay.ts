@@ -6,7 +6,7 @@ import {
   normalizeBackendTargetRefV2InputToV2,
 } from '../backends/targets/backendTargetRefV2.js';
 import { LlmTaskRunnerConfigV1Schema } from '../llm/tasks/llmTaskRunnerConfigV1.js';
-import { SessionModelSelectionV1Schema } from '../providers/selection/v1.js';
+import { SessionModelSelectionSchema } from '../providers/selection/v2.js';
 import { ApprovalProfileIdV1Schema } from '../actions/approvalProfiles.js';
 import {
   HappierReplayRecentMessagesCountSchema,
@@ -42,7 +42,7 @@ export const SessionContinueWithReplayRpcParamsSchema = lazyZodSchema(() => z.lo
     approvedNewDirectoryCreation: z.optional(z.boolean()),
     permissionMode: z.optional(z.string()),
     permissionModeUpdatedAt: z.optional(z.number()),
-    modelSelection: z.optional(SessionModelSelectionV1Schema),
+    modelSelection: z.optional(SessionModelSelectionSchema),
     approvalProfileId: z.optional(z.nullable(ApprovalProfileIdV1Schema)),
     replay: SessionContinueWithReplayRequestSchema,
   }).check(z.superRefine((value, ctx) => {

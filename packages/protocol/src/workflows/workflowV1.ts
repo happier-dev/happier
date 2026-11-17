@@ -5,7 +5,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { ConnectedServiceBindingsV2IngressSchema } from '../connect/connectedServiceBindings.js';
 import { ExecutionRunResultContractV1Schema } from '../execution/runs/resultContractV1.js';
 import { StrictJsonValueSchema, type JsonValue } from '../json/strictJsonValue.js';
-import { SessionModelSelectionV1Schema } from '../providers/selection/v1.js';
+import { SessionModelSelectionSchema } from '../providers/selection/v2.js';
 import {
   SessionAuthoringSelectionFieldsV1,
 } from '../sessions/authoring/selectionFieldsV1.js';
@@ -161,7 +161,7 @@ const WORKFLOW_SESSION_AUTHORING_SELECTION_SHAPE = {
   // The catalog entry carries a `.default(null)` for draft hydration. A workflow
   // definition must distinguish omission from an explicit null, so this consumes
   // the underlying selection schema without that default.
-  modelSelection: zMini.optional(zMini.nullable(zMini.lazy(() => SessionModelSelectionV1Schema))),
+  modelSelection: zMini.optional(zMini.nullable(zMini.lazy(() => SessionModelSelectionSchema))),
   profileId: zMini.optional(SessionAuthoringSelectionFieldsV1.profileId),
   approvalProfileId: zMini.optional(SessionAuthoringSelectionFieldsV1.approvalProfileId),
   permissionMode: zMini.optional(SessionAuthoringSelectionFieldsV1.permissionMode),
@@ -277,7 +277,7 @@ export const WorkflowParticipantBindingV1Schema = lazyZodSchema(() => z.union([
 export const WorkflowLiteralEngineSelectionV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ role: z.string().check(z.minLength(1)) }),
   z.strictObject({ agentTarget: AgentExecutionTargetV1Schema,
-    modelSelection: zMini.optional(zMini.nullable(SessionModelSelectionV1Schema)), effort: z.optional(z.string().check(z.minLength(1))) }),
+    modelSelection: zMini.optional(zMini.nullable(SessionModelSelectionSchema)), effort: z.optional(z.string().check(z.minLength(1))) }),
 ]));
 export type WorkflowLiteralEngineSelectionV1 = z.infer<typeof WorkflowLiteralEngineSelectionV1Schema>;
 export const WorkflowStepSelectionV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(WorkflowStepExecutionSelectionSchema, {

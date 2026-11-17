@@ -4,7 +4,7 @@ import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.
 import { AgentExecutionTargetV1Schema } from '../../agents/executionTargetV1.js';
 import { ConnectedServiceBindingsV2IngressSchema } from '../../connect/connectedServiceBindings.js';
 import { SessionCapabilitySelectionAuthoringV1Schema } from '../../reach/sessionCapabilitySelectionV1.js';
-import { SessionModelSelectionV1Schema } from '../../providers/selection/v1.js';
+import { SessionModelSelectionSchema } from '../../providers/selection/v2.js';
 import { AgentSessionConfigurationSnapshotV1Schema } from '../../runtime/agentSessionV1.js';
 import { AgentPermissionIntentV1Schema, AgentSessionToolPolicyShapeV1 } from '../../runtime/permissionIntentV1.js';
 import { SessionAuthoringCheckoutCreationDraftV1Schema, SessionAuthoringTerminalV1Schema } from '../authoring/creationFieldsV1.js';
@@ -32,7 +32,7 @@ export const SessionSpawnNewSelectionV2BaseSchema = lazyZodSchema(() => z.strict
   organizationPlacement: z.optional(SessionOrganizationPlacementV1Schema),
   agentTarget: AgentExecutionTargetV1Schema,
   roleId: z.optional(z.string().check(z.trim(), z.minLength(1))),
-  modelSelection: z.optional(SessionModelSelectionV1Schema),
+  modelSelection: z.optional(SessionModelSelectionSchema),
   profileId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   approvalProfileId: z.optional(SessionAuthoringSelectionFieldsV1.approvalProfileId),
   secretReferenceOverlay: z.optional(SecretReferenceOverlayV1Schema),

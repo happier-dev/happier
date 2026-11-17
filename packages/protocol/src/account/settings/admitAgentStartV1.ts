@@ -6,8 +6,9 @@ import { buildBackendTargetKeyV2, parseBackendTargetKeyV2, type PersistedBackend
 import { assertNonEscalatingPermissionMode } from '../../actions/permissionPrivilege.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import type { ExecutionRunIntent } from '../../execution/runs/runPrimitives.js';
-import type { ProviderBoundModelRef, SessionModelSelectionV1 } from '../../providers/selection/v1.js';
-import type { RoleEngineV1, RoleRunsAsV1 } from '../../prompts/roles/roleArtifactV1.js';
+import type { ProviderBoundModelRef } from '../../providers/selection/v1.js';
+import { projectSessionModelSelectionV2ToV1, type SessionModelSelection } from '../../providers/selection/v2.js';
+import { readRoleEngineModelRefV1, readRoleEngineSessionModelSelectionV1, type RoleEngineV1, type RoleRunsAsV1 } from '../../prompts/roles/roleArtifactV1.js';
 import type { ResolvedRolesSnapshotV1 } from '../../prompts/roles/rolesV1.js';
 import type { AgentPermissionIntentV1 } from '../../runtime/permissionIntentV1.js';
 import type { SessionSpawnNewInputV2 } from '../../sessions/creation/sessionSpawnNewInputV2.js';
@@ -47,7 +48,7 @@ export type PermissionModeCeiling = AgentPermissionIntentV1;
 
 type AgentStartConfigurationV1 = Readonly<{
   agentTarget?: PersistedBackendTargetRefV2;
-  modelSelection?: ProviderBoundModelRef | SessionModelSelectionV1;
+  modelSelection?: ProviderBoundModelRef | SessionModelSelection;
   permissionMode?: AgentPermissionIntentV1;
   agentModeId?: string;
   configOptions?: NonNullable<SessionSpawnNewInputV2['configuration']>['options'];
@@ -170,7 +171,8 @@ function isUnresolved(value: unknown): value is Unresolved {
 }
 
 function modelRef(value: AgentStartFactsV1['modelSelection']) {
-  return value && !isUnresolved(value) && 'ref' in value ? value.ref : value;
+  if (!value || isUnresolved(value) || !('ref' in value)) return value;
+  return value.v === 1 ? value.ref : projectSessionModelSelectionV2ToV1(value)?.ref ?? value.ref;
 }
 
 function differs(value: unknown, baseline: unknown): boolean {
@@ -246,13 +248,10 @@ export function admitAgentStartV1(
       })();
       if (!parsedTarget) return refuse({ code: 'target_unavailable', reason: 'engine_unavailable', ...(roleId ? { roleId } : {}) });
       if (directKind) {
-        const inheritedModel = modelRef(baseline.configuration?.modelSelection);
-        const providerConnectionId = inheritedModel && !isUnresolved(inheritedModel)
-          && inheritedModel.agentTargetKey === engine.agentTargetKey ? inheritedModel.providerConnectionId : null;
         effectiveFacts = {
           ...facts,
           agentTarget: parsedTarget,
-          modelSelection: engine.modelId ? { agentTargetKey: engine.agentTargetKey, providerConnectionId, modelId: engine.modelId } : undefined,
+          modelSelection: readRoleEngineSessionModelSelectionV1(engine, baseline.configuration?.modelSelection),
           profileId: role?.profileId,
           ...(engine.effort ? { configOptions: {
             ...(!isUnresolved(facts.configOptions) ? facts.configOptions : {}),
@@ -266,7 +265,7 @@ export function admitAgentStartV1(
           ...facts,
           agentTarget: facts.agentTarget ?? parsedTarget,
           ...(facts.modelSelection === undefined && engine.modelId
-            ? { modelSelection: { agentTargetKey: engine.agentTargetKey, providerConnectionId: null, modelId: engine.modelId } }
+            ? { modelSelection: readRoleEngineModelRefV1(engine) }
             : {}),
         };
         effectiveTargets = [parsedTarget];

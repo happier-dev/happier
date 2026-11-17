@@ -5,7 +5,7 @@ import { createStoredReadSchema, defineStoredReadProjection } from '../../json/s
 import { AgentExecutionTargetV1Schema } from '../../agents/executionTargetV1.js';
 import { ConnectedServiceBindingsV2IngressSchema } from '../../connect/connectedServiceBindings.js';
 import { readCapabilitySelectionCarrierV1, SessionCapabilitySelectionAuthoringV1Schema } from '../../reach/sessionCapabilitySelectionV1.js';
-import { SessionModelSelectionV1Schema } from '../../providers/selection/v1.js';
+import { SessionModelSelectionSchema } from '../../providers/selection/v2.js';
 import { AgentSessionConfigurationSnapshotV1Schema } from '../../runtime/agentSessionConfigurationV1.js';
 import { AgentSessionToolPolicyShapeV1 } from '../../runtime/permissionIntentV1.js';
 import { AgentSessionStartupInstructionsMarkerV1Schema } from '../../runtime/agentSessionStartupInstructionsV1.js';
@@ -50,7 +50,7 @@ const createSessionCreationImmutableRecipeSchema = () => z.strictObject({
   }),
   organization: SessionOrganizationPlacementV1Schema,
   agentTarget: AgentExecutionTargetV1Schema,
-  modelSelection: z.nullable(SessionModelSelectionV1Schema),
+  modelSelection: z.nullable(SessionModelSelectionSchema),
   profileId: z.nullable(z.string().check(z.trim(), z.minLength(1))),
   approvalProfileId: z.optional(SessionAuthoringSelectionFieldsV1.approvalProfileId),
   /** Host-resolved creation provenance; absent from public launch selections. */

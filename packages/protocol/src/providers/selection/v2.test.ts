@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createSessionActiveModelSelection,
+  serializeSessionModelSelection,
+  deserializeSessionModelSelection,
   SessionActiveModelSelectionSchema,
   SessionModelSelectionV2Schema,
   projectSessionModelSelectionV2ToV1,
@@ -12,6 +14,20 @@ import { SessionActiveModelSelectionV1Schema } from './v1.js';
 import { SessionOwnerMetadataV1Schema, createSessionOwnerMetadataV1, projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1 } from '../../sessions/metadata/sessionMetadataSchemasV1.js';
 
 describe('SessionModelSelectionV2', () => {
+  it('retains the exact model source across process transport while accepting retained V1 inputs', () => {
+    const selections = [
+      { v: 1 as const, updatedAt: 1, ref: { agentTargetKey: 'backend:claude', providerConnectionId: null, modelId: 'legacy' } },
+      { v: 2 as const, updatedAt: 2, ref: { source: 'native' as const, agentTargetKey: 'backend:claude', modelId: 'native' } },
+      { v: 2 as const, updatedAt: 3, ref: { source: 'team_resource' as const, teamId: 'team', resourceId: 'resource',
+        expectedResourceRevision: 4, deliveryMode: 'direct' as const, agentTargetKey: 'backend:claude', modelId: 'shared' } },
+    ];
+    for (const selection of selections) {
+      const encoded = serializeSessionModelSelection(selection);
+      expect(deserializeSessionModelSelection(encoded)).toEqual(selection);
+      expect(() => deserializeSessionModelSelection(`${encoded}=`)).toThrow();
+    }
+  });
+
   it('retains native references only on the native Team route and carries accepted source comparisons', () => {
     const nativeDelivery = { managedId: 'managed', controllerInstallationId: 'controller', guestInstallationId: 'guest',
       bindingKey: 'binding', placeholderRef: 'reference', sourceRevision: 'source:1', providerTicket: 'a'.repeat(43) };

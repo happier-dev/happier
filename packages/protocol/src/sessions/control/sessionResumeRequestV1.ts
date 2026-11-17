@@ -5,7 +5,7 @@ import { BackendTargetRefV2Schema, normalizeBackendTargetRefV2InputToV2, type Ba
 import { SpawnSessionExecutionAuthorizationSchema, SpawnSessionTerminalSchema } from '../spawnSession.js';
 import { RuntimeDescriptorV1Schema } from '../metadata/runtimeDescriptorV1.js';
 import { SESSION_PERMISSION_MODES } from '../metadata/sessionPermissionModes.js';
-import { SessionModelSelectionV1Schema } from '../../providers/selection/v1.js';
+import { SessionModelSelectionSchema } from '../../providers/selection/v2.js';
 import { SessionAttachMetadataIdentityPolicySchema } from '../attach/metadataIdentityPolicy.js';
 import { SessionAuthoringValueV1Schema } from '../authoring/index.js';
 import { SessionInitialGoalRequestV1Schema } from '../work/state/sessionWorkStateRpc.js';
@@ -28,7 +28,7 @@ export const SessionResumeRequestV1Schema = lazyZodSchema(() => z.strictObject({
     attachMetadataIdentityPolicy: z.optional(SessionAttachMetadataIdentityPolicySchema),
     permissionMode: z.optional(z.enum(SESSION_PERMISSION_MODES)),
     permissionModeUpdatedAt: z.optional(z.number()),
-    modelSelection: z.optional(SessionModelSelectionV1Schema),
+    modelSelection: z.optional(SessionModelSelectionSchema),
     accountSettingsVersionHint: z.optional(z.number().check(z.int(), z.nonnegative())),
     initialTranscriptAfterSeq: z.optional(z.number().check(z.int(), z.nonnegative())),
     executionAuthorization: z.optional(SpawnSessionExecutionAuthorizationSchema),

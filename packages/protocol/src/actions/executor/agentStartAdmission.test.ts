@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { actionStartTargetUnavailableV1, admitActionAgentStartV1, resolveActionAgentStartContextV1, resolveActionAgentStartRequestsV1, resolveRunStartModelAndConfig, stampAgentStartSelectionV1 } from './agentStartAdmission.js';
+import { SessionModelSelectionSchema } from '../../providers/selection/v2.js';
 import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../../account/settings/sessionAgentSpawnPolicyV1.js';
 import { ExecutionRunStartRequestSchema } from '../../execution/runs/startRequest.js';
@@ -17,6 +18,51 @@ const nativeTarget = { kind: 'agent' as const, identity: { pluginId: 'native.age
 const roleTarget = { kind: 'agent' as const, identity: { pluginId: 'role.agent', localId: 'agent' } };
 
 describe('canonical Action agent-start adapter', () => {
+  it('keeps the retained V1 control on the same Workflow Action projection path', () => {
+    const modelSelection = SessionModelSelectionSchema.parse({ v: 1, updatedAt: 5, ref: {
+      agentTargetKey: 'agent:native.agent/agent', modelId: 'selected-model', providerConnectionId: null,
+    } });
+    const resolved = resolveActionAgentStartRequestsV1({ actionId: 'session.spawn_new',
+      input: { executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'path', path: '/repo' } },
+      context: {}, baseline: { machineId: 'machine', directory: '/repo' },
+      effectiveSelection: { selection: { agentTarget: nativeTarget, modelSelection }, overrideEngine: true } });
+    expect(resolved).toMatchObject({ ok: true, effectiveInput: { modelSelection: { v: 1, ref: modelSelection.ref } } });
+  });
+  it.each(['native', 'account_provider_connection', 'team_resource'] as const)(
+    'preserves the %s model source through Workflow Action admission and dispatch projection', source => {
+      const agentTargetKey = 'agent:native.agent/agent';
+      const modelSelection = SessionModelSelectionSchema.parse({ v: 2, updatedAt: 5, ref: {
+        source, agentTargetKey, modelId: 'selected-model',
+        ...(source === 'account_provider_connection' ? { providerConnectionId: 'connection' } : {}),
+        ...(source === 'team_resource' ? { teamId: 'team', resourceId: 'resource', expectedResourceRevision: 2, deliveryMode: 'direct' } : {}),
+      } });
+      const baseline = { machineId: 'machine', directory: '/repo', configuration: { agentTarget: nativeTarget, modelSelection } };
+      for (const actionId of ['session.spawn_new', 'execution.run.start'] as const) {
+        const resolved = resolveActionAgentStartRequestsV1({ actionId, input: actionId === 'session.spawn_new'
+          ? { executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'path', path: '/repo' } }
+          : { intent: 'task', instructions: 'Work', permissionMode: 'no_tools', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response' },
+          context: {}, baseline, effectiveSelection: { selection: { agentTarget: nativeTarget, modelSelection }, overrideEngine: true } });
+        if (!resolved.ok) throw new Error(resolved.errorCode);
+        const request = resolved.requests[0];
+        if (!request || (request.kind !== 'spawn_new' && request.kind !== 'execution_run')) throw new Error('Expected Agent start');
+        expect(request.facts.modelSelection).toEqual(modelSelection);
+        if (actionId === 'session.spawn_new') {
+          expect(resolved.effectiveInput.modelSelection).toEqual(modelSelection);
+          expect(SessionModelSelectionSchema.safeParse(resolved.effectiveInput.modelSelection).success).toBe(true);
+        } else {
+          expect(ExecutionRunStartRequestSchema.safeParse(resolved.effectiveInput).success).toBe(true);
+          if (source === 'team_resource') {
+            expect(resolved.effectiveInput).not.toHaveProperty('modelSelection');
+            expect(resolved.effectiveInput.teamCredentialModel).toEqual({ kind: 'team_credential_provider_model',
+              teamId: 'team', resourceId: 'resource', expectedResourceRevision: 2, deliveryMode: 'direct', agentTargetKey, modelId: 'selected-model' });
+          } else {
+            expect(resolved.effectiveInput.modelSelection).toEqual({ agentTargetKey, modelId: 'selected-model',
+              providerConnectionId: source === 'native' ? null : 'connection' });
+          }
+        }
+      }
+    },
+  );
   it('admits an unstamped Workflow Action Session birth through the ordinary Agent-start owner', async () => {
     let births = 0;
     const executor = createActionExecutor({ sessionSpawnNew: async () => { births++; return { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' }; } });

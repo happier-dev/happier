@@ -9,7 +9,8 @@ import { BackendTargetKeyV2InputSchema, PersistedBackendTargetRefV2Schema, build
 import { normalizeConnectedServiceSelectionInput } from '../../connect/normalizeConnectedServiceSelectionInput.js';
 import { AgentStartBaselineSelectionErrorV1, resolveAgentStartBaselineSelectionV1 } from './agentStartBaselineSelectionV1.js';
 export { resolveAgentStartBaselineSelectionV1 } from './agentStartBaselineSelectionV1.js';
-import { ProviderBoundModelRefSchema, type ProviderBoundModelRef } from '../../providers/selection/v1.js';
+import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
+import { projectSessionModelSelectionV2ToV1, SessionModelSelectionSchema, type SessionModelSelection } from '../../providers/selection/v2.js';
 import { parseAgentPermissionIntentV1Alias } from '../../runtime/permissionIntentV1.js';
 import { AcpConfigOptionOverridesV1Schema } from '../../sessions/metadata/metadataOverridesV1.js';
 import { SessionSpawnNewInputV2BaseSchema, SessionSpawnNewInputV2Schema } from '../../sessions/creation/sessionSpawnNewInputV2.js';
@@ -23,7 +24,7 @@ import { TeamCredentialProviderModelSelectionV1Schema } from '../../teams/creden
 import { ExecutionRunIntentSchema } from '../../execution/runs/runPrimitives.js';
 import { projectExecutionRunChildChoiceV1, withExecutionRunStartFailureDetails } from '../../execution/runs/responseSchemas.js';
 import { resolveWorkflowStepSelectionV1, type WorkflowResolvedStepSelectionV1 } from '../../workflows/workflowStepSelectionV1.js';
-import { readRoleEngineModelRefV1, type RoleEngineV1 } from '../../prompts/roles/roleArtifactV1.js';
+import { readRoleEngineSessionModelSelectionV1, type RoleEngineV1 } from '../../prompts/roles/roleArtifactV1.js';
 import { parseQualifiedPluginContributionKey } from '../../plugins/contributionIdentity.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { ManagedAcquireAgentStartV1Schema } from '../../machines/managed/agentStartV1.js';
@@ -109,6 +110,15 @@ export function readActionWorkflowTargetInputFieldV1(actionId: string): 'agentTa
         : actionId === 'execution.run.start' ? 'backendTarget'
             : actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys';
 }
+/** Native Execution Actions retain their existing split model selectors. */
+function projectExecutionModelSelectionV1(selection: SessionModelSelection) {
+    if (selection.v === 2 && selection.ref.source === 'team_resource') {
+        const { source: _source, ...ref } = selection.ref;
+        return { teamCredentialModel: { kind: 'team_credential_provider_model' as const, ...ref } };
+    }
+    const legacy = selection.v === 1 ? selection : projectSessionModelSelectionV2ToV1(selection);
+    return { modelSelection: legacy?.ref };
+}
 /** Workflow selection fields shared by static validation and native admission. */
 export function projectActionWorkflowSelectionInputV1(
     actionId: string,
@@ -133,8 +143,9 @@ export function projectActionWorkflowSelectionInputV1(
         projected.agentModeId = selected.acpSessionModeId;
     if (projected.modelSelection === undefined && projected.modelId === undefined && projected.teamCredentialModel === undefined
         && selected.modelSelection !== undefined) {
-        projected.modelSelection = actionId === 'session.spawn_new' || selected.modelSelection === null
-            ? selected.modelSelection : selected.modelSelection.ref;
+        if (actionId === 'session.spawn_new' || selected.modelSelection === null)
+            projected.modelSelection = selected.modelSelection;
+        else Object.assign(projected, projectExecutionModelSelectionV1(selected.modelSelection));
     }
     if (actionId !== 'session.spawn_new' && projected.sessionConfigOptionOverrides === undefined && projected.configOptions === undefined
         && selected.sessionConfigOptionOverrides !== undefined) projected.sessionConfigOptionOverrides = selected.sessionConfigOptionOverrides;
@@ -213,7 +224,7 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
             const identity = parseQualifiedPluginContributionKey(model.ref.agentTargetKey);
             modelTarget = identity ? { kind: 'agent', identity } : null;
         }
-        return modelTarget && buildBackendTargetKeyV2(modelTarget) === buildBackendTargetKeyV2(target) ? model.ref : undefined;
+        return modelTarget && buildBackendTargetKeyV2(modelTarget) === buildBackendTargetKeyV2(target) ? model.v === 1 ? model.ref : model : undefined;
     };
     const selectedFacts = (facts: AgentStartFactsV1): AgentStartFactsV1 => {
         if (!selected)
@@ -248,7 +259,7 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
         const projected = projectAgentStartSelectionV1(input, { engine: { agentTargetKey: buildBackendTargetKeyV2(selected.agentTarget),
                 ...(selected.modelSelection ? { modelId: selected.modelSelection.ref.modelId } : {}), ...(typeof effort === 'string' ? { effort } : {}) },
             ...(kind === 'spawn_new' && selected.profileId ? { profileId: selected.profileId } : {}),
-        }, kind, baseline, selected.modelSelection?.ref);
+        }, kind, baseline, selected.modelSelection ?? undefined);
         // A native Execution Action profile is plugin-owned execution policy, not
         // the portable Launch Profile used to materialize Workflow Agent settings.
         return kind === 'spawn_new' ? projected : { ...projected,
@@ -527,7 +538,9 @@ export function stampAgentStartSelectionV1(input: Readonly<Record<string, unknow
             const parentModel = baseline.configuration?.modelSelection;
             const details = withExecutionRunStartFailureDetails({ childChoice: projectExecutionRunChildChoiceV1({
                 agentTargetKey: buildBackendTargetKeyV2(target), parentRouteCompatibility: 'incompatible',
-                parentModelSelection: parentModel && 'ref' in parentModel ? parentModel.ref : parentModel ?? null,
+                parentModelSelection: parentModel && 'ref' in parentModel
+                    ? (parentModel.v === 1 ? parentModel : projectSessionModelSelectionV2ToV1(parentModel))?.ref ?? null
+                    : parentModel ?? null,
             }) }, 'noRunCreated');
             Object.assign(error, { details, cause: {
                 ok: false, errorCode: error.code, error: error.message, details,
@@ -542,7 +555,7 @@ export function projectAgentStartSelectionV1(input: Readonly<Record<string, unkn
     intent?: Extract<ReturnType<typeof admitAgentStartV1>, {
         ok: true;
     }>['stamped']['intent'];
-}>, kind: 'spawn_new' | 'execution_run', baseline: AgentStartContextV1['baseline'], modelSelection?: ProviderBoundModelRef) {
+}>, kind: 'spawn_new' | 'execution_run', baseline: AgentStartContextV1['baseline'], modelSelection?: SessionModelSelection) {
     const stamped = selection;
     const target = parseBackendTargetKeyV2(stamped.engine.agentTargetKey);
     const result: Record<string, unknown> = { ...input, ...(kind === 'spawn_new' ? { agentTarget: target } : { backendTarget: target }) };
@@ -566,14 +579,14 @@ export function projectAgentStartSelectionV1(input: Readonly<Record<string, unkn
             };
     }
     if (stamped.engine.modelId) {
-        const baselineModel = baseline.configuration?.modelSelection;
-        const inheritedModel = baselineModel && 'ref' in baselineModel ? baselineModel.ref : baselineModel;
-        const ref = modelSelection ?? readRoleEngineModelRefV1(stamped.engine, inheritedModel)!;
+        const inputSelection = SessionModelSelectionSchema.safeParse(input.modelSelection);
+        const inherited = modelSelection ?? (inputSelection.success ? inputSelection.data : baseline.configuration?.modelSelection);
+        const selected = readRoleEngineSessionModelSelectionV1(stamped.engine, inherited)!;
         if (kind === 'spawn_new')
-            result.modelSelection = { v: 1, ref, updatedAt: 0 };
+            result.modelSelection = selected;
         else {
             result.modelId = stamped.engine.modelId;
-            result.modelSelection = ref;
+            Object.assign(result, projectExecutionModelSelectionV1(selected));
         }
     }
     if (stamped.profileId)

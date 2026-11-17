@@ -9,7 +9,8 @@ import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { ComposerRefV1Schema } from '../plugins/ui/composerRef.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDirectoryIntentV1.js';
-import { ProviderBoundModelRefSchema, SessionModelSelectionV1Schema } from '../providers/selection/v1.js';
+import { ProviderBoundModelRefSchema } from '../providers/selection/v1.js';
+import { SessionModelSelectionSchema } from '../providers/selection/v2.js';
 import { PersistedBackendTargetRefV2Schema } from '../backends/targets/backendTargetRefV2.js';
 import { TeamCredentialProviderModelSelectionV1Schema } from '../teams/credentials/providerModelCatalogV1.js';
 import { DiscussionMessageRefV1Schema } from '../discussions/references.js';
@@ -135,7 +136,7 @@ export const NewSessionDraftModelIntentSchema = lazyZodSchema(() => z.discrimina
 export type NewSessionDraftModelIntent = z.infer<typeof NewSessionDraftModelIntentSchema>;
 export const SessionAgentPickerSelectionSchema = lazyZodSchema(() => z.strictObject({
     modelId: z.string().check(z.minLength(1)),
-    modelSelection: z.optional(z.nullable(SessionModelSelectionV1Schema)),
+    modelSelection: z.optional(z.nullable(SessionModelSelectionSchema)),
     modelLabel: z.optional(z.nullable(z.string())),
     sessionModeId: z.nullable(z.string()),
     configOverrides: z.record(z.string(), z.string()),

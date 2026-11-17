@@ -4,7 +4,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.js';
 
 import { RuntimeDescriptorV1Schema } from '../metadata/runtimeDescriptorV1.js';
-import { SessionModelSelectionV1Schema } from '../../providers/selection/v1.js';
+import { SessionModelSelectionSchema } from '../../providers/selection/v2.js';
 import {
   ConnectedServiceBindingsV2IngressSchema,
 } from '../../connect/connectedServiceBindings.js';
@@ -461,7 +461,7 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
       automationNewSession: 'editable', automationExistingSession: 'hidden' },
   },
   modelSelection: {
-    schema: z._default(z.nullable(SessionModelSelectionV1Schema), null),
+    schema: z._default(z.nullable(SessionModelSelectionSchema), null),
     description: 'Explicit target-bound model selection; null means the agent default/automatic model.',
     storageClass: 'template',
     draftStorage: 'sync',

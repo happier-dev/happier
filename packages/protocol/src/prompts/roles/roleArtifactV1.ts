@@ -5,6 +5,7 @@ import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModel
 import { buildBackendTargetKeyV2, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '../../backends/targets/backendTargetRefV2.js';
 import type { AgentExecutionTargetV1 } from '../../agents/executionTargetV1.js';
 import type { ProviderBoundModelRef, SessionModelSelectionV1 } from '../../providers/selection/v1.js';
+import { projectSessionModelSelectionV2ToV1, readSessionModelSelectionProviderConnectionId, type SessionModelRefV2, type SessionModelSelection } from '../../providers/selection/v2.js';
 import type { AcpConfigOptionOverridesV1 } from '../../sessions/metadata/metadataOverridesV1.js';
 import { PROVIDER_REASONING_EFFORT_OPTION_ID } from '../../providers/catalog/reasoningEffort.js';
 
@@ -19,8 +20,8 @@ export const RoleEngineV1Schema = lazyZodSchema(() => z.strictObject({
 export type RoleEngineV1 = z.infer<typeof RoleEngineV1Schema>;
 
 /** A model ref's fields on a role engine: the model and, when a Provider connection serves it, that connection. */
-export function roleEngineModelFieldsV1(ref: ProviderBoundModelRef | null | undefined): Pick<RoleEngineV1, 'modelId' | 'providerConnectionId'> {
-  return { ...(ref?.modelId ? { modelId: ref.modelId } : {}), ...(ref?.providerConnectionId ? { providerConnectionId: ref.providerConnectionId } : {}) };
+export function roleEngineModelFieldsV1(ref: ProviderBoundModelRef | SessionModelRefV2 | null | undefined): Pick<RoleEngineV1, 'modelId' | 'providerConnectionId'> {
+  return { ...(ref?.modelId ? { modelId: ref.modelId } : {}), ...(ref && 'providerConnectionId' in ref && ref.providerConnectionId ? { providerConnectionId: ref.providerConnectionId } : {}) };
 }
 
 /**
@@ -38,6 +39,21 @@ export function readRoleEngineModelRefV1(
   return providerConnectionId
     ? { agentTargetKey: engine.agentTargetKey, providerConnectionId, modelId: engine.modelId }
     : { agentTargetKey: engine.agentTargetKey, providerConnectionId: null, modelId: engine.modelId };
+}
+
+/** Preserve a matching Session source; a Role model override uses the existing legacy inheritance rule. */
+export function readRoleEngineSessionModelSelectionV1(
+  engine: Pick<RoleEngineV1, 'agentTargetKey' | 'modelId' | 'providerConnectionId'>,
+  inherited?: ProviderBoundModelRef | SessionModelSelection | null,
+): SessionModelSelection | undefined {
+  const selection: SessionModelSelection | undefined = inherited
+    ? 'ref' in inherited ? inherited : { v: 1, updatedAt: 0, ref: inherited } : undefined;
+  if (engine.modelId && selection && selection.ref.agentTargetKey === engine.agentTargetKey
+    && selection.ref.modelId === engine.modelId && (engine.providerConnectionId === undefined
+      || engine.providerConnectionId === readSessionModelSelectionProviderConnectionId(selection))) return selection;
+  const legacy = selection?.v === 2 ? projectSessionModelSelectionV2ToV1(selection) : selection;
+  const ref = readRoleEngineModelRefV1(engine, legacy?.ref);
+  return ref ? { v: 1, updatedAt: 0, ref } : undefined;
 }
 
 /** The engine fields of a Session-authoring selection: what the shared engine picker reads and writes. */
