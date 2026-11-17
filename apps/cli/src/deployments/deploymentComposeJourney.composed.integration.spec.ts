@@ -83,7 +83,8 @@ import { readArtifactHeadersForCallerInTx, resolveArtifactAccessInTx } from '../
 import type { createManagedServicesOwner, ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { readSettings, updateSettings } from '@/persistence';
-import { configuration } from '@/configuration';
+import { configuration, reloadConfiguration } from '@/configuration';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { ApiClient } from '@/api/api';
@@ -540,10 +541,15 @@ export function assertP42RuntimeSecretHop(input: Readonly<{
 describe.skipIf(process.platform !== 'linux')('Source audience Environment content', () => {
     it.each(['plain', 'e2ee'] as const)('opens Environment and retained Link content after a Team Source share in %s mode', async encryptionMode => {
         const sharedHome = await createDeploymentSocketHome({ encryptionMode,
+            dbProvider: process.env.HAPPIER_DB_PROVIDER === 'postgres' ? 'postgres' : 'sqlite',
             ...(encryptionMode === 'e2ee' ? { prepareMachineContent: (key: Uint8Array, metadata: Readonly<Record<string, unknown>>) =>
                 createMachineContentCodec({ encryptionMode: 'e2ee', encryptionKey: key,
                     encryptionVariant: 'dataKey' }).encodeStored(metadata) } : {}) });
         const cleanup: Array<() => Promise<void>> = [() => sharedHome.close()];
+        const homeEnv = createEnvKeyScope(['HAPPIER_SERVER_URL', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_HOME_DIR']);
+        homeEnv.patch({ HAPPIER_SERVER_URL: sharedHome.baseUrl, HAPPIER_ACTIVE_SERVER_ID: sharedHome.serverId,
+            HAPPIER_HOME_DIR: join(sharedHome.baseDir, 'requester-home') });
+        reloadConfiguration();
         try {
             // Installation lookup is the OS boundary; Action admission, daemon,
             // content writer, Source mutation and Home readers remain real.
@@ -612,7 +618,7 @@ describe.skipIf(process.platform !== 'linux')('Source audience Environment conte
                 definition: { from: 'compose', document: 'services:\n  web:\n    image: nginx:alpine\n', profiles: [], services: ['web'] },
                 firstTargetLink: { machines: [{ machineId: sharedHome.machineId, installationId: sharedHome.installationId }] },
             }));
-            if (!created.ok) throw new Error(`Source audience fixture create refused: ${created.errorCode}`);
+            if (!created.ok) throw new Error(`Source audience fixture create refused: ${created.errorCode}; ${JSON.stringify(created.failureCause)}`);
             const environment = DeploymentEnvironmentCreateResultV1Schema.parse(created.result);
             if (!environment.ok) throw new Error(environment.error);
             const environmentUrl = `${sharedHome.baseUrl}/v1/deployments/environments/${environment.environmentId}?serverId=${sharedHome.serverId}`;
@@ -680,6 +686,13 @@ describe.skipIf(process.platform !== 'linux')('Source audience Environment conte
             const sharedResult = DeploymentEnvironmentGetResultV1Schema.parse(await sharedEnvironment.json());
             expect.soft({ status: sharedEnvironment.status, result: sharedResult.ok ? 'ok' : sharedResult.error })
                 .toEqual({ status: 200, result: 'ok' });
+            // With no ordinary Artifact grant, withdrawing the actual Source
+            // share withdraws inherited content access as well.
+            await setSourceAudience(false);
+            expect((await fetch(environmentUrl, { headers: memberHeaders })).status).toBe(404);
+            expect((await observeHeaders()).map(row => row.memberAccess)).toEqual([null, null]);
+            await setSourceAudience(true);
+            expect((await observeHeaders()).map(row => row.memberHeader)).toEqual(['ok', 'ok']);
             // The ordinary grant is a causal control and an independent right:
             // withdrawing Source visibility must not remove this direct grant.
             for (const reference of references) {
@@ -695,7 +708,7 @@ describe.skipIf(process.platform !== 'linux')('Source audience Environment conte
             expect((await fetch(environmentUrl, { headers: memberHeaders })).status).toBe(200);
         } finally {
             try { for (const dispose of cleanup.reverse()) await dispose(); }
-            finally { vi.restoreAllMocks(); vi.unstubAllEnvs(); }
+            finally { vi.restoreAllMocks(); vi.unstubAllEnvs(); homeEnv.restore(); reloadConfiguration(); }
         }
     }, 180_000);
 });

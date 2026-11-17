@@ -7,6 +7,7 @@ import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createLightSqliteHarness } from './lightSqliteHarness.ts';
+import { createDatabaseIntegrationHarness } from './databaseIntegrationHarness.ts';
 import { createAuthenticatedTestApp } from '../app/api/testkit/sqliteFastify.ts';
 import { registerDeploymentRoutes } from '../app/api/routes/deployments/deploymentRoutes.ts';
 import { projectSourceRoutes } from '../app/api/routes/projects/projectSourceRoutes.ts';
@@ -14,6 +15,7 @@ import { artifactsRoutes } from '../app/api/routes/artifacts/artifactsRoutes.ts'
 import { machinesRoutes } from '../app/api/routes/machines/machinesRoutes.ts';
 import { authRoutes } from '../app/api/routes/auth/authRoutes.ts';
 import { accountRoutes } from '../app/api/routes/account/accountRoutes.ts';
+import { changesRoutes } from '../app/api/routes/changes/changesRoutes.ts';
 import { featuresRoutes } from '../app/api/routes/features/featuresRoutes.ts';
 import { registerExternalActionRoutes } from '../app/api/routes/actions/registerExternalActionRoutes.ts';
 import { registerPluginAvailabilityRoutes } from '../app/plugins/availability/routes.ts';
@@ -22,9 +24,9 @@ import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/enc
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { startSocket } from '../app/api/socket.ts';
 import { auth } from '../app/auth/auth.ts';
+import { readCachedServerIdentityIdForHotPath } from '../app/serverIdentity/serverIdentity.ts';
 import { createArtifact } from '../app/artifacts/artifactWriteService.ts';
 import { db } from '../storage/db.ts';
-import { initiateShutdown } from '../utils/process/shutdown.ts';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 import { createReleaseLessDeclarationV1 } from '../app/plugins/availability/currentDeclaration.ts';
 import { createHomeConnectionDescriptorContinuityStoreForServer } from '../app/features/homeConnectionDescriptorContinuity.ts';
@@ -32,21 +34,25 @@ import { readHomeConnectionDescriptor } from '../app/features/homeConnectionDesc
 import { createEphemeralTlsServerFixture } from '../../../../packages/tests/src/testkit/tls/ephemeralTlsServerFixture.mjs';
 
 /** Real storage/auth/Socket boundary. No CLI source is imported into the server. */
-export async function createDeploymentSocketHome({ encryptionMode = 'plain', credentialVariant = 'dataKey', prepareMachineContent, configureApp,
-    serverId = `srv_${randomUUID().replaceAll('-', '')}` } = {}) {
-    const harness = await createLightSqliteHarness({
+export async function createDeploymentSocketHome({ encryptionMode = 'plain', credentialVariant = 'dataKey', dbProvider = 'sqlite', prepareMachineContent, configureApp,
+    serverId = readCachedServerIdentityIdForHotPath() ?? `srv_${randomUUID().replaceAll('-', '')}` } = {}) {
+    if (dbProvider === 'postgres' && (process.env.HAPPIER_DB_PROVIDER !== 'postgres' || !process.env.HAPPIER_DB_CONTRACT_CONTAINER_ID)) {
+        throw new Error('The PostgreSQL deployment journey requires the disposable DB-contract runner');
+    }
+    const harness = await (dbProvider === 'postgres' ? createDatabaseIntegrationHarness : createLightSqliteHarness)({
         tempDirPrefix: 'happier-deployment-socket-home-', initAuth: true, initEncrypt: true,
         env: { HAPPIER_SERVER_IDENTITY_ID: serverId, AUTH_REQUIRED_LOGIN_PROVIDERS: '',
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: 'none' },
     });
     let home;
+    let closeSocket;
     let tls;
     const previousCaCertificates = getCACertificates('default');
     const close = async () => {
         try {
             if (home) {
                 home.server.closeAllConnections();
-                try { await initiateShutdown('deployment-socket-fixture'); }
+                try { await closeSocket?.(); }
                 finally { await home.close(); }
             }
         } finally {
@@ -98,13 +104,14 @@ export async function createDeploymentSocketHome({ encryptionMode = 'plain', cre
             }) : privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
         } });
         // Routes capture the presence port during registration, as in startApi.
-        startSocket(home);
+        closeSocket = startSocket(home);
         registerDeploymentRoutes(home);
         projectSourceRoutes(home);
         artifactsRoutes(home);
         machinesRoutes(home);
         authRoutes(home);
         accountRoutes(home);
+        changesRoutes(home);
         const homeConnectionDescriptorContinuityStore = createHomeConnectionDescriptorContinuityStoreForServer(process.env);
         if (!homeConnectionDescriptorContinuityStore) throw new Error('Home descriptor continuity unavailable');
         featuresRoutes(home, { homeConnectionDescriptorContinuityStore });
