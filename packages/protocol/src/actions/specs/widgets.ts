@@ -1,4 +1,4 @@
-import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
+import { lazyActionSpecArray, lazyActionSpecRecord } from '../lazyActionSpecValue.js';
 
 import type { ApprovalPresentationContext, PreNormalizedActionSpec } from '../actionSpecs.js';
 import type { InputFieldHint } from '../../inputs/inputFields.js';
@@ -87,15 +87,15 @@ const pathsField = { path: 'paths', title: 'Input paths', widget: 'text_list', l
 const revisionField = { path: 'expectedRevision', title: 'Current layout revision', widget: 'json', required: true,
   description: 'Use the exact revision returned by the current layout read, or null for a missing layout. Intervening edits refuse the change.' } as const satisfies InputFieldHint;
 const nameField = { path: 'name', title: 'Name', widget: 'text', required: true } as const satisfies InputFieldHint;
-const widthField = { path: 'width', title: 'Group width', widget: 'select',
+const widthField = lazyActionSpecRecord(() => { path: 'width', title: 'Group width', widget: 'select',
   options: WidgetGroupWidthV1Schema.options.map(value => ({ value, label: value === 'half' ? 'Half width' : 'Full width' })),
-  description: 'The selected width must fit every child widget.' } as const satisfies InputFieldHint;
+  description: 'The selected width must fit every child widget.' } as const satisfies InputFieldHint);
 const sizeField = { path: 'size', title: 'Widget size', widget: 'select',
   options: WIDGET_SIZE_ORDER_V1.map(value => ({ value, label: value.charAt(0).toUpperCase() + value.slice(1) })),
   description: 'Choose a size declared by this widget and supported by the target surface; inspect widgets.catalog.list for available sizes.' } as const satisfies InputFieldHint;
-const areaField = { path: 'area', title: 'Project area', widget: 'select',
+const areaField = lazyActionSpecRecord(() => { path: 'area', title: 'Project area', widget: 'select',
   options: WidgetProjectAreaV1Schema.options.map(value => ({ value, label: value === 'main' ? 'Main' : 'Aside' })),
-  description: 'For Project layouts, choose the main area or aside in the same document.' } as const satisfies InputFieldHint;
+  description: 'For Project layouts, choose the main area or aside in the same document.' } as const satisfies InputFieldHint);
 const indexField = { path: 'toIndex', title: 'Insertion index', widget: 'integer',
   description: 'Zero-based widget position in the current view.' } as const satisfies InputFieldHint;
 const groupIdField = { path: 'groupId', title: 'Group id', widget: 'text',

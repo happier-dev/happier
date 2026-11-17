@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { projectNativeJsonValueForTransport } from '../../json/strictJsonValue.js';
@@ -28,7 +29,7 @@ const reviewedServer = z.strictObject({
   where: z.optional(ReachRulesChangeV1Schema), toolPolicy: z.optional(McpServerToolPolicyV1Schema), signIn: z.optional(z.literal('OAuth')),
   configOverrides: z.optional(z.array(reviewedOverride)),
 });
-const mcpReviewInput = z.strictObject({
+const mcpReviewInput = lazyZodSchema(() => z.strictObject({
   serverId: z.optional(z.string().check(z.minLength(1))), servers: z.optional(z.array(reviewedServer)),
   name: z.optional(z.string()), title: z.optional(z.string()),
   from: z.optional(RegistryItemPointerV1Schema), inputs: z.optional(z.array(z.string())),
@@ -38,7 +39,7 @@ const mcpReviewInput = z.strictObject({
   removeBindings: z.optional(z.boolean()), stepUp: z.optional(z.boolean()), dryRun: z.optional(z.boolean()),
   oauthApp: z.optional(z.enum(['set', 'remove'])), clientId: z.optional(z.string().check(z.minLength(1))),
   configOverrides: z.optional(z.array(reviewedOverride)),
-});
+}));
 
 function mcpReviewSchema(id: McpServerActionIdV1) {
   if (id === 'mcp.servers.tools.set' || id === 'mcp.servers.signIn.start') return z.required(mcpReviewInput, { serverId: true });

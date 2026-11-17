@@ -168,7 +168,7 @@ export const WorkflowInputReferenceV1Schema = z.strictObject({
   kind: z.literal('input'), name: WorkflowInputNameSchema, path: z.optional(WorkflowResultPathSchema),
 });
 
-export const WorkflowValueReferenceSchema: z.ZodMiniType<WorkflowValueReference> = z.discriminatedUnion('kind', [
+export const WorkflowValueReferenceSchema: z.ZodMiniType<WorkflowValueReference> = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('literal'), value: StrictJsonValueSchema }),
   WorkflowInputReferenceV1Schema,
   WorkflowTriggerEventReferenceV1Schema,
@@ -185,7 +185,7 @@ export const WorkflowValueReferenceSchema: z.ZodMiniType<WorkflowValueReference>
       }
     })),
   z.strictObject({ kind: z.literal('iteration'), field: z.enum(['index', 'position', 'count', 'stopReason']) }),
-]) as unknown as z.ZodMiniType<WorkflowValueReference>;
+]) as unknown as z.ZodMiniType<WorkflowValueReference>);
 
 export const WORKFLOW_COMPARE_OPERATORS = ['eq', 'neq', 'lt', 'lte', 'gt', 'gte'] as const;
 export type WorkflowCompareOperator = (typeof WORKFLOW_COMPARE_OPERATORS)[number];

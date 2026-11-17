@@ -58,6 +58,9 @@ describe('Session Action confirmation', () => {
             sessionId: 's1',
             mode: 'plain',
             ctx: null,
+            // The bound Session supplies its live owner metadata; no profile
+            // reference means this fixture uses the injected runtime policy.
+            getCurrentSessionMetadata: () => ({}),
             actionsSettingsProvider: createScopedRuntimeActionSettingsProvider(normalizeActionsSettingsV1({
                 v: 1,
                 actions: {
@@ -65,6 +68,9 @@ describe('Session Action confirmation', () => {
                 },
             })),
         }, {
+            // Blocking Session confirmation belongs to this retained host
+            // operation; ordinary durable Agent reads use deferred approval.
+            hostActionApprovalLifetime: { operationId: 'session-action-1', signal: lifetime.signal },
             sessionActionConfirmation: async (request) => await adapter.confirm(request, {
                 turnId: 'turn-1',
                 lifetimeSignal: lifetime.signal,
@@ -76,6 +82,9 @@ describe('Session Action confirmation', () => {
         const execution = executor.execute('session.activity.get', { sessionId: 's1' }, {
             surface: 'agent',
             authority: 'account_automation',
+            signal: lifetime.signal,
+            actionCaller: { kind: 'host' },
+            operationAcceptance: { operationId: 'session-action-1', actionId: 'session.activity.get', accept: () => {} },
             defaultSessionId: 's1',
             sessionInputSource: {
                 sourceSessionId: 's1',

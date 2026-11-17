@@ -49,19 +49,22 @@ afterEach(() => {
 });
 
 describe('runtime Actions policy binding', () => {
-  it('uses the injected Session confirmation for native Action callers without Account Artifact credentials', async () => {
+  it('requires an Artifact owner for durable Agent reads despite an injected Session confirmation', async () => {
+    const sessionActionConfirmation = vi.fn(async () => ({ decision: 'reject' as const, isCurrent: () => true }));
     const executor = createCliActionExecutor({
       token: 'restricted-runtime-token', sessionId: 'session-a', mode: 'plain', ctx: null,
       pluginActionExecutionOwner: 'current_process',
+      getCurrentSessionMetadata: () => ({}),
       actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({
         v: 1, actions: { 'session.activity.get': { approvalRequiredSurfaces: ['agent'] } },
       }) },
       // Human response is the real Session transport boundary.
-      sessionActionConfirmation: async () => ({ decision: 'reject' as const, isCurrent: () => true }),
+      sessionActionConfirmation,
     });
     await expect(executor.execute('session.activity.get', { sessionId: 'session-a' }, {
       surface: 'agent', authority: 'account_automation', defaultSessionId: 'session-a',
-    })).resolves.toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+    })).resolves.toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    expect(sessionActionConfirmation).not.toHaveBeenCalled();
   });
 
   it('fails a scoped-runtime approval closed when the Session producer is unavailable', async () => {
@@ -83,8 +86,8 @@ describe('runtime Actions policy binding', () => {
       defaultSessionId: 'session-a',
     })).resolves.toEqual({
       ok: false,
-      errorCode: 'approvals_not_supported',
-      error: 'approvals_not_supported',
+      errorCode: 'approval_context_unavailable',
+      error: 'approval_context_unavailable',
     });
     expect(harness.deps.approvalsList).toBeUndefined();
     expect(harness.deps.approvalsCreate).toBeUndefined();
@@ -121,8 +124,8 @@ describe('runtime Actions policy binding', () => {
     const inputs = {
       'machines.pools.list': {},
       'machines.pools.get': { poolId },
-      'machines.pools.create': { poolId, name: 'Development', members: [] },
-      'machines.pools.update': { poolId, expectedRevision: 0, name: 'Development', members: [] },
+      'machines.pools.create': { poolId, name: { content: { t: 'plain', v: 'Development' }, recipients: [] }, members: [] },
+      'machines.pools.update': { poolId, expectedRevision: 0, name: { content: { t: 'plain', v: 'Development' }, recipients: [] }, members: [] },
       'machines.pools.delete': { poolId, expectedRevision: 0 },
       'machines.pools.resolve': { poolId, requestKey: 'selection-a' },
     } as const;
@@ -138,14 +141,17 @@ describe('runtime Actions policy binding', () => {
   });
 
   it.each(['execute', 'prepare'] as const)('rechecks runtime enablement after a blocking approval during %s', async (method) => {
+    const lifetime = new AbortController();
     let settings = normalizeActionsSettingsV1({ v: 1, actions: {
       'action.spec.get': { approvalRequiredSurfaces: ['agent'] },
     } });
     let storedRequest: ApprovalRequest | null = null;
     const harness = createCliActionExecutorHarness({
       token: 'runtime-alice', sessionId: 'session-a', mode: 'plain', ctx: null,
+      getCurrentSessionMetadata: () => ({}),
       actionsSettingsProvider: { getActionsSettings: () => settings },
     }, {
+      hostActionApprovalLifetime: { actionId: 'action.spec.get', surface: 'agent', signal: lifetime.signal },
       // The Account-private Artifact store and human decision are external boundaries.
       approvalsCreate: async ({ request }) => {
         storedRequest = request;
@@ -168,7 +174,7 @@ describe('runtime Actions policy binding', () => {
     const result = await harness.executor[method]('action.spec.get', { id: 'session.message.send' }, {
       surface: 'agent', authority: 'account_automation', defaultSessionId: 'session-a',
       serverId: 'runtime-policy-home', serverIdentityId: 'runtime-policy-home-identity',
-      actionRequestId: `runtime-policy-${method}`,
+      actionRequestId: `runtime-policy-${method}`, signal: lifetime.signal,
       defaultSessionMachineId: 'runtime-policy-machine',
     });
     if (method === 'prepare') {

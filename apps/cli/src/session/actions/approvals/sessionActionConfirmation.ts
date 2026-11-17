@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { randomUUID } from 'node:crypto';
 import { SessionActionConfirmationResponseTargetV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionActionConfirmationsV1';
 import { SessionInputSourceSessionV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
@@ -10,7 +11,7 @@ import { HAPPIER_ACTION_REQUEST_SOURCE } from '@/agent/permissions/requestKind';
 import { deepEqual, hashObject } from '@/utils/deterministicJson';
 
 const RESPONSE_TARGET_KIND = 'happier_action_confirmation_v1';
-const SessionActionResponseTargetSchema = SessionActionConfirmationResponseTargetV1Schema;
+const SessionActionResponseTargetSchema = lazyZodSchema(() => SessionActionConfirmationResponseTargetV1Schema);
 
 type Confirmation = NonNullable<ActionExecutorDeps['sessionActionConfirmation']>;
 type ConfirmationRequest = Parameters<Confirmation>[0];

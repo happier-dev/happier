@@ -94,7 +94,7 @@ function boundedNfcString(maxUtf8Bytes: number, label: string) {
   }));
 }
 
-const OCCURRENCE_ID_SCHEMA = AutomationEventSourceOrOccurrenceIdV1Schema;
+const OCCURRENCE_ID_SCHEMA = lazyZodSchema(() => AutomationEventSourceOrOccurrenceIdV1Schema);
 export const AutomationConversationBindingIdV1Schema = boundedNfcString(
   256,
   'Conversation binding identifiers',

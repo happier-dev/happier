@@ -1,3 +1,4 @@
+import { memoizeActionSpecValue } from '@happier-dev/protocol/actions/lazyActionSpecValue';
 import { projectProviderSessionFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type {
   SessionRuntimeTeamCredentialDenialDetailsV1,
@@ -100,7 +101,7 @@ export function readSessionPreparationFailureDiagnostic(error: unknown): Readonl
     && closedCause.failureReason !== 'unclassified_provider_error' ? closedCause.failureReason
     : closedCause?.code && (ProviderErrorCodeV1Schema.safeParse(closedCause.code).success
       || readAgentStartupFailureCode(closedCause.code)) ? closedCause.code : null;
-  const originalCode = readClosedField(error, 'code', preparationDiagnosticCodes);
+  const originalCode = readClosedField(error, 'code', preparationDiagnosticCodes());
   const startupDetails = readAgentStartupFailureDetails({ code: originalCode,
     reason: readDataField(error, 'reason') ?? readDataField(readDataField(error, 'details'), 'reason') });
   const directReason = readClosedField(error, 'reason', preparationDiagnosticReasons);
@@ -110,18 +111,18 @@ export function readSessionPreparationFailureDiagnostic(error: unknown): Readonl
   return {
     originalCode,
     reason: startupDetails?.reason ?? (reason === 'unknown' && causeReason ? causeReason : reason === 'unknown'
-      && (providerDiagnosticCodes.has(originalCode) || readAgentStartupFailureCode(originalCode)
+      && (providerDiagnosticCodes().has(originalCode) || readAgentStartupFailureCode(originalCode)
         || originalCode === 'agent_isolation_unavailable') ? originalCode : reason),
     contextSource: readClosedField(error, 'contextSource', preparationDiagnosticSources),
     ...(closedCause ? { failureCause: closedCause } : {}),
   };
 }
 
-const providerDiagnosticCodes: ReadonlySet<string> = new Set(ProviderErrorCodeV1Schema.options);
-const preparationDiagnosticCodes = new Set([
+const providerDiagnosticCodes: () => ReadonlySet<string> = memoizeActionSpecValue(() => new Set(ProviderErrorCodeV1Schema.options));
+const preparationDiagnosticCodes = memoizeActionSpecValue(() => new Set([
   ...Object.keys(SESSION_PREPARATION_FAILURE_PREVIEWS),
   ...Object.keys(AGENT_STARTUP_FAILURE_PREVIEWS),
-  ...providerDiagnosticCodes,
+  ...providerDiagnosticCodes(),
   ...ProviderBrokerAdmissionFailureCodeV1Schema.options,
   'account_role_overrides_unavailable',
   'context_source_unavailable', 'role_overrides_unavailable', 'role_source_incomplete',
@@ -130,7 +131,7 @@ const preparationDiagnosticCodes = new Set([
   'project_requester_credentials_unavailable', 'project_finite_execution_unavailable',
   'metadata_tuple_ambiguous',
   DAEMON_PLUGIN_TOOL_CATALOG_UNAVAILABLE_CODE,
-]);
+]));
 const preparationDiagnosticSources = new Set([
   'account_lifetime', 'account_prompt_inventory', 'profile_prompt_inventory', 'project_association',
 ]);

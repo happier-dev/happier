@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../../../actions/lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from '../../../zodRuntimePolicy.js';
 
@@ -34,9 +35,9 @@ export type PluginUiTargetKindV1 = z.infer<typeof PluginUiTargetKindV1Schema>;
 
 export type PluginUiInlineSurfacePresentationV1 = 'content' | 'fill';
 
-const ALL_UI_SURFACE_PLATFORMS: readonly PluginUiPlatformV1[] = Object.freeze([
+const ALL_UI_SURFACE_PLATFORMS: readonly PluginUiPlatformV1[] = lazyActionSpecArray(() => Object.freeze([
   ...PluginUiPlatformV1Schema.options,
-]);
+]));
 
 /**
  * Exact host-owned inline roles. This is admission, not a generic author slot,

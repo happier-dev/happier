@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 /** Canonical built-in Settings metadata. UI pages attach host callbacks to these declarations. */
 import { AvatarStyleSchema, BotMotionSchema } from '../../account/settings/accountSettings.js';
 import { BotFaceStyleSchema } from '../../sessions/identity/sessionBotFaceV1.js';
@@ -13,7 +14,7 @@ function featureToggleSection(featureId: FeatureId) {
   } as const;
 }
 
-export const BUILT_IN_SETTINGS_METADATA_V1 = [
+export const BUILT_IN_SETTINGS_METADATA_V1 = lazyActionSpecArray(() => [
   {"anchor":"appearance.collectionRailWidths","pageId":"appearance","sectionId":"appearance.display","titleKey":"ui.resizableDockedPane.resizeA11y","title":"Collection rail widths","description":"Device-local Collection rail widths. Read returns the map by resize key. Set accepts {resizeKey:string,widthPx:number|null}; null resets that rail while preserving other rails. Layout geometry clamps the rendered width.","storage":{"scope":"local","kind":"localOwner","owner":"collectionRailWidthStorageBinding","access":"read_write"},"targetKinds":[],"sensitive":false,"agentSafety":"safe"},
   {"anchor":"appearance.newSessionDockedWidth","pageId":"appearance","sectionId":"appearance.display","titleKey":"settingsAppearance.newSessionDockedWidth","title":"New session dock width","description":"Set the docked New Session composer width on this device. Set null to follow the Session composer width.","storage":{"scope":"local","key":"newSessionDockedWidthPx","access":"read_write"},"targetKinds":[],"sensitive":false,"agentSafety":"safe"},
   {"anchor":"spaces.enabled","pageId":"session","sectionId":"session.list","titleKey":"sessionsList.spacesTitle","title":"Spaces","storage":{"scope":"account","key":"collectionSpacesEnabled","access":"read_write","allowedValues":[false,true]},"targetKinds":[],"sensitive":false,"agentSafety":"safe"},
@@ -1413,4 +1414,4 @@ export const BUILT_IN_SETTINGS_METADATA_V1 = [
   {"anchor":"voiceAdvanced.cancelSpeechModel","pageId":"voiceAdvanced","sectionId":"voiceAdvanced.models","titleKey":"common.cancel","title":"Cancel","sectionTitleKey":"settingsVoice.pages.advanced.speechModelsTitle","targetKinds":[],"sensitive":false,"operation":{"kind":"invoke","requiresHumanInteraction":false,"requiresApproval":false,"owner":"voiceSettingsOperation","options":["model_cancel","conversation"]}},
   {"anchor":"voiceAdvanced.removeSpeechModel","pageId":"voiceAdvanced","sectionId":"voiceAdvanced.models","titleKey":"settingsVoice.local.models.removeConfirmTitle","title":"Remove model pack","sectionTitleKey":"settingsVoice.pages.advanced.speechModelsTitle","targetKinds":[],"sensitive":false,"operation":{"kind":"invoke","requiresHumanInteraction":true,"requiresApproval":true,"uiConfirmation":"direct","owner":"voiceSettingsOperation","options":["model_remove","conversation"]}},
   {"anchor":"voiceAdvanced.defaultSpeechModel","pageId":"voiceAdvanced","sectionId":"voiceAdvanced.models","titleKey":"settingsVoice.local.models.setDefaultSubtitle","title":"Tap to use as the default","sectionTitleKey":"settingsVoice.pages.advanced.speechModelsTitle","targetKinds":[],"sensitive":false,"operation":{"kind":"invoke","requiresHumanInteraction":true,"requiresApproval":true,"uiConfirmation":"direct","owner":"voiceSettingsOperation","options":["model_default","conversation"]}},
-] as const;
+] as const);

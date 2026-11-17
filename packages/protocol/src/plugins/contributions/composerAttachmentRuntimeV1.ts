@@ -128,7 +128,7 @@ export type ComposerAttachmentResolveRequestV1<
 >;
 
 /** Host-stamped scope for the run-capable attachment resolution callback. */
-export const ComposerAttachmentInvocationScopeV2Schema = PluginExecutionScopeV1Schema;
+export const ComposerAttachmentInvocationScopeV2Schema = lazyZodSchema(() => PluginExecutionScopeV1Schema);
 export type ComposerAttachmentInvocationScopeV2 = PluginExecutionScopeV1;
 
 /**

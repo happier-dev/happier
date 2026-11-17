@@ -195,18 +195,30 @@ it.skipIf(process.platform !== 'linux')('refuses host-private Pi files through t
                     if (operation.kind === 'plugin_services.prepare_v1') return preparedSnapshot();
                     if (operation.kind === 'plugin_services.close_v1' || operation.kind === 'plugin_exec.launch.release_v1') return null;
                     if (operation.kind !== 'plugin_exec.launch.authorize_v1') throw new Error(operation.kind);
+                    expect(operation.agentNativeLaunch).toBe(true);
                     const { stdin, ...request } = operation.request;
                     const launch = await authorizePluginExecLaunchForHost(daemonExec, { ...request,
                         ...(stdin === undefined ? {} : { stdin: new Uint8Array(Buffer.from(stdin, 'base64')) }) },
                         { agentIsolation: null });
-                    try { return { authorizationId: operation.requestId,
-                        launch: { command: launch.command, args: launch.args, env: launch.env, cwd: launch.cwd } }; }
-                    finally { await launch.release(); }
+                    try {
+                        // This RPC fixture consumes the decoded native tuple at the
+                        // real materialization boundary. Generic Exec resolution
+                        // alone does not classify an Agent launch.
+                        createUnixAgentIdentityLaunch({
+                            managedHappierBinaryPath: '/nonexistent/happier', executable: launch.command,
+                            args: launch.args ?? [], requiredFiles: request.requiredFiles,
+                            cwd: launch.cwd ?? root, runtimeHome: join(root, 'native-runtime'),
+                            environment: launch.env ?? {}, selectedEnvironmentKeys: [], selectedMaterials: [],
+                        });
+                        return { authorizationId: operation.requestId,
+                            launch: { command: launch.command, args: launch.args, env: launch.env, cwd: launch.cwd } };
+                    } finally { await launch.release(); }
                 },
             });
+            const nativeLaunch = issueAgentNativeLaunchQualifierForHost(services.exec);
             await expect(services.exec.spawn({ executable: { kind: 'systemTool', id: 'pi-cli' }, cwd: root,
                 ...buildPiRpcLaunch({ providerModelId: 'selected-model', happierToolsExtension: tools }),
-            })).rejects.toMatchObject({ code: 'agent_launch_required_file_unavailable',
+            }, { nativeLaunch })).rejects.toMatchObject({ code: 'agent_launch_required_file_unavailable',
                 data: expect.objectContaining({ details: { phase: 'materialization', reason: 'not_materialized' } }) });
         } finally { controller.abort(); await tools.dispose(); }
     });

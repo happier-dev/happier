@@ -1,4 +1,4 @@
-import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { lazyZodSchema, lazyDefinition } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { valid as semverValid } from 'semver';
 
@@ -73,7 +73,7 @@ export const VoiceSpeechProviderRoleSchema = lazyZodSchema(() => z.enum([
 export type VoiceSpeechProviderRole = z.infer<typeof VoiceSpeechProviderRoleSchema>;
 
 /** Voice availability uses the shared client-execution platform grammar. */
-export const VoiceAvailabilityPlatformSchema = PluginClientExecutionPlatformV1Schema;
+export const VoiceAvailabilityPlatformSchema = lazyZodSchema(() => PluginClientExecutionPlatformV1Schema);
 export type VoiceAvailabilityPlatform = PluginClientExecutionPlatformV1;
 
 export const VoiceSpeechInputMimeTypeSchema = lazyZodSchema(() => z.enum([
@@ -421,7 +421,7 @@ export const VoiceProviderSettingFieldSchema = lazyZodSchema(() => PluginSetting
 })));
 export type VoiceProviderSettingField = z.infer<typeof VoiceProviderSettingFieldSchema>;
 
-const VoiceProviderSettingsPresentationTextSchema = PluginLocalizedStringV2Schema;
+const VoiceProviderSettingsPresentationTextSchema = lazyZodSchema(() => PluginLocalizedStringV2Schema);
 export const VoiceProviderSettingsPresentationPathSchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(256), z.refine((value) => {
   const segments = value.split('.');
   return segments.length <= 12 && segments.every((segment) => (
@@ -1351,7 +1351,7 @@ export function deriveVoiceCredentialBindingIdentityV1(input: Readonly<{
   });
 }
 
-export const VoiceProviderAccountOperationKindV1Schema = PluginContributionLocalIdSchema;
+export const VoiceProviderAccountOperationKindV1Schema = lazyDefinition(() => PluginContributionLocalIdSchema);
 
 export type VoiceProviderAccountOperationKindV1 = z.infer<
   typeof VoiceProviderAccountOperationKindV1Schema

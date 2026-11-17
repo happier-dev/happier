@@ -1,14 +1,15 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
 import { AnyClientUpgradeRequiredV1Schema } from '../clientCompatibility/upgradeRequiredV1.js';
 import { MachineEncodedWriteBasisV1Schema } from './machineContentKeyTransitionV1.js';
 export { MachineIsolationV1Schema, readMachineIsolationV1, type MachineIsolationV1 } from './machineIsolationV1.js';
 
-export const MachineUpdateMetadataRequestSchema = z.strictObject({
+export const MachineUpdateMetadataRequestSchema = lazyZodSchema(() => z.strictObject({
     ...MachineEncodedWriteBasisV1Schema.shape,
     machineId: z.optional(z.string().check(z.minLength(1))),
     metadata: z.string(),
-  });
+  }));
 
 export type MachineUpdateMetadataRequest = z.infer<
   typeof MachineUpdateMetadataRequestSchema
@@ -41,11 +42,11 @@ export type MachineUpdateMetadataResponse = z.infer<
   typeof MachineUpdateMetadataResponseSchema
 >;
 
-export const MachineUpdateStateRequestSchema = z.strictObject({
+export const MachineUpdateStateRequestSchema = lazyZodSchema(() => z.strictObject({
   ...MachineEncodedWriteBasisV1Schema.shape,
   machineId: z.optional(z.string().check(z.minLength(1))),
   daemonState: z.string(),
-});
+}));
 export type MachineUpdateStateRequest = z.infer<typeof MachineUpdateStateRequestSchema>;
 
 export const MachineUpdateStateResponseSchema = z.union([

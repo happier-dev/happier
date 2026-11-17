@@ -31,7 +31,7 @@ export function isRequesterProjectExecutionActionV1(actionId: string): actionId 
 }
 
 const nonempty = lazyZodSchema(() => z.string().check(z.minLength(1)));
-const workspace = WorkspaceAddressV1Schema;
+const workspace = lazyZodSchema(() => WorkspaceAddressV1Schema);
 export const ProjectSetupConsentRequiredV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('pendingApproval'), code: z.enum(['project_setup_consent_required', 'project_setup_effect_changed']), reviewedEffectDigest: nonempty,
   consentScope: z.optional(ProjectSetupConsentScopeV1Schema),

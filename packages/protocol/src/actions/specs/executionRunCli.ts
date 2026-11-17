@@ -1,3 +1,4 @@
+import { lazyActionSpecRecord } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
@@ -140,7 +141,7 @@ export function bindExecutionRunStartCliInput(
   };
 }
 
-export const EXECUTION_RUN_START_CLI_PROJECTION: ActionCliProjection = {
+export const EXECUTION_RUN_START_CLI_PROJECTION: ActionCliProjection = lazyActionSpecRecord(() => ({
   transportMachineIdAliases: ['--machine'],
   commands: [{
     path: ['session', 'run', 'start'],
@@ -195,7 +196,7 @@ export const EXECUTION_RUN_START_CLI_PROJECTION: ActionCliProjection = {
     ],
   },
   bindInput: (value) => bindExecutionRunStartCliInput(value as Partial<ExecutionRunStartCliInput>),
-};
+}));
 
 export const ExecutionRunListCliInputSchema = lazyZodSchema(() => z.strictObject({
   sessionId: SessionSelectorSchema,
@@ -218,7 +219,7 @@ export function bindExecutionRunListCliInput(
   };
 }
 
-export const EXECUTION_RUN_LIST_CLI_PROJECTION: ActionCliProjection = {
+export const EXECUTION_RUN_LIST_CLI_PROJECTION: ActionCliProjection = lazyActionSpecRecord(() => ({
   commands: [{ path: ['session', 'run', 'list'], positionals: ['sessionId'], visibility: 'canonical' }],
   inputSchema: ExecutionRunListCliInputSchema,
   inputHints: {
@@ -241,7 +242,7 @@ export const EXECUTION_RUN_LIST_CLI_PROJECTION: ActionCliProjection = {
     ],
   },
   bindInput: (value) => bindExecutionRunListCliInput(value as ExecutionRunListCliInput),
-};
+}));
 
 export const EXECUTION_RUN_GET_CLI_PROJECTION: ActionCliProjection = {
   transportMachineIdAliases: ['--machine'],

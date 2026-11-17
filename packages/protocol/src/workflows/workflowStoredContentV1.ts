@@ -90,7 +90,7 @@ const WorkflowFinalResultStoredPayloadV1Schema = lazyZodSchema(() => z.strictObj
 
 // Accepted Runs freeze complete Action contracts and can exceed Automation's
 // per-field budget. Their complete requests use the HTTP transport's body limit.
-export const WorkflowStoredContentEnvelopeV1Schema = StoredContentEnvelopeV1Schema;
+export const WorkflowStoredContentEnvelopeV1Schema = lazyZodSchema(() => StoredContentEnvelopeV1Schema);
 export type WorkflowStoredContentEnvelopeV1 = z.infer<typeof WorkflowStoredContentEnvelopeV1Schema>;
 
 export type WorkflowStoredContentOpenFailureV1 =

@@ -1,4 +1,4 @@
-import { lazyActionSpecArray } from './lazyActionSpecValue.js';
+import { lazyActionSpecArray, lazyActionSpecRecord } from './lazyActionSpecValue.js';
 import { APP_SHELL_ACTION_IDS } from './appShellActionIdsV1.js';
 export { APP_SHELL_ACTION_IDS } from './appShellActionIdsV1.js';
 import * as zMini from '../zodRuntimePolicy.js';
@@ -150,7 +150,7 @@ export const NewSessionDraftAgentIntentSchema = lazyZodSchema(() => z.discrimina
 ]));
 export type NewSessionDraftAgentIntent = z.infer<typeof NewSessionDraftAgentIntentSchema>;
 
-export const AppShellActionInputSchemas = {
+export const AppShellActionInputSchemas = lazyActionSpecRecord(() => {
   'session.work.get': z.strictObject({ sessionId: z.string().check(z.minLength(1)) }),
   'inbox.get': z.strictObject({}),
   'inbox.mark_all_read': z.strictObject({ targets: z.array(InboxTargetSchema) }),
@@ -166,8 +166,8 @@ export const AppShellActionInputSchemas = {
   'session.draft.append': z.strictObject({ sessionId: z.string().check(z.trim(), z.minLength(1)),
     text: z.string().check(z.refine(text => text.trim().length > 0)), sourceSessionId: z.optional(z.string().check(z.trim(), z.minLength(1))),
     discussionSource: z.optional(z.omit(DiscussionSelectionSourceV1Schema, { draftCorrelationId: true })) }),
-} as const;
-export const AppShellActionOutputSchemas = {
+} as const);
+export const AppShellActionOutputSchemas = lazyActionSpecRecord(() => {
   'session.work.get': z.discriminatedUnion('status', [ReadUnavailableSchema, ReadLoadingSchema, z.strictObject({
     status: z.literal('ready'), sessionId: z.string(),
     summary: z.strictObject({ outstanding: z.number(), needsYou: z.number(), stalled: z.number(), sessions: z.number(), runs: z.number() }),
@@ -201,7 +201,7 @@ export const AppShellActionOutputSchemas = {
   'session.draft.append': z.discriminatedUnion('status', [ReadUnavailableSchema, z.strictObject({
     status: z.literal('appended'), sessionId: z.string().check(z.minLength(1)), createdAtMs: z.number().check(z.int(), z.nonnegative()),
   })]),
-} as const;
+} as const);
 
 function createAppShellActionSpecs() {
   return [

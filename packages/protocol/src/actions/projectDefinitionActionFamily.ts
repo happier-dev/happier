@@ -19,7 +19,7 @@ export type ProjectDefinitionActionId = typeof PROJECT_DEFINITION_ACTION_IDS[num
 
 // These public Action roots retain Classic composition/JSON Schema projection;
 // nested domain schemas remain the single Mini validation owners.
-export const ProjectDefinitionWorkspaceSchema = WorkspaceAddressV1Schema;
+export const ProjectDefinitionWorkspaceSchema = lazyZodSchema(() => WorkspaceAddressV1Schema);
 export type ProjectDefinitionWorkspace = z.infer<typeof ProjectDefinitionWorkspaceSchema>;
 /** Query demand, not execution authority. Lists carry summaries; opened rows request exact native details. */
 export const ProjectDefinitionInspectReadSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [

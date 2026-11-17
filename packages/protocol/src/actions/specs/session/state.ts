@@ -112,10 +112,10 @@ export const SESSION_VIEW_INPUT_OPTION_LABELS: Readonly<Record<SessionListViewV1
  * the awareness contract that owns them. A spec listing its own literals would drift the moment
  * that enum changes.
  */
-export const SESSION_VIEW_INPUT_OPTIONS: ActionInputOption[] = SessionListViewV1Schema.options.map((view) => ({
+export const SESSION_VIEW_INPUT_OPTIONS: ActionInputOption[] = lazyActionSpecArray(() => SessionListViewV1Schema.options.map((view) => ({
   value: view,
   label: SESSION_VIEW_INPUT_OPTION_LABELS[view],
-}));
+})));
 
 function createSessionStateActionSpecs() {
   return Object.freeze([

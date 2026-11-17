@@ -1,10 +1,11 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod/mini';
 import { ScmRepositoryCloneInputSchema } from '@happier-dev/protocol/scm/repositoryClone';
 import { ScmRequestBaseSchema } from '@happier-dev/protocol/scm/requestBase';
 
 // Clone's public Action input is strictly domain-only. Machine/session RPC
 // transports also carry validated SCM envelope fields; consume them only here.
-const ScmRepositoryCloneRpcInputSchema = z.extend(ScmRepositoryCloneInputSchema, ScmRequestBaseSchema.shape);
+const ScmRepositoryCloneRpcInputSchema = lazyZodSchema(() => z.extend(ScmRepositoryCloneInputSchema, ScmRequestBaseSchema.shape));
 const ScmRepositoryCloneRpcRequestSchema = z.pipe(ScmRepositoryCloneRpcInputSchema,
     z.transform(({ cwd: _cwd, backendPreference: _backendPreference, outcomeVersion: _outcomeVersion, ...request }:
         z.infer<typeof ScmRepositoryCloneRpcInputSchema>) => request));

@@ -1,3 +1,4 @@
+import { lazyActionSpecRecord } from '@happier-dev/protocol/actions/lazyActionSpecValue';
 import { randomUUID } from 'node:crypto';
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import type { ScmCommandRunner } from '@/scm/runtime';
@@ -141,7 +142,7 @@ function hostEventDeliveryMatchesTarget(
 
 const pluginActionOutputSchemas: Readonly<
     Partial<Record<string, ZodType>>
-> = PLUGIN_ACTION_OUTPUT_SCHEMAS;
+> = lazyActionSpecRecord(() => PLUGIN_ACTION_OUTPUT_SCHEMAS);
 
 type PreparedRunnerDaemonPluginServicesSnapshotV1 = Readonly<{
     availability: Readonly<Record<

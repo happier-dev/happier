@@ -9,8 +9,8 @@ import { PluginUiDeclaredFailureActionV1Schema } from './failureActions.js';
 
 const closed = { policy: 'closed' } as const;
 const text = defineProtocolString();
-const machine = ServiceHealthNoticeMachineV1ProtocolSchema;
-const workspace = WorkspaceAddressV1ProtocolSchema;
+const machine = lazyDefinition(() => ServiceHealthNoticeMachineV1ProtocolSchema);
+const workspace = lazyDefinition(() => WorkspaceAddressV1ProtocolSchema);
 
 /** The existing split control's presentation without its declaration-only subject list. */
 export const FailureAgentActionV1Schema = lazyDefinition(() =>
@@ -18,9 +18,9 @@ export const FailureAgentActionV1Schema = lazyDefinition(() =>
 export type FailureAgentAction = ReturnType<typeof FailureAgentActionV1Schema.parse>;
 
 /** Data for the existing native placement presenter; it grants no execution authority. */
-export const FailureActionPlacementV1Schema = defineProtocolObject({
+export const FailureActionPlacementV1Schema = lazyDefinition(() => defineProtocolObject({
   machine: machine.optional(), workspace: workspace.optional(), agentTargetKey: text.optional(),
-}, closed);
+}, closed));
 export type FailureActionPlacement = ReturnType<typeof FailureActionPlacementV1Schema.parse>;
 
 export const FailureActionPlacementReasonV1Schema = defineProtocolUnion([
@@ -29,7 +29,7 @@ export const FailureActionPlacementReasonV1Schema = defineProtocolUnion([
 ]);
 
 /** The single presentation grammar; plugins normalize their domain results before returning it. */
-export const FailureActionOutcomeV1Schema = defineProtocolUnion([
+export const FailureActionOutcomeV1Schema = lazyDefinition(() => defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('started'), handoff: defineProtocolJsonValue().optional() }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('approval'), artifactId: text }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('selectionRequired'), fields: defineProtocolArray(text) }, closed),
@@ -42,5 +42,5 @@ export const FailureActionOutcomeV1Schema = defineProtocolUnion([
     reachable: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]) }, closed)),
     agents: defineProtocolArray(defineProtocolObject({ targetKey: text, label: text }, closed)),
   }, closed),
-]);
+]));
 export type FailureActionOutcome = ReturnType<typeof FailureActionOutcomeV1Schema.parse>;

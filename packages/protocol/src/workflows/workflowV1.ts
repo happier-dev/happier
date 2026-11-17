@@ -135,7 +135,7 @@ export function workflowInputToFieldHint(
   };
 }
 
-export const WorkflowResultContractSchema = ExecutionRunResultContractV1Schema;
+export const WorkflowResultContractSchema = lazyZodSchema(() => ExecutionRunResultContractV1Schema);
 export type WorkflowResultContract = z.infer<typeof WorkflowResultContractSchema>;
 
 /**

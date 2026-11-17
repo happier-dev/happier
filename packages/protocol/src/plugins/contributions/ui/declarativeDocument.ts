@@ -607,7 +607,7 @@ export type PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1 = Readonly<
 
 const PluginDeclarativeTargetedSurfaceHandleV1Schema: z.ZodMiniType<
   PluginDeclarativeTargetedSurfaceHandleV1
-> = PluginUiTargetedContributionSurfaceV1Schema;
+> = lazyZodSchema(() => PluginUiTargetedContributionSurfaceV1Schema);
 
 type TargetedSurfaceInventory = ReadonlyMap<string, PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1 | null>;
 

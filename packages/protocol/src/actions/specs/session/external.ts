@@ -357,7 +357,7 @@ function createExternalSessionOperationActionSpecsV1() {
 export const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1: ReturnType<typeof createExternalSessionOperationActionSpecsV1> = lazyActionSpecArray(createExternalSessionOperationActionSpecsV1);
 
 
-export const ExternalSessionTakeoverActionInputSchema = ExternalSessionTakeoverInputV1Schema;
+export const ExternalSessionTakeoverActionInputSchema = lazyZodSchema(() => ExternalSessionTakeoverInputV1Schema);
 
 function createExternalSessionActionSpecs() {
   return Object.freeze([

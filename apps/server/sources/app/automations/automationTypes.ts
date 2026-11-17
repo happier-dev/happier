@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '@happier-dev/protocol/actions/lazyActionSpecValue';
 import { parseAutomationRunExecutionRecipeV1, type AutomationRunExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import type { AutomationStoredActionDefinitionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import { type AutomationObservationOnlyDefinitionV1, type AutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
@@ -20,7 +21,7 @@ export type AutomationLegacyTargetType = Exclude<
 >;
 /** The canonical Run-state vocabulary; the Protocol schema is its one owner. */
 export type AutomationRunState = AutomationRunStateV3;
-export const AUTOMATION_RUN_STATES = AutomationRunStateV3Schema.options;
+export const AUTOMATION_RUN_STATES = lazyActionSpecArray(() => AutomationRunStateV3Schema.options);
 
 /** Narrows the shared physical Run enum to the retained Automation contract. */
 export function isAutomationRunState(state: string): state is AutomationRunState {

@@ -1105,7 +1105,7 @@ export type AutomationConversationAdmitReplyHandoffV1 = z.infer<
   typeof AutomationConversationAdmitReplyHandoffV1Schema
 >;
 
-export const AutomationRunReplyHandoffStateV1Schema = AutomationReplyHandoffStateV1Schema;
+export const AutomationRunReplyHandoffStateV1Schema = lazyZodSchema(() => AutomationReplyHandoffStateV1Schema);
 export type AutomationRunReplyHandoffStateV1 = AutomationReplyHandoffStateV1;
 
 /**

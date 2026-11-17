@@ -109,7 +109,7 @@ export const WorkflowDefinitionMetadataV1Schema = lazyZodSchema(() => z.strictOb
 }));
 export type WorkflowDefinitionMetadataV1 = z.infer<typeof WorkflowDefinitionMetadataV1Schema>;
 
-export const WorkflowDefinitionSavedByV1Schema = ArtifactSavedByV1Schema;
+export const WorkflowDefinitionSavedByV1Schema = lazyZodSchema(() => ArtifactSavedByV1Schema);
 export type WorkflowDefinitionSavedByV1 = z.infer<typeof WorkflowDefinitionSavedByV1Schema>;
 
 export const WorkflowDefinitionArtifactHeaderV1Schema = lazyZodSchema(() => z.strictObject({

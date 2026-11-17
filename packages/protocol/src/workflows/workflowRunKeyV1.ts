@@ -10,7 +10,7 @@ import { AutomationAccountCurrentnessWitnessV1Schema } from '../automations/auto
 import { WorkflowRunIdV1Schema, WorkflowDefinitionIdV1Schema } from './workflowIdsV1.js';
 
 /** Run-key wire epoch V1: authority, mutation and all nested objects are closed. */
-export const WorkflowRunRecipientKeyEnvelopeV1Schema = ArtifactRecipientKeyEnvelopeInputV1Schema;
+export const WorkflowRunRecipientKeyEnvelopeV1Schema = lazyZodSchema(() => ArtifactRecipientKeyEnvelopeInputV1Schema);
 export type WorkflowRunRecipientKeyEnvelopeV1 = z.infer<typeof WorkflowRunRecipientKeyEnvelopeV1Schema>;
 export const WorkflowRunRecipientKeyEnvelopesV1Schema = lazyZodSchema(() => z.array(WorkflowRunRecipientKeyEnvelopeV1Schema).check(z.refine(items => new Set(items.map(item => item.recipientAccountId)).size === items.length, { message: 'Duplicate recipientAccountId' })));
 export const WorkflowRunRecipientCensusInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -37,5 +37,5 @@ export const WorkflowRunRecipientKeyEnvelopeCommitInputV1Schema = lazyZodSchema(
   recipientKeyEnvelopes: WorkflowRunRecipientKeyEnvelopesV1Schema,
 }));
 export type WorkflowRunRecipientKeyEnvelopeCommitInputV1 = z.infer<typeof WorkflowRunRecipientKeyEnvelopeCommitInputV1Schema>;
-export const WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema = ArtifactRecipientKeyEnvelopeCommitResponseV1Schema;
+export const WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema = lazyZodSchema(() => ArtifactRecipientKeyEnvelopeCommitResponseV1Schema);
 export type WorkflowRunRecipientKeyEnvelopeCommitResponseV1 = z.infer<typeof WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema>;

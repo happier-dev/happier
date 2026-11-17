@@ -1,3 +1,4 @@
+import { lazyActionSpecRecord } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
@@ -38,10 +39,10 @@ function simulatorEventWithControlKindSchema<
 type DeviceOperationInputSchemas = {
   [K in SimulatorDeviceOperationKindV1 as typeof SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1[K]]: typeof SIMULATOR_DEVICE_OPERATION_SCHEMAS_V1[K];
 };
-const DEVICE_OPERATION_INPUT_SCHEMAS = Object.fromEntries(
+const DEVICE_OPERATION_INPUT_SCHEMAS = lazyActionSpecRecord(() => Object.fromEntries(
   Object.entries(SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1).map(([operation, actionId]) =>
     [actionId, SIMULATOR_DEVICE_OPERATION_SCHEMAS_V1[operation as SimulatorDeviceOperationKindV1]]),
-) as DeviceOperationInputSchemas;
+) as DeviceOperationInputSchemas);
 type DeviceOperationOutputSchemas = {
   [K in SimulatorDeviceOperationKindV1 as typeof SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1[K]]:
     K extends 'screenshot' ? typeof SimulatorDeviceScreenshotResultV1Schema
@@ -94,7 +95,7 @@ export const SIMULATOR_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<RuntimeAct
   'devices.simulator.sideband.request': 'Request simulator sideband data',
 });
 
-export const SIMULATOR_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
+export const SIMULATOR_RUNTIME_ACTION_INPUT_SCHEMAS = lazyActionSpecRecord(() => Object.freeze({
   ...DEVICE_OPERATION_INPUT_SCHEMAS,
   'devices.simulator.list': simulatorEventSchema('simulator.devices.list'),
   'devices.simulator.stream.keyframe': simulatorEventWithControlKindSchema(
@@ -120,7 +121,7 @@ export const SIMULATOR_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
   'devices.simulator.input.pinch': simulatorEventWithControlKindSchema('simulator.control.send', 'pinch'),
   'devices.simulator.input.rotate': simulatorEventWithControlKindSchema('simulator.control.send', 'rotate'),
   'devices.simulator.sideband.request': simulatorEventSchema('simulator.sideband.request'),
-} as const satisfies Readonly<Record<DevicesSimulatorRuntimeActionId, z.ZodMiniType>>);
+} as const satisfies Readonly<Record<DevicesSimulatorRuntimeActionId, z.ZodMiniType>>));
 
 export const SIMULATOR_RUNTIME_ACTION_OUTPUT_SCHEMAS = Object.freeze({
   ...DEVICE_OPERATION_OUTPUT_SCHEMAS,

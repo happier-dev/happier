@@ -1,3 +1,5 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
+import { lazyActionSpecArray } from '@happier-dev/protocol/actions/lazyActionSpecValue';
 import { z } from 'zod/mini';
 import { z as zMini } from 'zod/mini';
 import { BackendTargetRefV2Schema } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -20,10 +22,10 @@ import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/s
 import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 
-const StrictBackendTargetRefV2Schema = zMini.pipe(
+const StrictBackendTargetRefV2Schema = lazyZodSchema(() => zMini.pipe(
   zMini.strictObject(BackendTargetRefV2Schema.shape),
   BackendTargetRefV2Schema,
-);
+));
 
 const ProviderLaunchRequestShape = {
   selection: z.optional(asHostProtocolZod(ProviderBoundModelRefSchema)),
@@ -40,7 +42,7 @@ const ProviderLaunchRefusalShape = {
 
 // Host-private optional operations. Older daemons reject unknown operations;
 // that refusal cannot be interpreted as an empty executable snapshot.
-export const RUNNER_EXECUTION_RUN_SNAPSHOT_OPERATIONS = [
+export const RUNNER_EXECUTION_RUN_SNAPSHOT_OPERATIONS = lazyActionSpecArray(() => [
   z.strictObject({ kind: z.literal('execution_run.snapshot.acquire_v1'),
     backendTarget: z.optional(asHostProtocolZod(StrictBackendTargetRefV2Schema)) }),
   z.strictObject({ kind: z.literal('execution_run.snapshot.release_v1'), snapshotId: z.uuid() }),
@@ -64,7 +66,7 @@ export const RUNNER_EXECUTION_RUN_SNAPSHOT_OPERATIONS = [
   z.strictObject({ kind: z.literal('execution_run.provider.prepare_v1'), ...ProviderLaunchRequestShape }),
   z.strictObject({ kind: z.literal('execution_run.provider.revalidate_v1') }),
   z.strictObject({ kind: z.literal('execution_run.provider.release_v1') }),
-] as const;
+] as const);
 
 export const RunnerExecutionRunSnapshotV1Schema = z.strictObject({
   kind: z.literal('execution_run.snapshot'), snapshotId: z.uuid(),

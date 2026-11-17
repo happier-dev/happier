@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { ApprovalRequestV2StatusSchema } from './approvalRequestStatus.js';
 
@@ -13,7 +14,7 @@ export function isApprovalArtifactKindV1(kind: unknown): boolean {
 }
 
 /** Non-content query hints only; private header/body admission still owns decisions. */
-export const ApprovalArtifactStateV1Schema = ApprovalRequestV2StatusSchema;
+export const ApprovalArtifactStateV1Schema = lazyZodSchema(() => ApprovalRequestV2StatusSchema);
 export type ApprovalArtifactStateV1 = z.infer<typeof ApprovalArtifactStateV1Schema>;
 export const ApprovalArtifactQueryHintsV1Schema = z.strictObject({
   approvalState: z.nullable(ApprovalArtifactStateV1Schema),

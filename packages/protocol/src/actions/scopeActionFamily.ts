@@ -25,7 +25,7 @@ export const SessionListActionFiltersSchema = lazyZodSchema(() => z.extend(Sessi
 const SessionListActionFiltersStoredSchema = lazyZodSchema(() => createEntityListFilterStoredReadSchemaV1(SessionListActionFiltersSchema));
 const MutationResultSchema = lazyZodSchema(() => z.strictObject({ ok: z.literal(true) }));
 const WorkflowLibraryViewTargetSchema = z.strictObject({ clientId: z.optional(z.string().check(z.minLength(1))) });
-export const WorkflowLibraryViewSchema = WorkflowListFilterViewV1Schema;
+export const WorkflowLibraryViewSchema = lazyZodSchema(() => WorkflowListFilterViewV1Schema);
 export type WorkflowLibraryView = z.infer<typeof WorkflowLibraryViewSchema>;
 export const ShellColumnSchema = lazyZodSchema(() => z.enum(['navigation', 'main', 'side']));
 export type ShellColumn = z.infer<typeof ShellColumnSchema>;

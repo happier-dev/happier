@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod/mini';
 import { SessionSpawnLaunchErrorV1Schema } from '@happier-dev/protocol/spawnSession';
 import { AgentSessionConnectedAccountIdentityObservedEventV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
@@ -137,11 +138,11 @@ const ManagedServiceEndpointProjectionV1Schema =
   );
 
 // Construction can fail while its controller remains available for recovery.
-const SessionOpenConstructionFailureV1Schema = z.strictObject({
+const SessionOpenConstructionFailureV1Schema = lazyZodSchema(() => z.strictObject({
   phase: z.literal('agent_runtime_open'),
   code: asHostProtocolZod(SessionSpawnLaunchErrorV1Schema.shape.code),
   failureCause: z.optional(asHostProtocolZod(SessionRuntimeFailureCauseV1Schema)),
-});
+}));
 
 export const AgentRuntimeDaemonServiceSessionOpenAttestationV1Schema =
   z.strictObject({
@@ -359,7 +360,7 @@ export type AgentRuntimeDaemonServiceRequestV1 = {
   operation: AgentRuntimeDaemonServiceOperationV1;
 };
 
-export const AgentRuntimeDaemonServiceRequestV1Schema: z.ZodMiniType<AgentRuntimeDaemonServiceRequestV1> = z.strictObject({
+export const AgentRuntimeDaemonServiceRequestV1Schema: z.ZodMiniType<AgentRuntimeDaemonServiceRequestV1> = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   context: AgentRuntimeDaemonServiceRequestContextV1Schema,
   operation: z.discriminatedUnion('kind', [
@@ -374,10 +375,10 @@ export const AgentRuntimeDaemonServiceRequestV1Schema: z.ZodMiniType<AgentRuntim
     ...PROVIDER_BINDING_OPERATIONS,
     ...MANAGED_SERVER_OPERATIONS,
   ]),
-});
+}));
 
 export const AgentRuntimeDaemonServiceResponseV1Schema =
-  z.discriminatedUnion('ok', [
+  lazyZodSchema(() => z.discriminatedUnion('ok', [
     z.strictObject({
       ok: z.literal(true),
       result: z.union([
@@ -521,7 +522,7 @@ export const AgentRuntimeDaemonServiceResponseV1Schema =
         failureCause: z.optional(asHostProtocolZod(ActionFailureCauseV1Schema)),
       }),
     }),
-  ]);
+  ]));
 
 export type AgentRuntimeDaemonServiceResponseV1 =
   z.infer<typeof AgentRuntimeDaemonServiceResponseV1Schema>;

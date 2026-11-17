@@ -972,7 +972,7 @@ export type AutomationExecutionDispatchStateV3 = z.infer<
   typeof AutomationExecutionDispatchStateV3Schema
 >;
 
-export const AutomationReplyHandoffStateV3Schema = AutomationReplyHandoffStateV1Schema;
+export const AutomationReplyHandoffStateV3Schema = lazyZodSchema(() => AutomationReplyHandoffStateV1Schema);
 export type AutomationReplyHandoffStateV3 = AutomationReplyHandoffStateV1;
 
 /**

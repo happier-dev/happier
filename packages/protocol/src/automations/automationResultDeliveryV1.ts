@@ -1,4 +1,4 @@
-import { lazyZodSchema } from '../lazyZodSchema.js';
+import { lazyZodSchema, lazyDefinition } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
 import type { PluginJsonSchemaV2 } from '../plugins/contributions/publicTypes.js';
@@ -85,7 +85,7 @@ export type AutomationResultDeliveryActionRefV1 = PluginContributionIdentityV1;
 
 /** Portable projection so a plugin can declare the same ref in its manifest. */
 export const AutomationResultDeliveryActionRefV1JsonSchema: PluginJsonSchemaV2 =
-  PluginContributionIdentityV1JsonSchema;
+  lazyDefinition(() => PluginContributionIdentityV1JsonSchema);
 
 export const AutomationConversationResultDeliveryV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('none') }),

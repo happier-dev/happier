@@ -1,3 +1,5 @@
+import { lazyActionSpecArray } from '@happier-dev/protocol/actions/lazyActionSpecValue';
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod/mini';
 import { McpServerCatalogEntryV1Schema, McpServerRuleV1Schema, McpServerPluginSettingsMapV1Schema,
   McpPluginItemMetadataV1Schema } from '@happier-dev/protocol/mcp/servers/settingsV1';
@@ -28,7 +30,7 @@ export const RUNNER_PLUGIN_MCP_OPERATIONS = [
 export const RunnerPluginMcpOperationSchema = z.discriminatedUnion('kind', RUNNER_PLUGIN_MCP_OPERATIONS);
 export type RunnerPluginMcpOperation = z.infer<typeof RunnerPluginMcpOperationSchema>;
 
-export const RUNNER_PLUGIN_MCP_RESULTS = [
+export const RUNNER_PLUGIN_MCP_RESULTS = lazyActionSpecArray(() => [
   z.strictObject({ kind: z.literal('mcp.plugin.prepared'), items: z.array(z.strictObject({
     itemId: McpPluginItemMetadataV1Schema.shape.id, name: z.string(), title: z.optional(z.string()),
     config: McpServerCatalogEntryV1Schema, rules: z.array(McpServerRuleV1Schema),
@@ -37,6 +39,6 @@ export const RUNNER_PLUGIN_MCP_RESULTS = [
     unavailableReason: z.optional(z.literal('requester_native_discovery_unavailable')) }),
   z.strictObject({ kind: z.literal('mcp.plugin.materialized'), servers: z.array(Server) }),
   z.strictObject({ kind: z.literal('mcp.plugin.closed') }),
-] as const;
-export const RunnerPluginMcpResultSchema = z.discriminatedUnion('kind', RUNNER_PLUGIN_MCP_RESULTS);
+] as const);
+export const RunnerPluginMcpResultSchema = lazyZodSchema(() => z.discriminatedUnion('kind', RUNNER_PLUGIN_MCP_RESULTS));
 export type RunnerPluginMcpResult = z.infer<typeof RunnerPluginMcpResultSchema>;

@@ -94,7 +94,7 @@ export type PluginTargetedContributionOperationV1 = z.infer<typeof PluginTargete
 
 /** The manifest and mounted-UI projection share this one Surface presentation vocabulary. */
 export const PluginTargetedContributionSurfacePresentationV1Schema =
-  PluginUiTargetedContributionSurfacePresentationV1Schema;
+  lazyZodSchema(() => PluginUiTargetedContributionSurfacePresentationV1Schema);
 export type PluginTargetedContributionSurfacePresentationV1 =
   PluginUiTargetedContributionSurfacePresentationV1;
 

@@ -942,7 +942,7 @@ const roleBoolean = defineProtocolUnion([defineProtocolLiteral(true), defineProt
 export const MACHINE_PROVISIONER_PUT_FILE_BASE64_MAX_LENGTH_V1 = EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES;
 // A byte format shares non-backtracking validation across Node and Bun.
 const roleBase64 = defineProtocolString({ format: 'byte' });
-const roleRef = PluginContributionIdentityV1Schema;
+const roleRef = lazyDefinition(() => PluginContributionIdentityV1Schema);
 /** Read-only exact cleanup evidence; retryable is native idempotency evidence,
  * never independent admission to replay an effect. */
 export const MachineProvisionerCleanupObservationV1Schema = defineProtocolUnion([

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { isTransactionStorageError, readDatabaseErrorCode } from '@/storage/transactionErrors';
 import { z } from "zod/mini";
 import { extend } from "zod/mini";
@@ -84,7 +85,7 @@ const InvocationFactOperationSchema = z.strictObject({
         context.addIssue({ code: "custom", message: "Invocation facts require one exact worker attempt or terminal observation revision" });
     }
 }));
-const OperationSchema = z.discriminatedUnion("operation", [
+const OperationSchema = lazyZodSchema(() => z.discriminatedUnion("operation", [
     extend(WorkflowRunReadStateSetRequestV1Schema, { operation: z.literal("read_state.set") }),
     extend(WorkflowRunRecipientCensusInputV1Schema, { operation: z.literal("run-key.census"), publisherMachineId: z.optional(z.string().check(z.minLength(1))) }),
     extend(WorkflowRunRecipientKeyEnvelopeCommitInputV1Schema, { operation: z.literal("run-key.commit"), publisherMachineId: z.optional(z.string().check(z.minLength(1))) }),
@@ -120,7 +121,7 @@ const OperationSchema = z.discriminatedUnion("operation", [
     z.strictObject({ operation: z.literal("transition"), publisherMachineId: z.string().check(z.minLength(1)), runId: z.string().check(z.minLength(1)), parentAttempt: z.number().check(z.int(), z.nonnegative(), z.int()), expectedRevision: z.number().check(z.int(), z.nonnegative()), accountCurrentness: AutomationAccountCurrentnessWitnessV1Schema, state: WorkflowRunStateV1Schema, checkpointEnvelope: z.string().check(z.minLength(1)), resultEnvelope: z.optional(z.nullable(z.string())), custodyState: z.optional(z.enum(["pending", "settled"])), discussionRound: z.optional(WorkflowDiscussionRoundProgressV1Schema), invocationTransitions: z.optional(z.array(z.strictObject({ id: z.string().check(z.minLength(1)), expectedLifecycle: WorkflowInvocationLifecycleV1Schema, lifecycle: WorkflowInvocationLifecycleV1Schema, expectedContentRevision: z.string().check(z.regex(/^(0|[1-9][0-9]*)$/)) }))) }),
     z.strictObject({ operation: z.literal("invocations.recover"), publisherMachineId: z.optional(z.string().check(z.minLength(1))), runId: z.string().check(z.minLength(1)), expectedRevision: z.number().check(z.int(), z.nonnegative()), accountCurrentness: AutomationAccountCurrentnessWitnessV1Schema, checkpointEnvelope: z.string().check(z.minLength(1)), recoveries: z.array(z.strictObject({ invocationId: z.string().check(z.minLength(1)), newInvocationId: WorkflowInvocationRecordIdSchema, contentEnvelope: z.string().check(z.minLength(1)) })).check(z.minLength(1)) }),
     z.strictObject({ operation: z.literal("delete"), publisherMachineId: z.optional(z.string().check(z.minLength(1))), runId: z.string().check(z.minLength(1)), expectedRevision: z.number().check(z.int(), z.nonnegative()) }),
-]);
+]));
 
 export function registerWorkflowRunStorageRoutes(
     app: Fastify,

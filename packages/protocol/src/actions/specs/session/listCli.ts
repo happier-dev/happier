@@ -1,3 +1,4 @@
+import { lazyActionSpecRecord } from '../../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from '../../../zodRuntimePolicy.js';
 
@@ -160,7 +161,7 @@ export function bindSessionListCliInput(
   };
 }
 
-export const SESSION_LIST_CLI_PROJECTION: ActionCliProjection = {
+export const SESSION_LIST_CLI_PROJECTION: ActionCliProjection = lazyActionSpecRecord(() => ({
   commands: [
     { path: ['session', 'list'], visibility: 'canonical' },
     { path: ['list'], visibility: 'alias' },
@@ -201,4 +202,4 @@ export const SESSION_LIST_CLI_PROJECTION: ActionCliProjection = {
     { path: 'resumableOnly', aliases: ['--resumable'] },
   ],
   bindInput: (value, context) => bindSessionListCliInput(value as SessionListCliInput, context),
-};
+}));

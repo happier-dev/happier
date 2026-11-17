@@ -113,7 +113,7 @@ export const SessionHandoffPublicInputSchema = lazyZodSchema(() => (<T extends z
   handoffTargetReplacementApprovalActionInput: true,
 })).check(z.superRefine(refineSessionHandoffStateTransferV3)));
 
-export const SessionSpawnNewInputSchema = SessionSpawnNewActionInputV2Schema;
+export const SessionSpawnNewInputSchema = lazyZodSchema(() => SessionSpawnNewActionInputV2Schema);
 /** Ordinary terminal callers do not own negotiated committed-observer lifecycle. */
 export const SessionSpawnNewTerminalInputSchema = lazyZodSchema(() => z.omit(SessionSpawnNewActionInputV2BaseSchema, {
   observeSessionCommit: true,

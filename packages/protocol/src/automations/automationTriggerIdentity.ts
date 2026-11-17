@@ -14,8 +14,8 @@ export const AutomationTriggerIdProtocolSchema = defineProtocolString({
   maxLength: 191,
   pattern: '^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])',
 });
-export const AutomationTriggerIdSchema = asProtocolZod(AutomationTriggerIdProtocolSchema)
-  .brand<'AutomationTriggerId'>();
+export const AutomationTriggerIdSchema = lazyZodSchema(() => asProtocolZod(AutomationTriggerIdProtocolSchema)
+  .brand<'AutomationTriggerId'>());
 export type AutomationTriggerId = z.infer<typeof AutomationTriggerIdSchema>;
 
 /** Existing persisted parent/child locator, independent of a source's private config. */

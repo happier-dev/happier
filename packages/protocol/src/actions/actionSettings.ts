@@ -1,3 +1,4 @@
+import { memoizeActionSpecValue } from './lazyActionSpecValue.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ApprovalProfileIdV1Schema } from './approvalProfileIdV1.js';
 import { z } from '../zodRuntimePolicy.js';
@@ -86,7 +87,7 @@ export const ACTION_SETTINGS_OPT_IN_PLACEMENTS = ['agent_input_chips'] as const 
 const ACTION_SETTINGS_OPT_IN_PLACEMENT_SET = new Set<ActionUiPlacement>(ACTION_SETTINGS_OPT_IN_PLACEMENTS);
 const ACTION_TOOL_EXPOSURE_MODE_KEYS = ['agent', 'mcp', 'cli'] as const satisfies readonly ActionToolExposureSurface[];
 const ACTION_TOOL_EXPOSURE_MODE_KEY_SET = new Set<string>(ACTION_TOOL_EXPOSURE_MODE_KEYS);
-const BROAD_ACTION_SURFACE_KEYS = new Set<ActionSurfaceKey>(ActionSurfaceKeySchema.options);
+const BROAD_ACTION_SURFACE_KEYS = memoizeActionSpecValue(() => new Set<ActionSurfaceKey>(ActionSurfaceKeySchema.options));
 // A.6 tolerant read-on-load shim for pre-broad-surface persisted settings.
 // Keep the legacy spellings constructed below so the final source fence still
 // proves new code does not author those surface keys directly.
@@ -110,7 +111,7 @@ function normalizeActionSurfaceList(raw: unknown): readonly ActionSurfaceKey[] {
   for (const surface of raw) {
     if (typeof surface !== 'string') continue;
     const normalized = LEGACY_ACTION_SURFACE_ALIASES.get(surface) ?? surface;
-    if (!BROAD_ACTION_SURFACE_KEYS.has(normalized as ActionSurfaceKey)) continue;
+    if (!BROAD_ACTION_SURFACE_KEYS().has(normalized as ActionSurfaceKey)) continue;
     const surfaceKey = normalized as ActionSurfaceKey;
     if (seen.has(surfaceKey)) continue;
     seen.add(surfaceKey);

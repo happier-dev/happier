@@ -1,5 +1,5 @@
 import * as zMini from '../zodRuntimePolicy.js';
-import { lazyZodSchema } from '../lazyZodSchema.js';
+import { lazyZodSchema, lazyDefinition } from '../lazyZodSchema.js';
 import { AutomationSubjectKindV1Schema, type AutomationSubjectKindV1 } from './automationSubjectV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
@@ -37,7 +37,7 @@ import { ScmHostingProviderKindSchema, type ScmHostingProviderKind } from '../sc
 import { MachinePresenceTransitionKindV1Schema, type MachinePresenceTransitionKindV1 } from '../machines/machinePresenceTransitionsV1.js';
 
 export const AutomationQualifiedPluginContributionRefV1Schema =
-  PluginContributionIdentityV1Schema;
+  lazyDefinition(() => PluginContributionIdentityV1Schema);
 export type AutomationQualifiedPluginContributionRefV1 = PluginContributionIdentityV1;
 
 /**
@@ -57,7 +57,7 @@ export type AutomationObservationTransportKindV1 = z.infer<
 >;
 
 /** Descriptor-only eligibility on the canonical Event contribution. */
-const completionActionIdSchema: z.ZodMiniType<ActionId> = ActionIdSchema;
+const completionActionIdSchema: z.ZodMiniType<ActionId> = lazyZodSchema(() => ActionIdSchema);
 function createPluginEventAutomationDeclarationV1Schema() {
 return z.strictObject({
   v: z.literal(1),

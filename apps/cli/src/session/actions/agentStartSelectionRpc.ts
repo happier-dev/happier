@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod/mini';
 import { AgentStartSessionCallerV1Schema } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
 import { BackendTargetRefV2Schema, PersistedAgentTargetRefV1Schema } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -9,13 +10,13 @@ import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc'
 import type { RpcHandlerRegistrar } from '../../api/rpc/types';
 import type { NativeAgentSessionInteractionHostBinding } from '../../agent/runtime/registry/engineRegistryTypes';
 
-const turnIdSchema = SessionActionRpcOriginV1Schema.shape.sourceTurnId;
+const turnIdSchema = lazyZodSchema(() => SessionActionRpcOriginV1Schema.shape.sourceTurnId);
 // Validate closure before canonical legacy refinements: an intersection can
 // accept keys rejected by only one of its branches.
-const backendTargetSchema = z.union([
+const backendTargetSchema = lazyZodSchema(() => z.union([
   z.pipe(z.strictObject(BackendTargetRefV2Schema.shape), BackendTargetRefV2Schema),
   PersistedAgentTargetRefV1Schema,
-]);
+]));
 const selectionSchema = z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('unavailable') }),
   z.strictObject({ status: z.literal('applied'), backendTarget: backendTargetSchema,
@@ -25,9 +26,9 @@ const selectionSchema = z.discriminatedUnion('status', [
 ]);
 
 export const SessionAgentStartSelectionRequestV1Schema = z.strictObject({ turnId: turnIdSchema });
-export const SessionAgentStartSelectionResponseV1Schema = z.strictObject({
+export const SessionAgentStartSelectionResponseV1Schema = lazyZodSchema(() => z.strictObject({
   sessionId: AgentStartSessionCallerV1Schema.shape.sessionId, turnId: turnIdSchema, selection: selectionSchema,
-});
+}));
 
 /** Reads the existing native owner; registration never manufactures a baseline. */
 export function registerSessionAgentStartSelectionRpc(

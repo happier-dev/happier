@@ -85,7 +85,7 @@ import { DiscussionAddressV1Schema, DiscussionMessageIdSchema } from '../discuss
 import { WorkflowDiscussionOriginV1Schema, WorkflowRunOnCompleteV1Schema, WorkflowDiscussionResultDeliveryV1Schema } from './workflowDestinationsV1.js';
 export { WorkflowDefinitionEditRequestV1Schema, WorkflowDefinitionEditResultV1Schema } from './workflowDefinitionEditV1.js';
 
-const CursorSchema = OPAQUE_CURSOR_SCHEMA;
+const CursorSchema = lazyZodSchema(() => OPAQUE_CURSOR_SCHEMA);
 // Artifact cursors encode a JSON object as base64url (starting `ey`). The
 // reserved phase belongs to the same list, after its Account Artifact pages.
 export const WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1 = 'plugin-workflows_';

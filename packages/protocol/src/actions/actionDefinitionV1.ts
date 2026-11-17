@@ -23,8 +23,8 @@ import { PluginLooseJsonObjectSchema, PluginOptionalStringSchema } from '../plug
 import { ActionCompletionContractV1Schema } from './actionCompletion.js';
 import { PluginActionApprovalScopeV2Schema } from '../plugins/actions/v2.js';
 
-const LooseJsonObjectSchema = PluginLooseJsonObjectSchema;
-const OptionalStringSchema = PluginOptionalStringSchema;
+const LooseJsonObjectSchema = lazyZodSchema(() => PluginLooseJsonObjectSchema);
+const OptionalStringSchema = lazyZodSchema(() => PluginOptionalStringSchema);
 
 function normalizeSerializedActionSurfaces(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;

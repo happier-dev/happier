@@ -193,6 +193,9 @@ beforeEach(async () => {
         sessions: { 'session-old': createSessionFixture({ id: 'session-old', serverId, encryptionMode: 'e2ee', active: false,
             metadata: { path: '/repo', host: 'test', homeDir: '/home/test', machineId: 'm1', flavor: 'claude', permissionMode: 'default' } }) },
         workflowTriggerSetsById: {}, workflowTriggerSetIdsByQuery: {} });
+    // Match this Home's empty settings baseline so collection filters have an admitted Account snapshot.
+    const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+    storage.getState().applySettingsForScope({ serverId, accountId: 'account-a' }, settingsDefaults, 0);
     // This plain Account retains predecessor Session keys as history, not active Account authority.
     const encryption = await createEncryptionFromAuthCredentials(credentials);
     const encryptedKey = encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: new Uint8Array(32).fill(9),

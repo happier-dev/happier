@@ -996,7 +996,7 @@ export const WorkflowStepObservationV1Schema = lazyZodSchema(() => z.discriminat
 ]));
 export type WorkflowStepObservationV1 = z.infer<typeof WorkflowStepObservationV1Schema>;
 
-export const WorkflowFinalOutputSelectionV1Schema = WorkflowAuthoredResultReferenceSchema;
+export const WorkflowFinalOutputSelectionV1Schema = lazyZodSchema(() => WorkflowAuthoredResultReferenceSchema);
 
 export const WorkflowFinalResultV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('happier.workflow-final-result.v1'),

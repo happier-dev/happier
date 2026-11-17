@@ -14,7 +14,7 @@ export function isSettingsDeclarationActionIdV1(value: string): value is Setting
 }
 
 /** Values are strict JSON; the declaration's canonical owner admits each setting's shape. */
-export const SettingsDeclarationValueV1Schema = StrictJsonValueSchema;
+export const SettingsDeclarationValueV1Schema = lazyZodSchema(() => StrictJsonValueSchema);
 const SettingsDeclarationScalarChoiceV1Schema = lazyZodSchema(() => z.union([z.string(), z.number(), z.boolean(), z.null()]));
 const AnchorSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const SettingKeySchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
