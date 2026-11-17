@@ -139,13 +139,19 @@ export async function admitSessionLifecycleAutomationRunsTx(params: Readonly<{
     }
     const [{ source, rows }] = await readAutomationSessionLifecycleCandidatesInTx(params.tx, [params.sourceSession]);
 
-    const ownRows = rows.filter(row => row.automation.accountId === params.accountId);
-    const otherAccountIds = [...new Set(rows.filter(row => row.automation.accountId !== params.accountId)
-        .map(row => row.automation.accountId))];
-    if (otherAccountIds.length > 0) {
+    const rowsByAccount = new Map<string, SessionLifecycleCandidateRow[]>();
+    for (const row of rows) {
+        const accountId = row.automation.accountId;
+        const accountRows = rowsByAccount.get(accountId);
+        if (accountRows) accountRows.push(row);
+        else rowsByAccount.set(accountId, [row]);
+    }
+    const ownRows = rowsByAccount.get(params.accountId) ?? [];
+    rowsByAccount.delete(params.accountId);
+    if (rowsByAccount.size > 0) {
         const recipients = new Set(params.recipientAccountIds);
         afterTx(params.tx, () => {
-            void (async () => { for (const accountId of otherAccountIds) {
+            void (async () => { for (const [accountId, accountRows] of rowsByAccount) {
                 await inTx(async tx => {
                     if (!recipients.has(accountId)) {
                         const access = await resolveSessionAccessForOperation(tx, {
@@ -156,7 +162,7 @@ export async function admitSessionLifecycleAutomationRunsTx(params: Readonly<{
                     }
                     await admitSessionLifecycleCandidatesTx({
                         ...params, tx, accountId, occurrence,
-                        rows: rows.filter(row => row.automation.accountId === accountId),
+                        rows: accountRows,
                     });
                 });
             } })().catch(error => log({ module: 'automation-session-lifecycle', level: 'error' },

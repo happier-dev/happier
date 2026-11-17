@@ -82,6 +82,9 @@ function sender(provider: Provider) {
       outgoing = await buildRequest(provider, request, context);
     } catch (error) {
       context.signal.throwIfAborted();
+      context.services.logger.warn('[Notifications] preparation failed', {
+        failureCause: projectActionFailureCauseV1(error, 'notification.prepare', { allowUnknownErrorCode: false }),
+      });
       return { ...identity, status: 'failed', code: isPluginError(error) ? error.code
         : error instanceof TypeError ? 'notification_configuration_invalid' : 'notification_configuration_unavailable', retryable: false };
     }

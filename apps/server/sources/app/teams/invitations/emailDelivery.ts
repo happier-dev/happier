@@ -1,5 +1,6 @@
 import type { NormalizedVerifiedEmail } from '@happier-dev/protocol/auth/verifiedEmail';
 import type { TeamInvitationAdmissibleRoleV1, TeamInvitationEmailDeliveryV1 } from '@happier-dev/protocol/teams/invitation';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { AuthEmailDelivery } from "@/app/auth/email/authEmailDelivery";
 import type { SessionHistoryAccess } from "@/storage/enums.generated";
 import { db } from "@/storage/db";
@@ -84,10 +85,12 @@ export async function deliverTeamInvitationEmail(
             attemptedAt,
         }));
         return { status, attemptedAt: attemptedAt.getTime() };
-    } catch {
+    } catch (error) {
         // The invitation already committed. Submission may have happened, so no
         // recorded result honestly means unknown; explicit reissue is recovery.
-        log({ module: "teams", level: "warn" }, "Invitation committed without a recorded email delivery result");
+        log({ module: "teams", level: "warn",
+            failureCause: projectActionFailureCauseV1(error, "team.invitation.email_delivery", { allowUnknownErrorCode: false }),
+        }, "Invitation committed without a recorded email delivery result");
         return null;
     }
 }

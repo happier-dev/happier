@@ -167,6 +167,64 @@ describe('Session lifecycle scoped admission', () => {
         }
     });
 
+    it('partitions lifecycle candidates once rather than rescanning all rows for each Account', async () => {
+        const current = await owner();
+        const source = await db.session.create({ data: { accountId: current.accountId, tag: randomUUID(),
+            encryptionMode: 'plain', metadata: '{}', archivedAt: new Date() } });
+        const recipients = [current.accountId];
+        const triggerIds = new Set<string>();
+        for (let account = 0; account < 4; account += 1) {
+            const recipient = await owner();
+            recipients.push(recipient.accountId);
+            for (let trigger = 0; trigger < 2; trigger += 1) triggerIds.add((await habit(recipient, {
+                kind: 'sessionLifecycle', events: ['sessionArchived'], policy: { kind: 'everyMatch' },
+            }, { enabled: false })).trigger.id);
+        }
+        let accountReads = 0;
+        const visited = new Set<string>();
+        let finish!: () => void;
+        const allCandidatesVisited = new Promise<void>(resolve => { finish = resolve; });
+        // Instrument the final real database response, after Prisma decoding;
+        // all candidate, visibility, transaction and admission owners stay real.
+        expect(await inTx(tx => {
+            const measuredDelegate = new Proxy(tx.automationTrigger, { get: (delegate, key) => {
+                if (key !== 'findMany') return Reflect.get(delegate, key);
+                return async (...args: Parameters<typeof delegate.findMany>) => {
+                    const rows = await delegate.findMany(...args);
+                    for (const row of rows) {
+                        const automation: unknown = Reflect.get(row, 'automation');
+                        if (!triggerIds.has(row.id) || !automation || typeof automation !== 'object') continue;
+                        const accountId: unknown = Reflect.get(automation, 'accountId');
+                        const enabled: unknown = Reflect.get(automation, 'enabled');
+                        Object.defineProperties(automation, {
+                            accountId: { configurable: true, get: () => { accountReads += 1; return accountId; } },
+                            enabled: { configurable: true, get: () => {
+                                visited.add(row.id);
+                                if (visited.size === triggerIds.size) finish();
+                                return enabled;
+                            } },
+                        });
+                    }
+                    return rows;
+                };
+            } });
+            const measuredTx = new Proxy(tx, { get: (target, key) =>
+                key === 'automationTrigger' ? measuredDelegate : Reflect.get(target, key) });
+            return admitSessionLifecycleAutomationRunsTx({ tx: measuredTx, accountId: current.accountId,
+                sourceSession: source, recipientAccountIds: recipients, occurrence: { v: 1,
+                    kind: 'sessionLifecycle', event: 'sessionArchived', sourceSessionId: source.id,
+                    occurredAt: source.archivedAt!.getTime() },
+            });
+        })).toEqual([]);
+        await allCandidatesVisited;
+        // Let the last recipient's existing writer transaction finish before
+        // this fixture can close its database.
+        await inTx(async () => undefined);
+        expect(visited.size).toBe(triggerIds.size);
+        expect(accountReads).toBe(triggerIds.size);
+        expect(await db.automationRun.count({ where: { triggerId: { in: [...triggerIds] } } })).toBe(0);
+    });
+
     it('performs no additional source ACL work for an empty candidate bucket', async () => {
         const current = await owner();
         const source = await db.session.create({ data: { accountId: current.accountId, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' } });

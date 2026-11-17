@@ -66,6 +66,17 @@ describe('outbound notification provider contracts', () => {
     expect(http).toHaveBeenCalledTimes(1);
   });
 
+  it('retains the safe preparation cause without attempting delivery', async () => {
+    const { http, context } = boundary();
+    const privateDetails = 'private saved-secret retrieval failure';
+    context.services.secrets.get = async () => { throw Object.assign(new Error(privateDetails), { code: 'ECONNRESET' }); };
+    expect(await senders.teams(request, context)).toEqual({ deliveryId: request.deliveryId, channelId: request.channelId,
+      status: 'failed', code: 'notification_configuration_unavailable', retryable: false });
+    expect(http).not.toHaveBeenCalled();
+    expect(context.services.logger.warn).toHaveBeenCalledWith(expect.any(String), { failureCause: expect.objectContaining({ errorCode: 'ECONNRESET' }) });
+    expect(JSON.stringify(context.services.logger.warn.mock.calls)).not.toContain(privateDetails);
+  });
+
   it('does not replay an uncertain transport effect', async () => {
     const { http, context } = boundary();
     const privateDetails = 'secret in URL must not escape';
