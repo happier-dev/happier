@@ -5,6 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics, resolveHappierTypeScale } from '@happier-dev/plugin-ui/presentation';
 
 import { Typography } from '@/constants/Typography';
+import { resolveTranscriptPaint } from '@/components/sessions/transcript/transcriptPaint';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { scaleTextStyle } from '@/components/ui/text/uiFontScale';
 import type { MarkdownRenderingProfile } from '../rendering/MarkdownRenderingProfile';
@@ -140,7 +141,8 @@ export function buildEnrichedMarkdownStyle(params: Readonly<{
     const baseFontSize = readNumber(flattenedTextStyle.fontSize, roundTo2((embeddedBase?.fontSize ?? 16) * uiFontScale));
     const baseLineHeight = readNumber(flattenedTextStyle.lineHeight, roundTo2((embeddedBase?.lineHeight ?? 24) * uiFontScale));
     const inlineCodeFontSize = roundTo2(baseFontSize * 0.88);
-    const baseColor = readString(flattenedTextStyle.color, params.colors.text.primary);
+    const baseColor = resolveTranscriptPaint({ colors: params.colors }, 'user-bubble', 'text',
+        typeof flattenedTextStyle.color === 'string' && flattenedTextStyle.color.length > 0 ? flattenedTextStyle.color : undefined).foreground.color;
     const roleMetric = (role: 'heading' | 'label' | 'reading') => {
         const step = resolveHappierTypeScale(role, Platform.OS);
         return { fontSize: roundTo2(step.fontSize * uiFontScale), lineHeight: roundTo2(step.lineHeight * uiFontScale) };

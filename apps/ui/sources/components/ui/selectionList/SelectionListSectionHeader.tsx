@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
+import { resolveSelectionListPaint } from './selectionListPaint';
 import { SelectionListThemeSurfaceContext } from './SelectionListThemeSurfaceContext';
 import { View, Platform, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -94,7 +95,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         // U8.5 craft S1: a sentence-case group label in the secondary text colour, medium weight —
         // the group reads by weight and rhythm, not by an uppercase eyebrow.
 
-        color: theme.colors.text.secondary,
+        color: resolveSelectionListPaint(theme, 'provider').foreground.color,
         ...Typography.variant('meta', 'medium'),
 
     },

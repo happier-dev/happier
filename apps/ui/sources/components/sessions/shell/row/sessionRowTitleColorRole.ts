@@ -1,5 +1,6 @@
 import type { WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
 import type { SessionRowTitleTone } from './resolveSessionRowPresentation';
+import { resolveSessionRowPaint } from './sessionRowPaint';
 
 export type SessionListActiveColorModeV1 = 'activityAndAttention' | 'attentionOnly' | 'allActive';
 export type SessionRowTitleColorRole = 'primary' | 'secondary' | 'tertiary';
@@ -36,5 +37,5 @@ export function resolveSessionRowTitleColorRole(input: Readonly<{
 /** The ink of a title colour role; Session and Run rows read it here so a state reads the same on both. */
 export function sessionRowTitleInk(colors: Readonly<{ text: Readonly<{ primary: string; secondary: string; tertiary: string }> }>,
     role: SessionRowTitleColorRole): string {
-    return colors.text[role];
+    return resolveSessionRowPaint({ colors }, 'title', 'default', { titleRole: role }).foreground.color;
 }

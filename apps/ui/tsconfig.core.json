@@ -1857,6 +1857,7 @@
     "sources/components/sessions/shell/row/actionMenu/useSessionRowAppearanceMenu.ts",
     "sources/components/sessions/shell/row/actionMenu/useSessionRowPluginActions.ts",
     "sources/components/sessions/shell/row/resolveSessionRowPresentation.ts",
+    "sources/components/sessions/shell/row/sessionRowPaint.ts",
     "sources/components/sessions/shell/row/sessionRowTitleColorRole.ts",
     "sources/components/sessions/shell/row/useWorkflowSessionOccurrence.ts",
     "sources/components/sessions/shell/search/SessionListFilterControl.tsx",

@@ -2,6 +2,7 @@ import { resolveThemeSurfaceState, useHappierThemeSurfaceOverridesEnabled } from
 import * as React from 'react';
 import { themeSurfaceDataSet, type SurfaceAddress } from '@happier-dev/plugin-ui';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
+import { tabBarLabelPaint } from './tabBarPaint';
 import { I18nManager, Platform, Pressable, View, type LayoutChangeEvent } from 'react-native';
 import type { PressableProps, StyleProp, TextStyle, ViewStyle } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
@@ -491,7 +492,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexShrink: 1,
         fontSize: HAPPIER_SEGMENTED_METRICS.labelFontSizePx.default,
         lineHeight: SEGMENT_LABEL_SLOT_PX.default,
-        color: theme.colors.text.secondary,
+        color: tabBarLabelPaint(theme, false).color,
     },
     tabLabelCompact: {
         fontSize: HAPPIER_SEGMENTED_METRICS.labelFontSizePx.compact,
@@ -515,10 +516,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontVariant: ['tabular-nums'],
     },
     tabLabelInherited: {
-        color: theme.colors.text.secondary,
+        color: tabBarLabelPaint(theme, false).color,
     },
     tabLabelActive: {
-        color: theme.colors.text.primary,
+        color: tabBarLabelPaint(theme, true).color,
         // The semibold face itself; a numeric weight over the regular face would synthesize bold.
         ...Typography.default(HAPPIER_SEGMENTED_METRICS.labelActiveEmphasis),
     },

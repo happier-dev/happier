@@ -2,6 +2,7 @@ import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/p
 import * as React from 'react';
 import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
+import { sidebarWrapperPaint } from './sidebarPaint';
 import { Platform, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
@@ -234,6 +235,7 @@ const TITLE_STRIP_END_PADDING_PX = 12;
 
 const stylesheet = StyleSheet.create(() => ({
     strip: {
+        backgroundColor: sidebarWrapperPaint().color,
         position: 'relative',
         height: APP_SHELL_TITLE_STRIP_HEIGHT_PX,
         flexShrink: 0,

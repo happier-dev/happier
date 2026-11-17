@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
+import { resolveToolRowPaint } from '../toolRowPaint';
 import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
@@ -317,7 +318,7 @@ const styles = StyleSheet.create((theme, _runtime) => ({
     },
     title: {
         ...Typography.variant('body', 'semiBold'),
-        color: theme.colors.text.primary,
+        color: resolveToolRowPaint(theme, 'title').foreground.color,
         // The title keeps its width and the subtitle gives way first, but a long title still ends in an
         // ellipsis on a narrow row instead of pushing the row past its edge (lab `.l12-tl .tt`).
         flexShrink: 0,
@@ -329,13 +330,13 @@ const styles = StyleSheet.create((theme, _runtime) => ({
     },
     subtitleInline: {
         ...Typography.variant('body'),
-        color: theme.colors.text.secondary,
+        color: resolveToolRowPaint(theme, 'detail').foreground.color,
         minWidth: 0,
         flexShrink: 1,
     },
     statusInline: {
         ...Typography.variant('body'),
-        color: theme.colors.text.secondary,
+        color: resolveToolRowPaint(theme, 'detail').foreground.color,
         minWidth: 0,
         flexShrink: 1,
     },

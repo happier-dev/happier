@@ -2,6 +2,7 @@ import { resolveThemeSurfaceState, useHappierThemeSurfaceOverridesEnabled } from
 import * as React from 'react';
 import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
+import { tabBarLabelPaint } from '@/components/ui/navigation/tabBarPaint';
 import { Platform, View, useWindowDimensions, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, type StyleProp, type ViewStyle } from 'react-native';
 import { HappierPressable, HAPPIER_FOCUS_RING_DELEGATED_STYLE, useHappierTabSelection } from '@happier-dev/plugin-ui/presentation';
 import { ScrollView } from 'react-native-gesture-handler';
@@ -69,11 +70,11 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.variant('micro'),
     },
     labelActive: {
-        color: theme.colors.text.primary,
+        color: tabBarLabelPaint(theme, true).color,
         ...Typography.default('semiBold'),
     },
     labelInactive: {
-        color: theme.colors.text.secondary,
+        color: tabBarLabelPaint(theme, false).color,
     },
     // The leading tab stays put while the rest scroll; a short hairline marks where the track starts.
     trackDivider: {

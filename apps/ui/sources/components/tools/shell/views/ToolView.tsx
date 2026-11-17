@@ -5,6 +5,7 @@ import { useTranscriptRowContentDemand } from '@/components/sessions/transcript/
 import * as React from 'react';
 import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
+import { resolveToolRowPaint } from './toolRowPaint';
 import { View, TouchableOpacity, Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
@@ -696,20 +697,20 @@ const styles = StyleSheet.create((theme) => ({
     },
     toolName: {
         ...Typography.variant('body', 'semiBold'),
-        color: theme.colors.text.primary,
+        color: resolveToolRowPaint(theme, 'title').foreground.color,
     },
     status: {
         ...Typography.variant('body'),
-        color: theme.colors.text.secondary,
+        color: resolveToolRowPaint(theme, 'detail').foreground.color,
     },
     toolDescription: {
         ...Typography.variant('body'),
-        color: theme.colors.text.secondary,
+        color: resolveToolRowPaint(theme, 'detail').foreground.color,
         marginTop: theme.space.s2,
     },
     compactSubtitle: {
         ...Typography.variant('body'),
-        color: theme.colors.text.secondary,
+        color: resolveToolRowPaint(theme, 'detail').foreground.color,
     },
     content: {
         paddingHorizontal: theme.space.s12,

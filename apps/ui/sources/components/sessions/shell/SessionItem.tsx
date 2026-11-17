@@ -1,6 +1,7 @@
 import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
 import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
+import { resolveSessionRowPaint } from './row/sessionRowPaint';
 import { useSessionManagedWakeStatus } from '@/components/sessions/pending/useSessionManagedWakeStatus';
 import { useSessionArchivePending } from '@/hooks/session/useSessionArchivePending';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -662,7 +663,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     // The row's meta: the shared right-aligned tabular column, so times scan down the list.
     activityTime: {
         ...Typography.variant('micro'),
-        color: theme.colors.text.secondary,
+        color: resolveSessionRowPaint(theme, 'meta').foreground.color,
         ...HAPPIER_META_COLUMN_STYLE,
     },
     trailingStatusGroup: {

@@ -3,7 +3,7 @@ import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/p
 import * as React from 'react';
 import { View, type ViewProps, type ViewStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
+import { resolveTranscriptPaint } from './transcriptPaint';
 
 import type { Theme } from '@/theme';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
@@ -52,7 +52,7 @@ export function UserMessageBubble(props: Readonly<{
     const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
     const theme = props.theme ?? currentTheme;
     const style = [{
-        backgroundColor: glassContentFill(theme.colors.message.user.background, theme.colors),
+        backgroundColor: resolveTranscriptPaint(theme, 'user-bubble', 'root').background.color,
         ...(props.padding === 'parts' ? null : userMessageBubbleContentPadding(theme)),
         borderRadius: theme.parts.userBubble.radius,
         maxWidth: '100%' as const,

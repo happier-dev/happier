@@ -2,6 +2,7 @@ import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/p
 import * as React from 'react';
 import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
+import { sidebarWrapperPaint } from './sidebarPaint';
 import { Platform, View, type LayoutChangeEvent } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -635,6 +636,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.background.canvas,
     },
     group: {
+        backgroundColor: sidebarWrapperPaint().color,
         alignItems: 'center',
         flexShrink: 0,
     },

@@ -2,6 +2,7 @@ import { isSessionRuntimeRunning } from '@/sync/domains/session/attention/runtim
 import * as React from 'react';
 import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
+import { resolveTranscriptPaint } from '@/components/sessions/transcript/transcriptPaint';
 import { readableMessageText } from '@/components/sessions/transcript/messageDisplayText';
 import { isPendingMessageForRecipient } from '@/sync/domains/pending/pendingMessageRecipient';
 import { Platform, Pressable, ScrollView, View } from 'react-native';
@@ -877,7 +878,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                     <Text
                                         numberOfLines={collapsedLines}
                                         {...{ dataSet: themeSurfaceDataSet('user-bubble', 'text', 'default') }}
-                                        style={[styles.collapsedPlainText, { color: theme.colors.text.primary }, themeSurfaceStyles.surface({ surface: 'user-bubble', part: 'text', state: 'default' })]}
+                                        style={[styles.collapsedPlainText, { color: resolveTranscriptPaint(theme, 'user-bubble', 'text').foreground.color }, themeSurfaceStyles.surface({ surface: 'user-bubble', part: 'text', state: 'default' })]}
                                     >
                                         {text}
                                     </Text>

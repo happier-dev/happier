@@ -1349,6 +1349,7 @@
     "sources/components/navigation/shell/appRail/appRailModel.ts",
     "sources/components/navigation/shell/appRail/appShellColumnSizing.ts",
     "sources/components/navigation/shell/appRail/appShellColumnSurface.ts",
+    "sources/components/navigation/shell/appRail/sidebarPaint.ts",
     "sources/components/navigation/shell/appRail/useAppRailBotReorder.ts",
     "sources/components/navigation/shell/appRail/useAppShellLocation.ts",
     "sources/components/navigation/shell/appRail/useConnectedAccountsNeedingSignInCount.ts",

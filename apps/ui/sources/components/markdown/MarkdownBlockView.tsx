@@ -1,6 +1,7 @@
 import type { MarkdownBlock, MarkdownSpan, MarkdownTableAlignment } from './parseMarkdown';
 import * as React from 'react';
 import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { resolveTranscriptPaint } from '@/components/sessions/transcript/transcriptPaint';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import type { StyleProp, TextStyle } from 'react-native';
 import { Pressable, View, Platform } from 'react-native';
@@ -547,7 +548,7 @@ const style = StyleSheet.create((theme) => ({
         lineHeight: 24, // Reduced from 28 to 24
         marginTop: 8,
         marginBottom: 8,
-        color: theme.colors.text.primary,
+        color: resolveTranscriptPaint(theme, 'user-bubble', 'text').foreground.color,
         fontWeight: '400',
     },
 

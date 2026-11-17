@@ -1,7 +1,7 @@
 import { StyleSheet } from 'react-native-unistyles';
 
 import { shadowLevelStyle } from '@/shadowElevation';
-import { glassSurfacePlaneStyle } from '@/components/ui/glass/glassSurfacePaint';
+import { appShellColumnPlanePaint, resolveSidebarPaint } from './sidebarPaint';
 
 /**
  * The navigation plane's colour: the canvas the rail and title strip stand on. A navigation column
@@ -9,7 +9,7 @@ import { glassSurfacePlaneStyle } from '@/components/ui/glass/glassSurfacePaint'
  * and only the page is lifted off it (calm-shell `csedge.S1`). Every plane and peek coat reads it here.
  */
 export function appShellColumnPlaneColor(colors: Readonly<{ background: Readonly<{ canvas: string }> }>): string {
-    return colors.background.canvas;
+    return appShellColumnPlanePaint(colors).color;
 }
 
 /**
@@ -20,7 +20,7 @@ export function appShellColumnPlaneColor(colors: Readonly<{ background: Readonly
 export const appShellColumnSurface = StyleSheet.create((theme) => ({
     column: {
         flexShrink: 0,
-        ...glassSurfacePlaneStyle(appShellColumnPlaneColor(theme.colors), 'sidebar'),
+        backgroundColor: resolveSidebarPaint(theme, 'root').background.color,
     },
     /**
      * The plane alone, for a navigation column that stands beside the shell's (a Home console's own
@@ -28,7 +28,7 @@ export const appShellColumnSurface = StyleSheet.create((theme) => ({
      * paint it themselves.
      */
     plane: {
-        ...glassSurfacePlaneStyle(appShellColumnPlaneColor(theme.colors), 'sidebar'),
+        backgroundColor: resolveSidebarPaint(theme, 'root').background.color,
     },
     /**
      * A peeked column is a layer over the open column or the page: its lift falls on the trailing

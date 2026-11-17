@@ -2,6 +2,7 @@ import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/p
 import * as React from 'react';
 import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
+import { resolveSessionHeaderPaint } from './sessionHeaderPaint';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { Platform, View, type LayoutChangeEvent } from 'react-native';
 import { readHappierVisibleLayoutWidth } from '@happier-dev/plugin-ui/presentation/pageMetrics';
@@ -372,7 +373,7 @@ const styles = StyleSheet.create((theme) => ({
     title: {
         ...HEADER_BAND_TITLE_TEXT,
         ...Typography.default('semiBold'),
-        color: theme.colors.chrome.header.foreground,
+        color: resolveSessionHeaderPaint(theme, 'title').foreground.color,
         flexShrink: 1,
     },
     titleHovered: {

@@ -7,6 +7,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
 
 import { APP_RAIL_ITEM_SLOT_PX, APP_RAIL_WIDTH_PX } from './appRailMetrics';
+import { sidebarWrapperPaint } from './sidebarPaint';
 
 type SlotChildren = React.ComponentProps<typeof WorkspaceDestinationRow>['children'];
 
@@ -44,6 +45,7 @@ export function AppRailSlot(props: Readonly<{
 
 const styles = StyleSheet.create({
     slot: {
+        backgroundColor: sidebarWrapperPaint().color,
         width: APP_RAIL_WIDTH_PX,
         height: APP_RAIL_ITEM_SLOT_PX,
         alignItems: 'center',

@@ -15,6 +15,7 @@
 import * as React from 'react';
 import { resolveThemeSurfaceAddress, useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
+import { resolveSelectionListPaint } from './selectionListPaint';
 import { SelectionListThemeSurfaceContext } from './SelectionListThemeSurfaceContext';
 import { Platform, View, type GestureResponderEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -401,8 +402,8 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
   const cardFillStyle = isCard
     ? {
         backgroundColor: isSelected
-          ? paintColor(theme.colors.surface.selected)
-          : 'transparent',
+          ? resolveSelectionListPaint(theme, 'row', 'selected', paintColor(theme.colors.surface.selected)).background.color
+          : resolveSelectionListPaint(theme, 'row').background.color,
       }
     : null;
   // At one column there is no `SelectionListColumnRow`, so this envelope IS

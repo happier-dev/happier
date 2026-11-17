@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
+import { resolveSelectionListPaint } from './selectionListPaint';
 import { SelectionListThemeSurfaceContext } from './SelectionListThemeSurfaceContext';
 import {
     Platform,
@@ -331,7 +332,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     // A list on a page takes the page's material (glass when glass is on), from the same owner as `ItemList`.
     const { theme } = useUnistyles();
     const pageBackground = usePageContentBackgroundColor(theme.colors.surface.base);
-    const surfaceBackground = surface === 'none' ? null : { backgroundColor: pageBackground };
+    const surfaceBackground = surface === 'none' ? null : { backgroundColor: resolveSelectionListPaint(theme, 'root', 'default', pageBackground).background.color };
     const selectedOptionId = selection.kind === 'single' ? selection.selectedId : null;
     const multipleSelectedIds = selection.kind === 'multiple' ? selection.selectedIds : null;
     const selectedOptionIds = React.useMemo<ReadonlySet<string>>(
