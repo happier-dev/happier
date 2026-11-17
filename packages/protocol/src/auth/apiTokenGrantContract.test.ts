@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AccountApiTokensCreateActionInputV1Schema } from './accountApiTokens.js';
+import { PrivateLabelStoredV1Schema } from '../crypto/privateLabelV1.js';
 import { API_TOKEN_SOCKET_EVENT_ACTIONS, resolveSocketRpcSessionAuthorization, SESSION_RPC_METHODS } from '../rpc/index.js';
 import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema, StoredApiTokenGrantV1Schema, evaluateApiTokenGrantV1, resolveApiTokenSessionCapabilityCeilingV1 } from './apiTokenGrant.js';
 import { ExternalActionApiTokenServerPrincipalV1Schema, ExternalActionCredentialScopeDiagnosticV1Schema, ExternalActionExecutionAuthorizationBindingV1Schema } from '../actions/externalActionApi.js';
@@ -13,7 +14,7 @@ describe('scoped credential public ingress', () => {
       targets: { sessions: [], machines: [], environments: ['staging'] },
     };
     const input = AccountApiTokensCreateActionInputV1Schema.parse({
-      tokenId: '11111111-1111-4111-8111-111111111111', label: 'CI', grant,
+      tokenId: '11111111-1111-4111-8111-111111111111', label: PrivateLabelStoredV1Schema.parse({ content: { t: 'plain', v: 'CI' }, recipients: [] }), grant,
     });
     const tokenAction = getActionSpec('account.apiTokens.create');
     expect(tokenAction.inputSchema.parse(input)).toEqual(input);
@@ -56,7 +57,7 @@ describe('scoped credential public ingress', () => {
   });
   it('preserves exact Automation authority through persisted reads and rejects unknown restrictions', () => {
     const input = AccountApiTokensCreateActionInputV1Schema.parse({
-      tokenId: '11111111-1111-4111-8111-111111111111', label: 'Brief',
+      tokenId: '11111111-1111-4111-8111-111111111111', label: PrivateLabelStoredV1Schema.parse({ content: { t: 'plain', v: 'Brief' }, recipients: [] }),
       grant: { ...API_TOKEN_FULL_GRANT_V1, automationIds: ['brief'] },
     });
     expect(StoredApiTokenGrantV1Schema.parse(JSON.parse(JSON.stringify(input.grant)))).toEqual(input.grant);
@@ -68,7 +69,7 @@ describe('scoped credential public ingress', () => {
   });
   it('accepts a strict creation grant while refusing unknown grant authority', () => {
     const input = {
-      tokenId: '11111111-1111-4111-8111-111111111111', label: 'Leads',
+      tokenId: '11111111-1111-4111-8111-111111111111', label: PrivateLabelStoredV1Schema.parse({ content: { t: 'plain', v: 'Leads' }, recipients: [] }),
       grant: { v: 1, actions: { families: ['messaging'], ids: [] }, targets: { sessions: ['s1'], machines: [] }, approve: false, origins: [], models: null, permissionModes: null, create: null },
     };
     expect(AccountApiTokensCreateActionInputV1Schema.safeParse(input).success).toBe(true);
