@@ -18,10 +18,11 @@ const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 const { HomePeopleCollectionRail } = await import('./HomePeopleCollectionRail');
 const { Item } = await import('@/components/ui/lists/Item');
+const { CollectionList } = await import('@/components/ui/lists/collection/CollectionList');
 const { resetHomeGovernanceEngineForTests } = await import('@/sync/engine/home/governance/homeGovernanceEngine');
 const { applyHomeGovernanceProjection, resetHomeGovernanceSnapshotsForTests } = await import('@/sync/store/home/governance/homeGovernanceSnapshots');
-const { resetHomeAccountRosterEngineForTests } = await import('@/sync/engine/home/governance/homeAccountRosterEngine');
-const { resetHomeAccountRosterSnapshotsForTests } = await import('@/sync/store/home/governance/homeAccountRosterSnapshots');
+const { refreshHomeAccountRoster, resetHomeAccountRosterEngineForTests } = await import('@/sync/engine/home/governance/homeAccountRosterEngine');
+const { getHomeAccountRosterSnapshot, resetHomeAccountRosterSnapshotsForTests } = await import('@/sync/store/home/governance/homeAccountRosterSnapshots');
 const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
 const SEARCH_PATH = '/v1/home/accounts/search';
 
@@ -72,6 +73,39 @@ describe('People split rail search authority', () => {
 });
 
 describe('People rail status slot', () => {
+    it('withdraws the count after a refused roster read instead of reporting an empty Home', async () => {
+        const serverId = await home.addHome({ name: 'Studio', serverUrl: 'https://rail-count-refused.example', accountId: 'account-ada' });
+        const scope = { serverId, accountId: 'account-ada' };
+        home.answer(serverId, '/v1/home/governance/get', { body: homeGovernanceProjectionFixture() });
+        home.answer(serverId, '/v1/home/accounts/list', { body: { items: [], nextCursor: null } });
+        const screen = await renderScreen(<HomePeopleCollectionRail serverId={serverId} selectedAccountId={null} />);
+        const count = () => screen.tree.findByType(CollectionList).props.count;
+        await waitForHomeGovernance(() => expect(getHomeAccountRosterSnapshot(scope)?.status).toBe('ready'));
+        expect(count()).toBe(0);
+
+        home.answer(serverId, '/v1/home/accounts/list', { status: 403, body: { error: 'home_governance_forbidden' } });
+        await act(async () => { await refreshHomeAccountRoster(scope); });
+        await waitForHomeGovernance(() => expect(getHomeAccountRosterSnapshot(scope)?.status).toBe('error'));
+        expect(count()).toBeNull();
+    });
+
+    it('retains a completed legacy roster count when a refresh cannot reach the Home', async () => {
+        const serverId = await home.addHome({ name: 'Studio', serverUrl: 'https://rail-count-retained.example', accountId: 'account-ada' });
+        const scope = { serverId, accountId: 'account-ada' };
+        home.answer(serverId, '/v1/home/governance/get', { body: homeGovernanceProjectionFixture() });
+        home.answer(serverId, '/v1/home/accounts/list', { body: { items: [homeAccountRowFixture('ada')], nextCursor: null } });
+        const screen = await renderScreen(<HomePeopleCollectionRail serverId={serverId} selectedAccountId={null} />);
+        const count = () => screen.tree.findByType(CollectionList).props.count;
+        await waitForHomeGovernance(() => expect(getHomeAccountRosterSnapshot(scope)?.status).toBe('ready'));
+        expect(count()).toBe(1);
+
+        home.answer(serverId, '/v1/home/accounts/list', { dispatchThenFail: true });
+        await act(async () => { await refreshHomeAccountRoster(scope); });
+        await waitForHomeGovernance(() => expect(getHomeAccountRosterSnapshot(scope)?.status).toBe('error'));
+        expect(count()).toBe(1);
+        expect(screen.findByTestId('home-people-rail-row:ada')).toBeTruthy();
+    });
+
     it('says a disabled person in the icon-only status slot and keeps an active person quiet', async () => {
         const serverId = await home.addHome({ name: 'Studio', serverUrl: 'https://rail-status.example', accountId: 'account-ada' });
         home.answer(serverId, '/v1/home/governance/get', { body: homeGovernanceProjectionFixture() });

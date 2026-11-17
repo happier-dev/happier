@@ -10,7 +10,7 @@ export type { HomeAccountRosterStatus } from '@/sync/store/home/governance/homeA
 
 export type HomeAccountRoster = Readonly<{
     rows: readonly HomeAccountRowV1[];
-    /** Exact Home total when supplied; null for an older list response. */
+    /** Exact Home total when supplied or once every roster page is read; otherwise null. */
     total: number | null;
     status: HomeAccountRosterStatus;
     /** Retained across a failed page load so the list never blanks. */

@@ -6,6 +6,7 @@ import {
     installHomeGovernanceBoundaries,
     waitForHomeGovernance,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
@@ -16,6 +17,9 @@ const { loadMoreHomeAccountRoster, refreshHomeAccountRoster, resetHomeAccountRos
 const { resetHomeAccountRosterSnapshotsForTests } = await import('@/sync/store/home/governance/homeAccountRosterSnapshots');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const PATH = '/v1/home/accounts/list';
+
+// Keep cold module preparation outside the roster request's progress wait.
+await loadSyncSingletonForTests();
 
 beforeEach(async () => {
     resetHomeAccountRosterEngineForTests();
@@ -106,9 +110,10 @@ describe('useHomeAccountRoster shared resource', () => {
         const scope = { serverId, accountId: 'actor' };
         const first = homeAccountRowFixture('first');
         const second = homeAccountRowFixture('second');
-        harness.answer(serverId, PATH, { body: { items: [first], nextCursor: 'page-2', total: 2 } });
+        harness.answer(serverId, PATH, { body: { items: [first], nextCursor: 'page-2' } });
         const pair = await renderHook(() => [useHomeAccountRoster(scope, true), useHomeAccountRoster(scope, true)]);
         await waitForHomeGovernance(() => expect(pair.getCurrent()[0].status).toBe('ready'));
+        expect(pair.getCurrent()[0].total).toBeNull();
         harness.answer(serverId, PATH, { dispatchThenFail: true });
         const initialRequests = harness.requestsFor(PATH).length;
         await act(async () => { pair.getCurrent()[0].loadMore(); pair.getCurrent()[1].loadMore(); });
@@ -118,8 +123,8 @@ describe('useHomeAccountRoster shared resource', () => {
         expect(pair.getCurrent()[1].hasMore).toBe(true);
         const continuation = createDeferred<void>();
         harness.answer(serverId, PATH, { select: input => typeof input === 'object' && input !== null && 'cursor' in input && input.cursor === 'page-2'
-            ? { body: { items: [second], nextCursor: null, total: 2 }, respondAfter: continuation.promise }
-            : { body: { items: [first], nextCursor: 'page-2', total: 2 } } });
+            ? { body: { items: [second], nextCursor: null }, respondAfter: continuation.promise }
+            : { body: { items: [first], nextCursor: 'page-2' } } });
         await act(async () => { pair.getCurrent()[0].loadMore(); pair.getCurrent()[1].loadMore(); });
         await waitForHomeGovernance(() => { expect(harness.requestsFor(PATH).length).toBeGreaterThan(initialRequests + 1); });
         expect(harness.requestsFor(PATH)).toHaveLength(initialRequests + 2);
@@ -128,6 +133,7 @@ describe('useHomeAccountRoster shared resource', () => {
         await waitForHomeGovernance(() => expect(pair.getCurrent()[0].status).toBe('ready'));
         expect(pair.getCurrent().map(roster => roster.rows)).toEqual([[first, second], [first, second]]);
         expect(pair.getCurrent()[0].hasMore).toBe(false);
+        expect(pair.getCurrent()[0].total).toBe(2);
 
         harness.answer(serverId, PATH, { dispatchThenFail: true });
         await act(async () => { pair.getCurrent()[0].reload(); pair.getCurrent()[1].reload(); });
@@ -135,6 +141,7 @@ describe('useHomeAccountRoster shared resource', () => {
         expect(harness.requestsFor(PATH)).toHaveLength(initialRequests + 3);
         expect(pair.getCurrent().map(roster => roster.status)).toEqual(['error', 'error']);
         expect(pair.getCurrent()[1].rows).toEqual([first, second]);
+        expect(pair.getCurrent()[1].total).toBe(2);
     });
 
     it('isolates Homes and Accounts and revalidates after the last observer leaves', async () => {

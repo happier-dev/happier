@@ -168,7 +168,7 @@ export const HomePeopleCollectionRail = React.memo(function HomePeopleCollection
         <CollectionList
             testID="home-people-rail"
             title={t('homeGovernance.people')}
-            count={roster.hasMore ? null : roster.rows.length}
+            count={roster.total}
             search={canList ? {
                 testID: 'home-people-rail-search',
                 value: query,

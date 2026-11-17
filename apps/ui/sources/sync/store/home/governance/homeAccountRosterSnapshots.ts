@@ -68,7 +68,7 @@ export function applyHomeAccountRosterPage(scope: ServerAccountScope, page: Home
     write(scope, {
         scope,
         rows: retainKeyedRows(previous?.rows ?? null, incoming, row => row.accountId),
-        total: page.total ?? null,
+        total: page.total ?? (page.nextCursor === null ? incoming.length : null),
         status: 'ready',
         error: null,
         cursor: page.nextCursor,
