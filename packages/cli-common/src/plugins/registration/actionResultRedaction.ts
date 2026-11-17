@@ -13,6 +13,8 @@ export function redactPluginInvocationResultData(
 ): JsonValue {
     if (typeof value === 'string') return redact(value);
     if (value === null || typeof value !== 'object') return value;
+    const redactedLeaf = projectRedactedTypedLeaf(value, redact);
+    if (redactedLeaf) return redactedLeaf;
 
     type PendingRedaction =
         | Readonly<{ kind: 'array'; source: readonly JsonValue[]; destination: JsonValue[]; path: readonly string[] }>
@@ -32,6 +34,8 @@ export function redactPluginInvocationResultData(
         if (issue) candidate = { path: [...issue.path], code: issue.code, message: issue.message };
         if (typeof candidate === 'string') return redact(candidate);
         if (candidate === null || typeof candidate !== 'object') return candidate;
+        const redactedLeaf = projectRedactedTypedLeaf(candidate, redact);
+        if (redactedLeaf) return redactedLeaf;
         const next: PendingRedaction = isJsonArray(candidate)
             ? { kind: 'array', source: candidate, destination: [], path }
             : { kind: 'record', source: candidate, destination: {}, path };
@@ -55,4 +59,18 @@ export function redactPluginInvocationResultData(
         }
     }
     return root.destination;
+}
+
+/**
+ * A typed leaf ({ type, value }) constrains its value's format by its tag. When the redactor
+ * replaces part of a non-text leaf's value, keeping that tag would publish an invalid value,
+ * so the leaf becomes the plain text carrying the redacted string. Text leaves keep their shape.
+ */
+function projectRedactedTypedLeaf(candidate: JsonValue, redact: (value: string) => string): JsonValue | undefined {
+    if (Array.isArray(candidate) || candidate === null || typeof candidate !== 'object') return undefined;
+    const { type, value } = candidate;
+    if (typeof type !== 'string' || typeof value !== 'string') return undefined;
+    if (type === 'text' && Object.keys(candidate).length === 2) return undefined;
+    const redacted = redact(value);
+    return redacted === value ? undefined : { type: 'text', value: redacted };
 }
