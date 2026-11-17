@@ -364,6 +364,13 @@ from different plugins or Homes remain separate. Plugin authors can use the
 [subject-kind contribution](/plugins/api/actions-tools-commands#plugin-subject-identities-03-development-source)
 to supply these identities and their resource list.
 
+In unreleased 0.3 development, a deployment-managed Database subject identifies
+one logical database by its Environment, linked target and database name. A
+linked target can contain several databases, so the deployment read keeps their
+subjects separately. For Action triggers, selecting one scopes the trigger to
+your own Actions; sharing the Environment does not establish a shared Database
+grant.
+
 ### Schedule
 
 A schedule can run once at a date and time, repeat at an interval — every *n*
@@ -407,6 +414,15 @@ events follow that Machine's existing enabled memory, CPU and disk alert rules,
 including recovery. These sources observe live daemon transitions: keep the
 watcher running to receive them. Their checkpointed observer does not replay
 transitions missed while stopped, and it does not detect missing backup runs.
+
+The unreleased 0.3 Machine offline/online path uses the server's native presence
+transition to select matching Event kinds and Machine subjects. The trigger
+owner's connected client evaluates the private filter before a Run is admitted,
+using Account keys for encrypted Accounts. Plaintext Accounts require no Account
+keys, and the server never opens encrypted filters. This path is still being
+integrated and tested. It has no separate daemon presence observer, and the
+latest retained offline/online pair cannot recover overwritten transitions or
+guarantee delivery while that client is absent.
 
 An existing Run detail with readable event evidence also offers **Create a
 trigger from this event**. This preselects the event, not its private source
