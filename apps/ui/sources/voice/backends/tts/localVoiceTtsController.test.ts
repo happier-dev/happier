@@ -329,10 +329,13 @@ describe('localVoiceTtsController', () => {
             if (refreshCatalog) {
                 runtimeSupported = false;
                 await act(async () => { await refreshCatalog?.(); });
-                await vi.waitFor(() => expect(readAloudButton()?.props.disabled).toBe(true));
-                expect(readAloudButton()?.props.disabledReason)
-                    .toContain(translateVoiceReadiness('voice.readiness.runtime_missing'));
-                expect(readAloudButton()?.props.onDisabledPress).toEqual(expect.any(Function));
+                await vi.waitFor(() => expect(readAloudButton()).toBeUndefined());
+                const overflow = messageActions.findAll(node => node.props?.testID === 'plugin-message-actions-overflow-menu'
+                    && Array.isArray(node.props.items))[0];
+                const items = overflow?.props.items as ReadonlyArray<{ id: string; disabled?: boolean; subtitle?: string }> | undefined;
+                expect(items?.find(item => item.id === 'readAloud')).toMatchObject({ disabled: true,
+                    subtitle: expect.stringContaining(translateVoiceReadiness('voice.readiness.runtime_missing')) });
+                expect(items?.some(item => item.id === 'readAloud:recovery')).toBe(true);
             }
         } finally {
             localVoiceTtsController.stopSay();
@@ -340,6 +343,34 @@ describe('localVoiceTtsController', () => {
             await presence.unmount();
             await messageActions.unmount();
         }
+    });
+
+    it('replaces active Say with ordinary speech through the same output dispatch', async () => {
+        const current = storage.getState().settings;
+        const local = readLocalConversationVoiceSettings(current.voice);
+        storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice: writeLocalConversationVoiceSettings({
+            ...current.voice, providerId: 'local_conversation',
+        }, { ...local, tts: { ...local.tts, provider: 'device' } }) }, current));
+        const settings = storage.getState().settings;
+        const controller = createLocalVoiceTtsController();
+        const reading = speechBoundary.holdNextPlayback('device');
+        const saying = controller.say({ text: 'Chosen readout.', settings, tts: readLocalConversationVoiceSettings(settings.voice).tts,
+            networkTimeoutMs: 15_000, onSpeaking: () => {},
+        });
+        let speaking: Promise<void> | undefined;
+        let ordinary: ReturnType<typeof speechBoundary.holdNextPlayback> | undefined;
+        try {
+            await reading.started;
+            ordinary = speechBoundary.holdNextPlayback('device');
+            speaking = controller.speak({ text: 'New ordinary speech.', settings, tts: readLocalConversationVoiceSettings(settings.voice).tts,
+                networkTimeoutMs: 15_000, registerPlaybackStopper: () => () => {}, onSpeaking: () => {},
+            });
+            await ordinary.started;
+            expect(controller.readSay()).toBe('idle');
+            expect(await saying).toEqual({ status: 'cancelled' });
+            ordinary();
+            await speaking;
+        } finally { controller.stopSay(); reading(); ordinary?.(); await Promise.all([saying, speaking]); }
     });
 
     it('dispatches a current external dual-role speech provider through normal Local Voice TTS', async () => {

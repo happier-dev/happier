@@ -17,6 +17,9 @@ import {
   localVoicePendingEnqueue,
   localVoiceSpeechTranscription,
   localVoiceSpeechOutputBoundary,
+  publishLocalVoiceSubmittedUserMessage,
+  publishLocalVoiceAssistantMessage,
+  acknowledgeLocalVoicePendingEnqueue,
   registerLocalVoiceEngineHarnessHooks,
   speechRecStart,
   speechRecStop,
@@ -525,6 +528,241 @@ describe('local voice engine stop', () => {
     }
   });
 
+  it('stops Say before acquiring a fresh conversation microphone', async () => {
+    const localVoiceEngine = await loadLocalVoiceEngineWithCompatState();
+    const storage = await getStorage();
+    const local = readLocalConversationVoiceSettings(storage.getState().settings.voice);
+    storage.__setState({ settings: { ...storage.getState().settings, voice: {
+      ...storage.getState().settings.voice, providerId: 'local_conversation',
+      providers: { ...storage.getState().settings.voice.providers,
+        local_conversation: { schemaVersion: 1, config: { ...local, conversationMode: 'direct_session',
+          tts: { ...local.tts, provider: 'device', autoSpeakReplies: false },
+        } },
+      },
+    } } });
+    const { executeVoiceSpeechAction } = await import('@/sync/ops/actions/voiceSpeechAction');
+    const { localVoiceTtsController } = await import('@/voice/backends/tts/localVoiceTtsController');
+    const sayPlayback = localVoiceSpeechOutputBoundary.holdNextPlayback('device');
+    const saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep reading until I start the microphone.' }, storage.getState().settings);
+    try {
+      await sayPlayback.started;
+      let phaseAtCapture: string | null = null;
+      const record = localVoiceSpeechOutputBoundary.fileRecording.start.getMockImplementation();
+      localVoiceSpeechOutputBoundary.fileRecording.start.mockImplementationOnce(async (...args) => {
+        phaseAtCapture = localVoiceTtsController.readSay();
+        if (!record) throw new Error('Recording OS boundary unavailable');
+        return await record(...args);
+      });
+      await localVoiceEngine.toggleLocalVoiceTurn('s1');
+      expect(phaseAtCapture).toBe('idle');
+      expect(await saying).toEqual({ status: 'cancelled' });
+      expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
+    } finally {
+      sayPlayback(); localVoiceTtsController.stopSay(); await saying;
+      await localVoiceEngine.stopLocalVoiceSession();
+    }
+  });
+
+  it.each(['recorded', 'device', 'device-committed', 'recorded-starting', 'recorded-starting-replace', 'recorded-stop-failed', 'recorded-starting-stop-failed', 'recorded-muted'] as const)('discards %s conversation input before Say and keeps the conversation idle', async capture => {
+    const storage = await getStorage();
+    const local = readLocalConversationVoiceSettings(storage.getState().settings.voice);
+    storage.__setState({ settings: { ...storage.getState().settings, voice: {
+      ...storage.getState().settings.voice, providerId: 'local_conversation',
+      providers: { ...storage.getState().settings.voice.providers,
+        local_conversation: { schemaVersion: 1, config: { ...local, conversationMode: 'direct_session',
+          stt: capture.startsWith('device') ? { ...local.stt, provider: 'device' } : local.stt,
+          handsFree: { ...local.handsFree, enabled: capture === 'device' },
+          tts: { ...local.tts, provider: 'device', autoSpeakReplies: false },
+        } },
+      },
+    } } });
+    speechRecStart.mockImplementation(() => { emitSpeechRecEvent('start'); emitSpeechRecEvent('audiostart'); });
+    speechRecStop.mockImplementation(() => emitSpeechRecEvent('end'));
+    const { createLocalConversationVoiceAdapter } = await import('@/voice/adapters/localConversation/localConversationAdapter');
+    const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
+    const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
+    const { acknowledgeVoiceSessionRuntimeReady, setVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleControllerStore');
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    const { executeVoiceSpeechAction } = await import('@/sync/ops/actions/voiceSpeechAction');
+    const { localVoiceTtsController } = await import('@/voice/backends/tts/localVoiceTtsController');
+    const { localVoiceHomeId } = await import('./localVoiceEngine.testHarness');
+    registerVoiceAdapters([createLocalConversationVoiceAdapter()]);
+    const lifecycle = createVoiceSessionLifecycleController();
+    setVoiceSessionLifecycleController(lifecycle);
+    acknowledgeVoiceSessionRuntimeReady(true);
+    const unsubscribe = lifecycle.subscribe(() => setVoiceSessionSnapshot(lifecycle.getSnapshot()));
+    lifecycle.setConfiguredProviderId('local_conversation');
+    const target = { serverId: localVoiceHomeId, sessionId: 's1' };
+    const recorderStarting = createDeferred<void>();
+    const admitRecorder = createDeferred<{ recordingId: string }>();
+    if (capture === 'recorded-starting' || capture === 'recorded-starting-replace' || capture === 'recorded-starting-stop-failed') {
+      localVoiceSpeechOutputBoundary.fileRecording.start.mockImplementationOnce(async () => {
+        recorderStarting.resolve(); return await admitRecorder.promise;
+      });
+    }
+    const starting = lifecycle.toggle(target);
+    try {
+      if (capture === 'recorded-starting-stop-failed') {
+        await recorderStarting.promise;
+        const saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Do not speak after a failed late native stop.' },
+          storage.getState().settings);
+        localVoiceSpeechOutputBoundary.fileRecording.stop.mockRejectedValueOnce(new Error('file_recording_stop_failed'));
+        admitRecorder.resolve({ recordingId: 'local-engine-recording' });
+        await starting;
+        expect(await saying).toMatchObject({ status: 'unavailable' });
+        expect(expoSpeechSpeak).not.toHaveBeenCalled();
+        expect(localVoiceTtsController.readSay()).toBe('idle');
+        expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
+        return;
+      }
+      if (capture === 'recorded-starting-replace') {
+        await recorderStarting.promise;
+        // Only the clock is synthetic. Native start remains genuinely pending;
+        // Say must not borrow End's existing 1s terminal-abandonment shortcut.
+        vi.useFakeTimers();
+        const first = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Superseded answer.' }, storage.getState().settings);
+        let replacement = first;
+        try {
+          await vi.advanceTimersByTimeAsync(1_001);
+          expect(localVoiceTtsController.readSay()).toBe('preparing');
+          expect(expoSpeechSpeak).not.toHaveBeenCalled();
+          replacement = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Current answer.' }, storage.getState().settings);
+          await vi.advanceTimersByTimeAsync(1_001);
+          expect(localVoiceTtsController.readSay()).toBe('preparing');
+          expect(expoSpeechSpeak).not.toHaveBeenCalled();
+        } finally {
+          admitRecorder.resolve({ recordingId: 'local-engine-recording' });
+          await starting;
+          await Promise.all([first, replacement]);
+          vi.useRealTimers();
+        }
+        expect(await first).toEqual({ status: 'cancelled' });
+        expect(await replacement).toEqual({ status: 'completed' });
+        expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual(['Current answer.']);
+        expect(localVoiceSpeechOutputBoundary.fileRecording.stop).toHaveBeenCalled();
+        return;
+      }
+      if (capture === 'recorded-starting') {
+        await recorderStarting.promise;
+        const saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Read this answer.' },
+          storage.getState().settings);
+        expect(localVoiceTtsController.readSay()).toBe('preparing');
+        await waitForTestEvent(lifecycle.subscribe, lifecycle.getSnapshot,
+          snapshot => snapshot.status === 'connected' && snapshot.mode === 'idle');
+        localVoiceTtsController.stopSay();
+        admitRecorder.resolve({ recordingId: 'local-engine-recording' });
+        await starting;
+        expect(await saying).toEqual({ status: 'cancelled' });
+        expect(expoSpeechSpeak).not.toHaveBeenCalled();
+        expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: 'idle' });
+        expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
+        expect(localVoiceSpeechTranscription).not.toHaveBeenCalled();
+        expect(localVoiceSpeechOutputBoundary.fileRecording.stop).toHaveBeenCalled();
+        return;
+      }
+      await starting;
+      expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: 'listening' });
+      if (capture === 'device-committed') {
+        const enqueueEntered = createDeferred<void>();
+        const acknowledgeEnqueue = createDeferred<void>();
+        const enqueue = localVoicePendingEnqueue.getMockImplementation();
+        if (!enqueue) throw new Error('Missing pending-message HTTP boundary');
+        localVoicePendingEnqueue.mockImplementationOnce(async (...args) => {
+          enqueueEntered.resolve();
+          await acknowledgeEnqueue.promise;
+          return await enqueue(...args);
+        });
+        emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: 'Preserve this committed input', confidence: 0.9 }] });
+        const committed = lifecycle.commitInput(target.sessionId);
+        try {
+          await enqueueEntered.promise;
+          expect(await executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Read while the committed input settles.' },
+            storage.getState().settings)).toEqual({ status: 'completed' });
+          acknowledgeEnqueue.resolve();
+          await committed;
+          expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: 'idle' });
+          expect(localVoicePendingEnqueue).toHaveBeenCalledOnce();
+          // Only a new explicit mic action may admit fresh hands-free input.
+          await lifecycle.bargeIn(target.sessionId);
+          expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: 'listening' });
+        } finally {
+          acknowledgeEnqueue.resolve();
+          await committed;
+        }
+        return;
+      }
+      if (capture === 'recorded-muted') {
+        const { setLocalVoiceMuted } = await import('./localVoiceEngine');
+        await setLocalVoiceMuted(target.sessionId, true);
+      }
+      if (capture === 'recorded-stop-failed') {
+        // Only a successful native SDK acknowledgement closes this physical
+        // recorder. A failed first Say must retain enough ownership to retry.
+        const stop = localVoiceSpeechOutputBoundary.fileRecording.stop.getMockImplementation();
+        if (!stop) throw new Error('Missing native recording stop boundary');
+        let stopRefused = true;
+        let recordingOpen = true;
+        localVoiceSpeechOutputBoundary.fileRecording.stop.mockImplementation(async (...args) => {
+          if (stopRefused) throw new Error('file_recording_stop_failed');
+          const result = await stop(...args);
+          recordingOpen = false;
+          return result;
+        });
+        expect(await executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Do not speak over a failed microphone stop.' },
+          storage.getState().settings)).toMatchObject({ status: 'unavailable' });
+        expect(expoSpeechSpeak).not.toHaveBeenCalled();
+        expect(localVoiceTtsController.readSay()).toBe('idle');
+        expect(recordingOpen).toBe(true);
+        stopRefused = false;
+        let recordingOpenAtSpeech: boolean | null = null;
+        expoSpeechSpeak.mockImplementation((_text, options) => {
+          recordingOpenAtSpeech = recordingOpen;
+          options?.onStart?.(); options?.onDone?.();
+        });
+        expect(await executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Retry after the recorder really stops.' },
+          storage.getState().settings)).toMatchObject({ status: 'completed' });
+        expect(recordingOpenAtSpeech).toBe(false);
+        expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
+        expect(localVoiceSpeechTranscription).not.toHaveBeenCalled();
+        return;
+      }
+      if (capture === 'device') emitSpeechRecEvent('result', { isFinal: false, results: [{ transcript: 'Discard this input', confidence: 0.9 }] });
+      let captureModeAtSpeech: string | null = null;
+      expoSpeechSpeak.mockImplementation((_text, options) => {
+        captureModeAtSpeech = lifecycle.getSnapshot().mode;
+        options?.onStart?.(); options?.onDone?.();
+      });
+      expect(await executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Read this answer.' },
+        storage.getState().settings)).toEqual({ status: 'completed' });
+      expect(captureModeAtSpeech).toBe('idle');
+      localVoiceTtsController.stopSay();
+      if (capture === 'recorded-muted') {
+        const { getVoiceConversationRuntimeSnapshot } = await import('@/voice/runtime/machine/voiceConversationRuntimeStore');
+        const { toggleLocalVoiceTurn, setLocalVoiceMuted } = await import('./localVoiceEngine');
+        expect(getVoiceConversationRuntimeSnapshot().micMuted).toBe(true);
+        await toggleLocalVoiceTurn(target.sessionId);
+        expect(localVoiceSpeechOutputBoundary.fileRecording.setMuted).toHaveBeenLastCalledWith({
+          recordingId: 'local-engine-recording', muted: true,
+        });
+        // Existing unmute control changes the preference; Say never does.
+        await setLocalVoiceMuted(target.sessionId, false);
+        expect(getVoiceConversationRuntimeSnapshot().micMuted).toBe(false);
+        return;
+      }
+      emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: 'Discard this input', confidence: 0.9 }] });
+      emitSpeechRecEvent('end');
+      expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: 'idle' });
+      expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
+      expect(localVoiceSpeechTranscription).not.toHaveBeenCalled();
+    } finally {
+      admitRecorder.resolve({ recordingId: 'local-engine-recording' });
+      await starting;
+      localVoiceTtsController.stopSay();
+      await lifecycle.stop(target.sessionId);
+      unsubscribe();
+    }
+  }, 180_000);
+
   it('stops an in-progress recording turn without sending', async () => {
     const { toggleLocalVoiceTurn, getLocalVoiceState, stopLocalVoiceSession } = await loadLocalVoiceEngineWithCompatState();
 
@@ -563,6 +801,105 @@ describe('local voice engine stop', () => {
     await stopAndTranscribe;
 
     expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
+  });
+
+  it.each(['top_bar', 'island'] as const)('retains global Read aloud Stop in %s after Voice is disabled', async container => {
+    const storage = await getStorage();
+    const config = readLocalConversationVoiceSettings(storage.getState().settings.voice);
+    storage.__setState({ settings: { ...storage.getState().settings, voice: {
+      ...storage.getState().settings.voice, providerId: 'local_conversation',
+      providers: { ...storage.getState().settings.voice.providers,
+        local_conversation: { schemaVersion: 1, config: { ...config, tts: { ...config.tts, provider: 'device' } } },
+      },
+    } }, localSettings: { ...storage.getState().localSettings, voicePresenceContainer: container } });
+    const React = await import('react');
+    const { act } = await import('react-test-renderer');
+    const { Dimensions } = await import('react-native');
+    // Device/window dimensions are the external input; container selection stays real.
+    const dimensions = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1440, height: 900, scale: 1, fontScale: 1 });
+    const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
+    const { SessionCockpitChromeRegistryProvider } = await import('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry');
+    const { VoiceTopBarPresenceMount } = await import('@/components/voice/presence/VoiceTopBarPresence');
+    const { VoicePresenceAppShellMount } = await import('@/components/voice/presence/VoicePresenceAppShellMount');
+    const { executeVoiceSpeechAction } = await import('@/sync/ops/actions/voiceSpeechAction');
+    const { localVoiceTtsController } = await import('@/voice/backends/tts/localVoiceTtsController');
+    const playback = localVoiceSpeechOutputBoundary.holdNextPlayback('device');
+    const saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep Stop reachable.' }, storage.getState().settings);
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    try {
+      await playback.started;
+      screen = await renderScreen(React.createElement(SessionCockpitChromeRegistryProvider, null,
+        React.createElement(VoiceTopBarPresenceMount), React.createElement(VoicePresenceAppShellMount)));
+      if (container === 'island') {
+        await act(async () => {
+          screen!.findByTestId('voice-presence-float-host')!.props.onLayout({
+            nativeEvent: { layout: { x: 0, y: 0, width: 1440, height: 900 } },
+          });
+        });
+      }
+      const stopId = container === 'top_bar' ? 'voice-top-bar-read-aloud-stop' : 'voice-island-read-aloud-stop';
+      expect(screen.findByTestId(stopId)).not.toBeNull();
+      await act(() => storage.__setState({ settings: { ...storage.getState().settings,
+        featureToggles: { ...storage.getState().settings.featureToggles, voice: false },
+        voice: { ...storage.getState().settings.voice, providerId: 'off' },
+      } }));
+      expect(localVoiceTtsController.readSay()).toBe('speaking');
+      expect(screen.findByTestId(stopId)).not.toBeNull();
+      screen.pressByTestId(stopId);
+      expect(await saying).toEqual({ status: 'cancelled' });
+    } finally {
+      playback(); localVoiceTtsController.stopSay(); await saying;
+      await screen?.unmount(); dimensions.mockRestore();
+    }
+  });
+
+  it('preserves an already committed recorded transcript while Say takes output', async () => {
+    const storage = await getStorage();
+    const local = readLocalConversationVoiceSettings(storage.getState().settings.voice);
+    storage.__setState({ settings: { ...storage.getState().settings, voice: {
+      ...storage.getState().settings.voice,
+      providers: { ...storage.getState().settings.voice.providers,
+        local_conversation: { schemaVersion: 1, config: { ...local,
+          tts: { ...local.tts, provider: 'device', autoSpeakReplies: true },
+        } },
+      },
+    } } });
+    const transcription = createDeferred<string>();
+    localVoiceSpeechTranscription.mockImplementationOnce(() => transcription.promise);
+    const accepted = createDeferred<void>();
+    localVoicePendingEnqueue.mockImplementationOnce(async request => {
+      await publishLocalVoiceSubmittedUserMessage(request);
+      const result = acknowledgeLocalVoicePendingEnqueue(request);
+      accepted.resolve();
+      return result;
+    });
+    const { toggleLocalVoiceTurn, stopLocalVoiceSession, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
+    const { executeVoiceSpeechAction } = await import('@/sync/ops/actions/voiceSpeechAction');
+    const { localVoiceTtsController } = await import('@/voice/backends/tts/localVoiceTtsController');
+    const playback = localVoiceSpeechOutputBoundary.holdNextPlayback('device');
+    let saying: ReturnType<typeof executeVoiceSpeechAction> | undefined;
+    await toggleLocalVoiceTurn('s1');
+    const committed = toggleLocalVoiceTurn('s1');
+    try {
+      await waitForLocalVoiceBoundaryEvent('transcription');
+      saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Read another answer.' }, storage.getState().settings);
+      await playback.started;
+      const submitted = Promise.race([accepted.promise.then(() => true), committed.then(() => false)]);
+      transcription.resolve('Keep this already committed utterance.');
+      expect(await submitted).toBe(true);
+      await publishLocalVoiceAssistantMessage({ sessionId: 's1', id: 'committed-stt-after-say', text: 'The committed reply stays in the transcript.' });
+      await committed;
+      expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual(['Read another answer.']);
+      expect(localVoiceTtsController.readSay()).toBe('speaking');
+      expect(getLocalVoiceState().status).toBe('idle');
+      playback();
+      expect(await saying).toEqual({ status: 'completed' });
+    } finally {
+      playback(); localVoiceTtsController.stopSay(); await saying;
+      transcription.resolve('Keep this already committed utterance.');
+      await stopLocalVoiceSession();
+      await committed;
+    }
   });
 
   it('retires recorded capture when native Unmute fails without publishing unmuted input', async () => {

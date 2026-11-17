@@ -44,7 +44,10 @@ type RecordingPermissionResult = Readonly<{
     canAskAgain: boolean;
 }>;
 
-type RecordingMicSession = MicSession & Readonly<{
+type RecordingMicSession = Omit<MicSession, 'teardown'> & Readonly<{
+    /** Outstanding physical recording custody, including a native start still awaiting acknowledgement. */
+    hasUnretiredRecording: () => boolean;
+    teardown: (options?: Readonly<{ mode: 'read_aloud' }>) => Promise<void>;
     beginRecording: (signal?: AbortSignal) => Promise<void>;
     stopRecording: () => Promise<string | null>;
 }>;
@@ -177,6 +180,14 @@ export function createExpoAudioRecordingMicSession(
 ): RecordingMicSession {
     let recorder: ExpoAudioRecorderLike | null = null;
     let nativeFileRecording: VoiceFileRecording | null = null;
+    type NativeRecordingAttempt = {
+        recording: VoiceFileRecording;
+        started: Promise<void>;
+        retiring?: Promise<void>;
+    };
+    // End may admit another start while an uncancellable native start is still
+    // pending. Keep each actual resource until native stop acknowledges it.
+    const nativeRecordingAttempts = new Set<NativeRecordingAttempt>();
     let audioModeLease: VoiceAudioModeLease | null = null;
     let muted = false;
     const requestPermission = options.requestPermission ?? requestMicrophonePermission;
@@ -194,7 +205,25 @@ export function createExpoAudioRecordingMicSession(
     const discardTerminalArtifact = async (uri: string | null): Promise<void> => {
         const cleanup = createRecordedAudioArtifactCleanup(deleteRecordedAudio);
         cleanup.admit(uri);
-        await cleanup.cleanup();
+        const result = await cleanup.cleanup();
+        if (result.kind === 'failed') throw result.error;
+    };
+
+    const retireNativeRecording = (attempt: NativeRecordingAttempt): Promise<void> => {
+        if (attempt.retiring) return attempt.retiring;
+        const retiring = (async () => {
+            await attempt.started;
+            const uri = await attempt.recording.stop();
+            nativeRecordingAttempts.delete(attempt);
+            if (nativeFileRecording === attempt.recording) nativeFileRecording = null;
+            // Artifact deletion failure is observable, but cannot turn an
+            // acknowledged native stop back into physical microphone custody.
+            await discardTerminalArtifact(uri);
+        })().finally(() => {
+            if (attempt.retiring === retiring) attempt.retiring = undefined;
+        });
+        attempt.retiring = retiring;
+        return retiring;
     };
 
     const releaseAudioMode = async (activeLease = audioModeLease): Promise<void> => {
@@ -222,31 +251,32 @@ export function createExpoAudioRecordingMicSession(
             muted = nextMuted;
         },
         isMuted: () => muted,
-        teardown: async () => {
+        hasUnretiredRecording: () => nativeRecordingAttempts.size > 0 || recorder !== null,
+        teardown: async (options) => {
             const retiringAudioModeLease = audioModeLease;
-            const activeNativeRecording = nativeFileRecording;
-            nativeFileRecording = null;
-            if (activeNativeRecording) {
-                try {
-                    await discardTerminalArtifact(await activeNativeRecording.stop());
-                } catch {
-                    // Terminal artifact custody is best-effort here. The
-                    // ordinary stop path transfers the finalized URI to the
-                    // recorded-artifact owner before teardown.
+            if (audioModeLease === retiringAudioModeLease) audioModeLease = null;
+            // Invalidate pending preparation before joining physical retirement.
+            // Expo checks this lease before record(); native start is not abortable.
+            try {
+                if (options?.mode === 'read_aloud') {
+                    await Promise.all([...nativeRecordingAttempts].map(retireNativeRecording));
+                } else {
+                    const active = [...nativeRecordingAttempts].find(attempt => attempt.recording === nativeFileRecording);
+                    if (active) await retireNativeRecording(active);
                 }
-            }
-            const activeRecorder = recorder;
-            recorder = null;
-            if (activeRecorder) {
-                try {
+                const activeRecorder = recorder;
+                if (activeRecorder) {
                     await activeRecorder.stop();
+                    if (recorder === activeRecorder) recorder = null;
                     await discardTerminalArtifact(activeRecorder.uri ?? null);
-                } catch {
-                    // Recorder teardown is best-effort; the audio-session lease
-                    // must still be restored by its canonical owner.
                 }
+            } catch (error) {
+                // End remains best-effort. Read aloud needs acknowledged physical
+                // retirement, and a rejected stop retains the same handle to retry.
+                if (options?.mode === 'read_aloud') throw error;
+            } finally {
+                await releaseAudioMode(retiringAudioModeLease);
             }
-            await releaseAudioMode(retiringAudioModeLease);
         },
         getStream: () => null,
         beginRecording: async (signal) => {
@@ -272,22 +302,32 @@ export function createExpoAudioRecordingMicSession(
                     if (!nextNativeRecording) {
                         throw new Error('voice_native_file_recording_unavailable');
                     }
+                    const attempt: NativeRecordingAttempt = {
+                        recording: nextNativeRecording,
+                        started: nextNativeRecording.start(),
+                    };
+                    nativeRecordingAttempts.add(attempt);
                     try {
-                        await nextNativeRecording.start();
+                        try {
+                            await attempt.started;
+                        } catch (error) {
+                            nativeRecordingAttempts.delete(attempt);
+                            throw error;
+                        }
                         if (!signal?.aborted && audioModeLease === nextAudioModeLease && muted) {
                             await nextNativeRecording.setMuted(true);
                         }
                         if (signal?.aborted || audioModeLease !== nextAudioModeLease) {
-                            await discardTerminalArtifact(
-                                await nextNativeRecording.stop().catch(() => null),
-                            );
+                            await retireNativeRecording(attempt);
                             await releaseAudioMode(nextAudioModeLease);
                             return;
                         }
                     } catch (error) {
-                        await discardTerminalArtifact(
-                            await nextNativeRecording.stop().catch(() => null),
-                        );
+                        // A failed rollback remains owned for a strict retirement
+                        // retry; never erase its native handle or hide that failure.
+                        if (nativeRecordingAttempts.has(attempt) && !signal?.aborted) {
+                            await retireNativeRecording(attempt);
+                        }
                         throw error;
                     }
                     nativeFileRecording = nextNativeRecording;
@@ -323,13 +363,19 @@ export function createExpoAudioRecordingMicSession(
         stopRecording: async () => {
             const retiringAudioModeLease = audioModeLease;
             const activeNativeRecording = nativeFileRecording;
-            nativeFileRecording = null;
             const activeRecorder = recorder;
-            recorder = null;
             try {
-                if (activeNativeRecording) return await activeNativeRecording.stop();
+                if (activeNativeRecording) {
+                    const uri = await activeNativeRecording.stop();
+                    if (nativeFileRecording === activeNativeRecording) nativeFileRecording = null;
+                    for (const attempt of nativeRecordingAttempts) {
+                        if (attempt.recording === activeNativeRecording) nativeRecordingAttempts.delete(attempt);
+                    }
+                    return uri;
+                }
                 if (!activeRecorder) return null;
                 await activeRecorder.stop();
+                if (recorder === activeRecorder) recorder = null;
                 // Expo Audio's web recorder creates its Blob URL while stop()
                 // finalizes the MediaRecorder. Reading `uri` before that await
                 // silently drops valid browser recordings and skips STT.

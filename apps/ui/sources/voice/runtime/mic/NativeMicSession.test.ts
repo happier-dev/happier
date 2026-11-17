@@ -577,6 +577,10 @@ describe('NativeMicSession', () => {
 
         await expect(session.stopRecording()).rejects.toThrow('recorder_stop_failed');
         expect(audioSession.coordinator.getSnapshot().leaseCount).toBe(0);
+        // Releasing the audio-mode lease is not an acknowledgement that the
+        // physical recorder stopped. Its same handle remains available to retry.
+        await expect(session.stopRecording()).resolves.toBe('file:///tmp/rec.m4a');
+        expect(stopRecorder).toHaveBeenCalledTimes(2);
     });
 
     it('releases the exclusive audio-session lease when recorder preparation fails', async () => {

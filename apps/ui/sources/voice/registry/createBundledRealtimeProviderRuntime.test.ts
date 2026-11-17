@@ -275,10 +275,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       expect(runtimeBinding).toBeDefined();
 
       callbacks.get(2)!.onControl({ id: 'b-final', item: 'b-final', text: 'replacement B is still live' });
-      const textTurn = adapter.sendTextTurn!({
-        controlSessionId, conversationSessionId: controlSessionId, text: 'continue on B',
-        localId: 'replacement-b-text', deliveryCommand: 'interrupt_and_send', onAccepted: async () => {},
-      });
+      const textTurn = adapter.prepareTextTurn!({ controlSessionId, conversationSessionId: controlSessionId, text: 'continue on B' })({ localId: 'replacement-b-text', deliveryCommand: 'interrupt_and_send', onAccepted: async () => {} });
       await Promise.race([replacementTextSent.promise, textTurn]);
       expect(providerControls).toContainEqual({
         attemptId: 2, event: { type: 'input_text', text: 'continue on B' },
@@ -412,10 +409,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
       expect(browser.micSession.setMuted).not.toHaveBeenCalled();
       expect(browser.captures).toEqual([]);
-      await expect(adapter.sendTextTurn!({ controlSessionId, conversationSessionId: environment.historySessionId,
-        text: 'unsupported typed turn', localId: 'provider-managed-unsupported',
-        deliveryCommand: 'interrupt_and_send', onAccepted: async () => {},
-      })).rejects.toThrow('voice_text_turn_unsupported');
+      await expect(adapter.prepareTextTurn!({ controlSessionId, conversationSessionId: environment.historySessionId, text: 'unsupported typed turn' })({ localId: 'provider-managed-unsupported', deliveryCommand: 'interrupt_and_send', onAccepted: async () => {} })).rejects.toThrow('voice_text_turn_unsupported');
       expect(controls).toEqual([]);
       const coordinator = getSharedVoiceAudioSessionCoordinator();
       if (!coordinator) throw new Error('Expected the real native audio coordinator');
@@ -620,14 +614,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       sourceId: 'realtime_sdk:voice-global',
     });
     expect(providerManagedInputWriter.close).not.toHaveBeenCalled();
-    await expect(runtime.adapter.sendTextTurn?.({
-      controlSessionId: 'voice-global',
-      conversationSessionId: 'voice-global',
-      text: 'unsupported typed turn',
-      localId: 'voice-local-unsupported',
-      deliveryCommand: 'interrupt_and_send',
-      onAccepted: async () => {},
-    })).rejects.toThrow('voice_text_turn_unsupported');
+    await expect(runtime.adapter.prepareTextTurn?.({ controlSessionId: 'voice-global', conversationSessionId: 'voice-global', text: 'unsupported typed turn' })({ localId: 'voice-local-unsupported', deliveryCommand: 'interrupt_and_send', onAccepted: async () => {} })).rejects.toThrow('voice_text_turn_unsupported');
 
     await expect(runtime.adapter.resolveConversationBinding?.({
       controlSessionId: 'codex-session',
@@ -1062,25 +1049,19 @@ describe('createBundledRealtimeProviderRuntime', () => {
       sdkCallbacks.at(-1)!.onControl({ type: 'final', id: 'before-typed-final', item: 'before-typed-final', text: 'Settled before typed acceptance' });
       await previousTranscriptStarted.promise;
       let firstAccepted = false;
-      const firstTurn = adapter.sendTextTurn!({ controlSessionId, conversationSessionId: environment.historySessionId,
-        text: 'first overlapping turn', localId: 'public-first-turn', deliveryCommand: 'interrupt_and_send',
-        onAccepted: async () => {
+      const firstTurn = adapter.prepareTextTurn!({ controlSessionId, conversationSessionId: environment.historySessionId, text: 'first overlapping turn' })({ localId: 'public-first-turn', deliveryCommand: 'interrupt_and_send', onAccepted: async () => {
           firstAccepted = true;
           acceptanceStarted.resolve();
           await releaseAcceptance.promise;
           sentControls.push({ kind: 'pending_settled', localId: 'public-first-turn' });
-        },
-      });
+        } });
       await waitForTestEvent(subscribeControlSends, () => sentControls.length, count => count > 0);
       expect(sentControls).toEqual([{ kind: 'input_text', text: 'first overlapping turn' }]);
       await new Promise<void>(resolve => setTimeout(resolve, 0));
       expect(firstAccepted).toBe(false);
       releasePreviousTranscript.resolve();
       await acceptanceStarted.promise;
-      const secondTurn = adapter.sendTextTurn!({ controlSessionId, conversationSessionId: environment.historySessionId,
-        text: 'second overlapping turn', localId: 'public-second-turn', deliveryCommand: 'interrupt_and_send',
-        onAccepted: async () => { sentControls.push({ kind: 'pending_settled', localId: 'public-second-turn' }); },
-      });
+      const secondTurn = adapter.prepareTextTurn!({ controlSessionId, conversationSessionId: environment.historySessionId, text: 'second overlapping turn' })({ localId: 'public-second-turn', deliveryCommand: 'interrupt_and_send', onAccepted: async () => { sentControls.push({ kind: 'pending_settled', localId: 'public-second-turn' }); } });
       await Promise.resolve();
       expect(sentControls).toEqual([{ kind: 'input_text', text: 'first overlapping turn' }]);
       releaseAcceptance.resolve();
@@ -1101,14 +1082,9 @@ describe('createBundledRealtimeProviderRuntime', () => {
         stoppedAcceptanceStarted.resolve();
         await releaseStoppedAcceptance.promise;
       });
-      const admittedTurn = adapter.sendTextTurn!({ controlSessionId, conversationSessionId: environment.historySessionId,
-        text: 'accepted before Stop', localId: 'public-admitted-stop', deliveryCommand: 'interrupt_and_send', onAccepted: acceptedBeforeStop,
-      });
+      const admittedTurn = adapter.prepareTextTurn!({ controlSessionId, conversationSessionId: environment.historySessionId, text: 'accepted before Stop' })({ localId: 'public-admitted-stop', deliveryCommand: 'interrupt_and_send', onAccepted: acceptedBeforeStop });
       await stoppedAcceptanceStarted.promise;
-      const queuedTurn = adapter.sendTextTurn!({ controlSessionId, conversationSessionId: environment.historySessionId,
-        text: 'must not revive after Stop', localId: 'public-queued-stop', deliveryCommand: 'interrupt_and_send',
-        onAccepted: async () => { sentControls.push({ kind: 'stale_pending_settled' }); },
-      });
+      const queuedTurn = adapter.prepareTextTurn!({ controlSessionId, conversationSessionId: environment.historySessionId, text: 'must not revive after Stop' })({ localId: 'public-queued-stop', deliveryCommand: 'interrupt_and_send', onAccepted: async () => { sentControls.push({ kind: 'stale_pending_settled' }); } });
       // Attach rejection observation before Stop aborts the queued delivery.
       let queuedSettled = false;
       void queuedTurn.catch(() => { queuedSettled = true; });
@@ -1290,21 +1266,17 @@ describe('createBundledRealtimeProviderRuntime', () => {
     try {
       await scope.commit();
       const adapter = getExternalVoiceProviderRegistration(providerId)?.adapter;
-      if (!adapter?.sendTextTurn) throw new Error('Expected the registered typed-delivery owner');
+      if (!adapter?.prepareTextTurn) throw new Error('Expected the registered typed-delivery owner');
       registerVoiceAdapters([adapter]);
       await environment.configureVoice({ ...environment.persistedAccountSettings.voice, providerId,
         providers: { [providerId]: { schemaVersion: 1, config: {} } } });
       const controlSessionId = hostLease.host.globalVoiceSessionId;
       await adapter.start({ sessionId: controlSessionId, requestedTargetSessionAddress: null, initialContext: '' });
-      await adapter.sendTextTurn({ controlSessionId, conversationSessionId: environment.historySessionId,
-        text: 'supported input', localId: 'typed-supported', deliveryCommand: 'interrupt_and_send',
-        onAccepted: async () => { controls.push({ kind: 'pending_settled' }); } });
+      await adapter.prepareTextTurn({ controlSessionId, conversationSessionId: environment.historySessionId, text: 'supported input' })({ localId: 'typed-supported', deliveryCommand: 'interrupt_and_send', onAccepted: async () => { controls.push({ kind: 'pending_settled' }); } });
       expect(controls).toEqual([{ kind: 'input_text', text: 'supported input' }, { kind: 'pending_settled' }, { kind: 'response' }]);
       const accepted = vi.fn(async () => {});
       rejectNativeSend = true;
-      await expect(adapter.sendTextTurn({ controlSessionId, conversationSessionId: environment.historySessionId,
-        text: 'must not be accepted', localId: 'typed-rejected', deliveryCommand: 'interrupt_and_send', onAccepted: accepted,
-      })).rejects.toMatchObject({ message: 'voice_service_unavailable' });
+      await expect(adapter.prepareTextTurn({ controlSessionId, conversationSessionId: environment.historySessionId, text: 'must not be accepted' })({ localId: 'typed-rejected', deliveryCommand: 'interrupt_and_send', onAccepted: accepted })).rejects.toMatchObject({ message: 'voice_service_unavailable' });
       expect(accepted).not.toHaveBeenCalled();
       expect(controls).toHaveLength(3);
     } finally { await scope.unwind(); hostLease.revoke(); await environment.dispose(); }
@@ -2139,14 +2111,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
     ]);
 
     sentEvents.length = 0;
-    await expect(runtime.adapter.sendTextTurn!({
-      controlSessionId: 'session-1',
-      conversationSessionId: 'session-1',
-      text: 'stale carrier text',
-      localId: 'voice-local-stale',
-      deliveryCommand: 'interrupt_and_send',
-      onAccepted: async () => {},
-    })).rejects.toMatchObject({
+    await expect(runtime.adapter.prepareTextTurn!({ controlSessionId: 'session-1', conversationSessionId: 'session-1', text: 'stale carrier text' })({ localId: 'voice-local-stale', deliveryCommand: 'interrupt_and_send', onAccepted: async () => {} })).rejects.toMatchObject({
       message: 'voice_transcript_carrier_changed',
       code: 'VOICE_TEXT_TURN_REJECTED_BEFORE_EFFECT',
       pendingDeliveryBlockedReason: 'provider_rejected_before_acceptance',

@@ -2366,17 +2366,10 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       browser.peer.channel.open();
       await starting;
 
-      typedTurn = composed.runtime.adapter.sendTextTurn!({
-        controlSessionId: composed.controlSessionId,
-        conversationSessionId: carrierId,
-        text: 'hold final and correction until accepted',
-        localId: 'typed-barrier-final-correction',
-        deliveryCommand: 'interrupt_and_send',
-        onAccepted: async () => {
+      typedTurn = composed.runtime.adapter.prepareTextTurn!({ controlSessionId: composed.controlSessionId, conversationSessionId: carrierId, text: 'hold final and correction until accepted' })({ localId: 'typed-barrier-final-correction', deliveryCommand: 'interrupt_and_send', onAccepted: async () => {
           acceptanceStarted.resolve();
           await releaseAcceptance.promise;
-        },
-      });
+        } });
       await acceptanceStarted.promise;
 
       browser.peer.channel.message(JSON.stringify({
@@ -2584,17 +2577,10 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       browser.peer.channel.open();
       await starting;
 
-      typedTurn = composed.runtime.adapter.sendTextTurn!({
-        controlSessionId: composed.controlSessionId,
-        conversationSessionId: recreatedCarrierId,
-        text: 'hold canonical projection until acceptance',
-        localId: 'typed-barrier-a',
-        deliveryCommand: 'interrupt_and_send',
-        onAccepted: async () => {
+      typedTurn = composed.runtime.adapter.prepareTextTurn!({ controlSessionId: composed.controlSessionId, conversationSessionId: recreatedCarrierId, text: 'hold canonical projection until acceptance' })({ localId: 'typed-barrier-a', deliveryCommand: 'interrupt_and_send', onAccepted: async () => {
           typedAcceptanceStarted.resolve();
           await releaseTypedAcceptance.promise;
-        },
-      });
+        } });
       await typedAcceptanceStarted.promise;
 
       // This final is current and authoritative in A, but its visible projection
@@ -2857,17 +2843,10 @@ describe('realtime_openai source-composed WebRTC gate', () => {
         }),
       ])));
 
-      typedTurn = composed.runtime.adapter.sendTextTurn!({
-        controlSessionId: composed.controlSessionId,
-        conversationSessionId: recreatedCarrierId,
-        text: 'hold correction projection until acceptance',
-        localId: 'typed-barrier-a-correction',
-        deliveryCommand: 'interrupt_and_send',
-        onAccepted: async () => {
+      typedTurn = composed.runtime.adapter.prepareTextTurn!({ controlSessionId: composed.controlSessionId, conversationSessionId: recreatedCarrierId, text: 'hold correction projection until acceptance' })({ localId: 'typed-barrier-a-correction', deliveryCommand: 'interrupt_and_send', onAccepted: async () => {
           typedAcceptanceStarted.resolve();
           await releaseTypedAcceptance.promise;
-        },
-      });
+        } });
       await typedAcceptanceStarted.promise;
 
       // OpenAI emits a repeated completed event for the same item when its

@@ -118,6 +118,35 @@ describe('native VAD controller through real bridge and capture', () => {
         expect(native.capture.getSnapshot().subscriberCount).toBe(0);
         expect(controller.isActiveSession('session-native')).toBe(false);
     });
+    it('refuses strict retirement when the VAD microphone stop fails and retries the actual lease', async () => {
+        const native = installNativeBoundary();
+        const controller = createNativeVadController({ onEndpointSignal: vi.fn() });
+        expect(await controller.startSession({ minSpeechMs: 0, redemptionMs: 0, sessionId: 'vad-readout' })).toBe(true);
+        const stop = vi.mocked(native.nativeModule.stop);
+        const originalStop = stop.getMockImplementation();
+        if (!originalStop) throw new Error('Native PCM stop boundary missing');
+        let refused = true;
+        stop.mockImplementation(async args => {
+            if (refused) throw new Error('native_vad_stop_failed');
+            await originalStop(args);
+        });
+        try {
+            await expect(controller.stopSession('vad-readout', { mode: 'read_aloud' }))
+                .rejects.toThrow('native_vad_stop_failed');
+            refused = false;
+            await controller.stopSession('vad-readout', { mode: 'read_aloud' });
+            expect(native.capture.getSnapshot()).toMatchObject({ streamId: null, subscriberCount: 0 });
+            expect(getSharedVoiceAudioSessionCoordinator()?.getSnapshot().leaseCount).toBe(0);
+            expect(native.cancelVadDetector).toHaveBeenCalledOnce();
+        } finally {
+            refused = false;
+            await controller.stopSession('vad-readout');
+            // A failed assertion must also retire the actual shared SDK handle.
+            await native.capture.releaseUnusedCapture();
+            stop.mockImplementation(originalStop);
+        }
+    });
+
     it('normalizes native timing inputs and suppresses endpoints after stop', async () => {
         const native = installNativeBoundary();
         const onEndpointSignal = vi.fn();

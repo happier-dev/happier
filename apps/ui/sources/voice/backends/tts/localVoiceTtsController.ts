@@ -27,27 +27,31 @@ export function createLocalVoiceTtsController(options?: Readonly<{
     if (next === 'idle') saySource = null;
     for (const listener of listeners) listener();
   };
-  const controller: LocalVoiceTtsController = {
-    speak: async (ctx) => {
-      const preparation = await prepareLocalVoiceTtsRequest(ctx);
-      if (!preparation) return;
-      const controller = controllers.get(ctx.tts.provider);
-      if (controller) {
-        // Selection-less engines cannot consume a declared preference by silently using a default.
-        if (preparation.preference && !controller.sessionVoiceProviderId) {
-          reportTtsFailure(ctx, new Error('voice_preference_unavailable'));
-          return;
-        }
-        const onSpeaking = ctx.sessionId && !controller.sessionVoiceProviderId ? () => {
-          if (!preparation.isCurrent()) return;
-          preparation.onVoiceApplied?.(null);
-          ctx.onSpeaking();
-        } : ctx.onSpeaking;
-        await controller.speak({ ...ctx, preparation, onSpeaking });
+  const dispatchSpeech: LocalVoiceTtsController['speak'] = async (ctx) => {
+    const preparation = await prepareLocalVoiceTtsRequest(ctx);
+    if (!preparation) return;
+    const controller = controllers.get(ctx.tts.provider);
+    if (controller) {
+      // Selection-less engines cannot consume a declared preference by silently using a default.
+      if (preparation.preference && !controller.sessionVoiceProviderId) {
+        reportTtsFailure(ctx, new Error('voice_preference_unavailable'));
         return;
       }
-      if (await speakWithBundledSpeechTts(ctx.tts.provider, ctx, preparation)) return;
-      throw Object.assign(new Error('voice_tts_provider_unavailable'), { code: 'provider_unavailable' });
+      const onSpeaking = ctx.sessionId && !controller.sessionVoiceProviderId ? () => {
+        if (!preparation.isCurrent()) return;
+        preparation.onVoiceApplied?.(null);
+        ctx.onSpeaking();
+      } : ctx.onSpeaking;
+      await controller.speak({ ...ctx, preparation, onSpeaking });
+      return;
+    }
+    if (await speakWithBundledSpeechTts(ctx.tts.provider, ctx, preparation)) return;
+    throw Object.assign(new Error('voice_tts_provider_unavailable'), { code: 'provider_unavailable' });
+  };
+  const controller: LocalVoiceTtsController = {
+    speak: (ctx) => {
+      controller.stopSay();
+      return dispatchSpeech(ctx);
     },
     readSay: () => sayState,
     readSaySource: () => saySource,
@@ -71,7 +75,13 @@ export function createLocalVoiceTtsController(options?: Readonly<{
       publish('preparing');
       ctx.signal?.addEventListener('abort', abort, { once: true });
       try {
-        await controller.speak({ ...ctx, registerPlaybackStopper: playback.registerStopper.captureAttempt!(),
+        if (!current()) return { status: 'cancelled' };
+        const { localVoiceRuntimeController } = await import('@/voice/local/localVoiceRuntimeController');
+        if (!current()) return { status: 'cancelled' };
+        await localVoiceRuntimeController.prepareForReadAloud();
+        if (!current()) return { status: 'cancelled' };
+        await dispatchSpeech({ ...ctx,
+          registerPlaybackStopper: playback.registerStopper.captureAttempt!(),
           onSpeaking: () => { if (current()) { publish('speaking'); ctx.onSpeaking(); } },
         });
         return { status: current() ? 'completed' : 'cancelled' };

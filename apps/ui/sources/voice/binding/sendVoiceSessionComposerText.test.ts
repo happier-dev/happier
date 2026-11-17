@@ -257,8 +257,8 @@ async function restorePendingHttpAccount() {
 
 function pendingRows() { return getStorage().getState().sessionPending['carrier-s1']?.messages ?? []; }
 
-function hasTextTurn(adapter: VoiceAdapterController): adapter is VoiceAdapterController & Required<Pick<VoiceAdapterController, 'sendTextTurn'>> {
-    return typeof adapter.sendTextTurn === 'function';
+function hasTextTurn(adapter: VoiceAdapterController): adapter is VoiceAdapterController & Required<Pick<VoiceAdapterController, 'prepareTextTurn'>> {
+    return typeof adapter.prepareTextTurn === 'function';
 }
 
 describe('Voice composer through Sync HTTP custody', () => {
@@ -363,8 +363,6 @@ describe('Voice composer through Sync HTTP custody', () => {
     it('continues the accepted provider dispatch while joining exact-row HTTP settlement before returning its durable result', async () => {
         const adapter = getVoiceAdapterRegistry().get('happier.voice.elevenlabs/realtime-elevenlabs');
         if (!adapter || !hasTextTurn(adapter)) throw new Error('Actual text-turn adapter is unavailable');
-        // Observation only: the original controller/SDK dispatch runs unchanged.
-        const dispatch = vi.spyOn(adapter, 'sendTextTurn');
         let release!: () => void;
         let entered!: () => void;
         const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -383,16 +381,20 @@ describe('Voice composer through Sync HTTP custody', () => {
             expect(pendingRows()).toEqual([expect.objectContaining({ localId: 'awaited-acceptance', pendingDeliveryStatus: 'external_handoff' })]);
             // VOICE-LATENCY-1114: handled bookkeeping must not hold an
             // already accepted reply. Durable submission still joins it below.
-            await vi.waitFor(() => expect(dispatch.mock.settledResults).toEqual([{ type: 'fulfilled', value: undefined }]));
+            // A second real adapter turn reaches the SDK while the first row's
+            // HTTP ACK is held; an acceptance callback holding the queue fails here.
+            await adapter.prepareTextTurn({ controlSessionId: 'carrier-s1',
+                conversationSessionId: 'carrier-s1', text: 'queue continues' })({
+                localId: 'queue-progress-probe', deliveryCommand: 'interrupt_and_send', onAccepted: async () => {},
+            });
+            expect(providerMessages).toEqual(['hello', 'queue continues']);
             release();
             expect(await submission).toEqual({ ok: true, localId: 'awaited-acceptance', disposition: 'settled' });
-            expect(dispatch.mock.settledResults).toEqual([{ type: 'fulfilled', value: undefined }]);
-            expect(httpEvents).toEqual(['enqueue:awaited-acceptance', 'provider:hello', 'settle:awaited-acceptance']);
+            expect(httpEvents).toEqual(['enqueue:awaited-acceptance', 'provider:hello', 'settle:awaited-acceptance', 'provider:queue continues']);
             expect(pendingRows()).toEqual([]);
         } finally {
             release();
             await submission;
-            dispatch.mockRestore();
         }
     });
 
@@ -422,7 +424,6 @@ describe('Voice composer through Sync HTTP custody', () => {
     it('keeps the accepted row settled when the provider stops while handled bookkeeping is pending', async () => {
         const adapter = getVoiceAdapterRegistry().get('happier.voice.elevenlabs/realtime-elevenlabs');
         if (!adapter || !hasTextTurn(adapter)) throw new Error('Actual accepted lifecycle owner is unavailable');
-        const dispatch = vi.spyOn(adapter, 'sendTextTurn');
         let entered!: () => void;
         let release!: () => void;
         const handling = new Promise<void>((resolve) => { entered = resolve; });
@@ -438,7 +439,7 @@ describe('Voice composer through Sync HTTP custody', () => {
         let stopping: Promise<void> | null = null;
         try {
             await handling;
-            await vi.waitFor(() => expect(dispatch.mock.settledResults).toEqual([{ type: 'fulfilled', value: undefined }]));
+
             // A genuine user Stop is independent of the delayed server response.
             // Release the ACK without waiting for the client lifecycle to drain.
             stopping = adapter.stop({ sessionId: 'carrier-s1' });
@@ -448,7 +449,7 @@ describe('Voice composer through Sync HTTP custody', () => {
             expect(httpEvents).toEqual(['enqueue:accepted-carrier-change', 'provider:hello', 'settle:accepted-carrier-change']);
             expect(deliveryStatus).toBeNull();
             expect(pendingRows()).toEqual([]);
-        } finally { release(); await submission; await stopping; dispatch.mockRestore(); }
+        } finally { release(); await submission; await stopping; }
     });
 
     it('does not mistake an external-handoff snapshot before the enqueue acknowledgement for provider acceptance', async () => {
@@ -706,17 +707,12 @@ describe('Voice composer through Sync HTTP custody', () => {
         const adapter = getVoiceAdapterRegistry().get(adapterId);
         if (!adapter || !hasTextTurn(adapter)) throw new Error('Bundled ElevenLabs adapter is unavailable');
         expect(adapter.getSnapshot()).toMatchObject({ status: 'connected' });
-        const dispatch = vi.spyOn(adapter, 'sendTextTurn');
         const result = await sendVoiceSessionComposerText({ conversationSessionId: 'carrier-s1', text: 'hello',
             getAdapter: getVoiceAdapterRegistry().get,
         });
         expect(result).toEqual({ ok: true, localId: expect.any(String), disposition: 'settled' });
         if (!('localId' in result)) throw new Error('Accepted composer input must retain its generated identity');
         expect(result.localId.length).toBeGreaterThan(0);
-        expect(dispatch.mock.calls).toEqual([[expect.objectContaining({ controlSessionId: 'carrier-s1',
-            conversationSessionId: 'carrier-s1', text: 'hello', localId: result.localId,
-            deliveryCommand: 'interrupt_and_send', onAccepted: expect.any(Function) })]]);
-        dispatch.mockRestore();
         expect(providerMessages).toEqual(['hello']);
         expect(httpEvents).toEqual([`enqueue:${result.localId}`, 'provider:hello', `settle:${result.localId}`]);
         expect(pendingRows()).toEqual([]);
@@ -825,7 +821,6 @@ describe('Voice composer through Sync HTTP custody', () => {
         expect(binding).toMatchObject({ conversationSessionId: carrier.id, transcriptMode: 'native_session' });
         const adapter = getVoiceAdapterRegistry().get('local_conversation');
         if (!adapter || !hasTextTurn(adapter)) throw new Error('Actual native text-turn adapter is unavailable');
-        const dispatch = vi.spyOn(adapter, 'sendTextTurn');
         let release!: () => void;
         let entered!: () => void;
         const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -938,8 +933,6 @@ describe('Voice composer through Sync HTTP custody', () => {
                 expect(deliveryStatus).toEqual({ status: 'external_handoff' });
                 if (outcome.startsWith('aborted-')) {
                     await voiceAgentSessions.stop(VOICE_AGENT_GLOBAL_SESSION_ID);
-                    await dispatch.mock.results[0]?.value;
-                    expect(dispatch.mock.settledResults).toEqual([{ type: 'fulfilled', value: undefined }]);
                     expect(deliveryStatus).toEqual({ status: 'external_handoff' });
                 }
                 release();
@@ -953,13 +946,8 @@ describe('Voice composer through Sync HTTP custody', () => {
             const localId = enqueued?.localId;
             expect(localId).toEqual(expect.any(String));
             expect(localId?.length).toBeGreaterThan(0);
-            expect(dispatch.mock.calls).toEqual([[{ controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId: carrier.id,
-                text: 'hello', localId, deliveryCommand: 'interrupt_and_send', onAccepted: expect.any(Function) }]]);
             if (outcome === 'switched-to-direct-session') {
-                const failure = dispatch.mock.settledResults[0];
-                expect(failure?.type).toBe('rejected');
-                if (failure?.type !== 'rejected' || !(failure.value instanceof Error)) throw new Error('Actual native direct-session failure was not observable');
-                expect(result).toMatchObject({ ok: true, localId, disposition: 'ambiguous', message: failure.value.message,
+                expect(result).toMatchObject({ ok: true, localId, disposition: 'ambiguous', message: expect.any(String),
                     failureCause: expect.objectContaining({ phase: 'voice.runtime' }) });
             } else if (outcome === 'selection-unavailable' || outcome === 'target-offline') expect(result).toMatchObject({ ok: false, localId,
                 reason: 'terminal_rejected', message: outcome === 'selection-unavailable' ? 'voice_agent_selection_unavailable' : expect.any(String) });
@@ -978,6 +966,6 @@ describe('Voice composer through Sync HTTP custody', () => {
             expect(pendingRows()).toEqual(!acceptsTranscript ? [expect.objectContaining({ localId: 'native-real-turn',
                 pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: blockedReason })]
                 : outcome === 'aborted-settlement-failed' ? [expect.objectContaining({ localId: 'native-real-turn', pendingDeliveryStatus: 'external_handoff' })] : []);
-        } finally { release(); dispatch.mockRestore(); await voiceAgentSessions.stop(VOICE_AGENT_GLOBAL_SESSION_ID); }
+        } finally { release(); await voiceAgentSessions.stop(VOICE_AGENT_GLOBAL_SESSION_ID); }
     });
 });

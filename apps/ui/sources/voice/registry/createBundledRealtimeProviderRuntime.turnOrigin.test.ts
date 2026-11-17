@@ -129,9 +129,7 @@ describe('realtime response origin and canonical approval', () => {
         response('person-response');
         if (opening === 'late_microphone') finishMicrophone('person-audio');
       } else if (opening === 'typed') {
-        await composed.runtime.adapter.sendTextTurn!({ controlSessionId: composed.controlSessionId,
-          conversationSessionId: environment.historySessionId, text: 'Change the minimum speech duration',
-          localId: 'person-typed', deliveryCommand: 'interrupt_and_send', onAccepted: async () => {} });
+        await composed.runtime.adapter.prepareTextTurn!({ controlSessionId: composed.controlSessionId, conversationSessionId: environment.historySessionId, text: 'Change the minimum speech duration' })({ localId: 'person-typed', deliveryCommand: 'interrupt_and_send', onAccepted: async () => {} });
         response('person-response');
       } else if (opening === 'host_text') {
         commitMicrophone('previous-person-audio');

@@ -45,9 +45,7 @@ describe('createLocalVoiceAdapter', () => {
       ...carrier, metadataLayoutVersion: 1,
       ownerMetadataView: { ...carrier.metadata, flavor: 'claude' },
     } } });
-    await adapter.sendTextTurn?.({ controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      conversationSessionId: 'voice-home-session', text: 'Inspect this', localId: 'admitted-agent-turn',
-      deliveryCommand: 'interrupt_and_send', onAccepted: async () => {} });
+    await adapter.prepareTextTurn?.({ controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId: 'voice-home-session', text: 'Inspect this' })({ localId: 'admitted-agent-turn', deliveryCommand: 'interrupt_and_send', onAccepted: async () => {} });
     const request = localVoiceAgentRpc.requests.find(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START
       || request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1);
     expect(request?.input).toMatchObject({ start: { backendTarget: { kind: 'backend', backendId: 'codex' } } });
@@ -97,9 +95,7 @@ describe('createLocalVoiceAdapter', () => {
     enabled.sendContextUpdate({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, update: 'ENABLED_CONTEXT_SENTINEL' });
     const disabled = createLocalVoiceAdapter('local_direct', { contextUpdates: false, textTurns: false });
     disabled.sendContextUpdate({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, update: 'DISABLED_CONTEXT_SENTINEL' });
-    await enabled.sendTextTurn?.({ controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      conversationSessionId: 'voice-home-session', text: 'Inspect this', localId: 'enabled-context-turn',
-      deliveryCommand: 'interrupt_and_send', onAccepted: async () => {} });
+    await enabled.prepareTextTurn?.({ controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId: 'voice-home-session', text: 'Inspect this' })({ localId: 'enabled-context-turn', deliveryCommand: 'interrupt_and_send', onAccepted: async () => {} });
     expect(admittedProviderText()).toContain('ENABLED_CONTEXT_SENTINEL');
     expect(admittedProviderText()).not.toContain('DISABLED_CONTEXT_SENTINEL');
   });
@@ -110,14 +106,12 @@ describe('createLocalVoiceAdapter', () => {
     const withText = createLocalVoiceAdapter('local_conversation', { contextUpdates: true, textTurns: true });
     await withText.toggle({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID });
     let accepted = false;
-    await withText.sendTextTurn?.({ controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      conversationSessionId: 'voice-home-session', text: 'hi', localId: 'voice-local-1',
-      deliveryCommand: 'interrupt_and_send', onAccepted: async () => { accepted = true; } });
+    await withText.prepareTextTurn?.({ controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId: 'voice-home-session', text: 'hi' })({ localId: 'voice-local-1', deliveryCommand: 'interrupt_and_send', onAccepted: async () => { accepted = true; } });
     expect(accepted).toBe(true);
     expect(admittedProviderText()).toContain('hi');
     expect(localVoiceAgentRpc.readRetainedRun()?.status).toBe('running');
     const withoutText = createLocalVoiceAdapter('local_direct', { contextUpdates: false, textTurns: false });
-    expect('sendTextTurn' in withoutText).toBe(false);
+    expect('prepareTextTurn' in withoutText).toBe(false);
   });
 
   it('retains actual acceptance before a later response transport failure', async () => {
@@ -137,9 +131,7 @@ describe('createLocalVoiceAdapter', () => {
       if (!fallback) throw new Error('Missing daemon transport responder');
       return fallback(request);
     });
-    await expect(adapter.sendTextTurn?.({ controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      conversationSessionId: 'voice-home-session', text: 'keep this prompt', localId: 'voice-local-accepted',
-      deliveryCommand: 'interrupt_and_send', onAccepted: async () => { accepted = true; } })).rejects.toThrow(responseFailure);
+    await expect(adapter.prepareTextTurn?.({ controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId: 'voice-home-session', text: 'keep this prompt' })({ localId: 'voice-local-accepted', deliveryCommand: 'interrupt_and_send', onAccepted: async () => { accepted = true; } })).rejects.toThrow(responseFailure);
     expect(accepted).toBe(true);
     expect(acceptedBeforeFailure).toBe(true);
     expect(adapter.getSnapshot()).toMatchObject({ errorMessage: 'send_failed', mode: 'idle' });

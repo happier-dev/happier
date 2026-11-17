@@ -57,6 +57,7 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
   let handle: SherpaSttHandle | null = null;
   let clearHandleAttempt: Promise<void> | null = null;
   let stopping: Promise<SttStopResult> | null = null;
+  const unretiredCaptures = new Set<SherpaSttHandle>();
   const MAX_QUEUED_FRAMES = 8;
   const endpointController = deps.endpointController ?? createTurnEndpointController({
     onSignal: (signal) => deps.onEndpointSignal?.(signal),
@@ -65,6 +66,29 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
   const cancelRecognizer = (current: SherpaSttHandle): Promise<void> => {
     current.nativeCancellation ??= getOptionalSherpaNativeModule()?.cancel({ jobId: current.jobId }).catch(() => {}) ?? Promise.resolve();
     return current.nativeCancellation;
+  };
+
+  const releaseCapture = async (current: SherpaSttHandle): Promise<void> => {
+    let lease: VoicePcmCaptureLease | null;
+    try {
+      lease = await current.captureLease;
+    } catch {
+      // Acquisition can fail after native start. Its PCM owner retains any
+      // failed rollback; retry that cleanup without stopping other subscribers.
+      await current.capture.releaseUnusedCapture();
+      unretiredCaptures.delete(current);
+      return;
+    }
+    await lease?.release();
+    unretiredCaptures.delete(current);
+  };
+
+  const discardInput = async (): Promise<void> => {
+    await Promise.all([...unretiredCaptures].map(async current => {
+      current.abortController.abort();
+      void cancelRecognizer(current);
+      await releaseCapture(current);
+    }));
   };
 
   const clearHandle = async (expected?: SherpaSttHandle): Promise<void> => {
@@ -91,7 +115,7 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
       // the awaits below return promptly instead of what delays them.
       const cancelled = cancelRecognizer(current);
       const lease = await current.captureLease?.catch(() => null);
-      await lease?.release().catch(() => {});
+      await releaseCapture(current).catch(() => {});
       await lease?.waitForDrain().catch(() => {});
       await cancelled;
     })();
@@ -227,6 +251,7 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
       // Shared capture can deliver preserved native-start PCM before acquire
       // resolves. Admit its exact consumer and endpoint session first.
       handle = current;
+      unretiredCaptures.add(current);
       startupHandle = current;
       startupRecognizerJobId = null;
       endpointController.startSession(normalizedSessionId);
@@ -313,6 +338,7 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
         lease = await current.captureLease;
         if (!lease) throw new Error('local_neural_audio_capture_lease_missing');
         await lease.finish();
+        unretiredCaptures.delete(current);
         if (current.abortController.signal.aborted) throw new Error('local_neural_stt_aborted');
 
         const sherpa = getOptionalSherpaNativeModule();
@@ -332,7 +358,7 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
         // A finalized empty transcript is silence, which is a successful result.
         return { finalText: current.transcript.trim() };
       } catch {
-        await lease?.release().catch(() => {});
+        await releaseCapture(current).catch(() => {});
         await cancelRecognizer(current);
         return {
           error: createVoiceMachineError({
@@ -355,5 +381,5 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
     }
   };
 
-  return { start, stop };
+  return { start, stop, discardInput, hasUnretiredInput: () => unretiredCaptures.size > 0 };
 }

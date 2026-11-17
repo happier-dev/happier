@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storage';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionAccessFixture, createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createSessionMessagesFixture, createToolCallMessageFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { readStoredSessionMessages } from '@happier-dev/session-core/messages';
@@ -31,6 +31,60 @@ function createHarness() {
 }
 
 describe('sessions domain: no voice side effects', () => {
+    it.each(['omitted-full', 'undefined-projection', 'stale-projection'] as const)(
+        'preserves completed turn anchors across a non-authoritative publication (%s)', (publication) => {
+        const { get, domain } = createHarness();
+        const completed = createSessionFixture({ id: 's1', serverId: 'server_1', encryptionMode: 'plain',
+            encryptedContentAvailability: 'ready', sessionTurns: { v: 1, sessionId: 's1', updatedAt: 3,
+                latestTurnId: 'turn-1', turns: [{ turnId: 'turn-1', status: 'completed', startedAt: 1,
+                    updatedAt: 3, terminalAt: 3, transcriptAnchors: { startUserMessageSeq: 1, finalAssistantMessageSeq: 2 } }] } });
+        domain.applySessions([completed]);
+        const { sessionTurns, ...partial } = completed;
+        const incoming = { ...partial, updatedAt: completed.updatedAt + 1,
+            ...(publication === 'undefined-projection' ? { sessionTurns: undefined } : {}),
+            ...(publication === 'stale-projection' ? { sessionTurns: { v: 1 as const, sessionId: 's1', updatedAt: 1, turns: [] } } : {}),
+        };
+        domain.applySessions([incoming], publication === 'omitted-full' ? 'full' : 'projection');
+        expect(get().sessions.s1?.sessionTurns).toEqual(sessionTurns);
+    });
+
+    it.each(['empty', 'undefined', 'null', 'foreign', 'encrypted', 'locked', 'access'] as const)(
+        'clears retained turn anchors for authoritative content or read withdrawal (%s)', (change) => {
+        const { get, domain } = createHarness();
+        const completed = createSessionFixture({ id: 's1', serverId: 'server_1', encryptionMode: 'plain',
+            encryptedContentAvailability: 'ready', sessionTurns: { v: 1, sessionId: 's1', updatedAt: 3,
+                turns: [{ turnId: 'turn-1', status: 'completed', startedAt: 1, updatedAt: 3, terminalAt: 3,
+                    transcriptAnchors: { startUserMessageSeq: 1, finalAssistantMessageSeq: 2 } }] } });
+        domain.applySessions([completed]);
+        const { sessionTurns: _turns, ...partial } = completed;
+        const incoming = { ...partial, updatedAt: completed.updatedAt + 1,
+            ...(change === 'empty' ? { sessionTurns: { v: 1 as const, sessionId: 's1', updatedAt: 4, turns: [] } } : {}),
+            ...(change === 'undefined' ? { sessionTurns: undefined } : {}),
+            ...(change === 'null' ? { sessionTurns: null } : {}),
+            ...(change === 'foreign' ? { serverId: 'server_foreign' } : {}),
+            ...(change === 'encrypted' ? { encryptionMode: 'e2ee' as const } : {}),
+            ...(change === 'locked' ? { encryptedContentAvailability: 'encrypted_content_unavailable' as const } : {}),
+            ...(change === 'access' ? { access: createSessionAccessFixture('view', { readTranscript: false }) } : {}),
+        };
+        domain.applySessions([incoming]);
+        expect(get().sessions.s1?.sessionTurns).toEqual(incoming.sessionTurns);
+    });
+
+    it.each(['locked', 'access', 'foreign', 'initial'] as const)('drops copied turns without a current readable projection scope (%s)', (withdrawal) => {
+        const { get, domain } = createHarness();
+        const completed = createSessionFixture({ id: 's1', serverId: 'server_1', encryptionMode: 'plain',
+            encryptedContentAvailability: 'ready', sessionTurns: { v: 1, sessionId: 's1', updatedAt: 3,
+                turns: [{ turnId: 'turn-1', status: 'completed', startedAt: 1, updatedAt: 3, terminalAt: 3,
+                    transcriptAnchors: { startUserMessageSeq: 1, finalAssistantMessageSeq: 2 } }] } });
+        if (withdrawal !== 'initial') domain.applySessions([completed]);
+        domain.applySessions([{ ...completed,
+            ...(withdrawal === 'foreign' ? { serverId: 'server_foreign' } : {}),
+            ...(withdrawal === 'locked' ? { encryptedContentAvailability: 'encrypted_content_unavailable' as const }
+                : withdrawal === 'access' ? { access: createSessionAccessFixture('view', { readTranscript: false }) } : {}),
+        }], 'projection');
+        expect(get().sessions.s1?.sessionTurns).toBeUndefined();
+    });
+
     it('applies agentState permission requests to loaded session messages when applySessions receives newer agentStateVersion', async () => {
         const { get, domain } = createHarness();
 

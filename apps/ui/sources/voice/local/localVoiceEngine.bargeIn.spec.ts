@@ -86,22 +86,13 @@ async function driveReplyToSpeaking(handsFree = true, capturedTurn = false) {
     const turnPromise = capturedTurn
         ? engine.commitLocalVoiceInput('s1')
         : engine.sendLocalVoiceAgentTextTurn('s1', 'what is the forecast');
-    let outputFailure: { name: string; message: string; code?: unknown } | null = null;
-    void turnPromise.catch(error => {
-        outputFailure = error instanceof Error
-            ? { name: error.name, message: error.message, ...('code' in error ? { code: error.code } : {}) }
-            : { name: typeof error, message: String(error) };
-    });
-    await waitForLocalVoiceState(state => state.status === 'speaking');
-    expect(engine.getLocalVoiceState().status, JSON.stringify({
-        state: engine.getLocalVoiceState(), outputFailure,
-        audioSession: localVoiceSpeechOutputBoundary.getAudioSessionCoordinator().getSnapshot(),
-        sdkOrder: {
-            recognizerStart: speechRecStart.mock.invocationCallOrder,
-            recognizerStop: speechRecStop.mock.invocationCallOrder,
-            speak: expoSpeechSpeak.mock.invocationCallOrder,
-        },
-    })).toBe('speaking');
+    await Promise.race([
+        waitForLocalVoiceState(state => state.status === 'speaking'),
+        turnPromise.then(() => {
+            throw new Error('Voice turn settled before its held playback started');
+        }),
+    ]);
+    expect(engine.getLocalVoiceState().status).toBe('speaking');
     return { engine, turnPromise, finishSpeak: () => finishSpeak?.(), speakingStartedAt: Date.now() };
 }
 
@@ -116,7 +107,6 @@ describe('local voice engine real-producer barge-in', () => {
     registerLocalVoiceEngineHarnessHooks();
 
     afterEach(async () => {
-        vi.restoreAllMocks();
         const [engine, { voiceConversationRuntimeMachine }, { voiceSessionBindingStore },
             { __resetVoiceTurnInterruptions }] = await Promise.all([
             import('./localVoiceEngine'),
@@ -125,12 +115,15 @@ describe('local voice engine real-producer barge-in', () => {
             import('@/voice/transcript/voiceTurnInterruption'),
         ]);
         await engine.stopLocalVoiceSession();
+        const audioAfterEnd = localVoiceSpeechOutputBoundary.getAudioSessionCoordinator().getSnapshot();
+        expect(audioAfterEnd.leaseCount).toBe(0);
         voiceConversationRuntimeMachine.reset();
         __resetVoiceTurnInterruptions();
         for (const binding of voiceSessionBindingStore.getState().list()) {
             voiceSessionBindingStore.getState().unbind(binding.conversationSessionId);
         }
         voiceSessionBindingStore.getState().replacePersistedBindings([]);
+        vi.restoreAllMocks();
     });
 
     it.each([
@@ -169,6 +162,8 @@ describe('local voice engine real-producer barge-in', () => {
             }) } }),
         }));
         expect(expoSpeechStop).toHaveBeenCalled();
+        await waitForLocalVoiceBoundaryEvent('speech', 2);
+        await waitForLocalVoiceState(state => state.status === 'recording');
     }, 180_000);
 
     it('leaves the persisted assistant turn complete when native playback finishes normally', async () => {
@@ -197,6 +192,7 @@ describe('local voice engine real-producer barge-in', () => {
             await new Promise<void>(resolve => setTimeout(resolve, 0));
             expect(localVoicePendingEnqueue).toHaveBeenCalledTimes(1);
             await handle.engine.commitLocalVoiceInput('s1');
+            expect(localVoicePendingEnqueue).toHaveBeenCalledTimes(2);
         }
         await waitForLocalVoiceBoundaryEvent('pending-enqueue', 2);
         expect(localVoicePendingEnqueue).toHaveBeenCalledWith(expect.objectContaining({
@@ -204,5 +200,7 @@ describe('local voice engine real-producer barge-in', () => {
                 role: 'user', content: { type: 'text', text: INTERRUPTING_TEXT },
             }) } }),
         }));
+        await waitForLocalVoiceBoundaryEvent('speech', 2);
+        await waitForLocalVoiceState(state => state.status === 'recording');
     }, 180_000);
 });

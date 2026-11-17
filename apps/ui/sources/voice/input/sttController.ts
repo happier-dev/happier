@@ -61,4 +61,7 @@ export type SttStopResult =
 export type SttController = Readonly<{
     start: (params: SttStartParams) => Promise<void>;
     stop: () => Promise<SttStopResult>;
+    /** Discard physical input and confirm retirement without joining recognition/network work. */
+    discardInput: () => Promise<void>;
+    hasUnretiredInput: () => boolean;
 }>;

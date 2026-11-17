@@ -536,9 +536,14 @@ describe('createLocalVoiceCaptureOwner', () => {
             provider: 'recorded_audio',
             sessionId: 'recording-stop-error-session',
         });
+        await owner.setMuted({ sessionId: 'recording-stop-error-session', muted: true });
+        expect(recorder.record).toHaveBeenCalledOnce();
         await expect(owner.stopSession('recording-stop-error-session')).resolves.toBeUndefined();
 
-        expect(recorder.stop).toHaveBeenCalledOnce();
+        // Failed physical retirement must not resume the muted recorder while
+        // End resets the call's preference for a later explicit input.
+        expect(recorder.record).toHaveBeenCalledOnce();
+        expect(recorder.stop).toHaveBeenCalled();
         expect(nativeAudio.coordinator.getSnapshot().leaseCount).toBe(0);
     });
 
@@ -710,15 +715,17 @@ describe('createLocalVoiceCaptureOwner', () => {
             await readout;
             rearm = startTurn();
             await vi.advanceTimersByTimeAsync(0);
-            expect(onCaptureStarted).toHaveBeenCalledTimes(2);
+            // The preceding remote cancellation response is still held. A new
+            // physical input must not join the logical stop End abandoned.
+            await vi.waitFor(() => expect(onCaptureStarted).toHaveBeenCalledTimes(2));
             await rearm;
             const requestIds = network.requests.filter(request => request.method === 'daemon.voiceInference.stt.stream.start')
                 .map(request => DaemonVoiceInferenceSttStreamStartRequestSchema.parse(request.payload).requestId);
             expect(new Set(requestIds).size).toBe(1);
         } finally {
             call.abort(); releaseCancel?.();
-            await rearm;
             vi.useRealTimers();
+            await rearm;
             await owner.stopSession();
         }
     });
@@ -1613,6 +1620,54 @@ describe('createLocalVoiceCaptureOwner', () => {
         expect(pcm.coordinator.getSnapshot().leaseCount).toBe(0);
     });
 
+    it.each(['same-session', 'retargeted'] as const)('joins pending native VAD microphone startup before %s Read aloud retirement', async (target) => {
+        vi.useFakeTimers();
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        const pcm = createSharedNativePcmHarness({ nativeStart: async () => {
+            entered.resolve(); await release.promise; return { streamId: 'native-stream' };
+        } });
+        const cancelVadDetector = vi.fn(async () => {});
+        const bridge = await resolveNativeSileroVadBridge({
+            createVadDetector: vi.fn(async () => {}),
+            pushVadAudioFrame: vi.fn(async () => ({ speechStarted: false, speechEnded: false })),
+            cancelVadDetector,
+        }, { frameSource: pcm.capture });
+        const nativeVadController = createNativeVadController({ bridge, onEndpointSignal() {} });
+        const owner = createLocalVoiceCaptureOwner({ getSettings: () => neuralSettings,
+            onCaptureStarted() {}, onCaptureError() {},
+        }, { nativeVadController, terminalAbandonmentMs: 25 });
+        const starting = owner.startCapture({ handsFree: true, localNeuralExecution: 'device',
+            provider: 'local_neural', sessionId: 'pending-vad-readout' });
+        await entered.promise;
+        if (target === 'retargeted') {
+            const ended = owner.stopSession('pending-vad-readout');
+            await vi.advanceTimersByTimeAsync(25);
+            await ended;
+        }
+        let retired = false;
+        const retirement = owner.stopSession(target === 'retargeted' ? 'fresh-readout' : 'pending-vad-readout', { mode: 'read_aloud' })
+            .then(() => { retired = true; });
+        try {
+            // The ordinary End bound cannot certify physical input retirement.
+            await vi.advanceTimersByTimeAsync(25);
+            expect(retired).toBe(false);
+            release.resolve();
+            await Promise.all([starting, retirement]);
+            expect(retired).toBe(true);
+            expect(pcm.capture.getSnapshot()).toMatchObject({ streamId: null, subscriberCount: 0 });
+            expect(pcm.coordinator.getSnapshot().leaseCount).toBe(0);
+            expect(cancelVadDetector).toHaveBeenCalledOnce();
+            expect(sdk.sherpaCreate).not.toHaveBeenCalled();
+        } finally {
+            release.resolve();
+            await vi.advanceTimersByTimeAsync(25);
+            await Promise.allSettled([starting, retirement]);
+            vi.useRealTimers();
+            await owner.stopSession();
+        }
+    });
+
     it('settles End while native VAD startup is pending and disposes the late detector and PCM lease', async () => {
         vi.useFakeTimers();
         const nativeStartEntered = createDeferred<void>();
@@ -1760,6 +1815,151 @@ describe('createLocalVoiceCaptureOwner', () => {
             firstStart.resolve();
             await start;
             await captureOwner.stopSession();
+        }
+    });
+
+    it('leaves a fresh microphone outside an older Read aloud retirement', async () => {
+        const { createNativeMicSession } = await import('../mic/NativeMicSession');
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        const recording = createRecordingBoundary('file:///fresh-after-readout.wav');
+        const mic = createNativeMicSession({ ensurePermission: async () => {}, teardown: async () => {
+            entered.resolve(); await release.promise;
+        } });
+        const owner = createLocalVoiceCaptureOwner({ getSettings: () => ({}), onCaptureStarted() {}, onCaptureError() {} }, {
+            createLiveMicSession: () => mic, createRecordingMicSession: () => recording.session,
+        });
+        await owner.startCapture({ sessionId: 'old-input', provider: 'device', handsFree: false });
+        const retiring = owner.stopSession('old-input', { mode: 'read_aloud' });
+        try {
+            await entered.promise;
+            await owner.startCapture({ sessionId: 'fresh-input', provider: 'recorded_audio', handsFree: false });
+            release.resolve();
+            await retiring;
+            expect(recording.recorder.stop).not.toHaveBeenCalled();
+            await expect(owner.stopCapture({ sessionId: 'fresh-input', provider: 'recorded_audio' }))
+                .resolves.toEqual({ provider: 'recorded_audio', uri: 'file:///fresh-after-readout.wav' });
+        } finally { release.resolve(); await retiring; await owner.stopSession(); }
+    });
+
+    it('keeps strict Read aloud retirement pending until device capture ends and refuses an unconfirmed stop', async () => {
+        const failure = new Error('native_recognizer_stop_failed');
+        sdk.recognitionStop.mockImplementation(() => { throw failure; });
+        sdk.recognitionAbort.mockImplementation(() => { throw failure; });
+        const owner = createLocalVoiceCaptureOwner({ getSettings: () => ({}), onCaptureStarted() {}, onCaptureError() {} },
+            { terminalAbandonmentMs: 25 });
+        await owner.startCapture({ sessionId: 'device-retirement', provider: 'device', handsFree: false });
+        emitRecognition('result', { isFinal: false, results: [{ transcript: 'discard this partial' }] });
+        vi.useFakeTimers();
+        let outcome = 'pending';
+        const retirement = owner.stopSession('device-retirement', { mode: 'read_aloud' }).then(
+            () => { outcome = 'retired'; },
+            error => { outcome = 'failed'; throw error; },
+        );
+        const rejected = retirement.then(() => null, (error: unknown) => error);
+        try {
+            await vi.advanceTimersByTimeAsync(25);
+            expect(outcome).toBe('pending');
+            await vi.advanceTimersByTimeAsync(5_000);
+            expect(await rejected).toMatchObject({ message: 'device_stt_stop_unconfirmed' });
+            let retried = false;
+            const retry = owner.stopSession('device-retirement', { mode: 'read_aloud' }).then(() => { retried = true; });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(retried).toBe(false);
+            emitRecognition('end');
+            await retry;
+            expect(retried).toBe(true);
+        } finally {
+            sdk.recognitionStop.mockImplementation(() => emitRecognition('end'));
+            sdk.recognitionAbort.mockImplementation(() => emitRecognition('end'));
+            emitRecognition('end');
+            await vi.advanceTimersByTimeAsync(5_000);
+            await rejected.catch(() => {});
+            vi.useRealTimers();
+            await owner.stopSession();
+        }
+    });
+
+    it('refuses strict Read aloud retirement after native PCM stop fails and retries the same capture', async () => {
+        const stop = vi.mocked(nativeAudio.nativeModule.stop);
+        const originalStop = stop.getMockImplementation();
+        if (!originalStop) throw new Error('Native PCM stop boundary missing');
+        const failure = new Error('native_pcm_stop_failed');
+        let refused = true;
+        const attempts: string[] = [];
+        stop.mockImplementation(async args => {
+            attempts.push(args.streamId);
+            if (refused) throw failure;
+            await originalStop(args);
+        });
+        const owner = createLocalVoiceCaptureOwner({ getSettings: () => neuralSettings, onCaptureStarted() {}, onCaptureError() {} });
+        try {
+            await owner.startCapture({ sessionId: 'pcm-retirement', provider: 'local_neural', handsFree: false });
+            await expect(owner.stopSession('pcm-retirement', { mode: 'read_aloud' })).rejects.toThrow('native_pcm_stop_failed');
+            refused = false;
+            await expect(owner.stopSession('pcm-retirement', { mode: 'read_aloud' })).resolves.toBeUndefined();
+            expect(new Set(attempts).size).toBe(1);
+            expect(attempts.length).toBeGreaterThan(1);
+            expect(nativeAudio.capture.getSnapshot().subscriberCount).toBe(0);
+        } finally {
+            refused = false;
+            await owner.stopSession('pcm-retirement', { mode: 'read_aloud' });
+            stop.mockImplementation(originalStop);
+        }
+    });
+
+    it('joins both unretired native starts for Read aloud after bounded End admits a fresh recording', async () => {
+        (Platform as { OS: string }).OS = 'ios';
+        const firstStart = createDeferred<{ recordingId: string }>();
+        const secondStart = createDeferred<{ recordingId: string }>();
+        const firstEntered = createDeferred<void>();
+        const secondEntered = createDeferred<void>();
+        const nativeStart = vi.fn()
+            .mockImplementationOnce(() => { firstEntered.resolve(); return firstStart.promise; })
+            .mockImplementationOnce(() => { secondEntered.resolve(); return secondStart.promise; });
+        const nativeStop = vi.fn(async ({ recordingId }: { recordingId: string }) => ({ uri: `file:///tmp/${recordingId}.m4a` }));
+        const nativeModule = { ...nativeAudio.nativeModule,
+            startFileRecording: nativeStart,
+            setFileRecordingMuted: async () => {},
+            stopFileRecording: nativeStop,
+        };
+        const owner = createLocalVoiceCaptureOwner({
+            getSettings: () => ({}), onCaptureStarted() {}, onCaptureError() {},
+        }, { terminalAbandonmentMs: 25, createRecordingMicSession: () => {
+            const session = createExpoAudioRecordingMicSession({
+                createNativeFileRecording: () => createVoiceFileRecording(nativeModule),
+            });
+            recordingSessions.push(session);
+            return session;
+        } });
+        const first = owner.startCapture({ handsFree: false, provider: 'recorded_audio', sessionId: 'first' });
+        await firstEntered.promise;
+        vi.useFakeTimers();
+        let second: Promise<void> | undefined;
+        let retiring: Promise<void> | undefined;
+        try {
+            const ended = owner.stopSession('first');
+            await vi.advanceTimersByTimeAsync(25);
+            await ended;
+            second = owner.startCapture({ handsFree: false, provider: 'recorded_audio', sessionId: 'second' });
+            await secondEntered.promise;
+            let retired = false;
+            retiring = owner.stopSession('second', { mode: 'read_aloud' }).then(() => { retired = true; });
+            await vi.advanceTimersByTimeAsync(25);
+            expect(retired).toBe(false);
+            secondStart.resolve({ recordingId: 'second' });
+            await second;
+            await vi.advanceTimersByTimeAsync(0);
+            expect(retired).toBe(false);
+            firstStart.resolve({ recordingId: 'first' });
+            await Promise.all([first, retiring]);
+            expect(nativeStop.mock.calls.map(([args]) => args.recordingId).sort()).toEqual(['first', 'second']);
+            expect(owner.isCaptureActive('second')).toBe(false);
+        } finally {
+            firstStart.resolve({ recordingId: 'first' });
+            secondStart.resolve({ recordingId: 'second' });
+            await Promise.all([first, second, retiring]);
+            vi.useRealTimers();
         }
     });
 

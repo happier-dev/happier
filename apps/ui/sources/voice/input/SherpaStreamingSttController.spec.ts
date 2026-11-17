@@ -369,6 +369,17 @@ describe('SherpaStreamingSttController (native shared capture)', () => {
     expect(sherpaCancel).toHaveBeenCalledTimes(1);
     expect(micSession.teardown).toHaveBeenCalledTimes(1);
     expect(harness.capture.getSnapshot().subscriberCount).toBe(0);
+    // A failed acquisition has no lease; its cleanup must neither poison future
+    // discard nor stop another consumer which subsequently acquired the owner.
+    const peer = await harness.capture.acquire({
+      ownerId: 'current-peer',
+      format: { sampleRate: VOICE_RUNTIME_STT_PCM_FORMAT.sampleRateHz, channels: 1, frameMs: 20 },
+      onFrame: () => {},
+    });
+    await expect(controller.discardInput()).resolves.toBeUndefined();
+    expect(controller.hasUnretiredInput()).toBe(false);
+    expect(harness.capture.getSnapshot().subscriberCount).toBe(1);
+    await peer.release();
     await expect(controller.stop()).resolves.toEqual({ finalText: '' });
     await controller.start({ micSession: createMicSession(), sink: createSink() });
     harness.emit('AgM=');
@@ -376,6 +387,35 @@ describe('SherpaStreamingSttController (native shared capture)', () => {
     expect(sherpaStreamingPushFrame).toHaveBeenCalledWith(expect.objectContaining({ pcm16leBase64: 'AgM=' }));
     await controller.stop();
     await harness.capture.dispose();
+  });
+
+  it('retries the actual native rollback after failed capture admission before retiring input', async () => {
+    const harness = useCapture();
+    // The native stream starts, but fails to confirm the required conversation
+    // AEC capability. Its rollback then fails at the genuine native stop boundary.
+    harness.nativeModule.start.mockImplementationOnce(async () => ({ streamId: 'unretired-start' }));
+    let allowStop = false;
+    harness.nativeModule.stop.mockImplementation(async () => {
+      if (!allowStop) throw new Error('native_stop_failed');
+    });
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
+    try {
+      await expect(controller.start({ capturePurpose: 'conversation', micSession: createMicSession(), sink: createSink() })).rejects.toThrow();
+      expect(harness.nativeModule.start).toHaveBeenCalledTimes(1);
+      expect(harness.nativeModule.stop).toHaveBeenCalledWith({ streamId: 'unretired-start' });
+      await expect(controller.discardInput()).rejects.toThrow('native_stop_failed');
+      expect(controller.hasUnretiredInput()).toBe(true);
+      allowStop = true;
+      await expect(controller.discardInput()).resolves.toBeUndefined();
+      expect(controller.hasUnretiredInput()).toBe(false);
+      // The shared owner is reusable; retiring a failed acquisition is not disposal.
+      await controller.start({ micSession: createMicSession(), sink: createSink() });
+      expect(harness.capture.getSnapshot().subscriberCount).toBe(1);
+    } finally {
+      allowStop = true;
+      await controller.discardInput().catch(() => {});
+    }
   });
 
   it('surfaces pack/runtime/backpressure failures without leaking capture', async () => {

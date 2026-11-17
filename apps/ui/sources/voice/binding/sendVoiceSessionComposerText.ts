@@ -294,7 +294,12 @@ export async function sendVoiceSessionComposerText(params: Readonly<{
     if (!routing) return { ok: false, reason: 'not_voice_session' };
 
     const adapter = params.getAdapter(routing.binding.adapterId);
-    if (!adapter?.sendTextTurn) return { ok: false, reason: 'adapter_unavailable' };
+    if (!adapter?.prepareTextTurn) return { ok: false, reason: 'adapter_unavailable' };
+    const dispatch = adapter.prepareTextTurn({
+        controlSessionId: routing.binding.controlSessionId,
+        conversationSessionId: routing.binding.conversationSessionId,
+        text: params.text,
+    });
 
     return await submitDurableVoiceTextTurn({
         conversationSessionId: routing.binding.conversationSessionId,
@@ -303,10 +308,7 @@ export async function sendVoiceSessionComposerText(params: Readonly<{
         ...(adapter.transcriptSource ? { source: adapter.transcriptSource } : {}),
         pendingPort: params.pendingPort,
         dispatch: async ({ localId, deliveryCommand, onAccepted }) => {
-            await adapter.sendTextTurn!({
-                controlSessionId: routing.binding.controlSessionId,
-                conversationSessionId: routing.binding.conversationSessionId,
-                text: params.text,
+            await dispatch({
                 localId,
                 deliveryCommand,
                 onAccepted,

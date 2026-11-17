@@ -59,8 +59,7 @@ describe('local conversation voice adapter', () => {
   });
 
   async function send(text: string, localId: string, onAccepted: () => Promise<void> = async () => {}) {
-    await adapter.sendTextTurn?.({ controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      conversationSessionId: 'voice-home-session', text, localId, deliveryCommand: 'interrupt_and_send', onAccepted });
+    await adapter.prepareTextTurn?.({ controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId: 'voice-home-session', text })({ localId, deliveryCommand: 'interrupt_and_send', onAccepted });
   }
 
   it('toggle starts actual capture for the global Agent conversation', async () => {
@@ -160,7 +159,7 @@ describe('local conversation voice adapter', () => {
       .not.toHaveProperty('agentRuntime');
   });
 
-  it('another surface toggle finishes the active capture without retiring its global conversation', async () => {
+  it('another surface toggle commits capture and resumes listening in its global conversation', async () => {
     const storage = await getStorage();
     const current = storage.getState();
     const firstSession = current.sessions.s1;
@@ -172,7 +171,7 @@ describe('local conversation voice adapter', () => {
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, status: 'connected', mode: 'listening' });
     await adapter.toggle({ sessionId: 's-next' });
     expect(adapter.getSnapshot(), JSON.stringify(adapter.getSnapshot())).toMatchObject({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      status: 'connected', mode: 'idle', canStop: true });
+      status: 'connected', mode: 'listening', canStop: true });
   });
 
   it('does not retain synchronized Session updates in the actual Agent turn', async () => {
@@ -375,11 +374,11 @@ describe('local conversation voice adapter', () => {
     expect(adapter.getSnapshot()).toMatchObject({ status: 'disconnected', mode: 'idle', canStop: false });
   });
 
-  it('projects connected idle after actual capture finishes with no transcript', async () => {
+  it('resumes connected listening after actual native capture finishes with no transcript', async () => {
     await adapter.toggle({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID });
     await adapter.toggle({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID });
     expect(adapter.getSnapshot()).toMatchObject({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      status: 'connected', mode: 'idle', canStop: true });
+      status: 'connected', mode: 'listening', canStop: true });
   });
 
   it('projects physical mute from the actual capture owner', async () => {

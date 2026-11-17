@@ -73,6 +73,7 @@ import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { normalizeSessionAddress, sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { isSessionAccessRecipient } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
+import { isSessionContentReadable, readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { areServerAccountScopesEqual, createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -555,9 +556,12 @@ type IncomingSessionApply = Omit<Session, 'presence'> & { presence?: 'online' | 
 function resolveOrderedSessionApply(
     previousSession: Session | undefined,
     incomingSession: IncomingSessionApply,
+    source: SessionPublicationSource,
 ): IncomingSessionApply {
     let nextSession: IncomingSessionApply = reconcileSessionLifecycleProjection(previousSession, reconcileSessionTupleProjection(previousSession, incomingSession));
-    if (!previousSession) return nextSession;
+    if (!previousSession) {
+        return source === 'projection' ? { ...nextSession, sessionTurns: undefined } : nextSession;
+    }
     const applyPatch = (patch: Partial<IncomingSessionApply>): void => {
         nextSession = { ...nextSession, ...patch };
     };
@@ -571,6 +575,17 @@ function resolveOrderedSessionApply(
     );
     if (isSameHome && !Object.prototype.hasOwnProperty.call(incomingSession, 'presence')) {
         applyPatch({ presence: previousSession.presence });
+    }
+    // Copied runtime shells do not publish turn documents. Full reads own an
+    // explicit turn value; an omitted part preserves the current readable one.
+    if (source === 'projection' || !Object.hasOwn(incomingSession, 'sessionTurns')) {
+        const canRetainTurns = isSameHome && previousSession.encryptionMode === nextSession.encryptionMode
+            && isSessionContentReadable(readSessionContentAvailability(previousSession))
+            && isSessionContentReadable(readSessionContentAvailability(nextSession))
+            && previousSession.access !== null && nextSession.access !== null
+            && previousSession.access?.capabilities.readTranscript !== false
+            && nextSession.access?.capabilities.readTranscript !== false;
+        applyPatch({ sessionTurns: canRetainTurns ? previousSession.sessionTurns : undefined });
     }
     // Additive-optional presentation projection: an omitted value carries no
     // information (older producer or partial writer), so it preserves the last
@@ -1220,7 +1235,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const previousSession = previousHome && incomingHome
                     && !areServerProfileIdentifiersEquivalent(previousHome, incomingHome)
                     ? undefined : retainedSession;
-                const orderedSession = resolveOrderedSessionApply(previousSession, incomingSession);
+                const orderedSession = resolveOrderedSessionApply(previousSession, incomingSession, source);
                 const declaredOwnerServerId = normalizeTrimmedString(orderedSession.serverId);
                 const ownerServerId = resolveServerProfileScopeIdForIdentifier(declaredOwnerServerId ?? activeServerId);
                 const ownerRowsKey = resolveSessionListHomeKey(mergedRowsByServerId, ownerServerId);

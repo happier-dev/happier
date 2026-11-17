@@ -3,11 +3,12 @@ import {
   abortLocalVoiceTurn,
   commitLocalVoiceInput,
   isLocalVoiceInputEndpointDriven,
+  prepareLocalVoiceForReadAloud,
   announceLocalVoiceAgentAssistantText,
   appendLocalVoiceAgentAttemptContextUpdate,
   appendLocalVoiceAgentAutomaticUiContextUpdate,
   isLocalVoiceAgentActive,
-  sendLocalVoiceAgentTextTurn,
+  prepareLocalVoiceAgentTextTurn,
   sendLocalVoiceAgentTextUpdate,
   setLocalVoiceMuted,
   stopLocalVoiceSession,
@@ -20,6 +21,7 @@ import type { VoiceConversationSelection } from '@/voice/binding/voiceConversati
 export type LocalVoiceRuntimeController = Readonly<{
   abortTurn: (sessionId: string) => Promise<void>;
   commitInput: (sessionId: string) => Promise<void>;
+  prepareForReadAloud: () => Promise<void>;
   isInputEndpointDriven: () => boolean;
   announceAgentAssistantText: (sessionId: string, text: string) => void;
   /** Explicit current-attempt context; synchronized Session updates do not use this seam. */
@@ -27,15 +29,10 @@ export type LocalVoiceRuntimeController = Readonly<{
   appendAgentAutomaticUiContextUpdate: (sessionId: string, update: string) => void;
   isAgentActive: (sessionId: string) => boolean;
   setMuted: (sessionId: string, muted: boolean) => Promise<void>;
-  sendAgentTextTurn: (params: Readonly<{
+  prepareAgentTextTurn: (params: Readonly<{
     controlSessionId: string;
     text: string;
-    durableDispatch?: Readonly<{
-      localId: string;
-      deliveryCommand: 'interrupt_and_send';
-    }>;
-    onAccepted?: () => Promise<void>;
-  }>) => Promise<void>;
+  }>) => ReturnType<typeof prepareLocalVoiceAgentTextTurn>;
   sendAgentTextUpdate: (sessionId: string, update: string, context?: string) => Promise<void>;
   stopSession: (reason?: 'continued_elsewhere', signal?: AbortSignal) => Promise<void>;
   toggleTurn: (
@@ -52,14 +49,14 @@ export function createLocalVoiceRuntimeController(): LocalVoiceRuntimeController
   return {
     abortTurn: async (sessionId) => await abortLocalVoiceTurn(sessionId),
     commitInput: async (sessionId) => await commitLocalVoiceInput(sessionId),
+    prepareForReadAloud: async () => await prepareLocalVoiceForReadAloud(),
     isInputEndpointDriven: () => isLocalVoiceInputEndpointDriven(),
     announceAgentAssistantText: (sessionId, text) => announceLocalVoiceAgentAssistantText(sessionId, text),
     appendAgentContextUpdate: (sessionId, update) => appendLocalVoiceAgentAttemptContextUpdate(sessionId, update),
     appendAgentAutomaticUiContextUpdate: (sessionId, update) => appendLocalVoiceAgentAutomaticUiContextUpdate(sessionId, update),
     isAgentActive: (sessionId) => isLocalVoiceAgentActive(sessionId),
     setMuted: async (sessionId, muted) => await setLocalVoiceMuted(sessionId, muted),
-    sendAgentTextTurn: async ({ controlSessionId, text, durableDispatch, onAccepted }) =>
-      await sendLocalVoiceAgentTextTurn(controlSessionId, text, durableDispatch, onAccepted),
+    prepareAgentTextTurn: ({ controlSessionId, text }) => prepareLocalVoiceAgentTextTurn(controlSessionId, text),
     sendAgentTextUpdate: async (sessionId, update, context) => await sendLocalVoiceAgentTextUpdate(sessionId, update, context),
     stopSession: async (reason, signal) => await stopLocalVoiceSession(reason, signal),
     toggleTurn: async (sessionId, currentUiContext, requestedTargetSessionAddress, conversationSelection, onConversationSelection, onAgentSelection) =>

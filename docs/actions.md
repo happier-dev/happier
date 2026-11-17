@@ -7471,6 +7471,9 @@ uses the existing safe-control policy, including explicit user overrides.
 The output owner publishes preparing/speaking/idle for client controls, and
 results distinguish completed, cancelled and typed unavailable outcomes.
 Provider-owned synthesis boundaries still apply; the Action adds no text cap.
+Say discards active or starting local input before speech; submitted transcription
+and Agent work retain their lifetime. Reading continues through transcript navigation,
+with Stop available in the global Voice control.
 
 Field Dictation has separate `ui.voice_global.dictation.start`, `.finish`,
 `.cancel` and `.dismiss` operations. Focus the actual editable field or its

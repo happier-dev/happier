@@ -1908,7 +1908,8 @@ export function createBundledRealtimeProviderRuntime(
         sendContextEvents(config.encodeTextTurn(text), true);
       }
     },
-    async sendTextTurn({ controlSessionId, conversationSessionId, text, localId, onAccepted }) {
+    prepareTextTurn({ controlSessionId, conversationSessionId, text }) {
+      return async ({ localId, onAccepted }) => {
       const queue = typedTurnQueue;
       const previousTurn = queue.tail;
       let releaseTurn!: () => void;
@@ -2018,6 +2019,7 @@ export function createBundledRealtimeProviderRuntime(
       } finally {
         releaseTurn();
       }
+      };
     },
     getSnapshot: () => projectAdapterSnapshot(host.machine.getSnapshot()),
     subscribe: host.machine.subscribe,

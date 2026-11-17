@@ -148,14 +148,15 @@ export type VoiceAdapterController = Readonly<{
   setMuted(input: Readonly<{ sessionId: string; muted: boolean }>): Promise<void>;
   sendContextUpdate(input: Readonly<{ sessionId: string; update: string }>): void;
   sendContextText?(input: Readonly<{ sessionId: string; text: string }>): void;
-  sendTextTurn?(input: Readonly<{
+  prepareTextTurn?(input: Readonly<{
     controlSessionId: string;
     conversationSessionId: string;
     text: string;
+  }>): (dispatch: Readonly<{
     localId: string;
     deliveryCommand: 'interrupt_and_send';
     onAccepted(): Promise<void>;
-  }>): Promise<void>;
+  }>) => Promise<void>;
   getSnapshot(): VoiceSessionSnapshot;
   subscribe?(listener: () => void): () => void;
   resolveConversationBinding?(input: Readonly<{

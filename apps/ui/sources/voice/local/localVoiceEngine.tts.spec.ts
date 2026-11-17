@@ -102,6 +102,53 @@ describe('local voice engine TTS behavior', () => {
         }
     });
 
+    it('keeps newer Say playing when an already submitted direct reply arrives late', async () => {
+        const storage = await getStorage();
+        const { readStoredSessionMessages } = await import('@happier-dev/session-core/messages');
+        const config = readLocalDirectVoiceSettings(storage.getState().settings.voice);
+        storage.__setState({ settings: { ...storage.getState().settings, voice: {
+            ...storage.getState().settings.voice, providerId: 'local_direct',
+            providers: { ...storage.getState().settings.voice.providers,
+                local_direct: { schemaVersion: 1, config: { ...config,
+                    stt: { ...config.stt, provider: 'device' },
+                    tts: { ...config.tts, provider: 'device', autoSpeakReplies: true },
+                } },
+            },
+        } } });
+        localVoicePendingEnqueue.mockImplementationOnce(async request => {
+            await publishLocalVoiceSubmittedUserMessage(request);
+            return acknowledgeLocalVoicePendingEnqueue(request);
+        });
+        await localVoiceEngine.toggleLocalVoiceTurn('s1');
+        emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: 'question', confidence: 0.9, segments: [] }] });
+        const sending = localVoiceEngine.toggleLocalVoiceTurn('s1');
+        const { executeVoiceSpeechAction } = await import('@/sync/ops/actions/voiceSpeechAction');
+        const { localVoiceTtsController } = await import('@/voice/backends/tts/localVoiceTtsController');
+        const playback = localVoiceSpeechOutputBoundary.holdNextPlayback('device');
+        let saying: ReturnType<typeof executeVoiceSpeechAction> | undefined;
+        try {
+            await waitForLocalVoiceBoundaryEvent('pending-enqueue');
+            saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep the chosen readout.' }, storage.getState().settings);
+            await playback.started;
+            await publishLocalVoiceAssistantMessage({ sessionId: 's1', id: 'late-direct-after-say', text: 'Keep this submitted reply in the transcript.' });
+            await vi.waitFor(() => {
+                expect(readStoredSessionMessages(storage.getState(), 's1').map(message => message.kind))
+                    .toEqual(expect.arrayContaining(['user-text', 'agent-text']));
+                expect(storage.getState().sessions.s1?.latestTurnStatus).toBe('completed');
+                expect(storage.getState().sessions.s1?.sessionTurns?.turns)
+                    .toEqual(expect.arrayContaining([expect.objectContaining({ status: 'completed' })]));
+            });
+            await sending;
+            expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual(['Keep the chosen readout.']);
+            expect(localVoiceTtsController.readSay()).toBe('speaking');
+            playback();
+            await expect(saying).resolves.toEqual({ status: 'completed' });
+        } finally {
+            playback(); localVoiceTtsController.stopSay(); await saying;
+            await localVoiceEngine.stopLocalVoiceSession(); await sending;
+        }
+    });
+
     it.each(['device', 'local_neural'] as const)('supports manual barge-in with the retained device producer after selecting %s STT', async (nextProvider) => {
         const storage = await getStorage();
         storage.__setState({

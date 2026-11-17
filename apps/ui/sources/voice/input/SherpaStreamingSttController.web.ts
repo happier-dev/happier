@@ -17,5 +17,7 @@ export function createSherpaStreamingSttController(
       sink.onError(createVoiceMachineError({ kind: 'provider_error', reason: 'local_neural_stt_unavailable' }));
     },
     stop: async () => ({ finalText: '' }),
+    discardInput: async () => {},
+    hasUnretiredInput: () => false,
   };
 }

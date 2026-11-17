@@ -38,6 +38,10 @@ type DeviceSttHandle = {
   module: any;
   resolveEnd: () => void;
   endPromise: Promise<void>;
+  captureEndPromise: Promise<void>;
+  resolveCaptureEnd: () => void;
+  captureEnded: boolean;
+  discardAttempt: Promise<void> | null;
   subscriptions: { remove(): void }[];
   audioStarted: boolean;
   acceptsRecognizerEvents: boolean;
@@ -134,6 +138,7 @@ function resolveDeviceContinuousRecognition(args: Readonly<{
 
 export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): DeviceSttController {
   let handle: DeviceSttHandle | null = null;
+  const unretiredCaptures = new Set<DeviceSttHandle>();
   let startReservation: DeviceSttStartReservation | null = null;
   let completedResult: SttStopResult | null = null;
 
@@ -211,6 +216,12 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     if (failures.length > 1) throw new AggregateError(failures, 'Device STT capture-owner cleanup failed.');
   };
 
+  const removeRecognizerSubscriptions = (target: DeviceSttHandle): void => {
+    for (const subscription of target.subscriptions.splice(0)) {
+      try { subscription.remove(); } catch { /* Advisory listener cleanup. */ }
+    }
+  };
+
   const cleanupHandle = async (target: DeviceSttHandle): Promise<void> => {
     if (target.cleanupAttempt) return await target.cleanupAttempt;
     const attempt = (async () => {
@@ -221,11 +232,7 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
       });
       endpointController.clearSession(target.sessionId);
       target.abortCleanup();
-      try {
-        target.subscriptions.forEach((subscription) => subscription.remove());
-      } catch {
-        // ignore
-      }
+      if (target.captureEnded) removeRecognizerSubscriptions(target);
       await cleanupCaptureOwners(target);
       if (target.terminalResult) completedResult = target.terminalResult;
       if (handle === target) handle = null;
@@ -449,6 +456,10 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
       module: ExpoSpeechRecognitionModule,
       resolveEnd: () => resolveEnd?.(),
       endPromise,
+      captureEndPromise: Promise.resolve(),
+      resolveCaptureEnd: () => {},
+      captureEnded: true,
+      discardAttempt: null,
       subscriptions: [],
       audioStarted: false,
       acceptsRecognizerEvents: true,
@@ -616,7 +627,15 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
 
     nextHandle.subscriptions.push(
       ExpoSpeechRecognitionModule.addListener('end', () => {
-        if (!acceptsRecognizerEvent()) return;
+        // Native end follows audio-engine teardown; logical abort can finish
+        // earlier. Keep this acknowledgement until physical input retires.
+        nextHandle.captureEnded = true;
+        nextHandle.resolveCaptureEnd();
+        unretiredCaptures.delete(nextHandle);
+        if (!acceptsRecognizerEvent()) {
+          removeRecognizerSubscriptions(nextHandle);
+          return;
+        }
         if (nextHandle.recognizerState === 'stopping_for_mute') {
           nextHandle.recognizerState = 'muted';
           settleMuteTransition(nextHandle, { status: 'resolved' });
@@ -737,6 +756,12 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
       maxAlternatives: 1,
       continuous: resolveDeviceContinuousRecognition({ platformOs, isDomRuntime: dom }),
     } as any;
+    const startCapture = () => {
+      nextHandle.captureEnded = false;
+      nextHandle.captureEndPromise = new Promise<void>(resolve => { nextHandle.resolveCaptureEnd = resolve; });
+      unretiredCaptures.add(nextHandle);
+      ExpoSpeechRecognitionModule.start(recognizerStartOptions);
+    };
     nextHandle.startRecognizer = () => {
       if (
         handle !== nextHandle
@@ -751,14 +776,14 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
       nextHandle.recognizerStopRequested = false;
       nextHandle.recognizerState = 'running';
       try {
-        ExpoSpeechRecognitionModule.start(recognizerStartOptions);
+        startCapture();
       } catch (error) {
         nextHandle.recognizerState = 'muted';
         throw error;
       }
     };
     if (!nextHandle.desiredMuted) {
-      ExpoSpeechRecognitionModule.start(recognizerStartOptions);
+      startCapture();
     }
     } catch (error) {
       const startError = createVoiceMachineError({
@@ -842,8 +867,34 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     return result;
   };
 
+  const discardInput = async (): Promise<void> => {
+    await Promise.all([...unretiredCaptures].map(current => {
+      if (current.discardAttempt) return current.discardAttempt;
+      const attempt = (async () => {
+        current.acceptsRecognizerEvents = false;
+        current.recognizerStopRequested = true;
+        current.recognizerState = 'stopping';
+        try { current.module?.abort?.(); } catch { /* End remains the acknowledgement. */ }
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const ended = await Promise.race([
+          current.captureEndPromise.then(() => true),
+          new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), stopTimeoutMs); }),
+        ]);
+        if (timer !== undefined) clearTimeout(timer);
+        if (!ended) throw new Error('device_stt_stop_unconfirmed');
+        await cleanupHandle(current);
+      })().finally(() => {
+        if (current.discardAttempt === attempt) current.discardAttempt = null;
+      });
+      current.discardAttempt = attempt;
+      return attempt;
+    }));
+  };
+
   return {
     start,
+    discardInput,
+    hasUnretiredInput: () => unretiredCaptures.size > 0,
     setMuted: async (nextMuted) => {
       const current = handle;
       if (!current) return;

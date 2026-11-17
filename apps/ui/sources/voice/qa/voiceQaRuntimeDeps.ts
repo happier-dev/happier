@@ -134,15 +134,17 @@ export function createDefaultVoiceQaControllerDeps(): VoiceQaControllerDeps {
             const adapter = binding?.adapterId
                 ? getVoiceAdapterRegistry().get(binding.adapterId)
                 : resolveActiveRealtimeAdapter();
-            if (!adapter?.sendTextTurn) throw new Error('realtime_voice_session_not_registered');
+            if (!adapter?.prepareTextTurn) throw new Error('realtime_voice_session_not_registered');
+            const dispatch = adapter.prepareTextTurn({
+                controlSessionId,
+                conversationSessionId,
+                text,
+            });
             const result = await submitDurableVoiceTextTurn({
                 conversationSessionId,
                 text,
                 dispatch: async ({ localId, deliveryCommand, onAccepted }) => {
-                    await adapter.sendTextTurn!({
-                        controlSessionId,
-                        conversationSessionId,
-                        text,
+                    await dispatch({
                         localId,
                         deliveryCommand,
                         onAccepted,

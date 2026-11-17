@@ -21,19 +21,21 @@ export async function dispatchForegroundVoiceTextTurnQa(text: string): Promise<V
     }
 
     const adapter = getVoiceAdapterRegistry().get(LOCAL_CONVERSATION_ADAPTER_ID);
-    if (!adapter?.sendTextTurn) {
+    if (!adapter?.prepareTextTurn) {
         throw new Error('foreground_voice_text_turn_qa_adapter_unavailable');
     }
 
+    const dispatch = adapter.prepareTextTurn({
+        controlSessionId: binding.controlSessionId,
+        conversationSessionId: binding.conversationSessionId,
+        text: normalizedText,
+    });
     const result = await submitDurableVoiceTextTurn({
         conversationSessionId: binding.conversationSessionId,
         text: normalizedText,
         ...(adapter.transcriptSource ? { source: adapter.transcriptSource } : {}),
         dispatch: async ({ localId, deliveryCommand, onAccepted }) => {
-            await adapter.sendTextTurn!({
-                controlSessionId: binding.controlSessionId,
-                conversationSessionId: binding.conversationSessionId,
-                text: normalizedText,
+            await dispatch({
                 localId,
                 deliveryCommand,
                 onAccepted,

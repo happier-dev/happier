@@ -27,6 +27,7 @@ import {
     machineRpcWithServerScope,
     localVoicePendingEnqueue,
     localVoiceSpeechTranscription,
+    localVoiceSpeechOutputBoundary,
     localVoiceRouteState,
     switchLocalVoiceAccount,
     readLocalVoiceMachinePrerequisites,
@@ -809,10 +810,15 @@ describe('local voice engine agent behavior', () => {
         expect(welcomeActionRpc).not.toHaveBeenCalled();
 
         const { toggleLocalVoiceTurn } = localVoiceEngine;
+        const welcomePlayback = mode === 'immediate'
+            ? localVoiceSpeechOutputBoundary.holdNextPlayback('device') : null;
         await act(async () => { await toggleLocalVoiceTurn('s1', currentUi.port); });
 
         if (mode === 'immediate') {
-            await waitForLocalVoiceBoundaryEvent('speech');
+            await welcomePlayback!.started;
+            expect(localVoiceEngine.getLocalVoiceState().status).toBe('speaking');
+            welcomePlayback!();
+            await vi.waitFor(() => expect(localVoiceEngine.getLocalVoiceState().status).toBe('recording'));
             const { readStoredSessionMessages } = await import('@happier-dev/session-core/messages');
             const conversationSessionId = welcomeActionRpc.mock.calls[0]?.[0].sessionId;
             expect(conversationSessionId).toBeTypeOf('string');
@@ -843,6 +849,49 @@ describe('local voice engine agent behavior', () => {
             });
             expect(ensureAgentRpc).toHaveBeenCalledTimes(1);
         }
+    });
+
+    it('retains a delayed welcome transcript without replacing newer Say playback', async () => {
+        const storage = await getStorage();
+        const local = readLocalConversationVoiceSettings(storage.getState().settings.voice);
+        storage.__setState({ settings: { ...storage.getState().settings, voice: {
+            ...storage.getState().settings.voice, providerId: 'local_conversation',
+            welcome: { ...storage.getState().settings.voice.welcome, enabled: true, mode: 'immediate' },
+            providers: { ...storage.getState().settings.voice.providers,
+                local_conversation: { schemaVersion: 1, config: { ...local, conversationMode: 'agent',
+                    stt: { ...local.stt, provider: 'device' },
+                    tts: { ...local.tts, provider: 'device', autoSpeakReplies: true },
+                } },
+            },
+        } } });
+        speechRecStart.mockImplementation(() => { emitSpeechRecEvent('start'); emitSpeechRecEvent('audiostart'); });
+        speechRecStop.mockImplementation(() => emitSpeechRecEvent('end'));
+        const welcomeEntered = createDeferred<void>();
+        const releaseWelcome = createDeferred<void>();
+        welcomeActionRpc.mockImplementationOnce(async () => {
+            welcomeEntered.resolve(); await releaseWelcome.promise;
+            return ExecutionRunActionResponseSchema.parse({ ok: true, result: { assistantText: 'Retain this delayed welcome.' } });
+        });
+        await localVoiceEngine.toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+        await welcomeEntered.promise;
+        const { executeVoiceSpeechAction } = await import('@/sync/ops/actions/voiceSpeechAction');
+        const { localVoiceTtsController } = await import('@/voice/backends/tts/localVoiceTtsController');
+        const { localVoiceSpeechOutputBoundary } = await import('./localVoiceEngine.testHarness');
+        const playback = localVoiceSpeechOutputBoundary.holdNextPlayback('device');
+        const saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep the selected answer playing.' },
+            storage.getState().settings);
+        try {
+            await playback.started;
+            releaseWelcome.resolve();
+            const { readStoredSessionMessages } = await import('@happier-dev/session-core/messages');
+            const conversationSessionId = welcomeActionRpc.mock.calls[0]?.[0].sessionId;
+            if (!conversationSessionId) throw new Error('Welcome conversation boundary missing');
+            await vi.waitFor(() => expect(readStoredSessionMessages(storage.getState(), conversationSessionId)
+                .some(message => message.kind === 'agent-text' && message.text === 'Retain this delayed welcome.')).toBe(true));
+            await flushMicrotasks();
+            expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual(['Keep the selected answer playing.']);
+            expect(localVoiceTtsController.readSay()).toBe('speaking');
+        } finally { releaseWelcome.resolve(); playback(); localVoiceTtsController.stopSay(); await saying; }
     });
 
     it.each([false, true])('retains an explicit Start runtime refusal and releases capture (welcome=%s)', async welcome => {
@@ -1570,6 +1619,226 @@ describe('local voice engine agent behavior', () => {
         }
     });
 
+    it('Say discards duplex input and suppresses old live output without cancelling the Agent or Current UI', async () => {
+        const storage = await getStorage();
+        const local = readLocalConversationVoiceSettings(storage.getState().settings.voice);
+        storage.__setState({ settings: { ...storage.getState().settings, voice: {
+            ...storage.getState().settings.voice, providerId: 'local_conversation',
+            welcome: { ...storage.getState().settings.voice.welcome, enabled: false },
+            privacy: { ...storage.getState().settings.voice.privacy, currentUiContextMode: 'automatic' },
+            providers: { ...storage.getState().settings.voice.providers,
+                local_conversation: { schemaVersion: 1, config: { ...local, conversationMode: 'agent',
+                    stt: { ...local.stt, provider: 'device' },
+                    handsFree: { ...local.handsFree, enabled: true },
+                    tts: { ...local.tts, provider: 'device', autoSpeakReplies: true, bargeInEnabled: true },
+                    streaming: { ...local.streaming, enabled: true, ttsEnabled: true },
+                } },
+            },
+        } } });
+        speechRecStart.mockImplementation(() => { emitSpeechRecEvent('start'); emitSpeechRecEvent('audiostart'); });
+        speechRecStop.mockImplementation(() => emitSpeechRecEvent('end'));
+        const ui = await mountCurrentUi({ entity: { kind: 'issue', label: 'Retained context' }, commands: [] });
+        const control = VOICE_AGENT_GLOBAL_SESSION_ID;
+        await localVoiceEngine.toggleLocalVoiceTurn(control, ui.port);
+        await voiceAgentSessions.ensureRunning(control);
+        const liveStarted = createDeferred<void>();
+        const sayStarted = createDeferred<void>();
+        const finalReply = createDeferred<VoiceAgentTurnStreamReadResult>();
+        const firstText = 'The live Agent is still working.';
+        const lateText = 'This later chunk must remain silent.';
+        const sayText = 'Read this selected transcript answer.';
+        let finishLive = () => {};
+        let finishSay = () => {};
+        expoSpeechSpeak.mockImplementation((text, options) => {
+            options.onStart?.();
+            if (text === sayText) {
+                finishSay = () => options.onDone?.();
+                sayStarted.resolve();
+            } else if (text === firstText) {
+                finishLive = () => options.onDone?.();
+                liveStarted.resolve();
+            } else {
+                options.onDone?.();
+            }
+        });
+        startTurnRpc.mockResolvedValueOnce({ streamId: 'say-takeover-live' });
+        readTurnRpc.mockResolvedValueOnce(ExecutionRunTurnStreamReadResponseSchema.parse({
+            streamId: 'say-takeover-live', events: [{ t: 'voice_output', output: {
+                v: 1, kind: 'speech_segment', turnId: 'say-takeover-live', seq: 0,
+                segmentId: 'say-takeover-live:0', text: firstText,
+            } }], nextCursor: 1, done: false,
+        })).mockImplementationOnce(() => finalReply.promise);
+        const turn = localVoiceEngine.sendLocalVoiceAgentTextTurn(control, 'Keep working.', {
+            localId: 'say-takeover-input', deliveryCommand: 'interrupt_and_send',
+        });
+        const { executeVoiceSpeechAction } = await import('@/sync/ops/actions/voiceSpeechAction');
+        const { localVoiceTtsController } = await import('@/voice/backends/tts/localVoiceTtsController');
+        const { expoSpeechStop } = await import('./localVoiceEngine.testHarness');
+        let saying: ReturnType<typeof executeVoiceSpeechAction> | undefined;
+        const finishAgent = () => finalReply.resolve(ExecutionRunTurnStreamReadResponseSchema.parse({
+            streamId: 'say-takeover-live', events: [
+                { t: 'voice_output', output: { v: 1, kind: 'speech_segment', turnId: 'say-takeover-live',
+                    seq: 1, segmentId: 'say-takeover-live:1', text: lateText } },
+                { t: 'voice_output', output: { v: 1, kind: 'turn_final', turnId: 'say-takeover-live',
+                    seq: 2, text: firstText + ' ' + lateText } },
+            ], nextCursor: 3, done: true,
+        }));
+        try {
+            await liveStarted.promise;
+            emitSpeechRecEvent('result', { isFinal: false, results: [{ transcript: 'Discard this partial', confidence: 0.9 }] });
+            const stopsBefore = expoSpeechStop.mock.calls.length;
+            saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: sayText }, storage.getState().settings);
+            await sayStarted.promise;
+            expect(expoSpeechStop.mock.calls.length).toBeGreaterThan(stopsBefore);
+            expect(speechRecStop).toHaveBeenCalled();
+            expect(cancelTurnRpc).not.toHaveBeenCalled();
+            expect(voiceAgentSessions.isActive(control)).toBe(true);
+            finishAgent();
+            await turn;
+            expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual([firstText, sayText]);
+            expect(localVoiceTtsController.readSay()).toBe('speaking');
+            emitSpeechRecEvent('end');
+            expect(localVoiceEngine.getLocalVoiceState()).toMatchObject({ status: 'idle', sessionId: control });
+            localVoiceTtsController.stopSay();
+            expect(await saying).toEqual({ status: 'cancelled' });
+            // Unchanged automatic metadata is delivered once per attempt.
+            // A real mounted-owner transition proves Say kept its subscription.
+            await ui.unmount();
+            await localVoiceEngine.sendLocalVoiceAgentTextTurn(control, 'Do you still see this screen?', {
+                localId: 'say-retained-context-input', deliveryCommand: 'interrupt_and_send',
+            });
+            const message = (startTurnRpc.mock.calls.at(-1)?.[0].payload as { message?: string }).message;
+            expect(message).toContain('CURRENT UI CONTEXT');
+            expect(message).toContain('"state":"unavailable"');
+            expect(cancelTurnRpc).not.toHaveBeenCalled();
+            // Stop and a later Agent turn do not restore discarded input. A
+            // fresh explicit microphone action admits a clean capture again.
+            expect(localVoiceEngine.getLocalVoiceState()).toMatchObject({ status: 'idle', sessionId: control });
+            await localVoiceEngine.toggleLocalVoiceTurn(control);
+            expect(localVoiceEngine.getLocalVoiceState()).toMatchObject({ status: 'recording', sessionId: control });
+        } finally {
+            finishAgent(); finishLive(); finishSay(); localVoiceTtsController.stopSay();
+            await saying;
+            await turn;
+        }
+    });
+
+    it('Say discards duplex input while a delayed nonstream Agent reply remains silent', async () => {
+        const storage = await getStorage();
+        const local = readLocalConversationVoiceSettings(storage.getState().settings.voice);
+        storage.__setState({ settings: { ...storage.getState().settings, voice: {
+            ...storage.getState().settings.voice, providerId: 'local_conversation',
+            welcome: { ...storage.getState().settings.voice.welcome, enabled: false },
+            providers: { ...storage.getState().settings.voice.providers,
+                local_conversation: { schemaVersion: 1, config: { ...local, conversationMode: 'agent',
+                    stt: { ...local.stt, provider: 'device' },
+                    handsFree: { ...local.handsFree, enabled: true },
+                    tts: { ...local.tts, provider: 'device', autoSpeakReplies: true, bargeInEnabled: true },
+                    streaming: { ...local.streaming, enabled: true, ttsEnabled: false },
+                } },
+            },
+        } } });
+        speechRecStart.mockImplementation(() => { emitSpeechRecEvent('start'); emitSpeechRecEvent('audiostart'); });
+        speechRecStop.mockImplementation(() => emitSpeechRecEvent('end'));
+        const control = VOICE_AGENT_GLOBAL_SESSION_ID;
+        await localVoiceEngine.toggleLocalVoiceTurn(control);
+        await voiceAgentSessions.ensureRunning(control);
+        const readEntered = createDeferred<void>();
+        const sayStarted = createDeferred<void>();
+        const final = createDeferred<VoiceAgentTurnStreamReadResult>();
+        startTurnRpc.mockResolvedValueOnce({ streamId: 'say-nonstream-final' });
+        readTurnRpc.mockImplementationOnce(async () => { readEntered.resolve(); return await final.promise; });
+        const finishAgent = () => final.resolve(ExecutionRunTurnStreamReadResponseSchema.parse({
+            streamId: 'say-nonstream-final', events: [{ t: 'voice_output', output: {
+                v: 1, kind: 'turn_final', turnId: 'say-nonstream-final', seq: 0, text: 'Retain this late Agent answer.',
+            } }], nextCursor: 1, done: true,
+        }));
+        let finishSay = () => {};
+        expoSpeechSpeak.mockImplementation((text, options) => {
+            options.onStart?.();
+            if (text === 'Keep reading the selected answer.') {
+                finishSay = () => options.onDone?.(); sayStarted.resolve();
+            } else options.onDone?.();
+        });
+        const turn = localVoiceEngine.sendLocalVoiceAgentTextTurn(control, 'Finish the work.', {
+            localId: 'say-nonstream-input', deliveryCommand: 'interrupt_and_send',
+        });
+        const { executeVoiceSpeechAction } = await import('@/sync/ops/actions/voiceSpeechAction');
+        const { localVoiceTtsController } = await import('@/voice/backends/tts/localVoiceTtsController');
+        let saying: ReturnType<typeof executeVoiceSpeechAction> | undefined;
+        try {
+            await readEntered.promise;
+            saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep reading the selected answer.' },
+                storage.getState().settings);
+            await sayStarted.promise;
+            finishAgent(); await turn;
+            expect(cancelTurnRpc).not.toHaveBeenCalled();
+            expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual(['Keep reading the selected answer.']);
+            expect(localVoiceTtsController.readSay()).toBe('speaking');
+        } finally {
+            finishAgent(); finishSay(); localVoiceTtsController.stopSay(); await saying; await turn;
+        }
+    });
+
+    it.each(['engine', 'composer'] as const)('keeps newer Say while %s input waits for durable admission', async entry => {
+        const storage = await getStorage();
+        const local = readLocalConversationVoiceSettings(storage.getState().settings.voice);
+        storage.__setState({ settings: { ...storage.getState().settings, voice: {
+            ...storage.getState().settings.voice, providerId: 'local_conversation',
+            welcome: { ...storage.getState().settings.voice.welcome, enabled: false },
+            providers: { ...storage.getState().settings.voice.providers,
+                local_conversation: { schemaVersion: 1, config: { ...local, conversationMode: 'agent',
+                    stt: { ...local.stt, provider: 'device' },
+                    tts: { ...local.tts, provider: 'device', autoSpeakReplies: true },
+                    streaming: { ...local.streaming, enabled: true, ttsEnabled: false },
+                } },
+            },
+        } } });
+        speechRecStart.mockImplementation(() => { emitSpeechRecEvent('start'); emitSpeechRecEvent('audiostart'); });
+        speechRecStop.mockImplementation(() => emitSpeechRecEvent('end'));
+        const control = VOICE_AGENT_GLOBAL_SESSION_ID;
+        await localVoiceEngine.toggleLocalVoiceTurn(control);
+        await voiceAgentSessions.ensureRunning(control);
+        const { createLocalConversationVoiceAdapter } = await import('@/voice/adapters/localConversation/localConversationAdapter');
+        const { voiceConversationBindingResolver } = await import('@/voice/binding/VoiceConversationBindingResolver');
+        const { sendVoiceSessionComposerText } = await import('@/voice/binding/sendVoiceSessionComposerText');
+        const binding = voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId: control });
+        if (!binding) throw new Error('Expected native Voice conversation');
+        const adapter = createLocalConversationVoiceAdapter();
+        const enqueueEntered = createDeferred<void>();
+        const releaseEnqueue = createDeferred<void>();
+        const enqueue = localVoicePendingEnqueue.getMockImplementation();
+        if (!enqueue) throw new Error('Expected canonical pending HTTP boundary');
+        localVoicePendingEnqueue.mockImplementationOnce(async request => {
+            const response = await enqueue(request);
+            enqueueEntered.resolve(); await releaseEnqueue.promise; return response;
+        });
+        const startsBefore = startTurnRpc.mock.calls.length;
+        const sending = entry === 'engine'
+            ? localVoiceEngine.sendLocalVoiceAgentTextTurn(control, 'Retain this submitted work.')
+            : sendVoiceSessionComposerText({ conversationSessionId: binding.conversationSessionId,
+                text: 'Retain this submitted work.', getAdapter: () => adapter });
+        const { executeVoiceSpeechAction } = await import('@/sync/ops/actions/voiceSpeechAction');
+        const { localVoiceTtsController } = await import('@/voice/backends/tts/localVoiceTtsController');
+        const { localVoiceSpeechOutputBoundary } = await import('./localVoiceEngine.testHarness');
+        const playback = localVoiceSpeechOutputBoundary.holdNextPlayback('device');
+        let saying: ReturnType<typeof executeVoiceSpeechAction> | undefined;
+        try {
+            await enqueueEntered.promise;
+            saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep this newer answer playing.' }, storage.getState().settings);
+            await playback.started;
+            releaseEnqueue.resolve();
+            const result = await sending;
+            if (entry === 'composer') expect(result).toMatchObject({ ok: true });
+            expect(startTurnRpc.mock.calls.length).toBeGreaterThan(startsBefore);
+            expect(cancelTurnRpc).not.toHaveBeenCalled();
+            expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual(['Keep this newer answer playing.']);
+            expect(localVoiceTtsController.readSay()).toBe('speaking');
+        } finally {
+            releaseEnqueue.resolve(); playback(); localVoiceTtsController.stopSay(); await saying; await sending;
+        }
+    });
+
     it('streams agent deltas into chunked device TTS playback when enabled', async () => {
         const storage = await getStorage();
         storage.__setState({
@@ -1857,7 +2126,7 @@ describe('local voice engine agent behavior', () => {
         await voiceAgentSessions.ensureRunning(VOICE_AGENT_GLOBAL_SESSION_ID);
         expect(voiceAgentSessions.isActive(VOICE_AGENT_GLOBAL_SESSION_ID), 'actual local Agent admission').toBe(true);
         const localAdapter = getVoiceAdapterRegistry().get('local_conversation');
-        if (!localAdapter?.sendTextTurn) throw new Error('local conversation adapter unavailable');
+        if (!localAdapter?.prepareTextTurn) throw new Error('local conversation adapter unavailable');
         const settingsBeforeRetirement = storage.getState().settings;
 
         // Retirement is synchronous at the Account owner. It revokes the exact
@@ -1884,14 +2153,7 @@ describe('local voice engine agent behavior', () => {
             ],
         }));
         const onAccepted = vi.fn(async () => {});
-        await expect(localAdapter.sendTextTurn({
-            controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-            conversationSessionId: 'voice-home-session',
-            text: 'Run the retained tool.',
-            localId: 'retired-local-agent-turn',
-            deliveryCommand: 'interrupt_and_send',
-            onAccepted,
-        })).resolves.toBeUndefined();
+        await expect(localAdapter.prepareTextTurn({ controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId: 'voice-home-session', text: 'Run the retained tool.' })({ localId: 'retired-local-agent-turn', deliveryCommand: 'interrupt_and_send', onAccepted })).resolves.toBeUndefined();
         // Account retirement already aborted this run. The existing turn
         // boundary settles cancellation; acceptance and disclosure stay fenced.
         expect(onAccepted).not.toHaveBeenCalled();

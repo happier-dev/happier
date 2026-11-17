@@ -1192,8 +1192,6 @@ export async function fetchAndApplySessionById(params: Readonly<{
       }
       : params.includeTurnsProjection === false && previousSession?.encryptionMode === encryptionMode
         ? {
-          ...(Object.hasOwn(previousSession, 'sessionTurns')
-            ? { sessionTurns: previousSession.sessionTurns } : {}),
           ...(Object.hasOwn(previousSession, 'rollbackEligibleTurnStarts')
             ? { rollbackEligibleTurnStarts: previousSession.rollbackEligibleTurnStarts } : {}),
         }

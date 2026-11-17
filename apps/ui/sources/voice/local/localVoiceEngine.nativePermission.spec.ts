@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { SessionPermissionRespondRpcParamsV1Schema } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import { SessionPermissionRespondRpcParamsV1Schema, SessionUserActionAnswerRpcParamsV1Schema } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { NativePermissionChoiceAnswerV1Schema, type NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/nativeChoicesV1';
 import { createDeferred, waitForTestEvent } from '@/dev/testkit';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
@@ -11,7 +11,7 @@ import {
   registerLocalVoiceEngineHarnessHooks, sessionRpcWithServerScope,
   waitForLocalVoiceBoundaryEvent, warmLocalVoiceEngineHarnessGraph,
   applyLocalVoiceSessionAgentState,
-  readLocalVoiceHttpRequests,
+  readLocalVoiceHttpRequests, setLocalVoiceHttpResponder, localVoiceSpeechOutputBoundary, flushMicrotasks,
 } from './localVoiceEngine.testHarness';
 
 const restoreLoader = await warmLocalVoiceEngineHarnessGraph();
@@ -48,6 +48,88 @@ const run120Choices = buildCodexPermissionChoices('16367ecb-d8ca-463b-8155-cf0fd
 
 describe('native Voice permission input', () => {
   registerLocalVoiceEngineHarnessHooks();
+
+  it.each([false, true])('retains a delayed native permission transcript without replacing newer Say playback (announcement waits: %s)', async announcementWaits => {
+    const storage = await getStorage();
+    const state = storage.getState();
+    const config = readLocalConversationVoiceSettings(state.settings.voice);
+    storage.__setState({ settings: { ...state.settings, voice: { ...state.settings.voice,
+      providerId: 'local_conversation', canApproveRequests: true,
+      welcome: { ...state.settings.voice.welcome, enabled: false },
+      providers: { ...state.settings.voice.providers, local_conversation: { schemaVersion: 1,
+        config: { ...config, conversationMode: 'agent', agent: { ...config.agent, prewarmOnConnect: false },
+          tts: { ...config.tts, provider: 'device', autoSpeakReplies: true } } } },
+    } } });
+    const { createLocalConversationVoiceAdapter } = await import('@/voice/adapters/localConversation/localConversationAdapter');
+    const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
+    const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
+    const { setVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleControllerStore');
+    const { voiceConversationBindingResolver } = await import('@/voice/binding/VoiceConversationBindingResolver');
+    registerVoiceAdapters([createLocalConversationVoiceAdapter()]);
+    const lifecycle = createVoiceSessionLifecycleController();
+    setVoiceSessionLifecycleController(lifecycle);
+    lifecycle.setConfiguredProviderId('local_conversation');
+    await lifecycle.toggle({ serverId: localVoiceHomeId, sessionId: 's1' });
+    const controlSessionId = lifecycle.getSnapshot().sessionId!;
+    const { voiceAgentSessions } = await import('@/voice/agent/voiceAgentSessions');
+    await voiceAgentSessions.ensureRunning(controlSessionId);
+    const binding = voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId });
+    if (!binding) throw new Error('Expected native Voice conversation');
+    const transcriptEntered = createDeferred<void>();
+    const releaseTranscript = createDeferred<void>();
+    setLocalVoiceHttpResponder(async request => {
+      if (request.method === 'POST' && request.path === `/v2/sessions/${binding.conversationSessionId}/messages`) {
+        transcriptEntered.resolve(); await releaseTranscript.promise;
+      }
+      return undefined;
+    });
+    const session = storage.getState().sessions[binding.conversationSessionId]!;
+    const publishing = applyLocalVoiceSessionAgentState({ ...session, active: true,
+      agentStateVersion: (session.agentStateVersion ?? 0) + 1,
+      updatedAt: Math.max(Date.now(), session.updatedAt + 1),
+      agentState: { requests: { 'native-write': { kind: 'permission', tool: 'Write',
+        arguments: { file_path: '/tmp/native-voice-test' }, createdAt: Date.now(), nativeChoices: codexChoices } } },
+    });
+    const { executeVoiceSpeechAction } = await import('@/sync/ops/actions/voiceSpeechAction');
+    const { localVoiceTtsController } = await import('@/voice/backends/tts/localVoiceTtsController');
+    const playback = localVoiceSpeechOutputBoundary.holdNextPlayback('device');
+    let saying: ReturnType<typeof executeVoiceSpeechAction> | undefined;
+    try {
+      await transcriptEntered.promise;
+      if (announcementWaits) {
+        const { announceLocalVoiceAgentAssistantText } = await import('./localVoiceEngine');
+        announceLocalVoiceAgentAssistantText(controlSessionId, 'The delegated task has finished.');
+        const pending = storage.getState().sessions[binding.conversationSessionId]!;
+        await applyLocalVoiceSessionAgentState({ ...pending,
+          agentStateVersion: (pending.agentStateVersion ?? 0) + 1,
+          updatedAt: Math.max(Date.now(), pending.updatedAt + 1),
+          agentState: { requests: {}, completedRequests: { 'native-write': {
+            ...pending.agentState!.requests!['native-write']!, status: 'approved', completedAt: Date.now(),
+          } } },
+        });
+      }
+      saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Keep the selected answer playing.' }, storage.getState().settings);
+      await playback.started;
+      releaseTranscript.resolve();
+      const { readStoredSessionMessages } = await import('@happier-dev/session-core/messages');
+      await vi.waitFor(() => expect(readStoredSessionMessages(storage.getState(), binding.conversationSessionId)
+        .some(message => message.kind === 'agent-text' && message.text.includes('permission'))).toBe(true));
+      if (announcementWaits) {
+        await vi.waitFor(() => expect(readStoredSessionMessages(storage.getState(), binding.conversationSessionId)
+          .some(message => message.kind === 'agent-text' && message.text === 'The delegated task has finished.')).toBe(true));
+        expect(storage.getState().sessions[binding.conversationSessionId]?.agentState?.completedRequests?.['native-write'])
+          .toMatchObject({ status: 'approved' });
+      } else {
+        expect(storage.getState().sessions[binding.conversationSessionId]?.agentState?.requests?.['native-write']).toBeDefined();
+      }
+      await flushMicrotasks(20);
+      expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual(['Keep the selected answer playing.']);
+      expect(localVoiceTtsController.readSay()).toBe('speaking');
+    } finally {
+      releaseTranscript.resolve(); playback(); localVoiceTtsController.stopSay(); await saying; await publishing;
+      setLocalVoiceHttpResponder(null); await lifecycle.stop(controlSessionId);
+    }
+  });
 
   it.each([
     { answer: "No, don't run it", nextRequest: false },
@@ -255,6 +337,10 @@ describe('native Voice permission input', () => {
         }
       }
       if (request.method === RPC_METHODS.SESSION_PERMISSION_RESPOND || request.method === RPC_METHODS.SESSION_USER_ACTION_ANSWER) {
+        const payload = request.method === RPC_METHODS.SESSION_PERMISSION_RESPOND
+          ? SessionPermissionRespondRpcParamsV1Schema.parse(request.payload)
+          : SessionUserActionAnswerRpcParamsV1Schema.parse(request.payload);
+        const nativeChoice = 'nativeChoice' in payload ? payload.nativeChoice : undefined;
         if (responseFailure) throw Object.assign(new Error('Permission transport unavailable'), { rpcErrorCode: 'target_unavailable' });
         // Publish the daemon's answered-request update as well as its RPC result.
         const carrier = storage.getState().sessions[request.sessionId]!;
@@ -265,7 +351,7 @@ describe('native Voice permission input', () => {
         if (nativeOffer) {
           // Genuine daemon RPC boundary: current native requests reject bare
           // booleans/decisions and require one of their offered selections.
-          const selection = NativePermissionChoiceAnswerV1Schema.safeParse(request.payload.nativeChoice);
+          const selection = NativePermissionChoiceAnswerV1Schema.safeParse(nativeChoice);
           if (!selection.success || selection.data.requirementId !== offeredChoices.requirementId
             || !offeredChoices.choices.some(choice => choice.id === selection.data.choiceId)) {
             throw Object.assign(new Error('permission_response_invalid'), { rpcErrorCode: 'permission_response_invalid' });
@@ -277,7 +363,7 @@ describe('native Voice permission input', () => {
           agentState: { ...carrier.agentState, requests: {}, completedRequests: {
             ...carrier.agentState?.completedRequests,
             'native-write': { ...pending, status: approved ? 'approved' : 'denied',
-              ...(nativeStop ? { decision: 'abort', nativeChoice: request.payload.nativeChoice } : {}), completedAt: Date.now() },
+              ...(nativeStop ? { decision: 'abort', nativeChoice } : {}), completedAt: Date.now() },
           } },
         });
         if (!endAfterResponse) waiting.resolve();
@@ -406,7 +492,7 @@ describe('native Voice permission input', () => {
         const { createSessionFixture } = await import('@/dev/testkit');
         storage.getState().applySessions([createSessionFixture({ id: 'delegated-next', serverId: target.serverId,
           active: true, metadataLayoutVersion: 1,
-          ownerMetadataView: { flavor: 'claude', machineId: 'machine-1', path: '/project' } })]);
+          ownerMetadataView: { host: 'test-host', flavor: 'claude', machineId: 'machine-1', path: '/project' } })]);
         // Reach the same target-selection entry as session.open, retaining the
         // conversation admitted by the real lifecycle above.
         const { setPrimaryActionSessionId } = await import('@/voice/tools/actionImpl/sessionTargets');

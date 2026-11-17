@@ -114,7 +114,7 @@ export type LocalVoiceCaptureOwner = Readonly<{
         sessionId?: string;
         provider: Extract<LocalVoiceCaptureProvider, 'device' | 'local_neural'>;
     }>) => void;
-    stopSession: (sessionId?: string | null) => Promise<void>;
+    stopSession: (sessionId?: string | null, options?: Readonly<{ mode: 'read_aloud' }>) => Promise<void>;
 }>;
 
 type LocalVoiceCaptureOwnerDeps = Readonly<{
@@ -194,6 +194,13 @@ export function createLocalVoiceCaptureOwner(
     let liveMicSession: MicSession | null = null;
     let liveMicGeneration = 0;
     let recordingMicSession: RecordingMicSession | null = null;
+    const unretiredRecordingSessions = new Set<RecordingMicSession>();
+    const unretiredSttControllers = new Set<SttController>();
+    const pruneRetiredSttControllers = (): void => {
+        for (const controller of unretiredSttControllers) {
+            if (!controller.hasUnretiredInput()) unretiredSttControllers.delete(controller);
+        }
+    };
     let activeCaptureSessionId: string | null = null;
     let activeCaptureProvider: LocalVoiceCaptureProvider | null = null;
     let activeCaptureSettings: any | null = null;
@@ -245,12 +252,8 @@ export function createLocalVoiceCaptureOwner(
         if (existing) return existing;
         const teardown = (async () => {
             await session.teardown().catch(() => {});
-            // Reset the retired facade only after releasing physical capture.
-            // Native recording mute is asynchronous and must not reopen End's mic.
-            try {
-                await session.setMuted(false);
-            } catch {
-                // Retirement remains best-effort.
+            if ('hasUnretiredRecording' in session && !session.hasUnretiredRecording()) {
+                unretiredRecordingSessions.delete(session);
             }
         })();
         retiredMicSessions.set(session, teardown);
@@ -535,6 +538,7 @@ export function createLocalVoiceCaptureOwner(
         recordingMicSession ??=
             options.createRecordingMicSession?.()
             ?? createDefaultRecordingMicSession();
+        unretiredRecordingSessions.add(recordingMicSession);
         return recordingMicSession;
     };
     const createEndpointController = (): TurnEndpointController => createTurnEndpointController({
@@ -583,6 +587,7 @@ export function createLocalVoiceCaptureOwner(
         };
         deviceSttController ??= options.createDeviceSttController?.(deviceDeps)
             ?? createDefaultDeviceSttController(deviceDeps);
+        unretiredSttControllers.add(deviceSttController);
         return deviceSttController;
     };
     let sherpaSttController: SherpaStreamingSttController | null = null;
@@ -599,6 +604,7 @@ export function createLocalVoiceCaptureOwner(
         };
         sherpaSttController ??= options.createSherpaSttController?.(sherpaDeps)
             ?? createDefaultSherpaStreamingSttController(sherpaDeps);
+        unretiredSttControllers.add(sherpaSttController);
         return sherpaSttController;
     };
     const getDaemonStreamingSttController = (): DaemonStreamingSttController => {
@@ -618,6 +624,7 @@ export function createLocalVoiceCaptureOwner(
         };
         daemonStreamingSttController ??= options.createDaemonStreamingSttController?.(daemonDeps)
             ?? createDefaultDaemonStreamingSttController(daemonDeps);
+        unretiredSttControllers.add(daemonStreamingSttController);
         return daemonStreamingSttController;
     };
     const getLocalNeuralSttController = (
@@ -928,6 +935,10 @@ export function createLocalVoiceCaptureOwner(
                 if (pendingCaptureStart === captureStart) {
                     pendingCaptureStart = null;
                 }
+                for (const session of unretiredRecordingSessions) {
+                    if (!session.hasUnretiredRecording()) unretiredRecordingSessions.delete(session);
+                }
+                pruneRetiredSttControllers();
             }
         },
         stopCapture: async ({ sessionId, provider }) => {
@@ -1056,13 +1067,20 @@ export function createLocalVoiceCaptureOwner(
         clearHandsFree: ({ sessionId, provider }) => {
             runtimeTurnPolicyController.clearHandsFreeCaptureSession({ provider, sessionId });
         },
-        stopSession: async (sessionId) => {
+        stopSession: async (sessionId, options) => {
             const normalizedSessionId = typeof sessionId === 'string' && sessionId.trim().length > 0
                 ? sessionId.trim()
                 : null;
             const recordingCaptureSessionId = activeCaptureProvider === 'recorded_audio'
                 ? activeCaptureSessionId
                 : null;
+            const retiringSttControllers = options?.mode === 'read_aloud' ? [...unretiredSttControllers] : [];
+            const retiringRecordingSessions = options?.mode === 'read_aloud' ? [...unretiredRecordingSessions] : [];
+            if (options?.mode === 'read_aloud') {
+                (['device', 'local_neural'] as const).forEach(provider => {
+                    runtimeTurnPolicyController.clearHandsFreeCaptureSession({ provider, sessionId: normalizedSessionId });
+                });
+            }
             let terminalRecordingCleanupError: unknown;
             let terminalRecordingCleanupFailed = false;
             const terminalDeadlineAt = now() + terminalAbandonmentMs;
@@ -1105,14 +1123,35 @@ export function createLocalVoiceCaptureOwner(
                 await teardownMicSessionOnce(activeLiveMicSession);
             }
 
-            await waitUntilTerminalBound(captureStart, terminalDeadlineAt);
-            await waitUntilTerminalBound(waitForPendingFailureCleanup(), terminalDeadlineAt);
+            // End may abandon startup; strict Read aloud instead joins the
+            // recording facades which still own actual pending native resources.
+            if (options?.mode !== 'read_aloud') {
+                await waitUntilTerminalBound(captureStart, terminalDeadlineAt);
+                await waitUntilTerminalBound(waitForPendingFailureCleanup(), terminalDeadlineAt);
+            }
 
             if (stoppedNativeVadController) {
-                await waitUntilTerminalBound(
-                    stoppedNativeVadController.stopSession(normalizedSessionId),
-                    terminalDeadlineAt,
+                const retirement = stoppedNativeVadController.stopSession(
+                    options?.mode === 'read_aloud' ? undefined : normalizedSessionId,
+                    options,
                 );
+                if (options?.mode === 'read_aloud') await retirement;
+                else await waitUntilTerminalBound(retirement, terminalDeadlineAt);
+            }
+            if (options?.mode === 'read_aloud') {
+                await Promise.all([
+                    ...retiringSttControllers.map(async controller => {
+                        await controller.discardInput();
+                        unretiredSttControllers.delete(controller);
+                    }),
+                    ...retiringRecordingSessions.map(async session => {
+                        await session.teardown({ mode: 'read_aloud' });
+                        if (!session.hasUnretiredRecording()) unretiredRecordingSessions.delete(session);
+                    }),
+                ]);
+                // Physical input is retired; committed recognition/Agent work
+                // and the person's acknowledged call mute remain independent.
+                return;
             }
             if (stoppedDeviceSttController) {
                 await waitUntilTerminalBound(stoppedDeviceSttController.stop(), terminalDeadlineAt);
@@ -1133,6 +1172,7 @@ export function createLocalVoiceCaptureOwner(
                     sessionId: normalizedSessionId,
                 });
             });
+
 
             if (activeRecordingMicSession) {
                 if (recordingCaptureSessionId) {
@@ -1161,6 +1201,7 @@ export function createLocalVoiceCaptureOwner(
             }
             mutedSessionId = null;
             muted = false;
+            pruneRetiredSttControllers();
 
             if (terminalRecordingCleanupFailed) {
                 if (recordingCaptureSessionId) {

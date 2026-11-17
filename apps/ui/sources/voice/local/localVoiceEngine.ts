@@ -21,6 +21,7 @@ import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSes
 import { voiceAgentSessions } from '@/voice/agent/voiceAgentSessions';
 import { VoiceRunStopUnconfirmedError } from '@/voice/runtime/execution/voiceRunStopReconciliation';
 import { speakAssistantText } from '@/voice/output/speakAssistantText';
+import { localVoiceTtsController } from '@/voice/backends/tts/localVoiceTtsController';
 import { resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
 import { createVoicePlaybackController } from '@/voice/runtime/playback/VoicePlaybackController';
 import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
@@ -79,7 +80,7 @@ import {
   resolveLocalVoiceAdapterSettings,
   resolveLocalConversationControlSessionId,
 } from './localVoiceSettings';
-import { sendVoiceTextTurn as sendVoiceTextTurnImpl } from './sendVoiceTextTurn';
+import { prepareVoiceTextTurn, sendVoiceTextTurn as sendVoiceTextTurnImpl } from './sendVoiceTextTurn';
 import {
   bindCurrentUiContextVoiceToolPortToAdmission,
   type VoiceCurrentUiToolPort,
@@ -113,6 +114,7 @@ type LocalVoiceCaptureAdmission = {
   lease: VoiceCaptureAdmissionLease;
   captureAttempt: LocalVoiceCaptureAttempt;
   captureAbortController: AbortController;
+  inputEnabled: boolean;
   currentUiContext?: VoiceCurrentUiToolPort;
   currentUiContextRetirementController?: AbortController;
   currentUiContextAutomaticUpdateProjector?: CurrentUiContextAutomaticUpdateProjector;
@@ -262,6 +264,7 @@ function acquireCaptureAdmission(
     lease: admission.lease,
     captureAttempt: resolveLocalVoiceCaptureAttempt(controlSessionId, admission.lease),
     captureAbortController: new AbortController(),
+    inputEnabled: true,
     ...(currentUiContext && currentUiContextRetirementController ? {
       currentUiContext: bindCurrentUiContextVoiceToolPortToAdmission(
         currentUiContext,
@@ -303,6 +306,13 @@ function isCaptureAttemptCurrent(
   return isCaptureAdmissionCurrent(admission)
     && admission.captureAttempt === captureAttempt
     && !admission.captureAbortController.signal.aborted;
+}
+
+function isCaptureInputEnabled(
+  admission: LocalVoiceCaptureAdmission,
+  captureAttempt: LocalVoiceCaptureAttempt,
+): boolean {
+  return admission.inputEnabled && isCaptureAttemptCurrent(admission, captureAttempt);
 }
 
 function readCaptureCurrentUiContext(controlSessionId: string): VoiceCurrentUiToolPort | undefined {
@@ -373,7 +383,8 @@ async function startCaptureForAdmission(
   captureAttempt: LocalVoiceCaptureAttempt,
   signal?: AbortSignal,
 ): Promise<void> {
-  if (!isCaptureAdmissionCurrent(admission) || admission.captureAttempt !== captureAttempt) return;
+  if (!isCaptureInputEnabled(admission, captureAttempt) || signal?.aborted) return;
+  localVoiceTtsController.stopSay();
   await startCaptureWithInputLevel({
     sessionId: captureAttempt.controlSessionId,
     provider: captureAttempt.provider,
@@ -410,6 +421,7 @@ async function startBargeInRearmListening(
   currentUiContext?: VoiceCurrentUiToolPort,
 ): Promise<void> {
   if (localVoiceCaptureOwner.isCaptureActive(sessionId)) return;
+  if (readCaptureAdmission(sessionId)?.inputEnabled === false) return;
   const admission = acquireCaptureAdmission(sessionId, currentUiContext);
   if (!admission) return;
   await startCaptureForAdmission(admission, admission.captureAttempt, signal);
@@ -630,7 +642,7 @@ async function maybeRearmHandsFreeCapture(
   // The requesting turn can outlive its capture admission: End (or Account
   // retirement) aborts and releases it while that turn settles. Only the
   // admission which produced the utterance may reopen capture.
-  if (!isCaptureAdmissionCurrent(origin) || origin.captureAbortController.signal.aborted) {
+  if (!isCaptureInputEnabled(origin, origin.captureAttempt)) {
     return false;
   }
 
@@ -642,6 +654,7 @@ async function maybeRearmHandsFreeCapture(
   if (
     !admission
     || !captureAttempt
+    || !isCaptureInputEnabled(admission, captureAttempt)
     || !captureAttempt.handsFree
     || !isEndpointDrivenCaptureProvider(captureAttempt.provider)
   ) {
@@ -679,7 +692,7 @@ function beginEndpointDrivenStopAndSend(
 function handleRuntimeOwnedEndpointSignal(signal: TurnEndpointSignal): boolean {
   const current = getCurrentLocalRuntimeCompatState();
   const admission = readCaptureAdmission(signal.sessionId);
-  if (!admission) return false;
+  if (!admission?.inputEnabled) return false;
   const captureAttempt = admission.captureAttempt;
   const { settings, provider } = captureAttempt;
 
@@ -701,12 +714,12 @@ function handleRuntimeOwnedEndpointSignal(signal: TurnEndpointSignal): boolean {
           speakingElapsedMs: resolveBargeInSpeakingElapsedMs(signal.detectedAt),
           bargeInEnabled: isVoiceBargeInEnabled(settings),
         });
-        if (!isCaptureAdmissionCurrent(admission) || admission.captureAttempt !== captureAttempt) return;
+        if (!isCaptureInputEnabled(admission, captureAttempt)) return;
         if (interrupted) {
           // Playback settles the preceding send. Keep the recognizer which
           // produced this utterance; manual input remains buffered for Send.
           await precedingTurn?.catch(() => {});
-          if (!isCaptureAdmissionCurrent(admission) || admission.captureAttempt !== captureAttempt) return;
+          if (!isCaptureInputEnabled(admission, captureAttempt)) return;
           if (captureAttempt.handsFree) {
             beginEndpointDrivenStopAndSend(admission, captureAttempt, provider);
           }
@@ -716,7 +729,7 @@ function handleRuntimeOwnedEndpointSignal(signal: TurnEndpointSignal): boolean {
           await localVoiceCaptureOwner.stopEndpointDrivenCapture({
             adaptiveConfig: resolveAdaptiveInterruptionConfig(), provider, sessionId: signal.sessionId,
           });
-          if (!isCaptureAdmissionCurrent(admission) || admission.captureAttempt !== captureAttempt
+          if (!isCaptureInputEnabled(admission, captureAttempt)
             || voiceConversationRuntimeMachine.getSnapshot().error) return;
           await startCaptureForAdmission(admission, captureAttempt, admission.captureAbortController.signal);
         }
@@ -771,6 +784,7 @@ async function startLocalVoiceCapture(args: Readonly<{
   if (!admission) {
     return;
   }
+  admission.inputEnabled = true;
   const captureAttempt = admission.captureAttempt;
 
   let startError: unknown = null;
@@ -799,6 +813,9 @@ async function startLocalVoiceCapture(args: Readonly<{
     });
   }
 
+  // Read aloud can retire physical input while retaining this admission for
+  // an already submitted turn and its Current UI authority.
+  if (!isCaptureInputEnabled(admission, captureAttempt)) return;
   const startedState = getCurrentLocalRuntimeCompatState();
   if (
     !isCaptureAdmissionCurrent(admission)
@@ -845,6 +862,7 @@ async function readNativeTurnMessage(
   listen: boolean,
   isPromptCurrent: () => boolean,
   onReady: () => void,
+  playbackEpoch = playbackController.captureEpoch(),
 ): Promise<void> {
   const sessionId = captureAttempt.controlSessionId;
   const isCurrent = () => isPromptCurrent() && isCaptureAttemptCurrent(admission, captureAttempt);
@@ -857,14 +875,14 @@ async function readNativeTurnMessage(
       new VoiceMachineFailure('provider_error', 'voice_transcript_persist_failed', error), admission, captureAttempt);
     return;
   }
-  if (!isCurrent()) return;
+  if (!isCurrent() || !playbackController.isEpochCurrent(playbackEpoch)) return;
   const { config } = resolveLocalVoiceAdapterSettings(captureAttempt.settings);
   if (config?.tts?.autoSpeakReplies === false) return;
   // Stop duplex recognition during readout, so its own speech cannot
   // interrupt the native model turn.
   if (localVoiceCaptureOwner.isCaptureActive(sessionId)) {
     await localVoiceCaptureOwner.stopSession(sessionId);
-    if (!isCurrent()) return;
+    if (!isCurrent() || !playbackController.isEpochCurrent(playbackEpoch)) return;
   }
   let spoken = false;
   let interrupted = false;
@@ -891,7 +909,7 @@ async function readNativeTurnMessage(
   } finally { noteTtsStopped(); }
   if (!isCurrent() || interrupted) return;
   voiceConversationRuntimeMachine.transitionToThinking({ controlSessionId: sessionId });
-  if (!listen || !spoken) return;
+  if (!listen || !spoken || !isCaptureInputEnabled(admission, captureAttempt)) return;
   onReady();
   await voiceConversationRuntimeMachine.rearmListening({
     controlSessionId: sessionId,
@@ -904,10 +922,11 @@ async function resumeNativeVoiceListening(
   captureAttempt: LocalVoiceCaptureAttempt,
 ): Promise<void> {
   const sessionId = captureAttempt.controlSessionId;
-  if (!isCaptureAttemptCurrent(admission, captureAttempt)
+  if (!isCaptureInputEnabled(admission, captureAttempt)
     || getCurrentLocalRuntimeCompatState().status !== 'idle'
     || voiceConversationRuntimeMachine.getSnapshot().error) return;
   if (await activeNativePermissionInput?.resumeReadout()) return;
+  if (!isCaptureInputEnabled(admission, captureAttempt)) return;
   if (localVoiceCaptureOwner.isCaptureActive(sessionId)) {
     // Keep duplex input which may already contain the next utterance.
     voiceConversationRuntimeMachine.transitionToListening({ controlSessionId: sessionId });
@@ -995,7 +1014,7 @@ async function runVoiceTurnWithSendFailureHandling(
     const ttsSettings = admission
       ? parseLocalVoiceTtsSettings(resolveLocalVoiceAdapterSettings(admission.captureAttempt.settings).config?.tts)
       : null;
-    startsPlaybackCapture = !!admission && isEndpointDrivenCaptureProvider(admission.captureAttempt.provider)
+    startsPlaybackCapture = !!admission && admission.inputEnabled && isEndpointDrivenCaptureProvider(admission.captureAttempt.provider)
       && isVoiceBargeInEnabled(admission.captureAttempt.settings)
       && ttsSettings?.autoSpeakReplies !== false
       && !localVoiceCaptureOwner.isCaptureActive(sessionId);
@@ -1094,6 +1113,7 @@ async function stopAndSendRecordedTurn(
   ) {
     return;
   }
+  const dispatch = prepareVoiceTextTurn({ sessionId, playbackController, voiceAgentSessions });
   const permissionResponse = activeNativePermissionInput?.captureResponse();
   voiceConversationRuntimeMachine.transitionToTranscribing({ controlSessionId: sessionId });
   let uri: string | null = null;
@@ -1163,12 +1183,9 @@ async function stopAndSendRecordedTurn(
     }
     const currentUiContext = admission.currentUiContext;
     await runVoiceTurnWithSendFailureHandling(sessionId, (signal) =>
-      sendVoiceTextTurnImpl({
-        sessionId,
+      dispatch({
         settings: captureAttempt.settings,
         userText: text,
-        playbackController,
-        voiceAgentSessions,
         onTtsStarted: noteTtsStarted,
         onAssistantFinalAvailable: noteAssistantFinalAvailable,
         onTtsStopped: noteTtsStopped,
@@ -1202,6 +1219,7 @@ async function stopSttAndSend(
     });
     return;
   }
+  const dispatch = prepareVoiceTextTurn({ sessionId, playbackController, voiceAgentSessions });
   const permissionResponse = activeNativePermissionInput?.captureResponse();
   voiceConversationRuntimeMachine.transitionToTranscribing({ controlSessionId: sessionId });
 
@@ -1231,12 +1249,9 @@ async function stopSttAndSend(
   if (permissionResponse && await permissionResponse(endpointDecision.transcript)) return;
 
   await runVoiceTurnWithSendFailureHandling(sessionId, (signal) =>
-    sendVoiceTextTurnImpl({
-      sessionId,
+    dispatch({
       settings: captureAttempt.settings,
       userText: endpointDecision.transcript,
-      playbackController,
-      voiceAgentSessions,
       onTtsStarted: noteTtsStarted,
       onAssistantFinalAvailable: noteAssistantFinalAvailable,
       onTtsStopped: noteTtsStopped,
@@ -1300,46 +1315,45 @@ export function announceLocalVoiceAgentAssistantText(sessionId: string, text: st
     return;
   }
   const captureAttempt = admission.captureAttempt;
+  const playbackEpoch = playbackController.captureEpoch();
   // A delegated Session can finish after the carrier Voice turn has settled.
   // Its sync announcement still uses the active attempt's playback and rearm.
   fireAndForget((async () => {
     if (await activeNativePermissionInput?.waitForPendingReadout()) return;
-    await readNativeTurnMessage(admission, captureAttempt, text, true, () => true, () => {});
+    await readNativeTurnMessage(admission, captureAttempt, text, true, () => true, () => {}, playbackEpoch);
   })(), { tag: 'voice.nativeSession.announce' });
+}
+
+export function prepareLocalVoiceAgentTextTurn(sessionId: string, text: string): (
+  durableDispatch?: Readonly<{ localId: string; deliveryCommand: 'interrupt_and_send' }>,
+  onAccepted?: () => Promise<void>,
+) => Promise<void> {
+  const trimmed = text.trim();
+  const settings = storage.getState().settings;
+  const resolvedSessionId = resolveLocalConversationControlSessionId(settings, sessionId);
+  const currentUiContext = readCaptureCurrentUiContext(resolvedSessionId);
+  const dispatch = prepareVoiceTextTurn({ sessionId: resolvedSessionId, playbackController, voiceAgentSessions });
+  return async (durableDispatch, onAccepted) => {
+    if (!trimmed) return;
+    await runVoiceTurnWithSendFailureHandling(resolvedSessionId, signal => dispatch({
+      settings, userText: trimmed,
+      onTtsStarted: noteTtsStarted,
+      onAssistantFinalAvailable: noteAssistantFinalAvailable,
+      onTtsStopped: noteTtsStopped,
+      waitForPendingReadout: activeNativePermissionInput?.waitForPendingReadout,
+      signal, durableDispatch, onUserTranscriptAccepted: onAccepted,
+      ...(currentUiContext ? { currentUiContext } : {}),
+    }));
+  };
 }
 
 export async function sendLocalVoiceAgentTextTurn(
   sessionId: string,
   text: string,
-  durableDispatch?: Readonly<{
-    localId: string;
-    deliveryCommand: 'interrupt_and_send';
-  }>,
+  durableDispatch?: Readonly<{ localId: string; deliveryCommand: 'interrupt_and_send' }>,
   onAccepted?: () => Promise<void>,
 ): Promise<void> {
-  const trimmed = text.trim();
-  if (!trimmed) return;
-
-  const settings = storage.getState().settings as any;
-  const resolvedSessionId = resolveLocalConversationControlSessionId(settings, sessionId);
-  const currentUiContext = readCaptureCurrentUiContext(resolvedSessionId);
-  await runVoiceTurnWithSendFailureHandling(resolvedSessionId, (signal) =>
-    sendVoiceTextTurnImpl({
-      sessionId: resolvedSessionId,
-      settings,
-      userText: trimmed,
-      playbackController,
-      voiceAgentSessions,
-      onTtsStarted: noteTtsStarted,
-      onAssistantFinalAvailable: noteAssistantFinalAvailable,
-      onTtsStopped: noteTtsStopped,
-      waitForPendingReadout: activeNativePermissionInput?.waitForPendingReadout,
-      signal,
-      durableDispatch,
-      onUserTranscriptAccepted: onAccepted,
-      ...(currentUiContext ? { currentUiContext } : {}),
-    }),
-  );
+  return prepareLocalVoiceAgentTextTurn(sessionId, text)(durableDispatch, onAccepted);
 }
 
 export async function sendLocalVoiceAgentTextUpdate(sessionId: string, update: string, context?: string): Promise<void> {
@@ -1407,6 +1421,26 @@ async function settleEndingTransition(
       error: currentSnapshot.controlSessionId === controlSessionId ? currentSnapshot.error : null,
     });
   }
+}
+
+/** Retire only input and output; submitted turns and their context retain their admission. */
+export async function prepareLocalVoiceForReadAloud(): Promise<void> {
+  localVoicePreparationAttemptGuard.cancel();
+  localVoicePreparationAbortController?.abort();
+  localVoicePreparationAbortController = null;
+  playbackController.interrupt();
+  noteTtsStopped();
+  const admission = captureAdmission;
+  if (admission) admission.inputEnabled = false;
+  closeInputLevel();
+  const snapshot = voiceConversationRuntimeMachine.getSnapshot();
+  const controlSessionId = admission?.controlSessionId
+    ?? (snapshot.adapterId === null ? snapshot.controlSessionId : null);
+  if (!controlSessionId) return;
+  if (snapshot.adapterId === null && snapshot.controlSessionId === controlSessionId) {
+    voiceConversationRuntimeMachine.transitionToConnected({ controlSessionId });
+  }
+  await localVoiceCaptureOwner.stopSession(controlSessionId, { mode: 'read_aloud' });
 }
 
 export async function abortLocalVoiceTurn(sessionId: string): Promise<void> {
@@ -1530,6 +1564,7 @@ export async function toggleLocalVoiceTurn(
     const admission = readCaptureAdmission(controlSessionId);
     if (!admission) return;
     const captureAttempt = admission.captureAttempt;
+    const playbackEpoch = playbackController.captureEpoch();
 
     const welcome = voiceSettingsParse(params.settings?.voice).welcome;
     const shouldWelcome = welcome.enabled && welcome.mode === 'immediate' && config?.tts?.autoSpeakReplies !== false;
@@ -1547,7 +1582,8 @@ export async function toggleLocalVoiceTurn(
           const text = typeof assistantText === 'string' ? assistantText.trim() : '';
           if (text && !await activeNativePermissionInput?.waitForPendingReadout()) {
             const assistantEntryId = await persistLocalVoiceAgentAssistantText(controlSessionId, text);
-            if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
+            if (!isCaptureAttemptCurrent(admission, captureAttempt)
+              || !playbackController.isEpochCurrent(playbackEpoch)) return;
             await speakAssistantText({
               sessionId,
               text,
@@ -1560,6 +1596,10 @@ export async function toggleLocalVoiceTurn(
               },
             });
             noteTtsStopped();
+            if (!isCaptureAttemptCurrent(admission, captureAttempt)
+              || !playbackController.isEpochCurrent(playbackEpoch)) return;
+            transitionVoiceRuntimeToIdle({ controlSessionId });
+            await resumeNativeVoiceListening(admission, captureAttempt);
           }
           return;
         }

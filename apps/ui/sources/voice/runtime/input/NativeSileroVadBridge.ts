@@ -136,8 +136,11 @@ export async function resolveNativeSileroVadBridge(
             let stopped = false;
             let speechActive = false;
             let captureLease: NativePcmCaptureLease | null = null;
+            let detectorCanceled = false;
 
             const cancelDetector = async (): Promise<void> => {
+                if (detectorCanceled) return;
+                detectorCanceled = true;
                 try {
                     await resolvedNativeModule.cancelVadDetector({ detectorId });
                 } catch {
@@ -147,15 +150,11 @@ export async function resolveNativeSileroVadBridge(
 
             const releaseCapture = async (): Promise<void> => {
                 const lease = captureLease;
-                captureLease = null;
                 if (!lease) {
                     return;
                 }
-                try {
-                    await lease.release();
-                } catch {
-                    // The shared capture owner remains responsible for its own final teardown.
-                }
+                await lease.release();
+                if (captureLease === lease) captureLease = null;
             };
 
             const stopAfterFrameFailure = (error: unknown): void => {
@@ -163,7 +162,7 @@ export async function resolveNativeSileroVadBridge(
                     return;
                 }
                 stopped = true;
-                void releaseCapture();
+                void releaseCapture().catch(() => {});
                 void cancelDetector();
                 onTerminal?.(error);
             };
@@ -218,9 +217,6 @@ export async function resolveNativeSileroVadBridge(
 
             return {
                 stop: async () => {
-                    if (stopped) {
-                        return;
-                    }
                     stopped = true;
                     await releaseCapture();
                     await cancelDetector();

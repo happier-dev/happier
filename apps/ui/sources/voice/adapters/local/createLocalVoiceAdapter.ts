@@ -94,17 +94,13 @@ export function createLocalVoiceAdapter(
       }
     : () => {};
 
-  const sendTextTurn = capabilities.textTurns
-    ? async (opts: Parameters<NonNullable<VoiceAdapterController['sendTextTurn']>>[0]) => {
-        await localVoiceRuntimeController.sendAgentTextTurn({
-          controlSessionId: opts.controlSessionId,
-          text: opts.text,
-          durableDispatch: {
-            localId: opts.localId,
-            deliveryCommand: opts.deliveryCommand,
-          },
-          onAccepted: opts.onAccepted,
+  const prepareTextTurn = capabilities.textTurns
+    ? (opts: Parameters<NonNullable<VoiceAdapterController['prepareTextTurn']>>[0]) => {
+        const dispatch = localVoiceRuntimeController.prepareAgentTextTurn({
+          controlSessionId: opts.controlSessionId, text: opts.text,
         });
+        return async (input: Parameters<ReturnType<NonNullable<VoiceAdapterController['prepareTextTurn']>>>[0]) =>
+          await dispatch({ localId: input.localId, deliveryCommand: input.deliveryCommand }, input.onAccepted);
       }
     : undefined;
 
@@ -119,7 +115,7 @@ export function createLocalVoiceAdapter(
     bargeIn,
     setMuted,
     sendContextUpdate,
-    ...(sendTextTurn ? { sendTextTurn } : {}),
+    ...(prepareTextTurn ? { prepareTextTurn } : {}),
     getSnapshot,
     subscribe: (listener) => useVoiceConversationRuntimeStore.subscribe(() => listener()),
     ...(capabilities.resolveBindingTranscriptMode

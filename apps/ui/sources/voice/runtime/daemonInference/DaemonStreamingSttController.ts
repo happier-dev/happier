@@ -1,7 +1,8 @@
 import type { SttController, SttStartParams, SttStopResult } from '@/voice/input/sttController';
 import { resolveLocalNeuralSttCaptureSettings } from '@/voice/input/resolveLocalNeuralSttCaptureSettings';
 import type { TurnEndpointController } from '@/voice/runtime/input/TurnEndpointController';
-import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
+import { classifyVoiceMachineError, createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
+import { readSafeVoiceRuntimeFailureCode, recordVoiceRuntimeFailure } from '@/voice/runtime/voiceRuntimeFailureCode';
 import type {
     DaemonVoiceInferenceSttStreamEvent,
     DaemonVoiceInferenceSttStreamFinishResponse,
@@ -158,6 +159,11 @@ export function createDaemonStreamingSttController(
     let active: ActiveDaemonStreamingStt | null = null;
     let stopping: Promise<SttStopResult> | null = null;
     let paused: Readonly<{ params: SttStartParams; result: Promise<SttStopResult> }> | null = null;
+    const unretiredCaptures = new Set<DaemonSpeechPcmCapture>();
+    const retireCapture = async (capture: DaemonSpeechPcmCapture): Promise<void> => {
+        await capture.stop();
+        unretiredCaptures.delete(capture);
+    };
     const getSettings = deps.getSettings ?? (() => ({}));
     const client = (deps.createClient ?? createDefaultDaemonVoiceInferenceClient)();
     const createPcmCapture = deps.createPcmCapture ?? createDaemonSpeechPcmCapture;
@@ -235,7 +241,11 @@ export function createDaemonStreamingSttController(
         }
         handle.unlinkAbort();
         const attempt = Promise.all([
-            handle.capture.stop().catch(() => {}),
+            retireCapture(handle.capture).catch((error: unknown) => {
+                const failure = classifyVoiceMachineError(error, { kind: 'provider_error' });
+                recordVoiceRuntimeFailure('daemon_streaming_stt', 'provider_error', failure.kind,
+                    readSafeVoiceRuntimeFailureCode(error) ?? failure.kind);
+            }),
             handle.sender.cancel().catch(() => {}),
         ]).then(() => undefined);
         handle.cancelAttempt = attempt;
@@ -359,6 +369,7 @@ export function createDaemonStreamingSttController(
                 unlinkAbort: () => {},
             };
             active = handle;
+            unretiredCaptures.add(capture);
             if (handle.sessionId) {
                 endpointController?.startSession(handle.sessionId);
             }
@@ -419,6 +430,13 @@ export function createDaemonStreamingSttController(
             await owner.retire();
             const handle = await startAttempt(params, prefixText);
             owner.retire = async () => {
+                // End can abandon a held cancellation reply. Its sender is
+                // already locally closed; physical capture still must retire
+                // before this admitted call can listen again.
+                if (handle?.aborted) {
+                    await retireCapture(handle.capture);
+                    return;
+                }
                 await stopping;
                 await cancelActive(handle ?? null);
             };
@@ -445,6 +463,7 @@ export function createDaemonStreamingSttController(
                 }
                 try {
                     await handle.capture.finish();
+                    unretiredCaptures.delete(handle.capture);
                     if (handle.aborted) {
                         return { finalText: handle.finalText };
                     }
@@ -494,6 +513,10 @@ export function createDaemonStreamingSttController(
     };
     return {
         start,
+        discardInput: async () => {
+            await Promise.all([...unretiredCaptures].map(retireCapture));
+        },
+        hasUnretiredInput: () => unretiredCaptures.size > 0,
         stop: async () => {
             const held = paused;
             paused = null;

@@ -92,13 +92,32 @@ export async function sendVoiceTextTurn(params: {
   /** Provider-owned current UI port carried by this exact local voice attempt. */
   currentUiContext?: VoiceCurrentUiToolPort;
 }): Promise<void> {
+  const { sessionId, playbackController, voiceAgentSessions, ...input } = params;
+  return prepareVoiceTextTurn({ sessionId, playbackController, voiceAgentSessions })(input);
+}
+
+type VoiceTextTurnContext = Pick<Parameters<typeof sendVoiceTextTurn>[0], 'sessionId' | 'playbackController' | 'voiceAgentSessions'>;
+
+/** Capture existing output and attempt ownership before recognition or durable admission. */
+export function prepareVoiceTextTurn(
+  context: VoiceTextTurnContext,
+): (input: Omit<Parameters<typeof sendVoiceTextTurn>[0], keyof VoiceTextTurnContext>) => Promise<void> {
+  const playbackEpoch = context.playbackController.captureEpoch();
+  const registerPlaybackStopper =
+    context.playbackController.registerStopper.captureAttempt?.() ?? context.playbackController.registerStopper;
+  return input => dispatchVoiceTextTurn({ ...context, ...input }, playbackEpoch, registerPlaybackStopper);
+}
+
+async function dispatchVoiceTextTurn(
+  params: Parameters<typeof sendVoiceTextTurn>[0],
+  playbackEpoch: number,
+  registerPlaybackStopper: VoicePlaybackStopperRegistrar,
+): Promise<void> {
   const sessionId = normalizeNonEmptyString(params.sessionId);
   if (!sessionId) {
     throw new Error('session_id_required');
   }
   const { settings, userText } = params;
-  const registerPlaybackStopper =
-    params.playbackController.registerStopper.captureAttempt?.() ?? params.playbackController.registerStopper;
   const { adapterId, config } = resolveLocalVoiceAdapterSettings(settings);
   const networkTimeoutMs = resolveVoiceNetworkTimeoutMs(config?.networkTimeoutMs, 15_000);
   const conversationMode =
@@ -120,11 +139,11 @@ export async function sendVoiceTextTurn(params: {
       text: userText,
       pendingPort: params.pendingPort,
       dispatch: async ({ localId, deliveryCommand, onAccepted }) => {
-        await sendVoiceTextTurn({
+        await dispatchVoiceTextTurn({
           ...params,
           durableDispatch: { localId, deliveryCommand },
           onUserTranscriptAccepted: onAccepted,
-        }).catch((error: unknown) => {
+        }, playbackEpoch, registerPlaybackStopper).catch((error: unknown) => {
           dispatchOutcome.failure = { error };
           throw error;
         });
@@ -223,7 +242,6 @@ export async function sendVoiceTextTurn(params: {
     let streamingPlaybackError: unknown = null;
     try {
       throwIfAborted();
-      const playbackEpoch = params.playbackController.captureEpoch();
       let currentOutputTurnId: string | null = null;
       let canonicalTurnFinalized = false;
       let canonicalTurnCancelled = false;
@@ -419,6 +437,7 @@ export async function sendVoiceTextTurn(params: {
 
         if (await params.waitForPendingReadout?.()) return;
         throwIfAborted();
+        if (!params.playbackController.isEpochCurrent(playbackEpoch)) return;
         await speakAssistantText({
           sessionId,
           text: assistantText,
@@ -531,7 +550,9 @@ export async function sendVoiceTextTurn(params: {
   // transcript before submission so Sync retains that real reply for playback.
   const releaseReplyConsumer = autoSpeak ? registerSessionRealtimeTranscriptConsumer(sessionId) : null;
   let submittedUserLocalId: string | undefined;
-  voiceConversationRuntimeMachine.transitionToThinking({ controlSessionId: sessionId });
+  if (params.playbackController.isEpochCurrent(playbackEpoch)) {
+    voiceConversationRuntimeMachine.transitionToThinking({ controlSessionId: sessionId });
+  }
   try {
     throwIfAborted();
     const submission = await sync.submitMessage(sessionId, userText, undefined, undefined, {
@@ -571,6 +592,7 @@ export async function sendVoiceTextTurn(params: {
   }
   try {
     if (await params.waitForPendingReadout?.()) return;
+    if (!params.playbackController.isEpochCurrent(playbackEpoch)) return;
     await speakAssistantText({
       sessionId,
       text: assistantEntry.text,

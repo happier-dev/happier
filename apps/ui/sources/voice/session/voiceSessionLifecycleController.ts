@@ -180,7 +180,7 @@ function requiresCurrentUiContextToolSetReplacement(adapter: VoiceAdapterControl
     // seeds its model session once, so either tool-catalog boundary needs to
     // replace it. Local direct lacks the Agent text-turn capability, hence no
     // model-session tool catalog to retire.
-    return adapter.engineKind === 'realtime' || typeof adapter.sendTextTurn === 'function';
+    return adapter.engineKind === 'realtime' || typeof adapter.prepareTextTurn === 'function';
 }
 
 export function createVoiceSessionLifecycleController(deps?: Readonly<{
