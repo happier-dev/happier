@@ -276,7 +276,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         expect(second.getCurrent().agentPickerSelectedOptionId).toBe('agent:happier.agent.codex/codex');
     });
 
-    it('keeps an Account connection and refuses a Team ref in an armed continuation', async () => {
+    it('retains Account and Team sources through armed continuation inspection and remount', async () => {
         const agentTargetKey = 'agent:happier.agent.codex/codex';
         const hook = await renderControls();
         await armTarget(hook, agentTargetKey);
@@ -288,26 +288,34 @@ describe('useInSessionAgentPickerControls arm draft', () => {
                 ref: { source: 'account_provider_connection', agentTargetKey, providerConnectionId, modelId: 'account-model' },
             })).toBe(true);
         });
-        expect(readPersistedArm()?.intent.selection).toMatchObject({ modelId: 'account-model', providerConnectionId });
+        expect(readPersistedArm()?.intent.selection).toMatchObject({ modelSelection: {
+            source: 'account_provider_connection', agentTargetKey, providerConnectionId, modelId: 'account-model',
+        } });
+        const teamRef = { source: 'team_resource' as const, agentTargetKey, modelId: 'default', teamId: 'team-1',
+            resourceId: 'resource-1', expectedResourceRevision: 1, deliveryMode: 'brokered' as const };
         await act(async () => {
             expect(await hook.getCurrent().applyDraftModelIntent({
                 kind: 'selection',
-                ref: { source: 'team_resource', agentTargetKey, modelId: 'team-model', teamId: 'team-1',
-                    resourceId: 'resource-1', expectedResourceRevision: 1, deliveryMode: 'brokered' },
-            })).toBe(false);
+                ref: teamRef,
+            })).toBe(true);
         });
-        expect(readPersistedArm()?.intent.selection).toMatchObject({ modelId: 'account-model', providerConnectionId });
-        expect(Modal.alert).toHaveBeenCalledWith('common.unavailable', 'session.agentContinuation.teamModelUnsupported');
-        vi.mocked(Modal.alert).mockClear();
+        expect(readPersistedArm()?.intent.selection).toMatchObject({ modelSelection: teamRef });
+        expect(machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
+            payload: expect.objectContaining({ selections: [expect.objectContaining({ modelSelection: teamRef })] }),
+        }));
+        await hook.unmount();
+        const remounted = await renderControls();
+        expect(remounted.getCurrent().armedContinuation?.selection.modelSelection).toEqual(teamRef);
         await act(async () => {
-            expect(await hook.getCurrent().applyDraftModelIntent({
+            expect(await remounted.getCurrent().applyDraftModelIntent({
                 kind: 'team',
                 selection: { kind: 'team_credential_provider_model', agentTargetKey, modelId: 'team-model', teamId: 'team-1',
                     resourceId: 'resource-1', expectedResourceRevision: 1, deliveryMode: 'brokered' },
-            })).toBe(false);
+            })).toBe(true);
         });
-        expect(readPersistedArm()?.intent.selection).toMatchObject({ modelId: 'account-model', providerConnectionId });
-        expect(Modal.alert).toHaveBeenCalledWith('common.unavailable', 'session.agentContinuation.teamModelUnsupported');
+        expect(readPersistedArm()?.intent.selection.modelSelection).toEqual({ ...teamRef, modelId: 'team-model' });
+        expect(Modal.alert).not.toHaveBeenCalled();
+        await remounted.unmount();
     });
 
     it('preserves the qualified installed Agent through inspection and the armed selection', async () => {

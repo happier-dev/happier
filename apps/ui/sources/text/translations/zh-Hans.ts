@@ -8274,7 +8274,6 @@ export const zhHans: TranslationStructure = {
     },
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} 更多…`,
     agentContinuation: {
-    teamModelUnsupported: "在此会话中切换代理时不支持团队模型。请使用此模型开始新会话。",
       currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。正在运行此会话。`,
       currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。此会话上次使用。`,
       currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。此会话上次报告。`,

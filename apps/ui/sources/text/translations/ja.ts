@@ -8893,7 +8893,6 @@ localTailscale: {
     },
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} 件…`,
     agentContinuation: {
-    teamModelUnsupported: "このセッションでエージェントを切り替える際に、チームのモデルは使用できません。このモデルで新しいセッションを開始してください。",
       currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。このセッションを実行中です。`,
       currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。このセッションで最後に使用されました。`,
       currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。このセッションで最後に報告されました。`,

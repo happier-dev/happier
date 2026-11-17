@@ -80,9 +80,13 @@ another raw Stop RPC to its own Machine or another Action admission. The Stop ow
 confirmation predicate still decides when cutover may proceed; transition does not author an explicit-Stop hold.
 
 The request is strict: `{ v: 1, sessionId, expectedCurrentAgentId, selection, input }`. `selection`
-carries `agentId` plus optional `modelId`, `providerConnectionId`, `acpSessionModeId` and
-`sessionConfigOptionOverrides`, and a `superRefine` requires `modelId` whenever
-`providerConnectionId` is set. `input` extends the ordinary user-message send request with a
+carries `agentId` plus optional canonical `modelSelection`, `acpSessionModeId` and
+`sessionConfigOptionOverrides`. Current 0.3 development retains the exact V1/V2 model ref through
+armed draft persistence, inspection and cutover. Team refs keep their resource revision and delivery
+choice; cutover uses the existing V2 intent writer and Team slot-binding owner. Retained flat
+`modelId`/`providerConnectionId` inputs remain readable, requiring a model whenever a connection is
+set. Older strict readers reject the canonical field rather than silently dropping its source.
+`input` extends the ordinary user-message send request with a
 **required** `localId` — the caller's message is part of the operation, not a follow-up.
 
 The result union discriminates on `type` and has four arms:

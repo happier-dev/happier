@@ -10014,7 +10014,6 @@ const enSession = {
   toolCallsCollapsedPreviewMore: ({ count }: { count: number }) =>
     `+${count} more…`,
   agentContinuation: {
-    teamModelUnsupported: "Team models aren’t supported when switching agents in this session. Start a new session with this model.",
     currentAgentAccessibilityLabel: ({ agent }: { agent: string }) =>
       `${agent}. Running this Session.`,
     currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) =>

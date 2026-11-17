@@ -8427,7 +8427,6 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     },
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} de plus…`,
     agentContinuation: {
-    teamModelUnsupported: "Les modèles de l’équipe ne sont pas pris en charge lors du changement d’agent dans cette session. Démarrez une nouvelle session avec ce modèle.",
       currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Exécute cette session.`,
       currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Dernier Agent utilisé par cette session.`,
       currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Dernier Agent signalé pour cette session.`,

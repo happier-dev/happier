@@ -3,8 +3,8 @@ import { resolveAgentRoutingId } from '@happier-dev/agents';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 
 import { buildAcpConfigOptionOverridesV1FromConfigOptions } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
-import { isNativeAutomaticModelSelectionInputV1, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
-import { SessionModelSelectionSchema, readSessionModelSelectionProviderConnectionId, projectSessionModelRefToExecutionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { isNativeAutomaticModelSelectionInputV1 } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelSelectionSchema, isSessionModelRefSourceBound, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
 import type { NewSessionDraftAgentIntent, NewSessionDraftModelIntent } from '@happier-dev/protocol/actions/appShellActionFamily';
@@ -26,7 +26,6 @@ import {
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
-import { Modal } from '@/modal';
 
 import type {
     SessionArmedAgentContinuation,
@@ -233,20 +232,16 @@ function resolveDefaultTargetSelection(
     return selection ? { ...DEFAULT_TARGET_SELECTION, modelId: selection.ref.modelId, modelSelection: selection } : DEFAULT_TARGET_SELECTION;
 }
 
-function refuseTeamModelContinuation(): false {
-    Modal.alert(t('common.unavailable'), t('session.agentContinuation.teamModelUnsupported'));
-    return false;
-}
-
 /**
  * `default` is the native Agent's "no model choice" sentinel, so it can only
- * mean Automatic when no Provider connection is bound. A Provider is allowed to
+ * mean Automatic when no model source is bound. A Provider is allowed to
  * serve a model literally named `default`, and the strict transition schema
  * requires a `modelId` whenever a connection is set.
  */
 function isNativeAutomaticSelection(selection: SessionAgentPickerSelection): boolean {
+    if (selection.modelSelection && isSessionModelRefSourceBound(selection.modelSelection.ref)) return false;
     return isNativeAutomaticModelSelectionInputV1({
-        providerConnectionId: selection.modelSelection ? readSessionModelSelectionProviderConnectionId(selection.modelSelection) : null,
+        providerConnectionId: null,
         modelId: selection.modelId,
     });
 }
@@ -269,14 +264,12 @@ function buildTargetSelection(
         configOptions: selection.configOverrides,
         updatedAt: configUpdatedAt,
     });
-    const providerConnectionId = selection.modelSelection ? readSessionModelSelectionProviderConnectionId(selection.modelSelection) : null;
     return {
         v: 1,
         agentId: resolveContinuationAgentId(entry),
-        ...(isNativeAutomaticSelection(selection) ? {} : { modelId: selection.modelId }),
-        ...(providerConnectionId
-            ? { providerConnectionId }
-            : {}),
+        ...(isNativeAutomaticSelection(selection) ? {} : selection.modelSelection
+            ? { modelSelection: selection.modelSelection.ref }
+            : { modelId: selection.modelId }),
         ...(selection.sessionModeId ? { acpSessionModeId: selection.sessionModeId } : {}),
         ...(overrides ? { sessionConfigOptionOverrides: overrides } : {}),
     };
@@ -284,8 +277,11 @@ function buildTargetSelection(
 
 function projectPersistedArmSelection(arm: ArmedAgentContinuation): SessionAgentPickerSelection {
     const selection = arm.intent.selection;
-    const modelId = selection.modelId ?? 'default';
-    const modelSelection: SessionModelSelectionV1 | null = selection.modelId
+    const modelId = selection.modelSelection?.modelId ?? selection.modelId ?? 'default';
+    const modelSelection: SessionModelSelection | null = selection.modelSelection
+        ? SessionModelSelectionSchema.parse({ v: 'source' in selection.modelSelection ? 2 : 1,
+            updatedAt: 0, ref: selection.modelSelection })
+        : selection.modelId
         ? selection.providerConnectionId == null
             ? {
                 v: 1,
@@ -887,7 +883,6 @@ export function useInSessionAgentPickerControls(
     armOwnerRef.current = armExactSelection;
     const applySelection = React.useCallback(async (entry: ResolvedBackendCatalogEntry, selection: SessionAgentPickerSelection) => {
         if (!accountScope || !accountScopeIsCurrent() || currentAgentId === null) return false;
-        if (selection.modelSelection && 'teamCredentialModel' in projectSessionModelRefToExecutionModelSelection(selection.modelSelection.ref)) return refuseTeamModelContinuation();
         if (selection.modelSelection && (!backendTargetKeysMatch(selection.modelSelection.ref.agentTargetKey, entry.backendTarget)
             || selection.modelSelection.ref.modelId !== selection.modelId)) return false;
         if (!inspectableTargetSelections.some(selection => selection.agentId === resolveContinuationAgentId(entry))) return false;
@@ -929,12 +924,16 @@ export function useInSessionAgentPickerControls(
     const applyDraftModelIntent = React.useCallback(async (intent: NewSessionDraftModelIntent) => {
         const entry = targetEntries.find(candidate => candidate.backendTargetKey === armed?.backendTargetKey);
         if (!entry || !armed) return false;
-        if (intent.kind === 'team') return refuseTeamModelContinuation();
+        let ref = intent.kind === 'selection' ? intent.ref : null;
+        if (intent.kind === 'team' && intent.selection) {
+            const { kind: _kind, ...modelRef } = intent.selection;
+            ref = { source: 'team_resource', ...modelRef };
+        }
         const selection = readTargetSelection(entry.backendTargetKey);
         return await applySelection(entry, { ...selection,
-            modelId: intent.kind === 'mode' ? intent.modelId : intent.ref?.modelId ?? 'default', modelLabel: null,
-            modelSelection: intent.kind === 'selection' && intent.ref ? SessionModelSelectionSchema.parse({
-                v: 'source' in intent.ref ? 2 : 1, updatedAt: Date.now(), ref: intent.ref,
+            modelId: intent.kind === 'mode' ? intent.modelId : ref?.modelId ?? 'default', modelLabel: null,
+            modelSelection: ref ? SessionModelSelectionSchema.parse({
+                v: 'source' in ref ? 2 : 1, updatedAt: Date.now(), ref,
             }) : null,
         });
     }, [applySelection, armed, readTargetSelection, targetEntries]);
