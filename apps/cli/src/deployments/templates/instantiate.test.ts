@@ -49,6 +49,7 @@ import { PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { prepareDeploymentTemplateInstantiationV1 } from '@happier-dev/deployments';
 import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
+import { logger } from '@/ui/logger';
 
 /** These fixtures store inline JSON bodies; a blob reference would be a different contract. */
 function parseInlineBody(document: Readonly<{ body?: unknown }> | null | undefined): unknown {
@@ -63,7 +64,10 @@ const unreachedReviewedChild: HostReviewedChildPortV1 = {
     invoke: async request => { throw new Error(`Reviewed child ${String(request.action)} is not reached`); },
 };
 
-it.each([false, true])('persists independent generated credentials from a bundled database (reviewed mapping=%s)', async reviewedMapping => {
+it.each([false, true, 'metadata-unavailable'] as const)('persists independent generated credentials from a bundled database (reviewed mapping=%s)', async scenario => {
+    const reviewedMapping = scenario === true;
+    const diagnosticLog = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    let metadataUnavailable = false;
     const fixture = await createSavedSecretsCliHttpFixture();
     try {
         const credentials = await fixture.deps.readCredentialsFn?.();
@@ -116,7 +120,10 @@ it.each([false, true])('persists independent generated credentials from a bundle
             const path = request.url ? new URL(request.url).pathname : '';
             if (request.method === 'GET' && path === '/v1/projects/sources/project') return { status: 200, data: { ok: true, canManage: true,
                 source: { id: 'project', revision: 1, name: 'Project', createdByAccountId: 'account-cli-fixture', audience: [] } } };
-            if (request.method === 'POST' && path.endsWith('/template')) return { status: 200, data: persist(request.data) };
+            if (request.method === 'POST' && path.endsWith('/template')) {
+                if (metadataUnavailable) throw new TypeError('PRIVATE-TEMPLATE-METADATA');
+                return { status: 200, data: persist(request.data) };
+            }
             return originalRequest(request);
         });
         const scopeKey = fixture.inHome(() => resolveAccountSettingsScopeKey(credentials));
@@ -193,8 +200,17 @@ it.each([false, true])('persists independent generated credentials from a bundle
                 current.environment.revision++;
                 return { ok: true, result: { ok: true, environmentId: current.environment.id, revision: current.environment.revision } };
             } };
+            metadataUnavailable = scenario === 'metadata-unavailable' && ordinal === 2;
             const result = await fixture.inHome(() => templates.instantiate(input, { runtimeAccountId: 'account-cli-fixture',
                 hostReviewedChild: bindingsChild }));
+            if (metadataUnavailable) {
+                expect(result).toMatchObject({ ok: false, errorCode: 'outcome_unknown', details: { kind: 'partial', phase: 'metadata' } });
+                expect(diagnosticLog).toHaveBeenCalledWith(expect.any(String), { failureCause: {
+                    phase: 'deployment.template.metadata', errorCode: null, httpStatus: null, errorClass: 'TypeError',
+                } });
+                expect(JSON.stringify({ result, diagnostics: diagnosticLog.mock.calls })).not.toContain('PRIVATE-TEMPLATE-METADATA');
+                return;
+            }
             expect(result).toMatchObject({ kind: 'applied', savedSecrets: [{ name: ordinal === 1 ? 'DB_PASSWORD' : 'DB_PASSWORD_2' }] });
             // Grants are sealed to the writer's references; the template commit must not replace them.
             expect(current.content.bindings).toEqual(sealedBindings);

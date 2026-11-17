@@ -1,4 +1,4 @@
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { carryActionFailureDiagnostic, readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { deploymentOutputValidationFailure } from '../outputValidation';
 import { applyEnvironmentSecretBindingsPatchV1, captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
@@ -48,6 +48,7 @@ import { resolveAdmittedRepositoryWorkspace, validateAdmittedRepositoryWorkspace
 import { prepareRepositoryFilesPullRequest, openRepositoryFilesPullRequest, type RepositoryFilesPullRequestHost } from '@/scm/actions/repositoryFilesPullRequest';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { logger } from '@/ui/logger';
 
 const refuse = (failure: string | ActionExecuteFailure): never => {
     const code = typeof failure === 'string' ? failure : failure.errorCode;
@@ -571,8 +572,13 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         const path = `/v1/deployments/environments/${encodeURIComponent(body.environmentId)}/template`;
         const headers = await host.headers(context, 'deployments.templates.instantiate', { method: 'POST', path, body });
         const response = await axios.request<unknown>({ method: 'POST', url: `${host.serverHttpBaseUrl}${path}`, headers, data: body,
-            signal: context.signal, validateStatus: () => true }).catch(error => refuse(classifyHomeDomainHttpMutationFailureV1({
-                error, issued: true, aborted: context.signal?.aborted === true })));
+            signal: context.signal, validateStatus: () => true }).catch(error => {
+                logger.warnLocalFile('[Deployment] Template metadata transition unavailable', {
+                    failureCause: projectActionFailureCauseV1(error, 'deployment.template.metadata', { allowUnknownErrorCode: false }),
+                });
+                return refuse(classifyHomeDomainHttpMutationFailureV1({
+                    error, issued: true, aborted: context.signal?.aborted === true }));
+            });
         const result = DeploymentEnvironmentCreateResultV1Schema.safeParse(response.data);
         if (!result.success) return refuse('outcome_unknown');
         if (!result.data.ok) return refuse(result.data.error);
