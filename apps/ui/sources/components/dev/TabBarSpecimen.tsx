@@ -29,13 +29,13 @@ const PROJECT_PAGES: readonly Page[] = [
     count: '3',
     countTone: 'warning',
   },
-  { id: 'logs', label: 'Logs', icon: 'scroll' },
+  { id: 'logs', label: 'Logs', icon: 'list-bullets' },
   { id: 'settings', label: 'Settings', icon: 'sliders-horizontal' },
 ];
 const MACHINE_PAGES: readonly Page[] = [
   { id: 'overview', label: 'Overview', icon: 'house' },
   { id: 'sessions', label: 'Sessions', icon: 'chats-circle', count: '4' },
-  { id: 'terminal', label: 'Terminal', icon: 'terminal-window' },
+  { id: 'terminal', label: 'Terminal', icon: 'terminal' },
   { id: 'files', label: 'Files', icon: 'folder' },
   { id: 'services', label: 'Services', icon: 'stack', count: '9' },
   {
