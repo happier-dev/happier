@@ -21,12 +21,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     container: {
         minWidth: 0,
     },
+    // A field's name reads as words above its box (credentials lab `cc-f .lb`): the label role in
+    // primary ink, never a tracked meta caption.
     label: {
-        ...Typography.variant('meta', 'semiBold'),
-
-        color: theme.colors.text.secondary,
-        letterSpacing: 0.6,
-        marginBottom: Platform.select({ ios: 4, default: 5 }),
+        ...Typography.variant('label'),
+        color: theme.colors.text.primary,
+        marginBottom: theme.space.s6,
     },
     controlContainer: {
         minWidth: 0,

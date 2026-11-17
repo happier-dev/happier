@@ -54,11 +54,24 @@ describe('ConnectedAccountDeviceForm', () => {
             .toBe('ABCD');
     });
 
+    it('reads as one status row: the code, where to enter it and the wait, with Open as the one primary', async () => {
+        const screen = await renderScreen(<ConnectedAccountDeviceForm verificationUri="https://chatgpt.com/device" userCode="WDJB-MJHT"
+            expiresAtMs={Date.now() + 60_000} serviceTitle="ChatGPT" busy={false} onPoll={vi.fn()} onResume={vi.fn()} onCancel={vi.fn()} />);
+        expect(screen.findByTestId('connected-account-device:steps')).toBeNull();
+        const status = screen.tree.find((node) => node.props.testID === 'connected-account-device:status');
+        const statusIds = status.findAll((node) => typeof node.props.testID === 'string').map((node) => node.props.testID);
+        expect(statusIds).toEqual(expect.arrayContaining(['connected-account-device:code', 'connected-account-device:where',
+            'connected-account-device:copy']));
+        expect(statusIds).not.toContain('connected-account-device:open');
+        expect(screen.findByTestId('connected-account-device:open')).not.toBeNull();
+    });
+
     it('offers a new code after the provider expiry, without an inoperable check action', async () => {
         const onResume = vi.fn();
         const screen = await renderScreen(<ConnectedAccountDeviceForm userCode="ABCD" expiresAtMs={Date.now() - 1000}
             busy={false} onPoll={vi.fn()} onResume={onResume} />);
         expect(screen.tree.findAll((node) => node.props.testID === 'connected-account-device:poll')).toHaveLength(0);
+        expect(screen.findByTestId('connected-account-device:open')).toBeNull();
         await pressTestInstanceAsync(screen.tree.find((node) => node.props.testID === 'connected-account-device:resume'));
         expect(onResume).toHaveBeenCalledOnce();
     });

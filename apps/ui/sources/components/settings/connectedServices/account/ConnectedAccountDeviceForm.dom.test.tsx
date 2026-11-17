@@ -14,7 +14,6 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
 const { ConnectedAccountDeviceForm } = await import('./ConnectedAccountDeviceForm');
-const { SetupSteps } = await import('@/components/ui/setupBlocks/SetupSteps');
 const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
 
 it('muse.experience.pc1 commits only the expiry leaf for 60 ticks and leaves static controls quiet', async () => {
@@ -39,7 +38,7 @@ it('muse.experience.pc1 commits only the expiry leaf for 60 ticks and leaves sta
         counts.start();
         await act(async () => root.render(scene(true)));
         counts.stop();
-        for (const component of [ConnectedAccountDeviceForm, SetupSteps, RoundButton]) {
+        for (const component of [ConnectedAccountDeviceForm, RoundButton]) {
             expect(counts.read().commitsFor(component)).toBeGreaterThan(0);
         }
         await act(async () => root.render(scene(false)));
@@ -52,8 +51,7 @@ it('muse.experience.pc1 commits only the expiry leaf for 60 ticks and leaves sta
         expect(container.textContent).toContain('time=1:00');
         expect(measured.commits).toBe(60);
         expect({ form: measured.commitsFor(ConnectedAccountDeviceForm),
-            steps: measured.commitsFor(SetupSteps),
-            buttons: measured.commitsFor(RoundButton) }).toEqual({ form: 0, steps: 0, buttons: 0 });
+            buttons: measured.commitsFor(RoundButton) }).toEqual({ form: 0, buttons: 0 });
         expect(poll).not.toHaveBeenCalled();
     } finally {
         counts.stop();

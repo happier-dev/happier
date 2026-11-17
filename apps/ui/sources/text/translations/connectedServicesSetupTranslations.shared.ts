@@ -20,10 +20,9 @@ export type ConnectedServicesSetupTranslation = Readonly<{
     settleAddToPoolWhy: (params: Readonly<{ pool: string; agent: string; active: string }>) => string;
     settleAddToPoolShort: (params: Readonly<{ pool: string }>) => string;
     settleAddToPool: (params: Readonly<{ pool: string }>) => string;
-    deviceStepCopy: string;
-    deviceStepOpen: (params: Readonly<{ service: string }>) => string;
-    deviceStepOpenWhere: (params: Readonly<{ where: string }>) => string;
-    deviceStepApprove: (params: Readonly<{ service: string }>) => string;
+    /** The device code's one line: where the person enters it. */
+    deviceEnterAt: (params: Readonly<{ where: string }>) => string;
+    deviceEnterIn: (params: Readonly<{ service: string }>) => string;
     deviceCheckNow: string;
     keyNew: string;
     keySaved: string;
@@ -65,10 +64,8 @@ export const connectedServicesSetupTranslationsEnglish = { en: {
         settleAddToPoolWhy: ({ pool, agent, active }) => `Add it to ${pool}, so ${agent} moves to it when ${active} runs out?`,
         settleAddToPoolShort: ({ pool }) => `Add it to ${pool}?`,
         settleAddToPool: ({ pool }) => `Add to ${pool}`,
-        deviceStepCopy: 'Copy this code',
-        deviceStepOpen: ({ service }) => `Open ${service} and enter it`,
-        deviceStepOpenWhere: ({ where }) => `${where}, signed in to the account you want to use`,
-        deviceStepApprove: ({ service }) => `Approve Happier in ${service}`,
+        deviceEnterAt: ({ where }) => `Enter this code at ${where}`,
+        deviceEnterIn: ({ service }) => `Enter this code in ${service}`,
         deviceCheckNow: 'Check now',
         keyNew: 'New key',
         keySaved: 'Saved key',
