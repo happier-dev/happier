@@ -451,6 +451,8 @@ export function ServiceRowView(props: Readonly<{
     onStopManagedService?: ServiceRowManagedControlHandler;
     onRestartManagedService?: ServiceRowManagedControlHandler;
     onCopyServiceUrl?: ServiceRowCopyUrlHandler;
+    /** Attaches the service's retained output as a terminal tab (never starts it). */
+    onShowServiceTerminal?: (target: LocalServiceLaunchTarget) => Promise<unknown>;
     /**
      * The openable instance already running on a port, other than this row. A start that collided
      * with this project's own listener offers it ("Open running web") instead of Retry.
@@ -527,6 +529,7 @@ export function ServiceRowView(props: Readonly<{
     const canForget = offered.forget;
     const canStop = !operationActive && offered.stopManaged;
     const canRestart = !operationActive && offered.restartManaged;
+    const showTerminalTarget = operationActive ? null : offered.showTerminal;
     const detail = props.presentation === 'detail';
     // A loopback address on another machine can't be used here: the row stops offering to copy it,
     // except as the phone detail's Address row, which names it.
@@ -673,6 +676,16 @@ export function ServiceRowView(props: Readonly<{
                 onPress: addressCopy.copy,
             });
         }
+        // Show attaches the retained output as a terminal tab; it never starts or restarts the service.
+        if (showTerminalTarget && props.onShowServiceTerminal) {
+            const onShow = props.onShowServiceTerminal;
+            actions.push({
+                id: 'show-terminal',
+                title: t('localServices.worktreePorts.showTerminal'),
+                icon: 'terminal',
+                onPress: () => { void onShow(showTerminalTarget); },
+            });
+        }
         if (canRestart) {
             actions.push({
                 id: 'restart',
@@ -713,7 +726,7 @@ export function ServiceRowView(props: Readonly<{
             });
         }
         return actions;
-    }, [addressCopy.copy, addressValue, canForget, canOpen, canRestart, canStop, canTerminate, detail, handleForget, handleRestart, handleStop, handleMenuShare, handleTerminate, row.terminateIdentityConfidence, shareInMenu]);
+    }, [addressCopy.copy, addressValue, canForget, canOpen, canRestart, canStop, canTerminate, detail, handleForget, handleRestart, handleStop, handleMenuShare, handleTerminate, props.onShowServiceTerminal, row.terminateIdentityConfidence, shareInMenu, showTerminalTarget]);
 
     const pending = runner.pendingId === menuPendingId;
     // A row still hydrating its binding shows the row spinner instead of a word; a pending menu action does too.

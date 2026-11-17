@@ -22,6 +22,8 @@ import type { ServiceRowOpenHandler } from './ServiceRowView';
 import { useLocalServiceEntryActions } from './useLocalServiceEntryActions';
 import { useLocalServiceLiveFeeds } from './useLocalServiceLiveFeeds';
 import { useLocalServicePresentationFeatures } from './useLocalServicePublicPreviewFeature';
+import { WorktreePortsLine } from './WorktreePortsLine';
+import { useProjectCommandOutputHostScope } from '@/components/inbox/actionOperations/projectCommandOutputHost';
 
 export type LocalServicesSurfaceHostProps = Readonly<{
     machineId?: string | null;
@@ -81,11 +83,14 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
         launcherSnapshotClient: props.launcherSnapshotClient,
     });
     const { inventoryState, launcherState, refresh: onRefresh } = feeds;
+    // Show terminal attaches a service's retained output in the bottom terminal of the page that hosts this surface.
+    const terminalScopeId = useProjectCommandOutputHostScope();
     const entryActions = useLocalServiceEntryActions({
         machineId,
         serverId,
         sessionId,
         workspaceRoot,
+        ...(terminalScopeId ? { terminalScopeId } : {}),
         scope,
         runtimeActionExecute: props.runtimeActionExecute,
         onRefresh,
@@ -109,6 +114,21 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
     const platform = hasAdmittedPluginProjection
         ? props.platform ?? pluginProjection.platform
         : pluginProjection.platform;
+
+    // The checkout's own ports, when its project gives each checkout its own (the ports owner's selected-root result).
+    const worktreePorts = launcherState?.worktreePorts ?? null;
+    const workspaceRefId = props.workspaceRefId ?? null;
+    const portsWorkspace = React.useMemo(() => serverId && machineId && workspaceRefId && workspaceRoot
+        ? { serverId, machineId, workspaceId: workspaceRefId, rootPath: workspaceRoot } : null,
+    [machineId, serverId, workspaceRefId, workspaceRoot]);
+    const scopeNote = worktreePorts ? (
+        <WorktreePortsLine
+            result={worktreePorts.result}
+            workspace={portsWorkspace}
+            onReassigned={onRefresh}
+            testID={`${props.testID}-worktree-ports`}
+        />
+    ) : null;
 
     const pluginStack = (
         <PluginSurfacePlacementStack
@@ -147,6 +167,7 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
             describeDeclaration={props.describeDeclaration}
             viewerAccountId={entryActions.viewerAccountId}
             effectReview={entryActions.review}
+            scopeNote={scopeNote}
             testID={props.testID}
             footer={pluginStack}
         />

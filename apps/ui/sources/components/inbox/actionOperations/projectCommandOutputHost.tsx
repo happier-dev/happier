@@ -39,6 +39,11 @@ export function ProjectCommandOutputHost(
   );
 }
 
+/** The bottom-terminal scope this host provides, for other surfaces that attach a terminal tab there. */
+export function useProjectCommandOutputHostScope(): string | null {
+  return React.useContext(ProjectCommandOutputHostContext);
+}
+
 export type ProjectCommandOutputOpenOptions = Readonly<{
   /** The bottom tab's label: the script and its actual Machine ("test · hz-build-1"). */
   title: string;

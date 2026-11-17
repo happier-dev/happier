@@ -610,6 +610,31 @@ describe('ServiceRowView', () => {
         expect(String(action?.subtitle ?? '')).not.toHaveLength(0);
     });
 
+    it('offers Show terminal for a service with retained output and attaches it without starting anything', async () => {
+        const terminalView = { kind: 'terminal_view' as const, machineId: 'machine-a', terminalId: 'term-1',
+            terminalKey: 'service:web', cwd: '/repo/web', interactive: true as const };
+        const target = launchTarget({ id: 'declaration:web', source: 'managed_service', state: 'available',
+            unavailableReason: undefined, actions: ['manage'], terminalView });
+        const show = vi.fn(async () => null);
+        const start = vi.fn();
+        const screen = await renderScreen(
+            <ServiceRowView row={serviceRow({ id: 'declaration:web', title: 'web', status: 'running', reasonCode: null, target })}
+                onShowServiceTerminal={show} onStartLauncherTarget={start} expanded onExpandedChange={vi.fn()} testID="row" />,
+        );
+        const action = rowOverflowActions(screen).find((entry) => entry.id === 'show-terminal');
+        expect(action).toBeTruthy();
+        await act(async () => { (action!.onPress as () => void)(); });
+        expect(show).toHaveBeenCalledExactlyOnceWith(target);
+        expect(start).not.toHaveBeenCalled();
+    });
+
+    it('offers no Show terminal where the service has no retained terminal or the surface has no terminal', async () => {
+        const withoutHost = await renderScreen(<ServiceRowView row={serviceRow()} testID="row" />);
+        expect(rowOverflowActions(withoutHost).some((entry) => entry.id === 'show-terminal')).toBe(false);
+        const withoutView = await renderScreen(<ServiceRowView row={serviceRow()} onShowServiceTerminal={vi.fn()} testID="row2" />);
+        expect(rowOverflowActions(withoutView).some((entry) => entry.id === 'show-terminal')).toBe(false);
+    });
+
     it('offers no terminate action when the row cannot be terminated', async () => {
         const screen = await renderScreen(
             <ServiceRowView row={serviceRow()} onTerminateDetectedService={vi.fn()} testID="row" />,

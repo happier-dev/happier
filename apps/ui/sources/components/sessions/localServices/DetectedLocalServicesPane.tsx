@@ -328,6 +328,8 @@ function firstInventoryDiagnosticCopy(diagnostics: readonly unknown[], homeDir?:
 type DetectedLocalServicesPaneProps = Readonly<{
     inventoryState: LocalServiceInventoryState;
     launcherState?: LocalServiceLauncherState | null;
+    /** One line under the scope bar about the selected workspace (its own ports), from the host that knows it. */
+    scopeNote?: React.ReactNode;
     publicPreviewState?: LocalServicePublicPreviewState | null;
     /** The preview-access snapshot, when the host already holds it (a specimen); rows read the shared store otherwise. */
     previewState?: LocalServicePreviewState;
@@ -345,6 +347,7 @@ type DetectedLocalServicesPaneProps = Readonly<{
     onStopManagedService?: ServiceRowManagedControlHandler;
     onRestartManagedService?: ServiceRowManagedControlHandler;
     onCopyServiceUrl?: ServiceRowCopyUrlHandler;
+    onShowServiceTerminal?: (target: LocalServiceLaunchTarget) => Promise<unknown>;
     onOpenServiceInBrowser?: ServiceRowOpenHandler;
     publicPreviewActions?: LocalServicePublicPreviewActions;
     /**
@@ -545,6 +548,7 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
             onStopManagedService={props.onStopManagedService}
             onRestartManagedService={props.onRestartManagedService}
             onCopyServiceUrl={props.onCopyServiceUrl}
+            onShowServiceTerminal={props.onShowServiceTerminal}
             sourceMachineId={props.sourceMachineId}
             serverId={props.serverId}
             sourceMachine={props.machine}
@@ -581,6 +585,7 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
         phone,
         starterNames,
         props.onCopyServiceUrl,
+        props.onShowServiceTerminal,
         props.onForgetDetectedService,
         props.onRestartManagedService,
         props.onStopManagedService,
@@ -632,6 +637,7 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
             onStopManagedService={props.onStopManagedService}
             onRestartManagedService={props.onRestartManagedService}
             onCopyServiceUrl={props.onCopyServiceUrl}
+            onShowServiceTerminal={props.onShowServiceTerminal}
             sourceMachineId={props.sourceMachineId}
             serverId={props.serverId}
             sourceMachine={props.machine}
@@ -650,7 +656,7 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
     ) : null, [detailRow, detailLead, animationEnabled, findRunningOpenTarget, starterNames, testID, preferredLanguage,
         props.onOpenServiceInBrowser, props.onStartLauncherTarget, props.onTerminateDetectedService,
         props.onForgetDetectedService, props.onStopManagedService, props.onRestartManagedService,
-        props.onCopyServiceUrl, props.sourceMachineId, props.serverId, props.machine,
+        props.onCopyServiceUrl, props.onShowServiceTerminal, props.sourceMachineId, props.serverId, props.machine,
         props.publicPreviewEnabled, props.publicPreviewStatusClient, props.renderServicePlacement,
         props.publicPreviewState, props.previewState, props.publicPreviewActions, props.publicPreviewCapabilityDisabledReasons]);
 
@@ -786,6 +792,7 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
                         ) : null}
                         {/* The scope control stays put when switching: a scan diagnostic belongs to the selected scope, so it sits under it. */}
                         {scopeBar}
+                        {scope === 'workspace' ? props.scopeNote : null}
                         <DiagnosticsBanner diagnostics={viewModel.diagnostics} homeDir={props.machine?.homeDir} testID={`${testID}-error`} checkAgain={checkAgain} />
                         {detailRow ? null : effectReview}
                         {hasRows
