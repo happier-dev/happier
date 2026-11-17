@@ -1400,6 +1400,85 @@ describe('finite managed wake original Action authority (real storage)', () => {
         } finally { await app.close(); }
     });
 
+    it.each([['request_headers_too_large', 'request_headers_too_large'], ['Bad Code!', undefined]] as const)('keeps only a valid controller refusal code on the finite wake failure cause (%j)', async (refusal, expectedReason) => {
+        const actionId = 'projects.script.run' as const;
+        const test = await setup();
+        const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const sessionInput = actionId === SESSION_SPAWN_NEW_ACTION_ID_V1;
+        for (const machine of sessionInput ? [test.guest] : [test.controller, test.guest]) {
+            await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: test.account.id, machineId: machine.id,
+                principal: { kind: 'account', accountId: requester.id }, level: sessionInput ? 'view' : 'admin' }));
+        }
+        const token = await auth.createToken(requester.id, undefined, { kind: 'account', authority: 'present_user' });
+        const session = actionId === 'session.open' ? await db.session.create({ data: {
+            accountId: requester.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain', active: false,
+        } }) : undefined;
+        if (session) {
+            expect(await inTx(tx => createSessionMachineAccessKeyInTx(tx, { accountId: requester.id,
+                sessionId: session.id, machineId: test.guest.id, data: 'opaque-session-key' }))).toMatchObject({ ok: true });
+            await db.session.update({ where: { id: session.id }, data: { runtimeMachineTarget: {
+                homeId, accountId: requester.id, sessionId: session.id,
+                machineId: test.guest.id, installationId: test.guest.installationId!,
+            } } });
+        }
+        const envelope = { v: 1 as const, requestId: test.requestId,
+            target: session ? { kind: 'session' as const, sessionId: session.id } : { kind: 'machine' as const, machineId: test.guest.id },
+            input: session ? { sessionId: session.id, intent: 'resume' } : sessionInput ? {
+                executionTarget: { serverId: homeId, machineId: test.guest.id },
+                creationKey: test.requestId, directory: { kind: 'path', path: '/work' },
+                organizationPlacement: { sectionId: null, tagIds: [] },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+                initialInput: { text: 'Start this Session' },
+            } : { rootPath: '/work', path: 'original-private-file' } };
+        let carrier: ExternalActionExecutionAuthorizationV1 | undefined;
+        const methods: string[] = [];
+        const boundaryErrors: unknown[] = [];
+        const dispatch = createExternalActionDaemonDispatcher({ io: new Server(), forwardRpc: async request => {
+            try {
+                methods.push(request.method);
+                if (request.method === `${test.controller.id}:${MANAGED_FINITE_WAKE_RPC_METHOD}`) {
+                    expect(request.callParams).toMatchObject({ target: test.target, actionOrigin: carrier });
+                    await test.check(carrier);
+                    await db.machine.update({ where: { id: test.guest.id }, data: { active: true } });
+                    return { ok: true, result: { ok: false, errorCode: refusal, error: 'controller refused' } };
+                }
+                expect(request.method).toBe(`${test.guest.id}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`);
+                expect(request.callParams).toMatchObject({ envelope, executionAuthorization: carrier,
+                    principal: { accountId: requester.id, authority: 'present_user' } });
+                return { ok: true, result: createExternalActionDaemonDispatchResponseV1(prepareExternalActionResponseEnvelopeV1({
+                    v: 1, actionId, requestId: test.requestId, execution: { ok: true, result: { ran: true } },
+                })) };
+            } catch (error) { boundaryErrors.push(error); throw error; }
+        } });
+        const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>() as unknown as ServerFastify;
+        app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+        enableAuthentication(app); registerExternalActionRoutes(app, { dispatch });
+        await app.ready();
+        try {
+            const headers = { ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${token}` };
+            const minted = await app.inject({ method: 'POST', url: `/v1/actions/${actionId}/execution-authorization`,
+                headers, payload: { v: 1, machineId: test.guest.id, envelope } });
+            expect(minted.statusCode, minted.body).toBe(200);
+            const root = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+            if (!root.managedFiniteWake) throw new Error('Actual Home must supply the controller custody recipient');
+            carrier = { ...root,
+                requesterAccountContext: { kind: 'installation_sealed_v1', installationId: root.binding.installationId, ciphertext: 'guest_box' },
+                managedFiniteWake: { ...root.managedFiniteWake, requesterAccountContext: {
+                    kind: 'installation_sealed_v1', installationId: root.managedFiniteWake.target.controller.installationId, ciphertext: 'controller_box',
+                } } };
+            const current = await verifyCurrentExternalActionPrincipal(carrier.binding);
+            const principal = current && projectExternalActionBoundPrincipal(carrier.binding, current);
+            if (!principal) throw new Error('Real requester principal was not admitted');
+            const result = await dispatch({ actionId, envelope, principal, executionAuthorization: carrier });
+            if (boundaryErrors.length > 0) throw boundaryErrors[0];
+            // An unknown code is dropped by the Action cause projection; the cause itself stays.
+            expect(result).toMatchObject({ kind: 'placement_error', code: 'target_unavailable',
+                failureCause: { phase: 'machines.managed.wake' } });
+            expect(result.kind === 'placement_error' && result.failureCause && 'nativeErrorReason' in result.failureCause
+                ? result.failureCause.nativeErrorReason : undefined).toBe(expectedReason);
+        } finally { await app.close(); }
+    });
+
     it.each(['no_controller', 'controller_unavailable'] as const)('refuses an asleep Session spawn with its Protocol wake-blocked reason (%s)', async reason => {
         const test = await setup();
         if (reason === 'no_controller') {
