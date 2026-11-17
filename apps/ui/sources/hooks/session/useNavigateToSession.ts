@@ -8,6 +8,7 @@ import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { markSessionOpenRequestedForSessionUiTelemetry } from '@/sync/runtime/performance/sessionUiTelemetry';
 import { useAuth } from '@/auth/context/AuthContext';
+import { sync } from '@/sync/sync';
 import { buildScopedSessionRouteHref } from './sessionRouteServerScope';
 import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
@@ -81,6 +82,8 @@ export async function navigateToSession(sessionId: string, opts: NavigateToSessi
     // the target through Expo so its new workspace adopts the qualified route;
     // same-Home opens retain the caller's tab and its local history.
     const router = crossedHome ? rootRouter : owner.router;
+    // The destination renders at transition priority; its first transcript read leaves now.
+    sync.onSessionOpenRequested(normalizedSessionId);
     await router.navigate(buildScopedSessionRouteHref({
         sessionId: normalizedSessionId,
         serverId: targetServerId || null,

@@ -3895,6 +3895,19 @@ class Sync {
     }
 
 
+        /**
+         * A Session open was requested: start its first transcript read now, while the destination
+         * renders at transition priority, instead of after the view mounts. The view's visibility
+         * joins it: `invalidateCoalesced` is a no-op while the read runs, and once it has landed the
+         * catch-up policy reads again only for a newer known seq (`decideMessageCatchUpPolicy`).
+         * A transcript already in memory is left to the visibility path.
+         */
+        onSessionOpenRequested = (sessionId: string) => {
+            if (this.embedSessionScope || isDemoModeActive()) return;
+            if (storage.getState().sessionMessages[sessionId]?.isLoaded === true) return;
+            this.ensureInitialSessionMessages(sessionId);
+        };
+
         onSessionVisible = (sessionId: string) => {
             if (this.embedSessionScope && (sessionId !== this.embedSessionScope.scope.sessionId || !this.embedSessionScope.isCurrent())) return;
             for (const repository of this.sessionSystemRecordRepositories.values()) repository.refreshObserved();

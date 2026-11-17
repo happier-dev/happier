@@ -928,4 +928,57 @@ describe('sync stale-reopen targeted refetch (C6/D2a)', () => {
             sync.disconnectServer();
         }
     });
+    // P03-JOURNEYS-5: the first read starts at the open request, while the destination renders;
+    // the view's visibility joins it instead of reading the transcript it just received again.
+    function openedTranscriptResponse(): Response {
+        return new Response(JSON.stringify({
+            messages: [1, 2, 3].map((seq) => plainTranscriptApiMessage(`mm${seq}`, seq, `row ${seq}`)),
+            hasMore: false, nextAfterSeq: null,
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+
+    async function openBeforeView(): Promise<typeof import('./sync').sync> {
+        const { sync } = await seedLoadedHistorySession();
+        storage.setState(initialStorageState, true);
+        storage.getState().applySessions([createSession(SESSION_ID, 3)]);
+        requestMock.mockImplementation(() => Promise.resolve(openedTranscriptResponse()));
+        requestMock.mockClear();
+        expect(messagesRequestPaths()).toHaveLength(0);
+        // The read leaves at the open request, before any view exists.
+        sync.onSessionOpenRequested(SESSION_ID);
+        await expect.poll(() => storage.getState().sessionMessages[SESSION_ID]?.isLoaded).toBe(true);
+        expect(messagesRequestPaths()).toHaveLength(1);
+        return sync;
+    }
+
+    it('joins the read started at the open request when the view becomes visible', async () => {
+        const sync = await openBeforeView();
+        markSessionSurfaceVisible(SESSION_ID);
+        try {
+            sync.onSessionVisible(SESSION_ID);
+            await sync.refreshSessionMessages(SESSION_ID);
+            expect(readStoredTranscriptText('mm3')).toBe('row 3');
+            expect(messagesRequestPaths()).toHaveLength(1);
+        } finally {
+            markSessionSurfaceHidden(SESSION_ID);
+            sync.resetMessageTransport();
+            sync.disconnectServer();
+        }
+    });
+
+    it('still catches up at visibility when a newer message became known after the open read', async () => {
+        const sync = await openBeforeView();
+        storage.getState().applySessions([createSession(SESSION_ID, 21)]);
+        requestMock.mockImplementation(() => Promise.resolve(newerMessageResponse()));
+        markSessionSurfaceVisible(SESSION_ID);
+        try {
+            sync.onSessionVisible(SESSION_ID);
+            await expect.poll(() => readStoredTranscriptText('mm21')).toBe('missed reply');
+            expect(messagesRequestPaths()).toHaveLength(2);
+        } finally {
+            markSessionSurfaceHidden(SESSION_ID);
+            sync.resetMessageTransport();
+            sync.disconnectServer();
+        }
+    });
 });
