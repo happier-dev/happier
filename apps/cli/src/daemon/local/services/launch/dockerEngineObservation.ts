@@ -82,6 +82,12 @@ export function openDockerEngineEvents(launch: HostAuthorizedPluginExecLaunch, p
         const request = httpRequest({ method: 'GET', host: 'docker',
             path: `/events?filters=${encodeURIComponent(JSON.stringify({ type: ['container'] }))}`,
             createConnection: () => socket });
+        const onStreamError = (error: unknown) => {
+            if (closed) return;
+            closed = true;
+            logger.warnLocalFile('[local-service] Docker event stream failed', projectActionFailureCauseV1(error, 'native_compose.events.stream', { allowUnknownErrorCode: false }));
+            disconnected();
+        };
         const dispose = () => disposing ??= (async () => {
             closed = true;
             lines?.close();
@@ -98,19 +104,21 @@ export function openDockerEngineEvents(launch: HostAuthorizedPluginExecLaunch, p
                 request.once('response', response => {
                     if (response.statusCode !== 200) { response.resume(); reject(new Error('docker_events_unavailable')); return; }
                     lines = createInterface({ input: response, crlfDelay: Infinity });
+                    lines.on('error', onStreamError);
                     lines.on('line', line => {
                         try { event(JSON.parse(line)); }
                         catch (error) {
                             if (!closed) {
+                                closed = true;
                                 logger.warnLocalFile('[local-service] Docker event parsing failed', projectActionFailureCauseV1(error, 'native_compose.events.parse', { allowUnknownErrorCode: false }));
                                 disconnected();
                             }
                         }
                     });
-                    response.once('error', () => { if (!closed) disconnected(); });
+                    response.once('error', onStreamError);
                     response.once('end', () => { if (!closed) disconnected(); });
-                    request.on('error', () => { if (!closed) disconnected(); });
-                    void process.handle.waitForExit().then(() => { if (!closed) disconnected(); }, () => { if (!closed) disconnected(); });
+                    request.on('error', onStreamError);
+                    void process.handle.waitForExit().then(() => { if (!closed) disconnected(); }, onStreamError);
                     resolve();
                 });
                 request.end();

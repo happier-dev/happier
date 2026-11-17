@@ -48,3 +48,26 @@ describe('Docker engine observation failure diagnostics', () => {
     });
 
 });
+
+describe('Docker subscribed stream failure diagnostics', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it('retains a broken subscribed HTTP stream cause before publishing disconnection', async () => {
+        const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        const script = `process.stdin.once('data', () => {
+            process.stdout.write('HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\nprivate-invalid-chunk\\r\\n');
+        }); process.stdin.resume();`;
+        const controller = new AbortController();
+        let disconnected!: () => void;
+        const down = new Promise<void>(resolve => { disconnected = resolve; });
+        const open = openDockerEngineEvents({ command: process.execPath, args: [], cwd: process.cwd(), env: {}, release() {} }, ['-e', script, '--']);
+        const subscription = await open({ signal: controller.signal, disconnected, event() {} });
+        try {
+            await down;
+            expect(diagnostic).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+                phase: 'native_compose.events.stream', errorClass: 'Error',
+            }));
+            expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private-invalid-chunk');
+        } finally { controller.abort(); await subscription.dispose(); }
+    });
+});
