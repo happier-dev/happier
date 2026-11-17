@@ -101,6 +101,100 @@ describe('apiProviderAccountUsage', () => {
         expect(result.pageFacts?.dayQuotaHistory).toEqual([summary]);
         expect(summaryReads).toBe(1);
     });
+    it.each([
+        { accountMode: 'plain' as const, missingCoverage: false },
+        { accountMode: 'e2ee' as const, missingCoverage: false },
+        { accountMode: 'plain' as const, missingCoverage: true },
+    ])('reads $accountMode daily history without downloading the selected Year observations (gap=$missingCoverage)', async ({ accountMode, missingCoverage }) => {
+        // Orchestrator 2026-11-16: Year/All day facts use sealed days plus exact current-window operands.
+        const { buildProviderAccountUsageDaySummaryV1, sealProviderAccountUsageDaySummaryV1, ProviderAccountUsageDaySummaryReadV1Schema } = await import('@happier-dev/protocol/connect/providerAccountUsageDaySummary');
+        const { projectProviderAccountUsageQuotaReadV1 } = await import('@happier-dev/protocol/connect/providerAccountUsageHistory');
+        const { parseQualifiedConnectedAccountV4StructuredQueryValue } = await import('@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec');
+        const { QualifiedProviderAccountUsageHistoryRequestV4Schema } = await import('@happier-dev/protocol/connect/providerAccountUsageHistory');
+        const day = 86_400_000;
+        const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+        const base = makeSnapshot();
+        const sample = (at: number, used: number, resetAt: number, limit = 100) => ProviderAccountUsageSnapshotV1Schema.parse({ ...base,
+            observedAtMs: at, fetchedAtMs: at, staleAfterMs: day,
+            meters: [{ meterId: 'daily', label: 'Daily', used, limit, utilizationPct: used / limit * 100,
+                resetsAt: resetAt, windowDurationMs: day, unit: 'count', status: 'ok', details: {} }],
+        });
+        const samples = [sample(1, 10, day), sample(day / 2, 70, day), sample(day - 1, 80, day),
+            sample(day + 1, 1, 2 * day), sample(day + 1000, 40, 2 * day, 200),
+            sample(2 * day + 1, 2, 3 * day), sample(2 * day + 3_600_000, 20, 3 * day), sample(2 * day + 7_200_000, 35, 3 * day)];
+        const current = samples.at(-1)!;
+        const source = { bindingKind: 'account' as const, ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' } };
+        const range = { startAtMs: 0, endAtMs: 3 * day };
+        const input = { source, projection: { range, resolution: 'accepted_observations' as const } };
+        const entries = samples.map((snapshot, index) => ({ id: `daily-accepted-${index}`, observedAtMs: snapshot.fetchedAtMs, snapshot }));
+        const summaries = [0, day, 2 * day].map(dayStartAtMs => buildProviderAccountUsageDaySummaryV1({ recordId: current.recordId,
+            dayStartAtMs, snapshots: samples.filter(snapshot => snapshot.fetchedAtMs >= dayStartAtMs && snapshot.fetchedAtMs < dayStartAtMs + day),
+            precedingSnapshot: samples.filter(snapshot => snapshot.fetchedAtMs < dayStartAtMs).at(-1) }));
+        const sealed = (snapshot: ProviderAccountUsageSnapshotV1) => {
+            if (accountMode === 'plain') return { t: 'plain' as const, v: snapshot };
+            const value = sealProviderAccountUsageSnapshot({ material, snapshot, randomBytes: n => new Uint8Array(n).fill(3) });
+            return { t: 'encrypted' as const, c: value.ciphertext, subscription: value.subscription, recoveryCreditDetails: value.recoveryCreditDetails };
+        };
+        const record = (snapshot: ProviderAccountUsageSnapshotV1) => ({ content: sealed(snapshot),
+            metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: day, status: 'ok' }, sources: [source] });
+        const ranges: typeof range[] = [];
+        let projectionReads = 0, writes = 0;
+        const request = vi.fn(async (url: string, init?: RequestInit) => {
+            const parsed = new URL(url, 'https://test.invalid');
+            if (parsed.pathname.endsWith('/sources/resolve')) return Response.json({ source, recordId: current.recordId,
+                providerAccountId: current.recordKey.accountSubjectId, fetchedAt: current.fetchedAtMs, staleAfterMs: day });
+            if (parsed.pathname.endsWith('/record')) return Response.json(record(current));
+            if (parsed.pathname.endsWith('/day-summaries')) {
+                const query = parseQualifiedConnectedAccountV4StructuredQueryValue(ProviderAccountUsageDaySummaryReadV1Schema, parsed.searchParams.get('query'));
+                expect(query, 'all admitted clock evidence must use the unbounded coverage wire, without a fabricated timestamp ceiling')
+                    .toEqual({ recordId: current.recordId, includeCoverage: true });
+                return Response.json({ summaries: summaries.filter(summary => !missingCoverage || summary.dayStartAtMs !== day).map(summary => ({ dayStartAtMs: summary.dayStartAtMs,
+                payload: { v: 1, coverage: { observationCount: entries.filter(entry => Math.floor(entry.observedAtMs / day) * day === summary.dayStartAtMs).length,
+                    frontier: (() => { const last = entries.filter(entry => Math.floor(entry.observedAtMs / day) * day === summary.dayStartAtMs).at(-1)!;
+                        return { id: last.id, observedAtMs: last.observedAtMs }; })() },
+                content: accountMode === 'plain' ? { t: 'plain', v: summary }
+                    : sealProviderAccountUsageDaySummaryV1({ summary, material, randomBytes: n => new Uint8Array(n).fill(3) }) } })),
+                missingDays: missingCoverage ? [{ dayStartAtMs: day, coverage: { observationCount: 2,
+                    frontier: { id: entries[4]!.id, observedAtMs: entries[4]!.observedAtMs } } }] : [] });
+            }
+            if (parsed.pathname.endsWith('/history')) {
+                if (init?.method === 'PUT') { writes++; return Response.json({ success: true }); }
+                const query = parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema, parsed.searchParams.get('query'));
+                if ('projection' in query) { projectionReads++; return Response.json({ projection: null, complete: false }); }
+                if (!('history' in query)) throw new Error('Unexpected exact witness demand');
+                ranges.push(query.history.range);
+                const page = { entries: entries.filter(entry => entry.observedAtMs >= query.history.range.startAtMs && entry.observedAtMs < query.history.range.endAtMs)
+                    .map(entry => ({ id: entry.id, observedAtMs: entry.observedAtMs, record: record(entry.snapshot) })), nextCursor: null };
+                return new Response(JSON.stringify(page) + '\n', { headers: { 'Content-Type': 'application/x-ndjson' } });
+            }
+            throw new Error(`Unexpected daily read path: ${parsed.pathname}`);
+        });
+        const options = { accountMode, material, request, historyView: 'daily' as const, includePendingWork: false, nowMs: current.observedAtMs,
+            readAllHistory: { onProgress: () => {} } };
+        const result = await (await loadApi({ daySummaries: true })).getProviderAccountUsageQuota(credentials, input, options);
+        const exact = projectProviderAccountUsageQuotaReadV1({ input, current, history: { entries, nextCursor: null }, daySummaries: summaries, nowMs: current.observedAtMs });
+        expect.soft(projectionReads, 'daily demand must not acquire an exact Year projection').toBe(0);
+        expect.soft(writes, 'daily demand must not bootstrap an exact Year projection').toBe(0);
+        if (!missingCoverage) expect.soft(ranges.length).toBeGreaterThan(0);
+        expect.soft(ranges.every(value => value.startAtMs >= 2 * day), 'only the actual current meter window is exact').toBe(true);
+        expect.soft(result.history).toBeUndefined();
+        if (!missingCoverage) {
+            expect.soft(result.pageFacts?.dayQuotaHistory).toEqual(exact.pageFacts?.dayQuotaHistory);
+            expect.soft(result.pageFacts?.witnessedResets).toEqual(exact.pageFacts?.witnessedResets);
+        }
+        if (missingCoverage) {
+            expect.soft(result.pace).toEqual([{ meterId: 'daily', value: { status: 'unavailable', reason: 'not_loaded' } }]);
+            if (result.pageFacts?.resetWitness) expect.soft(result.pageFacts.resetWitness).toEqual(entries.at(-1));
+        } else {
+            expect.soft(result.pace).toEqual(exact.pace);
+            expect.soft(result.pageFacts?.resetWitness).toEqual(entries.at(-1));
+        }
+        expect.soft(result.pageFacts?.historyStatus).toBe(missingCoverage ? 'partial' : 'complete');
+        expect(result.unusedCapacity).toEqual({ historyStatus: 'not_loaded', windows: [] });
+        expect(result.pageFacts?.earlierCurves, 'day endpoints must never masquerade as exact earlier curves').toEqual([
+            { meterId: 'daily', value: { status: 'unavailable', reason: 'not_loaded' } },
+        ]);
+    });
     it.each((['plain', 'e2ee'] as const).flatMap(accountMode =>
         (['json', 'stream', 'native', 'truncated'] as const).map(wire => ({ accountMode, wire }))))(
         'shares admitted $accountMode backfill material over $wire without dropping accepted witnesses', async ({ accountMode, wire }) => {

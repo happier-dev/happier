@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { UsageExactHistoryDemandContext } from '../usageMountedControls';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ConnectedAccountIdentityText } from '@/components/settings/connectedServices/ConnectedAccountIdentityText';
@@ -593,12 +594,16 @@ export function UsagePlanDisclosure(
     trailing?: React.ReactNode;
     testID: string;
     children: React.ReactNode;
+    loadExactHistory?: boolean;
   }>,
 ) {
   const { theme } = useUnistyles();
   const text = usePlanText();
   const reducedMotion = useReducedMotionPreference();
   const [expanded, setExpanded] = React.useState(false);
+  const acquireExactHistory = React.useContext(UsageExactHistoryDemandContext);
+  React.useEffect(() => expanded && props.loadExactHistory ? acquireExactHistory?.() : undefined,
+    [expanded, props.loadExactHistory, acquireExactHistory]);
   const name = props.name ?? props.title;
   const toggle = useUsageDisclosureCommand(name, expanded, () => setExpanded(value => !value));
   return (

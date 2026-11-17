@@ -302,6 +302,7 @@ function resolveQuery(
   clauses: UsageWidgetQueryOverrides,
   input: Readonly<Record<string, JsonValue>>,
   widgetId: UsageQueryWidgetId,
+  includeQuotaExactHistory: boolean,
 ): BoundRegistration | null {
   try {
     const descriptor = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: widgetId })!;
@@ -332,7 +333,7 @@ function resolveQuery(
       // into a summary body or turn a detailed Work body into a summary.
       includeContributions: false, workProjection: 'detail',
       includeSeries: false, includeInsights: false, includeActivity: false, activityResolution: 'both',
-      includeLeaders: false, includeModelTimeline: false, includeMessageStats: false, includeQuotaHistory: false, includeComparison: false,
+      includeLeaders: false, includeModelTimeline: false, includeMessageStats: false, includeQuotaHistory: false, includeQuotaExactHistory, includeComparison: false,
       includeTranscriptEvidence: false, includeCoach: false, includeQuota: false,
       ...USAGE_WIDGET_DEMAND[widgetId],
       ...(typeof queryInput.includeQuotaHistory === 'boolean' ? { includeQuotaHistory: queryInput.includeQuotaHistory } : {}),
@@ -375,6 +376,7 @@ export function useUsageWidgetModel(
 ): Readonly<{
   model: UsageWidgetBodyModel;
   query: UsageQuery | null;
+  acquireExactHistory(): () => void;
 }> {
   const batch = React.useContext(UsageWidgetBatchContext);
   const auth = useAuth();
@@ -384,9 +386,15 @@ export function useUsageWidgetModel(
   const [standaloneClauses] = React.useState(readStandaloneClauses);
   const clauses = batch?.clauses ?? standaloneClauses;
   const inputKey = JSON.stringify(input);
+  const [exactReaders, setExactReaders] = React.useState(0);
+  const acquireExactHistory = React.useCallback(() => {
+    setExactReaders(value => value + 1);
+    return () => setExactReaders(value => value - 1);
+  }, []);
+  const includeQuotaExactHistory = exactReaders > 0;
   const registration = React.useMemo(
-    () => resolveQuery(clauses, input, widgetId),
-    [clauses, inputKey, widgetId],
+    () => resolveQuery(clauses, input, widgetId, includeQuotaExactHistory),
+    [clauses, inputKey, widgetId, includeQuotaExactHistory],
   );
   const register = batch?.register;
   React.useLayoutEffect(
@@ -414,7 +422,7 @@ export function useUsageWidgetModel(
     plan: ownPlan,
   });
   const model = useUsageWidgetBodyModel(batch?.resource ?? own, id, registration?.projectSlice);
-  return { model, query: registration?.query ?? null };
+  return { model, query: registration?.query ?? null, acquireExactHistory };
 }
 
 const EMPTY_RESULTS: readonly UsageQueryResultSlice[] = Object.freeze([]);

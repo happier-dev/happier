@@ -10,7 +10,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useWidgetFrameResourceActivity } from '@/components/widgets/frame/widgetFrameResourceActivity';
 import { t } from '@/text';
 import { UsageBodyReading, type UsageBodyProps, type UsageWidgetPresentationInputs } from './usageBodyKit';
-import { useUsageRetryCommand } from './usageMountedControls';
+import { UsageExactHistoryDemandContext, useUsageRetryCommand } from './usageMountedControls';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { useUsageWidgetModel } from './usageWidgetBatch';
 import { useUsageQueryActions } from './useUsageQueryActions';
@@ -129,11 +129,11 @@ function UsageQueryWidgetBody(
   props: UsageWidgetBodyInput &
     Readonly<{ id: Exclude<UsageBuiltinWidgetIdV1, 'usage_sources'> }>,
 ) {
-  const { model, query } = useUsageWidgetModel(props.input, props.id);
-  return <>
+  const { model, query, acquireExactHistory } = useUsageWidgetModel(props.input, props.id);
+  return <UsageExactHistoryDemandContext.Provider value={acquireExactHistory}>
     <UsageQueryWidgetActions {...props} query={model.slice?.shownQuery ?? query} slice={model.slice} />
     <UsageQueryWidgetContent {...props} model={model} query={query} />
-  </>;
+  </UsageExactHistoryDemandContext.Provider>;
 }
 
 /** Command credential resolution updates the frame's actions, independently of its facts. */

@@ -181,8 +181,8 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
   const rangeColor = theme.colors.text.tertiary;
   const ghostColor = theme.colors.border.default;
   const earlier = React.useMemo(
-    () => (focus && !list ? projectUsageEarlierCurves(focus.account, focus.window.meterId) : null),
-    [focus, list],
+    () => (focus && !list && !tile ? projectUsageEarlierCurves(focus.account, focus.window.meterId) : null),
+    [focus, list, tile],
   );
   const series = React.useMemo(
     () =>
@@ -232,7 +232,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
     })),
   ] : []);
   const chooseWindow = React.useCallback((key: string) => { void windowCommands.invoke(key); }, [windowCommands.invoke]);
-  const details = useUsageChartDetails(t(`usage.widgets.${props.id}`), !list && Boolean(focus?.window.pace));
+  const details = useUsageChartDetails(t(`usage.widgets.${props.id}`), !list && Boolean(focus?.window.pace), true);
   if (projection.accounts.length === 0) {
     return (
       <View style={styles.body}>
@@ -483,7 +483,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
         </UsageMeterStack>
       </UsagePlanDisclosure> : null}
       {!tile && focus && focusName ? (
-        <UsagePlanDisclosure
+        <UsagePlanDisclosure loadExactHistory
           testID={`${props.testID}.pastCycles`}
           title={t('usage.board.plans.pastCyclesTitle')}
           meta={focusTitle}

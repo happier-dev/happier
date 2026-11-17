@@ -55,6 +55,8 @@ function getPeriodAdjustedUsageQueryKey(previous: UsageQuery, query: UsageQuery)
         && previous.granularity === getUsagePeriodDefinition(previous.period.relative).granularity
         && query.granularity === getUsagePeriodDefinition(query.period.relative).granularity;
     return getUsageQueryKey({ ...previous, period: query.period,
+        // Opening exact Details adds evidence demand without replacing the shown facts or disclosure.
+        includeQuotaExactHistory: query.includeQuotaExactHistory,
         ...(followsPeriodGranularity ? { granularity: query.granularity } : {}) });
 }
 

@@ -89,7 +89,7 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
   const noPriceOnce = drawn.length > 1 && drawn.every((account) => readPlanKeyFact(account, insightsOf(account), nowMs) === null);
   // Rows with no ended window yet say so once under the list, not on every row (sweep 1110 item 19).
   const noneEndedOnce = drawn.filter((account) => account.read?.current
-    && summarizeUsagePlanFit(account, target).observed === 0).length > 1;
+    && summarizeUsagePlanFit(account, target).reason === 'none_ended').length > 1;
   const planFitGaps = readPlanFitGaps(props.slice.planInsights);
   // A gap more readings cure is one quiet promise; attribution says what it needs.
   const caveats = [noPriceOnce ? t('usage.board.plans.planNoPriceAll') : null,
@@ -294,7 +294,7 @@ function PlanRow(
       accessibilityLabel={[props.name.title, priceText, periodText, paceText].filter(Boolean).join(', ')}
     >
       {/* The plan row itself opens its exact values and details at every widget size. */}
-        <UsagePlanDisclosure title={`${props.name.title}, ${t('usage.board.charts.showValues')}`} testID={`${props.testID}.details`}
+        <UsagePlanDisclosure loadExactHistory title={`${props.name.title}, ${t('usage.board.charts.showValues')}`} testID={`${props.testID}.details`}
           label={<>{identity}{secondaryLine}</>} trailing={figureNode}>
           <View style={styles.details}>
             {/* Terms first (what it costs, when it ends), then how it is being used, then what you can do. */}

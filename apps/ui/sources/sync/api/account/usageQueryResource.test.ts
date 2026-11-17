@@ -6069,6 +6069,80 @@ describe('usage query captured Resource adapter', () => {
     } finally { catalog.resolve(); await reading.catch(() => {}); }
   });
 
+  it.each(['year', 'all'] as const)('keeps %s daily quota demand independent of a shorter exact-curve query', async relative => {
+    const { buildProviderAccountUsageDaySummaryV1 } = await import('@happier-dev/protocol/connect/providerAccountUsageDaySummary');
+    const day = 86_400_000;
+    const now = Date.UTC(2026, 9, 15, 12);
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'daily-quota-demand' };
+    const source = { bindingKind: 'account' as const, ref };
+    const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+    const sample = (at: number, used: number) => ProviderAccountUsageSnapshotV1Schema.parse({ v: 1,
+      recordId: buildProviderAccountUsageRecordId(recordKey), recordKey, providerId: 'codex',
+      accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs: at, fetchedAtMs: at,
+      staleAfterMs: day, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+      meters: [{ meterId: 'daily', label: 'Daily', used, limit: 100, utilizationPct: used, resetsAt: Math.ceil(at / day) * day,
+        windowDurationMs: day, unit: 'count', status: 'ok', details: {} }] });
+    const snapshots = [sample(now - 10 * day, 20), sample(now - 3 * day, 30), sample(now - 3_600_000, 35), sample(now, 40)];
+    const current = snapshots.at(-1)!;
+    const entries = snapshots.map((snapshot, index) => ({ id: `daily-resource-${index}`, observedAtMs: snapshot.fetchedAtMs,
+      record: { content: { t: 'plain' as const, v: snapshot },
+        metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: day, status: 'ok' }, sources: [source] } }));
+    const days = [...new Set(snapshots.map(snapshot => Math.floor(snapshot.fetchedAtMs / day) * day))].map(dayStartAtMs => {
+      const rows = snapshots.filter(snapshot => Math.floor(snapshot.fetchedAtMs / day) * day === dayStartAtMs);
+      const last = entries.filter(entry => Math.floor(entry.observedAtMs / day) * day === dayStartAtMs).at(-1)!;
+      return { dayStartAtMs, payload: { v: 1, coverage: { observationCount: rows.length, frontier: { id: last.id, observedAtMs: last.observedAtMs } },
+        content: { t: 'plain', v: buildProviderAccountUsageDaySummaryV1({ recordId: current.recordId, dayStartAtMs, snapshots: rows }) } } };
+    });
+    const historyRanges: { startAtMs: number; endAtMs: number }[] = [];
+    const exactRanges: typeof historyRanges = [];
+    const captured = await context(request => {
+      if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ features: {
+        connectedServices: { enabled: true, quotas: { enabled: true } },
+      } }));
+      if (request.path.endsWith('/sources/resolve')) return Response.json({ source, recordId: current.recordId,
+        providerAccountId: ref.accountId, fetchedAt: now, staleAfterMs: day });
+      if (request.path.endsWith('/record')) return Response.json({ content: { t: 'plain', v: current },
+        metadata: { fetchedAt: now, staleAfterMs: day, status: 'ok' }, sources: [source] });
+      if (request.path.endsWith('/day-summaries')) return Response.json({ summaries: days, missingDays: [] });
+      if (request.path.endsWith('/history')) {
+        const query = parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
+          request.url.searchParams.get('query'));
+        if ('projection' in query) {
+          exactRanges.push(query.projection.range);
+          return Response.json({ projection: null, complete: false });
+        }
+        if (!('history' in query)) throw new Error('Unexpected exact witness query');
+        historyRanges.push(query.history.range);
+        const page = { entries: entries.filter(entry => entry.observedAtMs >= query.history.range.startAtMs && entry.observedAtMs < query.history.range.endAtMs), nextCursor: null };
+        return new Response(JSON.stringify(page) + '\n', { headers: { 'Content-Type': 'application/x-ndjson' } });
+      }
+      if (request.path === '/v2/pending/reset-starts/read') return Response.json({ entries: [] });
+      return undefined;
+    }, { connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] });
+    const daily = normalizeUsageQuery({ period: { relative }, includeAccounting: false, includeQuota: true,
+      includeQuotaHistory: true, includeQuotaExactHistory: false, includeComparison: false,
+      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
+    const first = await readUiUsageQueryBatch(captured, { queries: [daily] });
+    expect.soft(first.results[0]?.quota?.[0]?.pageFacts?.dayQuotaHistory).toHaveLength(days.length);
+    expect.soft(first.results[0]?.quota?.[0]?.pageFacts?.earlierCurves).toEqual([
+      { meterId: 'daily', value: { status: 'unavailable', reason: 'not_loaded' } },
+    ]);
+    expect.soft(first.results[0]?.sources).toContainEqual(expect.objectContaining({ source: 'quota', status: 'available' }));
+    expect.soft(historyRanges.length).toBeGreaterThan(0);
+    expect.soft(historyRanges.every(range => range.startAtMs >= Math.floor(now / day) * day),
+      'daily Year/All only reads the actual current quota window').toBe(true);
+    expect.soft(exactRanges).toEqual([]);
+    historyRanges.length = 0;
+    const exact = normalizeUsageQuery({ ...daily, period: { relative: '7days' }, includeQuotaExactHistory: true });
+    const mixed = await readUiUsageQueryBatch(captured, { queries: [daily, exact] });
+    expect.soft(mixed.results.find(slice => slice.key === getUsageQueryKey(daily))?.quota?.[0]?.pageFacts?.dayQuotaHistory).toHaveLength(days.length);
+    expect.soft(historyRanges.length + exactRanges.length).toBeGreaterThan(0);
+    expect([...historyRanges, ...exactRanges].every(range => range.startAtMs >= now - 7 * day),
+      'a seven-day earlier-curve consumer must not widen the daily Year/All into exact history').toBe(true);
+  });
+
   it('opens first-use B without cache hydration and admits its lossless projection only after the backfill completes', async () => {
     const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'first-use' };
     const source = { bindingKind: 'account' as const, ref };

@@ -32,7 +32,8 @@ import { sealProviderAccountUsagePageProjectionV1, openProviderAccountUsagePageP
     openProviderAccountUsagePageProjectionReadV1 } from '@happier-dev/protocol/connect/providerAccountUsagePageProjectionCrypto';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { getProviderAccountUsageDerivationInterval } from '@happier-dev/protocol/connect/deriveProviderAccountUsagePace';
+import { getProviderAccountUsageDerivationInterval, resolveProviderAccountUsageRecentHistoryRangesV1,
+    type ProviderAccountUsageRecentHistoryRangesV1 } from '@happier-dev/protocol/connect/deriveProviderAccountUsagePace';
 import { createCapturedServerReadTransport, type CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
 import { createScopedResolutionSingleFlight, type ScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
 import { getActiveServerHomeCarrier, getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -85,6 +86,9 @@ export type ProviderAccountUsageQuotaReadOptions = Readonly<{
     material?: AccountScopedCryptoMaterial; signal?: AbortSignal; nowMs?: number;
     expectedActiveServer?: ExpectedActiveServerFetchBasis; targets?: UsagePacingTargetsV1;
     includePendingWork?: boolean;
+    /** Day facts and current-window operands; exact observations are acquired only when separately demanded. */
+    historyView?: 'daily';
+    exactHistoryRange?: Readonly<{ startAtMs: number; endAtMs: number }>;
     projectionDocuments?: ProviderAccountUsageProjectionDocuments;
     /** Settings are an independent facet, never a prerequisite for current capacity. */
     readPacingTargets?: () => Promise<UsagePacingTargetsV1>;
@@ -149,7 +153,7 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
         const summaries = requestProviderAccountUsageDaySummaries(credentials, { recordId: resolution.recordId, range: historyRequest.range },
             { ...options, material }).then(value => {
             if (!active) return;
-            daySummaries = value; publish();
+            daySummaries = value?.summaries ?? []; publish();
         });
         try {
             await Promise.all([(async () => {
@@ -174,13 +178,15 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
     const { nowMs, waitingWork } = options.includePendingWork === false
         ? { nowMs: options.nowMs ?? Date.now(), waitingWork: undefined }
         : await readProviderAccountUsageWaitingWork(credentials, request, current, options);
-    return projectProviderAccountUsageQuotaReadV1({ input: request, current, daySummaries, ...(request.history ? { history: page && resolution ? await openHistoryPageWithYield({ recordId: resolution.recordId, accountMode: options.accountMode, material, page }, options) : { entries: [], nextCursor: null } } : {}), nowMs, targets: options.targets, waitingWork });
+    return projectProviderAccountUsageQuotaReadV1({ input: request, current, daySummaries: daySummaries?.summaries ?? (request.history ? [] : undefined), ...(request.history ? { history: page && resolution ? await openHistoryPageWithYield({ recordId: resolution.recordId, accountMode: options.accountMode, material, page }, options) : { entries: [], nextCursor: null } } : {}), nowMs, targets: options.targets, waitingWork });
 }
 
 /** The B owner materializes exact accepted observations once; Plans never carries raw history trees. */
 async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentials, request: ConnectedServiceQuotaGetInputV1,
     options: ProviderAccountUsageQuotaReadOptions, recordId: string, initialCurrent: ProviderAccountUsageSnapshotV1 | null, recordJson: unknown): Promise<ConnectedServiceQuotaGetResultV1> {
-    const demand = request.projection!;
+    const displayDemand = request.projection!;
+    const daily = options.historyView === 'daily';
+    const exactDemand = daily ? options.exactHistoryRange ? { ...displayDemand, range: options.exactHistoryRange } : null : displayDemand;
     const assertCurrent = () => { throwIfAborted(options.signal); options.assertCurrent?.(); };
     let current = initialCurrent;
     let history: ConnectedServiceQuotaGetResultV1['history'];
@@ -190,6 +196,9 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
     let active = true;
     let admitted: AdmittedUsageProjection | undefined;
     let daySummaries: ProviderAccountUsageDaySummaryV1[] | undefined;
+    let recentHistory: ConnectedServiceQuotaGetResultV1['history'];
+    let recentHistorySelection: ProviderAccountUsageRecentHistoryRangesV1 | undefined;
+    let missingDays: readonly Readonly<{ dayStartAtMs: number }>[] | undefined;
     const credentialScope = resolveAuthCredentialsScopeKey(credentials);
     const materialBytes = options.material?.type === 'legacy' ? options.material.secret : options.material?.machineKey;
     // One instant per read: price, Pending and pacing revisions of this read keep its derived pace and
@@ -200,17 +209,18 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
         const previous = admitted?.view;
         // The admitted record owns quota facts. Entered price is opened onto
         // current separately and does not change that history/pace basis.
-        const sameBasis = previous && history === previous.history && sameStrictJsonValue(recordJson, previous.record)
+        const sameBasis = !daily && previous && history === previous.history && sameStrictJsonValue(recordJson, previous.record)
             && sameStrictJsonValue(daySummaries ?? null, previous.daySummaries ?? null);
         if (sameBasis && (previous.nowMs === nowMs || previous.interval
             && nowMs >= previous.interval.fromMs && nowMs < previous.interval.untilMs)) return { ...previous.value, current, source: request.source,
             targets: targets ?? [], waitingWork: waitingWork ?? { status: 'unavailable' as const, reason: 'read_failed' as const } };
-        const value = projectProviderAccountUsageQuotaReadV1({ input: request, current, history, pageFacts,
-            waitingWork, targets, daySummaries, nowMs });
+        const value = projectProviderAccountUsageQuotaReadV1({ input: request, current, history, pageFacts: daily ? undefined : pageFacts,
+            waitingWork, targets, daySummaries, nowMs, recentHistory, recentHistorySelection, missingDays,
+            ...(daily && exactDemand ? { exactHistoryRange: exactDemand.range } : {}) });
         // History settles once in this read. Price and Pending revisions change
         // independent facets, so keep its admitted page facts for them.
         pageFacts = value.pageFacts;
-        if (admitted && history) admitted.view = { record: recordJson, history, nowMs, value, daySummaries,
+        if (!daily && admitted && history) admitted.view = { record: recordJson, history, nowMs, value, daySummaries,
             interval: getProviderAccountUsageDerivationInterval({ current, history: history.entries.map(entry => entry.snapshot), nowMs }) };
         return value;
     };
@@ -231,10 +241,43 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
             material: options.material, record: recordJson });
         publish();
     }) : Promise.resolve();
-    const summaries = requestProviderAccountUsageDaySummaries(credentials, { recordId, range: demand.range }, options)
-        .then(value => { daySummaries = value; });
+    const summaries = requestProviderAccountUsageDaySummaries(credentials, { recordId,
+        // Clock evidence covers all admitted days, independently of the display range.
+        ...(daily ? { includeCoverage: true } : { range: displayDemand.range }) }, options)
+        .then(value => {
+            if (!active) return;
+            if (daily && !value) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_unavailable');
+            daySummaries = value?.summaries ?? [];
+            missingDays = value?.missingDays;
+            if (daily) recentHistorySelection = resolveProviderAccountUsageRecentHistoryRangesV1({ current,
+                daySummaries, missingDays, nowMs: readNowMs });
+        });
     try {
         await Promise.all([pending, price, pacing, summaries, (async () => {
+            if (daily) {
+                await summaries;
+                if (!active) return;
+                if (recentHistorySelection?.status === 'available') {
+                    const entries: NonNullable<typeof recentHistory>['entries'] = [];
+                    const openPage = createProviderAccountUsagePageProjectionOpenerV1();
+                    for (const range of recentHistorySelection.ranges) {
+                        await drainProviderAccountUsageHistory(credentials, { recordId,
+                            history: { range, pageSize: 100 } }, options, async page => {
+                            if (!active) throw Object.assign(new Error('Usage history read ended'), { name: 'AbortError' });
+                            const opened = await openHistoryPageWithYield({ recordId, accountMode: options.accountMode,
+                                material: options.material, page }, options);
+                            if (!active) throw Object.assign(new Error('Usage history read ended'), { name: 'AbortError' });
+                            const admitted = openPage(packProviderAccountUsagePageProjectionV1(
+                                buildProviderAccountUsagePageProjectionV1({ recordId, range, history: opened }))).history;
+                            for (const entry of admitted.entries) entries.push(entry);
+                        });
+                    }
+                    if (!active) return;
+                    recentHistory = { entries, nextCursor: null };
+                }
+                if (!exactDemand) { publish(); return; }
+            }
+            const demand = exactDemand!;
             const query = { recordId, projection: demand };
             // A concurrent backfill or accepted tail can invalidate publication.
             // Reopen canonical coverage before deriving another write.
@@ -570,11 +613,11 @@ async function requestProviderAccountUsageHistoryPage(credentials: AuthCredentia
 }
 
 async function requestProviderAccountUsageDaySummaries(credentials: AuthCredentials,
-    query: ReturnType<typeof ProviderAccountUsageDaySummaryReadV1Schema.parse>, options: ProviderAccountUsageQuotaReadOptions): Promise<ProviderAccountUsageDaySummaryV1[]> {
+    query: ReturnType<typeof ProviderAccountUsageDaySummaryReadV1Schema.parse>, options: ProviderAccountUsageQuotaReadOptions) {
     const read = await requestProviderAccountUsageRead(credentials, `/v4/connect/qualified/provider-account-usage/day-summaries?${new URLSearchParams({ query:
         encodeQualifiedConnectedAccountV4StructuredQueryValue(ProviderAccountUsageDaySummaryReadV1Schema, query) }).toString()}`, options);
-    if (!read) return [];
-    const summaries = ProviderAccountUsageDaySummaryResponseV1Schema.parse(read.json).summaries;
+    if (!read) return null;
+    const { summaries, missingDays } = ProviderAccountUsageDaySummaryResponseV1Schema.parse(read.json);
     const assertCurrent = () => { throwIfAborted(options.signal); options.assertCurrent?.(); };
     const opened = await mapCryptoBatchWithYield(summaries, summary => {
         assertCurrent();
@@ -582,7 +625,7 @@ async function requestProviderAccountUsageDaySummaries(credentials: AuthCredenti
             dayStartAtMs: summary.dayStartAtMs, accountMode: options.accountMode, material: options.material, content: summary.payload.content });
     });
     assertCurrent();
-    return opened;
+    return { summaries: opened, missingDays };
 }
 
 export async function getProviderAccountUsageHistoryWitness(credentials: AuthCredentials, input: Readonly<{ recordId: ProviderAccountUsageRecordId; witness: ProviderAccountUsageHistoryWitnessV1 }>, options: ProviderAccountUsageQuotaReadOptions) {

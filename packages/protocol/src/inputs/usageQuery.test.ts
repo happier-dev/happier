@@ -22,6 +22,14 @@ it('keeps host projection demand out of accounting and Session evidence transpor
   expect(project(coach)).toEqual(project(base));
   expect(JSON.stringify(project(chart))).not.toContain('includeCoach');
   expect(JSON.stringify(project(chart))).not.toContain('includeQuota"');
+  const daily = normalizeUsageQuery({ ...base, includeQuotaExactHistory: false });
+  const earlierCurves = normalizeUsageQuery({ ...base, includeQuotaExactHistory: true });
+  expect(getUsageQueryKey(daily)).not.toBe(getUsageQueryKey(earlierCurves));
+  expect(getUsageQueryKey(daily)).not.toBe(getUsageQueryKey(base));
+  for (const query of [daily, earlierCurves]) {
+    expect(usageQueryToAnalyticsRequest(query)).toEqual(usageQueryToAnalyticsRequest(base));
+    expect(project(query)).toEqual(project(base));
+  }
 });
 
 describe('shared UsageQuery', () => {

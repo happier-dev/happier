@@ -359,6 +359,25 @@ describe('shared Usage identity and dependent coverage', () => {
         expect(screen.findHostByTestId('settled-coverage') === null).toBe(true);
     });
 
+    it('reports completeness for demanded daily facts independently of unrequested exact ended history', () => {
+        const source = QualifiedConnectedServiceUsageSourceV4Schema.parse({ bindingKind: 'account',
+            ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'daily' } });
+        const read = { ...projectProviderAccountUsageQuotaReadV1({ input: { source }, current: null,
+            history: { entries: [], nextCursor: null }, daySummaries: [], nowMs: 200 }),
+            unusedCapacity: { historyStatus: 'not_loaded' as const, windows: [] } };
+        const dailyQuery = normalizeUsageQuery({ period: { relative: 'year' }, includeQuotaExactHistory: false });
+        const slice = (query = dailyQuery, partial = false) => resolveUsagePageAggregation({ queries: [query],
+            quota: { status: 'available', value: [{ ...read, pageFacts: { ...read.pageFacts!, historyStatus: partial ? 'partial' : 'complete' } }] },
+        }, bundledUsageModelPriceCatalog).results[0]!;
+        expect.soft(readUsageCoverageGaps(slice(), ['quota'])).toEqual([]);
+        const legacyExact = slice();
+        expect.soft(readUsageCoverageGaps({ ...legacyExact,
+            quota: legacyExact.quota?.map(({ pageFacts: _pageFacts, ...value }) => value) }, ['quota']))
+            .toContainEqual(expect.objectContaining({ source: 'quota', status: 'partial' }));
+        expect(readUsageCoverageGaps(slice(dailyQuery, true), ['quota']))
+            .toContainEqual(expect.objectContaining({ source: 'quota', status: 'partial' }));
+    });
+
     it('names every source still being read once for the page header', () => {
         const slice = (sources: readonly Readonly<{ source: string; status: 'pending' | 'not_loaded' | 'available' | 'partial' }>[]) =>
             ({ sources }) as unknown as Parameters<typeof describeUsagePagePendingSources>[0][number];

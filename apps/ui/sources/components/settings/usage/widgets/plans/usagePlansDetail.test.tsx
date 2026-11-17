@@ -434,6 +434,17 @@ it('uses the existing plan details as its named exact-values path', async () => 
   expect(screen.findByTestId('fit.plan.work.values.exact')?.props.accessibilityLabel).toContain('60.25%');
 });
 
+it('labels unrequested ended PlanFit history as not loaded for multiple accounts', async () => {
+  const now = Date.now();
+  const reads = ['first', 'second'].map(id => quotaRead(id, now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }], { unusedCapacity: { historyStatus: 'not_loaded', windows: [] } }));
+  const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
+  const screen = await renderPlanAccessibility(<UsagePlanFitWidget {...bodyProps(reads)} id="usage_plan_fit" testID="fit-unloaded" />);
+  expect(screen.getTextContent()).not.toContain(t('usage.board.plans.fitNoneEndedOnce'));
+  await screen.pressByTestIdAsync('fit-unloaded.plan.first.details-header');
+  expect(screen.getTextContent()).toContain(t('usage.board.plans.pastCyclesNotLoaded'));
+});
+
 it('names reset rows as the exact-values path and includes hidden precision without extra focus targets', async () => {
   const now = Date.now();
   const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30.125,

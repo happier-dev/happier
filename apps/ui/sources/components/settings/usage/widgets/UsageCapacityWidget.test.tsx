@@ -37,6 +37,70 @@ let previousAvailable = isAppliedActiveServerRuntimeAvailable();
 let previousProfile = storage.getState().profile;
 let previousScope = storage.getState().profileScope;
 let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
+
+it('loads exact PlanFit history only while existing plan details are expanded', async () => {
+  const { buildProviderAccountUsageDaySummaryV1 } = await import('@happier-dev/protocol/connect/providerAccountUsageDaySummary');
+  const { UsageWidgetBody } = await import('./UsageWidgetBody');
+  const { createMountedCurrentUiContextWrapper } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+  const day = 86_400_000, now = Date.now(), today = Math.floor(now / day) * day;
+  const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'plan-drill' };
+  const source = { bindingKind: 'account' as const, ref };
+  const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+  const record = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordKey, recordId: buildProviderAccountUsageRecordId(recordKey),
+    providerId: 'codex', accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs: now, fetchedAtMs: now,
+    staleAfterMs: day, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+    meters: [{ meterId: 'daily', label: 'Daily', used: 35, limit: 100, utilizationPct: 35, resetsAt: today + day,
+      windowDurationMs: day, unit: 'count', status: 'ok', details: {} }] });
+  const summary = buildProviderAccountUsageDaySummaryV1({ recordId: record.recordId, dayStartAtMs: today, snapshots: [record] });
+  const row = { content: { t: 'plain', v: record }, metadata: { fetchedAt: now, staleAfterMs: day, status: 'ok' }, sources: [source] };
+  let exactReads = 0;
+  const rawRanges: { startAtMs: number; endAtMs: number }[] = [];
+  const profile = AccountProfileSchema.parse({ id: 'account-a', connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'manual',
+    revisionSemantics: 'revisioned', credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false,
+    configurationRevision: null, scopes: [] }] });
+  home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-plan-drill.test', accountId: 'account-a', profile }],
+    route: request => {
+      if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+      if (request.path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+      if (request.path.endsWith('/sources/resolve')) return Response.json({ source, recordId: record.recordId,
+        providerAccountId: ref.accountId, fetchedAt: now, staleAfterMs: day });
+      if (request.path.endsWith('/record')) return Response.json(row);
+      if (request.path.endsWith('/day-summaries')) return Response.json({ summaries: [{ dayStartAtMs: today, payload: {
+        v: 1, coverage: { observationCount: 1, frontier: { id: 'current', observedAtMs: now } }, content: { t: 'plain', v: summary } } }], missingDays: [] });
+      if (request.path.endsWith('/history')) {
+        if (request.method === 'PUT') return Response.json({ success: true });
+        const query = parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
+          request.url.searchParams.get('query'));
+        if ('projection' in query) { exactReads++; return Response.json({ projection: null, complete: false }); }
+        if (!('history' in query)) throw new Error('Unexpected witness demand');
+        rawRanges.push(query.history.range);
+        return Response.json({ entries: [{ id: 'current', observedAtMs: now, record: row }], nextCursor: null });
+      }
+      if (request.path === '/v2/pending/reset-starts/read') return Response.json({ entries: [] });
+      return undefined;
+    } });
+  const serverId = home.homes.a!.id;
+  publishAppliedActiveServerSnapshot({ serverId, serverUrl: home.homes.a!.serverUrl, generation: 0 });
+  const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+  const credentials = (await TokenStorage.getCredentialsForServerUrl(home.homes.a!.serverUrl))!;
+  storage.setState({ profileScope: { serverId, accountId: 'account-a' }, profile });
+  await getServerFeaturesSnapshot({ serverId, force: true });
+  const view = (relative: 'year' | 'all') => <InjectedAuthProvider credentials={credentials}>
+    <UsageWidgetBody id="usage_plan_fit" input={{ period: { relative } }} serverId={serverId} testID="fit-drill" />
+  </InjectedAuthProvider>;
+  const screen = await renderScreen(view('year'), { wrapper: await createMountedCurrentUiContextWrapper() });
+  await expect.poll(() => screen.findByTestId('fit-drill.plan.plan-drill.details-header') !== null).toBe(true);
+  expect.soft(exactReads, 'default Plans Year must not acquire exact selected history').toBe(0);
+  expect(rawRanges.every(range => range.startAtMs >= today)).toBe(true);
+  await screen.pressByTestIdAsync('fit-drill.plan.plan-drill.details-header');
+  await expect.poll(() => exactReads, { message: 'existing Details action acquires exact history' }).toBeGreaterThan(0);
+  await screen.pressByTestIdAsync('fit-drill.plan.plan-drill.details-header');
+  const before = exactReads;
+  await screen.update(view('all'));
+  await flushHookEffects({ cycles: 30 });
+  expect(exactReads, 'collapsed Details must leave default Plans All bounded').toBe(before);
+});
 beforeEach(() => {
   previousSnapshot = getAppliedActiveServerSnapshot();
   previousAvailable = isAppliedActiveServerRuntimeAvailable();

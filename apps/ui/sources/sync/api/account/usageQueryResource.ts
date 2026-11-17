@@ -347,7 +347,7 @@ export async function readUiUsageModelPrices(context: UsageQueryAccountContext, 
 async function withUiConnectedServiceReader<T>(context: UsageQueryAccountContext, signal: AbortSignal | undefined,
     consume: (read: (input: ConnectedServiceQuotaGetInputV1) => Promise<ConnectedServiceQuotaGetResultV1>,
         readSelection: (input: ConnectedServicePoolSelectionGetRequestV1) => Promise<ConnectedServicePoolSelectionGetResponseV1>) => Promise<T>,
-    quotaReadOptions?: Pick<import('./apiProviderAccountUsage').ProviderAccountUsageQuotaReadOptions, 'readAllHistory' | 'includePendingWork'>) {
+    quotaReadOptions?: Pick<import('./apiProviderAccountUsage').ProviderAccountUsageQuotaReadOptions, 'readAllHistory' | 'includePendingWork' | 'historyView' | 'exactHistoryRange'>) {
     const [{ captureLazyActionAccountContext }, { createUiConnectedServiceAction }] = await Promise.all([
         import('@/sync/ops/actions/actionAccountContext'), import('@/sync/ops/actions/connectedServiceActionDeps'),
     ]);
@@ -456,15 +456,23 @@ function readOpenedQuotaHistoryScope(context: UsageQueryAccountContext) {
     return scope?.sources.length && readQuotaFeatureDecision(context, scope)?.state === 'enabled' ? scope : null;
 }
 
-async function readOpenedQuotaHistory(context: UsageQueryAccountContext, periods: readonly NonNullable<UsageAccountingSourceSnapshot['period']>[], nowMs: number, signal?: AbortSignal,
+async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
+    demands: readonly Readonly<{ query: UsageQuery; period: NonNullable<UsageAccountingSourceSnapshot['period']> }>[], nowMs: number, signal?: AbortSignal,
     onProgress?: (quota: OpenedQuotaRead) => void, previous?: UsageQueryBatchResult,
     opened: OpenedQuotaRead = readOpenedQuota(context, previous), changedRecordIds?: readonly string[]): Promise<OpenedQuotaRead> {
     const scope = readOpenedQuotaHistoryScope(context);
     if (!scope) return opened;
     // Start at the existing transport batch size; the admitted B reader grows
     // subsequent pages and publishes their accepted change points progressively.
+    const periods = demands.map(demand => demand.period);
     const range = periods.length ? { startAtMs: Math.min(...periods.map(period => period.startMs ?? 0)),
         endAtMs: Math.max(...periods.map(period => period.endMs ?? nowMs)) } : undefined;
+    const usesDailyFacts = ({ query }: typeof demands[number]) => query.includeQuotaExactHistory === false
+        && 'relative' in query.period && (query.period.relative === 'year' || query.period.relative === 'all');
+    const daily = demands.some(usesDailyFacts);
+    const exactPeriods = demands.filter(demand => !usesDailyFacts(demand)).map(demand => demand.period);
+    const exactHistoryRange = exactPeriods.length ? { startAtMs: Math.min(...exactPeriods.map(period => period.startMs ?? 0)),
+        endAtMs: Math.max(...exactPeriods.map(period => period.endMs ?? nowMs)) } : undefined;
     if (range && range.endAtMs <= range.startAtMs) return { status: 'unknown', errorCode: 'quota_query_range_empty' };
     const retainedBySource = new Map(opened.value?.map(value => [createCanonicalJsonSigningInput(value.source), value]));
     const admissionBySource = new Map(scope.sources.map(({ source, key }) => [createCanonicalJsonSigningInput(source), key]));
@@ -531,7 +539,7 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext, periods
                 acceptedBySource.set(index, accepted);
                 publishProgress(index, accepted, true);
             } catch (error) { failSource(index, error); }
-        })), { includePendingWork: !!range, readAllHistory: { onProgress: value => {
+        })), { includePendingWork: !!range, ...(daily ? { historyView: 'daily', exactHistoryRange } : {}), readAllHistory: { onProgress: value => {
             const index = sourceIndices.get(createCanonicalJsonSigningInput(value.source));
             if (index === undefined) throw new Error('Quota reader returned an unrequested source');
             acceptedBySource.set(index, value);
@@ -1323,7 +1331,7 @@ export async function readUiUsageQueryBatch(
         let progress: void | Promise<void> = undefined;
         try {
             quota = await readOpenedQuotaHistory(context, queries.filter(query => query.includeQuota !== false && query.includeQuotaHistory)
-                .map(query => periods.get(getUsageQueryKey(query))!), accountingNowMs, signal, value => {
+                .map(query => ({ query, period: periods.get(getUsageQueryKey(query))! })), accountingNowMs, signal, value => {
                     quota = value;
                     progress = readOptions.onProgress?.(reproject);
                 }, previous, quota, readOptions.allowanceRecordIds);
@@ -1570,7 +1578,7 @@ export async function readUiUsageQueryBatch(
             // Acquisition follows the changed input, independently of whether
             // its retained observation is complete, stale, unavailable or failed.
             if (quotaQueries.length && !readOptions?.retainAllowance) {
-                const settled = await readOpenedQuotaHistory(context, quotaQueries.filter(query => query.includeQuotaHistory).map(query => periods.get(getUsageQueryKey(query))!), accountingNowMs, signal,
+                const settled = await readOpenedQuotaHistory(context, quotaQueries.filter(query => query.includeQuotaHistory).map(query => ({ query, period: periods.get(getUsageQueryKey(query))! })), accountingNowMs, signal,
                     value => { quota = value; publish(); }, previous, quota, readOptions?.allowanceRecordIds);
                 if (settled !== quota) { quota = settled; publish(); }
             }

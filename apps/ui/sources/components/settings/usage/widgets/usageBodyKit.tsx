@@ -741,7 +741,8 @@ export function readUsageCoverageGaps(
   // Transport settlement does not establish history completeness. Keep the
   // settled allowance's qualification visible between refreshes as well.
   if (quotaRequested && slice.quota?.some(read => read.history?.nextCursor != null
-    || read.unusedCapacity && read.unusedCapacity.historyStatus !== 'returned_page')
+    || (read.pageFacts ? read.pageFacts.historyStatus !== 'complete'
+      : read.unusedCapacity && read.unusedCapacity.historyStatus !== 'returned_page'))
     && !gaps.some(source => source.source === 'quota')) {
     const clocks = slice.quota.flatMap(read => read.current && wasConnectedServiceQuotaObserved(read.current)
       ? [read.current.fetchedAtMs] : []);

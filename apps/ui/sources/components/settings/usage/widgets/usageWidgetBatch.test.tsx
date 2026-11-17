@@ -1,3 +1,4 @@
+import { WidgetPresentationProvider, type WidgetPresentation } from '@happier-dev/plugin-ui';
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
@@ -847,8 +848,12 @@ describe('Usage page batch', () => {
       usage_machines: [],
       usage_projects: [],
     } satisfies Record<WidgetId, readonly Output[]>;
-    const cases: readonly Readonly<{ id: WidgetId; style?: string; session?: string | string[]; reads: readonly Output[] }>[] = [
+    const cases: readonly Readonly<{ id: WidgetId; style?: string; session?: string | string[]; reads: readonly Output[]; size?: WidgetPresentation['size']; exactHistory?: boolean }>[] = [
       ...Object.entries(defaults).map(([id, reads]) => ({ id: id as WidgetId, reads })),
+      // Wide limits and small tiles draw no exact earlier-window curves; Large keeps the chart.
+      { id: 'usage_projections', size: 'wide', reads: defaults.usage_projections, exactHistory: false },
+      { id: 'usage_projections', size: 'small', reads: defaults.usage_projections, exactHistory: false },
+      { id: 'usage_projections', size: 'large', reads: defaults.usage_projections, exactHistory: false },
       { id: 'usage_flow', style: 'agentRiver', reads: ['includeActivity'] },
       { id: 'usage_breakdowns', style: 'crew', reads: ['includeActivity'] },
       { id: 'usage_rhythm', style: 'sky', reads: ['includeActivity'] },
@@ -883,8 +888,9 @@ describe('Usage page batch', () => {
     const inventoryQuery = normalizeUsageQuery({ ...pageQuery, period: { startMs: 0, endMs: 1000 }, breakdown: ['agent', 'machine', 'project', 'source'] });
     const view = (entry?: typeof cases[number]) => <InjectedAuthProvider credentials={credentials}><AppShellPluginUiProjectionValueProvider value={runtime}><CoreCollectionScope>
       <UsageWidgetBatchProvider clauses={readUsageWidgetQueryOverrides(pageQuery)} inventoryQuery={entry ? undefined : inventoryQuery} inventoryOnly={!entry}>
-        <DemandProbe />{entry ? <UsageWidgetBody id={entry.id} input={{ ...scope, period: { startMs: 0, endMs: 1000 }, metric: 'tokens',
-          ...(entry.style ? { style: entry.style } : {}), ...(entry.session ? { session: entry.session } : {}) }} serverId={serverId} testID="output-demand" /> : null}
+        <DemandProbe /><WidgetPresentationProvider value={entry?.size ? { size: entry.size,
+          footprint: { columns: 2, columnSpan: 1, rowSpan: 2, height: 'regular', width: 'half' }, geometry: { width: 500, height: 400 } } : undefined}>{entry ? <UsageWidgetBody id={entry.id} input={{ ...scope, period: { startMs: 0, endMs: 1000 }, metric: 'tokens',
+          ...(entry.style ? { style: entry.style } : {}), ...(entry.session ? { session: entry.session } : {}) }} serverId={serverId} testID="output-demand" /> : null}</WidgetPresentationProvider>
       </UsageWidgetBatchProvider></CoreCollectionScope></AppShellPluginUiProjectionValueProvider></InjectedAuthProvider>;
     const screen = await renderScreen(view(cases[0]!));
     const allowanceOnly = new Set<WidgetId>(['usage_capacity', 'usage_projections', 'usage_resets', 'usage_atmosphere', 'usage_machines', 'usage_projects']);
@@ -895,6 +901,8 @@ describe('Usage page batch', () => {
           includeAccounting: slice.requestedQuery.includeAccounting })),
           { message: `${entry.id} ${entry.style ?? 'default'} consumes only its declared output sections` })
           .toEqual([{ ...Object.fromEntries(outputs.map(output => [output, entry.reads.includes(output)])), includeAccounting: !allowanceOnly.has(entry.id) }]);
+        expect.soft(slices[0]?.requestedQuery, `${entry.id}/${entry.size ?? 'default'} must demand exact earlier curves only when drawn`)
+          .toMatchObject({ includeQuotaExactHistory: entry.exactHistory ?? false });
         if (entry.id === 'usage_period_summary') expect(slices[0]?.requestedQuery).toMatchObject({
           workProjection: 'summary', includeWorkEvidence: true, includeSessionEvidence: true, includeTranscriptEvidence: false,
         });

@@ -30,7 +30,7 @@ export { UsageSessionMessageEvidenceSchema, UsageSessionStateEvidenceSchema } fr
 
 // Host projection demand never changes the Session evidence wire contract.
 const UsageSessionEvidenceQuerySchema = lazyZodSchema(() => z.pipe(UsageQuerySchema,
-    z.transform(({ includeCoach: _coach, includeQuota: _quota, ...query }) => query)));
+    z.transform(({ includeCoach: _coach, includeQuota: _quota, includeQuotaExactHistory: _quotaExactHistory, ...query }) => query)));
 
 export const UsageSessionEvidenceRequestSchema = lazyZodSchema(() => z.strictObject({
     nowMs: Time,
