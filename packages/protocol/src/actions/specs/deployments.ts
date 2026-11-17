@@ -293,9 +293,29 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     ...(irreversible ? { irreversible: true as const } : {}),
     ...(id === deploymentActionIds.DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 ? { approvalNarrowing: deploymentBindingSelectionNarrowing } : {}),
     ...(id !== deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && id !== deploymentActionIds.DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 && id !== deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 && !accountPage
-      ? { approvalScope: 'environment' } : {}),
+      ? { approvalScope: id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1
+        ? { subjectKinds: ['environment', 'backup', 'database'] as const, project: (input: unknown) => {
+          const target = DeploymentActionInputSchemasV1[deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1].parse(input);
+          return { scope: 'environment' as const, subjects: [
+            { kind: 'backup' as const, serverId: target.serverId, environmentId: target.environmentId },
+            ...('destination' in target && target.destination?.kind === 'database' ? [{
+              kind: 'database' as const, serverId: target.serverId,
+              target: { kind: 'environment' as const, environmentId: target.environmentId,
+                service: target.destination.service, database: target.destination.database },
+            }] : []),
+          ] };
+        } }
+        : backup || backupConfigure
+        ? { subjectKinds: ['environment', 'backup'] as const, project: (input: unknown) => {
+          const target = DeploymentActionInputSchemasV1[id].parse(input);
+          return { scope: 'environment' as const, subjects: 'serverId' in target && typeof target.serverId === 'string'
+            && 'environmentId' in target && typeof target.environmentId === 'string'
+            ? [{ kind: 'backup' as const, serverId: target.serverId, environmentId: target.environmentId }] : [] };
+        } }
+        : 'environment' } : {}),
     executionPlacement: isDeploymentTargetLinkActionIdV1(id) || rolloutReview || query || backup || backupConfigure || telemetrySet || deploymentActionIds.isDeploymentDomainDnsActionIdV1(id) || isDeploymentDomainChildActionIdV1(id) || id === deploymentActionIds.DEPLOYMENT_PREPARE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RESTART_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_OBSERVATION_GET_ACTION_ID_V1 ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
     ...(id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 ? {
+      approvalScope: { subjectKinds: ['environment'] as const },
       executionPlacements: ['account', 'machine'],
       executionPlacementForInput: (input: unknown): 'account' | 'machine' => {
         const intent = readRecord(input);

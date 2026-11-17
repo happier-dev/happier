@@ -46,7 +46,7 @@ function createProjectContextActionSpecs() {
     id: PROJECT_SETUP_SET_ACTION_ID_V1, approval: { result: 'required' }, title: 'Change Project setup',
     description: 'Accept or detach one reviewed Shared setup, or edit private setup overrides. Preserves personal bindings and never grants execution consent.',
     safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
-    approvalScope: input => ({ subjects: [{ kind: 'project', ...ProjectSetupSetInputV1Schema.parse(input).projectRef }] }),
+    approvalScope: { subjectKinds: ['project'], project: (input) => ({ subjects: [{ kind: 'project', ...ProjectSetupSetInputV1Schema.parse(input).projectRef }] }) },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
     bindings: { mcpToolName: 'projects_setup_set' },
     cli: { commands: [{ path: ['projects', 'setup', 'set'], visibility: 'canonical' }] },
@@ -109,6 +109,7 @@ function createProjectContextActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'projects.context.update', approval: {result: 'required'},
+    approvalScope: { subjectKinds: ['project'], project: (input) => ({ subjects: [{ kind: 'project', ...ProjectContextUpdateInputV1Schema.parse(input).target }] }) },
     title: 'Update Project context',
     description: 'Attach, detach, reorder or adjust one personal Project context entry at the reviewed organization row revision.',
     sideEffectClass: 'write',
@@ -131,6 +132,7 @@ function createProjectContextActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'projects.organization.update', approval: {result: 'required'}, title: 'Update Project organization',
+    approvalScope: { subjectKinds: ['project'], project: (input) => ({ subjects: [{ kind: 'project', ...ProjectOrganizationUpdateInputV1Schema.parse(input).projectRef }] }) },
     description: 'Set or reset the private Project label or one Saved Secret reference binding at the reviewed organization row revision. A null label restores its baseline title; a null binding reference removes that name. Secret values are never accepted, and other organization fields are preserved.',
     sideEffectClass: 'write', safety: 'safe', executionPlacement: 'account', placements: [],
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
@@ -147,6 +149,7 @@ function createProjectContextActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'projects.visibility.set', approval: {result: 'required'}, title: 'Hide or show a Project',
+    approvalScope: { subjectKinds: ['project'], project: (input) => ({ subjects: [{ kind: 'project', ...ProjectVisibilitySetInputV1Schema.parse(input).target }] }) },
     description: 'Change visibility for one Home-qualified private Project at the observed organization row revision. Sessions and files remain unchanged.',
     sideEffectClass: 'write', safety: 'safe', executionPlacement: 'account', placements: [],
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },

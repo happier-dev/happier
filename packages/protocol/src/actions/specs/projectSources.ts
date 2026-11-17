@@ -39,6 +39,10 @@ type ProjectSourceActionSpec = {
 export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] = lazyActionSpecArray(() => [
   {
     ...common, id: 'projects.deploymentDefaults.set', approval: { result: 'required' },
+    approvalScope: { subjectKinds: ['app'], project: (input) => {
+      const target = ProjectDeploymentDefaultsSetInputV1Schema.parse(input);
+      return { subjects: [{ kind: 'app', serverId: target.serverId, projectSourceId: target.projectSourceId }] };
+    } },
     title: 'Set Project deployment defaults',
     description: 'Save or clear one shared Project defaults leaf under Source and content revisions. Existing Environments keep their configured values.',
     safety: 'danger', sideEffectClass: 'write', approvalPolicy: { uiConfirmation: 'direct' },

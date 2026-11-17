@@ -7,6 +7,7 @@ import { ActionPromptingSchema } from '../metadata.js';
 import { z } from '../../zodRuntimePolicy.js';
 import type { ApprovalNarrowing } from '../../approvals/approvalNarrowing.js';
 import type { ActionCompletionDeclaration } from '../actionCompletion.js';
+import { AutomationSubjectKindV1Schema, type AutomationSubjectV1 } from '../../automations/automationSubjectV1.js';
 import { ActionOperationDeclarationV1Schema, ActionOperationReentryPolicyV1Schema } from '../operations/v1.js';
 import { ActionCliProjectionSchema, readActionSchemaTopLevelFieldNames } from '../actionCliProjection.js';
 import { ActionExecutionPlacementSchema, ActionInputHintsSchema, ActionRequiredAuthoritySchema, ActionPermissionChangingSchema, ActionSurfaceSchema, ActionToolExposureSchema, type ActionExecutionPlacement, type ActionRequiredAuthority, type ActionSurfaces } from '../metadata.js';
@@ -32,6 +33,12 @@ export type SessionVisualCopyApprovalSummaryInput = Readonly<{
   destination: SessionSurfaceItemDestinationV1;
   network: UiSurfaceNetworkPolicyV1 | null;
 }>;
+
+/** The domain declares its admitted operands alongside its existing approval scope. */
+export type ActionApprovalScopeProjectionV1 = (
+  input: unknown,
+  context: Readonly<{ serverId?: string | null }>,
+) => Readonly<{ scope?: 'machine' | 'environment'; subjects: readonly AutomationSubjectV1[] }>;
 
 /** What a presenting app knows that an approval summary may use; every field is optional. */
 export type ApprovalPresentationContext = Readonly<{
@@ -179,7 +186,14 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
    * The host admits this operand's scope before confirmation. Environment scopes may
    * inherit a current preview-template preference without changing child authority.
    */
-  approvalScope: z.optional(z.enum(['machine', 'environment'])),
+  approvalScope: z.optional(z.union([
+    z.enum(['machine', 'environment']),
+    z.strictObject({
+      /** Potential kinds; actual identities still come from the admitted domain. */
+      subjectKinds: z.readonly(z.array(AutomationSubjectKindV1Schema)),
+      project: z.optional(z.custom<ActionApprovalScopeProjectionV1>((value) => typeof value === 'function')),
+    }),
+  ])),
   description: z.optional(z.string().check(z.minLength(1))),
   safety: ActionSafetySchema,
   safetyForInput: z.optional(z.custom<(input: unknown) => z.infer<typeof ActionSafetySchema> | undefined>((value) => typeof value === 'function')),

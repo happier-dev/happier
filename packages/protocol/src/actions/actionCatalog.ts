@@ -1,3 +1,4 @@
+import type { AutomationSubjectKindV1 } from '../automations/automationSubjectV1.js';
 import type { ActionId } from './actionIds.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
 import { pluginJsonValuesEqual } from '../plugins/contributions/jsonSchemaValues.js';
@@ -200,13 +201,28 @@ function projectSerializedActionOutput(
 }
 
 function projectActionAutomationChoices(definition: Pick<ActionDefinitionSummaryV1,
-  'id' | 'surfaces' | 'sideEffectClass' | 'executionPlacement'> & Readonly<{ completion?: unknown }>) {
+  'id' | 'surfaces' | 'sideEffectClass' | 'executionPlacement' | 'automation'> & Readonly<{ completion?: unknown }>) {
   const before = isActionEffectHookableV1(definition.sideEffectClass);
   return {
     before,
-    after: before && definition.completion === undefined,
+    after: before,
     workflowStep: isWorkflowStepActionSpecV1(definition),
+    ...(definition.automation?.subjectKinds ? { subjectKinds: definition.automation.subjectKinds } : {}),
   };
+}
+
+function projectNativeActionSubjectKinds(spec: ActionSpec): AutomationSubjectKindV1[] {
+  const kinds = new Set<AutomationSubjectKindV1>();
+  if (typeof spec.approvalScope === 'string') kinds.add(spec.approvalScope);
+  else for (const kind of spec.approvalScope?.subjectKinds ?? []) kinds.add(kind);
+  if (spec.sessionTarget) {
+    kinds.add('session');
+    kinds.add('project');
+    kinds.add('machine');
+  }
+  // The admitted profile is optional context for every native Action.
+  kinds.add('approvalProfile');
+  return [...kinds];
 }
 
 function serializeActionSpecMetadata(
@@ -235,9 +251,10 @@ function serializeActionSpecMetadata(
     ...(spec.prompting ? { prompting: spec.prompting } : {}),
     ...(spec.contextualDefaults ? { contextualDefaults: spec.contextualDefaults } : {}),
     ...(spec.sessionTarget ? { sessionTarget: spec.sessionTarget } : {}),
+    ...(typeof spec.approvalScope === 'string' ? { approvalScope: spec.approvalScope } : {}),
     ...(spec.execution ? { execution: spec.execution } : {}),
     ...(spec.sideEffectClass ? { sideEffectClass: spec.sideEffectClass } : {}),
-    automation: projectActionAutomationChoices(spec),
+    automation: { ...projectActionAutomationChoices(spec), subjectKinds: projectNativeActionSubjectKinds(spec) },
     ...(spec.operation ? { operation: spec.operation } : {}),
   };
 }
@@ -383,6 +400,7 @@ function projectActionDefinitionSummaryMetadata(definition: ActionDefinitionSumm
     ...(definition.prompting === undefined ? {} : { prompting: definition.prompting }),
     ...(definition.contextualDefaults === undefined ? {} : { contextualDefaults: definition.contextualDefaults }),
     ...(definition.sessionTarget === undefined ? {} : { sessionTarget: definition.sessionTarget }),
+    ...(definition.approvalScope === undefined ? {} : { approvalScope: definition.approvalScope }),
     inputHints: definition.inputHints,
     ...(!includeOutputSchema || definition.outputSchema === undefined ? {} : { outputSchema: definition.outputSchema }),
     ...(definition.execution === undefined
@@ -503,7 +521,7 @@ function getHostActionSearchSummary(
   const summary = { definition, searchText: actionSearchText(definition),
     // Output projection can be expensive. Ranking needs only metadata; retain
     // the existing immutable result cache once this row is actually selected.
-    project: () => projected ??= Object.freeze(projectSerializedActionOutput(definition, spec, params)),
+    project: () => projected ??= Object.freeze(projectSerializedActionOutput(definition, spec, { ...params, includeOutputSchema: true })),
   };
   summaries.set(spec, summary);
   return summary;

@@ -70,7 +70,11 @@ describe('configured deployment backup Actions', () => {
     expect(spec, 'Configured backup operations must be public Actions').toBeDefined();
     if (!spec) return;
     expect(spec).toMatchObject({ safety: entry.read ? 'safe' : 'danger', sideEffectClass: entry.read ? 'read' : 'write',
-      executionPlacement: 'machine', approvalScope: 'environment' });
+      executionPlacement: 'machine' });
+    const project = typeof spec.approvalScope === 'object' ? spec.approvalScope.project : undefined;
+    if (!project) throw new Error('Backup operand declaration missing');
+    expect(project(entry.input, { serverId: common.serverId })).toEqual({ scope: 'environment',
+      subjects: [{ kind: 'backup', serverId: common.serverId, environmentId: common.environmentId }] });
     expect(spec.serverTransport).toBeUndefined();
     expect(spec.inputSchema.parse(entry.input)).toEqual(entry.input);
     expect(spec.inputSchema.safeParse({ ...entry.input, configRevision: undefined }).success).toBe(false);

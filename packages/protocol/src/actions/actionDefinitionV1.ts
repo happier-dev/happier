@@ -1,3 +1,4 @@
+import { AutomationSubjectKindV1Schema } from '../automations/automationSubjectV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { PluginSubjectKindContributionV1Schema } from '../plugins/contributions/subjectKinds.js';
 import { PluginLocalizedStringV2Schema } from '../plugins/contributions/publicTypes.js';
@@ -97,6 +98,8 @@ const ActionAutomationChoicesV1Schema = lazyZodSchema(() => z.strictObject({
     before: z.boolean(),
     after: z.boolean(),
     workflowStep: z.boolean(),
+    /** Potential admitted kinds, including Session and profile context; never a permission claim. */
+    subjectKinds: z.optional(z.array(AutomationSubjectKindV1Schema)),
   }));
 
 export const ActionDefinitionSummaryV1Schema = lazyZodSchema(() => z.looseObject({

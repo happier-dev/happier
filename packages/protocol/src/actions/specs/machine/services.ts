@@ -199,6 +199,7 @@ function createMachineServiceActionSpecs() {
   return [
 {
   id: 'machines.services.exec', title: 'Run a service command',
+  approvalScope: { subjectKinds: ['machine', 'environment'] },
   // The exact-generation approval scope and environment permission are admitted by the target daemon,
   // so the app hands the person's confirmed press to that daemon as logs.read does.
   originalExecution: { daemonIngressSurfaces: ['ui'] },
@@ -227,6 +228,7 @@ function createMachineServiceActionSpecs() {
   serviceSpec('machines.services.unwatch', 'Stop watching a service', 'Remove observation intent without stopping the native service.'),
 {
   id: 'machines.services.control', title: 'Control a service',
+  approvalScope: { subjectKinds: ['machine', 'environment'] },
   description: 'Start, stop or restart the exact admitted native service generation without recreating it.',
   safety: 'danger', sideEffectClass: 'write', executionPlacement: 'machine', placements: [],
   approval: { result: 'required' }, approvalPolicy: { uiConfirmation: 'direct' },
@@ -246,6 +248,7 @@ function createMachineServiceActionSpecs() {
 },
 {
   id: 'machines.services.logs.read', title: 'Read service logs', approval: { result: 'required' },
+  approvalScope: { subjectKinds: ['machine', 'environment'] },
   originalExecution: { daemonIngressSurfaces: ['cli', 'ui'] },
   description: 'Read a bounded, redacted page from the exact admitted service generation.',
   safety: 'safe', sideEffectClass: 'read', executionPlacement: 'machine', placements: [],

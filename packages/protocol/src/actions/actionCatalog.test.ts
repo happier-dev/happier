@@ -22,6 +22,32 @@ import { prepareExternalActionResponseEnvelopeV1 } from './externalActionApi.js'
 import { compileProtocolJsonSchema } from '../plugins/actions/jsonSchemaCompiler.js';
 
 describe('actionCatalog action-definition adapter', () => {
+  it('enumerates native subject choices through ordinary search and strict discovery without executable operands', () => {
+    for (const [id, subjectKinds] of [
+      ['projects.visibility.set', ['project', 'approvalProfile']],
+      ['projects.deploymentDefaults.set', ['app', 'approvalProfile']],
+      ['deployments.backups.run', ['environment', 'backup', 'approvalProfile']],
+      ['deployments.backups.restore', ['environment', 'backup', 'database', 'approvalProfile']],
+      ['machines.reboot', ['machine', 'approvalProfile']],
+      ['machines.services.control', ['machine', 'environment', 'approvalProfile']],
+      ['machines.services.exec', ['machine', 'environment', 'approvalProfile']],
+      ['deployments.environments.create', ['environment', 'approvalProfile']],
+      ['session.stop', ['session', 'project', 'machine', 'approvalProfile']],
+      ['settings.set', ['approvalProfile']],
+    ] as const) {
+      const summary = searchSerializedActionSpecsForSurface({
+        surface: 'ui', query: id, purpose: 'automation', limit: null, includeOutputSchema: false,
+      }).find(row => row.id === id);
+      expect(summary, id).toBeDefined();
+      expect(summary?.automation, id).toMatchObject({ before: true, subjectKinds });
+      expect(projectActionDefinitionSummaryForExternalDiscovery(summary!), id).toMatchObject({
+        automation: { subjectKinds },
+      });
+      expect(projectActionDefinitionForExternalDiscovery(actionSpecToActionDefinitionV1(getActionSpec(id))), id)
+        .toMatchObject({ automation: { subjectKinds } });
+    }
+  });
+
   it('returns a complete deliberately demanded catalog beyond ordinary search limits', () => {
     const base = actionSpecToActionDefinitionV1(getActionSpec('action.spec.search'));
     const definitions = Array.from({ length: 201 }, (_, index): ActionDefinitionV1 => ({
@@ -42,7 +68,7 @@ describe('actionCatalog action-definition adapter', () => {
       ['machines.command.run', { before: true, after: true, workflowStep: true }],
       ['workflow.run.summaries', { before: false, after: false, workflowStep: true }],
       ['ui.current_context.read', { before: false, after: false, workflowStep: false }],
-      [DEPLOYMENT_DEPLOY_ACTION_ID_V1, { before: true, after: false, workflowStep: true }],
+      [DEPLOYMENT_DEPLOY_ACTION_ID_V1, { before: true, after: true, workflowStep: true }],
     ] as const) {
       const summary = serializeActionSpec(getActionSpec(id), { includeOutputSchema: false });
       expect(summary, id).toMatchObject({ automation });
@@ -416,6 +442,9 @@ describe('actionCatalog action-definition adapter', () => {
       .slice(0, 2)
       .map(spec => serializeActionSpec(spec, { surface: 'mcp' }));
     for (const query of [undefined, '']) {
+      const summaries = searchSerializedActionSpecsForSurface({ surface: 'mcp', query, limit: 2, isActionEnabled, includeOutputSchema: false });
+      expect(summaries.map(summary => summary.id)).toEqual(expected.map(definition => definition.id));
+      expect(summaries.every(summary => summary.outputSchema === undefined)).toBe(true);
       expect(searchSerializedActionSpecsForSurface({ surface: 'mcp', query, limit: 2, isActionEnabled })).toEqual(expected);
     }
   });
@@ -601,6 +630,7 @@ describe('actionCatalog action-definition adapter', () => {
     })).toEqual([{
       id: 'com.acme.actions/actions/strictprojectionneedle9x',
       title: 'Strictprojectionneedle9x',
+      automation: { before: true, after: true, workflowStep: false },
       description: null,
       safety: 'safe',
       placements: [],

@@ -46,7 +46,11 @@ describe('deployment backup restore Action', () => {
     const input = { ...common, mode, ...(mode === 'confirm' ? { prepareOperationId: 'prepare-operation' } : {}),
       ...(mode === 'recover' ? { operationId: 'failed-restore' } : {}) };
     expect(spec).toMatchObject({ safety: 'danger', sideEffectClass: 'write', executionPlacement: 'machine',
-      approvalScope: 'environment', irreversible: true, approvalPolicy: { uiConfirmation: 'policy' } });
+      irreversible: true, approvalPolicy: { uiConfirmation: 'policy' } });
+    const project = typeof spec.approvalScope === 'object' ? spec.approvalScope.project : undefined;
+    if (!project) throw new Error('Restore operand declaration missing');
+    expect(project(input, { serverId: common.serverId })).toMatchObject({ scope: 'environment',
+      subjects: [{ kind: 'backup', serverId: common.serverId, environmentId: common.environmentId }] });
     expect(spec.serverTransport).toBeUndefined();
     expect(spec.inputSchema.parse(input)).toEqual(input);
     expect(spec.inputSchema.safeParse({ ...input, evidence: {} }).success).toBe(false);
