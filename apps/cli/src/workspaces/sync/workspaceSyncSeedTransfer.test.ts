@@ -14,9 +14,60 @@ import {
   createWorkspaceSyncSeedExport,
   materializeLocalWorkspaceSyncSeed,
   materializeWorkspaceSyncSeedExport,
+  resolveWorkspaceSyncSeedTransfer,
 } from './workspaceSyncSeedTransfer';
 
 describe('workspace sync seed transfer', () => {
+  it.each([
+    ['all_files', 'local'], ['all_files', 'remote'],
+    ['git_worktree', 'local'], ['git_worktree', 'remote'],
+  ] as const)('materializes %s policy through %s seed with ignored selections and explicit exclusions', async (selection, transport) => {
+    const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'seed-content-policy-' });
+    const root = await mkdtemp(join(tmpdir(), 'seed-content-policy-target-'));
+    const targetPath = join(root, 'target');
+    const registration = createGitScmBackendRuntimeRegistration();
+    const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+      definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git',
+      executableDefinition: registration.runtime!, registration,
+    })]);
+    const operationId = `seed-policy-${selection}-${transport}`;
+    const workspaceTransfer = resolveWorkspaceSyncSeedTransfer({ selection,
+      extraIncludePatterns: ['include.env'], extraIgnorePatterns: ['excluded.txt'] });
+    try {
+      await writeFile(join(repository.rootPath, '.gitignore'), 'ignored.txt\ninclude.env\nsecret.env\n');
+      for (const path of ['ignored.txt', 'include.env', 'secret.env', 'excluded.txt', 'user.txt']) {
+        await writeFile(join(repository.rootPath, path), `content:${path}`);
+      }
+      if (transport === 'local') {
+        const custody = await materializeLocalWorkspaceSyncSeed({ operationId, activeServerDir: root,
+          sourcePath: repository.rootPath, targetPath, workspaceTransfer, registry });
+        await custody.commit();
+      } else {
+        const exported = await createWorkspaceSyncSeedExport({ operationId, activeServerDir: root,
+          sourcePath: repository.rootPath, workspaceTransfer, registry });
+        const custody = await materializeWorkspaceSyncSeedExport({ operationId, targetPath,
+          requestPayload: async request => {
+            const payload = request.transferId === operationId ? exported.payloadSource
+              : await exported.onDemandScope.resolvePayloadSourceOnOpen({ transferId: request.transferId, requestBody: {} });
+            try { await writeTransferPayloadSourceToFile({ source: payload, destinationPath: request.destinationPath }); }
+            finally { await payload.dispose?.(); }
+          }, materializeWorkspaceExportArtifacts: input => materializeWorkspaceExportArtifactsWithScmWorkspace({ ...input, registry }),
+        });
+        await custody.commit();
+      }
+      for (const path of ['user.txt', 'include.env']) {
+        expect(await readFile(join(targetPath, path), 'utf8')).toBe(`content:${path}`);
+      }
+      for (const path of ['ignored.txt', 'secret.env']) {
+        if (selection === 'all_files') expect(await readFile(join(targetPath, path), 'utf8')).toBe(`content:${path}`);
+        else await expect(readFile(join(targetPath, path))).rejects.toMatchObject({ code: 'ENOENT' });
+      }
+      await expect(readFile(join(targetPath, 'excluded.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await Promise.all([rm(repository.rootPath, { recursive: true, force: true }), rm(root, { recursive: true, force: true })]);
+    }
+  });
+
   it('keeps an intentionally empty nested Git selection empty instead of exporting ignored content', async () => {
     const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'nested-empty-selection-' });
     const sourcePath = join(repository.rootPath, 'private'); await mkdir(sourcePath);

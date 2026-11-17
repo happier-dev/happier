@@ -2415,7 +2415,6 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   };
   const unsubscribe = factories.subscribeProjectSnapshot(() => reconcileAuthority());
   reconcileAuthority();
-  await authorityTail.catch(() => undefined);
   const startup = privateRecovery.then(async () => {
     await runtime.start().catch((error) => {
       publishReadiness({ state: 'unavailable', errorCode: 'engine_unavailable' });
