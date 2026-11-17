@@ -10,6 +10,8 @@ const { createBundledPluginPublicationFsFixture } = await vi.hoisted(async () =>
 ));
 import { ExternalSessionsCandidatesListResponseSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { resolveBuiltInContributions } from '@/plugins/projection/registry/resolveBuiltInContributions';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerMachineExternalSessionsRpcHandlers } from '@/api/machine/rpcHandlers.externalSessions';
@@ -67,7 +69,11 @@ afterEach(() => { vi.unstubAllEnvs(); fixture.nativeUnavailable = false; fixture
 
 describe('Codex History source RPC', () => {
     let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
-    beforeAll(async () => { runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController }); });
+    beforeAll(async () => {
+        runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+            runtimeOptions: { contributes: createResolvedContributionRegistry(resolveBuiltInContributions()),
+                pluginIds: ['happier.agent.codex'] } });
+    });
     afterAll(async () => { await runtime.dispose(); });
     it('continues a slow Codex discovery page through the real host when its native progress exceeds 2,000 characters', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-codex-progress-'));

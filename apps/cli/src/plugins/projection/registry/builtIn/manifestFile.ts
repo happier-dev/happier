@@ -229,7 +229,7 @@ export function ingestBundledPluginManifest(locator: BundledManifestLocator, man
     const options = { purpose: 'installedRead', manifestAuthority: 'bundled_first_party', sourceProvenance: 'localSource' } as const;
     // Generated files serialize the canonical publisher's successfully admitted
     // manifest. The only assertion is at that same-build JSON decoding boundary.
-    return 'manifestRelativePath' in locator
-        ? ingestCanonicalPluginManifest(manifest as CanonicalPluginManifest, { ...options, admission: 'build' })
-        : ingestCanonicalPluginManifest(manifest, options);
+    return 'manifest' in locator
+        ? ingestCanonicalPluginManifest(manifest, options)
+        : ingestCanonicalPluginManifest(manifest as CanonicalPluginManifest, { ...options, admission: 'build' });
 }

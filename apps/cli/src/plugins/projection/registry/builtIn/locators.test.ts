@@ -86,10 +86,15 @@ describe('bundled plugin locators', () => {
 
             expect(loadBundledPluginLocatorResult([bundled]).loadedPlugins).toHaveLength(1);
             expect(admissions.mock.calls).toHaveLength(1);
-            const invalid = loadBundledPluginLocatorResult([{ ...bundled, manifest: { ...built.manifest, unknownRestriction: true } }]);
+            const overridden = loadBundledPluginLocatorResult([{ ...bundled, manifestRelativePath: 'bundled.json' }]);
+            expect(overridden.pluginFailures).toEqual([]);
+            expect(overridden.loadedPlugins[0]?.manifest).toEqual(built.manifest);
+            expect(admissions.mock.calls).toHaveLength(2);
+            const invalid = loadBundledPluginLocatorResult([{ ...bundled, manifestRelativePath: 'bundled.json',
+                manifest: { ...built.manifest, unknownRestriction: true } }]);
             expect(invalid.loadedPlugins).toHaveLength(0);
             expect(invalid.pluginFailures).toHaveLength(1);
-            expect(admissions.mock.calls).toHaveLength(2);
+            expect(admissions.mock.calls).toHaveLength(3);
 
             const manifestPath = join(root, 'foreign.json');
             for (const sourceProvenance of ['localSource', 'registryCustodied'] as const) {
@@ -98,8 +103,8 @@ describe('bundled plugin locators', () => {
                 writeFileSync(manifestPath, JSON.stringify(createPluginManifestV2Fixture({ unknownRestriction: true })));
                 expect((await readPluginManifest({ manifestPath, sourceProvenance })).ok).toBe(false);
             }
-            expect(admissions.mock.calls).toHaveLength(6);
-            console.info('bundled-runtime-admission-cost', JSON.stringify({ bundled: 0, inline: 2, installedAndDev: 4 }));
+            expect(admissions.mock.calls).toHaveLength(7);
+            console.info('bundled-runtime-admission-cost', JSON.stringify({ bundled: 0, inline: 3, installedAndDev: 4 }));
         } finally {
             admissions.mockRestore();
             Object.defineProperty(process, 'execPath', execPathDescriptor);
