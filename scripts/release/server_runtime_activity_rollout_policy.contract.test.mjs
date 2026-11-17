@@ -164,7 +164,7 @@ test('promote-server performs the write-capable deploy-ref mutation only from a 
   assert.doesNotMatch(promotionStep, /scripts\/pipeline\/run\.mjs/);
   assert.doesNotMatch(promotionStep, /git rev-parse HEAD/);
   const deployStep = workflowStep(workflow, 'Deploy exact hosted images');
-  assert.match(deployStep, /node "\$RUNNER_TEMP\/deploy-hosted-images\.mjs" --images "\$HOSTED_IMAGES"/);
+  assert.match(deployStep, /node "\$RUNNER_TEMP\/dispatch-hosted-deploy\.mjs" --images "\$HOSTED_IMAGES"/);
   assert.match(deployStep, /needs\.publish_hosted\.outputs\.hosted_images/);
   assert.doesNotMatch(deployStep, /git rev-parse|needs\.validate_candidate\.outputs/);
 });

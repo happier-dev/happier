@@ -17,7 +17,7 @@ test('promote-server isolates deploy branch promotion and exact image deploy in 
   assert.doesNotMatch(raw, /node scripts\/pipeline\/run\.mjs deploy/);
   assert.match(raw, /\$RUNNER_TEMP\/promote-server-deploy-ref\.mjs/);
   assert.match(raw, /\$RUNNER_TEMP\/deploy-ref-cas\.mjs/);
-  assert.match(raw, /\$RUNNER_TEMP\/deploy-hosted-images\.mjs/);
+  assert.match(raw, /\$RUNNER_TEMP\/dispatch-hosted-deploy\.mjs/);
   assert.match(raw, /--expected-current-sha/);
   assert.match(raw, /group: deploy-ref-\$\{\{ github\.repository \}\}-\$\{\{ inputs\.environment \}\}-server/);
   assert.doesNotMatch(raw, /Wait for deploy workflow/i);

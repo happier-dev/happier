@@ -831,13 +831,22 @@ private; CI never rewrites those credentials. Keep API routing on port 3005 and
 UI routing on 8080. Preserve migration ownership: the designated API runs
 migrations; workers use `RUN_MIGRATIONS=0`.
 
-Coordinate this operator switch with landing the workflow changes. They replace
-the webhook path immediately: manual server/UI deployment and changed-ref
-promotion fail when Dokploy is unconfigured, while direct pushes to server/UI
-deploy refs no longer start a deployment workflow. A failed deployment after
-promotion may leave the deploy ref advanced; configure Dokploy and rerun with
-`force_deploy=true`, or use the explicit image map in the manual deploy workflow.
-The replaced webhook path is not an automatic fallback.
+Coordinate this operator switch with landing the workflow changes. Release server/UI
+promotion dispatches `deploy.yml` on `deploy/<environment>/<component>`, passing
+the publisher's exact `hosted_images` map, and waits for that run's conclusion.
+Only that deploy job reads environment-scoped Dokploy credentials. This keeps the
+production branch policy (`deploy/production/*`) intact even when release control
+runs from `dev`. The release App token needs Actions write permission to dispatch
+and observe the deploy run; secrets are not copied to `release-shared`.
+
+Direct pushes to server/UI deploy refs no longer start deployment. Resuming a
+failed promotion redeploys the exact map even if the ref already advanced; the
+same image can be deployed again. A manual recovery can also dispatch `deploy.yml`
+on the corresponding deploy ref with an explicit image map. Production fails
+when Dokploy is unconfigured; preview with no applications skips with a notice
+through the same adapter. The replaced webhook path is not an automatic fallback.
+Cancelling release control may leave its already dispatched deploy running;
+operators can inspect or cancel the linked deploy run in GitHub Actions.
 
 The adapter sets API/worker env `HAPPIER_SERVER_FLAVOR=full`,
 `HAPPIER_DB_PROVIDER=postgres`, `HAPPIER_SERVER_UI_REQUIRED=0`,

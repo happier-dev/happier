@@ -600,6 +600,7 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
           permission-workflows: write
+          permission-actions: write
       - name: Create release notes asset token
         id: release_notes_assets_token
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
@@ -653,17 +654,14 @@ jobs:
             --deploy-environment "$DEPLOY_ENVIRONMENT" --component ui --sha "$RELEASE_SHA" \
             --summary-file "$GITHUB_STEP_SUMMARY" --github-output "$GITHUB_OUTPUT"
       - name: Deploy exact hosted images
-        if: inputs.deploy_web && (steps.promote_ref.outputs.changed == 'true' || inputs.force_deploy)
+        if: inputs.deploy_web
         env:
           HOSTED_IMAGES: ${{ needs.publish_hosted.outputs.hosted_images }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-          DOKPLOY_API_URL: ${{ vars.DOKPLOY_API_URL }}
-          DOKPLOY_UI_SERVER_URL: ${{ vars[format('HAPPIER_{0}_SERVER_URL', inputs.environment == 'production' && 'PRODUCTION' || 'PREVIEW')] }}
-          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
-          DOKPLOY_UI_APPLICATION_ID: ${{ vars[format('DOKPLOY_{0}_UI_APPLICATION_ID', inputs.environment == 'production' && 'PRODUCTION' || 'PREVIEW')] }}
-          CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
-          CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
-        run: node scripts/pipeline/deploy/deploy-hosted-images.mjs --images "$HOSTED_IMAGES"
+          DEPLOY_COMPONENT: ui
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+        run: node scripts/pipeline/deploy/dispatch-hosted-deploy.mjs --images "$HOSTED_IMAGES"
 
   mobile_native:
     name: Mobile native (local runner)

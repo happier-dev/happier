@@ -124,7 +124,15 @@ test('hosted promotions publish before deploy-ref promotion and deploy the publi
     assert.ok(workflow.jobs[promote].needs.includes('publish_hosted'));
     const deploy = workflow.jobs[promote].steps.find((step) => step.env?.HOSTED_IMAGES);
     assert.equal(deploy?.env?.HOSTED_IMAGES, '${{ needs.publish_hosted.outputs.hosted_images }}');
-    assert.match(deploy.run, /deploy-hosted-images\.mjs/);
+    assert.match(deploy.run, /dispatch-hosted-deploy\.mjs/);
+    assert.equal(workflow.jobs[promote].environment, 'release-shared');
+    assert.equal(deploy.env.DEPLOY_COMPONENT, file === 'promote-ui.yml' ? 'ui' : 'server');
+    assert.equal(deploy.env.GH_REPO, '${{ github.repository }}');
+    assert.ok(deploy.env.GH_TOKEN.includes('token.outputs.token'));
+    assert.doesNotMatch(deploy.if ?? '', /changed|force_deploy/, 'resume must redeploy the same image map even after ref promotion');
+    assert.doesNotMatch(JSON.stringify(deploy.env), /DOKPLOY/);
+    const token = workflow.jobs[promote].steps.find((step) => step.id === (file === 'promote-ui.yml' ? 'app_token' : 'promotion_token'));
+    assert.equal(token.with['permission-actions'], 'write');
     assert.doesNotMatch(JSON.stringify(workflow.jobs[promote]), /trigger-webhooks\.mjs|trigger-server-deploy-webhooks/);
   }
   const autoDeploy = YAML.parse(await loadWorkflow('deploy-on-deploy-branch.yml'));
@@ -150,7 +158,7 @@ test('nightly dev docker waits for the release artifacts it consumes', async () 
 });
 
 test('production UI deployment never falls back to the preview server URL', async () => {
-  for (const name of ['promote-ui.yml', 'deploy.yml']) {
+  for (const name of ['deploy.yml']) {
     const workflow = YAML.parse(await loadWorkflow(name));
     const steps = Object.values(workflow.jobs).flatMap((job) => job.steps ?? []);
     const deploy = steps.find((step) => step.env?.DOKPLOY_UI_SERVER_URL);
