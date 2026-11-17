@@ -245,6 +245,19 @@ describe('Project readiness through the public Action', () => {
       details: { step: 'readiness', code: 'home_unreachable' } });
     expect(JSON.stringify(result)).not.toContain('PRIVATE-');
   });
+  it('records the readiness refusal cause once without native output', async () => {
+    const { logger: localLog } = await import('@/ui/logger');
+    const log = vi.spyOn(localLog, 'warnLocalFile').mockImplementation(() => {});
+    const { executor, metadata } = readinessFixture();
+    metadata.mockRejectedValue(Object.assign(new Error('PRIVATE-NATIVE-STDERR'), { code: 'stale_input', stderr: 'PRIVATE-NATIVE-STDERR' }));
+    await executor.execute('projects.readiness.read', {
+      serverId: 'home', machineId: 'controller', projectId: 'project',
+      environments: [{ environmentId: 'production', expectedRevision: 2 }],
+    }, { surface: 'cli', serverId: 'home', runtimeAccountId: 'account' });
+    const recorded = log.mock.calls.filter(([, data]) => (data as { phase?: string } | undefined)?.phase === 'deployment.project.readiness');
+    expect(recorded).toHaveLength(1);
+    expect(JSON.stringify(recorded)).not.toContain('PRIVATE-');
+  });
   it('reports recorded current-source verification without opening the repository or acquiring secrets', async () => {
     const backup: DeploymentBackupConfigurationV1 = { configRevision: 2,
       destinationRef: { pluginId: 'example.storage', localId: 's3' }, occurrenceId: 'storage', config: {}, credentialBindings: [],

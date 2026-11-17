@@ -9,6 +9,8 @@ import {
 import type { DeploymentBackupConfigurationV1, DeploymentEnvironmentBackupV1, DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { deploymentBackupTargetOperands, selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
+// Keep after the protocol imports: placed first, it broke this module graph's schema initialization (A/B, 11-17).
+import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 
 export type ProjectReadinessEnvironmentV1 =
   Readonly<{ kind: 'available'; durableData: 'present' | 'absent' | 'unknown'; backup?: DeploymentEnvironmentBackupV1;
@@ -117,7 +119,8 @@ export function createProjectReadinessActionForHost(ports: ProjectReadinessHostP
     } catch (error) {
       const code = context.signal?.aborted ? 'cancelled' : readRpcErrorCode(error)
         ?? (error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'action_failed');
-      return { ok: false, errorCode: code, error: code, details: { step: 'readiness', code } } as const;
+      return recordFailureCause(error, 'deployment.project.readiness',
+        { ok: false, errorCode: code, error: code, details: { step: 'readiness', code } } as const);
     }
   };
 }
