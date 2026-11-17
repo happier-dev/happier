@@ -149,6 +149,7 @@ export function normalizeCliActionThrownError(error: unknown): Readonly<{ failur
   if (hasTypedFailure || errorCode !== 'action_failed' || failure.failureCause.errorCode !== null) {
     return { failure: { errorCode, errorMessage: resolveActionFailureMessage(failure.error, failure.failureCause, errorCode, failure.details),
       failureCause: failure.failureCause,
+      ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
       ...(failure.details === undefined ? {} : { details: failure.details }),
       ...(failure.effectAttempted !== undefined ? { effectAttempted: failure.effectAttempted } : {}) }, unexpected: false };
   }

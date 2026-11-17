@@ -9,10 +9,9 @@ import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol';
 
 import { hasFlag } from '@/cli/commands/shared/argvFlags';
 import { printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
-import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import type { StoredCredentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
-import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
+import { normalizeActionExecuteResult, normalizeCliActionThrownError, projectCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { parseSessionCreateSpawnOptions } from './create/parseSessionCreateSpawnOptions';
@@ -176,37 +175,29 @@ export async function cmdSessionCreate(
     );
     recordStartupPhase('spawn_dispatch');
   } catch (error) {
-    const mapped = mapUnknownErrorToControlError(error);
+    const failure = projectCliActionFailure(normalizeCliActionThrownError(error).failure);
     if (structuredCreationOutput) {
       await printJsonEnvelope({
         ok: false,
         kind: 'session_create',
-        error: {
-          code: mapped.code,
-          ...(mapped.message ? { message: mapped.message } : {}),
-          ...(((error as { details?: unknown })?.details !== undefined) ? { details: (error as { details?: unknown }).details } : {}),
-        },
+        error: failure,
       });
       return;
     }
-    throw Object.assign(new Error(mapped.message ?? (error instanceof Error ? error.message : 'Failed to create session')), {
-      code: mapped.code,
-      ...(((error as { details?: unknown })?.details !== undefined) ? { details: (error as { details?: unknown }).details } : {}),
-    });
+    const { message, ...failureMetadata } = failure;
+    throw Object.assign(new Error(message ?? failure.code), failureMetadata);
   }
 
   const result = normalizeActionExecuteResult(actionRes);
   if (!result.ok) {
     const isAmbiguousSpawn = hasSpawnNonce(result.details);
+    const failure = projectCliActionFailure(result);
     if (structuredCreationOutput) {
       await printJsonEnvelope({
         ok: false,
         kind: 'session_create',
         error: {
-          code: result.errorCode,
-          ...(result.errorMessage ? { message: result.errorMessage } : {}),
-          ...(result.candidates ? { candidates: result.candidates } : {}),
-          ...(result.details !== undefined ? { details: result.details } : {}),
+          ...failure,
           ...(isAmbiguousSpawn ? { spawnAttemptId: effectiveSpawnAttemptId } : {}),
         },
       });
@@ -215,10 +206,8 @@ export async function cmdSessionCreate(
     const retryHint = isAmbiguousSpawn
       ? ` Retry with --spawn-attempt-id ${effectiveSpawnAttemptId} --resume-spawn-attempt.`
       : '';
-    throw Object.assign(new Error(`${result.errorMessage ?? result.errorCode}${retryHint}`), {
-      code: result.errorCode,
-      ...(result.details !== undefined ? { details: result.details } : {}),
-    });
+    const { message, ...failureMetadata } = failure;
+    throw Object.assign(new Error(`${message ?? failure.code}${retryHint}`), failureMetadata);
   }
   const rawCreated = result.data;
   if (await tryHandleApprovalRequestCreated({
@@ -288,21 +277,19 @@ export async function cmdSessionCreate(
       executor,
       sessionId: created.sessionId,
       timeoutSeconds: readSessionWaitTimeoutSecondsFlag(argv),
-    });
+    }).catch(error => ({ ok: false as const, ...normalizeCliActionThrownError(error).failure }));
     if (!waitResult.ok) {
+      const failure = projectCliActionFailure(waitResult);
       if (json) {
         await printJsonEnvelope({
           ok: false,
           kind: 'session_create',
-          error: {
-            code: waitResult.errorCode,
-            ...(waitResult.candidates ? { candidates: waitResult.candidates } : {}),
-            ...(waitResult.errorMessage ? { message: waitResult.errorMessage } : {}),
-          },
+          error: failure,
         });
         return;
       }
-      throw new Error(waitResult.errorMessage ?? waitResult.errorCode);
+      const { message, ...failureMetadata } = failure;
+      throw Object.assign(new Error(message ?? failure.code), failureMetadata);
     }
     if (await tryHandleApprovalRequestCreated({
       envelopeKind: 'session_create',

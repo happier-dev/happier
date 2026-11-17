@@ -1,8 +1,9 @@
 import { createServer } from 'node:http';
 
 import { expect, it } from 'vitest';
+import { projectActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
-import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SessionSpawnNewActionResultV1Schema, SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { AccessibleMachineAccessV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
@@ -222,7 +223,7 @@ it.each([
   }
 });
 
-it.each(['provider', 'agent_signed_out', 'child_exit'] as const)('preserves the typed %s cause through public Action transport and JSON or thrown Session-create errors', async (kind) => {
+it.each(['provider', 'agent_signed_out', 'child_exit', 'admission', 'wait_admission'] as const)('preserves the typed %s cause through public Action transport and JSON or thrown Session-create errors', async (kind) => {
   const providerError = createProviderErrorV1('provider_endpoint_unavailable', {
     connectionId: 'pc_gateway', machineId: 'machine-a',
   });
@@ -238,6 +239,9 @@ it.each(['provider', 'agent_signed_out', 'child_exit'] as const)('preserves the 
         }))
     : SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({ errorCode: 'agent_signed_out',
         errorMessage: 'upstream-private-auth-diagnostic', agentId: 'custom-agent' }));
+  const admissionFailure = projectActionExecuteFailure({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+    effectAttempted: false, failureCause: { phase: 'session.authorization.mint', errorClass: 'Error',
+      errorCode: 'target_unavailable', httpStatus: 409 } });
   const requests: string[] = [];
   // Only the remote public Action HTTP boundary is substituted. The result uses
   // its canonical schema; the SDK client and CLI strict consumer stay real.
@@ -247,8 +251,13 @@ it.each(['provider', 'agent_signed_out', 'child_exit'] as const)('preserves the 
     for await (const chunk of request) body += String(chunk);
     const { requestId } = JSON.parse(body) as { requestId?: string };
     response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ v: 1, actionId: 'session.spawn_new', requestId,
-      execution: { ok: true, result } }));
+    response.end(JSON.stringify({ v: 1, actionId: kind === 'wait_admission' && request.url !== '/v1/actions/session.spawn_new'
+      ? 'session.wait.idle' : 'session.spawn_new', requestId,
+      execution: kind === 'wait_admission' && request.url === '/v1/actions/session.spawn_new'
+        ? { ok: true, result: SessionSpawnNewActionResultV1Schema.parse({ type: 'success', sessionId: 'c123456789012345678901234',
+          disposition: 'created', executionTarget: { serverId: configuration.activeServerId, machineId: 'machine-a' },
+          organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } }) }
+        : kind === 'admission' || kind === 'wait_admission' ? { ...admissionFailure, requestId } : { ok: true, result } }));
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
@@ -262,11 +271,14 @@ it.each(['provider', 'agent_signed_out', 'child_exit'] as const)('preserves the 
         token: 'hap_v1_11111111-1111-4111-8111-111111111111_' + 'A'.repeat(43),
         encryption: null, credentialProvenance: 'api_token' as const,
       }) };
-      const argv = ['--machine-id', 'machine-a', '--path', '/tmp'];
+      const argv = ['--machine-id', 'machine-a', '--path', '/tmp', ...(kind === 'wait_admission' ? ['--wait'] : [])];
       const output = captureConsoleJsonOutput();
       try {
         await cmdSessionCreate([...argv, '--json'], deps);
-        const expected = kind === 'child_exit' ? { code: 'spawn_failed', launchError: {
+        const expected = kind === 'admission' || kind === 'wait_admission'
+          ? { code: admissionFailure.errorCode, failureCause: admissionFailure.failureCause, effectAttempted: false,
+            ...(kind === 'admission' ? { requestId: expect.any(String) } : {}) }
+          : kind === 'child_exit' ? { code: 'spawn_failed', launchError: {
             code: 'CHILD_EXITED_BEFORE_WEBHOOK', childExit: { code: 1, signal: null },
           } }
           : kind === 'provider' ? { code: 'spawn_failed', retryable: true, providerError }
@@ -280,7 +292,10 @@ it.each(['provider', 'agent_signed_out', 'child_exit'] as const)('preserves the 
             message: expect.stringMatching(/select.*connected account profile.*configure.*default profile/i),
           } : kind === 'child_exit' ? { message: expect.stringContaining('module_not_found: nacl-fast.js') } : {}),
         });
-        expect(requests).toEqual(['POST /v1/actions/session.spawn_new', 'POST /v1/actions/session.spawn_new']);
+        expect(requests).toEqual(kind === 'wait_admission'
+          ? ['POST /v1/actions/session.spawn_new', 'POST /v1/actions/session.wait.idle',
+            'POST /v1/actions/session.spawn_new', 'POST /v1/actions/session.wait.idle']
+          : ['POST /v1/actions/session.spawn_new', 'POST /v1/actions/session.spawn_new']);
       } finally { output.restore(); }
     });
   } finally {

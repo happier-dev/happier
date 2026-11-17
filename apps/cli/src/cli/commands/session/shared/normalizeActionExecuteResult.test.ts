@@ -20,10 +20,11 @@ describe('CLI Action failure presentation', () => {
 
   it.each(['direct', 'cause'] as const)('keeps the typed public failure authoritative over CLI-like diagnostics (%s)', kind => {
     const failure = createActionExecuteFailureError({ ok: false, errorCode: 'action_failed', error: 'Invalid vendor payload',
+      requestId: 'typed-request',
       failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'invalid_arguments', httpStatus: null } });
     const error = kind === 'direct' ? failure
       : Object.assign(new Error('Invalid vendor payload', { cause: failure }), { code: 'invalid_arguments' });
-    expect(normalizeCliActionThrownError(error)).toMatchObject({ failure: { errorCode: 'action_failed',
+    expect(normalizeCliActionThrownError(error)).toMatchObject({ failure: { errorCode: 'action_failed', requestId: 'typed-request',
       failureCause: { errorCode: 'invalid_arguments' } } });
   });
 

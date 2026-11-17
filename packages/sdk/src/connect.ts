@@ -853,12 +853,14 @@ function createClient(
         });
       }
       if (!externalActionResponse.execution.ok) {
-        throw new HappierActionError(
+        const failure = new HappierActionError(
           externalActionResponse.execution.errorCode,
           externalActionResponse.execution.error,
           externalActionResponse.execution.details,
           requestId,
         );
+        failure.cause = { ...externalActionResponse.execution, requestId };
+        throw failure;
       }
       const deferredApproval = parseDeferredApprovalRequest(
         externalActionResponse.execution.result,

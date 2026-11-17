@@ -55,6 +55,7 @@ import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPol
 import { getActionSpec, resolveActionExecutionPlacementForInput, PublicActionIdSchema, SignedRootActionIdSchema, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindCallerInput } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
 import { isPluginActionExecutionDispatchId, type PluginActionExecutionRequestOwner } from './createDaemonPluginActionExecutor';
@@ -639,10 +640,11 @@ async function executePatPublicActionPlan(params: Readonly<{
     return { ok: true, result };
   } catch (error) {
     if (error instanceof HappierActionError) {
-      return {
+      return parseActionExecuteFailure(error.cause) ?? {
         ok: false,
         errorCode: error.code,
         error: error.message,
+        ...(error.requestId === undefined ? {} : { requestId: error.requestId }),
         ...(error.details === undefined ? {} : { details: error.details }),
       };
     }
