@@ -20,6 +20,31 @@ describe('isProviderBoundSessionMetadata', () => {
     }))).toBe(true);
   });
 
+  it('keeps a current Account Provider intent bound without its retired V1 carrier', () => {
+    expect(isProviderBoundSessionMetadata({
+      modelSelectionIntentV2: { v: 2, updatedAt: 12, ref: {
+        source: 'account_provider_connection', agentTargetKey: 'backend:codex',
+        providerConnectionId: 'pc_work', modelId: 'provider-model',
+      } },
+    })).toBe(true);
+  });
+
+  it('does not classify a current native or Team source from a stale V1 Provider intent', () => {
+    for (const ref of [
+      { source: 'native', agentTargetKey: 'backend:codex', modelId: 'model' },
+      { source: 'team_resource', agentTargetKey: 'backend:codex', modelId: 'model',
+        resourceId: 'resource', teamId: 'team', expectedResourceRevision: 1, deliveryMode: 'brokered' },
+    ]) {
+      expect(isProviderBoundSessionMetadata({
+        ...intent({ agentTargetKey: 'backend:codex', providerConnectionId: 'pc_old', modelId: 'old' }),
+        modelSelectionIntentV2: { v: 2, updatedAt: 12, ref },
+      })).toBe(false);
+    }
+    expect(isProviderBoundSessionMetadata({
+      modelSelectionIntentV2: { ref: { source: 'account_provider_connection', providerConnectionId: 'pc_work' } },
+    })).toBe(true);
+  });
+
   it('does not report a native selection, a cleared intent, or absent metadata', () => {
     expect(isProviderBoundSessionMetadata(intent({
       agentTargetKey: 'backend:codex',
@@ -194,6 +219,33 @@ describe('resolveAmbientProviderConnectionForModelIntent', () => {
       agentTargetKey: 'backend:codex',
       sessionActive: false,
     })).toEqual({ status: 'resolved', providerConnectionId: null });
+  });
+
+  it('uses the current Account Provider source for an inactive model-only edit', () => {
+    expect(resolveAmbientProviderConnectionForModelIntent({
+      metadata: {
+        modelSelectionIntentV2: { v: 2, updatedAt: 12, ref: {
+          source: 'account_provider_connection', agentTargetKey: 'backend:codex',
+          providerConnectionId: 'pc_persisted', modelId: 'persisted-model',
+        } },
+      },
+      agentTargetKey: 'backend:codex', sessionActive: false,
+    })).toEqual({ status: 'resolved', providerConnectionId: 'pc_persisted' });
+  });
+
+  it('refuses malformed or differently targeted V2 intent without falling back to V1', () => {
+    for (const ref of [
+      { source: 'account_provider_connection', providerConnectionId: 'pc_work' },
+      { source: 'native', agentTargetKey: 'backend:claude', modelId: 'model' },
+    ]) {
+      expect(resolveAmbientProviderConnectionForModelIntent({
+        metadata: {
+          modelSelectionIntentV2: { v: 2, updatedAt: 12, ref },
+          modelOverrideV1: { v: 1, updatedAt: 99, modelId: 'legacy-native' },
+        },
+        agentTargetKey: 'backend:codex', sessionActive: false,
+      })).toEqual({ status: 'unreadable', code: 'model_selection_session_provider_state_unreadable' });
+    }
   });
 
   it('refuses an inactive Session whose canonical intent is present but unreadable', () => {
