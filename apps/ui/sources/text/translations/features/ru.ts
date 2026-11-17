@@ -171,6 +171,2334 @@ import * as Shared_workspaceBarTranslations from '../workspaceBarTranslations.sh
 import type { TranslationStructure } from '../en';
 import * as Shared_workspaceSyncDiagnosticTranslations from '../workspaceSyncDiagnosticTranslations.shared';
 import * as Shared_workspaceTabTranslations from '../workspaceTabTranslations.shared';
+import * as Shared_simulatorDeviceToolsTranslations from '../simulatorDeviceToolsTranslations';
+import type { SupportedLanguage as simulatorDeviceToolsTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentMoveTranslations from '../deploymentMoveTranslations';
+import type { SupportedLanguage as deploymentMoveTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_newSessionActionDefaultTranslations from '../newSessionActionDefaultTranslations';
+import * as Shared_chatLinksTranslations from '../chatLinksTranslations';
+import type { SupportedLanguage as chatLinksTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentDefaultsTranslations from '../deploymentDefaultsTranslations';
+import type { SupportedLanguage as deploymentDefaultsTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentCopyTranslations from '../deploymentCopyTranslations';
+import type { SupportedLanguage as deploymentCopyTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentSettingsTranslations from '../deploymentSettingsTranslations';
+import { deploymentOperationalTranslations as deploymentSettingsTranslations__deploymentOperationalTranslations } from '../deploymentOperationalTranslations';
+import type { SupportedLanguage as deploymentSettingsTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_pluginPublishTranslations from '../pluginPublishTranslations';
+import * as Shared_botTemplateTranslations from '../botTemplateTranslations';
+import type { SupportedLanguage as botTemplateTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_botTemplateRecipientTranslations from '../botTemplateRecipientTranslations';
+import type { SupportedLanguage as botTemplateRecipientTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_botFaceNameTranslations from '../botFaceNameTranslations.shared';
+import * as Shared_screenCaptureTranslations from '../screenCaptureTranslations.shared';
+import * as Shared_deploymentCreationReviewTranslations from '../deploymentCreationReviewTranslations';
+import type { SupportedLanguage as deploymentCreationReviewTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentPlatformLinkTranslations from '../deploymentPlatformLinkTranslations';
+import type { SupportedLanguage as deploymentPlatformLinkTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentPromotionTranslations from '../deploymentPromotionTranslations';
+import type { SupportedLanguage as deploymentPromotionTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_fileEditingTranslations from '../fileEditingTranslations.shared';
+import { fileAiSuggestionsTranslations as fileEditingTranslations__fileAiSuggestionsTranslations } from '../fileAiSuggestionsTranslations.shared';
+import { fileAiSuggestionControls as fileEditingTranslations__fileAiSuggestionControls } from '../fileAiSuggestionsTranslations.shared';
+import { fileNextEditTranslations as fileEditingTranslations__fileNextEditTranslations } from '../fileAiSuggestionsTranslations.shared';
+import * as Shared_usageChartInputTranslations from '../usageChartInputTranslations.shared';
+import * as Shared_usageChartPlanetFamilyTranslations from '../usageChartPlanetFamilyTranslations.shared';
+import * as Shared_fileSelectionAskTranslations from '../fileSelectionAskTranslations.shared';
+import * as Shared_fileTrackTranslations from '../fileTrackTranslations.shared';
+import * as Shared_actionPresentationTranslations from '../actionPresentationTranslations';
+import * as Shared_fileReviewNoteTranslations from '../fileReviewNoteTranslations.shared';
+import * as Shared_composerReferenceTranslations from '../composerReferenceTranslations.shared';
+import * as Shared_hunkReviewTranslations from '../hunkReviewTranslations.shared';
+import * as Shared_storeInstalledTranslations from '../storeInstalledTranslations.shared';
+import * as Shared_connectedAccountCallbackTranslations from '../connectedAccountCallbackTranslations';
+import * as Shared_skillsPageTranslations from '../skillsPageTranslations';
+import * as Shared_capabilityNoticeTranslations from '../capabilityNoticeTranslations';
+import * as Shared_skillDetailTranslations from '../skillDetailTranslations';
+import * as Shared_skillsFoundTranslations from '../skillsFoundTranslations';
+import * as Shared_mcpFoundTranslations from '../mcpFoundTranslations';
+import * as Shared_skillsUpdatesTranslations from '../skillsUpdatesTranslations';
+import * as Shared_mcpPageTranslations from '../mcpPageTranslations';
+import * as Shared_valueRefRowsTranslations from '../valueRefRowsTranslations';
+import * as Shared_agentAddTranslations from '../agentAddTranslations';
+import * as Shared_mcpHomeTranslations from '../mcpHomeTranslations';
+import * as Shared_agentsHomeTranslations from '../agentsHomeTranslations';
+import * as Shared_profileSeedsTranslations from '../profileSeedsTranslations';
+import * as Shared_scopeSectionTranslations from '../scopeSectionTranslations';
+import * as Shared_capabilityKitTranslations from '../capabilityKitTranslations';
+import { sessionCapabilityTranslations as capabilityKitTranslations__sessionCapabilityTranslations } from '../sessionCapabilityTranslations';
+import { capabilityDetailTranslations as capabilityKitTranslations__capabilityDetailTranslations } from '../capabilityDetailTranslations';
+import { mcpSignInTranslations as capabilityKitTranslations__mcpSignInTranslations } from '../mcpSignInTranslations';
+import { registriesTranslations as capabilityKitTranslations__registriesTranslations } from '../registriesTranslations';
+import { skillAddTranslations as capabilityKitTranslations__skillAddTranslations } from '../registriesTranslations';
+import { mcpAddTranslations as capabilityKitTranslations__mcpAddTranslations } from '../mcpAddTranslations';
+import { storeTranslations as capabilityKitTranslations__storeTranslations } from '../storeTranslations';
+import * as Shared_sessionListSpacesKeyboardTranslations from '../sessionListSpacesKeyboardTranslations.shared';
+import * as Shared_reviewKeyboardTranslations from '../reviewKeyboardTranslations.shared';
+import * as Shared_paneKeyboardTranslations from '../paneKeyboardTranslations';
+import type { SupportedLanguage as paneKeyboardTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_needsYouHighlightTranslations from '../needsYouHighlightTranslations';
+import type { SupportedLanguage as needsYouHighlightTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_quickOpenTranslations from '../quickOpenTranslations';
+import type { SupportedLanguage as quickOpenTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_paneMainColumnTranslations from '../paneMainColumnTranslations';
+import type { SupportedLanguage as paneMainColumnTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_paneEmptyEditorTranslations from '../paneEmptyEditorTranslations';
+import type { SupportedLanguage as paneEmptyEditorTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_llmTaskRunnerTranslations from '../llmTaskRunnerTranslations';
+import type { SupportedLanguage as llmTaskRunnerTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_actionSettingsResourcesTranslations from '../actionSettingsResourcesTranslations.shared';
+import * as Shared_resourceProposalTranslations from '../resourceProposalTranslations.shared';
+import * as Shared_machineResourceUiTranslations from '../machineResourceUiTranslations.shared';
+import { machineWidgetBodyTranslations as machineResourceUiTranslations__machineWidgetBodyTranslations } from '../machineWidgetBodyTranslations.shared';
+
+const Domain_simulatorDeviceToolsTranslations = (() => {
+const simulatorDeviceToolsTranslations = {
+  "ru": {
+    start: "Запустить",
+    stopped: "Остановлено",
+    powerOff: "Выключить",
+    screenshot: "Сделать снимок экрана",
+    operationFailed: "На устройстве не получилось",
+    videoUnsupported: "Видео здесь не воспроизводится",
+    videoUnsupportedBody: "Этот браузер не может декодировать видео устройства. Откройте Happier в актуальном Chrome, Edge или Safari либо в приложении.",
+    appSection: "Приложение",
+    appDescription: "Запуск или остановка приложения по ID пакета.",
+    appId: "ID приложения",
+    launch: "Запустить",
+    terminate: "Остановить",
+    linkSection: "Открыть ссылку",
+    url: "URL или диплинк",
+    open: "Открыть",
+    settingsSection: "Настройки устройства",
+    appearance: "Оформление",
+    light: "Светлое",
+    dark: "Тёмное",
+    textSize: "Размер текста",
+    small: "Мелкий",
+    defaultSize: "Обычный",
+    large: "Крупный",
+    orientation: "Ориентация",
+    portrait: "Портретная",
+    landscape: "Альбомная",
+    location: "Геопозиция",
+    latitude: "Широта",
+    longitude: "Долгота",
+    setLocation: "Задать",
+    clearLocation: "Сбросить",
+    permissions: "Разрешения",
+    permissionsDescription: "Измените, что может использовать приложение выше.",
+    permission: "Разрешение",
+    allow: "Разрешить",
+    deny: "Запретить",
+    reset: "Сбросить",
+    camera: "Камера",
+    photos: "Фото",
+    microphone: "Микрофон",
+    contacts: "Контакты",
+    locationPermission: "Геопозиция",
+    push: "Push-уведомление",
+    pushDescription: "Отправляется приложению выше.",
+    payload: "Содержимое (JSON)",
+    send: "Отправить",
+    invalidJson: "Введите объект JSON.",
+    needAppId: "Сначала введите ID приложения.",
+    accessibility: "Универсальный доступ",
+    accessibilityDescription: "Элементы на экране так, как их читает универсальный доступ.",
+    readScreen: "Прочитать экран",
+    press: "Нажать",
+    truncated: "Показана часть экрана.",
+    noElements: "Элементы не найдены.",
+  },
+} as const satisfies Pick<Record<simulatorDeviceToolsTranslations__SupportedLanguage, Shared_simulatorDeviceToolsTranslations.SimulatorDeviceToolsCopy>, "ru">;
+
+return { simulatorDeviceToolsTranslations };
+})();
+
+const Domain_deploymentMoveTranslations = (() => {
+const deploymentMoveTranslations = {
+  "ru": {
+    "dataReviewLead": "Проверьте останавливаемые службы источника и изменения приложения. Процесс остановит запись, проверит итоговую резервную копию, восстановит и проверит назначение, затем развернёт приложение. Исходные данные останутся на источнике. При неопределённом переключении перед продолжением нужно ваше решение в запуске.",
+    "writers": "Службы для остановки",
+    "writerReviewRequired": "Не удалось определить службы, записывающие в источник. Проверьте службы и их состояние, затем повторите попытку.",
+    "noRunningWriter": "Запустите службы приложения, которые будут использовать перенесённую базу, затем проверьте перенос снова.",
+    "stopped": "Уже остановлена · останется остановленной",
+    "menu": "Перенести на другую машину…",
+    "title": "Перенести на другую машину",
+    "description": "Используется тот же коммит. Источник работает до проверки нового сервера; локальные данные сохраняются.",
+    "restriction": "Доступно для приложений из репозитория без доменов и локальных данных.",
+    "stateless": "У приложения нет локальных данных для переноса",
+    "source": "Откуда",
+    "destination": "Куда",
+    "run": "Запустить процесс переноса"
+  },
+} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'stopped', string>>>, "ru">;
+
+return { deploymentMoveTranslations };
+})();
+
+const Domain_newSessionActionDefaultTranslations = (() => {
+const newSessionActionDefaultTranslations = {
+  "ru": { name: 'Название действия', launchMode: 'В следующий раз', review: 'Проверить перед запуском', start: 'Запустить сразу', open: 'Сохранить как настройки действия по умолчанию…', saved: 'Настройки действия сохранены', failed: 'Не сохранено.', stablePlacementRequired: "Чтобы сохранить настройки, выберите постоянный компьютер или «Спрашивать». Временные компьютеры и выбор из пула сохранить нельзя.", workspaceMode: "Для этого действия нужна рабочая копия. Выберите подходящую папку и сохраните настройки снова.", nameRequired: 'Введите название действия.' },
+} as const;
+
+return { newSessionActionDefaultTranslations };
+})();
+
+const Domain_chatLinksTranslations = (() => {
+const chatLinksTranslations = {
+  "ru": {"title": "Открывать ссылки из чатов в", "description": "Выберите, где открывать ссылки на этом устройстве. Ссылки localhost машины всегда открываются в приложении.", "browser": "Ваш браузер", "embedded": "Встроенный", "managed": "Управляемый"},
+} as const satisfies Pick<Record<chatLinksTranslations__SupportedLanguage, Shared_chatLinksTranslations.ChatLinksCopy>, "ru">;
+
+return { chatLinksTranslations };
+})();
+
+const Domain_deploymentDefaultsTranslations = (() => {
+const deploymentDefaultsTranslations = {
+  "ru": {
+        accountDescription: 'Настройки новых окружений в проектах вашего аккаунта. Командные проекты используют общие настройки проекта.',
+        projectDescription: 'Применяются при создании окружения. Существующие окружения сохраняют свои настройки.',
+        useAccount: 'Использовать настройку аккаунта', useBuiltin: 'Использовать настройку Happier', retention: 'Версии для отката',
+        clearToInherit: 'Очистите, чтобы наследовать настройку', projectTitle: 'Настройки развёртывания', alertChannels: 'Каналы уведомлений', accountLink: 'Настройки развёртывания вашего аккаунта',
+        triggersTitle: "Триггеры", triggersDescription: "У каждого окружения свои триггеры. Откройте окружение, чтобы посмотреть или добавить их.",
+    },
+} as const satisfies Pick<Record<deploymentDefaultsTranslations__SupportedLanguage, Shared_deploymentDefaultsTranslations.Copy>, "ru">;
+
+return { deploymentDefaultsTranslations };
+})();
+
+const Domain_deploymentCopyTranslations = (() => {
+const deploymentCopyTranslations = {
+  "ru": {
+    name: ({ name }) => `${name} копия`,
+    preparePrompt: ({ name, sourceId, environmentId }) => `Подготовь развёртывание окружения ${name} (${environmentId}), источник проекта ${sourceId}. Изучи репозиторий и инструкции. Предложи Dockerfile, compose.yaml и проверку состояния в pull request для просмотра. Не сливай и не развёртывай.`,
+    menu: "Дублировать окружение…",
+    title: "Дублировать окружение",
+    description: "Копирует определение развёртывания. Выберите ссылки; автоматического развёртывания не будет.",
+    bindings: "Что копируется",
+    same: "Та же ссылка",
+    choose: "Выбрать другую…",
+    omit: "Оставить пустым",
+    include: "Включить",
+    domainsStay: "Домены остаются в источнике: адрес принадлежит одному окружению.",
+    dataTitle: "Данные",
+    dataOmit: "Не подключать",
+    dataOmitHint: "Создаёт это окружение без этого ресурса данных.",
+    dataRestoreUnavailable: "Восстановление резервной копии этих данных при дублировании недоступно.",
+    dataConnections: "Общие подключения",
+    dataConnectionsHint: "Выберите сохранённые подключения для этой копии. База данных остаётся подключённой к исходному окружению.",
+    dataConnectionsUnavailable: "Сохранённые переменные подключения не выбраны. Выберите одну выше или другой вариант данных.",
+    dataReuse: "Использовать те же",
+    dataReuseHint: "Оба окружения используют одни и те же данные.",
+    dataEmpty: "Начать с пустых",
+    dataEmptyHint: "Подключает новые пустые данные. Настройте подключения после создания окружения.",
+    dataEmptyUnavailable: "Этот провайдер не поддерживает создание пустой базы данных.",
+    dataRestore: "Восстановить последнюю резервную копию",
+    dataRestoreHint: "Новая копия из последней резервной копии источника.",
+    prepareTitle: "Нет compose.yaml · попросить агента",
+    prepareBody: "Откройте Старт, чтобы попросить Dockerfile, compose.yaml и проверку состояния в pull request для вашего просмотра.",
+    refresh: "Эти сведения устарели. Обновите окружение, проверьте настройки и повторите попытку.",
+    permission: "Ваш доступ не позволяет выполнить эту операцию. Попросите доступ у управляющего окружением и повторите попытку.",
+    machine: "Машина контроллера недоступна. Подключите машину контроллера и повторите попытку.",
+    repository: "Локальная копия репозитория не выбрана. Выберите репозиторий в Старте и подготовьте его до развёртывания.",
+    unsupported: "Эта цель не поддерживает операцию. Выберите другую цель или измените выбор.",
+    retry: "Операция отклонена.Проверьте причину, измените выбор и повторите попытку.",
+  },
+} as const satisfies Pick<Record<deploymentCopyTranslations__SupportedLanguage, Shared_deploymentCopyTranslations.DeploymentCopyTranslations>, "ru">;
+
+return { deploymentCopyTranslations };
+})();
+
+const Domain_deploymentSettingsTranslations = (() => {
+const deploymentSettingsTranslations = {
+  "ru": {
+    ...deploymentSettingsTranslations__deploymentOperationalTranslations['ru'],
+    fleetIngressSuggestedBody: "Предложено на основе сетевых данных машин. Сохраните этот вариант, если хотите его использовать; при настройке домена маршрут всё равно будет проверен.",
+    fleet: Shared_deploymentSettingsTranslations.fleetCopy,
+    moveToRepository: Shared_deploymentSettingsTranslations.moveToRepositoryCopy,
+    previewEditor: Shared_deploymentSettingsTranslations.previewEditorCopy,
+    restoreExtended: Shared_deploymentSettingsTranslations.restoreExtendedCopy,
+    fleetIngressTitle: "Публичный маршрут",
+    fleetIngressChoose: "Выберите маршрут",
+    fleetIngressUnobserved: "Зона домена и общая частная сеть здесь ещё не проверены. Выберите маршрут; он будет проверен при настройке домена.",
+    fleetIngressTunnel: "Cloudflare Tunnel",
+    fleetIngressEdge: "Пограничный Caddy",
+    fleetIngressTunnelBody: "Коннекторы резервируют друг друга, но не распределяют нагрузку. Без частной сети обеспечивается защита только от отказа сервера или коннектора.",
+    fleetIngressEdgeBody: "Распределяет трафик через частную сеть. Если пограничная машина остановится, приложение будет недоступно.",
+    privateSharingTitle: "Частный доступ",
+    privateSharingBody: "Откройте частный доступ к сервису. Изменения применятся при следующем развёртывании.",
+    privateSharingAdd: "Открыть сервис",
+    privateSharingRepository: "Измените Compose-файл в репозитории для частного доступа и настройте экспорт сервиса с агентом.",
+    privateSharingUnsupported: "Попросите агента изменить эти экспорты, сохранив существующий доступ.",
+    privateSharingMultipleMachines: "Этот редактор настраивает частный доступ только для окружения, работающего на одной машине.",
+    privateSharingNetworkMissing: "На машине окружения откройте «Сеть → Частные сети», подключите Tailscale и присоединитесь к сети другого приложения.",
+    privateSharingService: "Сервис",
+    privateSharingKey: "Имя экспорта",
+    privateSharingPort: "Порт контейнера",
+    privateSharingScheme: "Схема URL",
+    privateSharingNetwork: "Частная сеть",
+    privateSharingAddress: "Адрес хоста",
+    privateSharingHostPort: "Публикуемый порт хоста",
+    privateSharingReview: "Проверить доступ",
+    privateSharingReviewBody: "Следующее развёртывание привяжет этот адрес и порт. Другие приложения смогут использовать частный экспорт.",
+    privateSharingInvalid: "Проверьте сервис, имя экспорта, схему и оба порта.",
+    privateSharingHappierNetwork: "Сеть Happier",
+    privateSharingHappierNetworkBody: "Ваши машины получают к нему частный доступ через Happier. VPN не нужен.",
+    privateSharingHappierNetworkPending: "Пока недоступно",
+    privateSharingJoinedNetworkBody: "Приложения в этой сети подключаются по его частному адресу.",
+    privateSharingReviewBodyHappier: "Следующее развёртывание откроет этот порт только на этой машине. Другие ваши машины подключатся через Happier.",
+    destinationS3: ({ region }) => `S3 в ${region}`,
+    destinationS3NoRegion: 'Хранилище S3',
+    destinationTest: 'Проверить',
+    destinationReachable: 'Доступно · проверено только что',
+    destinationRepositoryMissing:
+      'Резервных копий там нет · проверьте бакет и префикс',
+    destinationNativeFailed: 'Хранилище не ответило · проверьте адрес',
+    destinationLocked:
+      'Его использует другое копирование · повторите, когда оно закончится',
+    destinationPasswordIncorrect: 'Пароль репозитория не подходит',
+    destinationRetry: 'Проверка не завершилась · повторите',
+    keepTitle: 'Хранить',
+    keepChange: 'Изменить',
+    keepDescription:
+      'После каждого копирования более старые копии сверх этих чисел удаляются. Оставьте все поля пустыми, чтобы хранить все копии.',
+    keepLast: 'Последние',
+    keepDaily: 'Ежедневные',
+    keepWeekly: 'Еженедельные',
+    keepMonthly: 'Ежемесячные',
+    keepSave: 'Сохранить',
+    keepCancel: 'Отмена',
+    keepInvalid: 'Используйте целые числа больше нуля',
+    pruneTitle: 'Удалить старые копии сейчас',
+    pruneDescription:
+      'Удаляет копии сверх сохраняемых, не дожидаясь следующего копирования.',
+    pruneAction: 'Удалить',
+    pruned: ({ count }) => `Удалено старых копий: ${count}`,
+    prunedNothing: 'Нечего удалять',
+    rolloutRecreateShort: 'Перезапуск на месте',
+    rolloutStartFirstShort: 'Сначала новые',
+    previewsTitle: 'Превью',
+    previewsOn: 'Включено для новых pull request',
+    previewsOff: 'Выключено',
+    previewsEnrollmentUnavailable: "Сохранено, но новые pull request пока не получат предпросмотры",
+    previewsRunsOn: 'Работает на',
+    previewsAddress: 'Адрес',
+    previewsData: 'Данные',
+    previewsDataOwn: 'Собственная база',
+    previewsDataBranch: 'Ветка базы данных',
+    previewsDataNone: 'Нет',
+    previewsDataParent: "Ветка от",
+    previewsDataParentBody: "Каждый pull request получает ветку без копирования данных; она удаляется, когда pull request закрывается",
+    previewsDataOwnUnavailable: "Собственную базу данных настраивает агент",
+    previewsDataBranchUnavailable: "Для веток нужна подключённая база данных, которая их поддерживает",
+    previewsForks: 'Pull request из форков не получают превью',
+    previewsProductionTarget: 'Превью используют ту же цель развёртывания, что и рабочая среда',
+    previewsDataUnavailable: 'Не настроено для этого окружения · попросите агента',
+    previewsSetUpOff: 'Выключено · включите, чтобы у каждого pull request была своя копия окружения',
+    previewsNeedRepository: 'Для превью нужен репозиторий',
+    previewsNeedRepositoryBody: 'Определение этого окружения хранится в Happier. Превью собирают каждый pull request из репозитория.',
+    previewsNoRepository: 'Для превью нужен репозиторий проекта',
+    backupNotSetUpTitle: 'Нет резервных копий',
+    backupNotSetUpBody: 'Резервное копирование не настроено, данные окружения никуда не копируются.',
+    restoreOnFailOnBody: 'Деплой, не прошедший проверки, возвращается к последнему рабочему релизу',
+    restoreOnFailOffBody: 'Неудачный деплой остаётся как есть, пока вы не откатите его',
+    keptBody: 'Релизы хранятся на сервере, чтобы откатываться без пересборки',
+    setupTitle: 'Настроить резервное копирование',
+    setupDestination: 'Место назначения',
+    setupSheetTitle: "Куда сохранять резервные копии?",
+    setupSheetLead: ({ machine }: { machine: string }) => `Каждая копия шифруется на ${machine} перед отправкой.`,
+    setupSheetNext: "Проверьте хранилище и сохраните. Создавайте только новый репозиторий.",
+    setupMoreOptions: "Другие параметры",
+    setupNoDatabaseTitle: "Сначала добавьте базу данных",
+    setupNoDatabaseBody: "Резервные копии создаются из базы данных этого окружения.",
+    setupBody: "Выберите хранилище для зашифрованных копий.",
+    setupStart: 'Настроить',
+    setupEndpoint: 'Адрес',
+    setupBucket: 'Бакет',
+    setupPrefix: 'Папка в бакете',
+    setupRegion: 'Регион',
+    setupService: 'Сервис базы данных',
+    setupSave: 'Сохранить',
+    setupCancel: 'Отмена',
+    setupIncomplete: "Выберите хранилище, источник и обязательные сохранённые секреты.",
+    credentialAccessKeyId: 'ID ключа доступа',
+    credentialSecretAccessKey: 'Секретный ключ доступа',
+    credentialRepositoryPassword: 'Пароль репозитория',
+    credentialSessionToken: 'Токен сессии',
+    credentialMissing: 'Нужен сохранённый секрет',
+    credentialSet: 'Сохранённый секрет выбран',
+    credentialChoose: 'Выбрать…',
+    scheduleTitle: 'Ночные копии',
+    scheduleOff: 'Выключено · каждую ночь в 02:00 копирует, проверяет и хранит заданное число',
+    scheduleOn: 'Включено · каждую ночь в 02:00',
+    scheduleTurnOn: 'Включить',
+    setupNoDestination: 'Копиям нужно место для хранения. Сначала добавьте хранилище в Магазине.',
+    setupOpenStore: 'Открыть Магазин',
+    setupRoleRequired: "Обязательный сохранённый секрет",
+    setupRoleOptional: 'Необязательно · только если хранилище его использует',
+    setupInitializeAndSave: "Создать репозиторий и сохранить",
+    setupAnotherMachine: "Другая машина",
+    setupReceiverMachine: "Машина назначения",
+    setupLocalWarning: "На этой машине · не внешняя копия",
+    setupLocalGrowth: "При хранении всех копий они не удаляются автоматически. Диск может заполниться.",
+    setupCapacityKnown: "Свободное место",
+    setupCapacityUnknown: "Свободное место неизвестно",
+    setupCapacityAtBackupMachine: "Проверьте свободное место на машине, которой принадлежит этот путь резервного копирования.",
+    credentialSshPrivateKey: "Закрытый ключ SSH",
+    addCheck: 'Добавить проверку',
+    addCheckUnavailable:
+      'Проверки нельзя настроить отсюда · откройте страницу служб машины',
+  },
+} as const satisfies Pick<Record<deploymentSettingsTranslations__SupportedLanguage, Shared_deploymentSettingsTranslations.DeploymentSettingsTranslations>, "ru">;
+
+return { deploymentSettingsTranslations };
+})();
+
+const Domain_pluginPublishTranslations = (() => {
+const pluginPublishTranslations = {
+  "ru": {
+        title: 'Опубликовать плагин', subtitle: 'Опубликуйте новую версию в npm, чтобы любой мог установить её из Store.',
+        templateTitle: ({ name }: { name: string }) => 'Опубликовать {name}'.replace('{name}', () => name), templateSubtitle: ({ name }: { name: string }) => 'Опубликуйте этот шаблон в npm, чтобы любой мог запустить своего {name} из Store.'.replace('{name}', () => name),
+        package: 'Пакет', packageDescription: 'Проверьте, соберите и упакуйте этот проект на выбранной машине.',
+        prepare: 'Проверить и подготовить', check: 'Проверить', build: 'Собрать', pack: 'Упаковать', viewFiles: 'Посмотреть файлы',
+        listing: 'Страница в Store', listingDescription: 'Что пользователи видят в Store перед установкой.',
+        name: 'Название', description: 'Описание', keywords: 'Ключевые слова', keywordsHint: 'Разделяйте ключевые слова запятыми.',
+        icon: 'Значок пакета', readme: 'README', versionAndNotes: 'Версия и список изменений', version: 'Версия', changelog: 'Список изменений',
+        patch: 'Исправление', minor: 'Минорная', major: 'Мажорная',
+        npm: 'Опубликовать в npm', npmDescription: 'Выберите профиль реестра, сохранённый на этой машине.',
+        connect: 'Войти в npm', change: 'Изменить', coordinate: 'Имя пакета', public: 'Публичный · установить может любой',
+        signInRequired: 'Выберите профиль npm перед публикацией.', direct: 'Опубликовать напрямую', staged: 'Отправить на одобрение в npm',
+        stageHint: 'Версия на рассмотрении станет публичной после одобрения сопровождающим в npm. До одобрения у нового пакета может отображаться временная страница.',
+        github: 'GitHub', githubDescription: 'Необязательно. Храните исходный код рядом с пакетом.',
+        githubEnable: 'Отправить исходный код и создать релиз', repository: 'Репозиторий', branch: 'Ветка', remote: 'Удалённый репозиторий Git',
+        selectedFiles: 'Файлы для коммита', selectedFilesHint: 'Один путь относительно проекта на строку. Будут включены только эти файлы.',
+        commitMessage: 'Сообщение коммита', commit: 'Закоммитить выбранные файлы',
+        publish: 'Опубликовать', publishReview: 'Публично публикует проверенный пакет и выполняет выбранные операции GitHub.',
+        prepareRequired: 'Подготовьте пакет, чтобы проверить его файлы перед публикацией.',
+        preparing: 'Подготовка пакета…', publishing: 'Публикация…', checking: 'Проверка публикации…',
+        history: 'Опубликованные версии', historyDescription: 'Версии выбранного пакета в npm.',
+        checkPublication: 'Проверить публикацию', reviewNpm: 'Открыть одобрение в npm', openNpm: 'Открыть в npm', openGithub: 'Открыть в GitHub', retryGithub: 'Повторить GitHub',
+        published: 'Опубликовано в npm', indexLag: 'Пакет публичный. Он может появиться в поиске Store не сразу.',
+        awaitingMaintainer: 'Ожидается одобрение npm', outcomeUnknown: 'Не удалось подтвердить публикацию',
+        outcomeUnknownBody: 'Проверьте именно эту версию перед повторной загрузкой.',
+        versionConflict: 'Эта версия уже занята. Выберите другую версию и подготовьте её заново.',
+        signInToPublish: 'Войдите в npm, чтобы опубликовать.', versionTakenReason: 'Выберите версию, которой ещё нет в npm.',
+        useVersion: ({ version }: { version: string }) => 'Использовать {version}'.replace('{version}', () => version),
+        authenticationRequired: 'npm требует повторного входа.', challenge: 'npm требует дополнительной аутентификации. Откройте Connect, чтобы продолжить конфиденциально.',
+        failed: 'Не удалось опубликовать', cancelled: 'Публикация отменена', missing: 'Эта версия не опубликована.',
+        reviewRequired: 'Подготовленные файлы изменились. Просмотрите новый отчёт перед публикацией.',
+        githubFailed: 'Пакет опубликован в npm. GitHub всё ещё требует внимания.',
+        noTests: 'Команда тестирования не настроена', testsPassed: 'Тесты пройдены', testsFailed: 'Тесты не пройдены',
+        unavailable: 'Этот проект недоступен. Выберите машину в сети и повторите попытку.', project: 'Папка проекта',
+        preview: 'Предпросмотр', loadMore: 'Загрузить ещё', githubUnavailable: 'Выберите параметры GitHub, чтобы проверить этот проект.',
+        npmProfile: 'Профиль npm', publicationMode: 'Публикация', readDraft: 'Прочитать черновик публикации', patchDraft: 'Изменить черновик публикации',
+        chooseIcon: 'Выбрать изображение', iconPng: 'Изображение PNG. Включается в пакет при подготовке.', iconPickFailed: 'Не удалось открыть изображение. Выберите его ещё раз.',
+        continueGithub: 'Продолжить с GitHub', githubSelectionRequired: 'Выберите репозиторий, ветку и операции GitHub для публикации.',
+        githubHistory: 'Загрузить релизы GitHub', githubHistoryUnavailable: 'Не удалось загрузить релизы GitHub.',
+        githubHistoryIncomplete: 'Некоторые релизы или подробности не показаны. Загрузите ещё, когда они будут доступны.', githubHistoryEmpty: 'Релизов GitHub пока нет.',
+        scaffoldSource: 'Подготовить этот исходный код с агентом',
+        scaffoldPrompt: 'Преобразуй существующий исходный код плагина в готовый к публикации пакет плагина с помощью публичного процесса создания каркаса для авторов плагинов. Сохрани существующий исходный код и используй его в полученном пакете.',
+        githubOptions: 'Выбрать параметры GitHub', githubUnavailableReason: 'GitHub недоступен для этого проекта.',
+        pushSource: 'Отправить исходный код', createRelease: 'Создать релиз GitHub', createRepository: 'Создать репозиторий',
+        repositoryName: 'Имя репозитория', repositoryOwner: 'Владелец репозитория', noIconResources: 'Добавьте в проект ресурс PNG, включаемый в пакет, чтобы выбрать значок.',
+        ready: 'Готово', passed: 'Пройдено', notConfigured: 'Не настроено', machineRequired: 'Выберите машину, чтобы подготовить и опубликовать.', notRun: 'Ещё не запускалось', running: 'Выполняется…',
+        githubReviewUnknown: 'Проверьте репозиторий и релиз в GitHub перед повтором неподтверждённой операции.',
+    },
+} as const;
+
+return { pluginPublishTranslations };
+})();
+
+const Domain_botTemplateTranslations = (() => {
+const botTemplateTranslations = {
+  "ru": Shared_botTemplateTranslations.copy(["Шаблон бота", "Дать копию", "Создать шаблон, из которого другие сделают своего", "Проверить шаблон", "Что получат", "Инструкции", "Первая задача", "Версия выпуска", "Примечания к выпуску", "Получатель копии", "Личный черновик", "Опубликовано", "Сохранение…", "Несохранённые изменения", "Сохранено", "Изменения сохранены локально. Повторите сохранение.", "Сохранена другая редакция. Проверьте её перед заменой изменений.", "Проверить другую редакцию", "Использовать эту редакцию как основу", "Шаблон недоступен", "Шаблон · создан из {name}", "Автор {author} · {version} · {sharing}", "Сохранить перед выходом? Изменения останутся в открытом черновике этого аккаунта до закрытия приложения.", "Выйти с сохранением правок в черновике", "Исключено", "Описание", "Личный"], "ru"),
+} as const satisfies Pick<Record<botTemplateTranslations__SupportedLanguage, Shared_botTemplateTranslations.BotTemplateTranslations>, "ru">;
+
+return { botTemplateTranslations };
+})();
+
+const Domain_botTemplateRecipientTranslations = (() => {
+const botTemplateRecipientTranslations = {
+  "ru": Shared_botTemplateRecipientTranslations.copy(['Создать свою копию', 'Создать бота', 'Источник шаблона', 'Принята версия {version}', 'Следить за обновлениями', 'Независимая копия', 'Правила памяти', 'Навыки', 'Требования', 'Обязательно', 'Необязательно', 'Входные данные', 'Исполняемый', 'Двоичный · Base64', 'Скачать', "Шаблон изменился. Проверьте текущую версию перед созданием копии.", "Выберите место запуска копии. Создание запускает бота с инструкциями шаблона."], 'ru'),
+} as const satisfies Pick<Record<botTemplateRecipientTranslations__SupportedLanguage, ReturnType<typeof Shared_botTemplateRecipientTranslations.copy>>, "ru">;
+
+return { botTemplateRecipientTranslations };
+})();
+
+const Domain_botFaceNameTranslations = (() => {
+const botFaceNameTranslations = {
+  "ru": {
+    accountDefault: 'По умолчанию для аккаунта',
+    bodies: { crab: "Краб", squid: "Кальмар", octopus: "Осьминог", ufo: "Тарелка", specter: "Призрак", ghost: "Привидение", beetle: "Жук", spider: "Паук", jelly: "Медуза", hopper: "Попрыгун", pup: "Щенок", drone: "Дрон", robot: "Робот", walker: "Ходок", rocket: "Ракета", feet: "Ножки", tail: "Хвост", drip: "Капля", bracelegs: "Ноги-скобки", tagclaws: "Клешни-теги", cursortail: "Хвост-курсор", termbody: "Терминал", antlers: "Рога-ветки", semi: "Точка с запятой", brackets: "Скобки", cursor: "Курсор", bean: "Боб", squat: "Коротышка", bag: "Мешок", loaf: "Буханка", puddle: "Лужа", tower: "Башня", stilts: "Ходули", tall: "Высокий", cat: "Кошка" },
+    colours: { daybreak: "Рассвет", lagoon: "Лагуна", orchid: "Орхидея", aurora: "Сияние", indigo: "Индиго", glacier: "Ледник", moss: "Мох", sand: "Песок", ink: "Чернила" },
+  },
+} as const satisfies Pick<Readonly<Record<string, Shared_botFaceNameTranslations.BotFaceNames>>, "ru">;
+
+return { botFaceNameTranslations };
+})();
+
+const Domain_screenCaptureTranslations = (() => {
+const screenCaptureCopy = {
+  "ru": {
+    privacy: { hiddenTagsTitle: "Теги приватных сессий", hiddenTagsDescription: "Сессии с этими тегами скрыты в списках во время записи или при включённой приватности демонстрации экрана." },
+    recording: {
+      systemSelectionTitle: 'Выберите окно или экран',
+      systemSelectionReason: 'Система откроет выбор источника. Запись области недоступна в этом сеансе рабочего стола.',
+      pipewireUnavailable: 'Захват PipeWire недоступен. Установите плагин PipeWire для GStreamer и повторите попытку.',
+      videoEncoderUnavailable: 'Кодировщик VP8 недоступен. Установите плагин VP8 для GStreamer и повторите попытку.',
+      videoMuxerUnavailable: 'Запись WebM недоступна. Установите плагины WebM для GStreamer и повторите попытку.',
+      videoDecoderUnavailable: 'Не удаётся декодировать запись для обрезки. Установите плагины VP8 и Matroska для GStreamer и повторите попытку.',
+      cursorUnavailable: 'Системный выбор источника не поддерживает захват курсора. Используйте портал рабочего стола с поддержкой курсора.',
+      videoPipelineUnavailable: 'Отсутствуют необходимые видеокомпоненты GStreamer. Установите видеоплагины и повторите попытку.',
+      title: "Запись",
+      pause: "Пауза",
+      resume: "Продолжить",
+      stop: "Остановить запись",
+      stopShort: "Остановить",
+      hideControl: "Скрыть, запись продолжится",
+      saving: "Сохранение записи…",
+      discarded: "Запись удалена",
+      play: "Воспроизвести",
+      afterTrim: ({ time }: Readonly<{ time: string }>) => `${time} после обрезки`,
+      marksOnPausedFrame: "пометки видны на кадре на паузе", theAgent: "Агент",
+      keyFrames: ({ agent, count }: Readonly<{ agent: string; count: number }>) => count === 1
+        ? `${agent} получит один ключевой кадр с заметками и пометками`
+        : `${agent} получит ключевые кадры (${count}) с заметками и пометками`,
+      withVideo: "участники сессии также получат видео.",
+      withoutVideo: "Видео останется здесь.",
+      blurredVideo: "Видео останется здесь, потому что на нём видно то, что вы размыли.",
+      includeBlurredQuestion: "На видео видно то, что вы размыли на кадре. Всё равно включить?",
+      keepVideoOff: "Не включать",
+      includeAnyway: "Всё равно включить",
+      leaveOut: "Не включать",
+      includeVideo: "Включить видео",
+      trimStart: "Начало обрезки",
+      trimEnd: "Конец обрезки",
+      timeline: "Таймлайн",
+      pins: "Заметки и пометки на таймлайне",
+      resetTrim: "Сбросить обрезку",
+      continue: "Продолжить", failedReason: "Запись остановилась до сохранения видео. Ничего не отправлено.", failedTitle: "Запись остановилась", openingTitle: "Открываем запись…", openFailedTitle: "Запись не открылась", openFailedReason: "Happier не смог прочитать видеофайл. Обрезка, отметки и заметки сохранены.", mediaFailed: "Не удалось прочитать видео", commitFailed: "Пометки на этом кадре не сохранены",
+    },
+    attach: { capture: "Снять экран", record: "Записать экран" },
+    recent: { refresh: "Обновить", chooseFile: "Выбрать файл…", chooseFolder: "Выбрать папку…", loadFailed: "Не удалось прочитать папку снимков", operationFailed: "Не получилось. Снимки на месте.", folderMissing: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `Папка ${folder} не найдена`, folderDenied: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `У Happier нет доступа к ${folder}`, folderUnreadable: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `Не удалось прочитать ${folder}`, folderNotWatched: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `${folder} не обновляется сама`, title: "Недавние снимки", attach: "прикрепить", search: "Поиск снимков", empty: "В папке пока нет снимков" },
+    chooser: { title: "Отправить в сессию", attachTo: "Прикрепить к", search: "Поиск сессий", openInHappier: "Открыта в Happier", recent: "Недавние", newSession: "Новая сессия…", moveHint: "выбрать", sendHere: "отправить сюда", copyHere: "скопировать сюда", empty: "Подходящих сессий нет" },
+    windowText: { frontmostLabel: ({ app, count }: Shared_screenCaptureTranslations.Copy<"app" | "count">) => `Текст переднего окна · ${app} · ${count} слов`,
+      label: ({ app, count }: Shared_screenCaptureTranslations.Copy<"app" | "count">) => `Текст всего окна · ${app} · слов: ${count}`,
+      partialLabel: ({ app, count }: Shared_screenCaptureTranslations.Copy<"app" | "count">) => `Часть текста окна · ${app} · слов: ${count}`,
+      words: ({ count }: Shared_screenCaptureTranslations.Copy<"count">) => `Слов: ${count}`,
+      reading: "Чтение текста окна…", empty: "В этом окне нет текста", unavailable: "Текст окна недоступен", view: "Показать",
+      sheetDescription: ({ app }: Shared_screenCaptureTranslations.Copy<"app">) => `Всё, что можно прочитать в окне ${app}, в том числе за пределами снимка. Текст уходит вместе с изображением, чтобы агент мог его цитировать.`,
+      dontInclude: "Не включать", lockedTitle: "Текст всего окна выключен", lockedBody: "Вы размыли часть снимка, а текст окна показал бы её. Включите его снова, если он всё ещё нужен.",
+      includeTitle: "Текст содержит то, что вы размыли", includeBody: "В тексте окна может остаться то, что вы размыли. Изображение в любом случае останется размытым.", keepOff: "Оставить выключенным", includeText: "Включить текст",
+      permissionTitle: "Разрешите Happier читать текст окна", permissionBody: "macOS спросит один раз. Пока это включено, Happier читает текст всего снятого окна и ничего больше.", permissionOpen: "Откройте Конфиденциальность и безопасность › Универсальный доступ", permissionEnable: "Включите Happier", permissionWaiting: "Ожидание разрешения… включится само",
+    },
+    settings: { includeWindowShadow: "Включать тень окна", windowShadowDescription: "Снимки окон включают тень macOS с прозрачными полями.", windowShadowUnavailable: "Доступно в macOS 14 и новее.", screenFor: "Чтобы делать снимки экрана", windowTextFor: "Чтобы читать текст снятого окна", title: 'Снимки экрана', captureShortcut: 'Сочетание клавиш для снимка', instantWindowShortcut: 'Сочетание клавиш для мгновенного снимка окна', recordingShortcut: 'Сочетание клавиш для записи', sound: 'Звук снимка', includeWindowText: 'Включать текст окна по умолчанию', folder: 'Папка снимков', description: "Нажмите сочетание клавиш где угодно, отметьте нужное и отправьте в сессию.", notSet: "Не задано", notOnWayland: "На Wayland пока недоступно", conflict: "Это сочетание занято другим приложением. Предыдущее продолжает работать.", refused: "Система отклонила это сочетание. Предыдущее продолжает работать.", soundDescription: "Короткий звук при появлении снимка. Следует за беззвучным режимом системы.", windowTextDescription: "Новые снимки сразу включают текст окна. Размытие выключает его.", changeFolder: "Изменить…", permissionsTitle: "Разрешения", permissionsDescription: "Что система разрешает Happier и о чём должны спрашивать агенты.", screenPermission: "Запись экрана", accessibilityPermission: "Универсальный доступ", approvals: "Подтверждения для агентов", approvalsDescription: "Должен ли агент спрашивать перед снимком экрана" },
+    selection: { releaseRecording: "Отпустите, чтобы начать запись", label: "Выберите, что захватить", modeLabel: "Тип захвата", screenshot: "Снимок", recording: "Запись", instruction: "Выделите область, щёлкните окно или нажмите R", keyboardPosition: "Стрелки — позиция · Enter — первый угол", keyboardRegion: "Стрелки — размер · Enter — снимок", release: "Отпустите, чтобы захватить" },
+    window: { pickAnotherSession: "Выбрать другую сессию",
+      title: "Захват", notePlaceholder: "Добавьте заметку для агента (необязательно)", chooseSession: "Выбрать сессию", sameAsLastCapture: "Как при последнем захвате", nativeTitle: ({ subject }: Shared_screenCaptureTranslations.Copy<"subject">) => `Захват Happier — ${subject}`, region: "Область",
+      sendTo: ({ session, machine }: Shared_screenCaptureTranslations.Copy<"session" | "machine">) => `Отправить в ${session} на ${machine}`,
+      wholeWindowText: "Текст всего окна", addToDraft: "В черновик", send: "Отправить", discard: "Отменить", copy: "Копировать изображение", showInFolder: "Показать в папке", more: "Ещё",
+      attachRecent: "Прикрепить недавний захват", copyWindowText: "Копировать текст окна", settings: "Настройки захвата", justNow: "только что", flattenFailed: "Не удалось нанести пометки на изображение",
+      unreachable: ({ machine }: Shared_screenCaptureTranslations.Copy<"machine">) => `${machine} недоступна`, lastSeen: ({ time }: Shared_screenCaptureTranslations.Copy<"time">) => `была в сети в ${time}`,
+      addOrPick: "Добавьте захват в черновик или", pickAnother: "выберите другую сессию",
+    },
+    permission: { drag: "Перетащите Happier в список", title: "Разрешите Happier захватывать экран", reason: "macOS спросит один раз. Happier видит экран только когда вы нажимаете сочетание клавиш или выбираете «Захватить экран» в строке меню.", reasonWithShortcut: ({ shortcut }: Shared_screenCaptureTranslations.Copy<"shortcut">) => `macOS спросит один раз. Happier видит экран только когда вы нажимаете ${shortcut} или выбираете «Захватить экран» в строке меню.`, waiting: "Ожидание разрешения…", openSettings: "Открыть Системные настройки", notNow: "Не сейчас", where: "Включите Happier в разделе «Конфиденциальность и безопасность › Запись экрана и системного звука». macOS может попросить перезапустить Happier.", allowed: ({ shortcut }: Shared_screenCaptureTranslations.Copy<"shortcut">) => `Разрешено · нажмите ${shortcut}, чтобы сделать снимок`, reopenNeeded: "Если вы только что разрешили Happier доступ, откройте его заново, чтобы применить", reopen: "Открыть Happier заново" },
+    failed: { title: "Захват не получен", reason: "Инструмент захвата закрылся, не передав изображение. Ничего не отправлено.", tryAgain: "Повторить" },
+    pill: { notAdded: "Не добавлено в черновик", notStarted: "Новая сессия не запустилась", notPrepared: "Не удалось подготовить снимок",
+      starting: "Открываем новую сессию…", started: "Готово в новой сессии",
+      sending: ({ session }: Shared_screenCaptureTranslations.Copy<"session">) => `Отправка в ${session}…`, adding: "Добавление в черновик…", sent: ({ session }: Shared_screenCaptureTranslations.Copy<"session">) => `Отправлено в ${session}`,
+      added: ({ number }: Readonly<{ number: number }>) => `Добавлено в черновик как изображение #${number}`,
+      waiting: ({ session, count }: Readonly<{ session: string; count: number }>) => `${session} · ожидают захватов: ${count}`,
+      failed: "Не отправлено", failedDetail: "Черновик всё сохранил", discarded: "Захват отменён", open: "Открыть", edit: "Изменить",
+    },
+  },
+} as const;
+
+return { screenCaptureCopy };
+})();
+
+const Domain_deploymentCreationReviewTranslations = (() => {
+const deploymentCreationReviewTranslations = {
+  "ru": {
+    title: 'Как развёртывается',
+    description:
+      'Проверьте их перед созданием.',
+    create: 'Создать окружение',
+    buildsOn: ({ machine }) => `Собирается на ${machine}`,
+    deploysFrom: ({ machine }) => `Развёртывания идут с ${machine}`,
+    keepsPrevious: ({ count }) =>
+      count === 0
+        ? 'Не хранит прошлых версий для отката'
+        : `Хранит прошлых версий для отката: ${count}`,
+    fromExplicit: 'Выбрано вами',
+    fromProject: 'Из проекта',
+    fromAccount: 'Из вашего аккаунта',
+    fromBuiltin: 'По умолчанию в Happier',
+  },
+} as const satisfies Pick<Record<deploymentCreationReviewTranslations__SupportedLanguage, Shared_deploymentCreationReviewTranslations.DeploymentCreationReviewCopy>, "ru">;
+
+return { deploymentCreationReviewTranslations };
+})();
+
+const Domain_deploymentPlatformLinkTranslations = (() => {
+const deploymentPlatformLinkTranslations = {
+  "ru": {
+    detachLead: ({ name, platform }) => `Отсоедините ${name} от Happier, оставив его в ${platform}.`,
+    detachBody: ({ platform }) => `Сервис продолжает работать в ${platform}, сохраняя данные и расходы. Чтобы остановить или удалить его, сделайте это в ${platform}.`,
+    removalTitle: ({ resource }) => `Отвязать или удалить ${resource}`,
+    removalLead: ({ resource, platform }) => `${resource} работает в ${platform}. Оставьте его там или удалите в ${platform}.`,
+    keepTitle: ({ platform }) => `Оставить в ${platform}`,
+    keepBody: ({ resource, platform }) => `${resource} продолжает работать в ${platform} с данными и расходами. Happier перестаёт в него развёртывать.`,
+    keepBodyData: ({ resource, platform }) => `${resource} остаётся в ${platform} с данными и расходами. Happier перестаёт им управлять.`,
+    deleteTitle: ({ platform }) => `Удалить в ${platform}`,
+    deleteBody: ({ resource, platform }) => `${platform} удалит ${resource}. Это нельзя отменить.`,
+    deleteConsequence: ({ resource, platform }) => `Удалить ${resource} в ${platform}?`,
+    typeToDelete: ({ resource }) => `Введите ${resource}, чтобы удалить`,
+    confirmDelete: ({ resource }) => `Удалить ${resource}`,
+    confirmDeleteWithEnvironment: ({ name, resource }) => `Удалить ${name} и ${resource}`,
+    createOnMachine: "Создать на",
+    finishLinkingOnMachine: "Завершить привязку на",
+    openProvider: "Открыть у провайдера",
+    recoveryUnavailable: "Результат создания недоступен",
+    modeExisting: "Использовать существующий",
+    modeCreate: "Создать новый",
+    create: ({ platform }) => `Создать и привязать ${platform}`,
+    createConsequences: `Создаёт ресурс. Провайдер может взимать плату. Выбранный контроллер использует подключённый аккаунт, указанный здесь.`,
+    provisioned: "Ресурс создан; привязка не завершена",
+    created: "Проект создан и привязан",
+    branchSet: ({ branch }) => `Ветка production: ${branch}.`,
+    branchDefaultKept: ({ branch, requestedBranch }) => `Веткой production остаётся ${branch}. Не удалось установить ${requestedBranch}; измените её у провайдера.`,
+    branchUnconfirmed: ({ requestedBranch }) => `Обновление до ${requestedBranch} не подтверждено. Провайдер может по-прежнему использовать ветку по умолчанию; проверьте её у провайдера.`,
+    finishLinking: "Завершить привязку",
+    outcomeUnknown: "Провайдер не подтвердил завершение создания",
+    outcomeUnknownBody: "Проверьте состояние у провайдера, прежде чем выбирать другой ресурс. Happier не будет создавать его повторно.",
+    duplicate: "Эта область провайдера уже привязана",
+    useExisting: "Использовать существующее окружение",
+    chooseAnother: "Выбрать другую область",
+    accessTitle: "Доступ для развёртывания",
+    deploysUse: ({ principal, platform }) => `Развёртывания используют доступ ${principal} к ${platform}`,
+    personalAccessDependency: "Это личное подключение должно оставаться доступным. Его удаление или потеря доступа к провайдеру остановит будущие развёртывания.",
+    teamAccessDependency: "Для развёртываний нужны доступные учётные данные команды с доступом к провайдеру.",
+    providerAccount: "Аккаунт или команда провайдера",
+    providerProject: "Проект провайдера",
+    providerScope: "Окружение провайдера",
+    sourceManifest: "Манифест исходников",
+    providerBuild: "Сборка на платформе",
+    controllerBuild: "Сборка на контроллере",
+    buildImage: "Контейнер сборки",
+    buildToolchain: "Инструменты сборки",
+    buildOutputManifest: "Манифест результата сборки",
+    sourceMethod: "Способ развёртывания",
+    gitIntegration: "Интеграция Git",
+    upload: "Загрузка",
+    gitIntegrationBody: "Платформа читает проверенный коммит из подключённого репозитория.",
+    uploadBody: "Happier отправляет проверенный коммит через контроллер, без Git-доступа платформы.",
+    title: ({ name }) => `Развернуть ${name} на платформе`,
+    lead: 'Свяжите проект, который у вас уже есть на хостинг-платформе. Связывание ничего там не меняет; это сделает следующее развёртывание.',
+    add: 'Добавить платформу',
+    usePlatform: 'Использовать платформу',
+    platform: 'Платформа',
+    loading: 'Ищем платформы…',
+    failed: 'Не удалось загрузить платформы',
+    empty: 'Ни одна платформа не включена',
+    emptyBody:
+      'Включите плагин развёртывания в разделе «Плагины», чтобы связать платформу.',
+    check: 'Проверить',
+    checkAgain: 'Проверить снова',
+    link: ({ platform }) => `Связать ${platform}`,
+    ready: 'Готово к связыванию',
+    needsGit: 'Этот проект пока не видит ваш репозиторий',
+    needsGitBody: 'Дайте ему доступ и проверьте снова.',
+    repositoryRequired: 'Для этого источника нужен репозиторий',
+    repositoryRequiredBody: 'Подключите репозиторий к этому источнику и проверьте снова.',
+    grant: 'Дать доступ',
+    refused: 'Не удалось проверить этот проект',
+    linkRefused: 'Не удалось связать этот проект',
+    onMachine: 'Машине',
+    platformLater: 'Проект на платформе вы выберете сразу после создания.',
+    deploysFrom: 'Развёртывает с',
+    onPlatformTitle: ({ platform }) => `В ${platform}`,
+    onPlatformBody: 'Затем выберите аккаунт и проект. Привязка ничего не развёртывает.',
+    platformBuilds: 'Платформа собирает репозиторий этого проекта из выбранной ветки.',
+    managersOnly: 'Подключить платформу могут только управляющие этой средой.',
+    refusedRemedy: 'Проверьте выбранные аккаунт и проект, затем проверьте ещё раз.',
+    nothingDeployedBody: 'Первое развёртывание соберёт эту ветку на подключённой платформе.',
+    deployNoPlatform: 'У этой среды пока нет проекта на платформе для развёртывания.',
+    connectTitle: ({ platform }) => `Подключите ${platform}, чтобы развёртывать здесь`,
+    connectBody: ({ platform }) => `Happier связывает это окружение с проектом ${platform} и перед связыванием проверяет, что может ваш токен, и говорит, чего не хватает.`,
+    connectAction: ({ platform }) => `Добавить токен ${platform}`,
+    choicesFailed: ({ platform }) => `Не удалось прочитать варианты ${platform}`,
+    choicesFailedBody: "Проверьте, что подключению видны ваши проекты, и повторите.",
+    connection: "Подключение",
+    hostNeedsSetup: ({ machine }) => `${machine} ещё не готова принимать развёртывания`,
+    hostSetupBody: "Вы проверяете каждое изменение до запуска. Сохранение этого окружения может подождать.",
+    hostSetupAction: ({ machine }) => `Настроить ${machine}`,
+    hostReviewAction: ({ machine }) => `Проверить настройку ${machine}`,
+    hostUnchecked: ({ machine }) => `Не удалось проверить, может ли ${machine} принимать развёртывания`,
+  },
+} as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "ru">;
+
+return { deploymentPlatformLinkTranslations };
+})();
+
+const Domain_deploymentPromotionTranslations = (() => {
+const deploymentPromotionTranslations = {
+  "ru": {
+    open: 'Продвинуть в…', title: 'Продвинуть развёртывание', lead: ({ name, version }) => `Выберите, где развернуть ${version} из ${name}.`,
+    destination: 'Назначение', image: 'Готовый артефакт', imageBody: 'Использует образы этого сохранённого развёртывания Compose в другом сохранённом окружении Compose на ваших серверах.',
+    emptyTitle: 'Выберите другое окружение',
+    emptyBody: 'Создайте или подключите целевое окружение и повторите попытку.', loadFailed: 'Не удалось загрузить окружения', refused: 'Не удалось продвинуть', review: 'Проверить продвижение',
+    missingOne: ({ destination, name }) => `В ${destination} не задана ${name}`, missingMany: ({ destination, count }) => `В ${destination} не заданы переменные: ${count}`,
+    missingBodyOne: ({ source, destination }) => `В ${source} она задана. Сначала добавьте её в ${destination}, если эта версия её читает.`,
+    missingBodyMany: ({ source, destination }) => `В ${source} они заданы. Сначала добавьте их в ${destination}, если эта версия их читает.`,
+    missingAdd: ({ destination }) => `Добавить в ${destination}…`, compareFailed: ({ destination }) => `Не удалось сравнить переменные с ${destination}`,
+  },
+} as const satisfies Pick<Record<deploymentPromotionTranslations__SupportedLanguage, Shared_deploymentPromotionTranslations.PromotionCopy>, "ru">;
+
+return { deploymentPromotionTranslations };
+})();
+
+const Domain_fileEditingTranslations = (() => {
+const fileEditingTranslations = {
+  "ru": {
+    aiSuggestions: { ...fileEditingTranslations__fileAiSuggestionsTranslations.ru, ...fileEditingTranslations__fileAiSuggestionControls.ru, ...fileEditingTranslations__fileNextEditTranslations.ru },
+    statusEditing: 'Редактирование',
+    statusUnsaved: 'Не сохранено',
+    statusSaving: 'Сохранение',
+    statusSaved: 'Сохранено',
+    discardEdits: 'Отменить правки',
+    conflictByAgent: ({ agent }) => `${agent} изменил этот файл.`,
+    conflictOnDisk: 'Этот файл изменился на диске.',
+    editsKept: 'Ваши правки сохранены.',
+    useMine: 'Оставить мою',
+    useAgents: ({ agent }) => `Взять версию ${agent}`,
+    useTheirs: 'Взять версию с диска',
+    offline: ({ machine }) =>
+      `${machine} не отвечает. Ваши правки хранятся на этом устройстве; сохраните, когда он вернётся.`,
+    offlineSaving: ({ machine }) =>
+      `${machine} не отвечает. Ваши правки хранятся на этом устройстве и сохранятся, когда он вернётся.`,
+    backOnline: ({ machine }) =>
+      `${machine} снова на связи. Ваши правки можно сохранить.`,
+    awaitingApproval:
+      'Ожидание разрешения на сохранение. Ваши правки сохранены.',
+    saveFailed: 'Не удалось сохранить. Ваши правки сохранены.',
+    draftNotStored:
+      'Ваши правки не сохранены на этом устройстве. Сохраните, чтобы не потерять их.',
+    lineEndings: ({ ending }) => `Концы строк будут сохранены как ${ending}.`,
+    editsSetAside: 'Ваши правки отложены',
+    agentVersionReplaced: ({ agent }) => `Версия ${agent} заменена`,
+    diskVersionReplaced: 'Версия на диске заменена',
+    dismissNotice: 'Закрыть',
+    placesDiffer: ({ count }) => `Различий: ${count}.`,
+    useAllMine: 'Везде мою',
+    useAllAgents: ({ agent }) => `Везде версию ${agent}`,
+    useAllTheirs: 'Везде версию с диска',
+    backToEditing: 'Вернуться к редактированию',
+    placeLine: ({ line }) => `Строка ${line}`,
+    placeLines: ({ start, end }) => `Строки ${start}–${end}`,
+    onlyAgentChanged: ({ agent }) => `изменил только ${agent}`,
+    onlyDiskChanged: 'изменилась только версия на диске',
+    yoursVsAgents: ({ agent }) => `ваша или ${agent}`,
+    yoursVsDisk: 'ваша или с диска',
+    usingAgents: ({ agent }) => `Версия ${agent}`,
+    usingTheirs: 'Версия с диска',
+    usingMine: 'Ваша версия',
+    replacedLines: ({ count }) => `Заменено строк: ${count}`,
+    addedLines: ({ count }) => `Добавлено строк: ${count}`,
+    removedLines: ({ count }) => `Удалено строк: ${count}`,
+    youEditedThisChange: 'Вы изменили это место',
+    nextChange: 'Следующее изменение',
+    previousChange: 'Предыдущее изменение',
+    changes: 'Изменения',
+    hideKeyboard: 'Скрыть клавиатуру',
+    indent: 'Отступ',
+    outdent: 'Убрать отступ',
+    moveLeft: 'Влево',
+    moveRight: 'Вправо',
+    insertText: ({ text }) => `Вставить ${text}`,
+    editorKeys: 'Клавиши редактора',
+      redo: 'Повторить',
+  },
+} as const satisfies Pick<Record<
+  | 'en'
+  | 'ca'
+  | 'de'
+  | 'es'
+  | 'fr'
+  | 'it'
+  | 'ja'
+  | 'pl'
+  | 'pt'
+  | 'ru'
+  | 'zh-Hans'
+  | 'zh-Hant',
+  Shared_fileEditingTranslations.FileEditingTranslations
+>, "ru">;
+
+return { fileEditingTranslations };
+})();
+
+const Domain_usageChartInputTranslations = (() => {
+const usageChartInputTranslations = {
+  "ru": { commandChoose: "Выбрать строку", commandValues: "Значения графика", commandValuesInput: "Без ввода читает все интервалы. Используйте bucket (индекс с нуля) и mode (read, select, toggle, hover, scrub), чтобы прочитать или закрепить один. Возвращает точные заголовок, итог и строки.", commandChooseInput: "Используйте row (id из значений графика), чтобы выбрать строку закреплённого интервала.",
+    inputColourBy: 'Цвет по', inputIntensity: 'Интенсивность', inputLeadingAgent: 'Ведущий агент', inputDay: 'День',
+    inputPlanets: 'Планеты периода', inputThread: 'Нить серий', inputSkyline: 'Панорама недель', inputSurface: 'Дни на поверхности',
+    inputRings: 'Кольца серий', inputPeriodOrbit: 'Вокруг периода', inputMoons: 'Луны', inputGalaxy: 'Галактика сессий',
+    inputCalendar: 'Календарь', inputWeekdayHour: 'День недели / час', inputSky: 'Небо дней', inputWeekTide: 'Недельная волна', inputDaylight: 'Дневной свет',
+    inputLanes: 'Дорожки', inputDial: 'Циферблат', inputTimeline: 'Хронология по компьютерам', inputCrew: 'Команда', inputRiver: 'Река агентов',
+    inputShipped: 'Выпущено', inputPersonalRecords: 'Личные рекорды', inputSteering: 'Управление по агентам' },
+} as const;
+
+return { usageChartInputTranslations };
+})();
+
+const Domain_usageChartPlanetFamilyTranslations = (() => {
+const usageChartPlanetFamilyTranslations = {
+  "ru": Shared_usageChartPlanetFamilyTranslations.block({
+    levelColumn: 'Активность',
+    weekColumn: 'Неделя',
+    activeDaysColumn: 'Активные дни',
+    shareColumn: 'Доля',
+    daysColumn: 'Дни',
+    peakColumn: 'Одновременно',
+    kindColumn: 'Компьютер',
+    countColumn: 'Сколько',
+    weekdayInitials: 'П,В,С,Ч,П,С,В',
+    streakBestDays: ({ count }) => `Лучшая · ${count} дн.`,
+    streakNowDays: ({ count }) => `${count} дн. сейчас`,
+    streakOngoingBest: ({ count }) =>
+      `${count} дн. · самая длинная серия за период`,
+    daysLit: ({ count, total }) => `Освещено ${count} из ${total} дней`,
+    partialWeek: ({ from, to }) => `${from}–${to} · неполная неделя`, noStreakRings: 'За этот период нет серий из трёх дней и более',
+    moonsCaption: 'Каждый агент — луна; её размер — его доля.',
+    moonsCaptionDays:
+      'Каждый агент — луна; её размер — его доля, освещённая часть — сколько дней он работал.',
+    machinesUnavailable:
+      'Типы компьютеров пока не записываются. Они появятся, когда Happier сможет определить, на каком типе компьютера работал каждый агент.',
+    machinesEmpty: 'За этот период ни один компьютер не запускал агентов.',
+    machineKindUnknown: 'Неизвестный тип',
+    projectsEmpty: 'Публичных проектов пока нет.',
+    atmosphereFirstWeek: 'Неделя 1',
+    atmosphereCaption:
+      'Ореол гуще в недели, когда одновременно работало больше агентов; неделя 1 вверху.',
+    atmosphereCaptionPeak: ({ count }) =>
+      `Ореол гуще в недели, когда одновременно работало больше агентов; до ${count} одновременно за период.`,
+  }),
+} as const;
+
+return { usageChartPlanetFamilyTranslations };
+})();
+
+const Domain_fileSelectionAskTranslations = (() => {
+const fileSelectionAskTranslations = {
+  "ru": { ask: 'Спросить', comment: 'Комментировать', copy: 'Копировать', toolbarLabel: 'Выделение', moreWaysToAsk: 'Другие способы спросить', lineCount: ({ count }: { count: number }) => `${count} ${count % 10 === 1 && count % 100 !== 11 ? 'строка' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'строки' : 'строк'}`, sideRun: 'Спросить в отдельном запуске', targetTitle: 'Спросить без сессии', targetDescription: 'Выберите, где открывать вопросы о файлах, если сессия не открыта.', detachedRun: 'Отдельный запуск', newSession: 'Новая сессия' },
+} as const;
+
+return { fileSelectionAskTranslations };
+})();
+
+const Domain_fileTrackTranslations = (() => {
+const fileTrackTranslations = {
+  "ru": { track: 'Следить', tracking: 'Слежение', paused: 'Пауза', resume: 'Продолжить', turnOnA11y: ({ agent }: { agent: string }) => `Следить за правками ${agent}`, turnOffA11y: ({ agent }: { agent: string }) => `Перестать следить за правками ${agent}`, resumeA11y: ({ agent }: { agent: string }) => `Снова следить за правками ${agent}`, writing: 'Пишет', watch: 'Смотреть', agentWorking: ({ agent }: { agent: string }) => `${agent} работает`, view: 'Открыть', needsYou: 'Нужны вы', caretA11y: ({ agent }: { agent: string }) => `${agent} пишет здесь` },
+} as const;
+
+return { fileTrackTranslations };
+})();
+
+const Domain_actionPresentationTranslations = (() => {
+const actionPresentationTranslations = {
+  "ru": Shared_actionPresentationTranslations.copy({ title: 'Создать общедоступную ссылку на документ', named: name => `Создать общедоступную ссылку на «${name}»?`, summary: 'Любой, у кого есть эта ссылка, сможет прочитать документ.' }, { change: ({ name, kind }) => `Изменить «${name}» (${kind}) для всей вашей работы.`, reset: ({ name, kind }) => `Удалить ваши изменения в «${name}» (${kind}) и использовать исходные настройки.` }, { now: 'Сейчас', afterIdle: 'После простоя', start: 'Запустить', stop: 'Остановить', suspend: 'Приостановить', resume: 'Возобновить', delete: 'Удалить', external: 'Существующий сервер', managedLocal: 'Шлюз под управлением Happier' }, {
+        destinations: { transcript: "Скопировать визуальный элемент в эту сессию, в беседу.", board: "Скопировать визуальный элемент в эту сессию, на доску.", both: "Скопировать визуальный элемент в эту сессию, в беседу и на доску." },
+        origins: origins => `Копия сохраняет сетевой доступ к ${origins}.`,
+        open: "Копия сохраняет сетевой доступ к любому сайту.",
+    }),
+} as const;
+
+return { actionPresentationTranslations };
+})();
+
+const Domain_fileReviewNoteTranslations = (() => {
+const fileReviewNoteTranslations = {
+  "ru": {
+        discard: ({ paths, count }) => `Вы отменили изменения${count === null ? '' : ` (${count})`} в ${paths}`,
+        restore: ({ paths }) => `Вы восстановили предыдущее состояние ${paths}`,
+        restoreBeforeTurn: ({ paths, turn }) => `Вы восстановили ${paths} до состояния перед: ${turn}`,
+        undoDiscard: ({ paths }) => `Вы вернули отменённые изменения в ${paths}`,
+        undoRestore: ({ paths }) => `Вы отменили восстановление ${paths}`,
+        undo: ({ paths }) => `Вы отменили действие проверки в ${paths}`,
+    },
+} as const satisfies Pick<Record<string, Shared_fileReviewNoteTranslations.Labels>, "ru">;
+
+return { fileReviewNoteTranslations };
+})();
+
+const Domain_composerReferenceTranslations = (() => {
+const composerReferenceTranslations = {
+  "ru": { imageNumber: ({ number }) => `Изображение №${number}`, imageAccessibility: ({ number, name }) => `Изображение ${number}, ${name}`, attachmentRemoved: 'Вложение удалено', open: 'Открыть', removeFromMessage: 'Убрать из сообщения', kindSession: 'Сессия', kindFolder: 'Папка', kindSkill: 'Навык', kindPlugin: 'Плагин', kindWorkflow: 'Рабочий процесс', kindWidget: 'Виджет', unavailableDetail: 'Сейчас недоступно. Отправится как название.', removedDetail: 'Вложение удалено. При отправке оно не войдёт.', hintMention: 'Упомянуть', kindFile: "Файл", tabAll: "Все", hintNextKind: "Следующий тип", noMatches: ({ query }) => `Ничего не найдено по запросу «${query}»`, nothingToMention: "Пока нечего упомянуть", noMatchesDetail: "Попробуйте другое слово или перетащите элемент сюда." },
+} as const satisfies Pick<Record<string, Shared_composerReferenceTranslations.Labels>, "ru">;
+
+return { composerReferenceTranslations };
+})();
+
+const Domain_hunkReviewTranslations = (() => {
+const hunkReviewTranslations = {
+  "ru": {
+    change: ({ n }) => `Изменение ${n}`,
+    line: ({ line }) => `строка ${line}`,
+    lines: ({ start, end }) => `строки ${start}–${end}`,
+    kept: 'Принято',
+    keep: 'Принять',
+    keepUnavailable: 'Принятие изменений недоступно. Откройте эту проверку заново и повторите попытку.',
+    discard: 'Отменить',
+    keepA11y: ({ n, total, range }) =>
+      `Принять изменение ${n} из ${total}, ${range}`,
+    unkeepA11y: ({ n, total, range }) =>
+      `Отметить изменение ${n} из ${total}, ${range}, как непросмотренное`,
+    discardA11y: ({ n, total, range }) =>
+      `Отменить изменение ${n} из ${total}, ${range}`,
+    counter: ({ current, total }) => `${current} из ${total}`,
+    changes: ({ total }) => String((total === 1 ? 'изменение' : 'изменений')),
+    previousChange: 'Предыдущее изменение',
+    nextChange: 'Следующее изменение',
+    keepAll: 'Принять все',
+    fileReviewed: 'Все изменения в этом файле просмотрены',
+    filesLeft: ({ count }) => (count % 10 === 1 && count % 100 !== 11 ? `остался ${count} файл` : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? `осталось ${count} файла` : `осталось ${count} файлов`),
+    viewed: 'Просмотрено',
+    viewedChanged: 'Изменён после просмотра',
+    viewedNotSaved: 'Не сохранено в GitHub',
+    viewedA11y: ({ name }) => `${name}, просмотрено в GitHub`,
+    viewedCount: ({ count, total }) => `${count} из ${total} просмотрено`,
+    viewedUnavailable: 'Отметки просмотра недоступны',
+    nextFile: 'Следующий файл',
+    nextNamed: ({ name }) => `Далее · ${name}`,
+    scopeA11y: 'Какие изменения показать',
+    scopeTurn: 'Этот ход',
+    scopeSession: 'Этот сеанс',
+    scopeUncommitted: 'Незафиксированные',
+    noTurnChanges: 'В этом файле нет изменений из этого хода.',
+    noChanges: 'В этом файле нет изменений.',
+    showSession: 'Показать этот сеанс',
+    discardNeeds: ({ machine }) => `Для отмены нужен ${machine}`,
+    agentWriting: ({ agent }) => `${agent} пишет в этот файл`,
+    turn: ({ turn }) => `ход ${turn}`,
+    comment: 'Комментировать',
+    askAbout: 'Спросить об этом изменении',
+    copy: 'Копировать',
+    noticeDiscarded: 'Изменение отменено',
+    noticeDiscardedAt: ({ range }) => `Изменение отменено: ${range}`,
+    noticeRestored: ({ name }) => `${name} восстановлен`,
+    noticeKeptEdited: 'Оставлен: изменён с тех пор',
+    noticeUndone: 'Возвращено',
+    noticeUndoConflict: 'Файл с тех пор изменился. Вернуть нельзя.',
+    noticeUndoUnavailable: 'Готово. Это действие нельзя вернуть.',
+    noticeNoteFailed: ({ agent }) => `Готово, но не удалось сообщить ${agent}`,
+    noticeMovedOn: 'Файл изменился. Просмотрите его снова.',
+    noticeUpdateRequired: ({ machine }) =>
+      `Обновите ${machine}, чтобы отменять или восстанавливать изменения`,
+    noticeUnsupported: 'Это изменение нельзя отменить здесь.',
+    discardStaged: 'Сначала уберите эти изменения из индекса.',
+    discardRenamedOrCopied: 'Нельзя отменять отдельные изменения в переименованных или скопированных файлах.',
+    discardUntracked: 'Нельзя отменять отдельные изменения в неотслеживаемых файлах.',
+    noticeUnavailable: 'Эти изменения больше недоступны.',
+    noticeUnknown: 'Не удалось подтвердить. Обновите.',
+    undo: 'Вернуть',
+    replaceUnsavedTitle: 'Заменить несохранённые правки?',
+    replaceUnsavedMessage:
+      'Восстановление файла заменит правки, которые вы не сохранили.',
+    replace: 'Заменить',
+    imageSideBySide: 'Рядом',
+    imageSwipe: 'Шторка',
+    imageOnion: 'Наложение',
+    imageModeA11y: 'Сравнить изображения',
+    imageBefore: 'До',
+    imageAfter: 'После',
+    pdfOpenBefore: 'Открыть до',
+    pdfOpenAfter: 'Открыть после',
+    imageAdded: 'Добавлено',
+    imageDeleted: 'Удалено',
+    imageUnreadable: 'Не удалось прочитать изображение',
+    imageNoPreview: 'Нет предпросмотра',
+    imageTooLarge: "Слишком большой для предпросмотра",
+    imageUnsupported: "Предпросмотр этого формата недоступен",
+    imageMissing: "Файл не найден",
+    imageLoading: 'Загрузка изображения',
+    imageBlend: 'Смешение',
+    unchangedLines: ({ count }) => `неизменённых строк: ${count}`,
+    agentFallback: 'агент',
+  },
+} as const satisfies Pick<Record<string, Shared_hunkReviewTranslations.Labels>, "ru">;
+
+return { hunkReviewTranslations };
+})();
+
+const Domain_storeInstalledTranslations = (() => {
+const storeInstalledTranslations = {
+  "ru": {
+    title: 'Установлено',
+    purpose:
+      'Всё, чем управляет Happier, на каждой Machine и в каждом проекте: где работает, всё ли в порядке и что требует вашего внимания.',
+    searchPlaceholder: 'Искать во всём, чем управляет Happier',
+    groupBy: 'Группировать',
+    groupKind: 'По типу',
+    groupMachine: 'По Machine',
+    groupProject: 'По проекту',
+    status: 'Состояние',
+    present: ({ count }) => `Happier управляет для вас: ${count}.`,
+    presentAcross: ({ count, machines }) =>
+      `Happier управляет для вас: ${count}, на машинах: ${machines}.`,
+    needYou: ({ count }) => `Требуют внимания: ${count}.`,
+    includedMore: ({ count }) => `Ещё ${count} входят в Happier.`,
+    includedBody: 'Они поставляются с Happier и обновляются вместе с ним.',
+    partial: 'Часть ещё не загрузилась, так что это может быть не всё.',
+    needsYou: 'Требует внимания',
+    all: ({ count }) => `Все (${count})`,
+    allUnknown: 'Все',
+    fewer: 'Меньше',
+    sectionNone: 'Пока ничего.',
+    browserProfileEmpty: 'Профиль браузера, пока без расширений',
+    browseKind: 'Обзор',
+    sectionUnavailable: 'Сейчас не удалось загрузить.',
+    sectionPartial: 'Часть ещё не загрузилась.',
+    sectionIncomplete: 'Часть не удалось прочитать, поэтому здесь может быть не всё.',
+    accountGroup: 'Ваш аккаунт',
+    accountGroupBody: 'Не привязано к Machine или проекту.',
+    unassignedGroup: 'Место пока неизвестно',
+    unassignedGroupBody: 'Пока неизвестно, где они работают.',
+    noProjectGroup: 'Без проекта',
+    noProjectGroupBody: 'Не связаны с проектом.',
+    everyMachine: 'Все машины',
+    appNoPage: 'Страницы пока нет',
+    machineFallback: 'Machine',
+    emptyTitle: 'Пока пусто',
+    emptyBody:
+      'Добавленные MCP-серверы, навыки, агенты, провайдеры и плагины появятся здесь — с тем, где они работают и что требует внимания.',
+    browse: 'Открыть Store',
+    noMatch: ({ query }) => `Ничего не найдено по запросу «${query}»`,
+    noMatchFilters: 'С этими фильтрами ничего не найдено',
+    clear: 'Сбросить',
+    unavailable: 'Сейчас нельзя показать «Установлено» для этого аккаунта.',
+    machineTitle: 'На этой Machine',
+    machineBody: 'Всё, чем Happier управляет здесь.',
+    openInInstalled: 'Открыть в «Установлено»',
+  },
+} as const satisfies Pick<Record<string, Shared_storeInstalledTranslations.Labels>, "ru">;
+
+return { storeInstalledTranslations };
+})();
+
+const Domain_connectedAccountCallbackTranslations = (() => {
+const connectedAccountCallbackTranslations = {
+  "ru": Shared_connectedAccountCallbackTranslations.callbackCopy('ru', {
+        connectedBody: 'Возвращаемся к подключённым аккаунтам…',
+        pasteBody: 'Вставьте его на экране подключения, где вы начали вход. Он работает только там и только один раз.',
+        invalidBody: 'Начните вход заново на экране подключения.',
+        unfinishedBody: 'Вернитесь на экран подключения, чтобы продолжить вход, или вставьте там этот ответ.',
+        openConnections: 'Открыть подключённые аккаунты',
+    }),
+} as const satisfies Pick<Record<Shared_connectedAccountCallbackTranslations.Locale, Shared_connectedAccountCallbackTranslations.CallbackCopy>, "ru">;
+
+return { connectedAccountCallbackTranslations };
+})();
+
+const Domain_skillsPageTranslations = (() => {
+const ru: Shared_skillsPageTranslations.SkillsPageTranslation = {
+  pane: { thisBot: "Созданы этим Ботом", yours: "Ваши", registries: "Из ваших реестров", other: "Другие навыки", allSkills: "Все ваши навыки" },
+  saved: {
+    saved: "Сохранено в ваших навыках",
+    notAttached: "Здесь не подключено",
+    attachAgain: "Подключить снова",
+    liveNow: "Уже активно",
+    loadsAfterTurn: "Загрузится после этого хода",
+    restartNow: "Перезапустить сейчас",
+    needsRestart: "Нужен перезапуск",
+    view: "Открыть",
+    liveNowDetail: ({ name }) => name + " использует его со следующего сообщения.",
+    loadsAfterTurnDetail: "Он подключится между ходами. Разговор сохранится.",
+    restartDetail: "Перезапуск сохраняет разговор.",
+    restartTerminalDetail: "Перезапустите сессию из терминала. Разговор сохранится.",
+    notAttachedDetail: "Он есть в ваших навыках, но эта сессия его не приняла.",
+    onlyUses: ({ name }) => "использует только " + name,
+  },
+  maker: {
+    title: "Кем создано",
+    anyone: "Кем угодно",
+    you: "Вами",
+    anyBot: "Любым ботом",
+    registries: "Из реестров",
+    session: "Сессия",
+    person: "Другой человек",
+    unknown: "Автор неизвестен",
+    openSession: "Открыть сессию",
+    createdHere: "Создано в Happier",
+  },
+  title: 'Скиллы',
+  pageDescription:
+    'Инструкции, которые агенты берут, когда задача их требует. Добавьте скилл один раз — и он будет на каждой машине.',
+  searchPlaceholder: 'Искать скиллы',
+  addSkill: 'Добавить скилл',
+  allSkills: 'Все скиллы',
+  needLook: ({ count }) => `Проверить: ${count}`,
+  inUse: 'Используются',
+  off: 'Выключены',
+  updates: 'Обновления',
+  noOwnSkills: 'Своих скиллов пока нет',
+  noMatch: ({ query }) => `Нет скиллов по запросу «${query}»`,
+  loadFailed: 'Не удалось загрузить скиллы',
+  home: {
+    reach: ({ count, agents, machines }) =>
+      `Скиллов: ${count} · ${agents} · машин: ${machines}`,
+    reachNeedLook: ({ count }) => `, проверить: ${count}`,
+    reachNone: 'Ни один скилл пока не включён',
+    reachWaiting: ({ count }) =>
+      `Включено навыков: ${count}. Они дойдут до ваших агентов, как только машина сообщит, какие у неё есть.`,
+    unsupported: ({ count, agents }) =>
+      `Включено скиллов: ${count}, но ${agents} не умеет пользоваться скиллами.`,
+    unsupportedNote: ({ agents }) => `${agents} не умеет пользоваться скиллами.`,
+    noMachines: 'Скиллы появятся на первой подключённой машине.',
+    catchesUp: ({ machines }) => `${machines} догонит, когда вернётся.`,
+    catchUpCount: ({ count }) => `Машины не в сети (${count}) догонят, когда вернутся.`,
+    mapLabel: ({ skills, machines }) =>
+      `Скиллов: ${skills}, машин: ${machines}`,
+    offlineLastKnown: ({ time }) => `Не в сети · последнее состояние ${time}`,
+    offline: 'Не в сети',
+    noAgents: 'Агентов пока нет',
+    noSkillAgents: 'Здесь ни один агент не использует скиллы',
+    moreMachines: ({ count }) => `Ещё машин: ${count}`,
+    needsLook: 'Нужно проверить',
+    updateWaiting: 'В источнике ждёт более новая версия.',
+    modifiedUpstream: 'Вы изменили его, и источник тоже изменился.',
+    removedFromSource: 'В источнике его больше нет. Оставьте свою копию или удалите его.',
+    maskedOn: ({ machine }) => `Там действует собственная копия ${machine}.`,
+    unreadable: 'Не удалось прочитать этот навык.',
+    byId: ({ id }) => `Навык ${id}`,
+    writeOwn: 'Написать свой',
+    review: 'Посмотреть',
+    decide: 'Выбрать',
+    whereTitle: 'Где включён',
+    whereBody:
+      'Новый скилл включён везде. Ограничьте его проектом или машиной или скройте от агента; побеждает самое точное правило, а любая сессия может добавить или убрать скилл.',
+    firstHeadline: 'Теперь ваши скиллы есть на каждой машине',
+    firstPurpose:
+      'Скилл — это папка с инструкциями, иногда со скриптами, которую агент берёт, когда задача её требует. Ваши теперь следуют за вами на каждую машину.',
+    firstSentence: ({ on, off }) =>
+      `${on > 0 ? `Включены там, где вы их уже использовали: ${on}. Ждут под вашим Home, пока вы не выберете: ` : ''}${off}.`,
+    choose: 'Выбрать, что включено',
+    chooseOff: ({ count }) => `Выключено: ${count}`,
+    nothingElse: 'Больше ничего не изменится, пока вы не выберете.',
+    emptyTitle: 'Научите агентов один раз',
+    emptyBody:
+      'Скилл — это папка с инструкциями, которую агент берёт, когда задача её требует. Добавьте его здесь, и его получит каждый агент на каждой машине.',
+    emptySentence:
+      'Машины вращаются вокруг вашего Home. Добавленный скилл попадает на каждую из них, к каждому агенту.',
+  },
+};
+
+const skillsPageTranslations = {
+  "ru": ru,
+} as const;
+
+return { skillsPageTranslations };
+})();
+
+const Domain_capabilityNoticeTranslations = (() => {
+const capabilityNoticeTranslations = {
+  "ru": Shared_capabilityNoticeTranslations.copy(['{name} не удалось запустить', '{name} не удалось загрузить', 'нет {key}', 'нужен вход', 'вход выполнен для другого адреса',
+    'удалённый мост недоступен', 'этот агент не может получить навыки таким способом', 'Серверы MCP', 'Навыки', 'не удалось прочитать его файлы', 'не удалось передать вход в эту сессию']),
+} as const;
+
+return { capabilityNoticeTranslations };
+})();
+
+const Domain_skillDetailTranslations = (() => {
+const ru: Shared_skillDetailTranslations.SkillDetailTranslation = {
+  whereDescription:
+    'Настройте один раз — и каждая машина последует. Побеждает самое точное правило.',
+  tokensWhenUsed: ({ tokens }) => `${tokens} токенов при использовании`,
+  menu: {
+    duplicate: 'Дублировать',
+    makeCopy: 'Сделать редактируемую копию',
+    moveToFolder: 'Переместить в папку',
+    noFolder: 'Без папки',
+    exportZip: 'Экспортировать как .zip',
+    copyLink: 'Копировать ссылку',
+    linkCopied: 'Ссылка скопирована',
+  },
+  banner: {
+    couldntLoadTitle: 'Не удалось загрузить этот скилл',
+    couldntLoadBody:
+      'Ваша библиотека не ответила. Сессии сохраняют уже имеющуюся копию.',
+  },
+  instructions: {
+    title: 'Инструкции',
+    edit: 'Изменить',
+    done: 'Готово',
+    preview: 'Предпросмотр',
+    showAll: 'Показать всё',
+    showLess: 'Показать меньше',
+    saving: 'Сохранение…',
+    saved: 'Сохранено · применится к новым сессиям',
+    saveFailed: 'Не удалось сохранить. Ваш текст сохранён.',
+    conflict: 'Изменено на другом устройстве',
+    reviewBoth: 'Сравнить оба',
+    keepMine: 'Оставить мой',
+    takeTheirs: 'Взять другой',
+    yours: 'Ваш',
+    theirs: 'Другой',
+    lintOk: 'Имя и описание заданы',
+    lintMissingName: 'Добавьте имя во frontmatter',
+    lintMissingDescription:
+      'Добавьте описание, чтобы агенты знали, когда его использовать',
+    lintNoFrontmatter: 'Начните с блока frontmatter: имя и описание',
+    readOnlyPlugin: 'Входит в свой плагин и следует его версии.',
+  },
+  files: {
+    title: 'Файлы',
+    description: ({ count }) => `Файлов: ${count}, без скриптов.`,
+    descriptionScripts: ({ count, scripts }) =>
+      `Файлов: ${count}, из них скриптов: ${scripts}.`,
+    script: 'Скрипт',
+    addFile: 'Добавить файл',
+    addFilePrompt: 'Его путь внутри скилла.',
+    addFilePlaceholder: 'reference/notes.md',
+    remove: 'Удалить',
+    removeTitle: ({ path }) => `Удалить ${path}?`,
+    removeBody: 'Новые сессии получат скилл без него.',
+    more: ({ count }) => `Ещё ${count}`,
+    binary: 'Не текстовый файл',
+    loading: 'Открывается…',
+    afterAdd: 'Добавляйте файлы, когда скилл окажется в вашей библиотеке.',
+  },
+  source: {
+    title: 'Источник и обновления',
+    descriptionReview: 'Изменения из источника ждут вашей проверки.',
+    descriptionAuto:
+      'Изменения из источника приходят сами, если вы его не меняли.',
+    descriptionPinned:
+      'Закреплён на версии. Изменения из источника ждут, пока вы не открепите.',
+    descriptionOwn: 'Он ваш. Обновляете его только вы.',
+    writtenByYou: 'Написан вами',
+    writtenByYouBody: 'Правьте его здесь — каждая машина получит изменение.',
+    uploadedByYou: 'Загружен вами',
+    foundOn: ({ machine }) => `Найден на ${machine}`,
+    foundOnBody: ({ path }) => path,
+    firstParty: 'Встроен в Happier · следует его версии',
+    verifiedByDigest: 'Проверено по хешу',
+    noDigestPublished: 'Хеш не опубликован',
+    added: ({ date }) => `добавлен ${date}`,
+    updates: 'Обновления',
+    upToDate: 'Актуальная версия',
+    updateAvailable: 'Есть обновление',
+    removedFromSource: 'В источнике его больше нет',
+    notChecked: 'Ещё не проверялся',
+    checked: ({ time }) => `проверено ${time}`,
+    checkNow: 'Проверить сейчас',
+    view: 'Посмотреть',
+    auto: 'Обновлять автоматически',
+    autoBody:
+      'Выключено для чужих скиллов, чтобы вы сначала видели каждое изменение',
+    pin: 'Закрепить эту версию',
+    pinBody: 'Оставить эту версию, пока вы не открепите',
+    checkFailed: 'Не удалось проверить источник',
+  },
+  machines: {
+    description: 'Что сейчас получают агенты на каждой машине.',
+    nowhere: 'Пока не включён ни на одной машине.',
+    offline: 'Машина не в сети',
+    lastKnown: ({ time }) => `последнее состояние ${time}`,
+    masked: ({ agent, machine }) =>
+      `${agent}: побеждает собственная копия на ${machine}`,
+    cantLoad: ({ agents }) => `${agents} не умеет загружать скиллы здесь`,
+    previewFailed: ({ agent }) => `${agent}: —`,
+    checking: 'Проверка…',
+    projectNote:
+      'Внутри проекта всё ещё может победить собственная копия проекта.',
+    noAgent: 'Ни один агент здесь его не получает',
+    offlineCount: ({ count }) => `Не в сети: ${count}`,
+    summaryOn: ({ agents, machine }) => `${agents} на ${machine}`,
+    summaryOnMany: ({ agents, count }) => `${agents} на устройствах: ${count}`,
+  },
+  details: {
+    title: 'Подробности',
+    summary: 'Ревизия и копии вне Happier',
+    revision: 'Ревизия',
+    contentHash: 'Хеш содержимого',
+    alsoInstall: ({ machine }) => `Установить также на ${machine}`,
+    alsoInstallBody:
+      'Для использования вне Happier, в папке скиллов каждого агента',
+    installed: 'Установлен',
+    install: 'Установить',
+  },
+  leave: {
+    remove: 'Удалить скилл',
+    footnote: 'Запущенные сессии сохранят его до перезапуска.',
+    confirmTitle: ({ name }) => `Удалить ${name}?`,
+    confirmBody:
+      'Он исчезнет из вашей библиотеки и со всех машин. Запущенные сессии сохранят его до перезапуска.',
+    confirm: 'Удалить',
+  },
+  draft: {
+    title: 'Новый скилл',
+    purpose:
+      'Научите агентов чему-то один раз. Они читают описание, чтобы решить, когда его использовать.',
+    add: 'Добавить в библиотеку',
+    adding: 'Добавление…',
+    addFailed: 'Не удалось добавить скилл. Ваш текст сохранён.',
+  },
+};
+
+const skillDetailTranslations = {
+  "ru": ru,
+} as const;
+
+return { skillDetailTranslations };
+})();
+
+const Domain_skillsFoundTranslations = (() => {
+const ru: Shared_skillsFoundTranslations.SkillsFoundTranslation = {
+  title: 'Найдено на ваших машинах',
+  purpose:
+    'Скиллы, которые агенты уже хранят на каждой машине. Happier никогда их не изменяет. Добавьте скилл в библиотеку, чтобы он был на всех машинах.',
+  checkAgain: 'Проверить снова',
+  add: 'Добавить в библиотеку',
+  addAll: ({ count }) => `Добавить все (${count})`,
+  makeCopy: 'Сделать копию',
+  compare: 'Сравнить',
+  hideCompare: 'Скрыть',
+  inLibrary: 'В вашей библиотеке',
+  adding: 'Добавление…',
+  plugin: 'Плагин',
+  readBy: ({ agents, count }) =>
+    count === 1 ? `${agents} читает его` : `${agents} читают его`,
+  fromPlugin: ({ plugin }) => `Из плагина ${plugin}`,
+  installedByHappier: 'Установлен Happier',
+  masks: ({ machine }) =>
+    `В вашей библиотеке есть скилл с таким именем. На ${machine} приоритет у этой копии, поэтому агенты там используют её.`,
+  more: ({ count }) => `Ещё ${count}`,
+  showFewer: 'Показать меньше',
+  looking: 'Поиск…',
+  nothingHere: 'Скиллы здесь не найдены.',
+  quietEmpty: ({ count, others }) =>
+    others ? `Скиллы не найдены на других машинах: ${count}` : `Скиллы не найдены на машинах: ${count}`,
+  quietLooking: ({ count }) =>
+    `Поиск на машинах: ${count}…`,
+  lastKnown: ({ time }) => `последнее состояние ${time}`,
+  offlineBring: ({ machine }) =>
+    `Подключите ${machine} к сети, чтобы добавлять скиллы с неё.`,
+  offlineUnseen: ({ count }) =>
+    count === 1
+      ? `Одна машина не в сети ещё не просмотрена. Подключите её, чтобы увидеть её скиллы.`
+      : `Машины не в сети, которые ещё не просмотрены: ${count}. Подключите одну из них, чтобы увидеть её скиллы.`,
+  scanFailed: ({ machine }) => `Не удалось прочитать скиллы машины ${machine}`,
+  tryAgain: 'Повторить',
+  olderMachine: ({ machine }) =>
+    `Чтобы показать скиллы, ${machine} нужна более новая версия Happier.`,
+  rootFailed: ({ path }) => `Не удалось прочитать ${path}`,
+  noMachinesTitle: 'Машин пока нет',
+  noMachinesBody:
+    'Подключите машину, чтобы увидеть скиллы, которые агенты уже хранят на ней.',
+  addFailed: ({ name }) =>
+    `Не удалось добавить ${name}. Ничего не изменилось.`,
+  compareYours: 'Ваша библиотека',
+  compareTheirs: ({ machine }) => `На ${machine}`,
+  compareFailed: ({ machine }) =>
+    `Не удалось прочитать копию на ${machine}.`,
+  destination: 'Найдено на ваших машинах',
+  homeBody:
+    'Уже лежат в папках ваших агентов. Добавьте навык в библиотеку, и он будет с вами везде.',
+  seeAll: ({ count }) => `Все (${count})`,
+  alreadyOnMachines: ({ count }) => `На ваших машинах уже есть навыков: ${count}`,
+  install: {
+    installedIn: ({ path }) => `Установлен в ${path}`,
+    externallyModified: ({ machine }) =>
+      `Копия на ${machine} была изменена вне Happier, поэтому осталась как есть.`,
+    removeAnyway: 'Всё равно удалить',
+    removeTitle: ({ machine }) => `Удалить с ${machine}?`,
+    removeBody:
+      'Это удалит копию, которую Happier поместил в папки агентов на этой машине. Скилл останется в вашей библиотеке.',
+    remove: 'Удалить',
+    nativeConflict: ({ machine }) =>
+      `На ${machine} в папке агента уже есть другой скилл с таким именем. Happier его не тронул.`,
+    failed: ({ machine }) =>
+      `Не удалось установить на ${machine}. Ничего не изменилось.`,
+    removeFailed: ({ machine }) => `Не удалось удалить с ${machine}.`,
+    partial: ({ machine }) =>
+      `Установлено на ${machine} для некоторых агентов. Для остальных записать не удалось.`,
+  },
+};
+
+const skillsFoundTranslations = {
+  "ru": ru,
+} as const;
+
+return { skillsFoundTranslations };
+})();
+
+const Domain_mcpFoundTranslations = (() => {
+const ru: Shared_mcpFoundTranslations.McpFoundTranslation = {
+  purpose: 'MCP-серверы, которые ваши агенты уже настроили на каждой машине. Добавьте один в Happier — и он будет в каждой сессии, на каждой машине.',
+  checkAgain: 'Проверить снова',
+  add: 'Добавить',
+  inHappier: 'В Happier',
+  setUpIn: ({ agent }) => `Настроен в ${agent}`,
+  offIn: ({ agent }) => `Выключен в ${agent}`,
+  looking: 'Поиск…',
+  nothingHere: 'MCP-серверы здесь не найдены.',
+  lastKnown: ({ time }) => `последнее известное ${time}`,
+  offlineBring: ({ machine }) => `Подключите ${machine}, чтобы добавлять с неё.`,
+  offlineUnseen: ({ count }) =>
+    count === 1
+      ? '1 машина не в сети ещё не проверена. Подключите её, чтобы увидеть её MCP-серверы.'
+      : `Машины не в сети (${count}) ещё не проверены. Подключите одну, чтобы увидеть её MCP-серверы.`,
+  scanFailed: ({ machine }) => `Не удалось прочитать MCP-серверы на ${machine}`,
+  tryAgain: 'Повторить',
+  olderMachine: ({ machine }) => `${machine} нужна более новая версия Happier, чтобы показать её MCP-серверы.`,
+  noMachinesTitle: 'Машин пока нет',
+  noMachinesBody: 'Подключите машину, чтобы увидеть MCP-серверы, которые ваши агенты уже на ней настроили.',
+  warningReadFailed: ({ agent }) => `Не удалось прочитать настройки MCP ${agent}`,
+  warningReadFailedNoAgent: 'Не удалось прочитать файл настроек MCP',
+  warningParseFailed: ({ agent }) => `Не удалось разобрать настройки MCP ${agent}`,
+  warningParseFailedNoAgent: 'Не удалось разобрать файл настроек MCP',
+  warningUnsupported: ({ agent }) => `Некоторые MCP-серверы ${agent} пока нельзя прочитать`,
+  warningUnsupportedNoAgent: 'Некоторые MCP-серверы здесь пока нельзя прочитать',
+  quietEmpty: ({ count, others }) => `MCP-серверы не найдены на ${others ? 'других ' : ''}машинах: ${count}`,
+  quietLooking: ({ count }) =>
+    `Поиск на машинах: ${count}…`,
+};
+
+const mcpFoundTranslations = {
+  "ru": ru,
+} as const;
+
+return { mcpFoundTranslations };
+})();
+
+const Domain_skillsUpdatesTranslations = (() => {
+const ru: Shared_skillsUpdatesTranslations.SkillsUpdatesTranslation = {
+  updates: {
+    title: 'Обновления',
+    purpose:
+      'Более новые версии оттуда, откуда пришли ваши навыки. Ничего не изменится, пока вы не выберете.',
+    checkNow: 'Проверить',
+    checking: 'Проверка…',
+    readyTitle: 'Готовы к обновлению',
+    readyBody: 'Вы их не меняли, поэтому обновление безопасно.',
+    choiceTitle: 'Нужен ваш выбор',
+    choiceBody: ({ name }) =>
+      `Вы изменили ${name}, а у источника есть более новая версия. Выберите для каждого файла; показаны обе стороны.`,
+    refChange: ({ from, to }) => `с ${from} на ${to}`,
+    newerWaiting: 'Ждёт более новая версия',
+    linesChanged: ({ count, file }) => `Изменено строк в ${file}: ${count}`,
+    filesChanged: ({ count }) => `Изменено файлов: ${count}`,
+    viewChanges: 'Показать изменения',
+    hideChanges: 'Скрыть изменения',
+    update: 'Обновить',
+    fileDiffers: ({ count }) =>
+      `Ваша и их версии различаются · строк: ${count}`,
+    fileTheirsOnly: 'Новый в их версии',
+    fileMineOnly: 'Только в вашей',
+    fileUnchanged: 'Без изменений',
+    nothingToChoose: 'Нечего выбирать',
+    keepNote: ({ name }) =>
+      `Если оставить хотя бы один ваш файл, ${name} останется отмеченным как изменённый, и следующие обновления снова спросят.`,
+    notNow: 'Не сейчас',
+    applyChoices: 'Применить выбор',
+    upToDate: 'Всё актуально',
+    noSources: 'Ни один ваш навык не пришёл из источника с обновлениями. Навыки из GitHub или реестра показывают здесь новые версии.',
+    updatedTitle: 'Обновлены',
+    checkedAt: ({ time }) => `Проверено ${time}`,
+    checkFailed: 'Не удалось проверить обновления.',
+    diffFailed: 'Не удалось загрузить изменения.',
+    applyFailed: 'Не удалось обновить.',
+    applied: ({ ref }) => `Обновлено до ${ref}`,
+    tryAgain: 'Повторить',
+  },
+  choose: {
+    purpose: ({ total, off }) =>
+      `В вашей библиотеке ${total} навыков. ${off} остаются выключенными, пока вы не выберете, поэтому ваши сессии пока не меняются.`,
+    purposeIdle: 'Выберите, какие скиллы получают ваши агенты.',
+    migratedTitle: ({ count }) =>
+      `Уже включены там, где вы их использовали: ${count}`,
+    migratedBody: ({ names }) =>
+      `${names} пришли из контекста аккаунта или проекта, поэтому остаются включёнными там, где вы их использовали.`,
+    listTitle: 'Выберите, что получат ваши агенты',
+    selectAll: 'Выбрать все',
+    selectNone: 'Снять выбор',
+    usedOn: ({ date }) => `Использован ${date}`,
+    selected: ({ count }) => `Выбрано: ${count}`,
+    turnOn: ({ count }) => `Включить везде (${count})`,
+    failed: 'Не удалось включить. Ваш выбор сохранён.',
+    nothingWaits:
+      'У каждого навыка уже есть место. Включите или сузьте навык на его странице.',
+  },
+  shelf: {
+    title: 'Из ваших реестров',
+    titleNew: 'Начните с одного из этих',
+    browseAll: 'Смотреть все',
+    fromSource: ({ source }) => `Новое и популярное на ${source}.`,
+    add: 'Добавить',
+    inLibrary: 'В вашей библиотеке',
+    addFailed: 'Не удалось добавить',
+  },
+};
+
+const skillsUpdatesTranslations = {
+  "ru": ru,
+} as const;
+
+return { skillsUpdatesTranslations };
+})();
+
+const Domain_mcpPageTranslations = (() => {
+const configRu: Shared_mcpPageTranslations.McpConfigTranslation = {
+  transport: 'Запускается как',
+  command: 'Команда',
+  commandDescription: 'Программа, которую запускает каждая машина.',
+  arguments: 'Аргументы',
+  argument: ({ position }) => `Аргумент ${position}`,
+  removeArgument: ({ position }) => `Удалить аргумент ${position}`,
+  addArgument: 'Добавить аргумент',
+  workingFolder: 'Рабочая папка',
+  workingFolderDescription: 'Где запускается программа.',
+  sessionFolder: 'Папка проекта сессии',
+  aFolder: 'Папка на машине',
+  folderPath: 'Папка',
+  environment: 'Окружение',
+  environmentDescription: 'Значения, которые читает программа. Секреты остаются сквозно зашифрованными и записываются в сессию только на машине.',
+  addVariable: 'Добавить переменную',
+  address: 'Адрес',
+  addressDescription: 'Куда подключается Happier; на всех машинах используется один и тот же.',
+  headers: 'Заголовки',
+  headersDescription: 'Отправляются с каждым запросом. Секрет показывает своё имя, а не значение.',
+  addHeader: 'Добавить заголовок',
+  saved: 'Сохранено · действует для новых сессий',
+  saving: 'Сохранение…',
+  saveFailed: 'Не удалось сохранить. Ваша правка осталась на месте.',
+  different: 'Иначе на одной из машин…',
+  differentNone: 'На всех машинах одни и те же значения',
+  differentOne: ({ machine }) => `${machine}: значения отличаются`,
+  differentOn: ({ machine }) => `Отличается на ${machine}`,
+  addDifference: 'Добавить отличие для машины',
+  addAnother: 'Ещё одна машина',
+  differentCount: ({ count }) => `Отличается на ${count} ${ruPlural(count, 'машине', 'машинах', 'машинах')}`,
+  differsFolder: ({ path }) => `Рабочая папка ${path}`,
+  differsCommand: 'Команда',
+  differsArguments: 'Аргументы',
+  differsAddress: 'Адрес',
+  differsValues: ({ names }) => names,
+  inFolderOn: ({ folder, machine }) => `В ${folder} на ${machine}`,
+  removeDifference: 'Удалить',
+};
+
+const ruPlural = (count: number, one: string, few: string, many: string) =>
+  count % 10 === 1 && count % 100 !== 11
+    ? one
+    : [2, 3, 4].includes(count % 10) && ![12, 13, 14].includes(count % 100)
+      ? few
+      : many;
+
+const ru: Shared_mcpPageTranslations.McpPageBase = {
+  allServers: 'Все серверы',
+  foundOnMachines: 'Найдено на ваших машинах',
+  inUse: 'Используется',
+  off: 'Выкл.',
+  fromPlugins: 'Из плагинов',
+  builtIn: 'Встроенные',
+  builtInHappier: 'Happier',
+  builtInHappierDescription: 'Сессии, файлы, машины и ваши Действия',
+  builtInActions: 'Действия',
+  remote: 'Удалённый',
+  local: 'Локальный',
+  tools: {
+    title: 'Инструменты',
+    description: 'Что могут вызывать ваши агенты. «Спрашивать» показывает карточку подтверждения, «Разрешить» запускает без вопросов, «Выкл.» скрывает инструмент.',
+    defaultTitle: 'По умолчанию для инструментов',
+    defaultAsk: 'Спрашивать',
+    defaultReadOnly: 'Разрешить чтение',
+    defaultAll: 'Разрешить всё',
+    defaultAskDescription: 'Каждый инструмент сначала спрашивает. Инструмент, настроенный вами, сохраняет свою настройку.',
+    defaultReadOnlyDescription: 'Инструменты только для чтения запускаются без вопросов; всё, что записывает, сначала спрашивает. Инструмент, настроенный вами, сохраняет свою настройку.',
+    defaultAllDescription: 'Каждый инструмент запускается без вопросов. Инструмент, настроенный вами, сохраняет свою настройку.',
+    off: 'Выкл.',
+    ask: 'Спрашивать',
+    allow: 'Разрешить',
+    search: ({ count }) => `Поиск по ${count} ${ruPlural(count, 'инструменту', 'инструментам', 'инструментам')}`,
+    filterAll: 'Все',
+    filterReadOnly: 'Только чтение',
+    filterWrites: 'Запись',
+    filterDestructive: 'Разрушительные',
+    filterSetByYou: 'Настроены вами',
+    readOnly: 'Только чтение',
+    writes: 'Запись',
+    destructive: 'Разрушительный',
+    setByYou: 'Настроен вами',
+    backToDefault: ({ value }) => `Настроен вами · снова использовать значение по умолчанию (${value})`,
+    useDefault: ({ value }) => `Использовать значение по умолчанию (${value})`,
+    showAll: ({ count }) => `Показать все: ${count}`,
+    cost: ({ count, tokens }) => `${count} ${ruPlural(count, 'инструмент', 'инструмента', 'инструментов')} · ${tokens} токенов при загрузке всех.`,
+    onDemand: ({ agents, count }) => `${agents} ${agents.includes(' и ') ? 'загружают' : 'загружает'} инструмент только когда он нужен; остальные агенты загружают все (${count}) при запуске сессии.`,
+    notApply: ({ agents }) => `Настройки инструментов не действуют для: ${agents}. Они решают сами.`,
+    blocked: ({ agents }) => `В ${agents} значение «Выкл.» блокирует инструмент при вызове, а не скрывает его.`,
+    hiddenRestart: ({ agents }) => `Повторное включение скрытого инструмента действует в новых сессиях ${agents}.`,
+    notListed: 'Его инструменты появятся после первой проверки на машине.',
+    lastListed: ({ date }) => `Последний список: ${date}. Они вернутся, когда вернётся вход.`,
+    loadFailed: 'Не удалось прочитать его инструменты.',
+    noMatch: 'Подходящих инструментов нет.',
+    setFailed: 'Не удалось сохранить. Попробуйте ещё раз.',
+  },
+  detail: {
+    configurationTitle: 'Конфигурация',
+    configurationDescription: 'Изменяйте любое значение на месте; оно применяется к новым сессиям на каждой машине.',
+    machinesDescription: 'Happier подключается с каждой машины, поэтому проверяется каждая.',
+    test: 'Проверить',
+    onNowhere: 'Пока не включён ни на одной машине.',
+    toolsOn: ({ count }) => `${count} ${ruPlural(count, 'инструмент', 'инструмента', 'инструментов')}`,
+    checked: ({ time }) => `проверено ${time}`,
+    notChecked: 'ещё не проверено',
+    lastKnown: ({ time }) => `последнее известное состояние ${time}`,
+    summary: ({ ready, problems, offline, unchecked }) => {
+      const total = ready + problems + offline + unchecked;
+      if (total > 1 && ready === total) return `Готово на всех (${total})`;
+      if (total > 1 && offline === total) return `Все (${total}) не в сети`;
+      return [
+        ready > 0 ? `Готово: ${ready}` : null,
+        problems > 0 ? `Требуют внимания: ${problems}` : null,
+        unchecked > 0 ? `Проверить: ${unchecked}` : null,
+        offline > 0 ? `не в сети: ${offline}` : null,
+      ].filter(Boolean).join(' · ');
+    },
+    detailsTitle: 'Подробности',
+    versionLine: ({ version, protocol }) => protocol ? `Версия ${version} · протокол ${protocol}` : `Версия ${version}`,
+    update: {
+      title: 'Обновления',
+      upToDate: 'Актуально',
+      available: ({ version }) => `Доступна версия ${version}`,
+      checkFailed: 'Не удалось проверить обновления',
+      removed: 'Реестр больше не содержит этот сервер. Он продолжает работать как раньше.',
+      checkNow: 'Проверить сейчас',
+      review: 'Просмотреть',
+      readFailed: 'Не удалось прочитать новую версию. Повторите попытку.',
+      changesTitle: ({ version }) => `Обновить до ${version}`,
+      changesBody: 'Название, значения, инструменты и места включения останутся прежними.',
+      now: 'Сейчас',
+      after: 'После обновления',
+      apply: 'Обновить',
+      applyFailed: 'Не удалось обновить. Ваш выбор сохранён.',
+    },
+    serverInstructions: 'Инструкции сервера',
+    lastError: 'Вывод последней проверки',
+    copy: 'Копировать',
+    removeServer: 'Удалить сервер',
+    removeFootnote: 'Убирает его из всех сессий на каждой машине и удаляет его вход.',
+    conflict: {
+      reason: 'Изменено в другом месте',
+      review: 'Проверить',
+      title: 'Проверьте изменения',
+      description: 'Пока вы редактировали, этот сервер изменился на другом устройстве. Выберите, какие значения оставить.',
+      current: 'Текущие',
+      yours: 'Ваши',
+      notSet: 'Не задано',
+      machines: 'Различия по машинам',
+      keepMine: 'Оставить мои',
+      useCurrent: 'Взять текущие',
+      removedTitle: 'Удалено в другом месте',
+      removedDescription: 'Этот сервер удалён на другом устройстве. Ваши правки сохранить нельзя.',
+      discard: 'Отбросить мои правки',
+    },
+    copyInstallLink: 'Копировать ссылку для установки',
+    installLinkLabel: 'Ссылка для установки',
+    duplicate: 'Дублировать',
+    fromPlugin: ({ plugin }) => `Из ${plugin}`,
+    pluginFootnote: ({ plugin }) => `Поставляется с ${plugin}. Чтобы удалить его, удалите плагин.`,
+    banner: {
+      expiredTitle: ({ name }) => `Вход в ${name} истёк`,
+      expiredBody: ({ name, date, count }) => `${name} перестал принимать его${date ? ` ${date}` : ''}. Сессии запускаются без ${count ? `его инструментов (${count})` : 'его инструментов'}, пока вы не подключитесь заново. Одно повторное подключение действует на каждой машине.`,
+      signinTitle: ({ name }) => `Войдите в ${name}`,
+      signinBody: 'Сессии запускаются без его инструментов, пока вы не войдёте. Один вход действует на каждой машине.',
+      moreAccessTitle: ({ name }) => `${name} нужен больший доступ`,
+      moreAccessBody: 'Инструмент запросил доступ, которого нет у вашего входа. Предоставьте его один раз, и все машины его получат.',
+      revokedTitle: ({ name }) => `${name} больше не имеет доступа`,
+      revokedBody: 'Вход был отозван. Сессии запускаются без его инструментов, пока вы не войдёте снова.',
+      keyTitle: ({ name }) => `${name} нужен ключ`,
+      keyBody: 'Нужное ему значение ещё не сохранено. Сессии запускаются без него, пока вы не добавите его.',
+      errorTitle: ({ name, machine }) => `${name} остановился на ${machine}`,
+      errorBody: 'Сессии там запускаются без его инструментов. Вывод последней проверки находится в разделе «Подробности».',
+      cantrunTitle: ({ name, machine }) => `${name} не может работать на ${machine}`,
+      cantrunBody: ({ runtime }) => `Этой машине нужен ${runtime}. Сессии там запускаются без него; на других машинах всё в порядке.`,
+    },
+  },
+};
+
+const mcpPageTranslations = {
+  "ru": { ...ru, config: configRu },
+} as const satisfies Pick<Record<string, Shared_mcpPageTranslations.McpPageTranslation>, "ru">;
+
+return { mcpPageTranslations };
+})();
+
+const Domain_valueRefRowsTranslations = (() => {
+const ru: Shared_valueRefRowsTranslations.ValueRefRowsTranslation = {
+  name: 'Имя',
+  value: 'Значение',
+  typeLabel: 'Тип значения',
+  text: 'Текст',
+  savedSecret: 'Сохранённый секрет',
+  fromMachine: 'С машины',
+  template: 'Шаблон',
+  fromSession: 'Из сессии',
+  chooseSecret: 'Выберите сохранённый секрет',
+  needsValue: 'Нужно значение',
+  more: ({ name }) => `Ещё для ${name}`,
+  edit: 'Изменить…',
+  remove: 'Удалить',
+  invalidEnvName: 'Используйте заглавные буквы, цифры и _, начиная с буквы.',
+  invalidHeaderName: 'Используйте только буквы, цифры и -.',
+  duplicateName: 'Это имя уже используется.',
+  invalidMachine: 'Укажите переменную на машине, например ${HOME}.',
+};
+
+const valueRefRowsTranslations = {
+  "ru": ru,
+} as const;
+
+return { valueRefRowsTranslations };
+})();
+
+const Domain_agentAddTranslations = (() => {
+const agentAddTranslations = {
+  "ru": Shared_agentAddTranslations.en,
+} as const;
+
+return { agentAddTranslations };
+})();
+
+const Domain_mcpHomeTranslations = (() => {
+const pluralRu = (count: number, one: string, few: string, many: string) => {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
+};
+
+const ru: Shared_mcpHomeTranslations.McpHomeTranslation = {
+  loadFailed: 'Не удалось загрузить ваши серверы',
+  purpose:
+    'Инструменты, которые могут вызывать ваши агенты: трекер задач, браузер, база данных. Войдите один раз, и каждая машина сможет ими пользоваться.',
+  firstHeadline: 'Теперь ваши серверы следуют за вами',
+  firstPurpose:
+    'Они продолжили работать там, где были. Теперь работает и сервер, которому нужен вход: войдите один раз, с любого устройства, и каждая машина сможет им пользоваться.',
+  firstDismiss: 'Понятно',
+  groupAccount: 'Вход выполнен один раз, на всех машинах',
+  groupMachine: 'Работают на ваших машинах',
+  newAccountBody:
+    'Linear, Sentry или Notion: войдите с любого устройства, даже с телефона.',
+  newMachineBody:
+    'Браузер или база данных: Happier запускает их на машине, где идёт ваша сессия.',
+  factAs: ({ identity }) => `как ${identity}`,
+  factSignedIn: 'Вход выполнен',
+  factKey: 'API-ключ · сохранённый секрет',
+  present: ({ servers, tools, tokens }) =>
+    `${servers} ${pluralRu(servers, 'сервер даёт', 'сервера дают', 'серверов дают')} вашим агентам ${tools} ${pluralRu(tools, 'инструмент', 'инструмента', 'инструментов')}, около ${tokens} токенов контекста.`,
+  presentNoTools: ({ count }) =>
+    `${count} ${pluralRu(count, 'сервер включён', 'сервера включены', 'серверов включено')} для ваших агентов.`,
+  presentNone: 'Ни один сервер пока не включён.',
+  needYou: ({ count }) =>
+    ` ${count} ${pluralRu(count, 'ждёт', 'ждут', 'ждут')} вас.`,
+  needsTitle: 'Ждут вас',
+  needsAccount: 'Исправьте один раз с любого устройства, и каждая машина сможет им пользоваться',
+  needsAccountTools: ({ count }) =>
+    `Исправьте один раз с любого устройства, и каждая машина вернёт свои ${count} ${pluralRu(count, 'инструмент', 'инструмента', 'инструментов')}`,
+  needsKey: 'Добавьте ключ один раз как сохранённый секрет, и каждая машина сможет им пользоваться',
+  needsKeyNamed: ({ names }) => `Добавьте ${names} один раз как сохранённый секрет, и каждая машина сможет им пользоваться`,
+  previewSignedInAs: ({ identity }) =>
+    `Вход выполнен как ${identity}, для всех машин`,
+  previewSignedIn: 'Вход выполнен один раз, для всех машин',
+  previewKey: 'Его ключ — сохранённый секрет, он используется на всех машинах',
+  previewMachine: 'Запускается на машине, где идёт ваша сессия',
+  previewOff: 'Выключен: ни один агент его не получает',
+  previewExpired:
+    'Срок входа истёк. Подключите заново один раз, и он снова будет на всех машинах.',
+  previewSignIn:
+    'Войдите один раз, с любого устройства, и каждая машина сможет им пользоваться.',
+  previewNeedsKey:
+    'Ему нужен ключ. Добавьте его один раз как сохранённый секрет, и каждая машина сможет его запустить.',
+  newTitle: 'Дайте агентам больше инструментов',
+  newBody:
+    'MCP-сервер даёт вашим агентам инструменты: трекер задач, браузер, базу данных. Добавьте его здесь, войдите один раз, и он заработает на всех машинах.',
+  browse: 'Обзор серверов',
+  paste: 'Вставить конфигурацию',
+  shelfTitle: 'Рекомендуемые серверы',
+  shelfFrom: ({ source }) =>
+    `Из ${source}. Добавьте сервер, и он заработает на всех машинах.`,
+  shelfAdd: 'Добавить',
+  foundTitle: 'Найдено на ваших машинах',
+  foundBody:
+    'Настроены внутри агента, в Happier их ещё нет. Добавьте сервер, и он последует за вами.',
+  foundLine: ({ count, machine }) =>
+    `${count} ${pluralRu(count, 'сервер уже на', 'сервера уже на', 'серверов уже на')} ${machine}`,
+  foundLineMachines: ({ count, machines }) =>
+    `${count} ${pluralRu(count, 'сервер уже на', 'сервера уже на', 'серверов уже на')} ${machines} ${pluralRu(machines, 'машине', 'машинах', 'машинах')}`,
+  foundLineBody:
+    'Настроены в ваших агентах. Добавьте их, и они последуют за вами на все машины.',
+  review: 'Посмотреть',
+  mapLabel: ({ count }) =>
+    `${count} ${pluralRu(count, 'MCP-сервер', 'MCP-сервера', 'MCP-серверов')} вокруг вашего Home`,
+  more: ({ count }) => `+${count}`,
+};
+
+const mcpHomeTranslations = {
+  "ru": ru,
+} as const satisfies Pick<Record<string, Shared_mcpHomeTranslations.McpHomeTranslation>, "ru">;
+
+return { mcpHomeTranslations };
+})();
+
+const Domain_agentsHomeTranslations = (() => {
+const ru: Shared_agentsHomeTranslations.AgentsHomeTranslation = {
+  purpose:
+    'Агенты для кода, с которыми вы начинаете сессии: где они установлены и как входят в аккаунт.',
+  needsTitle: 'Нужно ваше участие',
+  needsSignIn: ({ machine }) =>
+    `Сессии на ${machine} не начнутся, пока вы не войдёте`,
+  tryTitle: 'Попробуйте другого агента',
+  tryBody: 'Каждый начинает сессии так же, как ваши агенты.',
+  modelsTitle: 'Модели для ваших агентов',
+  modelsBody:
+    'Провайдеры дают агентам больше моделей: один ключ для многих или сервер моделей на ваших машинах.',
+};
+
+const agentsHomeTranslations = {
+  "ru": ru,
+} as const satisfies Pick<Record<string, Shared_agentsHomeTranslations.AgentsHomeTranslation>, "ru">;
+
+return { agentsHomeTranslations };
+})();
+
+const Domain_profileSeedsTranslations = (() => {
+const ru: Shared_profileSeedsTranslations.ProfileSeedsTranslation = {
+  title: 'Навыки, которые добавляет этот профиль',
+  description: 'Добавляются в сессии с этим профилем сверх того, что дают ваши правила.',
+  add: 'Добавить',
+  addTitle: 'Добавить навык',
+  searchPlaceholder: 'Поиск по вашим навыкам',
+  nothingToAdd: 'Все навыки из вашей библиотеки уже добавлены.',
+  empty: 'Пока нет. Сессии с этим профилем получают то, что дают ваши правила.',
+  emptyLibrary: 'В вашей библиотеке пока нет навыков.',
+  openSkills: 'Открыть навыки',
+  missing: 'Нет в вашей библиотеке',
+  pending: 'Навык',
+  unreadableItem: 'Сейчас не удаётся прочитать',
+  remove: ({ skill }) => `Убрать ${skill}`,
+  reading: 'Чтение ваших навыков…',
+  unreadable: 'Не удалось прочитать ваши навыки',
+  tryAgain: 'Повторить',
+};
+
+const profileSeedsTranslations = {
+  "ru": ru,
+} as const;
+
+return { profileSeedsTranslations };
+})();
+
+const Domain_scopeSectionTranslations = (() => {
+const scopeSectionTranslations = {
+  "ru": Shared_scopeSectionTranslations.copy({
+    title: 'Навыки и серверы MCP',
+    descMachine:
+      'Что получают сессии на {machine}. Переключатель здесь задаёт правило только для {machine}; исключения для агентов по-прежнему действуют.',
+    descProject:
+      'Ваши сессии в {project} получают это на каждой машине. Переключатель здесь задаёт правило только для {project}; исключения для агентов по-прежнему действуют.',
+    descProjectTeam:
+      'Ваши сессии в {project} получают это на каждой машине. Переключатель здесь задаёт правило только для {project}; сессии {team} следуют своим правилам.',
+    skills: 'Навыки',
+    mcp: 'Серверы MCP',
+    allSkills: 'Все навыки ({count})',
+    allMcp: 'Все серверы MCP ({count})',
+    foundOne: 'Ещё 1 навык есть только на {machine}.',
+    foundMany: 'Навыки только на {machine}: ещё {count}.',
+    foundLink: 'Найдено на ваших машинах',
+    onFor: 'Включено для {agents}',
+    notFor: 'не для {agents}',
+    onOn: 'Включено на {machines}',
+    notOn: 'не на {machines}',
+    onIn: 'Включено в {place}',
+    offIn: 'Выключено в {place}',
+    onForPlace: 'Включено для {place}',
+    offForPlace: 'Выключено для {place}',
+    emptySkills: 'Навыков пока нет',
+    addSkill: 'Добавить навык',
+    emptyMcp: 'Серверов MCP пока нет',
+    addMcp: 'Добавить сервер',
+    loadFailed: 'Не удалось загрузить',
+    whenRunning: 'Появится, когда {machine} запущена',
+    turnedOn: '{name} включён для {place}',
+    turnedOff: '{name} выключен для {place}',
+    migrationNote: '{names} перенесён сюда из прежних настроек проекта.',
+    dismiss: 'Скрыть',
+  }),
+} as const;
+
+return { scopeSectionTranslations };
+})();
+
+const Domain_capabilityKitTranslations = (() => {
+const ru: Shared_capabilityKitTranslations.CapabilityKitTranslation = {
+  where: {
+    onEverywhere: 'Включено везде',
+    everywhere: 'Везде',
+    off: 'Выключено',
+    only: ({ agent, place, placeKind }) =>
+      Shared_capabilityKitTranslations.join(
+        'Только',
+        agent && `для ${agent}`,
+        place && `${placeKind === 'machine' ? 'на' : 'в'} ${place}`,
+      ),
+    on: ({ agent, place, placeKind }) =>
+      Shared_capabilityKitTranslations.join(
+        'включено',
+        agent && `для ${agent}`,
+        place && `${placeKind === 'machine' ? 'на' : 'в'} ${place}`,
+      ),
+    except: ({ agent, place, placeKind }) =>
+      Shared_capabilityKitTranslations.join(
+        'кроме',
+        agent,
+        place && `${placeKind === 'machine' ? 'на' : 'в'} ${place}`,
+      ),
+    exceptions: ({ count }) => {
+      const mod10 = count % 10,
+        mod100 = count % 100;
+      if (mod10 === 1 && mod100 !== 11) return `${count} исключение`;
+      if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14))
+        return `${count} исключения`;
+      return `${count} исключений`;
+    },
+    more: ({ count }) => `ещё ${count}`,
+    effect: {
+      everywhereOn: 'Все машины и агенты, включая добавленные позже',
+      everywhereOff: 'Выключено, если правило ниже не включит',
+      agentNever: ({ kind }) =>
+        kind === 'skill'
+          ? 'Никогда не получает этот навык, где бы он ни был включён'
+          : 'Никогда не получает этот сервер, где бы он ни был включён',
+      agentEverywhereOn: 'Получает даже там, где остальное выключено',
+      machineOn: 'Все агенты на этой машине',
+      machineOff: 'Ни один агент на этой машине',
+      projectOn: 'В этом проекте, на всех машинах',
+      projectOff: 'Не в этом проекте, ни на одной машине',
+      folderOn: 'В этой папке на этой машине',
+      folderOff: 'Не в этой папке',
+      agentAtOn: ({ agent, place, placeKind }) =>
+        `${agent} получает ${placeKind === 'machine' ? 'на' : 'в'} ${place}`,
+      agentAtOff: ({ agent, place, placeKind }) =>
+        `${agent} не получает ${placeKind === 'machine' ? 'на' : 'в'} ${place}`,
+    },
+    available: ({ agents, machines, projects }) =>
+      `Доступно для ${agents} на ${machines}${projects ? `, только в ${projects}` : ''}`,
+    availableNowhere: 'Пока нигде не доступно',
+    offlineNote: ({ machine }) =>
+      `${machine} не в сети. Получит, когда вернётся.`,
+    offlineNoteMany: ({ count }) =>
+      `${count} машин не в сети получат это, когда вернутся.`,
+    cantTake: ({ agent, kind }) =>
+      kind === 'skill'
+        ? `${agent} не может загружать навыки.`
+        : `${agent} не может использовать MCP-серверы.`,
+  },
+  control: {
+    title: 'Где включено',
+    description: 'Настройте один раз, и все машины последуют. Побеждает самое точное правило.',
+    everywhereLabel: 'Включено или выключено везде',
+    on: 'Вкл',
+    off: 'Выкл',
+    turnedOnIn: 'Включено в',
+    except: 'Кроме',
+    nowhereYet: 'Пока нигде. Добавьте проект, машину или агента.',
+    addException: 'Добавить исключение',
+    addPlace: 'Добавить место',
+    menuAgent: 'Агент',
+    menuAgentEverywhere: 'Агент, везде',
+    menuMachine: 'Машина',
+    menuProject: 'Проект',
+    menuProjectEverywhere: 'Проект, на каждой машине',
+    offline: 'не в сети',
+    machineCount: ({ count }) => count % 10 === 1 && count % 100 !== 11 ? `${count} машина` : [2, 3, 4].includes(count % 10) && ![12, 13, 14].includes(count % 100) ? `${count} машины` : `${count} машин`,
+    allAgents: 'Все агенты',
+    agentOnly: ({ agent }) => `Только ${agent}`,
+    whichAgents: ({ place }) => `Какие агенты в ${place}`,
+    remove: ({ target }) => `Удалить правило для ${target}`,
+    staysOff: ({ agents }) => `${agents} здесь остаётся выключен`,
+    change: 'Изменить',
+    changeFailed: 'Не удалось сохранить изменение.',
+    checking: 'Проверяем машины…',
+  },
+  add: {
+    closeDetails: 'Закрыть подробности',
+    backTo: ({ title }) => `Назад: ${title}`,
+    added: 'Добавлено',
+    done: 'Готово',
+    addFailed: 'Не удалось добавить. Попробуйте ещё раз.',
+    modesLabel: 'Способы добавить',
+    searchLabel: 'Поиск',
+  },
+  facts: {
+    textOnly: 'Только текст',
+    hasFiles: 'Есть файлы',
+    runsScripts: 'Запускает скрипты',
+    tokensWhenUsed: ({ count }) => `${count} токенов`,
+    toolCount: ({ count, shown }) => (count % 10 === 1 && count % 100 !== 11 ? `${shown} инструмент` : [2, 3, 4].includes(count % 10) && ![12, 13, 14].includes(count % 100) ? `${shown} инструмента` : `${shown} инструментов`),
+    tokensPerTurn: ({ count }) => `${count} токенов за ход`,
+    you: 'Вы',
+    happier: 'Happier',
+    pinnedTo: ({ ref }) => `Закреплено на ${ref}`,
+    inYourLibrary: 'В вашей библиотеке',
+  },
+  status: {
+    off: 'Выключено',
+    signin: 'Нужен вход',
+    moreAccess: 'Нужен расширенный доступ',
+    key: 'Нужен ключ',
+    cantrun: ({ machine }) =>
+      machine ? `Не запускается на ${machine}` : 'Не запускается',
+    offline: 'Не в сети',
+    update: 'Есть обновление',
+    removed: 'Удалено из источника',
+    modified: 'Изменено',
+    pinned: 'Закреплено',
+    unused: 'Давно не использовался',
+    unusedExplanation: ({ agents }) =>
+      `Использование учитывается для ${agents} и агентов, читающих навыки через Happier`,
+    error: ({ machine }) =>
+      machine ? `Остановлено на ${machine}` : 'Не удалось запустить',
+    masked: ({ machine }) =>
+      machine ? `Действует копия с ${machine}` : 'Действует другая копия',
+    signing: 'Вход…',
+    connected: 'Подключено',
+    expired: 'Вход истёк',
+    revoked: 'Доступ отозван',
+    fix: {
+      signIn: 'Войти',
+      reconnect: 'Переподключить',
+      addKey: 'Добавить ключ',
+      howToFix: 'Как исправить',
+      tryAgain: 'Повторить',
+      reviewUpdate: 'Просмотреть обновление',
+      compare: 'Сравнить',
+      turnOn: 'Включить',
+      grantAccess: 'Дать доступ',
+    },
+  },
+};
+
+const capabilityKitTranslations = {
+  "ru": { ...ru, skills: Domain_skillsPageTranslations.skillsPageTranslations.ru, session: capabilityKitTranslations__sessionCapabilityTranslations.ru, notice: Domain_capabilityNoticeTranslations.capabilityNoticeTranslations.ru, detail: capabilityKitTranslations__capabilityDetailTranslations.ru, skillDetail: Domain_skillDetailTranslations.skillDetailTranslations.ru, skillsFound: Domain_skillsFoundTranslations.skillsFoundTranslations.ru, mcpFound: Domain_mcpFoundTranslations.mcpFoundTranslations.ru, skillsUpdates: Domain_skillsUpdatesTranslations.skillsUpdatesTranslations.ru, mcp: Domain_mcpPageTranslations.mcpPageTranslations.ru, valueRows: Domain_valueRefRowsTranslations.valueRefRowsTranslations.ru, mcpSignIn: capabilityKitTranslations__mcpSignInTranslations.ru, connectedAccountCallback: Domain_connectedAccountCallbackTranslations.connectedAccountCallbackTranslations.ru, mcpHome: Domain_mcpHomeTranslations.mcpHomeTranslations.ru, registries: capabilityKitTranslations__registriesTranslations.ru, skillAdd: capabilityKitTranslations__skillAddTranslations.ru, mcpAdd: capabilityKitTranslations__mcpAddTranslations.ru, agentAdd: Domain_agentAddTranslations.agentAddTranslations.ru, agentsHome: Domain_agentsHomeTranslations.agentsHomeTranslations.ru, profileSeeds: Domain_profileSeedsTranslations.profileSeedsTranslations.ru, scopeSection: Domain_scopeSectionTranslations.scopeSectionTranslations.ru, store: capabilityKitTranslations__storeTranslations.ru },
+} as const;
+
+return { capabilityKitTranslations };
+})();
+
+const Domain_sessionListSpacesKeyboardTranslations = (() => {
+const sessionListSpacesKeyboardTranslations = {
+  "ru": Shared_sessionListSpacesKeyboardTranslations.commands('Открыть фильтры списка', ordinal => `Выбрать пространство ${ordinal}`),
+} as const;
+
+return { sessionListSpacesKeyboardTranslations };
+})();
+
+const Domain_reviewKeyboardTranslations = (() => {
+const reviewKeyboardTranslations = {
+  "ru": {
+        reviewChangeNext: 'Следующее изменение', reviewChangePrevious: 'Предыдущее изменение',
+        reviewChangeKeep: 'Сохранить или снять отметку изменения', reviewChangeDiscard: 'Отменить изменение',
+        reviewChangeAsk: 'Спросить об изменении', reviewFileNext: 'Следующий изменённый файл',
+        reviewFilePrevious: 'Предыдущий изменённый файл', reviewUndo: 'Отменить действие проверки',
+        editorSelectionAsk: 'Спросить о выделении', filesTrackToggle: 'Следить за изменениями агента', fileBlameToggle: 'Показать или скрыть blame',
+    },
+} as const;
+
+return { reviewKeyboardTranslations };
+})();
+
+const Domain_paneKeyboardTranslations = (() => {
+const paneArrangementTranslations = {
+  "ru": { paneArrangement: 'Расположение панелей', paneArrangementDescription: 'Выберите, что будет в центре: сессия или редактор.' , paneArrangementSession: 'Сначала сессия', paneArrangementEditor: 'Сначала редактор', paneArrangementSessionCaption: 'Чат в центре', paneArrangementEditorCaption: 'Код в центре', rightPanelPlacement: 'Разделение правой панели', rightPanelPlacementDescription: 'Выберите, как правая панель стоит рядом со страницей: отдельно или вместе, через линию или мягкую тень.', rightPanelPlacementSeparate: 'Отдельно', rightPanelPlacementLine: 'Линия', rightPanelPlacementShadow: 'Тень', rightPanelPlacementSeparateCaption: 'Отдельный лист рядом со страницей', rightPanelPlacementLineCaption: 'Соединена тонкой линией', rightPanelPlacementShadowCaption: 'Соединена мягкой тенью' },
+} as const satisfies Pick<Record<paneKeyboardTranslations__SupportedLanguage, Readonly<{ paneArrangement: string; paneArrangementDescription: string; paneArrangementSession: string; paneArrangementEditor: string; paneArrangementSessionCaption: string; paneArrangementEditorCaption: string; rightPanelPlacement: string; rightPanelPlacementDescription: string; rightPanelPlacementSeparate: string; rightPanelPlacementLine: string; rightPanelPlacementShadow: string; rightPanelPlacementSeparateCaption: string; rightPanelPlacementLineCaption: string; rightPanelPlacementShadowCaption: string }>>, "ru">;
+
+const paneRegionLabels = {
+  "ru": { rail: 'Навигация приложения', navigation: 'Колонка навигации', right: 'Боковая панель', details: 'Редактор и подробности', main: 'Основная колонка', bottom: 'Нижняя панель' },
+} as const satisfies Pick<Record<paneKeyboardTranslations__SupportedLanguage, Readonly<Record<'rail' | 'navigation' | 'right' | 'details' | 'main' | 'bottom', string>>>, "ru">;
+
+const paneKeyboardTranslations = {
+  "ru": { commands: { shellColumnToggle: 'Показать или скрыть навигацию', panesMainToggle: 'Показать или скрыть основную колонку', panesSideToggle: 'Показать или скрыть боковую панель', panesArrangementToggle: 'Изменить расположение панелей', panesRegionNext: 'Перейти к следующей области', panesRegionPrevious: 'Перейти к предыдущей области' }, groups: { panes: 'Панели', terminal: 'Терминал', search: 'Поиск', review: 'Проверка', files: 'Файлы и редактор', code: 'Анализ кода' }, desktop: 'Приложение для компьютера', browser: 'Браузер' },
+} as const satisfies Pick<Record<paneKeyboardTranslations__SupportedLanguage, Shared_paneKeyboardTranslations.PaneKeyboardCopy>, "ru">;
+
+return { paneArrangementTranslations, paneRegionLabels, paneKeyboardTranslations };
+})();
+
+const Domain_needsYouHighlightTranslations = (() => {
+const needsYouHighlightTranslations = {
+  "ru": { title: 'Выделять сессии, которым нужны вы', description: 'Как сессия, которой нужны вы, выделяется в списке на этом устройстве. Движение прекращается, когда вы её открываете.', dot: 'Точка', accent: 'Акцент', glint: 'Блик', shimmer: 'Мерцание', pulse: 'Пульс' },
+} as const satisfies Pick<Record<needsYouHighlightTranslations__SupportedLanguage, Shared_needsYouHighlightTranslations.NeedsYouHighlightCopy>, "ru">;
+
+const workingIndicatorTranslations = {
+  "ru": { title: 'Индикатор работы', description: 'Как работающая сессия выглядит в списке.', spinner: 'Спиннер', pulse: 'Пульсирующая точка', animatedTextTitle: 'Игривые слова работы', animatedTextDescription: 'Со словами статуса работающая сессия показывает игривое слово вместо «Работает».' },
+} as const satisfies Pick<Record<needsYouHighlightTranslations__SupportedLanguage, Shared_needsYouHighlightTranslations.WorkingIndicatorCopy>, "ru">;
+
+return { needsYouHighlightTranslations, workingIndicatorTranslations };
+})();
+
+const Domain_quickOpenTranslations = (() => {
+const quickOpenTranslations = {
+  "ru": { commands: { searchFiles: 'Открыть файл', searchSymbols: 'Перейти к символу' }, search: { recent: 'Недавние', changed: 'Изменены в этой сессии', changedInFolder: 'Изменённые файлы', openFile: 'Открыть файл…', showMore: 'Показать ещё', searchEverything: 'Искать везде', noMatch: ({ query, scope }) => `Нет файлов по запросу «${query}» в ${scope}`, symbolsNeedFile: 'Для символов откройте файл', filesInScope: ({ scope }) => `Файлы в ${scope}`, symbolsUnavailable: ({ file }) => `Символы для ${file} пока недоступны`, symbols: 'Символы', symbolAtLine: ({ name, line }) => `${name}, строка ${line}`, symbolsInFile: ({ file }) => `Символы в ${file}`, offline: ({ machine }) => `${machine} не отвечает. Показаны недавно открытые файлы.` } },
+} as const satisfies Pick<Record<quickOpenTranslations__SupportedLanguage, Shared_quickOpenTranslations.QuickOpenCopy>, "ru">;
+
+return { quickOpenTranslations };
+})();
+
+const Domain_paneMainColumnTranslations = (() => {
+const paneMainColumnTranslations = {
+  "ru": { hideSession: 'Скрыть сессию', showSession: 'Показать сессию', hideProject: 'Скрыть проект', showProject: 'Показать проект', hideWorkflow: 'Скрыть рабочий процесс', showWorkflow: 'Показать рабочий процесс', hidePage: ({ title }: { title: string }) => `Скрыть ${title}`, showPage: ({ title }: { title: string }) => `Показать ${title}` , needsYou: 'Ждёт вас', chipA11y: ({ label, name }: { label: string; name: string }) => `${label}: ${name}`, chipNeedsYouA11y: ({ label, name }: { label: string; name: string }) => `${label}: ${name}, ждёт вас`, chipNeedsYouAnnouncement: ({ name }: { name: string }) => `${name} ждёт вас`, sidebarReleaseToHide: 'Отпустите, чтобы скрыть', backToTranscript: 'Назад к переписке' },
+} as const satisfies Pick<Record<paneMainColumnTranslations__SupportedLanguage, Shared_paneMainColumnTranslations.MainColumnCopy>, "ru">;
+
+return { paneMainColumnTranslations };
+})();
+
+const Domain_paneEmptyEditorTranslations = (() => {
+const paneEmptyEditorTranslations = {
+  "ru": { title: 'Откройте файл рядом с сессией', reason: 'Читайте или редактируйте любой файл проекта, пока сессия работает.', openFile: 'Открыть файл…', changedInSession: 'Изменены в этой сессии', recent: 'Недавние', projectTitle: 'Откройте файл этого проекта', projectReason: 'Читайте или редактируйте здесь любой файл; агенты продолжают работать в своих сессиях.', changedInProject: 'Незафиксированные изменения', openChangedFileA11y: ({ name }: { name: string }) => `Открыть ${name}` },
+} as const satisfies Pick<Record<paneEmptyEditorTranslations__SupportedLanguage, Shared_paneEmptyEditorTranslations.EmptyEditorCopy>, "ru">;
+
+const paneShortcutsSheetTranslations = {
+  "ru": { footer: 'Клавиши ревью работают, когда в фокусе diff и вы не печатаете.', openSettings: 'Изменить сочетания в настройках', hostA11y: 'Показать сочетания для' },
+} as const satisfies Pick<Record<paneEmptyEditorTranslations__SupportedLanguage, Shared_paneEmptyEditorTranslations.ShortcutsSheetCopy>, "ru">;
+
+return { paneEmptyEditorTranslations, paneShortcutsSheetTranslations };
+})();
+
+const Domain_llmTaskRunnerTranslations = (() => {
+const llmTaskRunnerTranslations = {
+  "ru": {
+        auto: 'Авто',
+        autoCurrently: ({ runner }: { runner: string }) => `Авто — сейчас ${runner}`,
+        autoNothingReady: 'Авто — ничего не готово',
+        autoDescription: 'Авто использует самую дешёвую подходящую модель среди агентов, готовых на этой машине, с минимальным усилием. При равенстве предпочитает агента сессии.',
+        checking: 'Проверяем, что готово на этом компьютере…',
+        currently: ({ runner }: { runner: string }) => `Сейчас: ${runner}`,
+        noReadyAgent: 'На этом компьютере нет готового агента. Войдите в агента или выберите его здесь.',
+        noMatchingModel: 'Готовые агенты на этом компьютере не предлагают модели для этой задачи. Выберите её здесь.',
+        unavailable: 'Сейчас не удаётся проверить этот компьютер.',
+        chooseMachine: 'Выберите компьютер, чтобы увидеть, что выберет Авто.',
+        permissionTitle: 'Уровень доступа',
+        permission: { no_tools: 'Без инструментов', read_only: 'Только чтение', workspace_write: 'Может менять файлы', full: 'Полный доступ' },
+        permissionDescription: { no_tools: 'Работает только с переданным текстом.', read_only: 'Может также использовать инструменты, которые ничего не меняют.', workspace_write: 'Может менять файлы проекта.', full: 'Может использовать все инструменты агента.' },
+    },
+} as const satisfies Pick<Record<llmTaskRunnerTranslations__SupportedLanguage, Shared_llmTaskRunnerTranslations.LlmTaskRunnerCopy>, "ru">;
+
+return { llmTaskRunnerTranslations };
+})();
+
+const Domain_actionSettingsResourcesTranslations = (() => {
+const actionSettingsResourcesTranslations = {
+  "ru": {
+        status: {
+            humanAllowed: ({ partial }: { partial: boolean }): string => partial ? "Некоторые элементы могут выполнить" : "Вы можете выполнить",
+            humanAskFirst: ({ partial }: { partial: boolean }): string => partial ? "Некоторые элементы сначала спрашивают" : "Сначала спрашивает в приложении",
+            humanOff: ({ partial }: { partial: boolean }): string => partial ? "В некоторых элементах отключено" : "В приложении отключено",
+            agentAllowed: ({ partial }: { partial: boolean }): string => partial ? "Некоторые инструменты агентов могут выполнить" : "Агенты могут выполнить",
+            agentAskFirst: ({ partial }: { partial: boolean }): string => partial ? "Некоторые инструменты агентов сначала спрашивают" : "Спрашивает при запуске агентом",
+            agentOff: ({ partial }: { partial: boolean }): string => partial ? "Для некоторых инструментов агентов отключено" : "Для агентов отключено",
+            integrationAllowed: ({ partial }: { partial: boolean }): string => partial ? "Некоторые интеграции могут выполнить" : "Интеграции могут выполнить",
+            integrationAskFirst: ({ partial }: { partial: boolean }): string => partial ? "Некоторые интеграции сначала спрашивают" : "Спрашивает при запуске интеграцией",
+            integrationOff: ({ partial }: { partial: boolean }): string => partial ? "Для некоторых интеграций отключено" : "Для интеграций отключено",
+            allOff: "Отключено",
+            destructive: "Нельзя отменить",
+            external: "Меняет данные вне Happier",
+        },
+        family: {
+            title: 'Ресурсы',
+            reading: { title: 'Ресурсы · чтение', description: 'Просмотр ничего не меняет, поэтому по умолчанию он разрешён.' },
+            changing: { title: 'Ресурсы · изменения', description: 'Всё, что что-то останавливает или удаляет, по умолчанию сначала спрашивает вас. Остановка сессий и удаление рабочих деревьев — отдельные действия.' },
+            related: 'Отдельное действие · открывает его настройки',
+        },
+        facts: {
+            automationsSection: 'Автоматизации',
+            alwaysTrueSection: 'Всегда действует',
+            automations: { title: 'Плановые проверки', subtitle: 'Плановые проверки используют настройку «Агенты» выше.' },
+            forbidden: { title: 'Запрещённые места', subtitle: 'Happier отказывает в их перемещении и удалении.' },
+            trashFirst: { title: 'Корзина и окончательное удаление', subtitle: 'Сначала элементы попадают в корзину Happier. «Удалить сейчас» по умолчанию запрашивает разрешение.' },
+        },
+    },
+} as const;
+
+return { actionSettingsResourcesTranslations };
+})();
+
+const Domain_resourceProposalTranslations = (() => {
+const ru = {
+  title: {
+    storage: 'Предложение по очистке',
+    processes: 'Освободить память',
+    retry: 'Освободить место и повторить',
+  },
+  machineChecked: ({ machine, time }: { machine: string; time: string }) =>
+    `${machine} · проверено ${time}`,
+  machineChecking: ({ machine }: { machine: string }) =>
+    `${machine} · проверка…`,
+  selected: ({ count, total }: { count: number; total: number }) =>
+    `Выбрано ${count} из ${total}`,
+  selectAll: 'Выбрать все',
+  selectAllSafe: 'Выбрать все безопасные',
+  givesBack: 'Вернёт',
+  frees: 'Освободит',
+  onDisk: ({ amount }: { amount: string }) => `из ${amount} на диске`,
+  changed: 'изменено',
+  gone: 'больше нет',
+  notIncluded: 'Не входит в это предложение',
+  includeAnyway: 'Включить',
+  goal: ({ found, goal }: { found: string; goal: string }) =>
+    `Найдено ${found} из ${goal}`,
+  staleTitle: ({ count }: { count: number }) =>
+    count === 1
+      ? 'С момента проверки агентом изменился один элемент.'
+      : `С момента проверки агентом изменилось элементов: ${count}.`,
+  staleBody: 'Ничего нельзя одобрить, пока не будет повторной проверки.',
+  checkAgain: 'Проверить снова',
+  checkUnavailable:
+    'Сейчас проверить не удалось. Каждый элемент проверяется заново при выполнении.',
+  note: {
+    trash:
+      'Каждый элемент проверяется заново, затем перемещается. Место освободится, когда корзина будет очищена.',
+    processes: 'Ничего не удаляется. Каждый сначала проверяется заново.',
+    emptyAfter:
+      'Место нужно сейчас, поэтому корзина будет очищена сразу. Эту часть нельзя отменить.',
+  },
+  approve: {
+    trash: ({ count }: { count: number }) =>
+      `Переместить в корзину: ${count}`,
+    emptyAndRetry: 'В корзину, очистить и повторить',
+    keepUndo: 'В корзину и повторить',
+    keepUndoHint:
+      'Сохраняет отмену; место освобождается только после очистки корзины.',
+    stop: ({ count }: { count: number }) => `Остановить: ${count}`,
+  },
+  notNow: 'Не сейчас',
+  declinedTitle: 'Предложение отклонено',
+  declinedFacts: ({ count }: { count: number }) =>
+    `Элементов: ${count} · ничего не изменено`,
+  reopen: 'Открыть снова',
+  tryAgain: 'Повторить',
+  startAgain: 'Запустить снова',
+  startedAgain: 'Запущено снова',
+  keptByGuard: 'Оставлены, потому что работают',
+  memoryLabel: 'Память',
+  memoryAfter: ({ now, after }: { now: string; after: string }) => `сейчас ${now} · потом около ${after}`,
+  memoryNow: ({ now }: { now: string }) => `${now} занято`,
+  processesTree: 'Что использует память',
+  analysingFound: ({ count }: { count: number }) => `Пока найдено: ${count}`,
+  analysingNote: 'Ещё читает. Одобрить можно, когда закончит.',
+  inbox: {
+    allSafe: ({ count }: { count: number }) => `${count} элементов, все безопасны`,
+    mixed: ({ count, safe, attention }: { count: number; safe: number; attention: number }) => `${count} элементов · ${safe} безопасны, ${attention} требуют внимания`,
+    stops: ({ count }: { count: number }) => `Остановить ${count}`,
+  },
+  restored: 'Возвращено · ничего не удалено',
+  receiptChecking: 'Проверяем Корзину и недавние Действия…',
+  receiptUnavailable: 'Не удалось проверить текущий результат. Откройте предложение снова, чтобы повторить попытку.',
+  receiptUnknown: ({ count }: { count: number }) => `Итоговый результат недоступен для ${count} элементов.`,
+  receiptRestored: ({ count }: { count: number }) => `${count} элементов возвращено`,
+  receiptFreed: ({ count, amount }: { count: number; amount: string }) => `${amount} освобождено · ${count} элементов удалено`,
+  skipped: ({ reason }: { reason: string }) => `Не перемещено: ${reason}`,
+  stopped: ({ count }: { count: number }) => `Остановлено: ${count}`,
+  stoppedFreed: ({ amount }: { amount: string }) => `Освобождено ${amount}`,
+  notStopped: ({ reason }: { reason: string }) => `Не остановлено: ${reason}`,
+  failed: 'Не удалось завершить это предложение. Больше ничего не изменено.',
+  processSafe: 'Безопасно · можно запустить снова в любой момент',
+  processStopLoss: ({ title }: { title: string }) => `Остановка «${title}» прерывает текущую работу или ожидающий ответа вопрос.`,
+  processKillLoss: ({ title }: { title: string }) => `Завершение «${title}» немедленно прекращает работу; несохранённая работа теряется.`,
+  processCheck: 'Сначала проверить',
+  itemLabel: ({
+    title,
+    size,
+    verdict,
+  }: {
+    title: string;
+    size: string;
+    verdict: string;
+  }) => `${title}, ${size}, ${verdict}`,
+  owner: {
+    session: 'Сессия',
+    terminal: 'Терминал',
+    service: 'Сервер разработки',
+    run: 'Запуск',
+    browser_sidecar: 'Вспомогательный браузер',
+    workspace_sync: 'Синхронизация рабочей области',
+    other: 'Процесс',
+  },
+} as const;
+
+const resourceProposalTranslations = {
+  "ru": ru,
+} as const;
+
+return { resourceProposalTranslations };
+})();
+
+const Domain_machineResourceUiTranslations = (() => {
+const machineResourceUiTranslations = {
+  "ru": {
+        ask: { title: 'Спросить агента', placeholder: Shared_machineResourceUiTranslations.machinePhrase('Спросите о ', '…'), description: 'Он может прочитать то, что показывает эта страница, и предложить изменения. Без вашего одобрения ничего не останавливается и не удаляется.', offline: Shared_machineResourceUiTranslations.machinePhrase('', ' не в сети, поэтому агент сейчас не может её проверить.') },
+        askSuggestions: {
+            prompts: {
+                memory: Shared_machineResourceUiTranslations.machinePhrase('Почему у ', ' мало памяти?'),
+                disk: Shared_machineResourceUiTranslations.machinePhrase('Найди место, которое можно освободить на ', ''),
+                storage: Shared_machineResourceUiTranslations.machinePhrase('Объясни использование хранилища Happier на ', ''),
+                leftBehind: Shared_machineResourceUiTranslations.machinePhrase('Проверь оставшиеся процессы на ', ''),
+                guard: Shared_machineResourceUiTranslations.machinePhrase('Объясни, что сделает Guard на ', ''),
+                overview: Shared_machineResourceUiTranslations.machinePhrase('Проверь использование ресурсов на ', ''),
+                processes: Shared_machineResourceUiTranslations.machinePhrase('Что использует больше всего памяти на ', '?'),
+                weeklyReview: 'Проверяй хранилище каждый понедельник',
+                lastReport: Shared_machineResourceUiTranslations.machinePhrase('Объясни последний отчёт о ресурсах с ', ''),
+                lastStorageReport: Shared_machineResourceUiTranslations.machinePhrase('Проверь последний отчёт о хранилище с ', ''),
+                notifyWhenBack: Shared_machineResourceUiTranslations.machinePhrase('Сообщи, когда ', ' снова появится в сети'),
+                notifyWhenBackConsent: Shared_machineResourceUiTranslations.machinePhrase('Я согласен включить постоянные оповещения об отключении и обновления о восстановлении связи для ', '.'),
+                setupDocker: Shared_machineResourceUiTranslations.machinePhrase("Настроить Docker на ", ""),
+                setupReview: Shared_machineResourceUiTranslations.machinePhrase("Проверить, что настроено на ", ""),
+                setupHarden: Shared_machineResourceUiTranslations.machinePhrase("Усилить SSH и брандмауэр на ", ""),
+                securityAccess: Shared_machineResourceUiTranslations.machinePhrase("Объяснить, кто что может на ", ""),
+                securityNetwork: Shared_machineResourceUiTranslations.machinePhrase("Проверить, что открыто в интернет на ", ""),
+                securityUpdates: Shared_machineResourceUiTranslations.machinePhrase("Просмотреть ожидающие обновления на ", ""),
+            },
+            reasons: {
+                setup: "Каждое изменение вы проверите заранее",
+                security: "Только чтение, пока вы не одобрите",
+                memory: 'Нехватка памяти требует внимания', disk: Shared_machineResourceUiTranslations.amountPhrase('', ' свободно на этом томе'),
+                storage: Shared_machineResourceUiTranslations.amountPhrase('Happier использует ', ''), leftBehind: Shared_machineResourceUiTranslations.countPhrase('', ' оставшихся процессов'),
+                guard: 'Защита памяти выключена', calm: 'На этой машине всё спокойно',
+                currentReport: 'Из отчёта о ресурсах этой машины', weeklyReview: 'Еженедельное предложение для проверки',
+                offline: 'Эта машина не в сети; используйте последний отчёт',
+            },
+        },
+        widgets: {
+            body: machineResourceUiTranslations__machineWidgetBodyTranslations.ru,
+            machine_vitals: 'Показатели', machine_fleet: 'Машины', machine_metric: 'Метрика',
+            machine_top_consumers: 'Крупнейшие потребители', machine_left_behind: 'Оставшиеся',
+            machine_storage: 'Хранилище', machine_worktrees: 'Рабочие деревья', machine_guard: 'Guard',
+            machine_activity: 'Активность', machine_cleanup_suggestion: 'Предложение',
+            followsSessionMachine: 'Следует за машиной этой сессии',
+            inputs: {
+                volume: 'Том', range: 'Период', scope: 'Область', style: 'Стиль', metrics: 'Метрики',
+                warnAbove: 'Предупреждать выше', cpu: 'CPU', memory: 'Память', diskFree: 'Свободное место',
+                network: 'Сеть', oneHour: '1 час', oneDay: '24 часа', sevenDays: '7 дней',
+                machineScope: 'Машина', sessionScope: 'Сессия', sparklines: 'Миниграфики',
+                bars: 'Полосы', numbers: 'Числа', rings: 'Кольца', disk: 'Диск',
+            },
+        },
+    },
+} as const satisfies Pick<Record<'en' | 'ca' | 'de' | 'es' | 'fr' | 'it' | 'ja' | 'pl' | 'pt' | 'ru' | 'zhHans' | 'zhHant', typeof Shared_machineResourceUiTranslations.en>, "ru">;
+
+return { machineResourceUiTranslations };
+})();
 
 const Domain_accountDisplayTranslations = (() => {
 type AccountDisplayTranslation = Shared_accountDisplayTranslations.AccountDisplayTranslation;
@@ -18240,4 +20568,55 @@ export {
     Domain_workspaceBarTranslations as workspaceBarTranslations,
     Domain_workspaceSyncDiagnosticTranslations as workspaceSyncDiagnosticTranslations,
     Domain_workspaceTabTranslations as workspaceTabTranslations,
+    Domain_simulatorDeviceToolsTranslations as simulatorDeviceToolsTranslations,
+    Domain_deploymentMoveTranslations as deploymentMoveTranslations,
+    Domain_newSessionActionDefaultTranslations as newSessionActionDefaultTranslations,
+    Domain_chatLinksTranslations as chatLinksTranslations,
+    Domain_deploymentDefaultsTranslations as deploymentDefaultsTranslations,
+    Domain_deploymentCopyTranslations as deploymentCopyTranslations,
+    Domain_deploymentSettingsTranslations as deploymentSettingsTranslations,
+    Domain_pluginPublishTranslations as pluginPublishTranslations,
+    Domain_botTemplateTranslations as botTemplateTranslations,
+    Domain_botTemplateRecipientTranslations as botTemplateRecipientTranslations,
+    Domain_botFaceNameTranslations as botFaceNameTranslations,
+    Domain_screenCaptureTranslations as screenCaptureTranslations,
+    Domain_deploymentCreationReviewTranslations as deploymentCreationReviewTranslations,
+    Domain_deploymentPlatformLinkTranslations as deploymentPlatformLinkTranslations,
+    Domain_deploymentPromotionTranslations as deploymentPromotionTranslations,
+    Domain_fileEditingTranslations as fileEditingTranslations,
+    Domain_usageChartInputTranslations as usageChartInputTranslations,
+    Domain_usageChartPlanetFamilyTranslations as usageChartPlanetFamilyTranslations,
+    Domain_fileSelectionAskTranslations as fileSelectionAskTranslations,
+    Domain_fileTrackTranslations as fileTrackTranslations,
+    Domain_actionPresentationTranslations as actionPresentationTranslations,
+    Domain_fileReviewNoteTranslations as fileReviewNoteTranslations,
+    Domain_composerReferenceTranslations as composerReferenceTranslations,
+    Domain_hunkReviewTranslations as hunkReviewTranslations,
+    Domain_storeInstalledTranslations as storeInstalledTranslations,
+    Domain_connectedAccountCallbackTranslations as connectedAccountCallbackTranslations,
+    Domain_skillsPageTranslations as skillsPageTranslations,
+    Domain_capabilityNoticeTranslations as capabilityNoticeTranslations,
+    Domain_skillDetailTranslations as skillDetailTranslations,
+    Domain_skillsFoundTranslations as skillsFoundTranslations,
+    Domain_mcpFoundTranslations as mcpFoundTranslations,
+    Domain_skillsUpdatesTranslations as skillsUpdatesTranslations,
+    Domain_mcpPageTranslations as mcpPageTranslations,
+    Domain_valueRefRowsTranslations as valueRefRowsTranslations,
+    Domain_agentAddTranslations as agentAddTranslations,
+    Domain_mcpHomeTranslations as mcpHomeTranslations,
+    Domain_agentsHomeTranslations as agentsHomeTranslations,
+    Domain_profileSeedsTranslations as profileSeedsTranslations,
+    Domain_scopeSectionTranslations as scopeSectionTranslations,
+    Domain_capabilityKitTranslations as capabilityKitTranslations,
+    Domain_sessionListSpacesKeyboardTranslations as sessionListSpacesKeyboardTranslations,
+    Domain_reviewKeyboardTranslations as reviewKeyboardTranslations,
+    Domain_paneKeyboardTranslations as paneKeyboardTranslations,
+    Domain_needsYouHighlightTranslations as needsYouHighlightTranslations,
+    Domain_quickOpenTranslations as quickOpenTranslations,
+    Domain_paneMainColumnTranslations as paneMainColumnTranslations,
+    Domain_paneEmptyEditorTranslations as paneEmptyEditorTranslations,
+    Domain_llmTaskRunnerTranslations as llmTaskRunnerTranslations,
+    Domain_actionSettingsResourcesTranslations as actionSettingsResourcesTranslations,
+    Domain_resourceProposalTranslations as resourceProposalTranslations,
+    Domain_machineResourceUiTranslations as machineResourceUiTranslations,
 };

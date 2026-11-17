@@ -171,6 +171,2329 @@ import * as Shared_workspaceBarTranslations from '../workspaceBarTranslations.sh
 import type { TranslationStructure } from '../en';
 import * as Shared_workspaceSyncDiagnosticTranslations from '../workspaceSyncDiagnosticTranslations.shared';
 import * as Shared_workspaceTabTranslations from '../workspaceTabTranslations.shared';
+import * as Shared_simulatorDeviceToolsTranslations from '../simulatorDeviceToolsTranslations';
+import type { SupportedLanguage as simulatorDeviceToolsTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentMoveTranslations from '../deploymentMoveTranslations';
+import type { SupportedLanguage as deploymentMoveTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_newSessionActionDefaultTranslations from '../newSessionActionDefaultTranslations';
+import * as Shared_chatLinksTranslations from '../chatLinksTranslations';
+import type { SupportedLanguage as chatLinksTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentDefaultsTranslations from '../deploymentDefaultsTranslations';
+import type { SupportedLanguage as deploymentDefaultsTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentCopyTranslations from '../deploymentCopyTranslations';
+import type { SupportedLanguage as deploymentCopyTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentSettingsTranslations from '../deploymentSettingsTranslations';
+import { deploymentOperationalTranslations as deploymentSettingsTranslations__deploymentOperationalTranslations } from '../deploymentOperationalTranslations';
+import type { SupportedLanguage as deploymentSettingsTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_pluginPublishTranslations from '../pluginPublishTranslations';
+import * as Shared_botTemplateTranslations from '../botTemplateTranslations';
+import type { SupportedLanguage as botTemplateTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_botTemplateRecipientTranslations from '../botTemplateRecipientTranslations';
+import type { SupportedLanguage as botTemplateRecipientTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_botFaceNameTranslations from '../botFaceNameTranslations.shared';
+import * as Shared_screenCaptureTranslations from '../screenCaptureTranslations.shared';
+import * as Shared_deploymentCreationReviewTranslations from '../deploymentCreationReviewTranslations';
+import type { SupportedLanguage as deploymentCreationReviewTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentPlatformLinkTranslations from '../deploymentPlatformLinkTranslations';
+import type { SupportedLanguage as deploymentPlatformLinkTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentPromotionTranslations from '../deploymentPromotionTranslations';
+import type { SupportedLanguage as deploymentPromotionTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_fileEditingTranslations from '../fileEditingTranslations.shared';
+import { fileAiSuggestionsTranslations as fileEditingTranslations__fileAiSuggestionsTranslations } from '../fileAiSuggestionsTranslations.shared';
+import { fileAiSuggestionControls as fileEditingTranslations__fileAiSuggestionControls } from '../fileAiSuggestionsTranslations.shared';
+import { fileNextEditTranslations as fileEditingTranslations__fileNextEditTranslations } from '../fileAiSuggestionsTranslations.shared';
+import * as Shared_usageChartInputTranslations from '../usageChartInputTranslations.shared';
+import * as Shared_usageChartPlanetFamilyTranslations from '../usageChartPlanetFamilyTranslations.shared';
+import * as Shared_fileSelectionAskTranslations from '../fileSelectionAskTranslations.shared';
+import * as Shared_fileTrackTranslations from '../fileTrackTranslations.shared';
+import * as Shared_actionPresentationTranslations from '../actionPresentationTranslations';
+import * as Shared_fileReviewNoteTranslations from '../fileReviewNoteTranslations.shared';
+import * as Shared_composerReferenceTranslations from '../composerReferenceTranslations.shared';
+import * as Shared_hunkReviewTranslations from '../hunkReviewTranslations.shared';
+import * as Shared_storeInstalledTranslations from '../storeInstalledTranslations.shared';
+import * as Shared_connectedAccountCallbackTranslations from '../connectedAccountCallbackTranslations';
+import * as Shared_skillsPageTranslations from '../skillsPageTranslations';
+import * as Shared_capabilityNoticeTranslations from '../capabilityNoticeTranslations';
+import * as Shared_skillDetailTranslations from '../skillDetailTranslations';
+import * as Shared_skillsFoundTranslations from '../skillsFoundTranslations';
+import * as Shared_mcpFoundTranslations from '../mcpFoundTranslations';
+import * as Shared_skillsUpdatesTranslations from '../skillsUpdatesTranslations';
+import * as Shared_mcpPageTranslations from '../mcpPageTranslations';
+import * as Shared_valueRefRowsTranslations from '../valueRefRowsTranslations';
+import * as Shared_agentAddTranslations from '../agentAddTranslations';
+import * as Shared_mcpHomeTranslations from '../mcpHomeTranslations';
+import * as Shared_agentsHomeTranslations from '../agentsHomeTranslations';
+import * as Shared_profileSeedsTranslations from '../profileSeedsTranslations';
+import * as Shared_scopeSectionTranslations from '../scopeSectionTranslations';
+import * as Shared_capabilityKitTranslations from '../capabilityKitTranslations';
+import { sessionCapabilityTranslations as capabilityKitTranslations__sessionCapabilityTranslations } from '../sessionCapabilityTranslations';
+import { capabilityDetailTranslations as capabilityKitTranslations__capabilityDetailTranslations } from '../capabilityDetailTranslations';
+import { mcpSignInTranslations as capabilityKitTranslations__mcpSignInTranslations } from '../mcpSignInTranslations';
+import { registriesTranslations as capabilityKitTranslations__registriesTranslations } from '../registriesTranslations';
+import { skillAddTranslations as capabilityKitTranslations__skillAddTranslations } from '../registriesTranslations';
+import { mcpAddTranslations as capabilityKitTranslations__mcpAddTranslations } from '../mcpAddTranslations';
+import { storeTranslations as capabilityKitTranslations__storeTranslations } from '../storeTranslations';
+import * as Shared_sessionListSpacesKeyboardTranslations from '../sessionListSpacesKeyboardTranslations.shared';
+import * as Shared_reviewKeyboardTranslations from '../reviewKeyboardTranslations.shared';
+import * as Shared_paneKeyboardTranslations from '../paneKeyboardTranslations';
+import type { SupportedLanguage as paneKeyboardTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_needsYouHighlightTranslations from '../needsYouHighlightTranslations';
+import type { SupportedLanguage as needsYouHighlightTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_quickOpenTranslations from '../quickOpenTranslations';
+import type { SupportedLanguage as quickOpenTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_paneMainColumnTranslations from '../paneMainColumnTranslations';
+import type { SupportedLanguage as paneMainColumnTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_paneEmptyEditorTranslations from '../paneEmptyEditorTranslations';
+import type { SupportedLanguage as paneEmptyEditorTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_llmTaskRunnerTranslations from '../llmTaskRunnerTranslations';
+import type { SupportedLanguage as llmTaskRunnerTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_actionSettingsResourcesTranslations from '../actionSettingsResourcesTranslations.shared';
+import * as Shared_resourceProposalTranslations from '../resourceProposalTranslations.shared';
+import * as Shared_machineResourceUiTranslations from '../machineResourceUiTranslations.shared';
+import { machineWidgetBodyTranslations as machineResourceUiTranslations__machineWidgetBodyTranslations } from '../machineWidgetBodyTranslations.shared';
+
+const Domain_simulatorDeviceToolsTranslations = (() => {
+const simulatorDeviceToolsTranslations = {
+  "ca": {
+    start: "Inicia",
+    stopped: "Aturat",
+    powerOff: "Apaga",
+    screenshot: "Fes una captura",
+    operationFailed: "No ha funcionat al dispositiu",
+    videoUnsupported: "El vídeo no es pot reproduir aquí",
+    videoUnsupportedBody: "Aquest navegador no pot descodificar el vídeo del dispositiu. Obre Happier en un Chrome, Edge o Safari actual, o a l’app.",
+    appSection: "App",
+    appDescription: "Obre o tanca una app pel seu ID de bundle o paquet.",
+    appId: "ID de l’app",
+    launch: "Obre",
+    terminate: "Tanca",
+    linkSection: "Obre un enllaç",
+    url: "URL o enllaç profund",
+    open: "Obre",
+    settingsSection: "Configuració del dispositiu",
+    appearance: "Aparença",
+    light: "Clara",
+    dark: "Fosca",
+    textSize: "Mida del text",
+    small: "Petita",
+    defaultSize: "Predeterminada",
+    large: "Gran",
+    orientation: "Orientació",
+    portrait: "Vertical",
+    landscape: "Horitzontal",
+    location: "Ubicació",
+    latitude: "Latitud",
+    longitude: "Longitud",
+    setLocation: "Defineix",
+    clearLocation: "Esborra",
+    permissions: "Permisos",
+    permissionsDescription: "Canvia el que pot fer servir l’app de dalt.",
+    permission: "Permís",
+    allow: "Permet",
+    deny: "Denega",
+    reset: "Restableix",
+    camera: "Càmera",
+    photos: "Fotos",
+    microphone: "Micròfon",
+    contacts: "Contactes",
+    locationPermission: "Ubicació",
+    push: "Notificació push",
+    pushDescription: "S’envia a l’app de dalt.",
+    payload: "Contingut (JSON)",
+    send: "Envia",
+    invalidJson: "Introdueix un objecte JSON.",
+    needAppId: "Introdueix primer un ID d’app.",
+    accessibility: "Accessibilitat",
+    accessibilityDescription: "Els elements de la pantalla, tal com els llegeix l’accessibilitat.",
+    readScreen: "Llegeix la pantalla",
+    press: "Prem",
+    truncated: "Només una part de la pantalla.",
+    noElements: "No s’ha trobat cap element.",
+  },
+} as const satisfies Pick<Record<simulatorDeviceToolsTranslations__SupportedLanguage, Shared_simulatorDeviceToolsTranslations.SimulatorDeviceToolsCopy>, "ca">;
+
+return { simulatorDeviceToolsTranslations };
+})();
+
+const Domain_deploymentMoveTranslations = (() => {
+const deploymentMoveTranslations = {
+  "ca": {
+    "dataReviewLead": "Revisa els serveis d’origen que s’aturaran i els canvis de l’aplicació. El flux atura les escriptures, verifica una còpia final, restaura i comprova la destinació i desplega l’aplicació. Les dades originals es conserven a l’origen. Un canvi incert necessita la teva decisió al flux abans de continuar.",
+    "writers": "Serveis que s’aturaran",
+    "writerReviewRequired": "No s’han pogut identificar els processos que escriuen a l’origen. Revisa els serveis i el seu estat i torna-ho a provar.",
+    "noRunningWriter": "Inicia els serveis de l’aplicació que han d’utilitzar la base de dades traslladada i revisa el trasllat de nou.",
+    "stopped": "Ja aturat · continuarà aturat",
+    "menu": "Mou a una altra màquina…",
+    "title": "Mou a una altra màquina",
+    "description": "Utilitza el mateix commit. L’origen continua actiu fins que la destinació està bé; les dades locals es conserven.",
+    "restriction": "Només aplicacions de repositori sense dominis ni dades locals.",
+    "stateless": "Aquesta aplicació no té dades locals per moure",
+    "source": "Des de",
+    "destination": "A",
+    "run": "Inicia el flux de trasllat"
+  },
+} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'stopped', string>>>, "ca">;
+
+return { deploymentMoveTranslations };
+})();
+
+const Domain_newSessionActionDefaultTranslations = (() => {
+const newSessionActionDefaultTranslations = {
+  "ca": { name: 'Nom de l’acció', launchMode: 'La propera vegada', review: 'Revisa abans de començar', start: 'Comença ara mateix', open: 'Desa com a valors predeterminats d’aquesta acció…', saved: 'Valors predeterminats desats', failed: 'No s’ha desat.', stablePlacementRequired: "Per desar aquests valors, tria una màquina permanent o Pregunta. No es poden desar ordinadors temporals ni seleccions de grups.", workspaceMode: "Aquesta acció necessita una còpia de treball. Tria una carpeta compatible i torna a desar.", nameRequired: 'Introdueix un nom per a l’acció.' },
+} as const;
+
+return { newSessionActionDefaultTranslations };
+})();
+
+const Domain_chatLinksTranslations = (() => {
+const chatLinksTranslations = {
+  "ca": {"title": "Obre els enllaços dels xats a", "description": "Tria on obrir els enllaços en aquest dispositiu. Els enllaços localhost de la màquina sempre s’obren a l’aplicació.", "browser": "El teu navegador", "embedded": "Integrat", "managed": "Gestionat"},
+} as const satisfies Pick<Record<chatLinksTranslations__SupportedLanguage, Shared_chatLinksTranslations.ChatLinksCopy>, "ca">;
+
+return { chatLinksTranslations };
+})();
+
+const Domain_deploymentDefaultsTranslations = (() => {
+const deploymentDefaultsTranslations = {
+  "ca": {
+        accountDescription: 'Valors per als entorns nous dels projectes del teu compte. Els projectes d’equip fan servir els valors compartits del projecte.',
+        projectDescription: 'S’apliquen en crear un entorn. Els entorns existents conserven la seva configuració.',
+        useAccount: 'Fes servir el valor del compte', useBuiltin: 'Fes servir el valor de Happier', retention: 'Versions conservades per desfer',
+        clearToInherit: 'Buida-ho per heretar el valor', projectTitle: 'Configuració dels desplegaments', alertChannels: 'Canals de notificacions', accountLink: 'Valors de desplegament del teu compte',
+        triggersTitle: "Activadors", triggersDescription: "Cada entorn executa els seus propis activadors. Obre’n un per veure’ls o afegir-ne.",
+    },
+} as const satisfies Pick<Record<deploymentDefaultsTranslations__SupportedLanguage, Shared_deploymentDefaultsTranslations.Copy>, "ca">;
+
+return { deploymentDefaultsTranslations };
+})();
+
+const Domain_deploymentCopyTranslations = (() => {
+const deploymentCopyTranslations = {
+  "ca": {
+    name: ({ name }) => `${name} còpia`,
+    preparePrompt: ({ name, sourceId, environmentId }) => `Prepara el desplegament de l’entorn ${name} (${environmentId}), origen del projecte ${sourceId}. Inspecciona el repositori i les instruccions. Proposa Dockerfile, compose.yaml i comprovació de salut en una pull request per revisar. No fusionis ni despleguis.`,
+    menu: "Duplica l’entorn…",
+    title: "Duplica l’entorn",
+    description: "Copia la definició del desplegament. Tria les referències; no es desplega res automàticament.",
+    bindings: "Què es copia",
+    same: "Mateixa referència",
+    choose: "Tria’n una altra…",
+    omit: "Deixa buit",
+    include: "Inclou",
+    domainsStay: "Els dominis es queden a l’origen: una adreça pertany a un sol entorn.",
+    dataTitle: "Dades",
+    dataOmit: "No adjuntar",
+    dataOmitHint: "Crea aquest entorn sense aquest recurs de dades.",
+    dataRestoreUnavailable: "No es pot restaurar una còpia de seguretat d’aquestes dades en duplicar.",
+    dataConnections: "Connexions compartides",
+    dataConnectionsHint: "Tria les connexions desades que farà servir aquesta còpia. La base de dades continua vinculada a l’entorn d’origen.",
+    dataConnectionsUnavailable: "No s’ha seleccionat cap variable de connexió desada. Selecciona’n una a dalt o tria una altra opció de dades.",
+    dataReuse: "Reutilitzar",
+    dataReuseHint: "Tots dos entorns fan servir les mateixes dades.",
+    dataEmpty: "Començar buit",
+    dataEmptyHint: "Adjunta dades noves i buides. Configura les connexions després de crear l’entorn.",
+    dataEmptyUnavailable: "Aquest proveïdor no permet crear una base de dades buida.",
+    dataRestore: "Restaurar la darrera còpia de seguretat",
+    dataRestoreHint: "Una còpia nova a partir de la darrera còpia de seguretat de l’origen.",
+    prepareTitle: "Sense compose.yaml · demana-ho a un agent",
+    prepareBody: "Obre Inicia per demanar Dockerfile, compose.yaml i una comprovació de salut en una pull request per revisar.",
+    refresh: "Aquestes dades no estan actualitzades. Actualitza l’entorn, revisa la configuració i torna-ho a provar.",
+    permission: "El teu accés no permet aquesta operació. Demana accés a un gestor de l’entorn i torna-ho a provar.",
+    machine: "La màquina controladora no està disponible. Connecta la màquina controladora i torna-ho a provar.",
+    repository: "No hi ha cap repositori local seleccionat. Tria un repositori a Inicia i prepara’l abans de desplegar.",
+    unsupported: "Aquesta destinació no admet l’operació. Tria’n una de compatible o canvia la selecció.",
+    retry: "S’ha rebutjat l’operació.Revisa el motiu, ajusta la selecció i torna-ho a provar.",
+  },
+} as const satisfies Pick<Record<deploymentCopyTranslations__SupportedLanguage, Shared_deploymentCopyTranslations.DeploymentCopyTranslations>, "ca">;
+
+return { deploymentCopyTranslations };
+})();
+
+const Domain_deploymentSettingsTranslations = (() => {
+const deploymentSettingsTranslations = {
+  "ca": {
+    ...deploymentSettingsTranslations__deploymentOperationalTranslations['ca'],
+    fleetIngressSuggestedBody: "Suggeriment basat en la informació de xarxa de les màquines. Tria’l per desar-lo; la ruta es comprovarà en configurar el domini.",
+    fleet: Shared_deploymentSettingsTranslations.fleetCopy,
+    moveToRepository: Shared_deploymentSettingsTranslations.moveToRepositoryCopy,
+    previewEditor: Shared_deploymentSettingsTranslations.previewEditorCopy,
+    restoreExtended: Shared_deploymentSettingsTranslations.restoreExtendedCopy,
+    fleetIngressTitle: "Ruta pública",
+    fleetIngressChoose: "Tria una ruta",
+    fleetIngressUnobserved: "Aquí encara no s’ha comprovat cap zona del domini ni cap xarxa privada compartida. Tria una ruta; es comprovarà en configurar el domini.",
+    fleetIngressTunnel: "Cloudflare Tunnel",
+    fleetIngressEdge: "Caddy d’entrada",
+    fleetIngressTunnelBody: "Els connectors es donen suport en cas de fallada; no equilibren la càrrega. Sense una xarxa privada, només es cobreix la pèrdua del servidor o del connector.",
+    fleetIngressEdgeBody: "Equilibra el trànsit a través d’una xarxa privada. L’aplicació queda inaccessible si la màquina d’entrada s’atura.",
+    privateSharingTitle: "Accés privat",
+    privateSharingBody: "Comparteix un servei de manera privada. Els canvis s’apliquen al pròxim desplegament.",
+    privateSharingAdd: "Compartir servei",
+    privateSharingRepository: "Edita el fitxer Compose del repositori per publicar el servei en privat i configura’n l’exportació amb un agent.",
+    privateSharingUnsupported: "Demana a un agent que editi aquestes exportacions conservant l’accés actual.",
+    privateSharingMultipleMachines: "Aquest editor només pot configurar l’accés privat d’un entorn que s’executa en una sola màquina.",
+    privateSharingNetworkMissing: "A la màquina de l’entorn, obre Xarxa → Xarxes privades, connecta Tailscale i uneix-te a la xarxa de l’altra aplicació.",
+    privateSharingService: "Servei",
+    privateSharingKey: "Nom d’exportació",
+    privateSharingPort: "Port del contenidor",
+    privateSharingScheme: "Esquema URL",
+    privateSharingNetwork: "Xarxa privada",
+    privateSharingAddress: "Adreça de l’amfitrió",
+    privateSharingHostPort: "Port publicat de l’amfitrió",
+    privateSharingReview: "Revisar accés",
+    privateSharingReviewBody: "El pròxim desplegament farà servir aquesta adreça i port. Altres aplicacions podran utilitzar aquesta exportació privada.",
+    privateSharingInvalid: "Comprova el servei, el nom d’exportació, l’esquema i els dos ports.",
+    privateSharingHappierNetwork: "Xarxa Happier",
+    privateSharingHappierNetworkBody: "Les teves màquines hi accedeixen de manera privada a través de Happier. Sense VPN.",
+    privateSharingHappierNetworkPending: "Encara no disponible",
+    privateSharingJoinedNetworkBody: "Les apps d’aquesta xarxa hi accedeixen a la seva adreça privada.",
+    privateSharingReviewBodyHappier: "El pròxim desplegament publica aquest port només en aquesta màquina. Les altres màquines hi accedeixen a través de Happier.",
+    destinationS3: ({ region }) => `S3 a ${region}`,
+    destinationS3NoRegion: 'Emmagatzematge S3',
+    destinationTest: 'Prova',
+    destinationReachable: 'Accessible · provat ara',
+    destinationRepositoryMissing:
+      'No hi ha còpies allà · revisa el bucket i el prefix',
+    destinationNativeFailed: 'La destinació no ha respost · revisa l’adreça',
+    destinationLocked:
+      'Una altra còpia l’està fent servir · torna-ho a provar quan acabi',
+    destinationPasswordIncorrect: 'La contrasenya del repositori no coincideix',
+    destinationRetry: 'La prova no ha acabat · torna-ho a provar',
+    keepTitle: 'Conserva',
+    keepChange: 'Canvia',
+    keepDescription:
+      'Després de cada còpia, s’eliminen les més antigues que superin aquestes xifres. Deixa-ho tot buit per conservar-les totes.',
+    keepLast: 'Més recents',
+    keepDaily: 'Diàries',
+    keepWeekly: 'Setmanals',
+    keepMonthly: 'Mensuals',
+    keepSave: 'Desa',
+    keepCancel: 'Cancel·la',
+    keepInvalid: 'Fes servir nombres enters més grans que zero',
+    pruneTitle: 'Elimina ara les còpies antigues',
+    pruneDescription:
+      'Elimina les còpies que superen el que conserves, sense esperar la propera còpia.',
+    pruneAction: 'Elimina',
+    pruned: ({ count }) =>
+      count === 1
+        ? 'S’ha eliminat 1 còpia antiga'
+        : `S’han eliminat ${count} còpies antigues`,
+    prunedNothing: 'No hi ha res per eliminar',
+    rolloutRecreateShort: 'Reinicia al lloc',
+    rolloutStartFirstShort: 'Primer les noves',
+    previewsTitle: 'Previsualitzacions',
+    previewsOn: 'Activades per a noves pull requests',
+    previewsOff: 'Desactivades',
+    previewsEnrollmentUnavailable: "Desat, però les noves pull requests encara no tindran previsualitzacions",
+    previewsRunsOn: 'S’executa a',
+    previewsAddress: 'Adreça',
+    previewsData: 'Dades',
+    previewsDataOwn: 'La seva pròpia base de dades',
+    previewsDataBranch: 'Una branca de la base de dades',
+    previewsDataNone: 'Cap',
+    previewsDataParent: "Branca de",
+    previewsDataParentBody: "Cada pull request rep una branca sense copiar dades, que s’elimina quan es tanca la pull request",
+    previewsDataOwnUnavailable: "Un agent configura la seva pròpia base de dades",
+    previewsDataBranchUnavailable: "Les branques necessiten una base de dades enllaçada que les admeti",
+    previewsForks: 'Les pull requests de forks no tenen previsualització',
+    previewsProductionTarget: 'Les previsualitzacions comparteixen la destinació de producció',
+    previewsDataUnavailable: 'No configurat en aquest entorn · demana-ho a un agent',
+    previewsSetUpOff: 'Desactivades · activa-les perquè cada pull request tingui la seva còpia de l’entorn',
+    previewsNeedRepository: 'Les previsualitzacions necessiten un repositori',
+    previewsNeedRepositoryBody: 'La definició d’aquest entorn es desa a Happier. Les previsualitzacions construeixen cada pull request des d’un repositori.',
+    previewsNoRepository: 'Les previsualitzacions necessiten el repositori del projecte',
+    backupNotSetUpTitle: 'Sense còpia de seguretat',
+    backupNotSetUpBody: 'No hi ha cap còpia configurada, així que les dades d’aquest entorn no es copien enlloc.',
+    restoreOnFailOnBody: 'Un desplegament que falla les comprovacions torna a l’última versió bona',
+    restoreOnFailOffBody: 'Un desplegament fallit queda igual fins que el reverteixis',
+    keptBody: 'Versions desades al servidor per revertir sense reconstruir',
+    setupTitle: 'Configura les còpies de seguretat',
+    setupDestination: 'Destinació',
+    setupSheetTitle: "On van les còpies de seguretat?",
+    setupSheetLead: ({ machine }: { machine: string }) => `Cada còpia es xifra a ${machine} abans de sortir.`,
+    setupSheetNext: "Prova l’emmagatzematge i desa. Inicialitza només un repositori nou.",
+    setupMoreOptions: "Més opcions",
+    setupNoDatabaseTitle: "Primer afegeix una base de dades",
+    setupNoDatabaseBody: "Les còpies copien una base de dades d’aquest entorn.",
+    setupBody: "Tria on desar les còpies xifrades.",
+    setupStart: 'Configura',
+    setupEndpoint: 'Endpoint',
+    setupBucket: 'Bucket',
+    setupPrefix: 'Carpeta del bucket',
+    setupRegion: 'Regió',
+    setupService: 'Servei de base de dades',
+    setupSave: 'Desa',
+    setupCancel: 'Cancel·la',
+    setupIncomplete: "Completa l’emmagatzematge, l’origen i els secrets desats obligatoris.",
+    credentialAccessKeyId: 'ID de clau d’accés',
+    credentialSecretAccessKey: 'Clau d’accés secreta',
+    credentialRepositoryPassword: 'Contrasenya del repositori',
+    credentialSessionToken: 'Testimoni de sessió',
+    credentialMissing: 'Necessita un secret desat',
+    credentialSet: 'Secret desat triat',
+    credentialChoose: 'Tria…',
+    scheduleTitle: 'Còpies nocturnes',
+    scheduleOff: 'Desactivades · cada nit a les 02:00 copia, comprova i conserva les teves xifres',
+    scheduleOn: 'Activades · cada nit a les 02:00',
+    scheduleTurnOn: 'Activa',
+    setupNoDestination: 'Les còpies necessiten un lloc on guardar-se. Afegeix primer un emmagatzematge des de la Botiga.',
+    setupOpenStore: 'Obre la Botiga',
+    setupRoleRequired: "Secret desat obligatori",
+    setupRoleOptional: 'Opcional · només si el teu emmagatzematge el fa servir',
+    setupInitializeAndSave: "Inicialitza el repositori i desa",
+    setupAnotherMachine: "Una altra màquina",
+    setupReceiverMachine: "Màquina de destinació",
+    setupLocalWarning: "En aquesta màquina · sense còpia externa",
+    setupLocalGrowth: "Conservar-ho tot no elimina còpies automàticament. El disc es pot omplir.",
+    setupCapacityKnown: "Espai lliure",
+    setupCapacityUnknown: "Espai lliure no disponible",
+    setupCapacityAtBackupMachine: "Consulta l’espai lliure a la màquina que conté aquest camí de còpies.",
+    credentialSshPrivateKey: "Clau privada SSH",
+    addCheck: 'Afegeix una comprovació',
+    addCheckUnavailable:
+      'Les comprovacions no es configuren aquí · obre la pàgina Serveis de la màquina',
+  },
+} as const satisfies Pick<Record<deploymentSettingsTranslations__SupportedLanguage, Shared_deploymentSettingsTranslations.DeploymentSettingsTranslations>, "ca">;
+
+return { deploymentSettingsTranslations };
+})();
+
+const Domain_pluginPublishTranslations = (() => {
+const pluginPublishTranslations = {
+  "ca": {
+        title: 'Publica el connector', subtitle: 'Publica una versió nova a npm perquè tothom la pugui instal·lar des de la Store.',
+        templateTitle: ({ name }: { name: string }) => 'Publica {name}'.replace('{name}', () => name), templateSubtitle: ({ name }: { name: string }) => 'Publica aquesta plantilla a npm perquè tothom pugui crear el seu propi {name} des de la Store.'.replace('{name}', () => name),
+        package: 'Paquet', packageDescription: 'Comprova, compila i empaqueta aquest projecte a la màquina seleccionada.',
+        prepare: 'Comprova i prepara', check: 'Comprova', build: 'Compila', pack: 'Empaqueta', viewFiles: 'Mostra els fitxers',
+        listing: 'Fitxa de la Store', listingDescription: 'El que les persones veuen a la Store abans de la instal·lació.',
+        name: 'Nom', description: 'Descripció', keywords: 'Paraules clau', keywordsHint: 'Separa les paraules clau amb comes.',
+        icon: 'Icona del paquet', readme: 'README', versionAndNotes: 'Versió i registre de canvis', version: 'Versió', changelog: 'Registre de canvis',
+        patch: 'Pedaç', minor: 'Menor', major: 'Major',
+        npm: 'Publica a npm', npmDescription: 'Tria un perfil de registre desat en aquesta màquina.',
+        connect: 'Inicia sessió a npm', change: 'Canvia', coordinate: 'Nom del paquet', public: 'Públic · tothom el pot instal·lar',
+        signInRequired: 'Tria un perfil de npm abans de publicar.', direct: 'Publica directament', staged: 'Envia per a l’aprovació a npm',
+        stageHint: 'Una versió pendent necessita l’aprovació d’un responsable a npm abans de ser pública. Un paquet nou pot mostrar una pàgina provisional fins que s’aprovi.',
+        github: 'GitHub', githubDescription: 'Opcional. Desa el codi font al costat del paquet.',
+        githubEnable: 'Puja el codi font i crea una versió', repository: 'Repositori', branch: 'Branca', remote: 'Remot de Git',
+        selectedFiles: 'Fitxers per al commit', selectedFilesHint: 'Un camí relatiu al projecte per línia. Només s’hi inclouen aquests fitxers.',
+        commitMessage: 'Missatge del commit', commit: 'Fes commit dels fitxers seleccionats',
+        publish: 'Publica', publishReview: 'Publica el paquet revisat i executa les operacions de GitHub seleccionades de manera pública.',
+        prepareRequired: 'Prepara el paquet per revisar-ne els fitxers abans de publicar.',
+        preparing: 'S’està preparant el paquet…', publishing: 'S’està publicant…', checking: 'S’està comprovant la publicació…',
+        history: 'Versions publicades', historyDescription: 'Versions del paquet seleccionat a npm.',
+        checkPublication: 'Comprova la publicació', reviewNpm: 'Obre la revisió a npm', openNpm: 'Obre a npm', openGithub: 'Obre a GitHub', retryGithub: 'Torna-ho a provar amb GitHub',
+        published: 'Publicat a npm', indexLag: 'El paquet és públic. Pot trigar una mica a aparèixer a la cerca de la Store.',
+        awaitingMaintainer: 'Pendent d’aprovació de npm', outcomeUnknown: 'No s’ha pogut confirmar la publicació',
+        outcomeUnknownBody: 'Comprova aquesta versió exacta abans de provar una altra pujada.',
+        versionConflict: 'Aquesta versió ja està ocupada. Tria’n una altra i prepara-la de nou.',
+        signInToPublish: 'Inicia la sessió a npm per publicar.', versionTakenReason: 'Tria una versió que npm encara no tingui.',
+        useVersion: ({ version }: { version: string }) => 'Fes servir {version}'.replace('{version}', () => version),
+        authenticationRequired: 'npm necessita que tornis a iniciar sessió.', challenge: 'npm requereix autenticació addicional. Obre Connect per continuar en privat.',
+        failed: 'La publicació ha fallat', cancelled: 'Publicació cancel·lada', missing: 'Aquesta versió no està publicada.',
+        reviewRequired: 'Els fitxers preparats han canviat. Revisa l’informe nou abans de publicar.',
+        githubFailed: 'La publicació a npm s’ha completat. GitHub encara necessita atenció.',
+        noTests: 'No hi ha cap ordre de proves configurada', testsPassed: 'Proves superades', testsFailed: 'Proves fallides',
+        unavailable: 'Aquest projecte no està disponible. Tria una màquina connectada i torna-ho a provar.', project: 'Carpeta del projecte',
+        preview: 'Previsualització', loadMore: 'Carrega’n més', githubUnavailable: 'Tria les opcions de GitHub per inspeccionar aquest projecte.',
+        npmProfile: 'Perfil de npm', publicationMode: 'Publicació', readDraft: 'Llegeix l’esborrany de publicació', patchDraft: 'Edita l’esborrany de publicació',
+        chooseIcon: 'Tria una imatge', iconPng: 'Imatge PNG. S’inclou al paquet quan el prepares.', iconPickFailed: 'No s’ha pogut obrir la imatge. Torna-la a triar.',
+        continueGithub: 'Continua amb GitHub', githubSelectionRequired: 'Tria un repositori, una branca i les operacions de GitHub que es publicaran.',
+        githubHistory: 'Carrega les versions de GitHub', githubHistoryUnavailable: 'No s’han pogut carregar les versions de GitHub.',
+        githubHistoryIncomplete: 'S’han omès algunes versions o detalls. Carrega’n més quan estiguin disponibles.', githubHistoryEmpty: 'Encara no hi ha versions a GitHub.',
+        scaffoldSource: 'Prepara aquest codi font amb un agent',
+        scaffoldPrompt: 'Converteix aquest codi font de connector existent en un paquet de connector publicable mitjançant el flux públic de creació d’estructures per a autors de connectors. Conserva el codi font existent i utilitza’l al paquet resultant.',
+        githubOptions: 'Tria les opcions de GitHub', githubUnavailableReason: 'GitHub no està disponible per a aquest projecte.',
+        pushSource: 'Puja el codi font', createRelease: 'Crea una versió a GitHub', createRepository: 'Crea un repositori',
+        repositoryName: 'Nom del repositori', repositoryOwner: 'Propietari del repositori', noIconResources: 'Afegeix al projecte un recurs PNG inclòs al paquet per triar una icona.',
+        ready: 'A punt', passed: 'Superat', notConfigured: 'Sense configurar', machineRequired: 'Tria una màquina per preparar i publicar.', notRun: 'Encara no s’ha executat', running: 'En curs…',
+        githubReviewUnknown: 'Revisa el repositori i la versió a GitHub abans de tornar a provar una operació sense confirmar.',
+    },
+} as const;
+
+return { pluginPublishTranslations };
+})();
+
+const Domain_botTemplateTranslations = (() => {
+const botTemplateTranslations = {
+  "ca": Shared_botTemplateTranslations.copy(["Plantilla de Bot", "Dona una còpia", "Crea una plantilla perquè altres en facin el seu", "Revisa la plantilla", "Què reben", "Instruccions", "Primera tasca", "Versió", "Notes de versió", "Destinatari de la còpia", "Esborrany privat", "Compartit", "Desant…", "Canvis sense desar", "Desat", "Els canvis es conserven. Torna a provar de desar.", "S’ha desat una altra revisió. Revisa-la abans de substituir els canvis.", "Revisa l’altra revisió", "Utilitza aquesta revisió com a base", "Plantilla no disponible", "Plantilla · creada a partir de {name}", "Per {author} · {version} · {sharing}", "Vols desar abans de sortir? Els canvis romanen a l’esborrany obert d’aquest compte fins que es tanqui l’aplicació.", "Surt conservant els canvis", "Exclòs", "Descripció", "Privat"], "ca"),
+} as const satisfies Pick<Record<botTemplateTranslations__SupportedLanguage, Shared_botTemplateTranslations.BotTemplateTranslations>, "ca">;
+
+return { botTemplateTranslations };
+})();
+
+const Domain_botTemplateRecipientTranslations = (() => {
+const botTemplateRecipientTranslations = {
+  "ca": Shared_botTemplateRecipientTranslations.copy(['Crea la meva còpia', 'Crea el Bot', 'Origen de la plantilla', 'Versió acceptada {version}', 'Segueix les actualitzacions', 'Còpia independent', 'Regles de memòria', 'Habilitats', 'Requisits', 'Obligatori', 'Opcional', 'Entrades', 'Executable', 'Binari · Base64', 'Baixa', "La plantilla ha canviat. Revisa la versió actual abans de crear la còpia.", "Tria on executar la còpia. Crea inicia el Bot amb les instruccions de la plantilla."], 'ca'),
+} as const satisfies Pick<Record<botTemplateRecipientTranslations__SupportedLanguage, ReturnType<typeof Shared_botTemplateRecipientTranslations.copy>>, "ca">;
+
+return { botTemplateRecipientTranslations };
+})();
+
+const Domain_botFaceNameTranslations = (() => {
+const botFaceNameTranslations = {
+  "ca": {
+    accountDefault: 'Predeterminat del compte',
+    bodies: { crab: "Cranc", squid: "Calamar", octopus: "Pop", ufo: "Plat volador", specter: "Espectre", ghost: "Fantasma", beetle: "Escarabat", spider: "Aranya", jelly: "Medusa", hopper: "Saltador", pup: "Cadell", drone: "Dron", robot: "Robot", walker: "Caminant", rocket: "Coet", feet: "Peus", tail: "Cua", drip: "Gota", bracelegs: "Potes de claus", tagclaws: "Pinces d'etiqueta", cursortail: "Cua de cursor", termbody: "Terminal", antlers: "Banyes de branca", semi: "Punt i coma", brackets: "Claudàtors", cursor: "Cursor", bean: "Mongeta", squat: "Rabassut", bag: "Bossa", loaf: "Pa", puddle: "Bassal", tower: "Torre", stilts: "Xanques", tall: "Alt", cat: "Gat" },
+    colours: { daybreak: "Alba", lagoon: "Llacuna", orchid: "Orquídia", aurora: "Aurora", indigo: "Indi", glacier: "Glacera", moss: "Molsa", sand: "Sorra", ink: "Tinta" },
+  },
+} as const satisfies Pick<Readonly<Record<string, Shared_botFaceNameTranslations.BotFaceNames>>, "ca">;
+
+return { botFaceNameTranslations };
+})();
+
+const Domain_screenCaptureTranslations = (() => {
+const screenCaptureCopy = {
+  "ca": {
+    privacy: { hiddenTagsTitle: "Etiquetes de sessions privades", hiddenTagsDescription: "Les sessions amb aquestes etiquetes s’oculten de les llistes durant la gravació o quan la privadesa en compartir està activada." },
+    recording: {
+      systemSelectionTitle: 'Tria una finestra o pantalla',
+      systemSelectionReason: 'El sistema obrirà un selector. La gravació de regions no està disponible en aquesta sessió d’escriptori.',
+      pipewireUnavailable: 'La captura amb PipeWire no està disponible. Instal·la el connector PipeWire de GStreamer i torna-ho a provar.',
+      videoEncoderUnavailable: 'El codificador VP8 no està disponible. Instal·la el connector VP8 de GStreamer i torna-ho a provar.',
+      videoMuxerUnavailable: 'L’escriptor WebM no està disponible. Instal·la els connectors WebM de GStreamer i torna-ho a provar.',
+      videoDecoderUnavailable: 'No es pot descodificar la gravació per retallar-la. Instal·la els connectors VP8 i Matroska de GStreamer i torna-ho a provar.',
+      cursorUnavailable: 'El selector del sistema no pot incloure el cursor. Fes servir un portal d’escriptori que permeti capturar-lo.',
+      videoPipelineUnavailable: 'Falten components de vídeo de GStreamer. Instal·la els connectors de vídeo i torna-ho a provar.',
+      title: "Gravació",
+      pause: "Pausa",
+      resume: "Reprèn",
+      stop: "Atura la gravació",
+      stopShort: "Atura",
+      hideControl: "Amaga i continua gravant",
+      saving: "Desant la gravació…",
+      discarded: "Gravació descartada",
+      play: "Reprodueix",
+      afterTrim: ({ time }: Readonly<{ time: string }>) => `${time} després de retallar`,
+      marksOnPausedFrame: "les marques es veuen al fotograma en pausa", theAgent: "L’agent",
+      keyFrames: ({ agent, count }: Readonly<{ agent: string; count: number }>) => count === 1
+        ? `${agent} rep un fotograma clau amb les notes i marques`
+        : `${agent} rep ${count} fotogrames clau amb les notes i marques`,
+      withVideo: "les persones de la sessió també reben el vídeo.",
+      withoutVideo: "El vídeo es queda aquí.",
+      blurredVideo: "El vídeo es queda aquí perquè mostra el que has difuminat.",
+      includeBlurredQuestion: "El vídeo mostra el que has difuminat al fotograma. Vols incloure’l igualment?",
+      keepVideoOff: "Mantén-lo fora",
+      includeAnyway: "Inclou-lo igualment",
+      leaveOut: "Deixa’l fora",
+      includeVideo: "Inclou el vídeo",
+      trimStart: "Inici del retall",
+      trimEnd: "Final del retall",
+      timeline: "Línia de temps",
+      pins: "Notes i marques a la línia de temps",
+      resetTrim: "Restableix el retall",
+      continue: "Continua", failedReason: "S’ha aturat abans de desar el vídeo. No s’ha enviat res.", failedTitle: "La gravació s’ha aturat", openingTitle: "S’està obrint la gravació…", openFailedTitle: "La gravació no s’ha obert", openFailedReason: "Happier no ha pogut llegir el fitxer de vídeo. Es conserven el retall, les marques i les notes.", mediaFailed: "No s’ha pogut llegir el vídeo", commitFailed: "Les marques d’aquest fotograma no s’han desat",
+    },
+    attach: { capture: "Captura la pantalla", record: "Grava la pantalla" },
+    recent: { refresh: "Actualitza", chooseFile: "Tria un fitxer…", chooseFolder: "Tria una carpeta…", loadFailed: "No s’ha pogut llegir la carpeta de captures", operationFailed: "No ha funcionat. Les captures continuen aquí.", folderMissing: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `Falta ${folder}`, folderDenied: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `Happier no té permís per obrir ${folder}`, folderUnreadable: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `No s’ha pogut llegir ${folder}`, folderNotWatched: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `${folder} no s’actualitza sola`, title: "Captures recents", attach: "adjunta", search: "Cerca captures", empty: "Encara no hi ha captures a la carpeta" },
+    chooser: { title: "Envia a la sessió", attachTo: "Adjunta a", search: "Cerca sessions", openInHappier: "Oberta a Happier", recent: "Recents", newSession: "Sessió nova…", moveHint: "tria", sendHere: "envia aquí", copyHere: "copia aquí", empty: "Cap sessió coincideix" },
+    windowText: { frontmostLabel: ({ app, count }: Shared_screenCaptureTranslations.Copy<"app" | "count">) => `Text de la finestra del davant · ${app} · ${count} paraules`,
+      label: ({ app, count }: Shared_screenCaptureTranslations.Copy<"app" | "count">) => `Text de tota la finestra · ${app} · ${count} paraules`,
+      partialLabel: ({ app, count }: Shared_screenCaptureTranslations.Copy<"app" | "count">) => `Part del text de la finestra · ${app} · ${count} paraules`,
+      words: ({ count }: Shared_screenCaptureTranslations.Copy<"count">) => `${count} paraules`,
+      reading: "Llegint el text de la finestra…", empty: "No hi ha text en aquesta finestra", unavailable: "El text de la finestra no està disponible", view: "Mostra",
+      sheetDescription: ({ app }: Shared_screenCaptureTranslations.Copy<"app">) => `Tot el que es pot llegir a la finestra de ${app}, també fora de la captura. Va amb la imatge com a text, perquè l’agent el pugui citar.`,
+      dontInclude: "No l’incloguis", lockedTitle: "El text de tota la finestra està desactivat", lockedBody: "Has difuminat part de la captura i el text de la finestra ho mostraria. Torna’l a activar si encara el vols.",
+      includeTitle: "El text inclou el que has difuminat", includeBody: "El text de la finestra encara pot contenir el que has difuminat. La imatge continua difuminada igualment.", keepOff: "Mantén-lo desactivat", includeText: "Inclou el text",
+      permissionTitle: "Deixa que Happier llegeixi el text de la finestra", permissionBody: "macOS ho demana un cop. Mentre estigui activat, Happier llegeix el text de tota la finestra que captures, i res més.", permissionOpen: "Obre Privadesa i seguretat › Accessibilitat", permissionEnable: "Activa Happier", permissionWaiting: "Esperant el permís… s’activarà sol",
+    },
+    settings: { includeWindowShadow: "Inclou l’ombra de la finestra", windowShadowDescription: "Les captures de finestres inclouen l’ombra de macOS amb un marge transparent.", windowShadowUnavailable: "Disponible a macOS 14 o posterior.", screenFor: "Per capturar la pantalla", windowTextFor: "Per llegir el text de la finestra capturada", title: 'Captura de pantalla', captureShortcut: 'Drecera de captura', instantWindowShortcut: 'Drecera de captura instantània de finestra', recordingShortcut: 'Drecera de gravació', sound: 'So de captura', includeWindowText: 'Inclou el text de la finestra per defecte', folder: 'Carpeta de captures', description: "Prem una drecera on sigui, marca el que has captat i envia-ho a una sessió.", notSet: "Sense definir", notOnWayland: "Encara no disponible a Wayland", conflict: "Una altra aplicació fa servir aquesta drecera. L’anterior continua funcionant.", refused: "El sistema ha rebutjat aquesta drecera. L’anterior continua funcionant.", soundDescription: "Un so breu quan arriba una captura. Segueix el silenci del sistema.", windowTextDescription: "Les captures noves comencen amb el text de la finestra inclòs. Un difuminat el desactiva.", changeFolder: "Canvia…", permissionsTitle: "Permisos", permissionsDescription: "El que el sistema deixa fer a Happier i el que els agents han de demanar.", screenPermission: "Gravació de pantalla", accessibilityPermission: "Accessibilitat", approvals: "Aprovacions d’agents", approvalsDescription: "Si un agent ha de demanar permís abans de capturar la pantalla" },
+    selection: { releaseRecording: "Deixa anar per gravar", label: "Tria què vols capturar", modeLabel: "Tipus de captura", screenshot: "Captura", recording: "Gravació", instruction: "Arrossega una àrea, fes clic en una finestra o prem R", keyboardPosition: "Fletxes per posicionar · Retorn per fixar el primer vèrtex", keyboardRegion: "Fletxes per ajustar · Retorn per capturar", release: "Deixa anar per capturar" },
+    window: { pickAnotherSession: "Tria una altra sessió",
+      title: "Captura", notePlaceholder: "Afegeix una nota per a l’agent (opcional)", chooseSession: "Tria una sessió", sameAsLastCapture: "Igual que l’última captura", nativeTitle: ({ subject }: Shared_screenCaptureTranslations.Copy<"subject">) => `Captura de Happier — ${subject}`, region: "Regió",
+      sendTo: ({ session, machine }: Shared_screenCaptureTranslations.Copy<"session" | "machine">) => `Envia a ${session} a ${machine}`,
+      wholeWindowText: "Text de tota la finestra", addToDraft: "Afegeix a l’esborrany", send: "Envia", discard: "Descarta", copy: "Copia la imatge", showInFolder: "Mostra a la carpeta", more: "Més",
+      attachRecent: "Adjunta una captura recent", copyWindowText: "Copia el text de la finestra", settings: "Configuració de captura", justNow: "ara mateix", flattenFailed: "Les marques no s’han pogut aplicar a la imatge",
+      unreachable: ({ machine }: Shared_screenCaptureTranslations.Copy<"machine">) => `${machine} no és accessible`, lastSeen: ({ time }: Shared_screenCaptureTranslations.Copy<"time">) => `vist per última vegada a les ${time}`,
+      addOrPick: "Afegeix la captura a l’esborrany o", pickAnother: "tria una altra sessió",
+    },
+    permission: { drag: "Arrossega Happier a la llista", title: "Permet que Happier capturi la pantalla", reason: "macOS ho demana un cop. Happier només veu la pantalla quan prems la drecera o tries Captura la pantalla a la barra de menús.", reasonWithShortcut: ({ shortcut }: Shared_screenCaptureTranslations.Copy<"shortcut">) => `macOS ho demana un cop. Happier només veu la pantalla quan prems ${shortcut} o tries Captura la pantalla a la barra de menús.`, waiting: "Esperant el permís…", openSettings: "Obre la configuració del sistema", notNow: "Ara no", where: "Activa Happier a Privadesa i seguretat › Gravació de pantalla i àudio del sistema. Pot ser que macOS et demani tornar a obrir Happier.", allowed: ({ shortcut }: Shared_screenCaptureTranslations.Copy<"shortcut">) => `Permès · prem ${shortcut} per capturar`, reopenNeeded: "Si acabes de permetre Happier, torna’l a obrir per aplicar-ho", reopen: "Torna a obrir Happier" },
+    failed: { title: "La captura no ha arribat", reason: "L’eina de captura s’ha tancat sense lliurar cap imatge. No s’ha enviat res.", tryAgain: "Torna-ho a provar" },
+    pill: { notAdded: "No s’ha afegit a l’esborrany", notStarted: "La sessió nova no s’ha iniciat", notPrepared: "No s’ha pogut preparar la captura",
+      starting: "Obrint una sessió nova…", started: "A punt en una sessió nova",
+      sending: ({ session }: Shared_screenCaptureTranslations.Copy<"session">) => `Enviant a ${session}…`, adding: "Afegint a l’esborrany…", sent: ({ session }: Shared_screenCaptureTranslations.Copy<"session">) => `Enviat a ${session}`,
+      added: ({ number }: Readonly<{ number: number }>) => `Afegit a l’esborrany com a Imatge #${number}`,
+      waiting: ({ session, count }: Readonly<{ session: string; count: number }>) => `${session} · ${count} captures en espera`,
+      failed: "No enviat", failedDetail: "L’esborrany ho conserva tot", discarded: "Captura descartada", open: "Obre", edit: "Edita",
+    },
+  },
+} as const;
+
+return { screenCaptureCopy };
+})();
+
+const Domain_deploymentCreationReviewTranslations = (() => {
+const deploymentCreationReviewTranslations = {
+  "ca": {
+    title: 'Com es desplega',
+    description:
+      'Revisa’ls abans de crear-lo.',
+    create: 'Crea l’entorn',
+    buildsOn: ({ machine }) => `Es construeix a ${machine}`,
+    deploysFrom: ({ machine }) =>
+      `Els desplegaments s’executen des de ${machine}`,
+    keepsPrevious: ({ count }) =>
+      count === 0
+        ? 'No conserva cap versió anterior per desfer'
+        : count === 1
+          ? 'Conserva 1 versió anterior per desfer'
+          : `Conserva ${count} versions anteriors per desfer`,
+    fromExplicit: 'Ho has triat tu',
+    fromProject: 'Del projecte',
+    fromAccount: 'Del teu compte',
+    fromBuiltin: 'Valor per defecte de Happier',
+  },
+} as const satisfies Pick<Record<deploymentCreationReviewTranslations__SupportedLanguage, Shared_deploymentCreationReviewTranslations.DeploymentCreationReviewCopy>, "ca">;
+
+return { deploymentCreationReviewTranslations };
+})();
+
+const Domain_deploymentPlatformLinkTranslations = (() => {
+const deploymentPlatformLinkTranslations = {
+  "ca": {
+    detachLead: ({ name, platform }) => `Desvincula ${name} de Happier i deixa’l a ${platform}.`,
+    detachBody: ({ platform }) => `La càrrega continua executant-se a ${platform}, amb les seves dades i costos. Per aturar-la o eliminar-la, fes-ho a ${platform}.`,
+    removalTitle: ({ resource }) => `Desvincula o elimina ${resource}`,
+    removalLead: ({ resource, platform }) => `${resource} s’executa a ${platform}. Mantén-lo allà o elimina’l a ${platform}.`,
+    keepTitle: ({ platform }) => `Mantén-lo a ${platform}`,
+    keepBody: ({ resource, platform }) => `${resource} continua executant-se a ${platform} amb les seves dades i costos. Happier deixa de desplegar-hi.`,
+    keepBodyData: ({ resource, platform }) => `${resource} es queda a ${platform} amb les seves dades i costos. Happier deixa de gestionar-lo.`,
+    deleteTitle: ({ platform }) => `Elimina a ${platform}`,
+    deleteBody: ({ resource, platform }) => `${platform} elimina ${resource}. No es pot desfer.`,
+    deleteConsequence: ({ resource, platform }) => `Vols eliminar ${resource} a ${platform}?`,
+    typeToDelete: ({ resource }) => `Escriu ${resource} per eliminar-lo`,
+    confirmDelete: ({ resource }) => `Elimina ${resource}`,
+    confirmDeleteWithEnvironment: ({ name, resource }) => `Elimina ${name} i ${resource}`,
+    createOnMachine: "Crea a",
+    finishLinkingOnMachine: "Acaba l’enllaç a",
+    openProvider: "Obre al proveïdor",
+    recoveryUnavailable: "El resultat de la creació no està disponible",
+    modeExisting: "Fes servir un existent",
+    modeCreate: "Crea’n un de nou",
+    create: ({ platform }) => `Crea i enllaça ${platform}`,
+    createConsequences: `Crea un recurs. El proveïdor pot aplicar càrrecs. El controlador seleccionat fa servir el compte connectat indicat aquí.`,
+    provisioned: "Recurs creat; l’enllaç és incomplet",
+    created: "Projecte creat i enllaçat",
+    branchSet: ({ branch }) => `Branca de producció: ${branch}.`,
+    branchDefaultKept: ({ branch, requestedBranch }) => `La branca de producció continua sent ${branch}. No s’ha pogut establir ${requestedBranch}; canvia-la al proveïdor.`,
+    branchUnconfirmed: ({ requestedBranch }) => `L’actualització a ${requestedBranch} no està confirmada. El proveïdor pot continuar fent servir la branca predeterminada; comprova-la al proveïdor.`,
+    finishLinking: "Acaba l’enllaç",
+    outcomeUnknown: "El proveïdor no ha confirmat si la creació ha acabat",
+    outcomeUnknownBody: "Comprova el proveïdor abans de triar un altre recurs. Happier no el tornarà a crear.",
+    duplicate: "Aquest àmbit del proveïdor ja està enllaçat",
+    useExisting: "Fes servir l’entorn existent",
+    chooseAnother: "Tria un altre àmbit",
+    accessTitle: "Accés de desplegament",
+    deploysUse: ({ principal, platform }) => `Els desplegaments fan servir l’accés de ${principal} a ${platform}`,
+    personalAccessDependency: "Aquesta connexió personal ha de continuar disponible. Si s’elimina o perd l’accés al proveïdor, s’aturen els desplegaments futurs.",
+    teamAccessDependency: "Els desplegaments depenen que aquesta credencial de l’equip continuï disponible i conservi l’accés al proveïdor.",
+    providerAccount: "Compte o equip del proveïdor",
+    providerProject: "Projecte del proveïdor",
+    providerScope: "Entorn del proveïdor",
+    sourceManifest: "Manifest de la font",
+    providerBuild: "Construcció a la plataforma",
+    controllerBuild: "Construcció al controlador",
+    buildImage: "Contenidor de construcció",
+    buildToolchain: "Eines de construcció",
+    buildOutputManifest: "Manifest del resultat",
+    sourceMethod: "Mètode de desplegament",
+    gitIntegration: "Integració Git",
+    upload: "Puja",
+    gitIntegrationBody: "La plataforma llegeix el commit revisat del repositori connectat.",
+    uploadBody: "Happier envia el commit revisat a través del controlador, sense accés Git de la plataforma.",
+    title: ({ name }) => `Desplega ${name} a una plataforma`,
+    lead: 'Enllaça un projecte que ja tens en una plataforma d’allotjament. Enllaçar no hi canvia res; ho fa el proper desplegament.',
+    add: 'Afegeix una plataforma',
+    usePlatform: 'Fes servir una plataforma',
+    platform: 'Plataforma',
+    loading: 'Cercant plataformes…',
+    failed: 'No s’han pogut carregar les plataformes',
+    empty: 'No hi ha cap plataforma activada',
+    emptyBody:
+      'Activa un connector de desplegament a Connectors per enllaçar una plataforma.',
+    check: 'Comprova',
+    checkAgain: 'Torna a comprovar',
+    link: ({ platform }) => `Enllaça ${platform}`,
+    ready: 'A punt per enllaçar',
+    needsGit: 'Aquest projecte encara no veu el teu repositori',
+    needsGitBody: 'Dona-li accés i torna a comprovar.',
+    repositoryRequired: 'Aquesta font necessita un repositori',
+    repositoryRequiredBody: 'Connecta un repositori a aquesta font i torna a comprovar.',
+    grant: 'Dona accés',
+    refused: 'No s’ha pogut comprovar aquest projecte',
+    linkRefused: 'No s’ha pogut enllaçar aquest projecte',
+    onMachine: 'Una màquina',
+    platformLater:
+      'Tries el projecte de la plataforma just després de crear-lo.',
+    deploysFrom: 'Desplega des de',
+    onPlatformTitle: ({ platform }) => `A ${platform}`,
+    onPlatformBody: 'Després tries el compte i el projecte. Enllaçar no desplega res.',
+    platformBuilds: 'La plataforma construeix el repositori d’aquest projecte a la branca que triïs.',
+    managersOnly: 'Només els gestors d’aquest entorn poden enllaçar una plataforma.',
+    refusedRemedy: 'Revisa el compte i el projecte que has triat i torna a comprovar.',
+    nothingDeployedBody: 'El primer desplegament construeix aquesta branca a la plataforma que enllacis.',
+    deployNoPlatform: 'Aquest entorn encara no té cap projecte de plataforma on desplegar.',
+    connectTitle: ({ platform }) => `Connecta ${platform} per desplegar-hi`,
+    connectBody: ({ platform }) => `Happier enllaça aquest entorn amb un projecte de ${platform} i comprova què pot fer el teu token abans d’enllaçar-lo; et diu què hi falta.`,
+    connectAction: ({ platform }) => `Afegeix un token de ${platform}`,
+    choicesFailed: ({ platform }) => `No s’han pogut llegir les opcions de ${platform}`,
+    choicesFailedBody: "Comprova que la connexió pot veure els teus projectes i torna-ho a provar.",
+    connection: "Connexió",
+    hostNeedsSetup: ({ machine }) => `${machine} encara no està preparada per allotjar desplegaments`,
+    hostSetupBody: "Revises cada canvi abans que s’executi res. Desar aquest entorn pot esperar fins aleshores.",
+    hostSetupAction: ({ machine }) => `Prepara ${machine}`,
+    hostReviewAction: ({ machine }) => `Revisa la preparació de ${machine}`,
+    hostUnchecked: ({ machine }) => `No s’ha pogut comprovar si ${machine} pot allotjar desplegaments`,
+  },
+} as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "ca">;
+
+return { deploymentPlatformLinkTranslations };
+})();
+
+const Domain_deploymentPromotionTranslations = (() => {
+const deploymentPromotionTranslations = {
+  "ca": {
+    open: 'Promou a…', title: 'Promou el desplegament', lead: ({ name, version }) => `Tria on desplegar ${version} de ${name}.`,
+    destination: 'Destinació', image: 'Artefacte construït', imageBody: 'Reutilitza les imatges d’aquest desplegament de Compose desat en un altre entorn de Compose desat als teus servidors.',
+    emptyTitle: 'Tria un altre entorn',
+    emptyBody: 'Crea o enllaça un entorn de destinació i torna-ho a provar.', loadFailed: 'No s’han pogut carregar els entorns', refused: 'No s’ha pogut promoure', review: 'Revisa la promoció',
+    missingOne: ({ destination, name }) => `${destination} no defineix ${name}`, missingMany: ({ destination, count }) => `${destination} no defineix ${count} variables`,
+    missingBodyOne: ({ source, destination }) => `${source} la defineix. Afegeix-la primer a ${destination} si aquesta versió la llegeix.`,
+    missingBodyMany: ({ source, destination }) => `${source} les defineix. Afegeix-les primer a ${destination} si aquesta versió les llegeix.`,
+    missingAdd: ({ destination }) => `Afegeix a ${destination}…`, compareFailed: ({ destination }) => `No s’han pogut comparar les variables amb ${destination}`,
+  },
+} as const satisfies Pick<Record<deploymentPromotionTranslations__SupportedLanguage, Shared_deploymentPromotionTranslations.PromotionCopy>, "ca">;
+
+return { deploymentPromotionTranslations };
+})();
+
+const Domain_fileEditingTranslations = (() => {
+const fileEditingTranslations = {
+  "ca": {
+    aiSuggestions: { ...fileEditingTranslations__fileAiSuggestionsTranslations.ca, ...fileEditingTranslations__fileAiSuggestionControls.ca, ...fileEditingTranslations__fileNextEditTranslations.ca },
+    statusEditing: 'Editant',
+    statusUnsaved: 'Sense desar',
+    statusSaving: 'Desant',
+    statusSaved: 'Desat',
+    discardEdits: 'Descarta els canvis',
+    conflictByAgent: ({ agent }) => `${agent} ha canviat aquest fitxer.`,
+    conflictOnDisk: 'Aquest fitxer ha canviat al disc.',
+    editsKept: 'Els teus canvis es conserven.',
+    useMine: 'Fes servir la meva',
+    useAgents: ({ agent }) => `Fes servir la de ${agent}`,
+    useTheirs: 'Fes servir la del disc',
+    offline: ({ machine }) =>
+      `${machine} no respon. Els teus canvis es conserven en aquest dispositiu; desa quan torni.`,
+    offlineSaving: ({ machine }) =>
+      `${machine} no respon. Els teus canvis es conserven en aquest dispositiu i es desaran quan torni.`,
+    backOnline: ({ machine }) =>
+      `${machine} ha tornat. Els teus canvis estan a punt per desar.`,
+    awaitingApproval:
+      'S’espera l’aprovació per desar. Els teus canvis es conserven.',
+    saveFailed: 'No s’ha pogut desar. Els teus canvis es conserven.',
+    draftNotStored:
+      'Els teus canvis no estan desats en aquest dispositiu. Desa per conservar-los.',
+    lineEndings: ({ ending }) =>
+      `Els finals de línia es desaran com a ${ending}.`,
+    editsSetAside: 'Els teus canvis s’han apartat',
+    agentVersionReplaced: ({ agent }) =>
+      `S’ha substituït la versió de ${agent}`,
+    diskVersionReplaced: 'S’ha substituït la versió del disc',
+    dismissNotice: 'Tanca',
+    placesDiffer: ({ count }) =>
+      count === 1 ? 'Hi ha 1 diferència.' : `Hi ha ${count} diferències.`,
+    useAllMine: 'Fes servir totes les meves',
+    useAllAgents: ({ agent }) => `Fes servir totes les de ${agent}`,
+    useAllTheirs: 'Fes servir totes les del disc',
+    backToEditing: 'Torna a editar',
+    placeLine: ({ line }) => `Línia ${line}`,
+    placeLines: ({ start, end }) => `Línies ${start}–${end}`,
+    onlyAgentChanged: ({ agent }) => `només ${agent} l’ha canviat`,
+    onlyDiskChanged: 'només la versió del disc l’ha canviat',
+    yoursVsAgents: ({ agent }) => `la teva o la de ${agent}`,
+    yoursVsDisk: 'la teva o la del disc',
+    usingAgents: ({ agent }) => `Versió de ${agent}`,
+    usingTheirs: 'Versió del disc',
+    usingMine: 'La teva versió',
+    replacedLines: ({ count }) =>
+      count === 1 ? '1 línia substituïda' : `${count} línies substituïdes`,
+    addedLines: ({ count }) =>
+      count === 1 ? '1 línia afegida' : `${count} línies afegides`,
+    removedLines: ({ count }) =>
+      count === 1 ? '1 línia eliminada' : `${count} línies eliminades`,
+    youEditedThisChange: 'Has editat aquest canvi',
+    nextChange: 'Canvi següent',
+    previousChange: 'Canvi anterior',
+    changes: 'Canvis',
+    hideKeyboard: 'Amaga el teclat',
+    indent: 'Sagna',
+    outdent: 'Treu el sagnat',
+    moveLeft: 'Mou a l’esquerra',
+    moveRight: 'Mou a la dreta',
+    insertText: ({ text }) => `Insereix ${text}`,
+    editorKeys: 'Tecles de l’editor',
+      redo: 'Refés',
+  },
+} as const satisfies Pick<Record<
+  | 'en'
+  | 'ca'
+  | 'de'
+  | 'es'
+  | 'fr'
+  | 'it'
+  | 'ja'
+  | 'pl'
+  | 'pt'
+  | 'ru'
+  | 'zh-Hans'
+  | 'zh-Hant',
+  Shared_fileEditingTranslations.FileEditingTranslations
+>, "ca">;
+
+return { fileEditingTranslations };
+})();
+
+const Domain_usageChartInputTranslations = (() => {
+const usageChartInputTranslations = {
+  "ca": { commandChoose: "Tria una fila", commandValues: "Valors del gràfic", commandValuesInput: "Sense entrada, llegeix tots els intervals. Usa bucket (índex des de zero) i mode (read, select, toggle, hover, scrub) per llegir-ne o fixar-ne un. Retorna títol, total i files exactes.", commandChooseInput: "Usa row (id retornat per Valors del gràfic) per triar una fila de l’interval fixat.",
+    inputColourBy: 'Acoloreix per', inputIntensity: 'Intensitat', inputLeadingAgent: 'Agent principal', inputDay: 'Dia',
+    inputPlanets: 'Planetes del període', inputThread: 'Fil de ratxes', inputSkyline: 'Perfil de les setmanes', inputSurface: 'Dies a la superfície',
+    inputRings: 'Anells de ratxes', inputPeriodOrbit: 'Al voltant del període', inputMoons: 'Llunes', inputGalaxy: 'Galàxia de sessions',
+    inputCalendar: 'Calendari', inputWeekdayHour: 'Dia de la setmana / hora', inputSky: 'Cel de dies', inputWeekTide: 'Marea setmanal', inputDaylight: 'Llum del dia',
+    inputLanes: 'Carrils', inputDial: 'Esfera', inputTimeline: 'Cronologia per màquina', inputCrew: 'Tripulació', inputRiver: 'Riu d’agents',
+    inputShipped: 'Lliurat', inputPersonalRecords: 'Rècords personals', inputSteering: 'Direcció per agent' },
+} as const;
+
+return { usageChartInputTranslations };
+})();
+
+const Domain_usageChartPlanetFamilyTranslations = (() => {
+const usageChartPlanetFamilyTranslations = {
+  "ca": Shared_usageChartPlanetFamilyTranslations.block({
+    levelColumn: 'Activitat',
+    weekColumn: 'Setmana',
+    activeDaysColumn: 'Dies actius',
+    shareColumn: 'Proporció',
+    daysColumn: 'Dies',
+    peakColumn: 'Alhora',
+    kindColumn: 'Màquina',
+    countColumn: 'Quantes',
+    weekdayInitials: 'Dl,Dt,Dc,Dj,Dv,Ds,Dg',
+    streakBestDays: ({ count }) => `Millor · ${count} ${Number(count) === 1 ? 'dia' : 'dies'}`,
+    streakNowDays: ({ count }) => `${count} ${Number(count) === 1 ? 'dia' : 'dies'} ara`,
+    streakOngoingBest: ({ count }) =>
+      `${count} ${Number(count) === 1 ? 'dia' : 'dies'} · la ratxa més llarga d’aquest període`,
+    daysLit: ({ count, total }) => `${count} de ${total} dies il·luminats`,
+    partialWeek: ({ from, to }) => `${from}–${to} · setmana parcial`, noStreakRings: 'Cap ratxa de tres dies o més en aquest període',
+    moonsCaption: 'Cada agent és una lluna; la mida és la seva proporció.',
+    moonsCaptionDays:
+      'Cada agent és una lluna; la mida és la seva proporció i la part il·luminada, els dies que va treballar.',
+    machinesUnavailable:
+      'Encara no es registren els tipus de màquina. Apareixeran quan Happier sàpiga en quin tipus de màquina s’ha executat cada agent.',
+    machinesEmpty: 'Cap màquina no ha executat agents en aquest període.',
+    machineKindUnknown: 'Tipus desconegut',
+    projectsEmpty: 'Encara no hi ha projectes públics enllaçats.',
+    atmosphereFirstWeek: 'Setmana 1',
+    atmosphereCaption:
+      'L’halo s’espesseix les setmanes amb més agents alhora; la setmana 1 és a dalt.',
+    atmosphereCaptionPeak: ({ count }) =>
+      `L’halo s’espesseix les setmanes amb més agents alhora; fins a ${count} alhora en aquest període.`,
+  }),
+} as const;
+
+return { usageChartPlanetFamilyTranslations };
+})();
+
+const Domain_fileSelectionAskTranslations = (() => {
+const fileSelectionAskTranslations = {
+  "ca": { ask: 'Pregunta', comment: 'Comenta', copy: 'Copia', toolbarLabel: 'Selecció', moreWaysToAsk: 'Altres maneres de preguntar', lineCount: ({ count }: { count: number }) => `${count} ${count === 1 ? 'línia' : 'línies'}`, sideRun: 'Pregunta en una execució paral·lela', targetTitle: 'Pregunta sense sessió', targetDescription: 'Tria on obrir les preguntes sobre fitxers quan no hi ha cap sessió oberta.', detachedRun: 'Execució paral·lela', newSession: 'Sessió nova' },
+} as const;
+
+return { fileSelectionAskTranslations };
+})();
+
+const Domain_fileTrackTranslations = (() => {
+const fileTrackTranslations = {
+  "ca": { track: 'Segueix', tracking: 'Seguint', paused: 'En pausa', resume: 'Reprèn', turnOnA11y: ({ agent }: { agent: string }) => `Segueix els canvis de ${agent}`, turnOffA11y: ({ agent }: { agent: string }) => `Deixa de seguir els canvis de ${agent}`, resumeA11y: ({ agent }: { agent: string }) => `Torna a seguir els canvis de ${agent}`, writing: 'Escrivint', watch: 'Mira', agentWorking: ({ agent }: { agent: string }) => `${agent} està treballant`, view: 'Mostra', needsYou: 'Et necessita', caretA11y: ({ agent }: { agent: string }) => `${agent} està escrivint aquí` },
+} as const;
+
+return { fileTrackTranslations };
+})();
+
+const Domain_actionPresentationTranslations = (() => {
+const actionPresentationTranslations = {
+  "ca": Shared_actionPresentationTranslations.copy({ title: 'Crea un enllaç públic al document', named: name => `Vols crear un enllaç públic per a «${name}»?`, summary: 'Qualsevol persona que tingui aquest enllaç podrà llegir el document.' }, { change: ({ name, kind }) => `Canvia «${name}» (${kind}) per a tota la teva feina.`, reset: ({ name, kind }) => `Elimina els teus canvis a «${name}» (${kind}) i fes servir la configuració original.` }, { now: 'Ara', afterIdle: 'Després d’estar inactiva', start: 'Inicia', stop: 'Atura', suspend: 'Suspèn', resume: 'Represa', delete: 'Elimina', external: 'Servidor existent', managedLocal: 'Passarel·la gestionada per Happier' }, {
+        destinations: { transcript: "Copia un element visual en aquesta sessió, a la conversa.", board: "Copia un element visual en aquesta sessió, al tauler.", both: "Copia un element visual en aquesta sessió, a la conversa i al tauler." },
+        origins: origins => `La còpia conserva l’accés a la xarxa a ${origins}.`,
+        open: "La còpia conserva l’accés a la xarxa a qualsevol lloc web.",
+    }),
+} as const;
+
+return { actionPresentationTranslations };
+})();
+
+const Domain_fileReviewNoteTranslations = (() => {
+const fileReviewNoteTranslations = {
+  "ca": {
+        discard: ({ paths, count }) => `Has descartat ${count === null ? 'canvis' : `${count} canvi${count === 1 ? '' : 's'}`} a ${paths}`,
+        restore: ({ paths }) => `Has restaurat l’estat anterior de ${paths}`,
+        restoreBeforeTurn: ({ paths, turn }) => `Has restaurat ${paths} a abans del ${turn}`,
+        undoDiscard: ({ paths }) => `Has desfet el descart a ${paths}`,
+        undoRestore: ({ paths }) => `Has desfet la restauració de ${paths}`,
+        undo: ({ paths }) => `Has desfet l’acció de revisió a ${paths}`,
+    },
+} as const satisfies Pick<Record<string, Shared_fileReviewNoteTranslations.Labels>, "ca">;
+
+return { fileReviewNoteTranslations };
+})();
+
+const Domain_composerReferenceTranslations = (() => {
+const composerReferenceTranslations = {
+  "ca": { imageNumber: ({ number }) => `Imatge núm. ${number}`, imageAccessibility: ({ number, name }) => `Imatge ${number}, ${name}`, attachmentRemoved: 'Adjunt eliminat', open: 'Obre', removeFromMessage: 'Treu del missatge', kindSession: 'Sessió', kindFolder: 'Carpeta', kindSkill: 'Habilitat', kindPlugin: 'Connector', kindWorkflow: 'Flux de treball', kindWidget: 'Giny', unavailableDetail: 'Ara no està disponible. S’envia amb el seu nom.', removedDetail: 'S’ha eliminat el seu adjunt. Queda fora en enviar.', hintMention: 'Esmenta', kindFile: "Fitxer", tabAll: "Tot", hintNextKind: "Tipus següent", noMatches: ({ query }) => `Cap resultat per a «${query}»`, nothingToMention: "Encara no hi ha res per esmentar", noMatchesDetail: "Prova una altra paraula o arrossega l’element aquí." },
+} as const satisfies Pick<Record<string, Shared_composerReferenceTranslations.Labels>, "ca">;
+
+return { composerReferenceTranslations };
+})();
+
+const Domain_hunkReviewTranslations = (() => {
+const hunkReviewTranslations = {
+  "ca": {
+    change: ({ n }) => `Canvi ${n}`,
+    line: ({ line }) => `línia ${line}`,
+    lines: ({ start, end }) => `línies ${start}–${end}`,
+    kept: 'Conservat',
+    keep: 'Conservar',
+    keepUnavailable: 'No es poden conservar els canvis. Torna a obrir aquesta revisió per tornar-ho a provar.',
+    discard: 'Descartar',
+    keepA11y: ({ n, total, range }) =>
+      `Conservar el canvi ${n} de ${total}, ${range}`,
+    unkeepA11y: ({ n, total, range }) =>
+      `Marcar el canvi ${n} de ${total}, ${range}, com a no revisat`,
+    discardA11y: ({ n, total, range }) =>
+      `Descartar el canvi ${n} de ${total}, ${range}`,
+    counter: ({ current, total }) => `${current} de ${total}`,
+    changes: ({ total }) => String((total === 1 ? 'canvi' : 'canvis')),
+    previousChange: 'Canvi anterior',
+    nextChange: 'Canvi següent',
+    keepAll: 'Conservar-ho tot',
+    fileReviewed: 'Tots els canvis d’aquest fitxer revisats',
+    filesLeft: ({ count }) => (count === 1 ? 'en queda 1 fitxer' : `en queden ${count} fitxers`),
+    viewed: 'Vist',
+    viewedChanged: 'Canviat des que es va veure',
+    viewedNotSaved: 'No desat a GitHub',
+    viewedA11y: ({ name }) => `${name}, vist a GitHub`,
+    viewedCount: ({ count, total }) => `${count} de ${total} vistos`,
+    viewedUnavailable: 'Vist no disponible',
+    nextFile: 'Fitxer següent',
+    nextNamed: ({ name }) => `Següent · ${name}`,
+    scopeA11y: 'Canvis per mostrar',
+    scopeTurn: 'Aquest torn',
+    scopeSession: 'Aquesta sessió',
+    scopeUncommitted: 'Sense confirmar',
+    noTurnChanges: 'No hi ha canvis d’aquest torn en aquest fitxer.',
+    noChanges: 'No hi ha canvis en aquest fitxer.',
+    showSession: 'Mostrar aquesta sessió',
+    discardNeeds: ({ machine }) => `Descartar necessita ${machine}`,
+    agentWriting: ({ agent }) => `${agent} està escrivint aquest fitxer`,
+    turn: ({ turn }) => `torn ${turn}`,
+    comment: 'Comentar',
+    askAbout: 'Preguntar sobre aquest canvi',
+    copy: 'Copiar',
+    noticeDiscarded: 'Canvi descartat',
+    noticeDiscardedAt: ({ range }) => `Canvi descartat a la ${range}`,
+    noticeRestored: ({ name }) => `${name} restaurat`,
+    noticeKeptEdited: 'Conservat: editat des de llavors',
+    noticeUndone: 'Desfet',
+    noticeUndoConflict:
+      'El fitxer ha canviat des de llavors. No es pot desfer.',
+    noticeUndoUnavailable: 'Fet. Aquesta acció no es pot desfer.',
+    noticeNoteFailed: ({ agent }) => `Fet, però no s’ha pogut avisar ${agent}`,
+    noticeMovedOn: 'El fitxer ha canviat. Revisa’l de nou.',
+    noticeUpdateRequired: ({ machine }) =>
+      `Actualitza ${machine} per descartar o restaurar canvis`,
+    noticeUnsupported: 'Aquest canvi no es pot descartar aquí.',
+    discardStaged: 'Treu primer aquests canvis de l’àrea de preparació.',
+    discardRenamedOrCopied: 'No es poden descartar canvis individuals en fitxers reanomenats o copiats.',
+    discardUntracked: 'No es poden descartar canvis individuals en fitxers sense seguiment.',
+    noticeUnavailable: 'Aquests canvis ja no estan disponibles.',
+    noticeUnknown: 'No s’ha pogut confirmar. Actualitza.',
+    undo: 'Desfer',
+    replaceUnsavedTitle: 'Vols substituir els canvis sense desar?',
+    replaceUnsavedMessage:
+      'Restaurar el fitxer substitueix els canvis que no has desat.',
+    replace: 'Substituir',
+    imageSideBySide: 'Costat a costat',
+    imageSwipe: 'Lliscar',
+    imageOnion: 'Superposar',
+    imageModeA11y: 'Comparar imatges',
+    imageBefore: 'Abans',
+    imageAfter: 'Després',
+    pdfOpenBefore: 'Obre abans',
+    pdfOpenAfter: 'Obre després',
+    imageAdded: 'Afegida',
+    imageDeleted: 'Suprimida',
+    imageUnreadable: 'No s’ha pogut llegir aquesta imatge',
+    imageNoPreview: 'Sense previsualització',
+    imageTooLarge: "Massa gran per previsualitzar",
+    imageUnsupported: "No es pot previsualitzar aquest format",
+    imageMissing: "No s'ha trobat el fitxer",
+    imageLoading: 'Carregant la imatge',
+    imageBlend: 'Fusió',
+    unchangedLines: ({ count }) => (count === 1 ? '1 línia sense canvis' : `${count} línies sense canvis`),
+    agentFallback: 'l’agent',
+  },
+} as const satisfies Pick<Record<string, Shared_hunkReviewTranslations.Labels>, "ca">;
+
+return { hunkReviewTranslations };
+})();
+
+const Domain_storeInstalledTranslations = (() => {
+const storeInstalledTranslations = {
+  "ca": {
+    title: 'Instal·lat',
+    purpose:
+      'Tot el que Happier gestiona, a cada Machine i a cada projecte: on s’executa, si va bé i què et necessita.',
+    searchPlaceholder: 'Cerca en tot el que Happier gestiona',
+    groupBy: 'Agrupa per',
+    groupKind: 'Tipus',
+    groupMachine: 'Machine',
+    groupProject: 'Projecte',
+    status: 'Estat',
+    present: ({ count }) =>
+      count === 1
+        ? 'Happier gestiona 1 element per tu.'
+        : `Happier gestiona ${count} elements per tu.`,
+    presentAcross: ({ count, machines }) =>
+      `Happier gestiona ${count === 1 ? '1 element' : `${count} elements`} a ${machines === 1 ? '1 màquina' : `${machines} màquines`}.`,
+    needYou: ({ count }) =>
+      count === 1 ? '1 et necessita.' : `${count} et necessiten.`,
+    includedMore: ({ count }) => `${count} més ${count === 1 ? 've inclòs' : 'vénen inclosos'} amb Happier.`,
+    includedBody: 'Vénen amb Happier i s’actualitzen amb ell.',
+    partial: 'Una part encara no s’ha carregat, potser no hi és tot.',
+    needsYou: 'Et necessita',
+    all: ({ count }) => `Tots (${count})`,
+    allUnknown: 'Tots',
+    fewer: 'Menys',
+    sectionNone: 'Encara res.',
+    browserProfileEmpty: 'Perfil del navegador, encara sense extensions',
+    browseKind: 'Explora',
+    sectionUnavailable: 'No s’han pogut carregar ara.',
+    sectionPartial: 'Una part encara no s’ha carregat.',
+    sectionIncomplete: 'Una part no s’ha pogut llegir; potser no hi és tot.',
+    accountGroup: 'El teu compte',
+    accountGroupBody: 'No està lligat a cap Machine ni projecte.',
+    unassignedGroup: 'Encara sense ubicació',
+    unassignedGroupBody: 'Encara no se sap on s’executen.',
+    noProjectGroup: 'Sense projecte',
+    noProjectGroupBody: 'No estan associats a cap projecte.',
+    everyMachine: 'Totes les màquines',
+    appNoPage: 'Encara no hi ha cap pàgina per obrir',
+    machineFallback: 'Una Machine',
+    emptyTitle: 'Encara no hi ha res',
+    emptyBody:
+      'Els servidors MCP, skills, agents, proveïdors i plugins que afegeixis apareixen aquí, amb on s’executen i què et necessita.',
+    browse: 'Explora la Store',
+    noMatch: ({ query }) => `Res no coincideix amb «${query}»`,
+    noMatchFilters: 'Res no coincideix amb aquests filtres',
+    clear: 'Esborra',
+    unavailable: 'Instal·lat no es pot mostrar per a aquest compte ara.',
+    machineTitle: 'En aquesta Machine',
+    machineBody: 'Tot el que Happier gestiona aquí.',
+    openInInstalled: 'Obre a Instal·lat',
+  },
+} as const satisfies Pick<Record<string, Shared_storeInstalledTranslations.Labels>, "ca">;
+
+return { storeInstalledTranslations };
+})();
+
+const Domain_connectedAccountCallbackTranslations = (() => {
+const connectedAccountCallbackTranslations = {
+  "ca": Shared_connectedAccountCallbackTranslations.callbackCopy('ca', {
+        connectedBody: 'Tornant als teus comptes connectats…',
+        pasteBody: 'Enganxa’l a la pantalla de connexió on has començat a iniciar la sessió. Només funciona allà, una vegada.',
+        invalidBody: 'Torna a iniciar la sessió des de la pantalla de connexió.',
+        unfinishedBody: 'Torna a la pantalla de connexió per continuar iniciant la sessió o enganxa-hi aquest retorn.',
+        openConnections: 'Obre els comptes connectats',
+    }),
+} as const satisfies Pick<Record<Shared_connectedAccountCallbackTranslations.Locale, Shared_connectedAccountCallbackTranslations.CallbackCopy>, "ca">;
+
+return { connectedAccountCallbackTranslations };
+})();
+
+const Domain_skillsPageTranslations = (() => {
+const ca: Shared_skillsPageTranslations.SkillsPageTranslation = {
+  ...Shared_skillsPageTranslations.es,
+  pane: { thisBot: "Creades per aquest Bot", yours: "Teves", registries: "Dels teus registres", other: "Altres habilitats", allSkills: "Totes les teves habilitats" },
+  saved: {
+    saved: "Desat als teus skills",
+    notAttached: "No està adjunt aquí",
+    attachAgain: "Torna a adjuntar",
+    liveNow: "Actiu ara",
+    loadsAfterTurn: "Es carrega després d’aquest torn",
+    restartNow: "Reinicia ara",
+    needsRestart: "Cal reiniciar",
+    view: "Mostra",
+    liveNowDetail: ({ name }) => name + " la fa servir des del pròxim missatge.",
+    loadsAfterTurnDetail: "S’afegeix entre torns. La conversa es conserva.",
+    restartDetail: "Reiniciar conserva la conversa.",
+    restartTerminalDetail: "Reinicia-la des del seu terminal. La conversa es conserva.",
+    notAttachedDetail: "És a les teves habilitats; aquesta sessió no l’ha agafada.",
+    onlyUses: ({ name }) => "només " + name + " la fa servir",
+  },
+  maker: {
+    title: "Creat per",
+    anyone: "Qualsevol",
+    you: "Tu",
+    anyBot: "Qualsevol bot",
+    registries: "De registres",
+    session: "Sessió",
+    person: "Una altra persona",
+    unknown: "Creador desconegut",
+    openSession: "Obre la sessió",
+    createdHere: "Creat a Happier",
+  },
+  title: 'Habilitats',
+  pageDescription:
+    'Instruccions que els teus agents fan servir quan una tasca les necessita. Afegeix una habilitat un cop i arriba a totes les màquines.',
+  searchPlaceholder: 'Cerca habilitats',
+  addSkill: 'Afegeix una habilitat',
+  allSkills: 'Totes les habilitats',
+  needLook: ({ count }) =>
+    count === 1 ? '1 necessita revisió' : `${count} necessiten revisió`,
+  inUse: 'En ús',
+  off: 'Desactivades',
+  updates: 'Actualitzacions',
+  noOwnSkills: 'Encara no tens habilitats pròpies',
+  noMatch: ({ query }) => `Cap habilitat coincideix amb «${query}»`,
+  loadFailed: 'No s’han pogut carregar les teves habilitats',
+  home: {
+    ...Shared_skillsPageTranslations.es.home,
+    reach: ({ count, agents, machines }) =>
+      `${count} ${count === 1 ? 'habilitat arriba' : 'habilitats arriben'} a ${agents} en ${machines} ${machines === 1 ? 'màquina' : 'màquines'}`,
+    reachNeedLook: ({ count }) =>
+      `, i ${count} ${count === 1 ? 'necessita' : 'necessiten'} revisió`,
+    reachNone: 'Cap de les teves habilitats està activada encara',
+    reachWaiting: ({ count }) =>
+      `${count} ${count === 1 ? 'habilitat està activada' : 'habilitats estan activades'}. Arriben als teus agents quan una màquina indiqui quins té.`,
+    unsupported: ({ count, agents }) =>
+      `${count} ${count === 1 ? 'habilitat està activada' : 'habilitats estan activades'}, però ${agents} no pot fer servir habilitats.`,
+    unsupportedNote: ({ agents }) => `${agents} no pot fer servir habilitats.`,
+    noMachines:
+      'Les teves habilitats arribaran a la primera màquina que connectis.',
+    catchesUp: ({ machines }) => `${machines} es posarà al dia quan torni.`,
+    catchUpCount: ({ count }) => `${count} màquines fora de línia es posaran al dia quan tornin.`,
+    mapLabel: ({ skills, machines }) =>
+      `${skills} habilitats en ${machines} màquines`,
+    offlineLastKnown: ({ time }) => `Fora de línia · últim estat ${time}`,
+    offline: 'Fora de línia',
+    noAgents: 'Encara no hi ha agents',
+    noSkillAgents: 'Cap agent d’aquí fa servir habilitats',
+    moreMachines: ({ count }) => `${count} màquines més`,
+    needsLook: 'Necessiten revisió',
+    updateWaiting: 'Hi ha una versió més nova al seu origen.',
+    modifiedUpstream: 'L’has canviada, i l’origen també ha canviat.',
+    removedFromSource: 'El seu origen ja no la té. Conserva la teva còpia o treu-la.',
+    maskedOn: ({ machine }) => `Allà guanya la còpia pròpia de ${machine}.`,
+    unreadable: 'No s’ha pogut llegir aquesta habilitat.',
+    byId: ({ id }) => `Habilitat ${id}`,
+    writeOwn: 'Escriu-ne una',
+    review: 'Revisa',
+    decide: 'Tria',
+    whereTitle: 'On està activada',
+    whereBody:
+      'Una habilitat nova està activada a tot arreu. Limita-la a un projecte o una màquina, o desactiva-la per a un agent; la regla més específica guanya, i qualsevol sessió encara pot afegir-ne o treure’n una.',
+    firstHeadline: 'Les teves habilitats ara arriben a totes les màquines',
+    firstPurpose:
+      'Una habilitat és una carpeta d’instruccions, de vegades amb scripts, que un agent fa servir quan una tasca la necessita. Ara les teves et segueixen a totes les màquines.',
+    firstSentence: ({ on, off }) =>
+      `${on > 0 ? `${on} ${on === 1 ? 'habilitat està activada' : 'habilitats estan activades'} on ja les feies servir. ` : ''}${off} esperen a la teva Home fins que triïs.`,
+    choose: 'Tria què està activat',
+    chooseOff: ({ count }) => `${count} desactivades`,
+    nothingElse: 'Res més canvia fins que triïs.',
+    emptyTitle: 'Ensenya-ho als teus agents un sol cop',
+    emptyBody:
+      'Una habilitat és una carpeta d’instruccions que un agent fa servir quan una tasca la necessita. Afegeix-ne una aquí i tots els agents de totes les màquines la tindran.',
+    emptySentence:
+      'Les màquines giren al voltant de la teva Home. Una habilitat que afegeixis viatja a cadascuna, per a cada agent.',
+  },
+};
+
+const skillsPageTranslations = {
+  "ca": ca,
+} as const;
+
+return { skillsPageTranslations };
+})();
+
+const Domain_capabilityNoticeTranslations = (() => {
+const capabilityNoticeTranslations = {
+  "ca": Shared_capabilityNoticeTranslations.copy(['{name} no s’ha pogut iniciar', '{name} no s’ha pogut carregar', 'falta {key}', 'cal iniciar la sessió', 'l’inici de sessió és per a una altra adreça',
+    'el pont remot no està disponible', 'aquest agent no pot rebre habilitats d’aquesta manera', 'Servidors MCP', 'Habilitats', 'no s’han pogut llegir els seus fitxers', 'el seu inici de sessió no s’ha pogut passar a aquesta sessió']),
+} as const;
+
+return { capabilityNoticeTranslations };
+})();
+
+const Domain_skillDetailTranslations = (() => {
+const ca: Shared_skillDetailTranslations.SkillDetailTranslation = {
+  whereDescription:
+    'Configura-ho un cop i totes les màquines ho segueixen. Guanya la regla més específica.',
+  tokensWhenUsed: ({ tokens }) => `${tokens} tokens quan es fa servir`,
+  menu: {
+    duplicate: 'Duplica',
+    makeCopy: 'Fes una còpia editable',
+    moveToFolder: 'Mou a una carpeta',
+    noFolder: 'Sense carpeta',
+    exportZip: 'Exporta com a .zip',
+    copyLink: 'Copia l’enllaç',
+    linkCopied: 'Enllaç copiat',
+  },
+  banner: {
+    couldntLoadTitle: 'No s’ha pogut carregar aquesta habilitat',
+    couldntLoadBody:
+      'La teva biblioteca no ha respost. Les sessions conserven la còpia que ja tenen.',
+  },
+  instructions: {
+    title: 'Instruccions',
+    edit: 'Edita',
+    done: 'Fet',
+    preview: 'Previsualitza',
+    showAll: 'Mostra-ho tot',
+    showLess: 'Mostra’n menys',
+    saving: 'Desant…',
+    saved: 'Desat · s’aplica a les sessions noves',
+    saveFailed: 'No s’ha pogut desar. El teu text es conserva.',
+    conflict: 'Canviat en un altre dispositiu',
+    reviewBoth: 'Revisa les dues',
+    keepMine: 'Conserva la meva',
+    takeTheirs: 'Agafa la seva',
+    yours: 'La teva',
+    theirs: 'La seva',
+    lintOk: 'El nom i la descripció estan definits',
+    lintMissingName: 'Afegeix un nom al frontmatter',
+    lintMissingDescription:
+      'Afegeix una descripció perquè els agents sàpiguen quan fer-la servir',
+    lintNoFrontmatter: 'Comença amb un bloc frontmatter: nom i descripció',
+    readOnlyPlugin: 'Ve amb el seu connector i en segueix la versió.',
+  },
+  files: {
+    title: 'Fitxers',
+    description: ({ count }) =>
+      count === 1 ? '1 fitxer, sense scripts.' : `${count} fitxers, sense scripts.`,
+    descriptionScripts: ({ count, scripts }) =>
+      `${count} fitxers, ${scripts === 1 ? '1 s’executa com a script' : `${scripts} s’executen com a scripts`}.`,
+    script: 'Script',
+    addFile: 'Afegeix un fitxer',
+    addFilePrompt: 'La seva ruta dins de l’habilitat.',
+    addFilePlaceholder: 'reference/notes.md',
+    remove: 'Treu',
+    removeTitle: ({ path }) => `Vols treure ${path}?`,
+    removeBody: 'Les sessions noves reben l’habilitat sense aquest fitxer.',
+    more: ({ count }) => `${count} més`,
+    binary: 'No és un fitxer de text',
+    loading: 'Obrint…',
+    afterAdd: 'Afegeix-hi més fitxers quan l’habilitat sigui a la teva biblioteca.',
+  },
+  source: {
+    title: 'Origen i actualitzacions',
+    descriptionReview: 'Els canvis de l’origen esperen la teva revisió.',
+    descriptionAuto:
+      'Els canvis de l’origen arriben sols, tret que l’hagis canviat.',
+    descriptionPinned:
+      'Fixada a una versió. Els canvis de l’origen esperen fins que la desfixis.',
+    descriptionOwn: 'És teva. Només tu la canvies.',
+    writtenByYou: 'Escrita per tu',
+    writtenByYouBody: 'Edita-la aquí; totes les màquines reben el canvi.',
+    uploadedByYou: 'Pujada per tu',
+    foundOn: ({ machine }) => `Trobada a ${machine}`,
+    foundOnBody: ({ path }) => path,
+    firstParty: 'Integrada a Happier · en segueix la versió',
+    verifiedByDigest: 'Verificada amb resum criptogràfic',
+    noDigestPublished: 'Sense resum criptogràfic publicat',
+    added: ({ date }) => `afegida ${date}`,
+    updates: 'Actualitzacions',
+    upToDate: 'Al dia',
+    updateAvailable: 'Actualització disponible',
+    removedFromSource: 'L’origen ja no la té',
+    notChecked: 'Encara no comprovada',
+    checked: ({ time }) => `comprovada ${time}`,
+    checkNow: 'Comprova ara',
+    view: 'Mostra',
+    auto: 'Actualitza automàticament',
+    autoBody:
+      'Desactivat per a habilitats d’altres persones, així veus cada canvi primer',
+    pin: 'Fixa a aquesta versió',
+    pinBody: 'Conserva aquesta versió fins que la desfixis',
+    checkFailed: 'No s’ha pogut comprovar l’origen',
+  },
+  machines: {
+    description: 'El que reben ara els agents de cada màquina.',
+    nowhere: 'Encara no està activada a cap màquina.',
+    offline: 'Màquina fora de línia',
+    lastKnown: ({ time }) => `últim estat ${time}`,
+    masked: ({ agent, machine }) =>
+      `${agent}: preval la còpia pròpia de ${machine}`,
+    cantLoad: ({ agents }) => `${agents} no pot carregar habilitats aquí`,
+    previewFailed: ({ agent }) => `${agent}: —`,
+    checking: 'Comprovant…',
+    projectNote:
+      'Dins d’un projecte, la còpia pròpia del projecte encara pot guanyar.',
+    noAgent: 'Cap agent d’aquí la rep',
+    offlineCount: ({ count }) => `${count} fora de línia`,
+    summaryOn: ({ agents, machine }) => `${agents} a ${machine}`,
+    summaryOnMany: ({ agents, count }) => `${agents} a ${count} màquines`,
+  },
+  details: {
+    title: 'Detalls',
+    summary: 'Revisió i còpies fora de Happier',
+    revision: 'Revisió',
+    contentHash: 'Hash del contingut',
+    alsoInstall: ({ machine }) => `Instal·la-la també a ${machine}`,
+    alsoInstallBody:
+      'Per fer-la servir fora de Happier, a la carpeta d’habilitats de cada agent',
+    installed: 'Instal·lada',
+    install: 'Instal·la',
+  },
+  leave: {
+    remove: 'Treu l’habilitat',
+    footnote: 'Les sessions en curs la conserven fins que es reiniciïn.',
+    confirmTitle: ({ name }) => `Vols treure ${name}?`,
+    confirmBody:
+      'Surt de la teva biblioteca i de totes les màquines. Les sessions en curs la conserven fins que es reiniciïn.',
+    confirm: 'Treu',
+  },
+  draft: {
+    title: 'Habilitat nova',
+    purpose:
+      'Ensenya alguna cosa als teus agents un sol cop. Llegeixen la descripció per decidir quan fer-la servir.',
+    add: 'Afegeix a la biblioteca',
+    adding: 'Afegint…',
+    addFailed: 'No s’ha pogut afegir l’habilitat. El teu text es conserva.',
+  },
+};
+
+const skillDetailTranslations = {
+  "ca": ca,
+} as const;
+
+return { skillDetailTranslations };
+})();
+
+const Domain_skillsFoundTranslations = (() => {
+const ca: Shared_skillsFoundTranslations.SkillsFoundTranslation = {
+  title: 'Trobades a les teves màquines',
+  purpose:
+    'Habilitats que els teus agents ja tenen a cada màquina. Happier no les edita mai. Afegeix-ne una a la biblioteca per tenir-la a totes les màquines.',
+  checkAgain: 'Torna a comprovar',
+  add: 'Afegeix a la biblioteca',
+  addAll: ({ count }) => `Afegeix-les totes (${count})`,
+  makeCopy: 'Fes una còpia',
+  compare: 'Compara',
+  hideCompare: 'Amaga',
+  inLibrary: 'A la teva biblioteca',
+  adding: 'Afegint…',
+  plugin: 'Connector',
+  readBy: ({ agents, count }) =>
+    count === 1 ? `${agents} la llegeix` : `${agents} la llegeixen`,
+  fromPlugin: ({ plugin }) => `Del connector ${plugin}`,
+  installedByHappier: 'Instal·lada per Happier',
+  masks: ({ machine }) =>
+    `La teva biblioteca té una habilitat amb aquest nom. A ${machine} preval aquesta còpia, així que els agents d’allà la fan servir.`,
+  more: ({ count }) => `${count} més`,
+  showFewer: 'Mostra’n menys',
+  looking: 'Cercant…',
+  nothingHere: 'No s’ha trobat cap habilitat aquí.',
+  quietEmpty: ({ count, others }) =>
+    `No s’ha trobat cap habilitat en ${count} ${count === 1 ? (others ? 'altra màquina' : 'màquina') : (others ? 'altres màquines' : 'màquines')}`,
+  quietLooking: ({ count }) =>
+    `Cercant en ${count} ${count === 1 ? 'màquina' : 'màquines'}…`,
+  lastKnown: ({ time }) => `últim estat ${time}`,
+  offlineBring: ({ machine }) =>
+    `Posa ${machine} en línia per afegir-ne habilitats.`,
+  offlineUnseen: ({ count }) =>
+    count === 1
+      ? `1 màquina fora de línia encara no s’ha consultat. Posa-la en línia per veure’n les habilitats.`
+      : `${count} màquines fora de línia encara no s’han consultat. Posa’n una en línia per veure’n les habilitats.`,
+  scanFailed: ({ machine }) =>
+    `No s’han pogut llegir les habilitats de ${machine}`,
+  tryAgain: 'Torna-ho a provar',
+  olderMachine: ({ machine }) =>
+    `${machine} necessita un Happier més nou per llistar-ne les habilitats.`,
+  rootFailed: ({ path }) => `No s’ha pogut llegir ${path}`,
+  noMachinesTitle: 'Encara no hi ha màquines',
+  noMachinesBody:
+    'Connecta una màquina per veure les habilitats que els teus agents ja hi tenen.',
+  addFailed: ({ name }) => `No s’ha pogut afegir ${name}. No ha canviat res.`,
+  compareYours: 'La teva biblioteca',
+  compareTheirs: ({ machine }) => `A ${machine}`,
+  compareFailed: ({ machine }) =>
+    `No s’ha pogut llegir la còpia de ${machine}.`,
+  destination: 'Trobades a les teves màquines',
+  homeBody:
+    'Ja són a les carpetes dels teus agents. Afegeix-ne una a la biblioteca i et seguirà a tot arreu.',
+  seeAll: ({ count }) => `Mostra-les totes (${count})`,
+  alreadyOnMachines: ({ count }) => `Ja hi ha ${count} habilitats a les teves màquines`,
+  install: {
+    installedIn: ({ path }) => `Instal·lada a ${path}`,
+    externallyModified: ({ machine }) =>
+      `La còpia de ${machine} s’ha editat fora de Happier, així que s’ha deixat tal com és.`,
+    removeAnyway: 'Treu-la igualment',
+    removeTitle: ({ machine }) => `Vols treure-la de ${machine}?`,
+    removeBody:
+      'Això elimina la còpia que Happier ha posat a les carpetes dels agents d’allà. La teva biblioteca conserva l’habilitat.',
+    remove: 'Treu',
+    nativeConflict: ({ machine }) =>
+      `${machine} ja té una habilitat diferent amb aquest nom en una carpeta d’agent. Happier no l’ha tocada.`,
+    failed: ({ machine }) =>
+      `No s’ha pogut instal·lar a ${machine}. No ha canviat res.`,
+    removeFailed: ({ machine }) => `No s’ha pogut treure de ${machine}.`,
+    partial: ({ machine }) =>
+      `Instal·lada a ${machine} per a alguns agents. No s’ha pogut escriure per als altres.`,
+  },
+};
+
+const skillsFoundTranslations = {
+  "ca": ca,
+} as const;
+
+return { skillsFoundTranslations };
+})();
+
+const Domain_mcpFoundTranslations = (() => {
+const ca: Shared_mcpFoundTranslations.McpFoundTranslation = {
+  purpose: 'Servidors MCP que els teus agents ja tenen configurats a cada màquina. Afegeix-ne un a Happier i totes les sessions el tindran, a totes les màquines.',
+  checkAgain: 'Torna a comprovar',
+  add: 'Afegeix',
+  inHappier: 'A Happier',
+  setUpIn: ({ agent }) => `Configurat a ${agent}`,
+  offIn: ({ agent }) => `Desactivat a ${agent}`,
+  looking: 'Cercant…',
+  nothingHere: "No s'han trobat servidors MCP aquí.",
+  lastKnown: ({ time }) => `últim conegut ${time}`,
+  offlineBring: ({ machine }) => `Connecta ${machine} per afegir-ne des d'allà.`,
+  offlineUnseen: ({ count }) =>
+    count === 1
+      ? "1 màquina fora de línia encara no s'ha revisat. Connecta-la per veure'n els servidors MCP."
+      : `${count} màquines fora de línia encara no s'han revisat. Connecta'n una per veure'n els servidors MCP.`,
+  scanFailed: ({ machine }) => `No s'han pogut llegir els servidors MCP de ${machine}`,
+  tryAgain: 'Torna-ho a provar',
+  olderMachine: ({ machine }) => `${machine} necessita un Happier més nou per llistar els seus servidors MCP.`,
+  noMachinesTitle: 'Encara no hi ha màquines',
+  noMachinesBody: 'Connecta una màquina per veure els servidors MCP que els teus agents ja hi tenen configurats.',
+  warningReadFailed: ({ agent }) => `No s'ha pogut llegir la configuració MCP de ${agent}`,
+  warningReadFailedNoAgent: "No s'ha pogut llegir un fitxer de configuració MCP",
+  warningParseFailed: ({ agent }) => `No s'ha pogut interpretar la configuració MCP de ${agent}`,
+  warningParseFailedNoAgent: "No s'ha pogut interpretar un fitxer de configuració MCP",
+  warningUnsupported: ({ agent }) => `Alguns servidors MCP de ${agent} encara no es poden llegir`,
+  warningUnsupportedNoAgent: "Alguns servidors MCP d'aquí encara no es poden llegir",
+  quietEmpty: ({ count, others }) => `No s’ha trobat cap servidor MCP en ${count} ${count === 1 ? (others ? 'altra màquina' : 'màquina') : (others ? 'altres màquines' : 'màquines')}`,
+  quietLooking: ({ count }) =>
+    `Cercant en ${count} ${count === 1 ? 'màquina' : 'màquines'}…`,
+};
+
+const mcpFoundTranslations = {
+  "ca": ca,
+} as const;
+
+return { mcpFoundTranslations };
+})();
+
+const Domain_skillsUpdatesTranslations = (() => {
+const ca: Shared_skillsUpdatesTranslations.SkillsUpdatesTranslation = {
+  updates: {
+    title: 'Actualitzacions',
+    purpose:
+      'Versions més noves d’on van venir les teves habilitats. No canvia res fins que triïs.',
+    checkNow: 'Comprova ara',
+    checking: 'Comprovant…',
+    readyTitle: 'A punt per actualitzar',
+    readyBody: 'No les has canviat, així que actualitzar és segur.',
+    choiceTitle: 'Cal que triïs',
+    choiceBody: ({ name }) =>
+      `Has editat ${name} i el seu origen té una versió més nova. Tria fitxer per fitxer; es mostren tots dos costats.`,
+    refChange: ({ from, to }) => `de ${from} a ${to}`,
+    newerWaiting: 'Hi ha una versió més nova',
+    linesChanged: ({ count, file }) =>
+      `${count} ${count === 1 ? 'línia canviada' : 'línies canviades'} a ${file}`,
+    filesChanged: ({ count }) =>
+      `${count} ${count === 1 ? 'fitxer canviat' : 'fitxers canviats'}`,
+    viewChanges: 'Mostra els canvis',
+    hideChanges: 'Amaga els canvis',
+    update: 'Actualitza',
+    fileDiffers: ({ count }) =>
+      `La teva i la seva difereixen · ${count} ${count === 1 ? 'línia' : 'línies'}`,
+    fileTheirsOnly: 'Nou a la seva',
+    fileMineOnly: 'Només a la teva',
+    fileUnchanged: 'Sense canvis',
+    nothingToChoose: 'Res a triar',
+    keepNote: ({ name }) =>
+      `Si conserves algun fitxer teu, ${name} continua marcada com a modificada i les properes actualitzacions tornaran a preguntar.`,
+    notNow: 'Ara no',
+    applyChoices: 'Aplica les tries',
+    upToDate: 'Tot està al dia',
+    noSources: 'Cap de les teves skills ve d’una font que s’actualitzi. Les skills que afegeixis des de GitHub o un registre mostren aquí les versions noves.',
+    updatedTitle: 'Actualitzades',
+    checkedAt: ({ time }) => `Comprovat ${time}`,
+    checkFailed: 'No s’han pogut comprovar les actualitzacions.',
+    diffFailed: 'No s’han pogut carregar els canvis.',
+    applyFailed: 'No s’ha pogut actualitzar.',
+    applied: ({ ref }) => `Actualitzada a ${ref}`,
+    tryAgain: 'Torna-ho a provar',
+  },
+  choose: {
+    purpose: ({ total, off }) =>
+      `Tens ${total} habilitats a la biblioteca. ${off} continuen desactivades fins que triïs, així que les sessions encara no canvien.`,
+    purposeIdle: 'Decideix quines habilitats reben els teus agents.',
+    migratedTitle: ({ count }) =>
+      `${count} ja ${count === 1 ? 'està activada' : 'estan activades'} on les feies servir`,
+    migratedBody: ({ names }) =>
+      `${names} venien del context del compte o del projecte, així que continuen actives on les feies servir.`,
+    listTitle: 'Tria què reben els teus agents',
+    selectAll: 'Selecciona-ho tot',
+    selectNone: 'No en seleccionis cap',
+    usedOn: ({ date }) => `Usada el ${date}`,
+    selected: ({ count }) =>
+      `${count} ${count === 1 ? 'seleccionada' : 'seleccionades'}`,
+    turnOn: ({ count }) => `Activa’n ${count} a tot arreu`,
+    failed: 'No s’han pogut activar. Les teves tries es conserven.',
+    nothingWaits:
+      'Cada habilitat ja té el seu lloc. Activa’n o limita’n una des de la seva pàgina.',
+  },
+  shelf: {
+    title: 'Dels teus registres',
+    titleNew: 'Comença amb una d’aquestes',
+    browseAll: 'Explora-ho tot',
+    fromSource: ({ source }) => `Novetats i populars a ${source}.`,
+    add: 'Afegeix',
+    inLibrary: 'A la teva biblioteca',
+    addFailed: 'No s’ha pogut afegir',
+  },
+};
+
+const skillsUpdatesTranslations = {
+  "ca": ca,
+} as const;
+
+return { skillsUpdatesTranslations };
+})();
+
+const Domain_mcpPageTranslations = (() => {
+const configCa: Shared_mcpPageTranslations.McpConfigTranslation = {
+  transport: 'S’executa com a',
+  command: 'Ordre',
+  commandDescription: 'El programa que inicia cada màquina.',
+  arguments: 'Arguments',
+  argument: ({ position }) => `Argument ${position}`,
+  removeArgument: ({ position }) => `Elimina l’argument ${position}`,
+  addArgument: 'Afegeix un argument',
+  workingFolder: 'Carpeta de treball',
+  workingFolderDescription: 'On s’inicia el programa.',
+  sessionFolder: 'La carpeta del projecte de la sessió',
+  aFolder: 'Una carpeta de la màquina',
+  folderPath: 'Carpeta',
+  environment: 'Entorn',
+  environmentDescription: 'Valors que llegeix el programa. Els secrets continuen xifrats d’extrem a extrem i només s’escriuen a la sessió, a la màquina.',
+  addVariable: 'Afegeix una variable',
+  address: 'Adreça',
+  addressDescription: 'On es connecta Happier; totes les màquines fan servir la mateixa.',
+  headers: 'Capçaleres',
+  headersDescription: 'S’envien amb cada sol·licitud. Un secret mostra el seu nom, mai el valor.',
+  addHeader: 'Afegeix una capçalera',
+  saved: 'Desat · s’aplica a les sessions noves',
+  saving: 'Desant…',
+  saveFailed: 'No s’ha pogut desar. La teva edició continua aquí.',
+  different: 'Diferent en una màquina…',
+  differentNone: 'Totes les màquines fan servir aquests valors',
+  differentOne: ({ machine }) => `${machine} és diferent`,
+  differentOn: ({ machine }) => `Diferent a ${machine}`,
+  addDifference: 'Afegeix una diferència de màquina',
+  addAnother: 'Una altra màquina',
+  differentCount: ({ count }) => `${count} ${count === 1 ? 'màquina és diferent' : 'màquines són diferents'}`,
+  differsFolder: ({ path }) => `Carpeta de treball ${path}`,
+  differsCommand: 'Ordre',
+  differsArguments: 'Arguments',
+  differsAddress: 'Adreça',
+  differsValues: ({ names }) => names,
+  inFolderOn: ({ folder, machine }) => `A ${folder} a ${machine}`,
+  removeDifference: 'Elimina',
+};
+
+const ca: Shared_mcpPageTranslations.McpPageBase = {
+  allServers: 'Tots els servidors',
+  foundOnMachines: 'Trobats a les teves màquines',
+  inUse: 'En ús',
+  off: 'Desactivat',
+  fromPlugins: 'Dels connectors',
+  builtIn: 'Integrat',
+  builtInHappier: 'Happier',
+  builtInHappierDescription: 'Sessions, fitxers, màquines i les teves accions',
+  builtInActions: 'Accions',
+  remote: 'Remot',
+  local: 'Local',
+  tools: {
+    title: 'Eines',
+    description: 'El que els teus agents poden cridar. Pregunta mostra una targeta d’aprovació, Permet s’executa sense preguntar i Desactivat amaga l’eina.',
+    defaultTitle: 'Valor per defecte de les eines',
+    defaultAsk: 'Pregunta',
+    defaultReadOnly: 'Permet només lectura',
+    defaultAll: 'Permet-ho tot',
+    defaultAskDescription: 'Cada eina pregunta primer. Una eina que has configurat tu conserva el seu ajust.',
+    defaultReadOnlyDescription: 'Les eines de només lectura s’executen sense preguntar; tot el que escriu pregunta primer. Una eina que has configurat tu conserva el seu ajust.',
+    defaultAllDescription: 'Cada eina s’executa sense preguntar. Una eina que has configurat tu conserva el seu ajust.',
+    off: 'Desactivat',
+    ask: 'Pregunta',
+    allow: 'Permet',
+    search: ({ count }) => `Cerca entre ${count} eines`,
+    filterAll: 'Totes',
+    filterReadOnly: 'Només lectura',
+    filterWrites: 'Escriptura',
+    filterDestructive: 'Destructives',
+    filterSetByYou: 'Configurades per tu',
+    readOnly: 'Només lectura',
+    writes: 'Escriptura',
+    destructive: 'Destructiva',
+    setByYou: 'Configurada per tu',
+    backToDefault: ({ value }) => `Configurada per tu · torna a usar el valor per defecte (${value})`,
+    useDefault: ({ value }) => `Usa el valor per defecte (${value})`,
+    showAll: ({ count }) => `Mostra les ${count} eines`,
+    cost: ({ count, tokens }) => `${count} ${count === 1 ? 'eina' : 'eines'} · ${tokens} tokens quan es carreguen totes.`,
+    onDemand: ({ agents, count }) => `${agents} ${agents.includes(' i ') ? 'carreguen' : 'carrega'} una eina només quan la necessita; els altres agents les carreguen les ${count} en iniciar una sessió.`,
+    notApply: ({ agents }) => `Els ajustos d’eines no s’apliquen a ${agents}: decideixen per si mateixos.`,
+    blocked: ({ agents }) => `A ${agents}, Desactivat bloqueja una eina quan es crida en lloc d’amagar-la.`,
+    hiddenRestart: ({ agents }) => `Tornar a activar una eina amagada s’aplica a les noves sessions de ${agents}.`,
+    notListed: 'Les seves eines apareixen després de la primera prova en una màquina.',
+    lastListed: ({ date }) => `Última llista: ${date}. Tornen quan torni l’inici de sessió.`,
+    loadFailed: 'No s’han pogut llegir les seves eines.',
+    noMatch: 'Cap eina coincideix.',
+    setFailed: 'No s’ha pogut desar. Torna-ho a provar.',
+  },
+  detail: {
+    configurationTitle: 'Configuració',
+    configurationDescription: 'Edita qualsevol valor al lloc; s’aplica a les noves sessions de totes les màquines.',
+    machinesDescription: 'Happier es connecta des de cada màquina, així que cadascuna es comprova.',
+    test: 'Prova',
+    onNowhere: 'Encara no està activat en cap màquina.',
+    toolsOn: ({ count }) => `${count} ${count === 1 ? 'eina' : 'eines'}`,
+    checked: ({ time }) => `comprovat ${time}`,
+    notChecked: 'encara no comprovat',
+    lastKnown: ({ time }) => `darrer estat conegut ${time}`,
+    summary: ({ ready, problems, offline, unchecked }) => {
+      const total = ready + problems + offline + unchecked;
+      if (total > 1 && ready === total) return `Llest a tots ${total}`;
+      if (total > 1 && offline === total) return `Tots ${total} fora de línia`;
+      return [
+        ready > 0 ? `Llest a ${ready}` : null,
+        problems > 0 ? `${problems} ${problems === 1 ? 'necessita' : 'necessiten'} atenció` : null,
+        unchecked > 0 ? `${unchecked} per provar` : null,
+        offline > 0 ? `${offline} fora de línia` : null,
+      ].filter(Boolean).join(' · ');
+    },
+    detailsTitle: 'Detalls',
+    versionLine: ({ version, protocol }) => protocol ? `Versió ${version} · protocol ${protocol}` : `Versió ${version}`,
+    update: {
+      title: 'Actualitzacions',
+      upToDate: 'Al dia',
+      available: ({ version }) => `La versió ${version} és disponible`,
+      checkFailed: 'No s’ha pogut comprovar si hi ha actualitzacions',
+      removed: 'El registre ja no llista aquest servidor. Continua funcionant tal com és.',
+      checkNow: 'Comprova ara',
+      review: 'Revisa',
+      readFailed: 'No s’ha pogut llegir la versió nova. Torna-ho a provar.',
+      changesTitle: ({ version }) => `Actualitza a ${version}`,
+      changesBody: 'El nom, els valors, les eines i on està activat es queden tal com són.',
+      now: 'Ara',
+      after: 'Després de l’actualització',
+      apply: 'Actualitza',
+      applyFailed: 'No s’ha pogut actualitzar. Es conserven les teves tries.',
+    },
+    serverInstructions: 'Instruccions del servidor',
+    lastError: 'Sortida de l’última prova',
+    copy: 'Copia',
+    removeServer: 'Elimina el servidor',
+    removeFootnote: 'El treu de totes les sessions de totes les màquines i elimina el seu inici de sessió.',
+    conflict: {
+      reason: 'Canviat en un altre lloc',
+      review: 'Revisa',
+      title: 'Revisa els canvis',
+      description: 'Aquest servidor ha canviat en un altre dispositiu mentre l’editaves. Tria quins valors es queden.',
+      current: 'Actual',
+      yours: 'El teu',
+      notSet: 'Sense definir',
+      machines: 'Diferències per màquina',
+      keepMine: 'Conserva el meu',
+      useCurrent: 'Usa l’actual',
+      removedTitle: 'Eliminat en un altre lloc',
+      removedDescription: 'Aquest servidor s’ha eliminat en un altre dispositiu. No es poden desar les teves edicions.',
+      discard: 'Descarta les meves edicions',
+    },
+    copyInstallLink: 'Copia l’enllaç d’instal·lació',
+    installLinkLabel: 'Enllaç d’instal·lació',
+    duplicate: 'Duplica',
+    fromPlugin: ({ plugin }) => `De ${plugin}`,
+    pluginFootnote: ({ plugin }) => `Ve amb ${plugin}. Desinstal·la el connector per eliminar-lo.`,
+    banner: {
+      expiredTitle: ({ name }) => `La sessió de ${name} ha caducat`,
+      expiredBody: ({ name, date, count }) => `${name} ha deixat d’acceptar-la${date ? ` el ${date}` : ''}. Les sessions s’inicien sense ${count ? `les seves ${count} eines` : 'les seves eines'} fins que et tornis a connectar. Tornar-s’hi a connectar una vegada serveix per a totes les màquines.`,
+      signinTitle: ({ name }) => `Inicia la sessió a ${name}`,
+      signinBody: 'Les sessions s’inicien sense les seves eines fins que inicis la sessió. Iniciar-la una vegada serveix per a totes les màquines.',
+      moreAccessTitle: ({ name }) => `${name} necessita més accés`,
+      moreAccessBody: 'Una eina ha demanat un accés que el teu inici de sessió no té. Concedeix-lo una vegada i totes les màquines el seguiran.',
+      revokedTitle: ({ name }) => `${name} ja no té accés`,
+      revokedBody: 'S’ha revocat l’inici de sessió. Les sessions s’inicien sense les seves eines fins que tornis a iniciar la sessió.',
+      keyTitle: ({ name }) => `${name} necessita una clau`,
+      keyBody: 'Encara no s’ha desat un valor que necessita. Les sessions s’inicien sense ell fins que n’afegeixis un.',
+      errorTitle: ({ name, machine }) => `${name} s’ha aturat a ${machine}`,
+      errorBody: 'Les sessions d’allà s’inicien sense les seves eines. La sortida de l’última prova és a Detalls.',
+      cantrunTitle: ({ name, machine }) => `${name} no es pot executar a ${machine}`,
+      cantrunBody: ({ runtime }) => `Aquella màquina necessita ${runtime}. Les sessions d’allà s’inicien sense ell; les altres màquines van bé.`,
+    },
+  },
+};
+
+const mcpPageTranslations = {
+  "ca": { ...ca, config: configCa },
+} as const satisfies Pick<Record<string, Shared_mcpPageTranslations.McpPageTranslation>, "ca">;
+
+return { mcpPageTranslations };
+})();
+
+const Domain_valueRefRowsTranslations = (() => {
+const ca: Shared_valueRefRowsTranslations.ValueRefRowsTranslation = {
+  name: 'Nom',
+  value: 'Valor',
+  typeLabel: 'Tipus de valor',
+  text: 'Text',
+  savedSecret: 'Secret desat',
+  fromMachine: 'De la màquina',
+  template: 'Plantilla',
+  fromSession: 'De la sessió',
+  chooseSecret: 'Tria un secret desat',
+  needsValue: 'Necessita un valor',
+  more: ({ name }) => `Més per a ${name}`,
+  edit: 'Edita…',
+  remove: 'Elimina',
+  invalidEnvName: 'Fes servir lletres majúscules, dígits i _, començant per una lletra.',
+  invalidHeaderName: 'Fes servir només lletres, dígits i -.',
+  duplicateName: 'Aquest nom ja s’està fent servir.',
+  invalidMachine: 'Indica una variable de la màquina, com ${HOME}.',
+};
+
+const valueRefRowsTranslations = {
+  "ca": ca,
+} as const;
+
+return { valueRefRowsTranslations };
+})();
+
+const Domain_agentAddTranslations = (() => {
+const agentAddTranslations = {
+  "ca": Shared_agentAddTranslations.en,
+} as const;
+
+return { agentAddTranslations };
+})();
+
+const Domain_mcpHomeTranslations = (() => {
+const ca: Shared_mcpHomeTranslations.McpHomeTranslation = {
+  loadFailed: 'No s’han pogut carregar els teus servidors',
+  purpose:
+    'Eines que els teus agents poden cridar: el teu gestor d’incidències, un navegador, una base de dades. Inicia la sessió una vegada i totes les màquines les poden fer servir.',
+  firstHeadline: 'Ara els teus servidors et segueixen',
+  firstPurpose:
+    'Han continuat funcionant allà on eren. Ara també funciona un servidor que necessita iniciar la sessió: fes-ho una vegada, des de qualsevol dispositiu, i totes les màquines el poden fer servir.',
+  firstDismiss: 'Entesos',
+  groupAccount: 'Sessió iniciada una vegada, a totes les màquines',
+  groupMachine: 'S’executen a les teves màquines',
+  newAccountBody:
+    'Linear, Sentry o Notion: inicia la sessió des de qualsevol dispositiu, fins i tot el mòbil.',
+  newMachineBody:
+    'Un navegador o una base de dades: Happier l’inicia a la màquina on s’executa la teva sessió.',
+  factAs: ({ identity }) => `com a ${identity}`,
+  factSignedIn: 'Sessió iniciada',
+  factKey: 'Clau d’API · secret desat',
+  present: ({ servers, tools, tokens }) =>
+    `${servers} ${Shared_mcpHomeTranslations.plural(servers, 'servidor dona', 'servidors donen')} als teus agents ${tools} ${Shared_mcpHomeTranslations.plural(tools, 'eina', 'eines')}, uns ${tokens} tokens de context.`,
+  presentNoTools: ({ count }) =>
+    `${count} ${Shared_mcpHomeTranslations.plural(count, 'servidor està activat', 'servidors estan activats')} per als teus agents.`,
+  presentNone: 'Encara no hi ha cap servidor activat.',
+  needYou: ({ count }) =>
+    ` ${count} ${Shared_mcpHomeTranslations.plural(count, 'et necessita', 'et necessiten')}.`,
+  needsTitle: 'Et necessita',
+  needsAccount: 'Arregla-ho una vegada, des de qualsevol dispositiu, i totes les màquines el podran fer servir',
+  needsAccountTools: ({ count }) =>
+    `Arregla-ho una vegada, des de qualsevol dispositiu, i totes les màquines recuperen les seves ${count} ${Shared_mcpHomeTranslations.plural(count, 'eina', 'eines')}`,
+  needsKey: 'Afegeix la clau una vegada com a secret desat i totes les màquines el podran fer servir',
+  needsKeyNamed: ({ names }) => `Afegeix ${names} una vegada com a secret desat i totes les màquines el podran fer servir`,
+  previewSignedInAs: ({ identity }) =>
+    `Sessió iniciada com a ${identity}, per a totes les màquines`,
+  previewSignedIn: 'Sessió iniciada una vegada, per a totes les màquines',
+  previewKey: 'La seva clau és un secret desat, que s’usa a totes les màquines',
+  previewMachine: 'S’inicia a la màquina on s’executa la teva sessió',
+  previewOff: 'Desactivat: cap agent no el rep',
+  previewExpired:
+    'Ha caducat l’inici de sessió. Reconnecta una vegada i totes les màquines el recuperen.',
+  previewSignIn:
+    'Inicia la sessió una vegada, des de qualsevol dispositiu, i totes les màquines el poden fer servir.',
+  previewNeedsKey:
+    'Necessita una clau. Afegeix-la una vegada, com a secret desat, i totes les màquines el poden iniciar.',
+  newTitle: 'Dona més eines als teus agents',
+  newBody:
+    'Un servidor MCP dona eines als teus agents: el teu gestor d’incidències, un navegador, una base de dades. Afegeix-ne un aquí, inicia la sessió una vegada i funciona a totes les màquines.',
+  browse: 'Explora els servidors',
+  paste: 'Enganxa una configuració',
+  shelfTitle: 'Servidors suggerits',
+  shelfFrom: ({ source }) =>
+    `De ${source}. Afegeix-ne un i funciona a totes les màquines.`,
+  shelfAdd: 'Afegeix',
+  foundTitle: 'Trobats a les teves màquines',
+  foundBody:
+    'Configurats dins d’un agent, encara no a Happier. Afegeix-ne un i et segueix.',
+  foundLine: ({ count, machine }) =>
+    `${count} ${Shared_mcpHomeTranslations.plural(count, 'servidor ja és', 'servidors ja són')} a ${machine}`,
+  foundLineMachines: ({ count, machines }) =>
+    `${count} ${Shared_mcpHomeTranslations.plural(count, 'servidor ja és', 'servidors ja són')} a ${machines} màquines`,
+  foundLineBody:
+    'Configurats als teus agents. Afegeix-los i et segueixen a totes les màquines.',
+  review: 'Revisa',
+  mapLabel: ({ count }) =>
+    `${count} ${Shared_mcpHomeTranslations.plural(count, 'servidor MCP', 'servidors MCP')} al voltant del teu Home`,
+  more: ({ count }) => `+${count}`,
+};
+
+const mcpHomeTranslations = {
+  "ca": ca,
+} as const satisfies Pick<Record<string, Shared_mcpHomeTranslations.McpHomeTranslation>, "ca">;
+
+return { mcpHomeTranslations };
+})();
+
+const Domain_agentsHomeTranslations = (() => {
+const ca: Shared_agentsHomeTranslations.AgentsHomeTranslation = {
+  purpose:
+    'Els agents de codi amb què comences sessions, on estan instal·lats i com inicien la sessió.',
+  needsTitle: 'Et necessita',
+  needsSignIn: ({ machine }) =>
+    `Les sessions a ${machine} no poden començar fins que iniciïs la sessió`,
+  tryTitle: 'Prova un altre agent',
+  tryBody: 'Cadascun comença sessions com els agents que ja tens.',
+  modelsTitle: 'Models per als teus agents',
+  modelsBody:
+    'Els proveïdors donen més models als teus agents: una clau per a molts, o un servidor de models a les teves màquines.',
+};
+
+const agentsHomeTranslations = {
+  "ca": ca,
+} as const satisfies Pick<Record<string, Shared_agentsHomeTranslations.AgentsHomeTranslation>, "ca">;
+
+return { agentsHomeTranslations };
+})();
+
+const Domain_profileSeedsTranslations = (() => {
+const ca: Shared_profileSeedsTranslations.ProfileSeedsTranslation = {
+  title: 'Habilitats que afegeix aquest perfil',
+  description: 'S’afegeixen a les sessions amb aquest perfil, a sobre del que donen les teves regles.',
+  add: 'Afegeix',
+  addTitle: 'Afegeix una habilitat',
+  searchPlaceholder: 'Cerca a les teves habilitats',
+  nothingToAdd: 'Totes les habilitats de la teva biblioteca ja s’han afegit.',
+  empty: 'Encara cap. Les sessions amb aquest perfil reben el que donen les teves regles.',
+  emptyLibrary: 'La teva biblioteca encara no té habilitats.',
+  openSkills: 'Obre Habilitats',
+  missing: 'No és a la teva biblioteca',
+  pending: 'Habilitat',
+  unreadableItem: 'Ara no es pot llegir',
+  remove: ({ skill }) => `Treu ${skill}`,
+  reading: 'Llegint les teves habilitats…',
+  unreadable: 'No s’han pogut llegir les teves habilitats',
+  tryAgain: 'Torna-ho a provar',
+};
+
+const profileSeedsTranslations = {
+  "ca": ca,
+} as const;
+
+return { profileSeedsTranslations };
+})();
+
+const Domain_scopeSectionTranslations = (() => {
+const scopeSectionTranslations = {
+  "ca": Shared_scopeSectionTranslations.copy({
+    title: 'Habilitats i servidors MCP',
+    descMachine:
+      'El que reben les sessions a {machine}. Un interruptor aquí defineix una regla només per a {machine}; les excepcions d’agent continuen vigents.',
+    descProject:
+      'Les teves sessions a {project} reben això a totes les màquines. Un interruptor aquí defineix una regla només per a {project}; les excepcions d’agent continuen vigents.',
+    descProjectTeam:
+      'Les teves sessions a {project} reben això a totes les màquines. Un interruptor aquí defineix una regla només per a {project}; les sessions de {team} segueixen les seves.',
+    skills: 'Habilitats',
+    mcp: 'Servidors MCP',
+    allSkills: 'Totes les {count} habilitats',
+    allMcp: 'Tots els {count} servidors MCP',
+    foundOne: 'Una habilitat més només viu a {machine}.',
+    foundMany: '{count} habilitats més només viuen a {machine}.',
+    foundLink: 'Trobades a les teves màquines',
+    onFor: 'Activat per a {agents}',
+    notFor: 'no per a {agents}',
+    onOn: 'Activat a {machines}',
+    notOn: 'no a {machines}',
+    onIn: 'Activat a {place}',
+    offIn: 'Desactivat a {place}',
+    onForPlace: 'Activat per a {place}',
+    offForPlace: 'Desactivat per a {place}',
+    emptySkills: 'Encara no hi ha habilitats',
+    addSkill: 'Afegeix una habilitat',
+    emptyMcp: 'Encara no hi ha servidors MCP',
+    addMcp: 'Afegeix un servidor',
+    loadFailed: 'No s’ha pogut carregar',
+    whenRunning: 'Es mostra quan {machine} estigui en marxa',
+    turnedOn: '{name} està activat per a {place}',
+    turnedOff: '{name} està desactivat per a {place}',
+    migrationNote:
+      '{names} s’ha mogut aquí des de la configuració antiga del projecte.',
+    dismiss: 'Descarta',
+  }),
+} as const;
+
+return { scopeSectionTranslations };
+})();
+
+const Domain_capabilityKitTranslations = (() => {
+const ca: Shared_capabilityKitTranslations.CapabilityKitTranslation = {
+  where: {
+    onEverywhere: 'Activat a tot arreu',
+    everywhere: 'A tot arreu',
+    off: 'Desactivat',
+    only: ({ agent, place, placeKind }) =>
+      Shared_capabilityKitTranslations.join(
+        'Només',
+        agent && `per a ${agent}`,
+        place && `a ${place}`,
+      ),
+    on: ({ agent, place }) =>
+      Shared_capabilityKitTranslations.join('activat', agent && `per a ${agent}`, place && `a ${place}`),
+    except: ({ agent, place }) => Shared_capabilityKitTranslations.join('excepte', agent, place && `a ${place}`),
+    exceptions: ({ count }) =>
+      count === 1 ? '1 excepció' : `${count} excepcions`,
+    more: ({ count }) => `${count} més`,
+    effect: {
+      everywhereOn:
+        'Totes les màquines i agents, i els que afegeixis més endavant',
+      everywhereOff: 'Desactivat tret que una regla de sota l’activi',
+      agentNever: ({ kind }) =>
+        kind === 'skill'
+          ? 'No rep mai aquesta habilitat, on sigui que estigui activada'
+          : 'No rep mai aquest servidor, on sigui que estigui activat',
+      agentEverywhereOn: 'El rep fins i tot on la resta està desactivada',
+      machineOn: 'Tots els agents d’aquesta màquina',
+      machineOff: 'Cap agent d’aquesta màquina',
+      projectOn: 'En aquest projecte, a totes les màquines',
+      projectOff: 'No en aquest projecte, a cap màquina',
+      folderOn: 'En aquesta carpeta d’aquesta màquina',
+      folderOff: 'No en aquesta carpeta',
+      agentAtOn: ({ agent, place }) => `${agent} el rep a ${place}`,
+      agentAtOff: ({ agent, place }) => `${agent} no el rep a ${place}`,
+    },
+    available: ({ agents, machines, projects }) =>
+      `Disponible per a ${agents} a ${machines}${projects ? `, només a ${projects}` : ''}`,
+    availableNowhere: 'Encara no està disponible enlloc',
+    offlineNote: ({ machine }) =>
+      `${machine} està fora de línia. El rebrà quan torni.`,
+    offlineNoteMany: ({ count }) =>
+      `${count} màquines fora de línia ho rebran quan tornin.`,
+    cantTake: ({ agent, kind }) =>
+      kind === 'skill'
+        ? `${agent} no pot carregar habilitats.`
+        : `${agent} no pot fer servir servidors MCP.`,
+  },
+  control: {
+    title: 'On està actiu',
+    description: 'Defineix-ho una vegada i totes les màquines ho segueixen. Guanya la regla més específica.',
+    everywhereLabel: 'Activat o desactivat a tot arreu',
+    on: 'Sí',
+    off: 'No',
+    turnedOnIn: 'Activat a',
+    except: 'Excepte',
+    nowhereYet: 'Encara enlloc. Afegeix un projecte, una màquina o un agent.',
+    addException: 'Afegeix una excepció',
+    addPlace: 'Afegeix un lloc',
+    menuAgent: 'Un agent',
+    menuAgentEverywhere: 'Un agent, a tot arreu',
+    menuMachine: 'Una màquina',
+    menuProject: 'Un projecte',
+    menuProjectEverywhere: 'Un projecte, a totes les màquines',
+    offline: 'fora de línia',
+    machineCount: ({ count }) => count === 1 ? '1 màquina' : `${count} màquines`,
+    allAgents: 'Tots els agents',
+    agentOnly: ({ agent }) => `Només ${agent}`,
+    whichAgents: ({ place }) => `Quins agents a ${place}`,
+    remove: ({ target }) => `Elimina la regla de ${target}`,
+    staysOff: ({ agents }) => `${agents} continua desactivat aquí`,
+    change: 'Canvia',
+    changeFailed: 'No s’ha pogut desar el canvi.',
+    checking: 'Comprovant les màquines…',
+  },
+  add: {
+    closeDetails: 'Tanca els detalls',
+    backTo: ({ title }) => `Torna a ${title}`,
+    added: 'Afegit',
+    done: 'Fet',
+    addFailed: 'No s’ha pogut afegir. Torna-ho a provar.',
+    modesLabel: 'Maneres d’afegir',
+    searchLabel: 'Cerca',
+  },
+  facts: {
+    textOnly: 'Només text',
+    hasFiles: 'Té fitxers',
+    runsScripts: 'Executa scripts',
+    tokensWhenUsed: ({ count }) => `${count} tokens`,
+    toolCount: ({ count, shown }) => (count === 1 ? `${shown} eina` : `${shown} eines`),
+    tokensPerTurn: ({ count }) => `${count} tokens per torn`,
+    you: 'Tu',
+    happier: 'Happier',
+    pinnedTo: ({ ref }) => `Fixat a ${ref}`,
+    inYourLibrary: 'A la teva biblioteca',
+  },
+  status: {
+    off: 'Desactivat',
+    signin: 'Cal iniciar sessió',
+    moreAccess: 'Cal més accés',
+    key: 'Cal una clau',
+    cantrun: ({ machine }) =>
+      machine ? `No es pot executar a ${machine}` : 'No es pot executar',
+    offline: 'Fora de línia',
+    update: 'Actualització disponible',
+    removed: 'Ja no és a la font',
+    modified: 'Modificat',
+    pinned: 'Fixat',
+    unused: 'No s’ha fet servir recentment',
+    unusedExplanation: ({ agents }) =>
+      `L’ús es registra per a ${agents} i els agents que llegeixen habilitats a través de Happier`,
+    error: ({ machine }) =>
+      machine ? `Aturat a ${machine}` : 'No s’ha pogut iniciar',
+    masked: ({ machine }) =>
+      machine ? `Guanya la còpia de ${machine}` : 'Guanya una altra còpia',
+    signing: 'Iniciant sessió…',
+    connected: 'Connectat',
+    expired: 'La sessió ha caducat',
+    revoked: 'Accés revocat',
+    fix: {
+      signIn: 'Inicia sessió',
+      reconnect: 'Torna a connectar',
+      addKey: 'Afegeix una clau',
+      howToFix: 'Com solucionar-ho',
+      tryAgain: 'Torna-ho a provar',
+      reviewUpdate: 'Revisa l’actualització',
+      compare: 'Compara',
+      turnOn: 'Activa',
+      grantAccess: 'Concedeix accés',
+    },
+  },
+};
+
+const capabilityKitTranslations = {
+  "ca": { ...ca, skills: Domain_skillsPageTranslations.skillsPageTranslations.ca, session: capabilityKitTranslations__sessionCapabilityTranslations.ca, notice: Domain_capabilityNoticeTranslations.capabilityNoticeTranslations.ca, detail: capabilityKitTranslations__capabilityDetailTranslations.ca, skillDetail: Domain_skillDetailTranslations.skillDetailTranslations.ca, skillsFound: Domain_skillsFoundTranslations.skillsFoundTranslations.ca, mcpFound: Domain_mcpFoundTranslations.mcpFoundTranslations.ca, skillsUpdates: Domain_skillsUpdatesTranslations.skillsUpdatesTranslations.ca, mcp: Domain_mcpPageTranslations.mcpPageTranslations.ca, valueRows: Domain_valueRefRowsTranslations.valueRefRowsTranslations.ca, mcpSignIn: capabilityKitTranslations__mcpSignInTranslations.ca, connectedAccountCallback: Domain_connectedAccountCallbackTranslations.connectedAccountCallbackTranslations.ca, mcpHome: Domain_mcpHomeTranslations.mcpHomeTranslations.ca, registries: capabilityKitTranslations__registriesTranslations.ca, skillAdd: capabilityKitTranslations__skillAddTranslations.ca, mcpAdd: capabilityKitTranslations__mcpAddTranslations.ca, agentAdd: Domain_agentAddTranslations.agentAddTranslations.ca, agentsHome: Domain_agentsHomeTranslations.agentsHomeTranslations.ca, profileSeeds: Domain_profileSeedsTranslations.profileSeedsTranslations.ca, scopeSection: Domain_scopeSectionTranslations.scopeSectionTranslations.ca, store: capabilityKitTranslations__storeTranslations.ca },
+} as const;
+
+return { capabilityKitTranslations };
+})();
+
+const Domain_sessionListSpacesKeyboardTranslations = (() => {
+const sessionListSpacesKeyboardTranslations = {
+  "ca": Shared_sessionListSpacesKeyboardTranslations.commands('Obre els filtres de la llista', ordinal => `Selecciona l’espai ${ordinal}`),
+} as const;
+
+return { sessionListSpacesKeyboardTranslations };
+})();
+
+const Domain_reviewKeyboardTranslations = (() => {
+const reviewKeyboardTranslations = {
+  "ca": {
+        reviewChangeNext: 'Canvi següent', reviewChangePrevious: 'Canvi anterior',
+        reviewChangeKeep: 'Conservar o desmarcar el canvi', reviewChangeDiscard: 'Descartar el canvi',
+        reviewChangeAsk: 'Preguntar sobre el canvi', reviewFileNext: 'Fitxer modificat següent',
+        reviewFilePrevious: 'Fitxer modificat anterior', reviewUndo: 'Desfer l’acció de revisió',
+        editorSelectionAsk: 'Preguntar sobre la selecció', filesTrackToggle: 'Seguir els canvis de l’agent', fileBlameToggle: 'Mostra o amaga el blame',
+    },
+} as const;
+
+return { reviewKeyboardTranslations };
+})();
+
+const Domain_paneKeyboardTranslations = (() => {
+const paneArrangementTranslations = {
+  "ca": { paneArrangement: 'Disposició dels taulers', paneArrangementDescription: 'Tria si la sessió o l’editor ocupa el centre.' , paneArrangementSession: 'Primer la sessió', paneArrangementEditor: 'Primer l’editor', paneArrangementSessionCaption: 'El xat al centre', paneArrangementEditorCaption: 'El codi al centre', rightPanelPlacement: 'Separació del tauler dret', rightPanelPlacementDescription: 'Tria com queda el tauler dret al costat de la pàgina: a part, o unit per una línia o una ombra suau.', rightPanelPlacementSeparate: 'Separat', rightPanelPlacementLine: 'Línia', rightPanelPlacementShadow: 'Ombra', rightPanelPlacementSeparateCaption: 'Un full propi al costat de la pàgina', rightPanelPlacementLineCaption: 'Unit per una línia fina', rightPanelPlacementShadowCaption: 'Unit per una ombra suau' },
+} as const satisfies Pick<Record<paneKeyboardTranslations__SupportedLanguage, Readonly<{ paneArrangement: string; paneArrangementDescription: string; paneArrangementSession: string; paneArrangementEditor: string; paneArrangementSessionCaption: string; paneArrangementEditorCaption: string; rightPanelPlacement: string; rightPanelPlacementDescription: string; rightPanelPlacementSeparate: string; rightPanelPlacementLine: string; rightPanelPlacementShadow: string; rightPanelPlacementSeparateCaption: string; rightPanelPlacementLineCaption: string; rightPanelPlacementShadowCaption: string }>>, "ca">;
+
+const paneRegionLabels = {
+  "ca": { rail: 'Navegació de l’aplicació', navigation: 'Columna de navegació', right: 'Tauler lateral', details: 'Editor i detalls', main: 'Columna principal', bottom: 'Tauler inferior' },
+} as const satisfies Pick<Record<paneKeyboardTranslations__SupportedLanguage, Readonly<Record<'rail' | 'navigation' | 'right' | 'details' | 'main' | 'bottom', string>>>, "ca">;
+
+const paneKeyboardTranslations = {
+  "ca": { commands: { shellColumnToggle: 'Mostra o amaga la navegació', panesMainToggle: 'Mostra o amaga la columna principal', panesSideToggle: 'Mostra o amaga el tauler lateral', panesArrangementToggle: 'Canvia la disposició dels taulers', panesRegionNext: 'Enfoca la regió següent', panesRegionPrevious: 'Enfoca la regió anterior' }, groups: { panes: 'Taulers', terminal: 'Terminal', search: 'Cerca', review: 'Revisió', files: 'Fitxers i editor', code: 'Intel·ligència de codi' }, desktop: 'Aplicació d’escriptori', browser: 'Navegador' },
+} as const satisfies Pick<Record<paneKeyboardTranslations__SupportedLanguage, Shared_paneKeyboardTranslations.PaneKeyboardCopy>, "ca">;
+
+return { paneArrangementTranslations, paneRegionLabels, paneKeyboardTranslations };
+})();
+
+const Domain_needsYouHighlightTranslations = (() => {
+const needsYouHighlightTranslations = {
+  "ca": { title: 'Destaca les sessions que et necessiten', description: 'Com destaca a la llista d’aquest dispositiu una sessió que et necessita. El moviment s’atura quan l’obres.', dot: 'Punt', accent: 'Accent', glint: 'Reflex', shimmer: 'Lluentor', pulse: 'Pols' },
+} as const satisfies Pick<Record<needsYouHighlightTranslations__SupportedLanguage, Shared_needsYouHighlightTranslations.NeedsYouHighlightCopy>, "ca">;
+
+const workingIndicatorTranslations = {
+  "ca": { title: 'Indicador de feina', description: 'Com apareix a la llista una sessió que treballa.', spinner: 'Gir', pulse: 'Punt polsant', animatedTextTitle: 'Paraules de feina divertides', animatedTextDescription: 'Amb les paraules d’estat, una sessió que treballa mostra una paraula divertida en lloc de «Treballant».' },
+} as const satisfies Pick<Record<needsYouHighlightTranslations__SupportedLanguage, Shared_needsYouHighlightTranslations.WorkingIndicatorCopy>, "ca">;
+
+return { needsYouHighlightTranslations, workingIndicatorTranslations };
+})();
+
+const Domain_quickOpenTranslations = (() => {
+const quickOpenTranslations = {
+  "ca": { commands: { searchFiles: 'Obre un fitxer', searchSymbols: 'Ves al símbol' }, search: { recent: 'Recents', changed: 'Modificats en aquesta sessió', changedInFolder: 'Fitxers modificats', openFile: 'Obre un fitxer…', showMore: 'Mostra’n més', searchEverything: 'Cerca-ho tot', noMatch: ({ query, scope }) => `Cap fitxer coincideix amb «${query}» a ${scope}`, symbolsNeedFile: 'Obre un fitxer per veure els símbols', filesInScope: ({ scope }) => `Fitxers a ${scope}`, symbolsUnavailable: ({ file }) => `Els símbols de ${file} encara no estan disponibles`, symbols: 'Símbols', symbolAtLine: ({ name, line }) => `${name}, línia ${line}`, symbolsInFile: ({ file }) => `Símbols a ${file}`, offline: ({ machine }) => `${machine} no respon. Es mostren els fitxers oberts recentment.` } },
+} as const satisfies Pick<Record<quickOpenTranslations__SupportedLanguage, Shared_quickOpenTranslations.QuickOpenCopy>, "ca">;
+
+return { quickOpenTranslations };
+})();
+
+const Domain_paneMainColumnTranslations = (() => {
+const paneMainColumnTranslations = {
+  "ca": { hideSession: 'Amaga la sessió', showSession: 'Mostra la sessió', hideProject: 'Amaga el projecte', showProject: 'Mostra el projecte', hideWorkflow: 'Amaga el flux de treball', showWorkflow: 'Mostra el flux de treball', hidePage: ({ title }: { title: string }) => `Amaga ${title}`, showPage: ({ title }: { title: string }) => `Mostra ${title}` , needsYou: 'Et necessita', chipA11y: ({ label, name }: { label: string; name: string }) => `${label}: ${name}`, chipNeedsYouA11y: ({ label, name }: { label: string; name: string }) => `${label}: ${name}, et necessita`, chipNeedsYouAnnouncement: ({ name }: { name: string }) => `${name} et necessita`, sidebarReleaseToHide: 'Deixa anar per amagar', backToTranscript: 'Torna a la conversa' },
+} as const satisfies Pick<Record<paneMainColumnTranslations__SupportedLanguage, Shared_paneMainColumnTranslations.MainColumnCopy>, "ca">;
+
+return { paneMainColumnTranslations };
+})();
+
+const Domain_paneEmptyEditorTranslations = (() => {
+const paneEmptyEditorTranslations = {
+  "ca": { title: 'Obre un fitxer al costat de la sessió', reason: 'Llegeix o edita qualsevol fitxer del projecte mentre la sessió treballa.', openFile: 'Obre un fitxer…', changedInSession: 'Canviats en aquesta sessió', recent: 'Recents', projectTitle: 'Obre un fitxer d’aquest projecte', projectReason: 'Llegeix o edita qualsevol fitxer aquí; els agents continuen a les seves sessions.', changedInProject: 'Canvis sense confirmar', openChangedFileA11y: ({ name }: { name: string }) => `Obre ${name}` },
+} as const satisfies Pick<Record<paneEmptyEditorTranslations__SupportedLanguage, Shared_paneEmptyEditorTranslations.EmptyEditorCopy>, "ca">;
+
+const paneShortcutsSheetTranslations = {
+  "ca": { footer: 'Les tecles de revisió funcionen quan un diff té el focus i no escrius.', openSettings: 'Canvia les dreceres a Configuració', hostA11y: 'Mostra les dreceres per a' },
+} as const satisfies Pick<Record<paneEmptyEditorTranslations__SupportedLanguage, Shared_paneEmptyEditorTranslations.ShortcutsSheetCopy>, "ca">;
+
+return { paneEmptyEditorTranslations, paneShortcutsSheetTranslations };
+})();
+
+const Domain_llmTaskRunnerTranslations = (() => {
+const llmTaskRunnerTranslations = {
+  "ca": {
+        auto: 'Auto',
+        autoCurrently: ({ runner }: { runner: string }) => `Auto — ara ${runner}`,
+        autoNothingReady: 'Auto — res a punt',
+        autoDescription: 'Auto fa servir el model adequat més barat entre els agents a punt en aquesta màquina, amb l’esforç més baix. En cas d’empat, prefereix l’agent de la sessió.',
+        checking: 'Comprovant què està a punt en aquesta màquina…',
+        currently: ({ runner }: { runner: string }) => `Ara mateix: ${runner}`,
+        noReadyAgent: 'Cap agent no està a punt en aquesta màquina. Inicia sessió en un agent o tria’n un aquí.',
+        noMatchingModel: 'Els agents a punt d’aquesta màquina no ofereixen cap model que aquesta tasca pugui fer servir. Tria’n un aquí.',
+        unavailable: 'Ara mateix no es pot comprovar aquesta màquina.',
+        chooseMachine: 'Tria una màquina per veure què tria Auto.',
+        permissionTitle: 'Nivell de permís',
+        permission: { no_tools: 'Sense eines', read_only: 'Només lectura', workspace_write: 'Pot editar fitxers', full: 'Accés complet' },
+        permissionDescription: { no_tools: 'Treballa només amb el text que rep.', read_only: 'També pot fer servir eines que no canvien res.', workspace_write: 'Pot canviar fitxers del projecte.', full: 'Pot fer servir totes les eines de l’agent.' },
+    },
+} as const satisfies Pick<Record<llmTaskRunnerTranslations__SupportedLanguage, Shared_llmTaskRunnerTranslations.LlmTaskRunnerCopy>, "ca">;
+
+return { llmTaskRunnerTranslations };
+})();
+
+const Domain_actionSettingsResourcesTranslations = (() => {
+const actionSettingsResourcesTranslations = {
+  "ca": {
+        status: {
+            humanAllowed: ({ partial }: { partial: boolean }): string => partial ? "Alguns controls poden executar-la" : "Pots executar-la",
+            humanAskFirst: ({ partial }: { partial: boolean }): string => partial ? "Alguns controls et pregunten primer" : "Et pregunta primer a l’app",
+            humanOff: ({ partial }: { partial: boolean }): string => partial ? "Desactivada en alguns controls" : "Desactivada a l’app",
+            agentAllowed: ({ partial }: { partial: boolean }): string => partial ? "Algunes eines d’agent poden executar-la" : "Els agents poden executar-la",
+            agentAskFirst: ({ partial }: { partial: boolean }): string => partial ? "Algunes eines d’agent et pregunten primer" : "Et pregunta quan l’executa un agent",
+            agentOff: ({ partial }: { partial: boolean }): string => partial ? "Desactivada per a algunes eines d’agent" : "Desactivada per als agents",
+            integrationAllowed: ({ partial }: { partial: boolean }): string => partial ? "Algunes integracions poden executar-la" : "Les integracions poden executar-la",
+            integrationAskFirst: ({ partial }: { partial: boolean }): string => partial ? "Algunes integracions et pregunten primer" : "Et pregunta quan l’executa una integració",
+            integrationOff: ({ partial }: { partial: boolean }): string => partial ? "Desactivada per a algunes integracions" : "Desactivada per a les integracions",
+            allOff: "Desactivada",
+            destructive: "No es pot desfer",
+            external: "Canvia coses fora de Happier",
+        },
+        family: {
+            title: 'Recursos',
+            reading: { title: 'Recursos · consulta', description: 'Mirar mai canvia res, així que estan permeses per defecte.' },
+            changing: { title: 'Recursos · canvis', description: 'Tot el que atura o elimina alguna cosa et pregunta primer per defecte. Aturar sessions i eliminar arbres de treball tenen accions pròpies.' },
+            related: 'La seva pròpia acció · obre’n la configuració',
+        },
+        facts: {
+            automationsSection: 'Automatitzacions',
+            alwaysTrueSection: 'Sempre cert',
+            automations: { title: 'Revisions programades', subtitle: 'Les revisions programades utilitzen la configuració d’Agents de més amunt.' },
+            forbidden: { title: 'Ubicacions prohibides', subtitle: 'Happier es nega a moure-les o eliminar-les.' },
+            trashFirst: { title: 'Paperera i supressió permanent', subtitle: 'Els elements es mouen primer a la Paperera de Happier. Suprimeix ara demana permís per defecte.' },
+        },
+    },
+} as const;
+
+return { actionSettingsResourcesTranslations };
+})();
+
+const Domain_resourceProposalTranslations = (() => {
+const ca = {
+  title: {
+    storage: 'Proposta de neteja',
+    processes: 'Allibera memòria',
+    retry: 'Fes espai i torna-ho a provar',
+  },
+  machineChecked: ({ machine, time }: { machine: string; time: string }) =>
+    `${machine} · comprovat ${time}`,
+  machineChecking: ({ machine }: { machine: string }) =>
+    `${machine} · comprovant…`,
+  selected: ({ count, total }: { count: number; total: number }) =>
+    `${count} de ${total} seleccionats`,
+  selectAll: 'Selecciona-ho tot',
+  selectAllSafe: 'Selecciona tots els segurs',
+  givesBack: 'Recupera',
+  frees: 'Allibera',
+  onDisk: ({ amount }: { amount: string }) => `de ${amount} al disc`,
+  changed: 'canviat',
+  gone: 'ja no hi és',
+  notIncluded: 'No forma part d’aquesta proposta',
+  includeAnyway: 'Inclou-lo',
+  goal: ({ found, goal }: { found: string; goal: string }) =>
+    `${found} de ${goal} trobats`,
+  staleTitle: ({ count }: { count: number }) =>
+    count === 1
+      ? 'Una cosa ha canviat des que l’agent ho va mirar.'
+      : `${count} coses han canviat des que l’agent ho va mirar.`,
+  staleBody: 'No es pot aprovar res fins que no es torni a comprovar.',
+  checkAgain: 'Torna a comprovar',
+  checkUnavailable:
+    'Ara no s’han pogut comprovar. Cada element es torna a comprovar quan s’executa.',
+  note: {
+    trash:
+      'Cada element es torna a comprovar i després es mou. L’espai es recupera quan es buida la Paperera.',
+    processes: 'No se suprimeix res. Cada un es torna a comprovar primer.',
+    emptyAfter:
+      'L’espai cal ara, així que la Paperera es buida de seguida. Aquesta part no es pot desfer.',
+  },
+  approve: {
+    trash: ({ count }: { count: number }) => `Mou ${count} a la Paperera`,
+    emptyAndRetry: 'Paperera, buida i torna-ho a provar',
+    keepUndo: 'Mou a la Paperera i torna-ho a provar',
+    keepUndoHint: 'Manté Desfés; allibera espai només quan es buida la Paperera.',
+    stop: ({ count }: { count: number }) => `Atura ${count}`,
+  },
+  notNow: 'Ara no',
+  declinedTitle: 'Proposta rebutjada',
+  declinedFacts: ({ count }: { count: number }) =>
+    `${count} elements · no s’ha canviat res`,
+  reopen: 'Torna a obrir',
+  tryAgain: 'Torna-ho a provar',
+  startAgain: 'Torna a iniciar',
+  startedAgain: 'Iniciat de nou',
+  keptByGuard: 'Es mantenen perquè estan treballant',
+  memoryLabel: 'Memòria',
+  memoryAfter: ({ now, after }: { now: string; after: string }) => `${now} ara · uns ${after} després`,
+  memoryNow: ({ now }: { now: string }) => `${now} en ús`,
+  processesTree: 'Què fa servir la memòria',
+  analysingFound: ({ count }: { count: number }) => `${count} trobats fins ara`,
+  analysingNote: 'Encara llegint. Podràs aprovar-ho quan acabi.',
+  inbox: {
+    allSafe: ({ count }: { count: number }) => `${count} elements, tots segurs`,
+    mixed: ({ count, safe, attention }: { count: number; safe: number; attention: number }) => `${count} elements · ${safe} segurs, ${attention} necessiten la teva mirada`,
+    stops: ({ count }: { count: number }) => `Atura ${count}`,
+  },
+  restored: 'Restaurat · no s’ha eliminat res',
+  receiptChecking: 'Comprovant la Paperera i l’Activitat recent…',
+  receiptUnavailable: 'No s’ha pogut comprovar el resultat actual. Torna a obrir la proposta per reintentar-ho.',
+  receiptUnknown: ({ count }: { count: number }) => `Resultat final no disponible per a ${count} elements.`,
+  receiptRestored: ({ count }: { count: number }) => `${count} elements restaurats`,
+  receiptFreed: ({ count, amount }: { count: number; amount: string }) => `${amount} alliberats · ${count} elements eliminats`,
+  skipped: ({ reason }: { reason: string }) => `No s’ha mogut: ${reason}`,
+  stopped: ({ count }: { count: number }) => `${count} aturats`,
+  stoppedFreed: ({ amount }: { amount: string }) => `${amount} alliberats`,
+  notStopped: ({ reason }: { reason: string }) => `No s’ha aturat: ${reason}`,
+  failed: 'Aquesta proposta no s’ha pogut completar. No s’ha canviat res més.',
+  processSafe: 'Segur · es pot tornar a iniciar en qualsevol moment',
+  processStopLoss: ({ title }: { title: string }) => `Aturar «${title}» interromp la feina actual o la pregunta pendent.`,
+  processKillLoss: ({ title }: { title: string }) => `Matar «${title}» acaba la feina immediatament; es perd la feina no desada.`,
+  processCheck: 'Comprova-ho primer',
+  itemLabel: ({
+    title,
+    size,
+    verdict,
+  }: {
+    title: string;
+    size: string;
+    verdict: string;
+  }) => `${title}, ${size}, ${verdict}`,
+  owner: {
+    session: 'Sessió',
+    terminal: 'Terminal',
+    service: 'Servidor de desenvolupament',
+    run: 'Execució',
+    browser_sidecar: 'Navegador auxiliar',
+    workspace_sync: 'Sincronització de l’espai de treball',
+    other: 'Procés',
+  },
+} as const;
+
+const resourceProposalTranslations = {
+  "ca": ca,
+} as const;
+
+return { resourceProposalTranslations };
+})();
+
+const Domain_machineResourceUiTranslations = (() => {
+const machineResourceUiTranslations = {
+  "ca": {
+        ask: { title: 'Pregunta a un agent', placeholder: Shared_machineResourceUiTranslations.machinePhrase('Pregunta sobre ', '…'), description: 'Pot llegir el que mostra aquesta pàgina i proposar canvis. No s’atura ni s’elimina res sense la teva aprovació.', offline: Shared_machineResourceUiTranslations.machinePhrase('', ' està fora de línia, així que ara un agent no la pot consultar.') },
+        askSuggestions: {
+            prompts: {
+                memory: Shared_machineResourceUiTranslations.machinePhrase('Per què ', ' té poca memòria?'),
+                disk: Shared_machineResourceUiTranslations.machinePhrase('Troba espai que puc alliberar a ', ''),
+                storage: Shared_machineResourceUiTranslations.machinePhrase('Explica l’emmagatzematge de Happier a ', ''),
+                leftBehind: Shared_machineResourceUiTranslations.machinePhrase('Revisa els processos que han quedat a ', ''),
+                guard: Shared_machineResourceUiTranslations.machinePhrase('Explica què faria Guard si l’activés a ', ''),
+                overview: Shared_machineResourceUiTranslations.machinePhrase('Revisa l’ús de recursos a ', ''),
+                processes: Shared_machineResourceUiTranslations.machinePhrase('Què consumeix més memòria a ', '?'),
+                weeklyReview: 'Revisa l’emmagatzematge cada dilluns',
+                lastReport: Shared_machineResourceUiTranslations.machinePhrase('Explica l’últim informe de recursos de ', ''),
+                lastStorageReport: Shared_machineResourceUiTranslations.machinePhrase('Revisa l’últim informe d’emmagatzematge de ', ''),
+                notifyWhenBack: Shared_machineResourceUiTranslations.machinePhrase('Avisa’m quan ', ' torni a estar disponible'),
+                notifyWhenBackConsent: Shared_machineResourceUiTranslations.machinePhrase('Accepto activar les alertes continuades de màquina fora de línia i les actualitzacions de recuperació per a ', '.'),
+                setupDocker: Shared_machineResourceUiTranslations.machinePhrase("Configura Docker a ", ""),
+                setupReview: Shared_machineResourceUiTranslations.machinePhrase("Comprova què hi ha configurat a ", ""),
+                setupHarden: Shared_machineResourceUiTranslations.machinePhrase("Reforça l’SSH i el tallafoc de ", ""),
+                securityAccess: Shared_machineResourceUiTranslations.machinePhrase("Explica qui pot fer què a ", ""),
+                securityNetwork: Shared_machineResourceUiTranslations.machinePhrase("Comprova què està obert a internet a ", ""),
+                securityUpdates: Shared_machineResourceUiTranslations.machinePhrase("Revisa les actualitzacions pendents de ", ""),
+            },
+            reasons: {
+                setup: "Revises cada canvi abans",
+                security: "Només lectura fins que ho aprovis",
+                memory: 'Cal revisar la pressió de memòria', disk: Shared_machineResourceUiTranslations.amountPhrase('', ' lliures en aquest volum'),
+                storage: Shared_machineResourceUiTranslations.amountPhrase('Happier utilitza ', ''), leftBehind: Shared_machineResourceUiTranslations.countPhrase('', ' processos han quedat enrere'),
+                guard: 'La protecció de memòria està desactivada', calm: 'Aquesta màquina està tranquil·la',
+                currentReport: 'De l’informe de recursos d’aquesta màquina', weeklyReview: 'Una proposta de revisió setmanal',
+                offline: 'Aquesta màquina està fora de línia; consulta l’últim informe',
+            },
+        },
+        widgets: {
+            body: machineResourceUiTranslations__machineWidgetBodyTranslations.ca,
+            machine_vitals: 'Estat vital', machine_fleet: 'Màquines', machine_metric: 'Mètrica',
+            machine_top_consumers: 'Qui consumeix més', machine_left_behind: 'Processos restants',
+            machine_storage: 'Emmagatzematge', machine_worktrees: 'Arbres de treball', machine_guard: 'Guard',
+            machine_activity: 'Activitat', machine_cleanup_suggestion: 'Suggeriment',
+            followsSessionMachine: 'Segueix la màquina d’aquesta sessió',
+            inputs: {
+                volume: 'Volum', range: 'Interval', scope: 'Àmbit', style: 'Estil', metrics: 'Mètriques',
+                warnAbove: 'Avisa per sobre de', cpu: 'CPU', memory: 'Memòria', diskFree: 'Disc lliure',
+                network: 'Xarxa', oneHour: '1 hora', oneDay: '24 hores', sevenDays: '7 dies',
+                machineScope: 'Màquina', sessionScope: 'Sessió', sparklines: 'Minigràfics',
+                bars: 'Barres', numbers: 'Nombres', rings: 'Anells', disk: 'Disc',
+            },
+        },
+    },
+} as const satisfies Pick<Record<'en' | 'ca' | 'de' | 'es' | 'fr' | 'it' | 'ja' | 'pl' | 'pt' | 'ru' | 'zhHans' | 'zhHant', typeof Shared_machineResourceUiTranslations.en>, "ca">;
+
+return { machineResourceUiTranslations };
+})();
 
 const Domain_accountDisplayTranslations = (() => {
 type AccountDisplayTranslation = Shared_accountDisplayTranslations.AccountDisplayTranslation;
@@ -18230,4 +20553,55 @@ export {
     Domain_workspaceBarTranslations as workspaceBarTranslations,
     Domain_workspaceSyncDiagnosticTranslations as workspaceSyncDiagnosticTranslations,
     Domain_workspaceTabTranslations as workspaceTabTranslations,
+    Domain_simulatorDeviceToolsTranslations as simulatorDeviceToolsTranslations,
+    Domain_deploymentMoveTranslations as deploymentMoveTranslations,
+    Domain_newSessionActionDefaultTranslations as newSessionActionDefaultTranslations,
+    Domain_chatLinksTranslations as chatLinksTranslations,
+    Domain_deploymentDefaultsTranslations as deploymentDefaultsTranslations,
+    Domain_deploymentCopyTranslations as deploymentCopyTranslations,
+    Domain_deploymentSettingsTranslations as deploymentSettingsTranslations,
+    Domain_pluginPublishTranslations as pluginPublishTranslations,
+    Domain_botTemplateTranslations as botTemplateTranslations,
+    Domain_botTemplateRecipientTranslations as botTemplateRecipientTranslations,
+    Domain_botFaceNameTranslations as botFaceNameTranslations,
+    Domain_screenCaptureTranslations as screenCaptureTranslations,
+    Domain_deploymentCreationReviewTranslations as deploymentCreationReviewTranslations,
+    Domain_deploymentPlatformLinkTranslations as deploymentPlatformLinkTranslations,
+    Domain_deploymentPromotionTranslations as deploymentPromotionTranslations,
+    Domain_fileEditingTranslations as fileEditingTranslations,
+    Domain_usageChartInputTranslations as usageChartInputTranslations,
+    Domain_usageChartPlanetFamilyTranslations as usageChartPlanetFamilyTranslations,
+    Domain_fileSelectionAskTranslations as fileSelectionAskTranslations,
+    Domain_fileTrackTranslations as fileTrackTranslations,
+    Domain_actionPresentationTranslations as actionPresentationTranslations,
+    Domain_fileReviewNoteTranslations as fileReviewNoteTranslations,
+    Domain_composerReferenceTranslations as composerReferenceTranslations,
+    Domain_hunkReviewTranslations as hunkReviewTranslations,
+    Domain_storeInstalledTranslations as storeInstalledTranslations,
+    Domain_connectedAccountCallbackTranslations as connectedAccountCallbackTranslations,
+    Domain_skillsPageTranslations as skillsPageTranslations,
+    Domain_capabilityNoticeTranslations as capabilityNoticeTranslations,
+    Domain_skillDetailTranslations as skillDetailTranslations,
+    Domain_skillsFoundTranslations as skillsFoundTranslations,
+    Domain_mcpFoundTranslations as mcpFoundTranslations,
+    Domain_skillsUpdatesTranslations as skillsUpdatesTranslations,
+    Domain_mcpPageTranslations as mcpPageTranslations,
+    Domain_valueRefRowsTranslations as valueRefRowsTranslations,
+    Domain_agentAddTranslations as agentAddTranslations,
+    Domain_mcpHomeTranslations as mcpHomeTranslations,
+    Domain_agentsHomeTranslations as agentsHomeTranslations,
+    Domain_profileSeedsTranslations as profileSeedsTranslations,
+    Domain_scopeSectionTranslations as scopeSectionTranslations,
+    Domain_capabilityKitTranslations as capabilityKitTranslations,
+    Domain_sessionListSpacesKeyboardTranslations as sessionListSpacesKeyboardTranslations,
+    Domain_reviewKeyboardTranslations as reviewKeyboardTranslations,
+    Domain_paneKeyboardTranslations as paneKeyboardTranslations,
+    Domain_needsYouHighlightTranslations as needsYouHighlightTranslations,
+    Domain_quickOpenTranslations as quickOpenTranslations,
+    Domain_paneMainColumnTranslations as paneMainColumnTranslations,
+    Domain_paneEmptyEditorTranslations as paneEmptyEditorTranslations,
+    Domain_llmTaskRunnerTranslations as llmTaskRunnerTranslations,
+    Domain_actionSettingsResourcesTranslations as actionSettingsResourcesTranslations,
+    Domain_resourceProposalTranslations as resourceProposalTranslations,
+    Domain_machineResourceUiTranslations as machineResourceUiTranslations,
 };

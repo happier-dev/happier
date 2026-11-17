@@ -5,7 +5,7 @@
 type Name = Readonly<{ name: string }>;
 type Machine = Readonly<{ machine: string }>;
 
-const en = {
+export const en = {
   title: 'Add an agent',
   browse: 'Browse agents',
   browseDescription: 'From the ACP Registry and Happier plugins.',
@@ -175,15 +175,4 @@ export type AgentAddTranslation = typeof en;
 
 export const agentAddTranslations = {
   en,
-  ca: en,
-  de: en,
-  es: en,
-  fr: en,
-  it: en,
-  ja: en,
-  pl: en,
-  pt: en,
-  ru: en,
-  zhHans: en,
-  zhHant: en,
 } as const;

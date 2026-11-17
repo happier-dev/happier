@@ -171,6 +171,2240 @@ import * as Shared_workspaceBarTranslations from '../workspaceBarTranslations.sh
 import type { TranslationStructure } from '../en';
 import * as Shared_workspaceSyncDiagnosticTranslations from '../workspaceSyncDiagnosticTranslations.shared';
 import * as Shared_workspaceTabTranslations from '../workspaceTabTranslations.shared';
+import * as Shared_simulatorDeviceToolsTranslations from '../simulatorDeviceToolsTranslations';
+import type { SupportedLanguage as simulatorDeviceToolsTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentMoveTranslations from '../deploymentMoveTranslations';
+import type { SupportedLanguage as deploymentMoveTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_newSessionActionDefaultTranslations from '../newSessionActionDefaultTranslations';
+import * as Shared_chatLinksTranslations from '../chatLinksTranslations';
+import type { SupportedLanguage as chatLinksTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentDefaultsTranslations from '../deploymentDefaultsTranslations';
+import type { SupportedLanguage as deploymentDefaultsTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentCopyTranslations from '../deploymentCopyTranslations';
+import type { SupportedLanguage as deploymentCopyTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentSettingsTranslations from '../deploymentSettingsTranslations';
+import { deploymentOperationalTranslations as deploymentSettingsTranslations__deploymentOperationalTranslations } from '../deploymentOperationalTranslations';
+import type { SupportedLanguage as deploymentSettingsTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_pluginPublishTranslations from '../pluginPublishTranslations';
+import * as Shared_botTemplateTranslations from '../botTemplateTranslations';
+import type { SupportedLanguage as botTemplateTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_botTemplateRecipientTranslations from '../botTemplateRecipientTranslations';
+import type { SupportedLanguage as botTemplateRecipientTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_botFaceNameTranslations from '../botFaceNameTranslations.shared';
+import * as Shared_screenCaptureTranslations from '../screenCaptureTranslations.shared';
+import * as Shared_deploymentCreationReviewTranslations from '../deploymentCreationReviewTranslations';
+import type { SupportedLanguage as deploymentCreationReviewTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentPlatformLinkTranslations from '../deploymentPlatformLinkTranslations';
+import type { SupportedLanguage as deploymentPlatformLinkTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentPromotionTranslations from '../deploymentPromotionTranslations';
+import type { SupportedLanguage as deploymentPromotionTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_fileEditingTranslations from '../fileEditingTranslations.shared';
+import { fileAiSuggestionsTranslations as fileEditingTranslations__fileAiSuggestionsTranslations } from '../fileAiSuggestionsTranslations.shared';
+import { fileAiSuggestionControls as fileEditingTranslations__fileAiSuggestionControls } from '../fileAiSuggestionsTranslations.shared';
+import { fileNextEditTranslations as fileEditingTranslations__fileNextEditTranslations } from '../fileAiSuggestionsTranslations.shared';
+import * as Shared_usageChartInputTranslations from '../usageChartInputTranslations.shared';
+import * as Shared_usageChartPlanetFamilyTranslations from '../usageChartPlanetFamilyTranslations.shared';
+import * as Shared_fileSelectionAskTranslations from '../fileSelectionAskTranslations.shared';
+import * as Shared_fileTrackTranslations from '../fileTrackTranslations.shared';
+import * as Shared_actionPresentationTranslations from '../actionPresentationTranslations';
+import * as Shared_fileReviewNoteTranslations from '../fileReviewNoteTranslations.shared';
+import * as Shared_composerReferenceTranslations from '../composerReferenceTranslations.shared';
+import * as Shared_hunkReviewTranslations from '../hunkReviewTranslations.shared';
+import * as Shared_storeInstalledTranslations from '../storeInstalledTranslations.shared';
+import * as Shared_connectedAccountCallbackTranslations from '../connectedAccountCallbackTranslations';
+import * as Shared_skillsPageTranslations from '../skillsPageTranslations';
+import * as Shared_capabilityNoticeTranslations from '../capabilityNoticeTranslations';
+import * as Shared_skillDetailTranslations from '../skillDetailTranslations';
+import * as Shared_skillsFoundTranslations from '../skillsFoundTranslations';
+import * as Shared_mcpFoundTranslations from '../mcpFoundTranslations';
+import * as Shared_skillsUpdatesTranslations from '../skillsUpdatesTranslations';
+import * as Shared_mcpPageTranslations from '../mcpPageTranslations';
+import * as Shared_valueRefRowsTranslations from '../valueRefRowsTranslations';
+import * as Shared_agentAddTranslations from '../agentAddTranslations';
+import * as Shared_mcpHomeTranslations from '../mcpHomeTranslations';
+import * as Shared_agentsHomeTranslations from '../agentsHomeTranslations';
+import * as Shared_profileSeedsTranslations from '../profileSeedsTranslations';
+import * as Shared_scopeSectionTranslations from '../scopeSectionTranslations';
+import * as Shared_capabilityKitTranslations from '../capabilityKitTranslations';
+import { sessionCapabilityTranslations as capabilityKitTranslations__sessionCapabilityTranslations } from '../sessionCapabilityTranslations';
+import { capabilityDetailTranslations as capabilityKitTranslations__capabilityDetailTranslations } from '../capabilityDetailTranslations';
+import { mcpSignInTranslations as capabilityKitTranslations__mcpSignInTranslations } from '../mcpSignInTranslations';
+import { registriesTranslations as capabilityKitTranslations__registriesTranslations } from '../registriesTranslations';
+import { skillAddTranslations as capabilityKitTranslations__skillAddTranslations } from '../registriesTranslations';
+import { mcpAddTranslations as capabilityKitTranslations__mcpAddTranslations } from '../mcpAddTranslations';
+import { storeTranslations as capabilityKitTranslations__storeTranslations } from '../storeTranslations';
+import * as Shared_sessionListSpacesKeyboardTranslations from '../sessionListSpacesKeyboardTranslations.shared';
+import * as Shared_reviewKeyboardTranslations from '../reviewKeyboardTranslations.shared';
+import * as Shared_paneKeyboardTranslations from '../paneKeyboardTranslations';
+import type { SupportedLanguage as paneKeyboardTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_needsYouHighlightTranslations from '../needsYouHighlightTranslations';
+import type { SupportedLanguage as needsYouHighlightTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_quickOpenTranslations from '../quickOpenTranslations';
+import type { SupportedLanguage as quickOpenTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_paneMainColumnTranslations from '../paneMainColumnTranslations';
+import type { SupportedLanguage as paneMainColumnTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_paneEmptyEditorTranslations from '../paneEmptyEditorTranslations';
+import type { SupportedLanguage as paneEmptyEditorTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_llmTaskRunnerTranslations from '../llmTaskRunnerTranslations';
+import type { SupportedLanguage as llmTaskRunnerTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_actionSettingsResourcesTranslations from '../actionSettingsResourcesTranslations.shared';
+import * as Shared_resourceProposalTranslations from '../resourceProposalTranslations.shared';
+import * as Shared_machineResourceUiTranslations from '../machineResourceUiTranslations.shared';
+import { machineWidgetBodyTranslations as machineResourceUiTranslations__machineWidgetBodyTranslations } from '../machineWidgetBodyTranslations.shared';
+
+const Domain_simulatorDeviceToolsTranslations = (() => {
+const simulatorDeviceToolsTranslations = {
+  "zh-Hans": {
+    start: "启动",
+    stopped: "已停止",
+    powerOff: "关机",
+    screenshot: "截屏",
+    operationFailed: "在设备上执行失败",
+    videoUnsupported: "此处无法播放视频",
+    videoUnsupportedBody: "此浏览器无法解码设备视频。请在最新版 Chrome、Edge、Safari 或 App 中打开 Happier。",
+    appSection: "应用",
+    appDescription: "按 Bundle ID 或包名启动或停止应用。",
+    appId: "应用 ID",
+    launch: "启动",
+    terminate: "停止",
+    linkSection: "打开链接",
+    url: "URL 或深层链接",
+    open: "打开",
+    settingsSection: "设备设置",
+    appearance: "外观",
+    light: "浅色",
+    dark: "深色",
+    textSize: "文字大小",
+    small: "小",
+    defaultSize: "默认",
+    large: "大",
+    orientation: "方向",
+    portrait: "竖屏",
+    landscape: "横屏",
+    location: "位置",
+    latitude: "纬度",
+    longitude: "经度",
+    setLocation: "设置",
+    clearLocation: "清除",
+    permissions: "权限",
+    permissionsDescription: "更改上方应用可以使用的内容。",
+    permission: "权限",
+    allow: "允许",
+    deny: "拒绝",
+    reset: "重置",
+    camera: "相机",
+    photos: "照片",
+    microphone: "麦克风",
+    contacts: "通讯录",
+    locationPermission: "位置",
+    push: "推送通知",
+    pushDescription: "发送给上方的应用。",
+    payload: "内容（JSON）",
+    send: "发送",
+    invalidJson: "请输入 JSON 对象。",
+    needAppId: "请先输入应用 ID。",
+    accessibility: "辅助功能",
+    accessibilityDescription: "辅助技术读取到的屏幕元素。",
+    readScreen: "读取屏幕",
+    press: "按下",
+    truncated: "仅显示部分屏幕。",
+    noElements: "未找到元素。",
+  },
+} as const satisfies Pick<Record<simulatorDeviceToolsTranslations__SupportedLanguage, Shared_simulatorDeviceToolsTranslations.SimulatorDeviceToolsCopy>, "zh-Hans">;
+
+return { simulatorDeviceToolsTranslations };
+})();
+
+const Domain_deploymentMoveTranslations = (() => {
+const deploymentMoveTranslations = {
+  "zh-Hans": {
+    "dataReviewLead": "检查要停止的源服务和应用更改。工作流将停止写入、验证最终备份、恢复并检查目标，然后部署应用。原始数据会保留在源端。 切换结果不确定时，需要你在运行中决定后再继续。",
+    "writers": "要停止的服务",
+    "writerReviewRequired": "无法确定源端的写入服务。请检查源服务及其运行状态，然后重试。",
+    "noRunningWriter": "请先启动应使用迁移后数据库的应用服务，然后重新检查迁移。",
+    "stopped": "已停止 · 保持停止",
+    "menu": "移至另一台机器…",
+    "title": "移至另一台机器",
+    "description": "使用同一提交。目标通过健康检查前，源机器会保持运行，并保留本地数据。",
+    "restriction": "仅支持不含域名和本地数据的仓库应用。",
+    "stateless": "此应用没有需要迁移的本地数据",
+    "source": "来源",
+    "destination": "目标",
+    "run": "启动迁移工作流"
+  },
+} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'stopped', string>>>, "zh-Hans">;
+
+return { deploymentMoveTranslations };
+})();
+
+const Domain_newSessionActionDefaultTranslations = (() => {
+const newSessionActionDefaultTranslations = {
+  "zh-Hans": { name: '操作名称', launchMode: '下次操作', review: '开始前确认', start: '立即开始', open: '保存为此操作的默认设置…', saved: '已保存操作默认设置', failed: '无法保存操作默认设置，请重试。', stablePlacementRequired: "要保存这些默认设置，请选择固定机器或“询问”。无法保存临时计算机和资源池选择。", workspaceMode: "此操作需要工作副本。请选择兼容的文件夹，然后重新保存。", nameRequired: '请输入操作名称。' },
+} as const;
+
+return { newSessionActionDefaultTranslations };
+})();
+
+const Domain_chatLinksTranslations = (() => {
+const chatLinksTranslations = {
+  "zh-Hans": {"title": "聊天链接打开方式", "description": "选择此设备上的链接打开方式。机器的 localhost 链接始终在应用内打开。", "browser": "你的浏览器", "embedded": "内嵌", "managed": "托管"},
+} as const satisfies Pick<Record<chatLinksTranslations__SupportedLanguage, Shared_chatLinksTranslations.ChatLinksCopy>, "zh-Hans">;
+
+return { chatLinksTranslations };
+})();
+
+const Domain_deploymentDefaultsTranslations = (() => {
+const deploymentDefaultsTranslations = {
+  "zh-Hans": {
+        accountDescription: '用于你的账号所拥有项目中的新环境。团队项目使用共享的项目默认设置。',
+        projectDescription: '创建环境时使用。现有环境保留各自的设置。',
+        useAccount: '使用账号默认值', useBuiltin: '使用 Happier 默认值', retention: '为回滚保留的版本数',
+        clearToInherit: '清空以继承默认值', projectTitle: '部署设置', alertChannels: '通知渠道', accountLink: '你的账号部署默认设置',
+        triggersTitle: "触发器", triggersDescription: "每个环境运行自己的触发器。打开一个环境即可查看或添加。",
+    },
+} as const satisfies Pick<Record<deploymentDefaultsTranslations__SupportedLanguage, Shared_deploymentDefaultsTranslations.Copy>, "zh-Hans">;
+
+return { deploymentDefaultsTranslations };
+})();
+
+const Domain_deploymentCopyTranslations = (() => {
+const deploymentCopyTranslations = {
+  "zh-Hans": {
+    name: ({ name }) => `${name} 副本`,
+    preparePrompt: ({ name, sourceId, environmentId }) => `请为环境 ${name}（${environmentId}）、项目源 ${sourceId} 准备部署。检查仓库和说明。在供我审阅的拉取请求中提出 Dockerfile、compose.yaml 和健康检查。不要合并或部署。`,
+    menu: "复制环境…",
+    title: "复制环境",
+    description: "复制部署定义。请选择保留的引用；不会自动部署。",
+    bindings: "复制内容",
+    same: "相同引用",
+    choose: "选择其他…",
+    omit: "留空",
+    include: "包含",
+    domainsStay: "域名留在源环境：一个地址只属于一个环境。",
+    dataTitle: "数据",
+    dataOmit: "不附加",
+    dataOmitHint: "创建此环境时不附加此数据资源。",
+    dataRestoreUnavailable: "复制时无法恢复此数据的备份。",
+    dataConnections: "共享连接",
+    dataConnectionsHint: "选择此副本将使用的已保存连接。数据库仍附加在源环境中。",
+    dataConnectionsUnavailable: "未选择已保存的连接变量。请在上方选择一个，或选择其他数据选项。",
+    dataReuse: "复用",
+    dataReuseHint: "两个环境使用同一份数据。",
+    dataEmpty: "从空白开始",
+    dataEmptyHint: "附加新的空数据。创建环境后再配置连接。",
+    dataEmptyUnavailable: "此提供商不支持创建空数据库。",
+    dataRestore: "恢复最新备份",
+    dataRestoreHint: "从源环境的最新备份新建副本。",
+    prepareTitle: "没有 compose.yaml · 请智能体准备",
+    prepareBody: "打开开始面板，请智能体在供你审阅的拉取请求中添加 Dockerfile、compose.yaml 和健康检查。",
+    refresh: "这些信息已过时。刷新环境，检查最新设置后重试。",
+    permission: "你的访问权限不允许此操作。请环境管理员授予访问权限后重试。",
+    machine: "控制器机器不可用。将控制器机器上线后重试。",
+    repository: "尚未选择仓库检出目录。在开始面板选择仓库并在部署前完成准备。",
+    unsupported: "此目标不支持该操作。请选择支持的目标或更改选择。",
+    retry: "操作被拒绝。请检查原因，调整选择后重试。",
+  },
+} as const satisfies Pick<Record<deploymentCopyTranslations__SupportedLanguage, Shared_deploymentCopyTranslations.DeploymentCopyTranslations>, "zh-Hans">;
+
+return { deploymentCopyTranslations };
+})();
+
+const Domain_deploymentSettingsTranslations = (() => {
+const deploymentSettingsTranslations = {
+  "zh-Hans": {
+    ...deploymentSettingsTranslations__deploymentOperationalTranslations['zh-Hans'],
+    fleetIngressSuggestedBody: "根据机器的网络信息提供的建议。选择后才会保存；域名设置时仍会检查此路由。",
+    fleet: Shared_deploymentSettingsTranslations.fleetCopy,
+    moveToRepository: Shared_deploymentSettingsTranslations.moveToRepositoryCopy,
+    previewEditor: Shared_deploymentSettingsTranslations.previewEditorCopy,
+    restoreExtended: Shared_deploymentSettingsTranslations.restoreExtendedCopy,
+    fleetIngressTitle: "公网路由",
+    fleetIngressChoose: "选择路由",
+    fleetIngressUnobserved: "此处尚未检查域名区域或共享私有网络。请选择路由；域名设置时会进行检查。",
+    fleetIngressTunnel: "Cloudflare Tunnel",
+    fleetIngressEdge: "Caddy 边缘入口",
+    fleetIngressTunnelBody: "连接器互为备用，不分担负载。没有私有网络时，只能应对主机或连接器故障。",
+    fleetIngressEdgeBody: "通过私有网络分配流量。如果边缘机器停止运行，应用将无法访问。",
+    privateSharingTitle: "私有共享",
+    privateSharingBody: "私密共享服务。保存的更改将在下次部署时生效。",
+    privateSharingAdd: "共享服务",
+    privateSharingRepository: "编辑仓库中的 Compose 文件以私有方式发布服务，然后请智能体配置服务导出。",
+    privateSharingUnsupported: "请智能体编辑这些导出，以保留现有访问方式。",
+    privateSharingMultipleMachines: "此编辑器只能为在单台机器上运行的环境配置私有共享。",
+    privateSharingNetworkMissing: "在运行环境的机器上，打开“网络 → 私有网络”，连接 Tailscale，再加入另一应用所在的网络。",
+    privateSharingService: "服务",
+    privateSharingKey: "导出名称",
+    privateSharingPort: "容器端口",
+    privateSharingScheme: "URL 协议",
+    privateSharingNetwork: "私有网络",
+    privateSharingAddress: "主机地址",
+    privateSharingHostPort: "发布的主机端口",
+    privateSharingReview: "检查共享",
+    privateSharingReviewBody: "下次部署将绑定此主机地址和端口。其他应用随后可使用此私有导出。",
+    privateSharingInvalid: "请检查服务、导出名称、协议和两个端口。",
+    privateSharingHappierNetwork: "Happier 网络",
+    privateSharingHappierNetworkBody: "你的机器通过 Happier 私密访问它，无需 VPN。",
+    privateSharingHappierNetworkPending: "暂不可用",
+    privateSharingJoinedNetworkBody: "此网络中的应用通过其私有地址访问它。",
+    privateSharingReviewBodyHappier: "下次部署仅在此机器上发布此端口。你的其他机器通过 Happier 访问它。",
+    destinationS3: ({ region }) => `位于 ${region} 的 S3`,
+    destinationS3NoRegion: 'S3 存储',
+    destinationTest: '测试',
+    destinationReachable: '可访问 · 刚刚测试',
+    destinationRepositoryMissing: '那里没有备份 · 请检查存储桶和前缀',
+    destinationNativeFailed: '目标没有响应 · 请检查地址',
+    destinationLocked: '另一个备份正在使用它 · 完成后重试',
+    destinationPasswordIncorrect: '仓库密码不匹配',
+    destinationRetry: '测试未完成 · 重试',
+    keepTitle: '保留',
+    keepChange: '更改',
+    keepDescription:
+      '每次备份后，超出这些数量的旧备份会被移除。全部留空则保留所有备份。',
+    keepLast: '最近',
+    keepDaily: '每日',
+    keepWeekly: '每周',
+    keepMonthly: '每月',
+    keepSave: '保存',
+    keepCancel: '取消',
+    keepInvalid: '请使用大于零的整数',
+    pruneTitle: '立即移除旧备份',
+    pruneDescription: '移除超出保留数量的备份，无需等待下一次备份。',
+    pruneAction: '移除',
+    pruned: ({ count }) => `已移除 ${count} 个旧备份`,
+    prunedNothing: '没有超出保留数量的备份',
+    rolloutRecreateShort: '原地重启',
+    rolloutStartFirstShort: '先启动新副本',
+    previewsTitle: '预览',
+    previewsOn: '为新的拉取请求开启',
+    previewsOff: '关闭',
+    previewsEnrollmentUnavailable: "已保存，但新的拉取请求暂时不会获得预览",
+    previewsRunsOn: '运行于',
+    previewsAddress: '地址',
+    previewsData: '数据',
+    previewsDataOwn: '独立数据库',
+    previewsDataBranch: '数据库分支',
+    previewsDataNone: '无',
+    previewsDataParent: "分支自",
+    previewsDataParentBody: "每个拉取请求获得一个不复制数据的分支，拉取请求关闭时删除",
+    previewsDataOwnUnavailable: "独立数据库由代理设置",
+    previewsDataBranchUnavailable: "分支需要支持它的已关联数据库",
+    previewsForks: '来自分叉的拉取请求没有预览',
+    previewsProductionTarget: '预览与生产环境共用部署目标',
+    previewsDataUnavailable: '此环境尚未设置 · 请让代理设置',
+    previewsSetUpOff: '关闭 · 开启后每个拉取请求都会获得此环境的独立副本',
+    previewsNeedRepository: '预览需要代码仓库',
+    previewsNeedRepositoryBody: '此环境的定义存储在 Happier 中。预览需要从代码仓库构建每个拉取请求。',
+    previewsNoRepository: '预览需要项目的代码仓库',
+    backupNotSetUpTitle: '未备份',
+    backupNotSetUpBody: '尚未设置备份，此环境的数据不会被复制到任何地方。',
+    restoreOnFailOnBody: '未通过健康检查的部署会回到上一个正常版本',
+    restoreOnFailOffBody: '失败的部署会保持原样，直到你回滚',
+    keptBody: '保留在服务器上的版本，无需重新构建即可回滚',
+    setupTitle: '设置备份',
+    setupDestination: '备份位置',
+    setupSheetTitle: "备份存到哪里？",
+    setupSheetLead: ({ machine }: { machine: string }) => `每份备份在 ${machine} 上加密后才会发送。`,
+    setupSheetNext: "测试存储后再保存。仅初始化新仓库。",
+    setupMoreOptions: "更多选项",
+    setupNoDatabaseTitle: "请先添加数据库",
+    setupNoDatabaseBody: "备份会复制此环境运行的数据库。",
+    setupBody: "选择加密备份副本的存储位置。",
+    setupStart: '设置',
+    setupEndpoint: '端点',
+    setupBucket: '存储桶',
+    setupPrefix: '存储桶中的文件夹',
+    setupRegion: '区域',
+    setupService: '数据库服务',
+    setupSave: '保存',
+    setupCancel: '取消',
+    setupIncomplete: "请填写存储、来源和必需的已保存密钥。",
+    credentialAccessKeyId: '访问密钥 ID',
+    credentialSecretAccessKey: '秘密访问密钥',
+    credentialRepositoryPassword: '仓库密码',
+    credentialSessionToken: '会话令牌',
+    credentialMissing: '需要已保存的密钥',
+    credentialSet: '已选择已保存的密钥',
+    credentialChoose: '选择…',
+    scheduleTitle: '每晚备份',
+    scheduleOff: '关闭 · 每晚 02:00 备份、校验每个副本并按你的数量保留',
+    scheduleOn: '开启 · 每晚 02:00',
+    scheduleTurnOn: '开启',
+    setupNoDestination: '备份需要一个存放副本的地方。请先从商店添加备份存储。',
+    setupOpenStore: '打开商店',
+    setupRoleRequired: "必需的已保存密钥",
+    setupRoleOptional: '可选 · 仅当你的存储需要时',
+    setupInitializeAndSave: "初始化仓库并保存",
+    setupAnotherMachine: "另一台机器",
+    setupReceiverMachine: "目标机器",
+    setupLocalWarning: "保存在此机器上 · 不是异地副本",
+    setupLocalGrowth: "保留全部不会自动删除备份。此磁盘可能会被占满。",
+    setupCapacityKnown: "可用空间",
+    setupCapacityUnknown: "可用空间未知",
+    setupCapacityAtBackupMachine: "请在此备份路径所在的机器上查看剩余空间。",
+    credentialSshPrivateKey: "SSH 私钥",
+    addCheck: '添加检查',
+    addCheckUnavailable: '无法在此设置检查 · 请打开机器的服务页面',
+  },
+} as const satisfies Pick<Record<deploymentSettingsTranslations__SupportedLanguage, Shared_deploymentSettingsTranslations.DeploymentSettingsTranslations>, "zh-Hans">;
+
+return { deploymentSettingsTranslations };
+})();
+
+const Domain_pluginPublishTranslations = (() => {
+const pluginPublishTranslations = {
+  "zh-Hans": {
+        title: '发布插件', subtitle: '将新版本发布到 npm，让任何人都能从商店安装。',
+        templateTitle: ({ name }: { name: string }) => '发布 {name}'.replace('{name}', () => name), templateSubtitle: ({ name }: { name: string }) => '将此模板发布到 npm，让任何人都能从商店创建自己的 {name}。'.replace('{name}', () => name),
+        package: '软件包', packageDescription: '在所选机器上检查、构建并打包此项目。',
+        prepare: '检查并准备', check: '检查', build: '构建', pack: '打包', viewFiles: '查看文件',
+        listing: '商店详情', listingDescription: '用户在商店中安装前看到的信息。',
+        name: '名称', description: '描述', keywords: '关键词', keywordsHint: '用逗号分隔关键词。',
+        icon: '软件包图标', readme: 'README', versionAndNotes: '版本与更新日志', version: '版本', changelog: '更新日志',
+        patch: '补丁版本', minor: '次版本', major: '主版本',
+        npm: '发布到 npm', npmDescription: '选择保存在此机器上的注册表配置。',
+        connect: '登录 npm', change: '更改', coordinate: '软件包名称', public: '公开 · 任何人都能安装',
+        signInRequired: '发布前请选择 npm 配置。', direct: '直接发布', staged: '提交 npm 审批',
+        stageHint: '待审批版本需要维护者在 npm 上批准后才会公开。新软件包在获批前可能会显示占位页面。',
+        github: 'GitHub', githubDescription: '可选。将源代码与软件包一起保存。',
+        githubEnable: '推送源代码并创建发行版', repository: '仓库', branch: '分支', remote: 'Git 远程仓库',
+        selectedFiles: '要提交的文件', selectedFilesHint: '每行一个相对于项目的路径。仅包含这些文件。',
+        commitMessage: '提交消息', commit: '提交所选文件',
+        publish: '发布', publishReview: '公开发布已审阅的软件包，并执行所选的 GitHub 操作。',
+        prepareRequired: '请先准备软件包，以便在发布前审阅文件。',
+        preparing: '正在准备软件包…', publishing: '正在发布…', checking: '正在检查发布状态…',
+        history: '已发布版本', historyDescription: '所选软件包在 npm 上的版本。',
+        checkPublication: '检查发布状态', reviewNpm: '打开 npm 审批', openNpm: '在 npm 上打开', openGithub: '在 GitHub 上打开', retryGithub: '重试 GitHub',
+        published: '已发布到 npm', indexLag: '软件包已公开。可能需要一段时间才会出现在商店搜索中。',
+        awaitingMaintainer: '等待 npm 审批', outcomeUnknown: '无法确认发布结果',
+        outcomeUnknownBody: '再次上传前，请检查此确切版本。',
+        versionConflict: '此版本已被占用。请选择其他版本并重新准备。',
+        signInToPublish: '登录 npm 后即可发布。', versionTakenReason: '请选择 npm 中尚未存在的版本。',
+        useVersion: ({ version }: { version: string }) => '使用 {version}'.replace('{version}', () => version),
+        authenticationRequired: 'npm 需要你重新登录。', challenge: 'npm 需要额外身份验证。请打开 Connect，以私密方式继续。',
+        failed: '发布失败', cancelled: '发布已取消', missing: '此版本尚未发布。',
+        reviewRequired: '准备好的文件已更改。请在发布前审阅新报告。',
+        githubFailed: '已发布到 npm。GitHub 仍需处理。',
+        noTests: '未配置测试命令', testsPassed: '测试通过', testsFailed: '测试失败',
+        unavailable: '此项目不可用。请选择在线机器并重试。', project: '项目文件夹',
+        preview: '预览', loadMore: '加载更多', githubUnavailable: '请选择 GitHub 选项以检查此项目。',
+        npmProfile: 'npm 配置', publicationMode: '发布方式', readDraft: '读取发布草稿', patchDraft: '编辑发布草稿',
+        chooseIcon: '选择图片', iconPng: 'PNG 图片。准备时会包含在软件包中。', iconPickFailed: '无法打开图片。请重新选择。',
+        continueGithub: '继续使用 GitHub', githubSelectionRequired: '请选择仓库、分支以及要执行的 GitHub 发布操作。',
+        githubHistory: '加载 GitHub 发行版', githubHistoryUnavailable: '无法加载 GitHub 发行版。',
+        githubHistoryIncomplete: '部分发行版或详情已省略。可用时请加载更多。', githubHistoryEmpty: '暂无 GitHub 发行版。',
+        scaffoldSource: '让代理为此源代码搭建结构',
+        scaffoldPrompt: '使用面向插件作者的公开脚手架工作流程，将现有插件源代码转换为可发布的插件软件包。保留现有源代码，并在生成的软件包中使用它。',
+        githubOptions: '选择 GitHub 选项', githubUnavailableReason: '此项目无法使用 GitHub。',
+        pushSource: '推送源代码', createRelease: '创建 GitHub 发行版', createRepository: '创建仓库',
+        repositoryName: '仓库名称', repositoryOwner: '仓库所有者', noIconResources: '请在项目中添加随软件包分发的 PNG 资源，以便选择图标。',
+        ready: '就绪', passed: '通过', notConfigured: '未配置', machineRequired: '选择一台机器来准备和发布。', notRun: '尚未运行', running: '运行中…',
+        githubReviewUnknown: '重试未确认的操作前，请在 GitHub 上检查仓库和发行版。',
+    },
+} as const;
+
+return { pluginPublishTranslations };
+})();
+
+const Domain_botTemplateTranslations = (() => {
+const botTemplateTranslations = {
+  "zh-Hans": Shared_botTemplateTranslations.copy(["Bot模板", "提供副本", "创建他人可用来创建自己 Bot 的模板", "审核模板", "包含的内容", "指令", "首个任务", "发布版本", "发布说明", "副本接收者", "私有草稿", "已共享", "正在保存…", "未保存的更改", "已保存", "编辑内容已保留。请重试保存。", "已保存其他修订版。请先审核再覆盖更改。", "审核其他修订版", "将此修订版用作保存基准", "模板不可用", "模板 · 基于{name}创建", "作者 {author} · {version} · {sharing}", "离开前保存吗？编辑内容会保留在此账户打开的草稿中，直到关闭应用。", "保留编辑并离开", "已排除", "描述", "私有"], "zh-Hans"),
+} as const satisfies Pick<Record<botTemplateTranslations__SupportedLanguage, Shared_botTemplateTranslations.BotTemplateTranslations>, "zh-Hans">;
+
+return { botTemplateTranslations };
+})();
+
+const Domain_botTemplateRecipientTranslations = (() => {
+const botTemplateRecipientTranslations = {
+  "zh-Hans": Shared_botTemplateRecipientTranslations.copy(['创建我的副本', '创建Bot', '模板来源', '已接受版本 {version}', '关注模板更新', '独立副本', '记忆规则', '技能', '需求', '必需', '可选', '输入', '可执行', '二进制 · Base64', '下载', "模板已更改。创建副本前请查看当前版本。", "选择副本的运行位置。创建后，Bot将按照模板指令启动。"], 'zh-Hans'),
+} as const satisfies Pick<Record<botTemplateRecipientTranslations__SupportedLanguage, ReturnType<typeof Shared_botTemplateRecipientTranslations.copy>>, "zh-Hans">;
+
+return { botTemplateRecipientTranslations };
+})();
+
+const Domain_botFaceNameTranslations = (() => {
+const botFaceNameTranslations = {
+  "zh-Hans": {
+    accountDefault: '账户默认值',
+    bodies: { crab: "螃蟹", squid: "鱿鱼", octopus: "章鱼", ufo: "飞碟", specter: "魅影", ghost: "幽灵", beetle: "甲虫", spider: "蜘蛛", jelly: "水母", hopper: "跳跳", pup: "小狗", drone: "无人机", robot: "机器人", walker: "行者", rocket: "火箭", feet: "小脚", tail: "尾巴", drip: "水滴", bracelegs: "花括号腿", tagclaws: "标签钳", cursortail: "光标尾巴", termbody: "终端", antlers: "分支鹿角", semi: "分号", brackets: "括号", cursor: "光标", bean: "豆子", squat: "矮墩", bag: "袋子", loaf: "面包", puddle: "水洼", tower: "高塔", stilts: "高跷", tall: "高个", cat: "猫" },
+    colours: { daybreak: "破晓", lagoon: "泻湖", orchid: "兰花", aurora: "极光", indigo: "靛蓝", glacier: "冰川", moss: "苔藓", sand: "沙色", ink: "墨色" },
+  },
+} as const satisfies Pick<Readonly<Record<string, Shared_botFaceNameTranslations.BotFaceNames>>, "zh-Hans">;
+
+return { botFaceNameTranslations };
+})();
+
+const Domain_screenCaptureTranslations = (() => {
+const screenCaptureCopy = {
+  "zh-Hans": {
+    privacy: { hiddenTagsTitle: "私密会话标签", hiddenTagsDescription: "录制期间或开启共享隐私时，具有这些标签的会话不会显示在列表中。" },
+    recording: {
+      systemSelectionTitle: '选择窗口或屏幕',
+      systemSelectionReason: '系统将打开来源选择器。此桌面会话不支持区域录制。',
+      pipewireUnavailable: 'PipeWire 捕获不可用。请安装 GStreamer PipeWire 插件后重试。',
+      videoEncoderUnavailable: 'VP8 编码器不可用。请安装 GStreamer VP8 插件后重试。',
+      videoMuxerUnavailable: 'WebM 写入器不可用。请安装 GStreamer WebM 插件后重试。',
+      videoDecoderUnavailable: '无法解码录制内容以进行裁剪。请安装 GStreamer VP8 和 Matroska 插件后重试。',
+      cursorUnavailable: '系统来源选择器无法包含光标。请使用支持光标捕获的桌面门户。',
+      videoPipelineUnavailable: '缺少所需的 GStreamer 视频组件。请安装视频插件后重试。',
+      title: "录制",
+      pause: "暂停",
+      resume: "继续",
+      stop: "停止录制",
+      stopShort: "停止",
+      hideControl: "隐藏并继续录制",
+      saving: "正在保存录制…",
+      discarded: "录制已丢弃",
+      play: "播放",
+      afterTrim: ({ time }: Readonly<{ time: string }>) => `修剪后 ${time}`,
+      marksOnPausedFrame: "标记显示在暂停的画面上", theAgent: "智能体",
+      keyFrames: ({ agent, count }: Readonly<{ agent: string; count: number }>) => count === 1
+        ? `${agent}会收到 1 张带有备注和标记的关键帧`
+        : `${agent}会收到 ${count} 张带有备注和标记的关键帧`,
+      withVideo: "会话中的人也会收到视频。",
+      withoutVideo: "视频保留在这里。",
+      blurredVideo: "视频保留在这里，因为它显示了你模糊的内容。",
+      includeBlurredQuestion: "视频显示了你在画面上模糊的内容。仍要包含吗？",
+      keepVideoOff: "不包含",
+      includeAnyway: "仍然包含",
+      leaveOut: "不包含",
+      includeVideo: "包含视频",
+      trimStart: "修剪起点",
+      trimEnd: "修剪终点",
+      timeline: "时间线",
+      pins: "时间线上的备注和标记",
+      resetTrim: "重置修剪",
+      continue: "继续", failedReason: "视频保存前已停止。没有发送任何内容。", failedTitle: "录制已停止", openingTitle: "正在打开录制…", openFailedTitle: "录制未能打开", openFailedReason: "Happier 无法读取视频文件。裁剪、标记和备注都已保留。", mediaFailed: "无法读取视频", commitFailed: "此画面上的标记未保存",
+    },
+    attach: { capture: "捕获屏幕", record: "录制屏幕" },
+    recent: { refresh: "刷新", chooseFile: "选择文件…", chooseFolder: "选择文件夹…", loadFailed: "无法读取截图文件夹", operationFailed: "操作未成功。捕获仍在这里。", folderMissing: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `找不到 ${folder}`, folderDenied: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `Happier 无权打开 ${folder}`, folderUnreadable: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `无法读取 ${folder}`, folderNotWatched: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `${folder} 不会自动更新`, title: "最近的捕获", attach: "附加", search: "搜索捕获", empty: "文件夹中还没有捕获" },
+    chooser: { title: "发送到会话", attachTo: "附加到", search: "搜索会话", openInHappier: "已在 Happier 中打开", recent: "最近", newSession: "新建会话…", moveHint: "选择", sendHere: "发送到此处", copyHere: "复制到此处", empty: "没有匹配的会话" },
+    windowText: { frontmostLabel: ({ app, count }: Shared_screenCaptureTranslations.Copy<"app" | "count">) => `最前面窗口的文字 · ${app} · ${count} 个词`,
+      label: ({ app, count }: Shared_screenCaptureTranslations.Copy<"app" | "count">) => `整个窗口的文本 · ${app} · ${count} 个词`,
+      partialLabel: ({ app, count }: Shared_screenCaptureTranslations.Copy<"app" | "count">) => `部分窗口文本 · ${app} · ${count} 个词`,
+      words: ({ count }: Shared_screenCaptureTranslations.Copy<"count">) => `${count} 个词`,
+      reading: "正在读取窗口文本…", empty: "此窗口中没有文本", unavailable: "窗口文本不可用", view: "查看",
+      sheetDescription: ({ app }: Shared_screenCaptureTranslations.Copy<"app">) => `${app} 窗口中所有可读内容，包括捕获范围之外的内容。它会以文本形式随图片发送，方便代理引用。`,
+      dontInclude: "不包含", lockedTitle: "整个窗口的文本已关闭", lockedBody: "你模糊了捕获的一部分，而窗口文本会显示它。如果仍然需要，请重新打开。",
+      includeTitle: "文本包含你模糊的内容", includeBody: "窗口文本可能仍包含你模糊的内容。图片无论如何都会保持模糊。", keepOff: "保持关闭", includeText: "包含文本",
+      permissionTitle: "允许 Happier 读取窗口文本", permissionBody: "macOS 只询问一次。开启期间，Happier 只读取你捕获的整个窗口的文本。", permissionOpen: "打开 隐私与安全性 › 辅助功能", permissionEnable: "开启 Happier", permissionWaiting: "正在等待权限… 将自动开启",
+    },
+    settings: { includeWindowShadow: "包含窗口阴影", windowShadowDescription: "窗口截图包含 macOS 阴影和透明边距。", windowShadowUnavailable: "适用于 macOS 14 或更新版本。", screenFor: "用于捕获屏幕", windowTextFor: "用于读取所捕获窗口的文字", title: '屏幕捕获', captureShortcut: '捕获快捷键', instantWindowShortcut: '即时窗口捕获快捷键', recordingShortcut: '录制快捷键', sound: '捕获声音', includeWindowText: '默认包含窗口文本', folder: '捕获文件夹', description: "在任何地方按下快捷键，标注捕获的内容并发送到会话。", notSet: "未设置", notOnWayland: "Wayland 上暂不可用", conflict: "另一个应用正在使用此快捷键。之前的快捷键仍然有效。", refused: "系统拒绝了此快捷键。之前的快捷键仍然有效。", soundDescription: "捕获到达时的短促提示音，跟随系统静音设置。", windowTextDescription: "新捕获默认包含窗口文本。模糊操作会将其关闭。", changeFolder: "更改…", permissionsTitle: "权限", permissionsDescription: "系统允许 Happier 做什么，以及代理需要询问什么。", screenPermission: "屏幕录制", accessibilityPermission: "辅助功能", approvals: "代理审批", approvalsDescription: "代理捕获屏幕前是否需要询问" },
+    selection: { releaseRecording: "松开即可录制", label: "选择要捕获的内容", modeLabel: "捕获类型", screenshot: "截图", recording: "录制", instruction: "拖动选择区域、点击窗口或按 R", keyboardPosition: "方向键移动 · Enter 确定第一个角", keyboardRegion: "方向键调整 · Enter 截图", release: "松开即可捕获" },
+    window: { pickAnotherSession: "选择其他会话",
+      title: "捕获", notePlaceholder: "为智能体添加备注(可选)", chooseSession: "选择会话", sameAsLastCapture: "与上次捕获相同", nativeTitle: ({ subject }: Shared_screenCaptureTranslations.Copy<"subject">) => `Happier 捕获 — ${subject}`, region: "区域",
+      sendTo: ({ session, machine }: Shared_screenCaptureTranslations.Copy<"session" | "machine">) => `发送到 ${machine} 上的 ${session}`,
+      wholeWindowText: "整个窗口的文本", addToDraft: "添加到草稿", send: "发送", discard: "放弃", copy: "复制图片", showInFolder: "在文件夹中显示", more: "更多",
+      attachRecent: "附加最近的捕获", copyWindowText: "复制窗口文本", settings: "捕获设置", justNow: "刚刚", flattenFailed: "无法将标记应用到图片",
+      unreachable: ({ machine }: Shared_screenCaptureTranslations.Copy<"machine">) => `无法连接 ${machine}`, lastSeen: ({ time }: Shared_screenCaptureTranslations.Copy<"time">) => `最后在线 ${time}`,
+      addOrPick: "将捕获添加到草稿,或", pickAnother: "选择其他会话",
+    },
+    permission: { drag: "把 Happier 拖到列表中", title: "允许 Happier 捕获屏幕", reason: "macOS 只询问一次。只有当你按下快捷键或在菜单栏中选择“捕获屏幕”时,Happier 才能看到你的屏幕。", reasonWithShortcut: ({ shortcut }: Shared_screenCaptureTranslations.Copy<"shortcut">) => `macOS 只询问一次。只有当你按下 ${shortcut} 或在菜单栏中选择“捕获屏幕”时,Happier 才能看到你的屏幕。`, waiting: "正在等待权限…", openSettings: "打开系统设置", notNow: "暂不", where: "在“隐私与安全性 › 屏幕与系统音频录制”中打开 Happier。macOS 可能会要求你重新打开 Happier。", allowed: ({ shortcut }: Shared_screenCaptureTranslations.Copy<"shortcut">) => `已允许 · 按 ${shortcut} 开始捕获`, reopenNeeded: "如果你刚允许了 Happier，请重新打开它以生效", reopen: "重新打开 Happier" },
+    failed: { title: "未收到捕获", reason: "捕获工具已关闭,未交付图片。没有发送任何内容。", tryAgain: "重试" },
+    pill: { notAdded: "未添加到草稿", notStarted: "新会话未能启动", notPrepared: "无法准备截图",
+      starting: "正在打开新会话…", started: "已在新会话中就绪",
+      sending: ({ session }: Shared_screenCaptureTranslations.Copy<"session">) => `正在发送到 ${session}…`, adding: "正在添加到草稿…", sent: ({ session }: Shared_screenCaptureTranslations.Copy<"session">) => `已发送到 ${session}`,
+      added: ({ number }: Readonly<{ number: number }>) => `已作为图片 #${number} 添加到草稿`,
+      waiting: ({ session, count }: Readonly<{ session: string; count: number }>) => `${session} · ${count} 个捕获等待中`,
+      failed: "未发送", failedDetail: "草稿已保留全部内容", discarded: "已放弃捕获", open: "打开", edit: "编辑",
+    },
+  },
+} as const;
+
+return { screenCaptureCopy };
+})();
+
+const Domain_deploymentCreationReviewTranslations = (() => {
+const deploymentCreationReviewTranslations = {
+  "zh-Hans": {
+    title: '部署方式',
+    description: '创建前请先确认。',
+    create: '创建环境',
+    buildsOn: ({ machine }) => `在 ${machine} 上构建`,
+    deploysFrom: ({ machine }) => `从 ${machine} 运行部署`,
+    keepsPrevious: ({ count }) =>
+      count === 0 ? '不保留用于回滚的旧版本' : `保留 ${count} 个旧版本用于回滚`,
+    fromExplicit: '你的选择',
+    fromProject: '来自项目',
+    fromAccount: '来自你的账户',
+    fromBuiltin: 'Happier 默认值',
+  },
+} as const satisfies Pick<Record<deploymentCreationReviewTranslations__SupportedLanguage, Shared_deploymentCreationReviewTranslations.DeploymentCreationReviewCopy>, "zh-Hans">;
+
+return { deploymentCreationReviewTranslations };
+})();
+
+const Domain_deploymentPlatformLinkTranslations = (() => {
+const deploymentPlatformLinkTranslations = {
+  "zh-Hans": {
+    detachLead: ({ name, platform }) => `将 ${name} 与 Happier 分离，并保留在 ${platform} 上。`,
+    detachBody: ({ platform }) => `工作负载会继续在 ${platform} 上运行，保留数据并持续产生费用。要停止或删除它，请在 ${platform} 中操作。`,
+    removalTitle: ({ resource }) => `取消关联或删除 ${resource}`,
+    removalLead: ({ resource, platform }) => `${resource} 运行在 ${platform} 上。保留它，或在 ${platform} 上删除。`,
+    keepTitle: ({ platform }) => `保留在 ${platform}`,
+    keepBody: ({ resource, platform }) => `${resource} 会继续在 ${platform} 上运行，保留数据并产生费用。Happier 不再向其部署。`,
+    keepBodyData: ({ resource, platform }) => `${resource} 会保留在 ${platform} 上，包括数据和费用。Happier 不再管理它。`,
+    deleteTitle: ({ platform }) => `在 ${platform} 上删除`,
+    deleteBody: ({ resource, platform }) => `${platform} 将删除 ${resource}。此操作无法撤销。`,
+    deleteConsequence: ({ resource, platform }) => `在 ${platform} 上删除 ${resource}？`,
+    typeToDelete: ({ resource }) => `输入 ${resource} 以删除`,
+    confirmDelete: ({ resource }) => `删除 ${resource}`,
+    confirmDeleteWithEnvironment: ({ name, resource }) => `删除 ${name} 和 ${resource}`,
+    createOnMachine: "创建所用机器",
+    finishLinkingOnMachine: "完成关联所用机器",
+    openProvider: "在提供商中打开",
+    recoveryUnavailable: "无法获取创建结果",
+    modeExisting: "使用现有资源",
+    modeCreate: "新建",
+    create: ({ platform }) => `创建并关联 ${platform}`,
+    createConsequences: `创建资源。提供商可能收费。所选控制器使用此处显示的已连接账户。`,
+    provisioned: "资源已创建；关联未完成",
+    created: "项目已创建并关联",
+    branchSet: ({ branch }) => `生产分支：${branch}。`,
+    branchDefaultKept: ({ branch, requestedBranch }) => `生产分支仍为 ${branch}。无法设置 ${requestedBranch}；请在提供商处修改。`,
+    branchUnconfirmed: ({ requestedBranch }) => `更新为 ${requestedBranch} 尚未确认。提供商可能仍在使用仓库的默认分支；请在提供商处检查。`,
+    finishLinking: "完成关联",
+    outcomeUnknown: "提供商尚未确认创建是否完成",
+    outcomeUnknownBody: "选择其他资源前，请先检查提供商。Happier 不会再次创建此资源。",
+    duplicate: "此提供商范围已关联",
+    useExisting: "使用现有环境",
+    chooseAnother: "选择其他范围",
+    accessTitle: "部署访问权限",
+    deploysUse: ({ principal, platform }) => `部署使用 ${principal} 的 ${platform} 访问权限`,
+    personalAccessDependency: "此个人连接必须保持可用。删除连接或失去提供商访问权限会阻止后续部署。",
+    teamAccessDependency: "部署依赖此团队凭据保持可用并保留提供商访问权限。",
+    providerAccount: "提供商账户或团队",
+    providerProject: "提供商项目",
+    providerScope: "提供商环境",
+    sourceManifest: "源码清单",
+    providerBuild: "在平台构建",
+    controllerBuild: "在控制器构建",
+    buildImage: "构建容器",
+    buildToolchain: "构建工具链",
+    buildOutputManifest: "构建输出清单",
+    sourceMethod: "部署方式",
+    gitIntegration: "Git 集成",
+    upload: "上传",
+    gitIntegrationBody: "平台从已连接的仓库读取已审核的提交。",
+    uploadBody: "Happier 通过控制器发送已审核的提交，无需平台的 Git 访问权限。",
+    title: ({ name }) => `将 ${name} 部署到平台`,
+    lead: '关联你在托管平台上已有的项目。关联不会在那里做任何更改；下一次部署才会。',
+    add: '添加平台',
+    usePlatform: '使用平台',
+    platform: '平台',
+    loading: '正在查找平台…',
+    failed: '无法加载平台',
+    empty: '没有已开启的平台',
+    emptyBody: '在插件中开启一个部署插件即可关联平台。',
+    check: '检查',
+    checkAgain: '再次检查',
+    link: ({ platform }) => `关联 ${platform}`,
+    ready: '可以关联',
+    needsGit: '此项目还看不到你的仓库',
+    needsGitBody: '授予访问权限后再次检查。',
+    repositoryRequired: '此来源需要仓库',
+    repositoryRequiredBody: '请为此来源连接仓库，然后重新检查。',
+    grant: '授予访问权限',
+    refused: '无法检查此项目',
+    linkRefused: '无法关联此项目',
+    onMachine: '一台机器',
+    platformLater: '创建后即可选择平台上的项目。',
+    deploysFrom: '部署来源',
+    onPlatformTitle: ({ platform }) => `在 ${platform} 上`,
+    onPlatformBody: '接下来选择账户和项目。关联不会部署任何内容。',
+    platformBuilds: '平台会按你选择的分支构建此项目的仓库。',
+    managersOnly: '只有此环境的管理者可以关联平台。',
+    refusedRemedy: '请核对所选的账户和项目，然后再次检查。',
+    nothingDeployedBody: '首次部署会在你关联的平台上构建此分支。',
+    deployNoPlatform: '此环境还没有可部署到的平台项目。',
+    connectTitle: ({ platform }) => `连接 ${platform} 以在此部署`,
+    connectBody: ({ platform }) => `Happier 会将此环境关联到一个 ${platform} 项目，并在关联前检查你的令牌能做什么，告诉你还缺少哪些权限。`,
+    connectAction: ({ platform }) => `添加 ${platform} 令牌`,
+    choicesFailed: ({ platform }) => `无法读取你的 ${platform} 选项`,
+    choicesFailedBody: "请确认该连接能看到你的项目，然后重试。",
+    connection: "连接",
+    hostNeedsSetup: ({ machine }) => `${machine} 尚未设置为可托管部署`,
+    hostSetupBody: "在任何操作运行前，你都会审核每项更改。保存此环境可以等到那时再进行。",
+    hostSetupAction: ({ machine }) => `设置 ${machine}`,
+    hostReviewAction: ({ machine }) => `查看 ${machine} 的设置`,
+    hostUnchecked: ({ machine }) => `无法检查 ${machine} 是否可以托管部署`,
+  },
+} as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "zh-Hans">;
+
+return { deploymentPlatformLinkTranslations };
+})();
+
+const Domain_deploymentPromotionTranslations = (() => {
+const deploymentPromotionTranslations = {
+  "zh-Hans": {
+    open: '提升至…', title: '提升部署', lead: ({ name, version }) => `选择将 ${name} 的 ${version} 部署到哪里。`,
+    destination: '目标环境', image: '已构建产物', imageBody: '在你服务器上的另一个已保存 Compose 环境中，复用此已保存 Compose 部署的镜像。',
+    emptyTitle: '选择其他环境',
+    emptyBody: '创建或关联目标环境，然后重试。', loadFailed: '无法加载环境', refused: '无法提升部署', review: '检查提升',
+    missingOne: ({ destination, name }) => `${destination} 没有设置 ${name}`, missingMany: ({ destination, count }) => `${destination} 有 ${count} 个变量未设置`,
+    missingBodyOne: ({ source, destination }) => `${source} 设置了它。如果此版本会读取它，请先添加到 ${destination}。`,
+    missingBodyMany: ({ source, destination }) => `${source} 设置了它们。如果此版本会读取它们，请先添加到 ${destination}。`,
+    missingAdd: ({ destination }) => `添加到 ${destination}…`, compareFailed: ({ destination }) => `无法与 ${destination} 比较变量`,
+  },
+} as const satisfies Pick<Record<deploymentPromotionTranslations__SupportedLanguage, Shared_deploymentPromotionTranslations.PromotionCopy>, "zh-Hans">;
+
+return { deploymentPromotionTranslations };
+})();
+
+const Domain_fileEditingTranslations = (() => {
+const fileEditingTranslations = {
+  "zh-Hans": {
+    aiSuggestions: { ...fileEditingTranslations__fileAiSuggestionsTranslations['zh-Hans'], ...fileEditingTranslations__fileAiSuggestionControls['zh-Hans'], ...fileEditingTranslations__fileNextEditTranslations['zh-Hans'] },
+    statusEditing: '编辑中',
+    statusUnsaved: '未保存',
+    statusSaving: '正在保存',
+    statusSaved: '已保存',
+    discardEdits: '放弃编辑',
+    conflictByAgent: ({ agent }) => `${agent} 修改了此文件。`,
+    conflictOnDisk: '此文件在磁盘上已更改。',
+    editsKept: '你的编辑已保留。',
+    useMine: '使用我的',
+    useAgents: ({ agent }) => `使用 ${agent} 的`,
+    useTheirs: '使用磁盘上的',
+    offline: ({ machine }) =>
+      `${machine} 没有响应。你的编辑保留在此设备上；它恢复后再保存。`,
+    offlineSaving: ({ machine }) =>
+      `${machine} 没有响应。你的编辑保留在此设备上，它恢复后会自动保存。`,
+    backOnline: ({ machine }) => `${machine} 已恢复。你的编辑可以保存了。`,
+    awaitingApproval: '正在等待保存批准。你的编辑已保留。',
+    saveFailed: '无法保存。你的编辑已保留。',
+    draftNotStored: '你的编辑未存储在此设备上。保存以保留它们。',
+    lineEndings: ({ ending }) => `行尾将保存为 ${ending}。`,
+    editsSetAside: '你的编辑已暂存',
+    agentVersionReplaced: ({ agent }) => `${agent} 的版本已被替换`,
+    diskVersionReplaced: '磁盘上的版本已被替换',
+    dismissNotice: '关闭',
+    placesDiffer: ({ count }) => `${count} 处不同。`,
+    useAllMine: '全部使用我的',
+    useAllAgents: ({ agent }) => `全部使用 ${agent} 的`,
+    useAllTheirs: '全部使用磁盘上的',
+    backToEditing: '返回编辑',
+    placeLine: ({ line }) => `第 ${line} 行`,
+    placeLines: ({ start, end }) => `第 ${start}–${end} 行`,
+    onlyAgentChanged: ({ agent }) => `只有 ${agent} 修改了`,
+    onlyDiskChanged: '只有磁盘上的版本修改了',
+    yoursVsAgents: ({ agent }) => `你的 vs ${agent} 的`,
+    yoursVsDisk: '你的 vs 磁盘上的',
+    usingAgents: ({ agent }) => `使用 ${agent} 的`,
+    usingTheirs: '使用磁盘上的',
+    usingMine: '使用我的',
+    replacedLines: ({ count }) => `替换了 ${count} 行`,
+    addedLines: ({ count }) => `添加了 ${count} 行`,
+    removedLines: ({ count }) => `删除了 ${count} 行`,
+    youEditedThisChange: '你编辑过此更改',
+    nextChange: '下一个更改',
+    previousChange: '上一个更改',
+    changes: '更改',
+    hideKeyboard: '隐藏键盘',
+    indent: '缩进',
+    outdent: '减少缩进',
+    moveLeft: '向左移动',
+    moveRight: '向右移动',
+    insertText: ({ text }) => `插入 ${text}`,
+    editorKeys: '编辑器按键',
+      redo: '重做',
+  },
+} as const satisfies Pick<Record<
+  | 'en'
+  | 'ca'
+  | 'de'
+  | 'es'
+  | 'fr'
+  | 'it'
+  | 'ja'
+  | 'pl'
+  | 'pt'
+  | 'ru'
+  | 'zh-Hans'
+  | 'zh-Hant',
+  Shared_fileEditingTranslations.FileEditingTranslations
+>, "zh-Hans">;
+
+return { fileEditingTranslations };
+})();
+
+const Domain_usageChartInputTranslations = (() => {
+const usageChartInputTranslations = {
+  "zh-Hans": { commandChoose: "选择行", commandValues: "图表数值", commandValuesInput: "不输入参数时读取所有区间。使用bucket（从零开始的索引）和mode（read, select, toggle, hover, scrub）读取或固定一个区间。返回精确标题、总计和各行。", commandChooseInput: "使用row（图表数值返回的id）选择固定区间中的一行。",
+    inputColourBy: '着色依据', inputIntensity: '强度', inputLeadingAgent: '领先智能体', inputDay: '日期',
+    inputPlanets: '期间行星', inputThread: '连续记录之线', inputSkyline: '每周天际线', inputSurface: '表面上的日子',
+    inputRings: '连续记录之环', inputPeriodOrbit: '环绕期间', inputMoons: '卫星', inputGalaxy: '会话星系',
+    inputCalendar: '日历', inputWeekdayHour: '星期 / 小时', inputSky: '每日星空', inputWeekTide: '每周潮汐', inputDaylight: '日光',
+    inputLanes: '泳道', inputDial: '表盘', inputTimeline: '机器时间线', inputCrew: '团队', inputRiver: '智能体之河',
+    inputShipped: '已交付', inputPersonalRecords: '个人纪录', inputSteering: '按智能体统计指令' },
+} as const;
+
+return { usageChartInputTranslations };
+})();
+
+const Domain_usageChartPlanetFamilyTranslations = (() => {
+const usageChartPlanetFamilyTranslations = {
+  "zh-Hans": Shared_usageChartPlanetFamilyTranslations.block({
+    levelColumn: '活跃度',
+    weekColumn: '周',
+    activeDaysColumn: '活跃天数',
+    shareColumn: '占比',
+    daysColumn: '天数',
+    peakColumn: '同时运行',
+    kindColumn: '机器',
+    countColumn: '数量',
+    weekdayInitials: '一,二,三,四,五,六,日',
+    streakBestDays: ({ count }) => `最长 · ${count} 天`,
+    streakNowDays: ({ count }) => `当前 ${count} 天`,
+    streakOngoingBest: ({ count }) => `${count} 天 · 本期最长`,
+    daysLit: ({ count, total }) => `${total} 天中有 ${count} 天点亮`,
+    partialWeek: ({ from, to }) => `${from}–${to} · 部分周`, noStreakRings: '本期没有连续三天或以上的记录',
+    moonsCaption: '每个智能体是一颗月亮，大小代表占比。',
+    moonsCaptionDays:
+      '每个智能体是一颗月亮，大小代表占比，亮面代表工作的天数。',
+    machinesUnavailable:
+      '尚未记录机器类型。Happier 能识别每个智能体运行的机器类型后会在此显示。',
+    machinesEmpty: '本期没有机器运行智能体。',
+    machineKindUnknown: '未知类型',
+    projectsEmpty: '尚未关联公开项目。',
+    atmosphereFirstWeek: '第 1 周',
+    atmosphereCaption: '同时运行的智能体越多的周，光晕越浓；第 1 周在顶部。',
+    atmosphereCaptionPeak: ({ count }) =>
+      `同时运行的智能体越多的周，光晕越浓；本期最多同时 ${count} 个。`,
+  }),
+} as const;
+
+return { usageChartPlanetFamilyTranslations };
+})();
+
+const Domain_fileSelectionAskTranslations = (() => {
+const fileSelectionAskTranslations = {
+  "zh-Hans": { ask: '询问', comment: '评论', copy: '复制', toolbarLabel: '所选内容', moreWaysToAsk: '其他询问方式', lineCount: ({ count }: { count: number }) => `${count} 行`, sideRun: '在独立运行中询问', targetTitle: '不创建会话直接询问', targetDescription: '选择未打开会话时文件问题的打开位置。', detachedRun: '独立运行', newSession: '新会话' },
+} as const;
+
+return { fileSelectionAskTranslations };
+})();
+
+const Domain_fileTrackTranslations = (() => {
+const fileTrackTranslations = {
+  "zh-Hans": { track: '跟随', tracking: '跟随中', paused: '已暂停', resume: '继续', turnOnA11y: ({ agent }: { agent: string }) => `跟随 ${agent} 的编辑`, turnOffA11y: ({ agent }: { agent: string }) => `停止跟随 ${agent} 的编辑`, resumeA11y: ({ agent }: { agent: string }) => `继续跟随 ${agent} 的编辑`, writing: '正在写入', watch: '查看', agentWorking: ({ agent }: { agent: string }) => `${agent} 正在工作`, view: '查看', needsYou: '需要你', caretA11y: ({ agent }: { agent: string }) => `${agent} 正在这里写入` },
+} as const;
+
+return { fileTrackTranslations };
+})();
+
+const Domain_actionPresentationTranslations = (() => {
+const actionPresentationTranslations = {
+  "zhHans": Shared_actionPresentationTranslations.copy({ title: '创建文档公开链接', named: name => `为“${name}”创建公开链接？`, summary: '任何拥有此链接的人都可以阅读该文档。' }, { change: ({ name, kind }) => `为所有工作更改“${name}”（${kind}）。`, reset: ({ name, kind }) => `移除对“${name}”（${kind}）的更改并使用原始设置。` }, { now: '立即', afterIdle: '空闲后', start: '启动', stop: '停止', suspend: '挂起', resume: '恢复', delete: '删除', external: '现有服务器', managedLocal: '由 Happier 管理的网关' }, {
+        destinations: { transcript: "将可视内容复制到此会话的对话中。", board: "将可视内容复制到此会话的看板上。", both: "将可视内容复制到此会话的对话和看板上。" },
+        origins: origins => `副本保留对 ${origins} 的网络访问权限。`,
+        open: "副本保留访问任意网站的网络权限。",
+    }),
+} as const;
+
+return { actionPresentationTranslations };
+})();
+
+const Domain_fileReviewNoteTranslations = (() => {
+const fileReviewNoteTranslations = {
+  "zh-Hans": {
+        discard: ({ paths, count }) => `你放弃了 ${paths} 中的${count === null ? '' : ` ${count} 项`}更改`,
+        restore: ({ paths }) => `你将 ${paths} 恢复到了之前的状态`,
+        restoreBeforeTurn: ({ paths, turn }) => `你将 ${paths} 恢复到了${turn}之前`,
+        undoDiscard: ({ paths }) => `你撤销了对 ${paths} 的更改放弃操作`,
+        undoRestore: ({ paths }) => `你撤销了对 ${paths} 的恢复操作`,
+        undo: ({ paths }) => `你撤销了对 ${paths} 的审查操作`,
+    },
+} as const satisfies Pick<Record<string, Shared_fileReviewNoteTranslations.Labels>, "zh-Hans">;
+
+return { fileReviewNoteTranslations };
+})();
+
+const Domain_composerReferenceTranslations = (() => {
+const composerReferenceTranslations = {
+  "zh-Hans": { imageNumber: ({ number }) => `图片 #${number}`, imageAccessibility: ({ number, name }) => `图片 ${number}，${name}`, attachmentRemoved: '附件已移除', open: '打开', removeFromMessage: '从消息中移除', kindSession: '会话', kindFolder: '文件夹', kindSkill: '技能', kindPlugin: '插件', kindWorkflow: '工作流', kindWidget: '小组件', unavailableDetail: '暂时不可用，将以名称发送。', removedDetail: '其附件已移除，发送时不会包含。', hintMention: '提及', kindFile: "文件", tabAll: "全部", hintNextKind: "下一类", noMatches: ({ query }) => `没有与“${query}”匹配的结果`, nothingToMention: "暂时没有可提及的内容", noMatchesDetail: "换个词试试，或把项目拖到这里。" },
+} as const satisfies Pick<Record<string, Shared_composerReferenceTranslations.Labels>, "zh-Hans">;
+
+return { composerReferenceTranslations };
+})();
+
+const Domain_hunkReviewTranslations = (() => {
+const hunkReviewTranslations = {
+  "zh-Hans": {
+    change: ({ n }) => `更改 ${n}`,
+    line: ({ line }) => `第 ${line} 行`,
+    lines: ({ start, end }) => `第 ${start}–${end} 行`,
+    kept: '已保留',
+    keep: '保留',
+    keepUnavailable: '暂时无法保留更改。请重新打开此审查后重试。',
+    discard: '放弃',
+    keepA11y: ({ n, total, range }) =>
+      `保留第 ${n} 项更改（共 ${total} 项），${range}`,
+    unkeepA11y: ({ n, total, range }) =>
+      `将第 ${n} 项更改（共 ${total} 项，${range}）标记为未审查`,
+    discardA11y: ({ n, total, range }) =>
+      `放弃第 ${n} 项更改（共 ${total} 项），${range}`,
+    counter: ({ current, total }) => `${current} / ${total}`,
+    changes: () => String('项更改'),
+    previousChange: '上一项更改',
+    nextChange: '下一项更改',
+    keepAll: '全部保留',
+    fileReviewed: '此文件的所有更改均已审查',
+    filesLeft: ({ count }) => `还剩 ${count} 个文件`,
+    viewed: '已查看',
+    viewedChanged: '查看后有更改',
+    viewedNotSaved: '未保存到 GitHub',
+    viewedA11y: ({ name }) => `${name}，已在 GitHub 查看`,
+    viewedCount: ({ count, total }) => `已查看 ${count} / ${total}`,
+    viewedUnavailable: '无法读取已查看状态',
+    nextFile: '下一个文件',
+    nextNamed: ({ name }) => `下一个 · ${name}`,
+    scopeA11y: '要显示的更改',
+    scopeTurn: '本轮',
+    scopeSession: '本会话',
+    scopeUncommitted: '未提交',
+    noTurnChanges: '此文件中没有本轮的更改。',
+    noChanges: '此文件没有更改。',
+    showSession: '显示本会话',
+    discardNeeds: ({ machine }) => `放弃需要 ${machine}`,
+    agentWriting: ({ agent }) => `${agent} 正在写入此文件`,
+    turn: ({ turn }) => `第 ${turn} 轮`,
+    comment: '评论',
+    askAbout: '询问此更改',
+    copy: '复制',
+    noticeDiscarded: '已放弃更改',
+    noticeDiscardedAt: ({ range }) => `已放弃${range}的更改`,
+    noticeRestored: ({ name }) => `已恢复 ${name}`,
+    noticeKeptEdited: '已保留：之后有编辑',
+    noticeUndone: '已撤销',
+    noticeUndoConflict: '文件之后已更改，无法撤销。',
+    noticeUndoUnavailable: '已完成。此操作无法撤销。',
+    noticeNoteFailed: ({ agent }) => `已完成，但未能通知 ${agent}`,
+    noticeMovedOn: '文件已更改，请重新审查。',
+    noticeUpdateRequired: ({ machine }) => `请更新 ${machine} 以放弃或恢复更改`,
+    noticeUnsupported: '此更改无法在这里放弃。',
+    discardStaged: '请先取消暂存这些更改。',
+    discardRenamedOrCopied: '无法放弃重命名或复制文件中的单个更改。',
+    discardUntracked: '无法放弃未跟踪文件中的单个更改。',
+    noticeUnavailable: '这些更改已不可用。',
+    noticeUnknown: '无法确认，请刷新。',
+    undo: '撤销',
+    replaceUnsavedTitle: '替换未保存的编辑？',
+    replaceUnsavedMessage: '恢复文件会替换你尚未保存的编辑。',
+    replace: '替换',
+    imageSideBySide: '并排',
+    imageSwipe: '滑动',
+    imageOnion: '叠加',
+    imageModeA11y: '比较图片',
+    imageBefore: '之前',
+    imageAfter: '之后',
+    pdfOpenBefore: '打开之前',
+    pdfOpenAfter: '打开之后',
+    imageAdded: '已添加',
+    imageDeleted: '已删除',
+    imageUnreadable: '无法读取此图片',
+    imageNoPreview: '无预览',
+    imageTooLarge: "文件过大，无法预览",
+    imageUnsupported: "无法预览此格式",
+    imageMissing: "未找到文件",
+    imageLoading: '正在加载图片',
+    imageBlend: '混合',
+    unchangedLines: ({ count }) => `${count} 行未更改`,
+    agentFallback: '智能体',
+  },
+} as const satisfies Pick<Record<string, Shared_hunkReviewTranslations.Labels>, "zh-Hans">;
+
+return { hunkReviewTranslations };
+})();
+
+const Domain_storeInstalledTranslations = (() => {
+const storeInstalledTranslations = {
+  "zh-Hans": {
+    title: '已安装',
+    purpose:
+      'Happier 管理的一切，覆盖每台 Machine 和每个项目：在哪里运行、是否正常，以及需要你处理什么。',
+    searchPlaceholder: '搜索 Happier 管理的一切',
+    groupBy: '分组方式',
+    groupKind: '类型',
+    groupMachine: 'Machine',
+    groupProject: '项目',
+    status: '状态',
+    present: ({ count }) => `Happier 为你管理 ${count} 项。`,
+    presentAcross: ({ count, machines }) =>
+      `Happier 在 ${machines} 台机器上为你管理 ${count} 项。`,
+    needYou: ({ count }) => `${count} 项需要你处理。`,
+    includedMore: ({ count }) => `另有 ${count} 项随 Happier 附带。`,
+    includedBody: '它们随 Happier 提供，并随 Happier 一起更新。',
+    partial: '部分内容尚未加载，可能不是全部。',
+    needsYou: '需要你处理',
+    all: ({ count }) => `全部（${count}）`,
+    allUnknown: '全部',
+    fewer: '收起',
+    sectionNone: '还没有。',
+    browserProfileEmpty: '浏览器配置文件,还没有扩展',
+    browseKind: '浏览',
+    sectionUnavailable: '暂时无法加载。',
+    sectionPartial: '部分内容尚未加载。',
+    sectionIncomplete: '部分内容无法读取，因此这里可能不完整。',
+    accountGroup: '你的账户',
+    accountGroupBody: '不绑定某台 Machine 或某个项目。',
+    unassignedGroup: '位置未知',
+    unassignedGroupBody: '还不知道它们在哪里运行。',
+    noProjectGroup: '无项目',
+    noProjectGroupBody: '未关联到任何项目。',
+    everyMachine: '所有机器',
+    appNoPage: '暂无可打开的页面',
+    machineFallback: 'Machine',
+    emptyTitle: '这里还没有内容',
+    emptyBody:
+      '你添加的 MCP 服务器、技能、智能体、提供商和插件会显示在这里，并注明运行位置和需要你处理的事项。',
+    browse: '浏览 Store',
+    noMatch: ({ query }) => `没有与“${query}”匹配的内容`,
+    noMatchFilters: '没有符合这些筛选条件的内容',
+    clear: '清除',
+    unavailable: '暂时无法显示此账户的已安装内容。',
+    machineTitle: '这台 Machine 上有什么',
+    machineBody: 'Happier 在这里管理的一切。',
+    openInInstalled: '在已安装中打开',
+  },
+} as const satisfies Pick<Record<string, Shared_storeInstalledTranslations.Labels>, "zh-Hans">;
+
+return { storeInstalledTranslations };
+})();
+
+const Domain_connectedAccountCallbackTranslations = (() => {
+const connectedAccountCallbackTranslations = {
+  "zhHans": Shared_connectedAccountCallbackTranslations.callbackCopy('zhHans', {
+        connectedBody: '正在返回已连接的账户…',
+        pasteBody: '请粘贴到开始登录的连接页面。只能在那里使用一次。',
+        invalidBody: '请从连接页面重新开始登录。',
+        unfinishedBody: '返回连接页面继续登录，或在那里粘贴此回调。',
+        openConnections: '打开已连接的账户',
+    }),
+} as const satisfies Pick<Record<Shared_connectedAccountCallbackTranslations.Locale, Shared_connectedAccountCallbackTranslations.CallbackCopy>, "zhHans">;
+
+return { connectedAccountCallbackTranslations };
+})();
+
+const Domain_skillsPageTranslations = (() => {
+const zhHans: Shared_skillsPageTranslations.SkillsPageTranslation = {
+  pane: { thisBot: "此 Bot 创建", yours: "你的技能", registries: "来自你的注册库", other: "其他技能", allSkills: "你的所有技能" },
+  saved: {
+    saved: "已保存到你的技能",
+    notAttached: "未附加到此会话",
+    attachAgain: "重新附加",
+    liveNow: "现已生效",
+    loadsAfterTurn: "本轮结束后加载",
+    restartNow: "立即重启",
+    needsRestart: "需要重启才能加载",
+    view: "查看",
+    liveNowDetail: ({ name }) => name + " 从下一条消息起使用它。",
+    loadsAfterTurnDetail: "它会在两轮之间加入。对话保留。",
+    restartDetail: "重启会保留对话。",
+    restartTerminalDetail: "请在终端中重启。对话保留。",
+    notAttachedDetail: "它已在你的技能中，但本会话没有加载。",
+    onlyUses: ({ name }) => "仅 " + name + " 使用",
+  },
+  maker: {
+    title: "创建者",
+    anyone: "任何人",
+    you: "你",
+    anyBot: "任何机器人",
+    registries: "来自注册表",
+    session: "会话",
+    person: "其他人",
+    unknown: "创建者未知",
+    openSession: "打开会话",
+    createdHere: "在 Happier 中创建",
+  },
+  title: '技能',
+  pageDescription:
+    '任务需要时你的智能体会采用的指令。添加一次，技能就会到达每台机器。',
+  searchPlaceholder: '搜索技能',
+  addSkill: '添加技能',
+  allSkills: '全部技能',
+  needLook: ({ count }) => `${count} 个需要查看`,
+  inUse: '使用中',
+  off: '已关闭',
+  updates: '更新',
+  noOwnSkills: '还没有你自己的技能',
+  noMatch: ({ query }) => `没有与“${query}”匹配的技能`,
+  loadFailed: '无法加载你的技能',
+  home: {
+    reach: ({ count, agents, machines }) =>
+      `${count} 个技能到达 ${machines} 台机器上的 ${agents}`,
+    reachNeedLook: ({ count }) => `，${count} 个需要查看`,
+    reachNone: '你的技能还没有在任何地方开启',
+    reachWaiting: ({ count }) =>
+      `已开启 ${count} 个技能。机器报告它有哪些智能体后，技能就会到达。`,
+    unsupported: ({ count, agents }) =>
+      `已开启 ${count} 个技能，但 ${agents} 无法使用技能。`,
+    unsupportedNote: ({ agents }) => `${agents} 无法使用技能。`,
+    noMachines: '你的技能会到达你连接的第一台机器。',
+    catchesUp: ({ machines }) => `${machines} 回来后会跟上。`,
+    catchUpCount: ({ count }) => `${count} 台离线机器回来后会跟上。`,
+    mapLabel: ({ skills, machines }) =>
+      `${machines} 台机器上的 ${skills} 个技能`,
+    offlineLastKnown: ({ time }) => `离线 · 最后已知 ${time}`,
+    offline: '离线',
+    noAgents: '还没有智能体',
+    noSkillAgents: '这里没有使用技能的智能体',
+    moreMachines: ({ count }) => `另外 ${count} 台机器`,
+    needsLook: '需要查看',
+    updateWaiting: '来源处有更新的版本。',
+    modifiedUpstream: '你改过它，来源也变了。',
+    removedFromSource: '来源中已没有它。保留你的副本，或移除它。',
+    maskedOn: ({ machine }) => `在那里，${machine} 自己的副本优先。`,
+    unreadable: '无法读取此技能。',
+    byId: ({ id }) => `技能 ${id}`,
+    writeOwn: '自己编写',
+    review: '查看',
+    decide: '选择',
+    whereTitle: '在哪里开启',
+    whereBody:
+      '新技能默认处处开启。可以把它限定到某个项目或机器，或对某个智能体关闭；最具体的规则优先，任何会话也可以自行添加或去掉。',
+    firstHeadline: '你的技能现在会到达每台机器',
+    firstPurpose:
+      '技能是一个指令文件夹，有时带脚本，任务需要时智能体会采用它。你的技能现在会跟随你到每台机器。',
+    firstSentence: ({ on, off }) =>
+      `${on > 0 ? `${on} 个技能在你用过的地方已开启。` : ''}${off} 个在你的 Home 中等待你选择。`,
+    choose: '选择开启哪些',
+    chooseOff: ({ count }) => `${count} 个已关闭`,
+    nothingElse: '在你选择之前，其他一切不变。',
+    emptyTitle: '一次教会你的智能体',
+    emptyBody:
+      '技能是一个指令文件夹，任务需要时智能体会采用它。在这里添加一个，每台机器上的每个智能体都会得到它。',
+    emptySentence:
+      '机器围绕着你的 Home。你添加的技能会到达每一台机器上的每个智能体。',
+  },
+};
+
+const skillsPageTranslations = {
+  "zhHans": zhHans,
+} as const;
+
+return { skillsPageTranslations };
+})();
+
+const Domain_capabilityNoticeTranslations = (() => {
+const capabilityNoticeTranslations = {
+  "zhHans": Shared_capabilityNoticeTranslations.copy(['{name} 无法启动', '{name} 无法加载', '缺少 {key}', '需要登录', '登录对应的是另一个地址',
+    '远程桥接不可用', '此智能体无法以这种方式接收技能', 'MCP 服务器', '技能', '无法读取其文件', '无法将其登录信息传给此会话']),
+} as const;
+
+return { capabilityNoticeTranslations };
+})();
+
+const Domain_skillDetailTranslations = (() => {
+const zhHans: Shared_skillDetailTranslations.SkillDetailTranslation = {
+  whereDescription: '设置一次，每台机器都会跟随。最具体的规则优先。',
+  tokensWhenUsed: ({ tokens }) => `使用时 ${tokens} 个 token`,
+  menu: {
+    duplicate: '复制',
+    makeCopy: '创建可编辑副本',
+    moveToFolder: '移到文件夹',
+    noFolder: '无文件夹',
+    exportZip: '导出为 .zip',
+    copyLink: '复制链接',
+    linkCopied: '链接已复制',
+  },
+  banner: {
+    couldntLoadTitle: '无法加载此技能',
+    couldntLoadBody: '你的资料库没有响应。会话会继续使用已有的副本。',
+  },
+  instructions: {
+    title: '指令',
+    edit: '编辑',
+    done: '完成',
+    preview: '预览',
+    showAll: '显示全部',
+    showLess: '收起',
+    saving: '正在保存…',
+    saved: '已保存 · 适用于新会话',
+    saveFailed: '无法保存。你的文本已保留。',
+    conflict: '已在另一台设备上更改',
+    reviewBoth: '查看两者',
+    keepMine: '保留我的',
+    takeTheirs: '采用对方的',
+    yours: '你的',
+    theirs: '对方的',
+    lintOk: '名称和描述已设置',
+    lintMissingName: '在 frontmatter 中添加名称',
+    lintMissingDescription: '添加描述，让智能体知道何时使用',
+    lintNoFrontmatter: '以 frontmatter 块开头：名称和描述',
+    readOnlyPlugin: '随其插件提供，并跟随插件版本。',
+  },
+  files: {
+    title: '文件',
+    description: ({ count }) =>
+      count === 1 ? '1 个文件，没有脚本。' : `${count} 个文件，没有脚本。`,
+    descriptionScripts: ({ count, scripts }) =>
+      `${count} 个文件，其中 ${scripts} 个作为脚本运行。`,
+    script: '脚本',
+    addFile: '添加文件',
+    addFilePrompt: '它在技能内的路径。',
+    addFilePlaceholder: 'reference/notes.md',
+    remove: '移除',
+    removeTitle: ({ path }) => `移除 ${path}？`,
+    removeBody: '新会话获得的技能将不含它。',
+    more: ({ count }) => `另外 ${count} 个`,
+    binary: '不是文本文件',
+    loading: '正在打开…',
+    afterAdd: '技能进入你的资料库后，再添加更多文件。',
+  },
+  source: {
+    title: '来源与更新',
+    descriptionReview: '来源的更改会等你查看。',
+    descriptionAuto: '来源的更改会自动到达，除非你改过它。',
+    descriptionPinned: '已固定到某个版本。来源的更改会等到你取消固定。',
+    descriptionOwn: '由你自己更改。除了你，没有谁会更新它。',
+    writtenByYou: '由你编写',
+    writtenByYouBody: '在这里编辑；每台机器都会收到更改。',
+    uploadedByYou: '由你上传',
+    foundOn: ({ machine }) => `在 ${machine} 上找到`,
+    foundOnBody: ({ path }) => path,
+    firstParty: '内置于 Happier · 跟随其版本',
+    verifiedByDigest: '已通过摘要验证',
+    noDigestPublished: '未发布摘要',
+    added: ({ date }) => `添加于 ${date}`,
+    updates: '更新',
+    upToDate: '已是最新',
+    updateAvailable: '有可用更新',
+    removedFromSource: '来源中已没有它',
+    notChecked: '尚未检查',
+    checked: ({ time }) => `${time}检查`,
+    checkNow: '立即检查',
+    view: '查看',
+    auto: '自动更新',
+    autoBody: '他人的技能默认关闭，这样你会先看到每一处更改',
+    pin: '固定到此版本',
+    pinBody: '保留此版本，直到你取消固定',
+    checkFailed: '无法检查来源',
+  },
+  machines: {
+    description: '每台机器上的智能体当前获得的内容。',
+    nowhere: '还没有在任何机器上开启。',
+    offline: '机器离线',
+    lastKnown: ({ time }) => `最后已知 ${time}`,
+    masked: ({ agent, machine }) => `${agent}：${machine} 自己的副本优先`,
+    cantLoad: ({ agents }) => `${agents} 无法在这里加载技能`,
+    previewFailed: ({ agent }) => `${agent}：—`,
+    checking: '正在检查…',
+    projectNote: '在项目内，项目自己的副本仍可能优先。',
+    noAgent: '这里没有智能体会获得它',
+    offlineCount: ({ count }) => `${count} 台离线`,
+    summaryOn: ({ agents, machine }) => `${machine} 上的 ${agents}`,
+    summaryOnMany: ({ agents, count }) => `${count} 台设备上的 ${agents}`,
+  },
+  details: {
+    title: '详情',
+    summary: '修订版本和 Happier 之外的副本',
+    revision: '修订版本',
+    contentHash: '内容哈希',
+    alsoInstall: ({ machine }) => `也安装到 ${machine}`,
+    alsoInstallBody: '用于 Happier 之外，放入每个智能体自己的技能文件夹',
+    installed: '已安装',
+    install: '安装',
+  },
+  leave: {
+    remove: '移除技能',
+    footnote: '正在运行的会话会保留它，直到重新启动。',
+    confirmTitle: ({ name }) => `移除 ${name}？`,
+    confirmBody:
+      '它会从你的资料库和每台机器上移除。正在运行的会话会保留它，直到重新启动。',
+    confirm: '移除',
+  },
+  draft: {
+    title: '新技能',
+    purpose: '只需教你的智能体一次。它们会阅读描述来决定何时使用。',
+    add: '添加到资料库',
+    adding: '正在添加…',
+    addFailed: '无法添加技能。你的文本已保留。',
+  },
+};
+
+const skillDetailTranslations = {
+  "zhHans": zhHans,
+} as const;
+
+return { skillDetailTranslations };
+})();
+
+const Domain_skillsFoundTranslations = (() => {
+const zhHans: Shared_skillsFoundTranslations.SkillsFoundTranslation = {
+  title: '在你的机器上找到',
+  purpose:
+    '你的智能体已经保存在每台机器上的技能。Happier 不会编辑它们。将其添加到资料库，即可在每台机器上使用。',
+  checkAgain: '重新检查',
+  add: '添加到资料库',
+  addAll: ({ count }) => `全部添加（${count}）`,
+  makeCopy: '创建副本',
+  compare: '比较',
+  hideCompare: '隐藏',
+  inLibrary: '已在你的资料库中',
+  adding: '正在添加…',
+  plugin: '插件',
+  readBy: ({ agents }) => `${agents} 会读取它`,
+  fromPlugin: ({ plugin }) => `来自插件 ${plugin}`,
+  installedByHappier: '由 Happier 安装',
+  masks: ({ machine }) =>
+    `你的资料库中有同名技能。在 ${machine} 上，这个副本优先，因此那里的智能体会使用它。`,
+  more: ({ count }) => `另外 ${count} 个`,
+  showFewer: '显示更少',
+  looking: '正在查找…',
+  nothingHere: '这里没有找到技能。',
+  quietEmpty: ({ count, others }) =>
+    others ? `另外 ${count} 台机器上没有找到技能` : `${count} 台机器上没有找到技能`,
+  quietLooking: ({ count }) =>
+    `正在 ${count} 台机器上查找…`,
+  lastKnown: ({ time }) => `最后已知 ${time}`,
+  offlineBring: ({ machine }) => `让 ${machine} 上线后，才能从中添加。`,
+  offlineUnseen: ({ count }) =>
+    count === 1
+      ? `有 1 台离线机器尚未查看。让它上线即可查看其技能。`
+      : `有 ${count} 台离线机器尚未查看。让其中一台上线即可查看其技能。`,
+  scanFailed: ({ machine }) => `无法读取 ${machine} 的技能`,
+  tryAgain: '重试',
+  olderMachine: ({ machine }) =>
+    `${machine} 需要更新版本的 Happier 才能列出其技能。`,
+  rootFailed: ({ path }) => `无法读取 ${path}`,
+  noMachinesTitle: '还没有机器',
+  noMachinesBody: '连接一台机器，即可查看你的智能体已保存在其上的技能。',
+  addFailed: ({ name }) => `无法添加 ${name}。未作任何更改。`,
+  compareYours: '你的资料库',
+  compareTheirs: ({ machine }) => `在 ${machine} 上`,
+  compareFailed: ({ machine }) => `无法读取 ${machine} 上的副本。`,
+  destination: '在你的机器上找到',
+  homeBody:
+    '已在你的智能体自己的文件夹中。加入资料库后，它会随你到每台机器。',
+  seeAll: ({ count }) => `查看全部 ${count} 个`,
+  alreadyOnMachines: ({ count }) => `你的机器上已有 ${count} 个技能`,
+  install: {
+    installedIn: ({ path }) => `已安装在 ${path}`,
+    externallyModified: ({ machine }) =>
+      `${machine} 上的副本在 Happier 之外被编辑过，因此保持原样。`,
+    removeAnyway: '仍然移除',
+    removeTitle: ({ machine }) => `从 ${machine} 移除？`,
+    removeBody:
+      '这会删除 Happier 放在那里智能体文件夹中的副本。你的资料库会保留该技能。',
+    remove: '移除',
+    nativeConflict: ({ machine }) =>
+      `${machine} 的某个智能体文件夹中已有同名的不同技能。Happier 没有改动它。`,
+    failed: ({ machine }) => `无法安装到 ${machine}。未作任何更改。`,
+    removeFailed: ({ machine }) => `无法从 ${machine} 移除。`,
+    partial: ({ machine }) =>
+      `已为部分智能体安装到 ${machine}。其他的无法写入。`,
+  },
+};
+
+const skillsFoundTranslations = {
+  "zhHans": zhHans,
+} as const;
+
+return { skillsFoundTranslations };
+})();
+
+const Domain_mcpFoundTranslations = (() => {
+const zhHans: Shared_mcpFoundTranslations.McpFoundTranslation = {
+  purpose: '你的代理已在各台机器上设置的 MCP 服务器。添加到 Happier 后，每台机器上的每个会话都能使用。',
+  checkAgain: '再次检查',
+  add: '添加',
+  inHappier: '已在 Happier 中',
+  setUpIn: ({ agent }) => `在 ${agent} 中设置`,
+  offIn: ({ agent }) => `在 ${agent} 中已关闭`,
+  looking: '正在查找…',
+  nothingHere: '这里没有找到 MCP 服务器。',
+  lastKnown: ({ time }) => `最后已知 ${time}`,
+  offlineBring: ({ machine }) => `让 ${machine} 上线后即可从中添加。`,
+  offlineUnseen: ({ count }) => `${count} 台离线机器尚未查看。让其上线即可看到它的 MCP 服务器。`,
+  scanFailed: ({ machine }) => `无法读取 ${machine} 的 MCP 服务器`,
+  tryAgain: '重试',
+  olderMachine: ({ machine }) => `${machine} 需要更新的 Happier 才能列出其 MCP 服务器。`,
+  noMachinesTitle: '还没有机器',
+  noMachinesBody: '连接一台机器，即可看到你的代理已在其上设置的 MCP 服务器。',
+  warningReadFailed: ({ agent }) => `无法读取 ${agent} 的 MCP 设置`,
+  warningReadFailedNoAgent: '无法读取一个 MCP 设置文件',
+  warningParseFailed: ({ agent }) => `无法解析 ${agent} 的 MCP 设置`,
+  warningParseFailedNoAgent: '无法解析一个 MCP 设置文件',
+  warningUnsupported: ({ agent }) => `${agent} 的部分 MCP 服务器暂时无法读取`,
+  warningUnsupportedNoAgent: '这里的部分 MCP 服务器暂时无法读取',
+  quietEmpty: ({ count, others }) => `在${others ? '其他 ' : ''} ${count} 台机器上未找到 MCP 服务器`,
+  quietLooking: ({ count }) =>
+    `正在 ${count} 台机器上查找…`,
+};
+
+const mcpFoundTranslations = {
+  "zhHans": zhHans,
+} as const;
+
+return { mcpFoundTranslations };
+})();
+
+const Domain_skillsUpdatesTranslations = (() => {
+const zhHans: Shared_skillsUpdatesTranslations.SkillsUpdatesTranslation = {
+  updates: {
+    title: '更新',
+    purpose: '来自技能来源处的新版本。在你选择之前，什么都不会改变。',
+    checkNow: '立即检查',
+    checking: '正在检查…',
+    readyTitle: '可以更新',
+    readyBody: '你没有改动过这些，所以更新是安全的。',
+    choiceTitle: '需要你来选择',
+    choiceBody: ({ name }) =>
+      `你编辑过 ${name}，而它的来源有了新版本。请逐个文件选择；两边的内容都会显示。`,
+    refChange: ({ from, to }) => `从 ${from} 到 ${to}`,
+    newerWaiting: '有新版本可用',
+    linesChanged: ({ count, file }) => `${file} 中有 ${count} 行改动`,
+    filesChanged: ({ count }) => `${count} 个文件有改动`,
+    viewChanges: '查看改动',
+    hideChanges: '隐藏改动',
+    update: '更新',
+    fileDiffers: ({ count }) => `你的和他们的不同 · ${count} 行`,
+    fileTheirsOnly: '他们的版本新增',
+    fileMineOnly: '仅在你的版本中',
+    fileUnchanged: '未改动',
+    nothingToChoose: '无需选择',
+    keepNote: ({ name }) =>
+      `保留任何一个你的文件，${name} 都会保持“已修改”，之后的更新仍会询问你。`,
+    notNow: '以后再说',
+    applyChoices: '应用选择',
+    upToDate: '一切都是最新的',
+    noSources: '你的技能都不来自会更新的来源。从 GitHub 或注册表添加的技能会在这里显示新版本。',
+    updatedTitle: '已更新',
+    checkedAt: ({ time }) => `${time} 检查`,
+    checkFailed: '无法检查更新。',
+    diffFailed: '无法加载改动。',
+    applyFailed: '无法更新。',
+    applied: ({ ref }) => `已更新到 ${ref}`,
+    tryAgain: '重试',
+  },
+  choose: {
+    purpose: ({ total, off }) =>
+      `你的库中有 ${total} 个技能。在你选择之前，${off} 个保持关闭，所以你的会话暂时不会改变。`,
+    purposeIdle: '选择你的代理能获得哪些技能。',
+    migratedTitle: ({ count }) => `${count} 个已在你用过的地方开启`,
+    migratedBody: ({ names }) =>
+      `${names} 来自你的账户或项目上下文，所以在你用过的地方保持开启。`,
+    listTitle: '选择你的代理能获得什么',
+    selectAll: '全选',
+    selectNone: '全不选',
+    usedOn: ({ date }) => `${date} 使用过`,
+    selected: ({ count }) => `已选择 ${count} 个`,
+    turnOn: ({ count }) => `在所有地方开启 ${count} 个`,
+    failed: '无法开启。你的选择已保留。',
+    nothingWaits:
+      '每个技能都已有自己的位置。可以在技能自己的页面上开启或缩小范围。',
+  },
+  shelf: {
+    title: '来自你的注册表',
+    titleNew: '从这些开始',
+    browseAll: '浏览全部',
+    fromSource: ({ source }) => `${source} 上的新作和热门。`,
+    add: '添加',
+    inLibrary: '已在你的库中',
+    addFailed: '无法添加',
+  },
+};
+
+const skillsUpdatesTranslations = {
+  "zhHans": zhHans,
+} as const;
+
+return { skillsUpdatesTranslations };
+})();
+
+const Domain_mcpPageTranslations = (() => {
+const configZhHans: Shared_mcpPageTranslations.McpConfigTranslation = {
+  transport: '运行方式',
+  command: '命令',
+  commandDescription: '每台机器启动的程序。',
+  arguments: '参数',
+  argument: ({ position }) => `参数 ${position}`,
+  removeArgument: ({ position }) => `移除参数 ${position}`,
+  addArgument: '添加参数',
+  workingFolder: '工作文件夹',
+  workingFolderDescription: '程序启动的位置。',
+  sessionFolder: '会话的项目文件夹',
+  aFolder: '机器上的文件夹',
+  folderPath: '文件夹',
+  environment: '环境',
+  environmentDescription: '程序读取的值。密钥始终保持端到端加密，仅在机器上写入会话。',
+  addVariable: '添加变量',
+  address: '地址',
+  addressDescription: 'Happier 连接的位置；每台机器都使用同一个。',
+  headers: '请求头',
+  headersDescription: '随每个请求发送。密钥只显示名称，绝不显示其值。',
+  addHeader: '添加请求头',
+  saved: '已保存 · 适用于新会话',
+  saving: '正在保存…',
+  saveFailed: '无法保存。你的修改仍保留在这里。',
+  different: '某台机器上不同…',
+  differentNone: '所有机器使用相同的值',
+  differentOne: ({ machine }) => `${machine} 不同`,
+  differentOn: ({ machine }) => `在 ${machine} 上不同`,
+  addDifference: '添加机器差异',
+  addAnother: '另一台机器',
+  differentCount: ({ count }) => `${count} 台机器不同`,
+  differsFolder: ({ path }) => `工作文件夹 ${path}`,
+  differsCommand: '命令',
+  differsArguments: '参数',
+  differsAddress: '地址',
+  differsValues: ({ names }) => names,
+  inFolderOn: ({ folder, machine }) => `${machine} 上的 ${folder}`,
+  removeDifference: '移除',
+};
+
+const zhHans: Shared_mcpPageTranslations.McpPageBase = {
+  allServers: '所有服务器',
+  foundOnMachines: '在你的机器上找到的',
+  inUse: '使用中',
+  off: '关闭',
+  fromPlugins: '来自插件',
+  builtIn: '内置',
+  builtInHappier: 'Happier',
+  builtInHappierDescription: '会话、文件、机器和你的操作',
+  builtInActions: '操作',
+  remote: '远程',
+  local: '本地',
+  tools: {
+    title: '工具',
+    description: '你的智能体可以调用的内容。“询问”会显示审批卡片，“允许”无需询问直接运行，“关闭”会隐藏该工具。',
+    defaultTitle: '工具默认设置',
+    defaultAsk: '询问',
+    defaultReadOnly: '允许只读',
+    defaultAll: '全部允许',
+    defaultAskDescription: '每个工具都先询问。你自己设置过的工具保持其设置。',
+    defaultReadOnlyDescription: '只读工具无需询问直接运行；任何会写入的工具都先询问。你自己设置过的工具保持其设置。',
+    defaultAllDescription: '每个工具都无需询问直接运行。你自己设置过的工具保持其设置。',
+    off: '关闭',
+    ask: '询问',
+    allow: '允许',
+    search: ({ count }) => `搜索 ${count} 个工具`,
+    filterAll: '全部',
+    filterReadOnly: '只读',
+    filterWrites: '写入',
+    filterDestructive: '破坏性',
+    filterSetByYou: '你设置的',
+    readOnly: '只读',
+    writes: '写入',
+    destructive: '破坏性',
+    setByYou: '你设置的',
+    backToDefault: ({ value }) => `你设置的 · 恢复使用默认值（${value}）`,
+    useDefault: ({ value }) => `使用默认值（${value}）`,
+    showAll: ({ count }) => `显示全部 ${count} 个工具`,
+    cost: ({ count, tokens }) => `${count} 个工具 · 全部加载时共 ${tokens} 个 token。`,
+    onDemand: ({ agents, count }) => `${agents}只在需要时才加载工具；其他智能体会在会话开始时加载全部 ${count} 个。`,
+    notApply: ({ agents }) => `工具设置不适用于${agents}：它们自行决定。`,
+    blocked: ({ agents }) => `在${agents}中，“关闭”会在工具被调用时将其拦截，而不是隐藏。`,
+    hiddenRestart: ({ agents }) => `重新开启已隐藏的工具会应用于新的${agents}会话。`,
+    notListed: '首次在某台机器上测试后，会显示它的工具。',
+    lastListed: ({ date }) => `上次列出于 ${date}。登录恢复后它们会重新出现。`,
+    loadFailed: '无法读取它的工具。',
+    noMatch: '没有匹配的工具。',
+    setFailed: '无法保存。请重试。',
+  },
+  detail: {
+    configurationTitle: '配置',
+    configurationDescription: '可直接编辑任意值；它会应用于每台机器上的新会话。',
+    machinesDescription: 'Happier 会从每台机器进行连接，因此会逐台检查。',
+    test: '测试',
+    onNowhere: '尚未在任何机器上启用。',
+    toolsOn: ({ count }) => `${count} 个工具`,
+    checked: ({ time }) => `${time}检查`,
+    notChecked: '尚未检查',
+    lastKnown: ({ time }) => `${time}的已知状态`,
+    summary: ({ ready, problems, offline, unchecked }) => {
+      const total = ready + problems + offline + unchecked;
+      if (total > 1 && ready === total) return `全部 ${total} 台就绪`;
+      if (total > 1 && offline === total) return `全部 ${total} 台离线`;
+      return [
+        ready > 0 ? `${ready} 台就绪` : null,
+        problems > 0 ? `${problems} 台需要查看` : null,
+        unchecked > 0 ? `${unchecked} 台待测试` : null,
+        offline > 0 ? `${offline} 台离线` : null,
+      ].filter(Boolean).join(' · ');
+    },
+    detailsTitle: '详情',
+    versionLine: ({ version, protocol }) => protocol ? `版本 ${version} · 协议 ${protocol}` : `版本 ${version}`,
+    update: {
+      title: '更新',
+      upToDate: '已是最新',
+      available: ({ version }) => `版本 ${version} 可用`,
+      checkFailed: '无法检查更新',
+      removed: '注册表中已不再列出此服务器。它会继续照常工作。',
+      checkNow: '立即检查',
+      review: '查看',
+      readFailed: '无法读取新版本。请重试。',
+      changesTitle: ({ version }) => `更新到 ${version}`,
+      changesBody: '名称、值、工具以及启用位置都保持不变。',
+      now: '当前',
+      after: '更新后',
+      apply: '更新',
+      applyFailed: '无法更新。你的选择已保留。',
+    },
+    serverInstructions: '服务器说明',
+    lastError: '上次测试输出',
+    copy: '复制',
+    removeServer: '移除服务器',
+    removeFootnote: '会将其从每台机器的每个会话中移除，并删除其登录信息。',
+    conflict: {
+      reason: '已在别处更改',
+      review: '查看',
+      title: '查看更改',
+      description: '你编辑时，此服务器在另一台设备上发生了更改。请选择保留哪些值。',
+      current: '当前',
+      yours: '你的',
+      notSet: '未设置',
+      machines: '各机器的差异',
+      keepMine: '保留我的',
+      useCurrent: '使用当前',
+      removedTitle: '已在别处移除',
+      removedDescription: '此服务器已在另一台设备上移除，你的修改无法保存。',
+      discard: '放弃我的修改',
+    },
+    copyInstallLink: '复制安装链接',
+    installLinkLabel: '安装链接',
+    duplicate: '复制副本',
+    fromPlugin: ({ plugin }) => `来自 ${plugin}`,
+    pluginFootnote: ({ plugin }) => `随 ${plugin} 提供。卸载该插件即可移除。`,
+    banner: {
+      expiredTitle: ({ name }) => `${name} 的登录已过期`,
+      expiredBody: ({ name, date, count }) => `${name}${date ? ` 自 ${date} 起` : ''}不再接受该登录。在你重新连接之前，会话启动时将没有它的${count ? ` ${count} 个` : ''}工具。重新连接一次即可对每台机器生效。`,
+      signinTitle: ({ name }) => `登录 ${name}`,
+      signinBody: '在你登录之前，会话启动时将没有它的工具。登录一次即可对每台机器生效。',
+      moreAccessTitle: ({ name }) => `${name} 需要更多权限`,
+      moreAccessBody: '某个工具请求了你当前登录所没有的权限。授予一次，每台机器都会跟随。',
+      revokedTitle: ({ name }) => `${name} 不再拥有访问权限`,
+      revokedBody: '该登录已被撤销。在你重新登录之前，会话启动时将没有它的工具。',
+      keyTitle: ({ name }) => `${name} 需要密钥`,
+      keyBody: '它所需的值尚未保存。在你添加之前，会话启动时将没有它。',
+      errorTitle: ({ name, machine }) => `${name} 已在 ${machine} 上停止`,
+      errorBody: '那里的会话启动时将没有它的工具。上次测试输出见“详情”。',
+      cantrunTitle: ({ name, machine }) => `${name} 无法在 ${machine} 上运行`,
+      cantrunBody: ({ runtime }) => `该机器需要 ${runtime}。那里的会话启动时将没有它；其他机器不受影响。`,
+    },
+  },
+};
+
+const mcpPageTranslations = {
+  "zhHans": { ...zhHans, config: configZhHans },
+} as const satisfies Pick<Record<string, Shared_mcpPageTranslations.McpPageTranslation>, "zhHans">;
+
+return { mcpPageTranslations };
+})();
+
+const Domain_valueRefRowsTranslations = (() => {
+const zhHans: Shared_valueRefRowsTranslations.ValueRefRowsTranslation = {
+  name: '名称',
+  value: '值',
+  typeLabel: '值类型',
+  text: '文本',
+  savedSecret: '已保存密钥',
+  fromMachine: '来自机器',
+  template: '模板',
+  fromSession: '来自会话',
+  chooseSecret: '选择已保存的密钥',
+  needsValue: '需要一个值',
+  more: ({ name }) => `${name} 的更多选项`,
+  edit: '编辑…',
+  remove: '移除',
+  invalidEnvName: '使用大写字母、数字和 _，并以字母开头。',
+  invalidHeaderName: '仅限字母、数字和 -。',
+  duplicateName: '该名称已被使用。',
+  invalidMachine: '填写机器上的变量名，例如 ${HOME}。',
+};
+
+const valueRefRowsTranslations = {
+  "zhHans": zhHans,
+} as const;
+
+return { valueRefRowsTranslations };
+})();
+
+const Domain_agentAddTranslations = (() => {
+const agentAddTranslations = {
+  "zhHans": Shared_agentAddTranslations.en,
+} as const;
+
+return { agentAddTranslations };
+})();
+
+const Domain_mcpHomeTranslations = (() => {
+const zhHans: Shared_mcpHomeTranslations.McpHomeTranslation = {
+  loadFailed: '无法加载你的服务器',
+  purpose:
+    '你的智能体可以调用的工具：问题跟踪器、浏览器、数据库。登录一次，每台机器都能使用。',
+  firstHeadline: '你的服务器现在会跟着你',
+  firstPurpose:
+    '它们仍在原来的地方正常运行。现在，需要登录的服务器也能用了：在任意设备上登录一次，每台机器都能使用。',
+  firstDismiss: '知道了',
+  groupAccount: '登录一次，所有机器通用',
+  groupMachine: '在你的机器上运行',
+  newAccountBody: 'Linear、Sentry 或 Notion：在任意设备上登录，手机也可以。',
+  newMachineBody: '浏览器或数据库：Happier 会在你的会话所在的机器上启动它。',
+  factAs: ({ identity }) => `以 ${identity} 身份`,
+  factSignedIn: '已登录',
+  factKey: 'API 密钥 · 已保存的机密',
+  present: ({ servers, tools, tokens }) =>
+    `${servers} 个服务器为你的智能体提供 ${tools} 个工具，约占 ${tokens} 个上下文 token。`,
+  presentNoTools: ({ count }) => `已为你的智能体开启 ${count} 个服务器。`,
+  presentNone: '还没有开启任何服务器。',
+  needYou: ({ count }) => ` ${count} 个需要你处理。`,
+  needsTitle: '需要你处理',
+  needsAccount: '从任意设备修复一次，每台机器都能使用',
+  needsAccountTools: ({ count }) => `从任意设备修复一次，每台机器都会找回 ${count} 个工具`,
+  needsKey: '把密钥作为已保存的机密添加一次，每台机器都能使用',
+  needsKeyNamed: ({ names }) => `把 ${names} 作为已保存的机密添加一次，每台机器都能使用`,
+  previewSignedInAs: ({ identity }) =>
+    `已以 ${identity} 身份登录，所有机器通用`,
+  previewSignedIn: '登录一次，所有机器通用',
+  previewKey: '它的密钥是已保存的机密，在每台机器上使用',
+  previewMachine: '在你的会话所在的机器上启动',
+  previewOff: '已关闭：没有智能体会获得它',
+  previewExpired: '登录已过期。重新连接一次，每台机器就能恢复使用。',
+  previewSignIn: '在任意设备上登录一次，每台机器都能使用。',
+  previewNeedsKey:
+    '它需要一个密钥。将其作为已保存的机密添加一次，每台机器都能启动它。',
+  newTitle: '为你的智能体添加更多工具',
+  newBody:
+    'MCP 服务器能为你的智能体提供工具：问题跟踪器、浏览器、数据库。在这里添加一个，登录一次，每台机器都能用。',
+  browse: '浏览服务器',
+  paste: '粘贴配置',
+  shelfTitle: '推荐的服务器',
+  shelfFrom: ({ source }) => `来自 ${source}。添加后，每台机器都能用。`,
+  shelfAdd: '添加',
+  foundTitle: '在你的机器上发现',
+  foundBody: '在智能体中配置，尚未加入 Happier。添加后，它会跟着你。',
+  foundLine: ({ count, machine }) => `${machine} 上已有 ${count} 个服务器`,
+  foundLineMachines: ({ count, machines }) =>
+    `${machines} 台机器上已有 ${count} 个服务器`,
+  foundLineBody: '在你的智能体中配置。添加后，它们会跟着你到每台机器。',
+  review: '查看',
+  mapLabel: ({ count }) => `Home 周围有 ${count} 个 MCP 服务器`,
+  more: ({ count }) => `+${count}`,
+};
+
+const mcpHomeTranslations = {
+  "zhHans": zhHans,
+} as const satisfies Pick<Record<string, Shared_mcpHomeTranslations.McpHomeTranslation>, "zhHans">;
+
+return { mcpHomeTranslations };
+})();
+
+const Domain_agentsHomeTranslations = (() => {
+const zhHans: Shared_agentsHomeTranslations.AgentsHomeTranslation = {
+  purpose: '你用来开始会话的编程代理：安装在哪里，以及如何登录。',
+  needsTitle: '需要你处理',
+  needsSignIn: ({ machine }) => `登录之前，${machine} 上的会话无法开始`,
+  tryTitle: '试试其他代理',
+  tryBody: '每个代理都能像你现有的代理一样开始会话。',
+  modelsTitle: '代理可用的模型',
+  modelsBody:
+    '提供方为你的代理带来更多模型：一个密钥用于多个模型，或在你的机器上运行模型服务器。',
+};
+
+const agentsHomeTranslations = {
+  "zhHans": zhHans,
+} as const satisfies Pick<Record<string, Shared_agentsHomeTranslations.AgentsHomeTranslation>, "zhHans">;
+
+return { agentsHomeTranslations };
+})();
+
+const Domain_profileSeedsTranslations = (() => {
+const zhHans: Shared_profileSeedsTranslations.ProfileSeedsTranslation = {
+  title: '此配置添加的技能',
+  description: '在使用此配置的会话中添加，叠加在你的规则所提供的内容之上。',
+  add: '添加',
+  addTitle: '添加技能',
+  searchPlaceholder: '搜索你的技能',
+  nothingToAdd: '你库中的所有技能都已添加。',
+  empty: '暂无。使用此配置的会话会获得你的规则所提供的内容。',
+  emptyLibrary: '你的库中还没有技能。',
+  openSkills: '打开技能',
+  missing: '不在你的库中',
+  pending: '技能',
+  unreadableItem: '暂时无法读取',
+  remove: ({ skill }) => `移除 ${skill}`,
+  reading: '正在读取你的技能…',
+  unreadable: '无法读取你的技能',
+  tryAgain: '重试',
+};
+
+const profileSeedsTranslations = {
+  "zhHans": zhHans,
+} as const;
+
+return { profileSeedsTranslations };
+})();
+
+const Domain_scopeSectionTranslations = (() => {
+const scopeSectionTranslations = {
+  "zhHans": Shared_scopeSectionTranslations.copy({
+    title: '技能与 MCP 服务器',
+    descMachine:
+      '{machine} 上的会话会获得这些内容。这里的开关只为 {machine} 设置规则；针对智能体的例外仍然有效。',
+    descProject:
+      '你在 {project} 中的会话在每台机器上都会获得这些内容。这里的开关只为 {project} 设置规则；针对智能体的例外仍然有效。',
+    descProjectTeam:
+      '你在 {project} 中的会话在每台机器上都会获得这些内容。这里的开关只为 {project} 设置规则；{team} 的会话遵循各自的规则。',
+    skills: '技能',
+    mcp: 'MCP 服务器',
+    allSkills: '全部 {count} 个技能',
+    allMcp: '全部 {count} 个 MCP 服务器',
+    foundOne: '另有 1 个技能只存在于 {machine}。',
+    foundMany: '另有 {count} 个技能只存在于 {machine}。',
+    foundLink: '在你的机器上发现',
+    onFor: '为 {agents} 开启',
+    notFor: '不含 {agents}',
+    onOn: '在 {machines} 上开启',
+    notOn: '不含 {machines}',
+    onIn: '在 {place} 中开启',
+    offIn: '在 {place} 中关闭',
+    onForPlace: '为 {place} 开启',
+    offForPlace: '为 {place} 关闭',
+    emptySkills: '还没有技能',
+    addSkill: '添加技能',
+    emptyMcp: '还没有 MCP 服务器',
+    addMcp: '添加服务器',
+    loadFailed: '无法加载',
+    whenRunning: '{machine} 运行时显示',
+    turnedOn: '{name} 已为 {place} 开启',
+    turnedOff: '{name} 已为 {place} 关闭',
+    migrationNote: '{names} 已从旧的项目设置移到这里。',
+    dismiss: '关闭',
+  }),
+} as const;
+
+return { scopeSectionTranslations };
+})();
+
+const Domain_capabilityKitTranslations = (() => {
+const zhHans: Shared_capabilityKitTranslations.CapabilityKitTranslation = {
+  where: {
+    onEverywhere: '全部开启',
+    everywhere: '全部',
+    off: '关闭',
+    only: ({ agent, place }) =>
+      `仅${[place && `在 ${place}`, agent && `对 ${agent}`].filter(Boolean).join(' ')}`,
+    on: ({ agent, place }) =>
+      `${[place && `在 ${place}`, agent && `对 ${agent}`].filter(Boolean).join(' ')}开启`,
+    except: ({ agent, place }) =>
+      `${[place && `在 ${place}`, agent && `对 ${agent}`].filter(Boolean).join(' ')}除外`,
+    exceptions: ({ count }) => `${count} 个例外`,
+    more: ({ count }) => `另外 ${count} 个`,
+    effect: {
+      everywhereOn: '所有机器和代理，包括之后添加的',
+      everywhereOff: '关闭，除非下方规则开启',
+      agentNever: ({ kind }) =>
+        kind === 'skill'
+          ? '无论在哪里开启，都不会获得此技能'
+          : '无论在哪里开启，都不会获得此服务器',
+      agentEverywhereOn: '即使其他地方关闭也会获得',
+      machineOn: '这台机器上的所有代理',
+      machineOff: '这台机器上的代理都不会获得',
+      projectOn: '在此项目中，所有机器',
+      projectOff: '不在此项目中，任何机器都不会获得',
+      folderOn: '这台机器上的此文件夹',
+      folderOff: '不在此文件夹中',
+      agentAtOn: ({ agent, place }) => `${agent} 在 ${place} 获得`,
+      agentAtOff: ({ agent, place }) => `${agent} 在 ${place} 不获得`,
+    },
+    available: ({ agents, machines, projects }) => `${machines} 上的 ${agents} 可用${projects ? `，仅限 ${projects}` : ''}`,
+    availableNowhere: '尚未在任何地方可用',
+    offlineNote: ({ machine }) => `${machine} 已离线。恢复后会获得。`,
+    offlineNoteMany: ({ count }) =>
+      `${count} 台离线的机器恢复后会获得。`,
+    cantTake: ({ agent, kind }) =>
+      kind === 'skill'
+        ? `${agent} 无法加载技能。`
+        : `${agent} 无法使用 MCP 服务器。`,
+  },
+  control: {
+    title: '启用范围',
+    description: '设置一次,每台机器都会跟随。最具体的规则优先。',
+    everywhereLabel: '在所有位置开启或关闭',
+    on: '开',
+    off: '关',
+    turnedOnIn: '启用于',
+    except: '除外',
+    nowhereYet: '还没有任何位置。添加一个项目、一台机器或一个智能体。',
+    addException: '添加例外',
+    addPlace: '添加位置',
+    menuAgent: '智能体',
+    menuAgentEverywhere: '智能体(所有位置)',
+    menuMachine: '机器',
+    menuProject: '项目',
+    menuProjectEverywhere: '项目(所有机器)',
+    offline: '离线',
+    machineCount: ({ count }) => `${count} 台机器`,
+    allAgents: '所有智能体',
+    agentOnly: ({ agent }) => `仅 ${agent}`,
+    whichAgents: ({ place }) => `${place} 中的智能体`,
+    remove: ({ target }) => `删除 ${target} 的规则`,
+    staysOff: ({ agents }) => `${agents} 在这里仍保持关闭`,
+    change: '更改',
+    changeFailed: '无法保存此更改。',
+    checking: '正在检查机器…',
+  },
+  add: {
+    closeDetails: '关闭详情',
+    backTo: ({ title }) => `返回 ${title}`,
+    added: '已添加',
+    done: '完成',
+    addFailed: '无法添加，请重试。',
+    modesLabel: '添加方式',
+    searchLabel: '搜索',
+  },
+  facts: {
+    textOnly: '仅文本',
+    hasFiles: '包含文件',
+    runsScripts: '运行脚本',
+    tokensWhenUsed: ({ count }) => `${count} 个令牌`,
+    toolCount: ({ shown }) => `${shown} 个工具`,
+    tokensPerTurn: ({ count }) => `${count} 个令牌/轮`,
+    you: '你',
+    happier: 'Happier',
+    pinnedTo: ({ ref }) => `固定到 ${ref}`,
+    inYourLibrary: '在你的库中',
+  },
+  status: {
+    off: '关闭',
+    signin: '需要登录',
+    moreAccess: '需要更多权限',
+    key: '需要密钥',
+    cantrun: ({ machine }) =>
+      machine ? `无法在 ${machine} 上运行` : '无法运行',
+    offline: '离线',
+    update: '有可用更新',
+    removed: '已从来源移除',
+    modified: '已修改',
+    pinned: '已固定',
+    unused: '最近未使用',
+    unusedExplanation: ({ agents }) =>
+      `会记录 ${agents} 以及通过 Happier 读取技能的代理的使用情况`,
+    error: ({ machine }) => (machine ? `已在 ${machine} 上停止` : '无法启动'),
+    masked: ({ machine }) =>
+      machine ? `${machine} 的副本优先` : '另一份副本优先',
+    signing: '正在登录…',
+    connected: '已连接',
+    expired: '登录已过期',
+    revoked: '访问已撤销',
+    fix: {
+      signIn: '登录',
+      reconnect: '重新连接',
+      addKey: '添加密钥',
+      howToFix: '如何修复',
+      tryAgain: '重试',
+      reviewUpdate: '查看更新',
+      compare: '比较',
+      turnOn: '开启',
+      grantAccess: '授予访问权限',
+    },
+  },
+};
+
+const capabilityKitTranslations = {
+  "zhHans": { ...zhHans, skills: Domain_skillsPageTranslations.skillsPageTranslations.zhHans, session: capabilityKitTranslations__sessionCapabilityTranslations.zhHans, notice: Domain_capabilityNoticeTranslations.capabilityNoticeTranslations.zhHans, detail: capabilityKitTranslations__capabilityDetailTranslations.zhHans, skillDetail: Domain_skillDetailTranslations.skillDetailTranslations.zhHans, skillsFound: Domain_skillsFoundTranslations.skillsFoundTranslations.zhHans, mcpFound: Domain_mcpFoundTranslations.mcpFoundTranslations.zhHans, skillsUpdates: Domain_skillsUpdatesTranslations.skillsUpdatesTranslations.zhHans, mcp: Domain_mcpPageTranslations.mcpPageTranslations.zhHans, valueRows: Domain_valueRefRowsTranslations.valueRefRowsTranslations.zhHans, mcpSignIn: capabilityKitTranslations__mcpSignInTranslations.zhHans, connectedAccountCallback: Domain_connectedAccountCallbackTranslations.connectedAccountCallbackTranslations.zhHans, mcpHome: Domain_mcpHomeTranslations.mcpHomeTranslations.zhHans, registries: capabilityKitTranslations__registriesTranslations.zhHans, skillAdd: capabilityKitTranslations__skillAddTranslations.zhHans, mcpAdd: capabilityKitTranslations__mcpAddTranslations.zhHans, agentAdd: Domain_agentAddTranslations.agentAddTranslations.zhHans, agentsHome: Domain_agentsHomeTranslations.agentsHomeTranslations.zhHans, profileSeeds: Domain_profileSeedsTranslations.profileSeedsTranslations.zhHans, scopeSection: Domain_scopeSectionTranslations.scopeSectionTranslations.zhHans, store: capabilityKitTranslations__storeTranslations.zhHans },
+} as const;
+
+return { capabilityKitTranslations };
+})();
+
+const Domain_sessionListSpacesKeyboardTranslations = (() => {
+const sessionListSpacesKeyboardTranslations = {
+  "zh-Hans": Shared_sessionListSpacesKeyboardTranslations.commands('打开列表筛选器', ordinal => `选择空间 ${ordinal}`),
+} as const;
+
+return { sessionListSpacesKeyboardTranslations };
+})();
+
+const Domain_reviewKeyboardTranslations = (() => {
+const reviewKeyboardTranslations = {
+  "zh-Hans": {
+        reviewChangeNext: '下一处更改', reviewChangePrevious: '上一处更改',
+        reviewChangeKeep: '保留或取消标记更改', reviewChangeDiscard: '放弃更改',
+        reviewChangeAsk: '询问此更改', reviewFileNext: '下一个更改的文件',
+        reviewFilePrevious: '上一个更改的文件', reviewUndo: '撤销审查操作',
+        editorSelectionAsk: '询问所选内容', filesTrackToggle: '跟踪智能体编辑', fileBlameToggle: '显示或隐藏 blame',
+    },
+} as const;
+
+return { reviewKeyboardTranslations };
+})();
+
+const Domain_paneKeyboardTranslations = (() => {
+const paneArrangementTranslations = {
+  "zh-Hans": { paneArrangement: '面板布局', paneArrangementDescription: '选择将会话还是编辑器放在中间。' , paneArrangementSession: '会话优先', paneArrangementEditor: '编辑器优先', paneArrangementSessionCaption: '聊天居中', paneArrangementEditorCaption: '代码居中', rightPanelPlacement: '右侧面板分隔', rightPanelPlacementDescription: '选择右侧面板与页面的关系：独立显示，或以线条或柔和阴影相连。', rightPanelPlacementSeparate: '独立', rightPanelPlacementLine: '线条', rightPanelPlacementShadow: '阴影', rightPanelPlacementSeparateCaption: '页面旁独立的面板', rightPanelPlacementLineCaption: '以细线相连', rightPanelPlacementShadowCaption: '以柔和阴影相连' },
+} as const satisfies Pick<Record<paneKeyboardTranslations__SupportedLanguage, Readonly<{ paneArrangement: string; paneArrangementDescription: string; paneArrangementSession: string; paneArrangementEditor: string; paneArrangementSessionCaption: string; paneArrangementEditorCaption: string; rightPanelPlacement: string; rightPanelPlacementDescription: string; rightPanelPlacementSeparate: string; rightPanelPlacementLine: string; rightPanelPlacementShadow: string; rightPanelPlacementSeparateCaption: string; rightPanelPlacementLineCaption: string; rightPanelPlacementShadowCaption: string }>>, "zh-Hans">;
+
+const paneRegionLabels = {
+  "zh-Hans": { rail: '应用导航', navigation: '导航列', right: '侧面板', details: '编辑器与详情', main: '主列', bottom: '底部面板' },
+} as const satisfies Pick<Record<paneKeyboardTranslations__SupportedLanguage, Readonly<Record<'rail' | 'navigation' | 'right' | 'details' | 'main' | 'bottom', string>>>, "zh-Hans">;
+
+const paneKeyboardTranslations = {
+  "zh-Hans": { commands: { shellColumnToggle: '显示或隐藏导航', panesMainToggle: '显示或隐藏主列', panesSideToggle: '显示或隐藏侧面板', panesArrangementToggle: '切换面板布局', panesRegionNext: '聚焦下一区域', panesRegionPrevious: '聚焦上一区域' }, groups: { panes: '面板', terminal: '终端', search: '搜索', review: '审阅', files: '文件与编辑器', code: '代码智能' }, desktop: '桌面应用', browser: '浏览器' },
+} as const satisfies Pick<Record<paneKeyboardTranslations__SupportedLanguage, Shared_paneKeyboardTranslations.PaneKeyboardCopy>, "zh-Hans">;
+
+return { paneArrangementTranslations, paneRegionLabels, paneKeyboardTranslations };
+})();
+
+const Domain_needsYouHighlightTranslations = (() => {
+const needsYouHighlightTranslations = {
+  "zh-Hans": { title: '突出显示需要你的会话', description: '在此设备的列表中，需要你的会话如何显示。打开后动画停止。', dot: '圆点', accent: '强调条', glint: '闪光', shimmer: '微光', pulse: '脉动' },
+} as const satisfies Pick<Record<needsYouHighlightTranslations__SupportedLanguage, Shared_needsYouHighlightTranslations.NeedsYouHighlightCopy>, "zh-Hans">;
+
+const workingIndicatorTranslations = {
+  "zh-Hans": { title: '工作指示器', description: '工作中的会话在列表中的显示方式。', spinner: '旋转', pulse: '脉动圆点', animatedTextTitle: '趣味工作词', animatedTextDescription: '开启状态词时，工作中的会话显示趣味词语，而不是“工作中”。' },
+} as const satisfies Pick<Record<needsYouHighlightTranslations__SupportedLanguage, Shared_needsYouHighlightTranslations.WorkingIndicatorCopy>, "zh-Hans">;
+
+return { needsYouHighlightTranslations, workingIndicatorTranslations };
+})();
+
+const Domain_quickOpenTranslations = (() => {
+const quickOpenTranslations = {
+  "zh-Hans": { commands: { searchFiles: '打开文件', searchSymbols: '转到符号' }, search: { recent: '最近打开', changed: '此会话中已更改', changedInFolder: '已更改的文件', openFile: '打开文件…', showMore: '显示更多', searchEverything: '搜索全部', noMatch: ({ query, scope }) => `${scope} 中没有与“${query}”匹配的文件`, symbolsNeedFile: '请先打开文件以查看符号', filesInScope: ({ scope }) => `${scope} 中的文件`, symbolsUnavailable: ({ file }) => `${file} 的符号暂不可用`, symbols: '符号', symbolAtLine: ({ name, line }) => `${name}，第 ${line} 行`, symbolsInFile: ({ file }) => `${file} 中的符号`, offline: ({ machine }) => `${machine} 未响应。正在显示最近打开的文件。` } },
+} as const satisfies Pick<Record<quickOpenTranslations__SupportedLanguage, Shared_quickOpenTranslations.QuickOpenCopy>, "zh-Hans">;
+
+return { quickOpenTranslations };
+})();
+
+const Domain_paneMainColumnTranslations = (() => {
+const paneMainColumnTranslations = {
+  "zh-Hans": { hideSession: '隐藏会话', showSession: '显示会话', hideProject: '隐藏项目', showProject: '显示项目', hideWorkflow: '隐藏工作流', showWorkflow: '显示工作流', hidePage: ({ title }: { title: string }) => `隐藏${title}`, showPage: ({ title }: { title: string }) => `显示${title}` , needsYou: '需要你', chipA11y: ({ label, name }: { label: string; name: string }) => `${label}：${name}`, chipNeedsYouA11y: ({ label, name }: { label: string; name: string }) => `${label}：${name}，需要你`, chipNeedsYouAnnouncement: ({ name }: { name: string }) => `${name} 需要你`, sidebarReleaseToHide: '松开以隐藏', backToTranscript: '返回对话' },
+} as const satisfies Pick<Record<paneMainColumnTranslations__SupportedLanguage, Shared_paneMainColumnTranslations.MainColumnCopy>, "zh-Hans">;
+
+return { paneMainColumnTranslations };
+})();
+
+const Domain_paneEmptyEditorTranslations = (() => {
+const paneEmptyEditorTranslations = {
+  "zh-Hans": { title: '在会话旁打开文件', reason: '会话工作时，阅读或编辑此项目中的任何文件。', openFile: '打开文件…', changedInSession: '本会话中的更改', recent: '最近', projectTitle: '打开此项目中的文件', projectReason: '在这里阅读或编辑任何文件；智能体会在各自的会话中继续工作。', changedInProject: '未提交的更改', openChangedFileA11y: ({ name }: { name: string }) => `打开 ${name}` },
+} as const satisfies Pick<Record<paneEmptyEditorTranslations__SupportedLanguage, Shared_paneEmptyEditorTranslations.EmptyEditorCopy>, "zh-Hans">;
+
+const paneShortcutsSheetTranslations = {
+  "zh-Hans": { footer: '当差异视图获得焦点且你未在输入时，审阅按键可用。', openSettings: '在设置中更改快捷键', hostA11y: '显示快捷键：' },
+} as const satisfies Pick<Record<paneEmptyEditorTranslations__SupportedLanguage, Shared_paneEmptyEditorTranslations.ShortcutsSheetCopy>, "zh-Hans">;
+
+return { paneEmptyEditorTranslations, paneShortcutsSheetTranslations };
+})();
+
+const Domain_llmTaskRunnerTranslations = (() => {
+const llmTaskRunnerTranslations = {
+  "zh-Hans": {
+        auto: '自动',
+        autoCurrently: ({ runner }: { runner: string }) => `自动 — 当前为 ${runner}`,
+        autoNothingReady: '自动 — 没有可用的',
+        autoDescription: '自动会在这台机器上已就绪的智能体中选用最便宜的合适模型，并使用其最低推理强度。价格相同时优先使用会话自己的智能体。',
+        checking: '正在检查这台机器上已就绪的内容…',
+        currently: ({ runner }: { runner: string }) => `当前：${runner}`,
+        noReadyAgent: '这台机器上没有已就绪的智能体。请登录一个智能体，或在此处选择一个。',
+        noMatchingModel: '这台机器上已就绪的智能体没有此任务可用的模型。请在此处选择一个。',
+        unavailable: '暂时无法检查这台机器。',
+        chooseMachine: '选择一台机器以查看自动会选择什么。',
+        permissionTitle: '权限级别',
+        permission: { no_tools: '无工具', read_only: '只读', workspace_write: '可编辑文件', full: '完全访问' },
+        permissionDescription: { no_tools: '只处理提供给它的文本。', read_only: '还可以使用不做任何更改的工具。', workspace_write: '可以更改项目中的文件。', full: '可以使用智能体的所有工具。' },
+    },
+} as const satisfies Pick<Record<llmTaskRunnerTranslations__SupportedLanguage, Shared_llmTaskRunnerTranslations.LlmTaskRunnerCopy>, "zh-Hans">;
+
+return { llmTaskRunnerTranslations };
+})();
+
+const Domain_actionSettingsResourcesTranslations = (() => {
+const actionSettingsResourcesTranslations = {
+  "zhHans": {
+        status: {
+            humanAllowed: ({ partial }: { partial: boolean }): string => partial ? "部分控件可以运行" : "你可以运行",
+            humanAskFirst: ({ partial }: { partial: boolean }): string => partial ? "部分控件先询问你" : "在应用中先询问你",
+            humanOff: ({ partial }: { partial: boolean }): string => partial ? "在部分控件中关闭" : "在应用中关闭",
+            agentAllowed: ({ partial }: { partial: boolean }): string => partial ? "部分代理工具可以运行" : "代理可以运行",
+            agentAskFirst: ({ partial }: { partial: boolean }): string => partial ? "部分代理工具先询问你" : "代理运行时先询问你",
+            agentOff: ({ partial }: { partial: boolean }): string => partial ? "对部分代理工具关闭" : "对代理关闭",
+            integrationAllowed: ({ partial }: { partial: boolean }): string => partial ? "部分集成可以运行" : "集成可以运行",
+            integrationAskFirst: ({ partial }: { partial: boolean }): string => partial ? "部分集成先询问你" : "集成运行时先询问你",
+            integrationOff: ({ partial }: { partial: boolean }): string => partial ? "对部分集成关闭" : "对集成关闭",
+            allOff: "关闭",
+            destructive: "无法撤销",
+            external: "会更改 Happier 之外的内容",
+        },
+        family: {
+            title: '资源',
+            reading: { title: '资源 · 读取', description: '查看不会改变任何内容，所以默认允许。' },
+            changing: { title: '资源 · 更改', description: '任何会停止或移除内容的操作，默认都会先询问你。停止会话和移除工作树各有独立操作。' },
+            related: '独立操作 · 打开其设置',
+        },
+        facts: {
+            automationsSection: '自动化',
+            alwaysTrueSection: '始终适用',
+            automations: { title: '定期检查', subtitle: '定期检查使用上方的代理设置。' },
+            forbidden: { title: '禁止的位置', subtitle: 'Happier 会拒绝移动或删除它们。' },
+            trashFirst: { title: '废纸篓与永久删除', subtitle: '移动操作会先放入 Happier 废纸篓。“立即删除”默认要求确认。' },
+        },
+    },
+} as const;
+
+return { actionSettingsResourcesTranslations };
+})();
+
+const Domain_resourceProposalTranslations = (() => {
+const zhHans = {
+  title: {
+    storage: '清理建议',
+    processes: '释放内存',
+    retry: '腾出空间并重试',
+  },
+  machineChecked: ({ machine, time }: { machine: string; time: string }) =>
+    `${machine} · ${time}已检查`,
+  machineChecking: ({ machine }: { machine: string }) =>
+    `${machine} · 正在检查…`,
+  selected: ({ count, total }: { count: number; total: number }) =>
+    `已选择 ${count}/${total}`,
+  selectAll: '全选',
+  selectAllSafe: '选择所有安全项',
+  givesBack: '可回收',
+  frees: '可释放',
+  onDisk: ({ amount }: { amount: string }) => `占磁盘 ${amount}`,
+  changed: '已更改',
+  gone: '已不存在',
+  notIncluded: '不属于此建议',
+  includeAnyway: '包含它',
+  goal: ({ found, goal }: { found: string; goal: string }) =>
+    `已找到 ${found}，目标 ${goal}`,
+  staleTitle: ({ count }: { count: number }) =>
+    count === 1
+      ? '自代理检查后有 1 项发生了变化。'
+      : `自代理检查后有 ${count} 项发生了变化。`,
+  staleBody: '重新检查之前无法批准任何内容。',
+  checkAgain: '重新检查',
+  checkUnavailable: '暂时无法检查这些项目。每一项在执行时都会重新检查。',
+  note: {
+    trash: '每一项都会重新检查后再移动。清空废纸篓后空间才会释放。',
+    processes: '不会删除任何内容。每一项都会先重新检查。',
+    emptyAfter: '现在就需要空间，因此会立即清空废纸篓。这一步无法撤销。',
+  },
+  approve: {
+    trash: ({ count }: { count: number }) => `将 ${count} 项移到废纸篓`,
+    emptyAndRetry: '移到废纸篓、清空并重试',
+    keepUndo: '移到废纸篓并重试',
+    keepUndoHint: '保留撤销；仅在清空废纸篓后释放空间。',
+    stop: ({ count }: { count: number }) => `停止 ${count} 项`,
+  },
+  notNow: '暂不',
+  declinedTitle: '已拒绝建议',
+  declinedFacts: ({ count }: { count: number }) =>
+    `${count} 项 · 未做任何更改`,
+  reopen: '重新打开',
+  tryAgain: '重试',
+  startAgain: '重新启动',
+  startedAgain: '已重新启动',
+  keptByGuard: '因正在工作而保留',
+  memoryLabel: '内存',
+  memoryAfter: ({ now, after }: { now: string; after: string }) => `现在 ${now} · 之后约 ${after}`,
+  memoryNow: ({ now }: { now: string }) => `已用 ${now}`,
+  processesTree: '正在使用内存的内容',
+  analysingFound: ({ count }: { count: number }) => `目前已找到 ${count} 项`,
+  analysingNote: '仍在读取。完成后即可批准。',
+  inbox: {
+    allSafe: ({ count }: { count: number }) => `${count} 项，全部安全`,
+    mixed: ({ count, safe, attention }: { count: number; safe: number; attention: number }) => `${count} 项 · ${safe} 项安全，${attention} 项需要你查看`,
+    stops: ({ count }: { count: number }) => `停止 ${count} 项`,
+  },
+  restored: '已放回 · 未移除任何内容',
+  receiptChecking: '正在检查垃圾桶和近期活动…',
+  receiptUnavailable: '无法检查当前结果。请重新打开此建议以重试。',
+  receiptUnknown: ({ count }: { count: number }) => `无法确认 ${count} 项的最终结果。`,
+  receiptRestored: ({ count }: { count: number }) => `已放回 ${count} 项`,
+  receiptFreed: ({ count, amount }: { count: number; amount: string }) => `已释放 ${amount} · 已删除 ${count} 项`,
+  skipped: ({ reason }: { reason: string }) => `未移动：${reason}`,
+  stopped: ({ count }: { count: number }) => `已停止 ${count} 项`,
+  stoppedFreed: ({ amount }: { amount: string }) => `已释放 ${amount}`,
+  notStopped: ({ reason }: { reason: string }) => `未停止：${reason}`,
+  failed: '此建议未能完成。未更改其他任何内容。',
+  processSafe: '安全 · 随时可重新启动',
+  processStopLoss: ({ title }: { title: string }) => `停止“${title}”会中断当前工作或待回答的问题。`,
+  processKillLoss: ({ title }: { title: string }) => `强制结束“${title}”会立即终止工作；未保存的工作将丢失。`,
+  processCheck: '请先检查',
+  itemLabel: ({
+    title,
+    size,
+    verdict,
+  }: {
+    title: string;
+    size: string;
+    verdict: string;
+  }) => `${title}，${size}，${verdict}`,
+  owner: {
+    session: '会话',
+    terminal: '终端',
+    service: '开发服务器',
+    run: '运行',
+    browser_sidecar: '浏览器辅助进程',
+    workspace_sync: '工作区同步',
+    other: '进程',
+  },
+} as const;
+
+const resourceProposalTranslations = {
+  "zhHans": zhHans,
+} as const;
+
+return { resourceProposalTranslations };
+})();
+
+const Domain_machineResourceUiTranslations = (() => {
+const machineResourceUiTranslations = {
+  "zhHans": {
+        ask: { title: '询问智能体', placeholder: Shared_machineResourceUiTranslations.machinePhrase('询问关于 ', '…'), description: '它可以读取本页显示的内容并提出更改建议。未经你的批准，不会停止或删除任何内容。', offline: Shared_machineResourceUiTranslations.machinePhrase('', ' 处于离线状态，智能体现在无法查看它。') },
+        askSuggestions: {
+            prompts: {
+                memory: Shared_machineResourceUiTranslations.machinePhrase('', ' 为什么内存不足？'),
+                disk: Shared_machineResourceUiTranslations.machinePhrase('查找可以在 ', ' 上释放的空间'),
+                storage: Shared_machineResourceUiTranslations.machinePhrase('解释 ', ' 上 Happier 的存储占用'),
+                leftBehind: Shared_machineResourceUiTranslations.machinePhrase('检查 ', ' 上遗留的进程'),
+                guard: Shared_machineResourceUiTranslations.machinePhrase('解释在 ', ' 上开启 Guard 会做什么'),
+                overview: Shared_machineResourceUiTranslations.machinePhrase('检查 ', ' 的资源使用情况'),
+                processes: Shared_machineResourceUiTranslations.machinePhrase('', ' 上什么最占内存？'),
+                weeklyReview: '每周一检查存储空间',
+                lastReport: Shared_machineResourceUiTranslations.machinePhrase('解释 ', ' 的最新资源报告'),
+                lastStorageReport: Shared_machineResourceUiTranslations.machinePhrase('检查 ', ' 的最新存储报告'),
+                notifyWhenBack: Shared_machineResourceUiTranslations.machinePhrase('', ' 恢复在线时告诉我'),
+                notifyWhenBackConsent: Shared_machineResourceUiTranslations.machinePhrase('我同意为 ', ' 启用持续的机器离线提醒和恢复更新。'),
+                setupDocker: Shared_machineResourceUiTranslations.machinePhrase("在 ", " 上设置 Docker"),
+                setupReview: Shared_machineResourceUiTranslations.machinePhrase("查看 ", " 上已设置的内容"),
+                setupHarden: Shared_machineResourceUiTranslations.machinePhrase("加固 ", " 的 SSH 和防火墙"),
+                securityAccess: Shared_machineResourceUiTranslations.machinePhrase("说明谁能在 ", " 上做什么"),
+                securityNetwork: Shared_machineResourceUiTranslations.machinePhrase("查看 ", " 上对互联网开放的内容"),
+                securityUpdates: Shared_machineResourceUiTranslations.machinePhrase("查看 ", " 上等待安装的更新"),
+            },
+            reasons: {
+                setup: "每项更改都会先由你审阅",
+                security: "在你批准之前只读",
+                memory: '内存压力需要关注', disk: Shared_machineResourceUiTranslations.amountPhrase('此卷剩余 ', ''),
+                storage: Shared_machineResourceUiTranslations.amountPhrase('Happier 使用了 ', ''), leftBehind: Shared_machineResourceUiTranslations.countPhrase('遗留进程 ', ' 个'),
+                guard: '内存保护已关闭', calm: '这台机器状态平稳',
+                currentReport: '来自这台机器的资源报告', weeklyReview: '每周检查的建议',
+                offline: '这台机器已离线；使用其最新报告',
+            },
+        },
+        widgets: {
+            body: machineResourceUiTranslations__machineWidgetBodyTranslations.zhHans,
+            machine_vitals: '运行状态', machine_fleet: '机器', machine_metric: '指标',
+            machine_top_consumers: '占用最多', machine_left_behind: '遗留进程',
+            machine_storage: '存储', machine_worktrees: '工作树', machine_guard: 'Guard',
+            machine_activity: '活动', machine_cleanup_suggestion: '建议',
+            followsSessionMachine: '跟随此会话所在的机器',
+            inputs: {
+                volume: '卷', range: '范围', scope: '作用范围', style: '样式', metrics: '指标',
+                warnAbove: '超过时警告', cpu: 'CPU', memory: '内存', diskFree: '磁盘可用空间',
+                network: '网络', oneHour: '1 小时', oneDay: '24 小时', sevenDays: '7 天',
+                machineScope: '机器', sessionScope: '会话', sparklines: '迷你图',
+                bars: '柱形图', numbers: '数字', rings: '环形图', disk: '磁盘',
+            },
+        },
+    },
+} as const satisfies Pick<Record<'en' | 'ca' | 'de' | 'es' | 'fr' | 'it' | 'ja' | 'pl' | 'pt' | 'ru' | 'zhHans' | 'zhHant', typeof Shared_machineResourceUiTranslations.en>, "zhHans">;
+
+return { machineResourceUiTranslations };
+})();
 
 const Domain_accountDisplayTranslations = (() => {
 type AccountDisplayTranslation = Shared_accountDisplayTranslations.AccountDisplayTranslation;
@@ -18149,4 +20383,55 @@ export {
     Domain_workspaceBarTranslations as workspaceBarTranslations,
     Domain_workspaceSyncDiagnosticTranslations as workspaceSyncDiagnosticTranslations,
     Domain_workspaceTabTranslations as workspaceTabTranslations,
+    Domain_simulatorDeviceToolsTranslations as simulatorDeviceToolsTranslations,
+    Domain_deploymentMoveTranslations as deploymentMoveTranslations,
+    Domain_newSessionActionDefaultTranslations as newSessionActionDefaultTranslations,
+    Domain_chatLinksTranslations as chatLinksTranslations,
+    Domain_deploymentDefaultsTranslations as deploymentDefaultsTranslations,
+    Domain_deploymentCopyTranslations as deploymentCopyTranslations,
+    Domain_deploymentSettingsTranslations as deploymentSettingsTranslations,
+    Domain_pluginPublishTranslations as pluginPublishTranslations,
+    Domain_botTemplateTranslations as botTemplateTranslations,
+    Domain_botTemplateRecipientTranslations as botTemplateRecipientTranslations,
+    Domain_botFaceNameTranslations as botFaceNameTranslations,
+    Domain_screenCaptureTranslations as screenCaptureTranslations,
+    Domain_deploymentCreationReviewTranslations as deploymentCreationReviewTranslations,
+    Domain_deploymentPlatformLinkTranslations as deploymentPlatformLinkTranslations,
+    Domain_deploymentPromotionTranslations as deploymentPromotionTranslations,
+    Domain_fileEditingTranslations as fileEditingTranslations,
+    Domain_usageChartInputTranslations as usageChartInputTranslations,
+    Domain_usageChartPlanetFamilyTranslations as usageChartPlanetFamilyTranslations,
+    Domain_fileSelectionAskTranslations as fileSelectionAskTranslations,
+    Domain_fileTrackTranslations as fileTrackTranslations,
+    Domain_actionPresentationTranslations as actionPresentationTranslations,
+    Domain_fileReviewNoteTranslations as fileReviewNoteTranslations,
+    Domain_composerReferenceTranslations as composerReferenceTranslations,
+    Domain_hunkReviewTranslations as hunkReviewTranslations,
+    Domain_storeInstalledTranslations as storeInstalledTranslations,
+    Domain_connectedAccountCallbackTranslations as connectedAccountCallbackTranslations,
+    Domain_skillsPageTranslations as skillsPageTranslations,
+    Domain_capabilityNoticeTranslations as capabilityNoticeTranslations,
+    Domain_skillDetailTranslations as skillDetailTranslations,
+    Domain_skillsFoundTranslations as skillsFoundTranslations,
+    Domain_mcpFoundTranslations as mcpFoundTranslations,
+    Domain_skillsUpdatesTranslations as skillsUpdatesTranslations,
+    Domain_mcpPageTranslations as mcpPageTranslations,
+    Domain_valueRefRowsTranslations as valueRefRowsTranslations,
+    Domain_agentAddTranslations as agentAddTranslations,
+    Domain_mcpHomeTranslations as mcpHomeTranslations,
+    Domain_agentsHomeTranslations as agentsHomeTranslations,
+    Domain_profileSeedsTranslations as profileSeedsTranslations,
+    Domain_scopeSectionTranslations as scopeSectionTranslations,
+    Domain_capabilityKitTranslations as capabilityKitTranslations,
+    Domain_sessionListSpacesKeyboardTranslations as sessionListSpacesKeyboardTranslations,
+    Domain_reviewKeyboardTranslations as reviewKeyboardTranslations,
+    Domain_paneKeyboardTranslations as paneKeyboardTranslations,
+    Domain_needsYouHighlightTranslations as needsYouHighlightTranslations,
+    Domain_quickOpenTranslations as quickOpenTranslations,
+    Domain_paneMainColumnTranslations as paneMainColumnTranslations,
+    Domain_paneEmptyEditorTranslations as paneEmptyEditorTranslations,
+    Domain_llmTaskRunnerTranslations as llmTaskRunnerTranslations,
+    Domain_actionSettingsResourcesTranslations as actionSettingsResourcesTranslations,
+    Domain_resourceProposalTranslations as resourceProposalTranslations,
+    Domain_machineResourceUiTranslations as machineResourceUiTranslations,
 };

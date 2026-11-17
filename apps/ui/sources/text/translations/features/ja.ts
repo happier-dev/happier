@@ -171,6 +171,2290 @@ import * as Shared_workspaceBarTranslations from '../workspaceBarTranslations.sh
 import type { TranslationStructure } from '../en';
 import * as Shared_workspaceSyncDiagnosticTranslations from '../workspaceSyncDiagnosticTranslations.shared';
 import * as Shared_workspaceTabTranslations from '../workspaceTabTranslations.shared';
+import * as Shared_simulatorDeviceToolsTranslations from '../simulatorDeviceToolsTranslations';
+import type { SupportedLanguage as simulatorDeviceToolsTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentMoveTranslations from '../deploymentMoveTranslations';
+import type { SupportedLanguage as deploymentMoveTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_newSessionActionDefaultTranslations from '../newSessionActionDefaultTranslations';
+import * as Shared_chatLinksTranslations from '../chatLinksTranslations';
+import type { SupportedLanguage as chatLinksTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentDefaultsTranslations from '../deploymentDefaultsTranslations';
+import type { SupportedLanguage as deploymentDefaultsTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentCopyTranslations from '../deploymentCopyTranslations';
+import type { SupportedLanguage as deploymentCopyTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentSettingsTranslations from '../deploymentSettingsTranslations';
+import { deploymentOperationalTranslations as deploymentSettingsTranslations__deploymentOperationalTranslations } from '../deploymentOperationalTranslations';
+import type { SupportedLanguage as deploymentSettingsTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_pluginPublishTranslations from '../pluginPublishTranslations';
+import * as Shared_botTemplateTranslations from '../botTemplateTranslations';
+import type { SupportedLanguage as botTemplateTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_botTemplateRecipientTranslations from '../botTemplateRecipientTranslations';
+import type { SupportedLanguage as botTemplateRecipientTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_botFaceNameTranslations from '../botFaceNameTranslations.shared';
+import * as Shared_screenCaptureTranslations from '../screenCaptureTranslations.shared';
+import * as Shared_deploymentCreationReviewTranslations from '../deploymentCreationReviewTranslations';
+import type { SupportedLanguage as deploymentCreationReviewTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentPlatformLinkTranslations from '../deploymentPlatformLinkTranslations';
+import type { SupportedLanguage as deploymentPlatformLinkTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentPromotionTranslations from '../deploymentPromotionTranslations';
+import type { SupportedLanguage as deploymentPromotionTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_fileEditingTranslations from '../fileEditingTranslations.shared';
+import { fileAiSuggestionsTranslations as fileEditingTranslations__fileAiSuggestionsTranslations } from '../fileAiSuggestionsTranslations.shared';
+import { fileAiSuggestionControls as fileEditingTranslations__fileAiSuggestionControls } from '../fileAiSuggestionsTranslations.shared';
+import { fileNextEditTranslations as fileEditingTranslations__fileNextEditTranslations } from '../fileAiSuggestionsTranslations.shared';
+import * as Shared_usageChartInputTranslations from '../usageChartInputTranslations.shared';
+import * as Shared_usageChartPlanetFamilyTranslations from '../usageChartPlanetFamilyTranslations.shared';
+import * as Shared_fileSelectionAskTranslations from '../fileSelectionAskTranslations.shared';
+import * as Shared_fileTrackTranslations from '../fileTrackTranslations.shared';
+import * as Shared_actionPresentationTranslations from '../actionPresentationTranslations';
+import * as Shared_fileReviewNoteTranslations from '../fileReviewNoteTranslations.shared';
+import * as Shared_composerReferenceTranslations from '../composerReferenceTranslations.shared';
+import * as Shared_hunkReviewTranslations from '../hunkReviewTranslations.shared';
+import * as Shared_storeInstalledTranslations from '../storeInstalledTranslations.shared';
+import * as Shared_connectedAccountCallbackTranslations from '../connectedAccountCallbackTranslations';
+import * as Shared_skillsPageTranslations from '../skillsPageTranslations';
+import * as Shared_capabilityNoticeTranslations from '../capabilityNoticeTranslations';
+import * as Shared_skillDetailTranslations from '../skillDetailTranslations';
+import * as Shared_skillsFoundTranslations from '../skillsFoundTranslations';
+import * as Shared_mcpFoundTranslations from '../mcpFoundTranslations';
+import * as Shared_skillsUpdatesTranslations from '../skillsUpdatesTranslations';
+import * as Shared_mcpPageTranslations from '../mcpPageTranslations';
+import * as Shared_valueRefRowsTranslations from '../valueRefRowsTranslations';
+import * as Shared_agentAddTranslations from '../agentAddTranslations';
+import * as Shared_mcpHomeTranslations from '../mcpHomeTranslations';
+import * as Shared_agentsHomeTranslations from '../agentsHomeTranslations';
+import * as Shared_profileSeedsTranslations from '../profileSeedsTranslations';
+import * as Shared_scopeSectionTranslations from '../scopeSectionTranslations';
+import * as Shared_capabilityKitTranslations from '../capabilityKitTranslations';
+import { sessionCapabilityTranslations as capabilityKitTranslations__sessionCapabilityTranslations } from '../sessionCapabilityTranslations';
+import { capabilityDetailTranslations as capabilityKitTranslations__capabilityDetailTranslations } from '../capabilityDetailTranslations';
+import { mcpSignInTranslations as capabilityKitTranslations__mcpSignInTranslations } from '../mcpSignInTranslations';
+import { registriesTranslations as capabilityKitTranslations__registriesTranslations } from '../registriesTranslations';
+import { skillAddTranslations as capabilityKitTranslations__skillAddTranslations } from '../registriesTranslations';
+import { mcpAddTranslations as capabilityKitTranslations__mcpAddTranslations } from '../mcpAddTranslations';
+import { storeTranslations as capabilityKitTranslations__storeTranslations } from '../storeTranslations';
+import * as Shared_sessionListSpacesKeyboardTranslations from '../sessionListSpacesKeyboardTranslations.shared';
+import * as Shared_reviewKeyboardTranslations from '../reviewKeyboardTranslations.shared';
+import * as Shared_paneKeyboardTranslations from '../paneKeyboardTranslations';
+import type { SupportedLanguage as paneKeyboardTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_needsYouHighlightTranslations from '../needsYouHighlightTranslations';
+import type { SupportedLanguage as needsYouHighlightTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_quickOpenTranslations from '../quickOpenTranslations';
+import type { SupportedLanguage as quickOpenTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_paneMainColumnTranslations from '../paneMainColumnTranslations';
+import type { SupportedLanguage as paneMainColumnTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_paneEmptyEditorTranslations from '../paneEmptyEditorTranslations';
+import type { SupportedLanguage as paneEmptyEditorTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_llmTaskRunnerTranslations from '../llmTaskRunnerTranslations';
+import type { SupportedLanguage as llmTaskRunnerTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_actionSettingsResourcesTranslations from '../actionSettingsResourcesTranslations.shared';
+import * as Shared_resourceProposalTranslations from '../resourceProposalTranslations.shared';
+import * as Shared_machineResourceUiTranslations from '../machineResourceUiTranslations.shared';
+import { machineWidgetBodyTranslations as machineResourceUiTranslations__machineWidgetBodyTranslations } from '../machineWidgetBodyTranslations.shared';
+
+const Domain_simulatorDeviceToolsTranslations = (() => {
+const simulatorDeviceToolsTranslations = {
+  "ja": {
+    start: "起動",
+    stopped: "停止中",
+    powerOff: "電源を切る",
+    screenshot: "スクリーンショットを撮る",
+    operationFailed: "デバイスで実行できませんでした",
+    videoUnsupported: "このブラウザでは動画を再生できません",
+    videoUnsupportedBody: "このブラウザではデバイスの動画をデコードできません。最新の Chrome、Edge、Safari かアプリで Happier を開いてください。",
+    appSection: "アプリ",
+    appDescription: "バンドル ID またはパッケージ ID でアプリを起動・終了します。",
+    appId: "アプリ ID",
+    launch: "起動",
+    terminate: "終了",
+    linkSection: "リンクを開く",
+    url: "URL またはディープリンク",
+    open: "開く",
+    settingsSection: "デバイスの設定",
+    appearance: "外観",
+    light: "ライト",
+    dark: "ダーク",
+    textSize: "文字サイズ",
+    small: "小",
+    defaultSize: "標準",
+    large: "大",
+    orientation: "向き",
+    portrait: "縦",
+    landscape: "横",
+    location: "位置情報",
+    latitude: "緯度",
+    longitude: "経度",
+    setLocation: "設定",
+    clearLocation: "消去",
+    permissions: "権限",
+    permissionsDescription: "上のアプリが使えるものを変更します。",
+    permission: "権限",
+    allow: "許可",
+    deny: "拒否",
+    reset: "リセット",
+    camera: "カメラ",
+    photos: "写真",
+    microphone: "マイク",
+    contacts: "連絡先",
+    locationPermission: "位置情報",
+    push: "プッシュ通知",
+    pushDescription: "上のアプリに送信します。",
+    payload: "ペイロード（JSON）",
+    send: "送信",
+    invalidJson: "JSON オブジェクトを入力してください。",
+    needAppId: "先にアプリ ID を入力してください。",
+    accessibility: "アクセシビリティ",
+    accessibilityDescription: "支援技術が読み取る画面上の要素。",
+    readScreen: "画面を読み取る",
+    press: "押す",
+    truncated: "画面の一部のみ表示しています。",
+    noElements: "要素が見つかりません。",
+  },
+} as const satisfies Pick<Record<simulatorDeviceToolsTranslations__SupportedLanguage, Shared_simulatorDeviceToolsTranslations.SimulatorDeviceToolsCopy>, "ja">;
+
+return { simulatorDeviceToolsTranslations };
+})();
+
+const Domain_deploymentMoveTranslations = (() => {
+const deploymentMoveTranslations = {
+  "ja": {
+    "dataReviewLead": "停止する移動元のサービスとアプリの変更を確認します。ワークフローは書き込みを停止し、最終バックアップを検証して移動先に復元・確認した後、アプリをデプロイします。元のデータは移動元に保持されます。 切り替えが不確かな場合は、続行前に実行画面で判断が必要です。",
+    "writers": "停止するサービス",
+    "writerReviewRequired": "移動元の書き込みサービスを特定できませんでした。サービスと実行状態を確認してから、もう一度お試しください。",
+    "noRunningWriter": "移動したデータベースを使用するアプリサービスを起動してから、移動を再確認してください。",
+    "stopped": "停止済み · 停止を維持",
+    "menu": "別のマシンに移動…",
+    "title": "別のマシンに移動",
+    "description": "同じコミットを使用します。移動先の正常性が確認されるまで移動元は稼働し、ローカルデータは保持されます。",
+    "restriction": "ドメインとローカルデータのないリポジトリアプリのみ対応しています。",
+    "stateless": "このアプリには移動するローカルデータがありません",
+    "source": "移動元",
+    "destination": "移動先",
+    "run": "移動ワークフローを開始"
+  },
+} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'stopped', string>>>, "ja">;
+
+return { deploymentMoveTranslations };
+})();
+
+const Domain_newSessionActionDefaultTranslations = (() => {
+const newSessionActionDefaultTranslations = {
+  "ja": { name: 'アクション名', launchMode: '次回の動作', review: '開始前に確認', start: 'すぐに開始', open: 'このアクションの既定値として保存…', saved: 'アクションの既定値を保存しました', failed: '保存されていません。', stablePlacementRequired: "既定値を保存するには、常設のマシンまたは「確認する」を選択してください。一時的なコンピューターやプールの選択は保存できません。", workspaceMode: "このアクションには作業コピーが必要です。対応するフォルダーを選択して、もう一度保存してください。", nameRequired: 'アクション名を入力してください。' },
+} as const;
+
+return { newSessionActionDefaultTranslations };
+})();
+
+const Domain_chatLinksTranslations = (() => {
+const chatLinksTranslations = {
+  "ja": {"title": "チャットのリンクを開く場所", "description": "このデバイスでリンクを開く場所を選びます。マシンの localhost リンクは常にアプリ内で開きます。", "browser": "端末のブラウザ", "embedded": "埋め込み", "managed": "管理対象"},
+} as const satisfies Pick<Record<chatLinksTranslations__SupportedLanguage, Shared_chatLinksTranslations.ChatLinksCopy>, "ja">;
+
+return { chatLinksTranslations };
+})();
+
+const Domain_deploymentDefaultsTranslations = (() => {
+const deploymentDefaultsTranslations = {
+  "ja": {
+        accountDescription: 'アカウント所有プロジェクトの新しい環境に適用する既定値です。チームのプロジェクトでは共有のプロジェクト既定値を使います。',
+        projectDescription: '環境の作成時に適用します。既存の環境は現在の設定を維持します。',
+        useAccount: 'アカウントの既定値を使う', useBuiltin: 'Happierの既定値を使う', retention: 'ロールバック用に保持するリリース数',
+        clearToInherit: '空にすると既定値を継承します', projectTitle: 'デプロイ設定', alertChannels: '通知チャンネル', accountLink: 'アカウントのデプロイ既定値',
+        triggersTitle: "トリガー", triggersDescription: "トリガーは環境ごとに動きます。環境を開いて確認・追加できます。",
+    },
+} as const satisfies Pick<Record<deploymentDefaultsTranslations__SupportedLanguage, Shared_deploymentDefaultsTranslations.Copy>, "ja">;
+
+return { deploymentDefaultsTranslations };
+})();
+
+const Domain_deploymentCopyTranslations = (() => {
+const deploymentCopyTranslations = {
+  "ja": {
+    name: ({ name }) => `${name} コピー`,
+    preparePrompt: ({ name, sourceId, environmentId }) => `環境 ${name} (${environmentId})、プロジェクトソース ${sourceId} のデプロイを準備してください。リポジトリと指示を確認し、Dockerfile、compose.yaml、ヘルスチェックをレビュー用のプルリクエストで提案してください。マージやデプロイはしないでください。`,
+    menu: "環境を複製…",
+    title: "環境を複製",
+    description: "デプロイ定義をコピーします。参照を選択してください。自動ではデプロイされません。",
+    bindings: "コピーする内容",
+    same: "同じ参照",
+    choose: "別の参照を選択…",
+    omit: "空のまま",
+    include: "含める",
+    domainsStay: "ドメインは元の環境に残ります。アドレスは1つの環境にだけ属します。",
+    dataTitle: "データ",
+    dataOmit: "接続しない",
+    dataOmitHint: "このデータリソースを接続せずに環境を作成します。",
+    dataRestoreUnavailable: "このデータは複製時にバックアップから復元できません。",
+    dataConnections: "共有接続",
+    dataConnectionsHint: "このコピーで使う保存済みの接続を選択します。データベースは元の環境に接続されたままです。",
+    dataConnectionsUnavailable: "保存済みの接続変数が選択されていません。上で選択するか、別のデータオプションを選んでください。",
+    dataReuse: "再利用",
+    dataReuseHint: "両方の環境で同じデータを使います。",
+    dataEmpty: "空で始める",
+    dataEmptyHint: "新しい空のデータを接続します。環境の作成後に接続を設定してください。",
+    dataEmptyUnavailable: "このプロバイダーは空のデータベースの作成に対応していません。",
+    dataRestore: "最新のバックアップから復元",
+    dataRestoreHint: "元の環境の最新バックアップから作る新しいコピーです。",
+    prepareTitle: "compose.yaml がない · エージェントに依頼",
+    prepareBody: "スタートを開き、Dockerfile、compose.yaml、ヘルスチェックをレビュー可能なプルリクエストで依頼します。",
+    refresh: "この情報は古くなっています。環境を更新して最新の設定を確認し、再試行してください。",
+    permission: "アクセス権ではこの操作を実行できません。環境の管理者にアクセスを依頼し、再試行してください。",
+    machine: "コントローラーマシンを利用できません。コントローラーマシンをオンラインにして再試行してください。",
+    repository: "リポジトリのチェックアウトが未選択です。スタートでリポジトリを選び、デプロイ前に準備してください。",
+    unsupported: "この対象は操作に対応していません。対応する対象を選ぶか選択を変更してください。",
+    retry: "操作が拒否されました。理由を確認し、選択を調整して再試行してください。",
+  },
+} as const satisfies Pick<Record<deploymentCopyTranslations__SupportedLanguage, Shared_deploymentCopyTranslations.DeploymentCopyTranslations>, "ja">;
+
+return { deploymentCopyTranslations };
+})();
+
+const Domain_deploymentSettingsTranslations = (() => {
+const deploymentSettingsTranslations = {
+  "ja": {
+    ...deploymentSettingsTranslations__deploymentOperationalTranslations['ja'],
+    fleetIngressSuggestedBody: "マシンのネットワーク情報に基づく候補です。選択すると保存されます。ドメイン設定時にもルートを確認します。",
+    fleet: Shared_deploymentSettingsTranslations.fleetCopy,
+    moveToRepository: Shared_deploymentSettingsTranslations.moveToRepositoryCopy,
+    previewEditor: Shared_deploymentSettingsTranslations.previewEditorCopy,
+    restoreExtended: Shared_deploymentSettingsTranslations.restoreExtendedCopy,
+    fleetIngressTitle: "公開ルート",
+    fleetIngressChoose: "ルートを選択",
+    fleetIngressUnobserved: "ここではドメインのゾーンや共有プライベートネットワークはまだ確認されていません。ルートを選択してください。ドメイン設定時に確認されます。",
+    fleetIngressTunnel: "Cloudflare Tunnel",
+    fleetIngressEdge: "Caddy エッジ",
+    fleetIngressTunnelBody: "コネクターは互いの障害を補いますが、負荷は分散しません。プライベートネットワークがない場合、対応できるのはホストまたはコネクターの停止のみです。",
+    fleetIngressEdgeBody: "プライベートネットワーク経由でトラフィックを分散します。エッジマシンが停止すると、アプリにアクセスできなくなります。",
+    privateSharingTitle: "プライベート共有",
+    privateSharingBody: "サービスを非公開で共有します。保存内容は次のデプロイで適用されます。",
+    privateSharingAdd: "サービスを共有",
+    privateSharingRepository: "リポジトリの Compose ファイルを編集してサービスを非公開で公開し、エージェントにサービスのエクスポートを設定してもらってください。",
+    privateSharingUnsupported: "既存のアクセスを維持するため、これらのエクスポートはエージェントに編集を依頼してください。",
+    privateSharingMultipleMachines: "このエディターでは、1台のマシンで実行される環境のみプライベート共有を設定できます。",
+    privateSharingNetworkMissing: "実行マシンで「ネットワーク → プライベートネットワーク」を開き、Tailscale を接続して、他のアプリと同じネットワークに参加してください。",
+    privateSharingService: "サービス",
+    privateSharingKey: "エクスポート名",
+    privateSharingPort: "コンテナポート",
+    privateSharingScheme: "URL スキーム",
+    privateSharingNetwork: "プライベートネットワーク",
+    privateSharingAddress: "ホストアドレス",
+    privateSharingHostPort: "公開するホストポート",
+    privateSharingReview: "共有を確認",
+    privateSharingReviewBody: "次のデプロイでこのホストアドレスとポートにバインドします。その後、他のアプリでこのプライベートエクスポートを使えます。",
+    privateSharingInvalid: "サービス、エクスポート名、スキーム、両方のポートを確認してください。",
+    privateSharingHappierNetwork: "Happier ネットワーク",
+    privateSharingHappierNetworkBody: "あなたのマシンは Happier 経由で非公開に接続できます。VPN は不要です。",
+    privateSharingHappierNetworkPending: "まだ利用できません",
+    privateSharingJoinedNetworkBody: "このネットワーク上のアプリはプライベートアドレスで接続します。",
+    privateSharingReviewBodyHappier: "次のデプロイでこのポートをこのマシン上だけに公開します。他のマシンは Happier 経由で接続します。",
+    destinationS3: ({ region }) => `${region} の S3`,
+    destinationS3NoRegion: 'S3 ストレージ',
+    destinationTest: 'テスト',
+    destinationReachable: '到達可能 · たった今テスト済み',
+    destinationRepositoryMissing:
+      'バックアップが見つかりません · バケットとプレフィックスを確認',
+    destinationNativeFailed: '保存先が応答しません · アドレスを確認',
+    destinationLocked: '別のバックアップが使用中 · 終わったら再試行',
+    destinationPasswordIncorrect: 'リポジトリのパスワードが一致しません',
+    destinationRetry: 'テストが完了しませんでした · 再試行',
+    keepTitle: '保持',
+    keepChange: '変更',
+    keepDescription:
+      '各バックアップの後、これらの数を超えた古いバックアップは削除されます。すべて空欄ならすべて保持します。',
+    keepLast: '最新',
+    keepDaily: '日次',
+    keepWeekly: '週次',
+    keepMonthly: '月次',
+    keepSave: '保存',
+    keepCancel: 'キャンセル',
+    keepInvalid: '0 より大きい整数を使用してください',
+    pruneTitle: '古いバックアップを今すぐ削除',
+    pruneDescription:
+      '次のバックアップを待たずに、保持数を超えたバックアップを削除します。',
+    pruneAction: '削除',
+    pruned: ({ count }) => `古いバックアップを ${count} 件削除しました`,
+    prunedNothing: '保持数を超えたものはありません',
+    rolloutRecreateShort: 'その場で再起動',
+    rolloutStartFirstShort: '新しいものを先に',
+    previewsTitle: 'プレビュー',
+    previewsOn: '新しいプルリクエストでオン',
+    previewsOff: 'オフ',
+    previewsEnrollmentUnavailable: "保存しましたが、新しいプルリクエストにはまだプレビューが作成されません",
+    previewsRunsOn: '実行先',
+    previewsAddress: 'アドレス',
+    previewsData: 'データ',
+    previewsDataOwn: '専用データベース',
+    previewsDataBranch: 'データベースのブランチ',
+    previewsDataNone: 'なし',
+    previewsDataParent: "分岐元",
+    previewsDataParentBody: "各プルリクエストはデータをコピーしないブランチを受け取り、プルリクエストを閉じると削除されます",
+    previewsDataOwnUnavailable: "専用のデータベースはエージェントが設定します",
+    previewsDataBranchUnavailable: "ブランチには、それに対応するリンク済みデータベースが必要です",
+    previewsForks: 'フォークからのプルリクエストにはプレビューがありません',
+    previewsProductionTarget: 'プレビューは本番のデプロイ先を共有します',
+    previewsDataUnavailable: 'この環境では未設定 · エージェントに依頼してください',
+    previewsSetUpOff: 'オフ · オンにすると各プルリクエストにこの環境のコピーが作られます',
+    previewsNeedRepository: 'プレビューにはリポジトリが必要です',
+    previewsNeedRepositoryBody: 'この環境の定義は Happier に保存されています。プレビューは各プルリクエストをリポジトリからビルドします。',
+    previewsNoRepository: 'プレビューにはプロジェクトのリポジトリが必要です',
+    backupNotSetUpTitle: 'バックアップなし',
+    backupNotSetUpBody: 'バックアップが設定されていないため、この環境のデータはどこにもコピーされていません。',
+    restoreOnFailOnBody: 'ヘルスチェックに失敗したデプロイは最後の正常なリリースに戻ります',
+    restoreOnFailOffBody: '失敗したデプロイはロールバックするまでそのままです',
+    keptBody: '再ビルドせずにロールバックできるようサーバーに保持するリリース',
+    setupTitle: 'バックアップを設定',
+    setupDestination: '保存先',
+    setupSheetTitle: "バックアップの保存先",
+    setupSheetLead: ({ machine }: { machine: string }) => `各バックアップは ${machine} で暗号化されてから送信されます。`,
+    setupSheetNext: "保存先をテストしてから保存します。新しいリポジトリだけを初期化してください。",
+    setupMoreOptions: "その他のオプション",
+    setupNoDatabaseTitle: "先にデータベースを追加してください",
+    setupNoDatabaseBody: "バックアップはこの環境のデータベースをコピーします。",
+    setupBody: "暗号化したバックアップの保存先を選びます。",
+    setupStart: '設定',
+    setupEndpoint: 'エンドポイント',
+    setupBucket: 'バケット',
+    setupPrefix: 'バケット内のフォルダ',
+    setupRegion: 'リージョン',
+    setupService: 'データベースサービス',
+    setupSave: '保存',
+    setupCancel: 'キャンセル',
+    setupIncomplete: "保存先、コピー元、必須の保存済みシークレットを指定してください。",
+    credentialAccessKeyId: 'アクセスキー ID',
+    credentialSecretAccessKey: 'シークレットアクセスキー',
+    credentialRepositoryPassword: 'リポジトリのパスワード',
+    credentialSessionToken: 'セッショントークン',
+    credentialMissing: '保存済みシークレットが必要',
+    credentialSet: '保存済みシークレットを選択済み',
+    credentialChoose: '選択…',
+    scheduleTitle: '夜間バックアップ',
+    scheduleOff: 'オフ · 毎晩 02:00 にバックアップし、各コピーを確認して保持数を守ります',
+    scheduleOn: 'オン · 毎晩 02:00',
+    scheduleTurnOn: 'オンにする',
+    setupNoDestination: 'バックアップにはコピーの保存先が必要です。まずストアからバックアップストレージを追加してください。',
+    setupOpenStore: 'ストアを開く',
+    setupRoleRequired: "必須の保存済みシークレット",
+    setupRoleOptional: '任意 · ストレージが使う場合のみ',
+    setupInitializeAndSave: "リポジトリを初期化して保存",
+    setupAnotherMachine: "別のマシン",
+    setupReceiverMachine: "保存先のマシン",
+    setupLocalWarning: "このマシンに保存 · オフサイトのコピーではありません",
+    setupLocalGrowth: "すべて保持ではバックアップは自動削除されません。ディスクがいっぱいになる場合があります。",
+    setupCapacityKnown: "空き容量",
+    setupCapacityUnknown: "空き容量を取得できません",
+    setupCapacityAtBackupMachine: "このバックアップ先パスを所有するマシンで空き容量を確認してください。",
+    credentialSshPrivateKey: "SSH 秘密鍵",
+    addCheck: 'チェックを追加',
+    addCheckUnavailable:
+      'ここではチェックを設定できません · マシンのサービスページを開いてください',
+  },
+} as const satisfies Pick<Record<deploymentSettingsTranslations__SupportedLanguage, Shared_deploymentSettingsTranslations.DeploymentSettingsTranslations>, "ja">;
+
+return { deploymentSettingsTranslations };
+})();
+
+const Domain_pluginPublishTranslations = (() => {
+const pluginPublishTranslations = {
+  "ja": {
+        title: 'プラグインを公開', subtitle: '新しいバージョンを npm に公開すると、誰でもストアからインストールできます。',
+        templateTitle: ({ name }: { name: string }) => '{name} を公開'.replace('{name}', () => name), templateSubtitle: ({ name }: { name: string }) => 'このテンプレートを npm に公開すると、誰でもストアから自分の {name} を始められます。'.replace('{name}', () => name),
+        package: 'パッケージ', packageDescription: '選択したマシンでこのプロジェクトを確認し、ビルドしてパッケージ化します。',
+        prepare: '確認して準備', check: '確認', build: 'ビルド', pack: 'パッケージ化', viewFiles: 'ファイルを表示',
+        listing: 'ストアの掲載情報', listingDescription: 'インストール前にストアで表示される情報です。',
+        name: '名前', description: '説明', keywords: 'キーワード', keywordsHint: 'キーワードはカンマで区切ってください。',
+        icon: 'パッケージアイコン', readme: 'README', versionAndNotes: 'バージョンと変更履歴', version: 'バージョン', changelog: '変更履歴',
+        patch: 'パッチ', minor: 'マイナー', major: 'メジャー',
+        npm: 'npm に公開', npmDescription: 'このマシンに保存されているレジストリプロファイルを選択します。',
+        connect: 'npm にサインイン', change: '変更', coordinate: 'パッケージ名', public: '公開 · 誰でもインストールできます',
+        signInRequired: '公開する前に npm プロファイルを選択してください。', direct: '直接公開', staged: 'npm の承認に提出',
+        stageHint: '承認待ちのバージョンは、npm でメンテナーが承認するまで公開されません。新しいパッケージでは、承認まで仮のページが表示される場合があります。',
+        github: 'GitHub', githubDescription: '任意です。パッケージとともにソースコードを保管します。',
+        githubEnable: 'ソースをプッシュしてリリースを作成', repository: 'リポジトリ', branch: 'ブランチ', remote: 'Git リモート',
+        selectedFiles: 'コミットするファイル', selectedFilesHint: 'プロジェクトからの相対パスを1行に1つ入力してください。これらのファイルのみが含まれます。',
+        commitMessage: 'コミットメッセージ', commit: '選択したファイルをコミット',
+        publish: '公開', publishReview: '確認済みのパッケージを公開し、選択した GitHub 操作を公開で実行します。',
+        prepareRequired: '公開前にファイルを確認できるよう、パッケージを準備してください。',
+        preparing: 'パッケージを準備中…', publishing: '公開中…', checking: '公開状況を確認中…',
+        history: '公開済みバージョン', historyDescription: '選択したパッケージの npm 上のバージョンです。',
+        checkPublication: '公開状況を確認', reviewNpm: 'npm の承認画面を開く', openNpm: 'npm で開く', openGithub: 'GitHub で開く', retryGithub: 'GitHub を再試行',
+        published: 'npm に公開済み', indexLag: 'パッケージは公開されています。ストアの検索に表示されるまで時間がかかる場合があります。',
+        awaitingMaintainer: 'npm の承認待ち', outcomeUnknown: '公開を確認できませんでした',
+        outcomeUnknownBody: '再度アップロードする前に、このバージョンを確認してください。',
+        versionConflict: 'このバージョンはすでに使用されています。別のバージョンを選択して、もう一度準備してください。',
+        signInToPublish: '公開するには npm にサインインしてください。', versionTakenReason: 'npm にまだないバージョンを選択してください。',
+        useVersion: ({ version }: { version: string }) => '{version} を使用'.replace('{version}', () => version),
+        authenticationRequired: 'npm に再度サインインしてください。', challenge: 'npm で追加の認証が必要です。Connect を開いて非公開で続行してください。',
+        failed: '公開に失敗しました', cancelled: '公開がキャンセルされました', missing: 'このバージョンは公開されていません。',
+        reviewRequired: '準備したファイルが変更されました。公開前に新しいレポートを確認してください。',
+        githubFailed: 'npm への公開は完了しました。GitHub では対応が必要です。',
+        noTests: 'テストコマンドが設定されていません', testsPassed: 'テスト成功', testsFailed: 'テスト失敗',
+        unavailable: 'このプロジェクトは利用できません。オンラインのマシンを選択して再試行してください。', project: 'プロジェクトフォルダ',
+        preview: 'プレビュー', loadMore: 'さらに読み込む', githubUnavailable: 'このプロジェクトを確認するには GitHub オプションを選択してください。',
+        npmProfile: 'npm プロファイル', publicationMode: '公開方法', readDraft: '公開の下書きを読む', patchDraft: '公開の下書きを編集',
+        chooseIcon: '画像を選択', iconPng: 'PNG 画像。準備時にパッケージに含まれます。', iconPickFailed: '画像を開けませんでした。もう一度選択してください。',
+        continueGithub: 'GitHub で続行', githubSelectionRequired: 'リポジトリ、ブランチ、公開する GitHub 操作を選択してください。',
+        githubHistory: 'GitHub リリースを読み込む', githubHistoryUnavailable: 'GitHub リリースを読み込めませんでした。',
+        githubHistoryIncomplete: '一部のリリースや詳細が省略されています。利用可能になったら追加で読み込んでください。', githubHistoryEmpty: 'GitHub リリースはまだありません。',
+        scaffoldSource: 'エージェントでこのソースを整える',
+        scaffoldPrompt: 'プラグイン作者向けの公開スキャフォールドワークフローを使い、この既存のプラグインソースを公開可能なプラグインパッケージにしてください。既存のソースを保持し、作成するパッケージで使用してください。',
+        githubOptions: 'GitHub オプションを選択', githubUnavailableReason: 'このプロジェクトでは GitHub を利用できません。',
+        pushSource: 'ソースをプッシュ', createRelease: 'GitHub リリースを作成', createRepository: 'リポジトリを作成',
+        repositoryName: 'リポジトリ名', repositoryOwner: 'リポジトリの所有者', noIconResources: 'アイコンを選択するには、パッケージに含める PNG リソースをプロジェクトに追加してください。',
+        ready: '準備完了', passed: '成功', notConfigured: '未設定', machineRequired: '準備と公開を行うマシンを選択してください。', notRun: '未実行', running: '実行中…',
+        githubReviewUnknown: '未確認の操作を再試行する前に、GitHub でリポジトリとリリースを確認してください。',
+    },
+} as const;
+
+return { pluginPublishTranslations };
+})();
+
+const Domain_botTemplateTranslations = (() => {
+const botTemplateTranslations = {
+  "ja": Shared_botTemplateTranslations.copy(["Botテンプレート", "コピーを渡す", "他の人が自分用に始められるテンプレートを作成", "テンプレートを確認", "含まれる内容", "指示", "最初のタスク", "リリースバージョン", "リリースノート", "コピーの受信者", "非公開の下書き", "共有済み", "保存中…", "未保存の変更", "保存済み", "編集内容は保持されています。保存を再試行してください。", "別のリビジョンが保存されました。編集を置き換える前に確認してください。", "別のリビジョンを確認", "このリビジョンを保存の基準にする", "テンプレートを利用できません", "テンプレート · {name}から作成", "作成者 {author} · {version} · {sharing}", "移動前に保存しますか？編集はアプリを閉じるまで、このアカウントの開いている下書きに保持されます。", "編集を保持して移動", "除外", "説明", "非公開"], "ja"),
+} as const satisfies Pick<Record<botTemplateTranslations__SupportedLanguage, Shared_botTemplateTranslations.BotTemplateTranslations>, "ja">;
+
+return { botTemplateTranslations };
+})();
+
+const Domain_botTemplateRecipientTranslations = (() => {
+const botTemplateRecipientTranslations = {
+  "ja": Shared_botTemplateRecipientTranslations.copy(['自分のコピーを作成', 'Botを作成', 'テンプレートのソース', '採用バージョン {version}', '更新をフォロー', '独立したコピー', 'メモリルール', 'スキル', '必要なもの', '必須', '任意', '入力', '実行可能', 'バイナリ · Base64', 'ダウンロード', "テンプレートが変更されました。コピーを作成する前に現在のバージョンを確認してください。", "コピーの実行場所を選んでください。作成するとテンプレートの指示でBotが開始します。"], 'ja'),
+} as const satisfies Pick<Record<botTemplateRecipientTranslations__SupportedLanguage, ReturnType<typeof Shared_botTemplateRecipientTranslations.copy>>, "ja">;
+
+return { botTemplateRecipientTranslations };
+})();
+
+const Domain_botFaceNameTranslations = (() => {
+const botFaceNameTranslations = {
+  "ja": {
+    accountDefault: 'アカウントのデフォルト',
+    bodies: { crab: "カニ", squid: "イカ", octopus: "タコ", ufo: "円盤", specter: "亡霊", ghost: "おばけ", beetle: "カブトムシ", spider: "クモ", jelly: "クラゲ", hopper: "ホッパー", pup: "子犬", drone: "ドローン", robot: "ロボット", walker: "ウォーカー", rocket: "ロケット", feet: "あし", tail: "しっぽ", drip: "しずく", bracelegs: "波かっこの脚", tagclaws: "タグのハサミ", cursortail: "カーソルしっぽ", termbody: "ターミナル", antlers: "ブランチの角", semi: "セミコロン", brackets: "かっこ", cursor: "カーソル", bean: "豆", squat: "ずんぐり", bag: "ふくろ", loaf: "食パン", puddle: "水たまり", tower: "タワー", stilts: "竹馬", tall: "のっぽ", cat: "ネコ" },
+    colours: { daybreak: "夜明け", lagoon: "ラグーン", orchid: "オーキッド", aurora: "オーロラ", indigo: "インディゴ", glacier: "氷河", moss: "モス", sand: "サンド", ink: "インク" },
+  },
+} as const satisfies Pick<Readonly<Record<string, Shared_botFaceNameTranslations.BotFaceNames>>, "ja">;
+
+return { botFaceNameTranslations };
+})();
+
+const Domain_screenCaptureTranslations = (() => {
+const screenCaptureCopy = {
+  "ja": {
+    privacy: { hiddenTagsTitle: "非公開セッションのタグ", hiddenTagsDescription: "これらのタグが付いたセッションは、録画中または画面共有のプライバシーがオンの間、リストに表示されません。" },
+    recording: {
+      systemSelectionTitle: 'ウインドウまたは画面を選択',
+      systemSelectionReason: 'システムの共有元選択画面が開きます。このデスクトップセッションでは領域録画は利用できません。',
+      pipewireUnavailable: 'PipeWire キャプチャを利用できません。GStreamer の PipeWire プラグインをインストールして再試行してください。',
+      videoEncoderUnavailable: 'VP8 エンコーダーを利用できません。GStreamer の VP8 プラグインをインストールして再試行してください。',
+      videoMuxerUnavailable: 'WebM の書き込みを利用できません。GStreamer の WebM プラグインをインストールして再試行してください。',
+      videoDecoderUnavailable: 'トリミングのために録画をデコードできません。GStreamer の VP8 と Matroska プラグインをインストールして再試行してください。',
+      cursorUnavailable: 'システムの共有元選択でカーソルを含められません。カーソルキャプチャ対応のデスクトップポータルを使用してください。',
+      videoPipelineUnavailable: '必要な GStreamer の動画コンポーネントがありません。動画プラグインをインストールして再試行してください。',
+      title: "録画",
+      pause: "一時停止",
+      resume: "再開",
+      stop: "録画を停止",
+      stopShort: "停止",
+      hideControl: "隠して録画を続ける",
+      saving: "録画を保存しています…",
+      discarded: "録画を破棄しました",
+      play: "再生",
+      afterTrim: ({ time }: Readonly<{ time: string }>) => `トリム後 ${time}`,
+      marksOnPausedFrame: "マークは一時停止中のフレームに表示されます", theAgent: "エージェント",
+      keyFrames: ({ agent, count }: Readonly<{ agent: string; count: number }>) => count === 1
+        ? `${agent}には、メモとマーク付きのキーフレームが 1 枚届きます`
+        : `${agent}には、メモとマーク付きのキーフレームが ${count} 枚届きます`,
+      withVideo: "セッションの参加者には動画も届きます。",
+      withoutVideo: "動画はここに残ります。",
+      blurredVideo: "ぼかした内容が映っているため、動画はここに残ります。",
+      includeBlurredQuestion: "動画にはフレームでぼかした内容が映っています。それでも含めますか？",
+      keepVideoOff: "含めない",
+      includeAnyway: "それでも含める",
+      leaveOut: "含めない",
+      includeVideo: "動画を含める",
+      trimStart: "トリムの開始",
+      trimEnd: "トリムの終了",
+      timeline: "タイムライン",
+      pins: "タイムライン上のメモとマーク",
+      resetTrim: "トリムをリセット",
+      continue: "続ける", failedReason: "動画を保存する前に停止しました。何も送信されていません。", failedTitle: "録画が停止しました", openingTitle: "録画を開いています…", openFailedTitle: "録画を開けませんでした", openFailedReason: "Happier はビデオファイルを読み込めませんでした。トリム、マーク、メモは保持されています。", mediaFailed: "ビデオを読み込めませんでした", commitFailed: "このフレームのマークは保存されませんでした",
+    },
+    attach: { capture: "画面をキャプチャ", record: "画面を録画" },
+    recent: { refresh: "更新", chooseFile: "ファイルを選択…", chooseFolder: "フォルダを選択…", loadFailed: "キャプチャフォルダを読み込めませんでした", operationFailed: "うまくいきませんでした。キャプチャはそのまま残っています。", folderMissing: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `${folder} が見つかりません`, folderDenied: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `Happier には ${folder} を開く権限がありません`, folderUnreadable: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `${folder} を読み込めませんでした`, folderNotWatched: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `${folder} は自動では更新されません`, title: "最近のキャプチャ", attach: "添付", search: "キャプチャを検索", empty: "フォルダにキャプチャはまだありません" },
+    chooser: { title: "セッションに送信", attachTo: "添付先", search: "セッションを検索", openInHappier: "Happier で開いています", recent: "最近", newSession: "新しいセッション…", moveHint: "選択", sendHere: "ここに送信", copyHere: "ここにコピー", empty: "一致するセッションはありません" },
+    windowText: { frontmostLabel: ({ app, count }: Shared_screenCaptureTranslations.Copy<"app" | "count">) => `最前面のウィンドウのテキスト · ${app} · ${count} 語`,
+      label: ({ app, count }: Shared_screenCaptureTranslations.Copy<"app" | "count">) => `ウィンドウ全体のテキスト · ${app} · ${count} 語`,
+      partialLabel: ({ app, count }: Shared_screenCaptureTranslations.Copy<"app" | "count">) => `ウィンドウのテキストの一部 · ${app} · ${count} 語`,
+      words: ({ count }: Shared_screenCaptureTranslations.Copy<"count">) => `${count} 語`,
+      reading: "ウィンドウのテキストを読み取り中…", empty: "このウィンドウにテキストはありません", unavailable: "ウィンドウのテキストを利用できません", view: "表示",
+      sheetDescription: ({ app }: Shared_screenCaptureTranslations.Copy<"app">) => `${app} のウィンドウで読めるすべての内容です。キャプチャの外も含みます。エージェントが引用できるよう、テキストとして画像と一緒に送られます。`,
+      dontInclude: "含めない", lockedTitle: "ウィンドウ全体のテキストはオフです", lockedBody: "キャプチャの一部をぼかしたため、ウィンドウのテキストにはその内容が見えてしまいます。必要ならもう一度オンにしてください。",
+      includeTitle: "テキストにはぼかした内容が含まれます", includeBody: "ウィンドウのテキストには、ぼかした内容が残っている可能性があります。画像はどちらの場合もぼかされたままです。", keepOff: "オフのままにする", includeText: "テキストを含める",
+      permissionTitle: "Happier にウィンドウのテキストの読み取りを許可", permissionBody: "macOS が一度だけ確認します。オンの間、Happier はキャプチャしたウィンドウ全体のテキストだけを読み取ります。", permissionOpen: "プライバシーとセキュリティ › アクセシビリティ を開く", permissionEnable: "Happier をオンにする", permissionWaiting: "許可を待っています… 自動でオンになります",
+    },
+    settings: { includeWindowShadow: "ウインドウの影を含める", windowShadowDescription: "ウインドウのキャプチャにmacOSの影と透明な余白を含めます。", windowShadowUnavailable: "macOS 14以降で利用できます。", screenFor: "画面をキャプチャするため", windowTextFor: "キャプチャしたウィンドウのテキストを読むため", title: '画面キャプチャ', captureShortcut: 'キャプチャのショートカット', instantWindowShortcut: 'ウィンドウを即時キャプチャするショートカット', recordingShortcut: '録画のショートカット', sound: 'キャプチャ音', includeWindowText: '既定でウィンドウのテキストを含める', folder: 'キャプチャフォルダ', description: "どこからでもショートカットを押し、キャプチャに印を付けてセッションに送れます。", notSet: "未設定", notOnWayland: "Wayland ではまだ利用できません", conflict: "別のアプリがこのショートカットを使っています。以前のものは引き続き使えます。", refused: "システムがこのショートカットを拒否しました。以前のものは引き続き使えます。", soundDescription: "キャプチャが届いたときの短い音です。システムの消音に従います。", windowTextDescription: "新しいキャプチャにウィンドウのテキストを最初から含めます。ぼかすとオフになります。", changeFolder: "変更…", permissionsTitle: "権限", permissionsDescription: "システムが Happier に許可している内容と、エージェントが確認すべき内容です。", screenPermission: "画面収録", accessibilityPermission: "アクセシビリティ", approvals: "エージェントの承認", approvalsDescription: "エージェントが画面をキャプチャする前に確認するかどうか" },
+    selection: { releaseRecording: "離すと録画を開始", label: "キャプチャする対象を選択", modeLabel: "キャプチャの種類", screenshot: "スクリーンショット", recording: "録画", instruction: "範囲をドラッグ、ウインドウをクリック、またはRキー", keyboardPosition: "矢印キーで移動 · Enterで始点を決定", keyboardRegion: "矢印キーで調整 · Enterでキャプチャ", release: "離してキャプチャ" },
+    window: { pickAnotherSession: "別のセッションを選ぶ",
+      title: "キャプチャ", notePlaceholder: "エージェントへのメモを追加(任意)", chooseSession: "セッションを選択", sameAsLastCapture: "前回のキャプチャと同じ", nativeTitle: ({ subject }: Shared_screenCaptureTranslations.Copy<"subject">) => `Happier キャプチャ — ${subject}`, region: "範囲",
+      sendTo: ({ session, machine }: Shared_screenCaptureTranslations.Copy<"session" | "machine">) => `${machine} の ${session} に送信`,
+      wholeWindowText: "ウインドウ全体のテキスト", addToDraft: "下書きに追加", send: "送信", discard: "破棄", copy: "画像をコピー", showInFolder: "フォルダで表示", more: "その他",
+      attachRecent: "最近のキャプチャを添付", copyWindowText: "ウインドウのテキストをコピー", settings: "キャプチャ設定", justNow: "たった今", flattenFailed: "マークを画像に適用できませんでした",
+      unreachable: ({ machine }: Shared_screenCaptureTranslations.Copy<"machine">) => `${machine} に接続できません`, lastSeen: ({ time }: Shared_screenCaptureTranslations.Copy<"time">) => `最終確認 ${time}`,
+      addOrPick: "キャプチャを下書きに追加するか、", pickAnother: "別のセッションを選択してください",
+    },
+    permission: { drag: "Happier をリストにドラッグ", title: "Happier に画面のキャプチャを許可", reason: "macOS の確認は一度だけです。Happier が画面を見るのは、ショートカットを押すかメニューバーで「画面をキャプチャ」を選んだときだけです。", reasonWithShortcut: ({ shortcut }: Shared_screenCaptureTranslations.Copy<"shortcut">) => `macOS の確認は一度だけです。Happier が画面を見るのは、${shortcut} を押すかメニューバーで「画面をキャプチャ」を選んだときだけです。`, waiting: "許可を待っています…", openSettings: "システム設定を開く", notNow: "今はしない", where: "プライバシーとセキュリティ › 画面収録とシステムオーディオ録音 で Happier をオンにしてください。macOS から Happier の再起動を求められることがあります。", allowed: ({ shortcut }: Shared_screenCaptureTranslations.Copy<"shortcut">) => `許可済み · ${shortcut} を押してキャプチャ`, reopenNeeded: "Happier を許可したばかりなら、開き直すと反映されます", reopen: "Happier を開き直す" },
+    failed: { title: "キャプチャが届きませんでした", reason: "キャプチャツールが画像を渡さずに終了しました。何も送信されていません。", tryAgain: "再試行" },
+    pill: { notAdded: "下書きに追加されませんでした", notStarted: "新しいセッションを開始できませんでした", notPrepared: "キャプチャを準備できませんでした",
+      starting: "新しいセッションを開いています…", started: "新しいセッションで準備完了",
+      sending: ({ session }: Shared_screenCaptureTranslations.Copy<"session">) => `${session} に送信中…`, adding: "下書きに追加中…", sent: ({ session }: Shared_screenCaptureTranslations.Copy<"session">) => `${session} に送信しました`,
+      added: ({ number }: Readonly<{ number: number }>) => `画像 #${number} として下書きに追加しました`,
+      waiting: ({ session, count }: Readonly<{ session: string; count: number }>) => `${session} · ${count} 件のキャプチャが待機中`,
+      failed: "送信されませんでした", failedDetail: "下書きはそのまま残っています", discarded: "キャプチャを破棄しました", open: "開く", edit: "編集",
+    },
+  },
+} as const;
+
+return { screenCaptureCopy };
+})();
+
+const Domain_deploymentCreationReviewTranslations = (() => {
+const deploymentCreationReviewTranslations = {
+  "ja": {
+    title: 'デプロイのしかた',
+    description: '作成する前に確認してください。',
+    create: '環境を作成',
+    buildsOn: ({ machine }) => `${machine} でビルド`,
+    deploysFrom: ({ machine }) => `${machine} からデプロイ`,
+    keepsPrevious: ({ count }) =>
+      count === 0
+        ? 'ロールバック用の以前のバージョンは保持しません'
+        : `ロールバック用に以前のバージョンを ${count} 個保持`,
+    fromExplicit: 'あなたが選択',
+    fromProject: 'プロジェクトから',
+    fromAccount: 'アカウントから',
+    fromBuiltin: 'Happier の既定',
+  },
+} as const satisfies Pick<Record<deploymentCreationReviewTranslations__SupportedLanguage, Shared_deploymentCreationReviewTranslations.DeploymentCreationReviewCopy>, "ja">;
+
+return { deploymentCreationReviewTranslations };
+})();
+
+const Domain_deploymentPlatformLinkTranslations = (() => {
+const deploymentPlatformLinkTranslations = {
+  "ja": {
+    detachLead: ({ name, platform }) => `${name} を Happier から切り離し、${platform} に残します。`,
+    detachBody: ({ platform }) => `ワークロードはデータと継続的な費用を伴い、${platform} で稼働し続けます。停止または削除するには ${platform} で操作してください。`,
+    removalTitle: ({ resource }) => `${resource} の連携解除または削除`,
+    removalLead: ({ resource, platform }) => `${resource} は ${platform} で稼働しています。そのまま残すか、${platform} で削除します。`,
+    keepTitle: ({ platform }) => `${platform} に残す`,
+    keepBody: ({ resource, platform }) => `${resource} はデータと費用を伴い ${platform} で稼働し続けます。Happier はデプロイを停止します。`,
+    keepBodyData: ({ resource, platform }) => `${resource} はデータと費用を伴い ${platform} に残ります。Happier は管理を停止します。`,
+    deleteTitle: ({ platform }) => `${platform} で削除`,
+    deleteBody: ({ resource, platform }) => `${platform} が ${resource} を削除します。元に戻せません。`,
+    deleteConsequence: ({ resource, platform }) => `${platform} で ${resource} を削除しますか？`,
+    typeToDelete: ({ resource }) => `削除するには ${resource} と入力してください`,
+    confirmDelete: ({ resource }) => `${resource} を削除`,
+    confirmDeleteWithEnvironment: ({ name, resource }) => `${name} と ${resource} を削除`,
+    createOnMachine: "作成するマシン",
+    finishLinkingOnMachine: "リンクを完了するマシン",
+    openProvider: "プロバイダーで開く",
+    recoveryUnavailable: "作成結果を確認できません",
+    modeExisting: "既存のものを使用",
+    modeCreate: "新規作成",
+    create: ({ platform }) => `${platform} を作成してリンク`,
+    createConsequences: `リソースを作成します。プロバイダーの料金が発生する場合があります。選択したコントローラーは、ここに表示された接続済みアカウントを使用します。`,
+    provisioned: "リソースを作成しました。リンクは未完了です",
+    created: "プロジェクトを作成してリンクしました",
+    branchSet: ({ branch }) => `本番ブランチ: ${branch}。`,
+    branchDefaultKept: ({ branch, requestedBranch }) => `本番ブランチは ${branch} のままです。${requestedBranch} を設定できませんでした。プロバイダーで変更してください。`,
+    branchUnconfirmed: ({ requestedBranch }) => `${requestedBranch} への更新は未確認です。既定のブランチが引き続き使われている可能性があります。プロバイダーで確認してください。`,
+    finishLinking: "リンクを完了",
+    outcomeUnknown: "作成が完了したかどうかをプロバイダーが確認していません",
+    outcomeUnknownBody: "別のリソースを選ぶ前にプロバイダーを確認してください。Happier は再作成しません。",
+    duplicate: "このプロバイダースコープは既にリンクされています",
+    useExisting: "既存の環境を使用",
+    chooseAnother: "別のスコープを選択",
+    accessTitle: "デプロイのアクセス権",
+    deploysUse: ({ principal, platform }) => `デプロイには ${principal} の ${platform} アクセス権を使用します`,
+    personalAccessDependency: "この個人接続が利用可能である必要があります。削除やプロバイダーへのアクセス権の喪失により、以降のデプロイは停止します。",
+    teamAccessDependency: "デプロイには、このチーム認証情報が利用可能で、プロバイダーへのアクセス権を保持している必要があります。",
+    providerAccount: "プロバイダーのアカウントまたはチーム",
+    providerProject: "プロバイダーのプロジェクト",
+    providerScope: "プロバイダーの環境",
+    sourceManifest: "ソースマニフェスト",
+    providerBuild: "プラットフォームでビルド",
+    controllerBuild: "コントローラーでビルド",
+    buildImage: "ビルドコンテナー",
+    buildToolchain: "ビルドツールチェーン",
+    buildOutputManifest: "ビルド出力マニフェスト",
+    sourceMethod: "デプロイ方法",
+    gitIntegration: "Git 連携",
+    upload: "アップロード",
+    gitIntegrationBody: "プラットフォームが接続済みリポジトリから確認済みのコミットを読み取ります。",
+    uploadBody: "Happier がコントローラー経由で確認済みのコミットを送信します。プラットフォームの Git アクセスは不要です。",
+    title: ({ name }) => `${name} をプラットフォームにデプロイ`,
+    lead: 'ホスティングプラットフォームにすでにあるプロジェクトをリンクします。リンクしても向こうでは何も変わりません。次のデプロイで反映されます。',
+    add: 'プラットフォームを追加',
+    usePlatform: 'プラットフォームを使う',
+    platform: 'プラットフォーム',
+    loading: 'プラットフォームを探しています…',
+    failed: 'プラットフォームを読み込めませんでした',
+    empty: '有効なプラットフォームがありません',
+    emptyBody:
+      'プラットフォームをリンクするには、プラグインでデプロイ用プラグインを有効にしてください。',
+    check: '確認',
+    checkAgain: 'もう一度確認',
+    link: ({ platform }) => `${platform} をリンク`,
+    ready: 'リンクできます',
+    needsGit: 'このプロジェクトはまだリポジトリにアクセスできません',
+    needsGitBody: 'アクセスを許可してから、もう一度確認してください。',
+    repositoryRequired: 'このソースにはリポジトリが必要です',
+    repositoryRequiredBody: 'このソースにリポジトリを接続してから、もう一度確認してください。',
+    grant: 'アクセスを許可',
+    refused: 'このプロジェクトを確認できませんでした',
+    linkRefused: 'このプロジェクトをリンクできませんでした',
+    onMachine: 'マシン',
+    platformLater: 'プラットフォームのプロジェクトは作成した直後に選びます。',
+    deploysFrom: 'デプロイ元',
+    onPlatformTitle: ({ platform }) => `${platform} 側`,
+    onPlatformBody: '次にアカウントとプロジェクトを選びます。リンクしても何もデプロイされません。',
+    platformBuilds: 'プラットフォームが、選んだブランチでこのプロジェクトのリポジトリをビルドします。',
+    managersOnly: 'この環境の管理者だけがプラットフォームを連携できます。',
+    refusedRemedy: '選んだアカウントとプロジェクトを確認してから、もう一度チェックしてください。',
+    nothingDeployedBody: '最初のデプロイで、連携したプラットフォーム上でこのブランチがビルドされます。',
+    deployNoPlatform: 'この環境にはまだデプロイ先のプラットフォームのプロジェクトがありません。',
+    connectTitle: ({ platform }) => `ここにデプロイするには ${platform} を接続`,
+    connectBody: ({ platform }) => `Happier はこの環境を ${platform} のプロジェクトにリンクし、リンクする前にトークンでできることを確認して、足りないものを伝えます。`,
+    connectAction: ({ platform }) => `${platform} のトークンを追加`,
+    choicesFailed: ({ platform }) => `${platform} の選択肢を読み込めませんでした`,
+    choicesFailedBody: "接続からプロジェクトが見えることを確認して、もう一度お試しください。",
+    connection: "接続",
+    hostNeedsSetup: ({ machine }) => `${machine} はまだデプロイを受け入れる準備ができていません`,
+    hostSetupBody: "実行前にすべての変更を確認できます。この環境の保存はそれまで待てます。",
+    hostSetupAction: ({ machine }) => `${machine} をセットアップ`,
+    hostReviewAction: ({ machine }) => `${machine} のセットアップを確認`,
+    hostUnchecked: ({ machine }) => `${machine} がデプロイを受け入れられるか確認できませんでした`,
+  },
+} as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "ja">;
+
+return { deploymentPlatformLinkTranslations };
+})();
+
+const Domain_deploymentPromotionTranslations = (() => {
+const deploymentPromotionTranslations = {
+  "ja": {
+    open: '昇格先…', title: 'デプロイを昇格', lead: ({ name, version }) => `${name} の ${version} をデプロイする先を選んでください。`,
+    destination: '昇格先', image: 'ビルド済み', imageBody: '保存済み Compose デプロイのイメージを、自分のサーバー上の別の保存済み Compose 環境で再利用します。',
+    emptyTitle: '別の環境を選んでください',
+    emptyBody: '昇格先の環境を作成またはリンクしてから再試行してください。', loadFailed: '環境を読み込めませんでした', refused: '昇格できませんでした', review: '昇格を確認',
+    missingOne: ({ destination, name }) => `${destination} には ${name} が設定されていません`, missingMany: ({ destination, count }) => `${destination} には ${count} 個の変数が設定されていません`,
+    missingBodyOne: ({ source, destination }) => `${source} では設定されています。このバージョンが使う場合は、先に ${destination} に追加してください。`,
+    missingBodyMany: ({ source, destination }) => `${source} では設定されています。このバージョンが使う場合は、先に ${destination} に追加してください。`,
+    missingAdd: ({ destination }) => `${destination} に追加…`, compareFailed: ({ destination }) => `${destination} と変数を比較できませんでした`,
+  },
+} as const satisfies Pick<Record<deploymentPromotionTranslations__SupportedLanguage, Shared_deploymentPromotionTranslations.PromotionCopy>, "ja">;
+
+return { deploymentPromotionTranslations };
+})();
+
+const Domain_fileEditingTranslations = (() => {
+const fileEditingTranslations = {
+  "ja": {
+    aiSuggestions: { ...fileEditingTranslations__fileAiSuggestionsTranslations.ja, ...fileEditingTranslations__fileAiSuggestionControls.ja, ...fileEditingTranslations__fileNextEditTranslations.ja },
+    statusEditing: '編集中',
+    statusUnsaved: '未保存',
+    statusSaving: '保存中',
+    statusSaved: '保存済み',
+    discardEdits: '編集を破棄',
+    conflictByAgent: ({ agent }) => `${agent}がこのファイルを変更しました。`,
+    conflictOnDisk: 'このファイルはディスク上で変更されました。',
+    editsKept: 'あなたの編集は保持されています。',
+    useMine: '自分の版を使う',
+    useAgents: ({ agent }) => `${agent}の版を使う`,
+    useTheirs: 'ディスクの版を使う',
+    offline: ({ machine }) =>
+      `${machine}が応答しません。編集はこのデバイスに保持されています。戻ったら保存してください。`,
+    offlineSaving: ({ machine }) =>
+      `${machine}が応答しません。編集はこのデバイスに保持され、戻ったときに保存されます。`,
+    backOnline: ({ machine }) => `${machine}が戻りました。編集を保存できます。`,
+    awaitingApproval: '保存の承認を待っています。編集は保持されています。',
+    saveFailed: '保存できませんでした。編集は保持されています。',
+    draftNotStored:
+      '編集はこのデバイスに保存されていません。保持するには保存してください。',
+    lineEndings: ({ ending }) => `改行コードは${ending}で保存されます。`,
+    editsSetAside: '編集を退避しました',
+    agentVersionReplaced: ({ agent }) => `${agent}の版を置き換えました`,
+    diskVersionReplaced: 'ディスクの版を置き換えました',
+    dismissNotice: '閉じる',
+    placesDiffer: ({ count }) => `${count}か所が異なります。`,
+    useAllMine: 'すべて自分の版',
+    useAllAgents: ({ agent }) => `すべて${agent}の版`,
+    useAllTheirs: 'すべてディスクの版',
+    backToEditing: '編集に戻る',
+    placeLine: ({ line }) => `${line}行目`,
+    placeLines: ({ start, end }) => `${start}–${end}行目`,
+    onlyAgentChanged: ({ agent }) => `${agent}だけが変更`,
+    onlyDiskChanged: 'ディスクの版だけが変更',
+    yoursVsAgents: ({ agent }) => `自分の版か${agent}の版か`,
+    yoursVsDisk: '自分の版かディスクの版か',
+    usingAgents: ({ agent }) => `${agent}の版を使用`,
+    usingTheirs: 'ディスクの版を使用',
+    usingMine: '自分の版を使用',
+    replacedLines: ({ count }) => `${count}行を置き換え`,
+    addedLines: ({ count }) => `${count}行を追加`,
+    removedLines: ({ count }) => `${count}行を削除`,
+    youEditedThisChange: 'この変更は編集済みです',
+    nextChange: '次の変更',
+    previousChange: '前の変更',
+    changes: '変更',
+    hideKeyboard: 'キーボードを隠す',
+    indent: 'インデント',
+    outdent: 'インデント解除',
+    moveLeft: '左へ移動',
+    moveRight: '右へ移動',
+    insertText: ({ text }) => `${text}を挿入`,
+    editorKeys: 'エディタキー',
+      redo: 'やり直す',
+  },
+} as const satisfies Pick<Record<
+  | 'en'
+  | 'ca'
+  | 'de'
+  | 'es'
+  | 'fr'
+  | 'it'
+  | 'ja'
+  | 'pl'
+  | 'pt'
+  | 'ru'
+  | 'zh-Hans'
+  | 'zh-Hant',
+  Shared_fileEditingTranslations.FileEditingTranslations
+>, "ja">;
+
+return { fileEditingTranslations };
+})();
+
+const Domain_usageChartInputTranslations = (() => {
+const usageChartInputTranslations = {
+  "ja": { commandChoose: "行を選択", commandValues: "グラフの値", commandValuesInput: "入力なしで全区間を読み取ります。bucket（0始まりの添字）とmode（read, select, toggle, hover, scrub）で区間を読み取り、固定できます。正確なタイトル、合計、行を返します。", commandChooseInput: "固定した区間の行を選ぶにはrow（グラフの値が返すid）を指定します。",
+    inputColourBy: '色分け', inputIntensity: '強度', inputLeadingAgent: '最多のエージェント', inputDay: '日',
+    inputPlanets: '期間の惑星', inputThread: '連続記録の糸', inputSkyline: '週のスカイライン', inputSurface: '表面の日々',
+    inputRings: '連続記録の環', inputPeriodOrbit: '期間を巡る', inputMoons: '衛星', inputGalaxy: 'セッションの銀河',
+    inputCalendar: 'カレンダー', inputWeekdayHour: '曜日 / 時間', inputSky: '日々の星空', inputWeekTide: '週の波', inputDaylight: '一日の光',
+    inputLanes: 'レーン', inputDial: '文字盤', inputTimeline: 'マシン別タイムライン', inputCrew: 'クルー', inputRiver: 'エージェントの流れ',
+    inputShipped: '出荷済み', inputPersonalRecords: '自己記録', inputSteering: 'エージェント別の指示' },
+} as const;
+
+return { usageChartInputTranslations };
+})();
+
+const Domain_usageChartPlanetFamilyTranslations = (() => {
+const usageChartPlanetFamilyTranslations = {
+  "ja": Shared_usageChartPlanetFamilyTranslations.block({
+    levelColumn: '活動量',
+    weekColumn: '週',
+    activeDaysColumn: '活動日',
+    shareColumn: '割合',
+    daysColumn: '日数',
+    peakColumn: '同時実行',
+    kindColumn: 'マシン',
+    countColumn: '台数',
+    weekdayInitials: '月,火,水,木,金,土,日',
+    streakBestDays: ({ count }) => `最長 · ${count}日`,
+    streakNowDays: ({ count }) => `現在${count}日`,
+    streakOngoingBest: ({ count }) => `${count}日 · この期間で最長`,
+    daysLit: ({ count, total }) => `${total}日中${count}日が点灯`,
+    partialWeek: ({ from, to }) => `${from}–${to} · 一部の週`, noStreakRings: 'この期間に3日以上の連続はありません',
+    moonsCaption: '各エージェントは月です。大きさは割合を表します。',
+    moonsCaptionDays:
+      '各エージェントは月です。大きさは割合、明るい部分は稼働した日数を表します。',
+    machinesUnavailable:
+      'マシンの種類はまだ記録されていません。各エージェントが動いたマシンの種類を Happier が判別できると表示されます。',
+    machinesEmpty: 'この期間にエージェントを実行したマシンはありません。',
+    machineKindUnknown: '不明な種類',
+    projectsEmpty: '公開プロジェクトはまだリンクされていません。',
+    atmosphereFirstWeek: '第1週',
+    atmosphereCaption:
+      '同時に動いたエージェントが多い週ほど光輪が濃くなります。第1週が上です。',
+    atmosphereCaptionPeak: ({ count }) =>
+      `同時に動いたエージェントが多い週ほど光輪が濃くなります。この期間の最大は同時${count}件です。`,
+  }),
+} as const;
+
+return { usageChartPlanetFamilyTranslations };
+})();
+
+const Domain_fileSelectionAskTranslations = (() => {
+const fileSelectionAskTranslations = {
+  "ja": { ask: '質問', comment: 'コメント', copy: 'コピー', toolbarLabel: '選択範囲', moreWaysToAsk: 'ほかの質問方法', lineCount: ({ count }: { count: number }) => `${count} 行`, sideRun: '別の実行で質問', targetTitle: 'セッションなしで質問', targetDescription: 'セッションを開いていないとき、ファイルへの質問をどこで開くかを選びます。', detachedRun: '別の実行', newSession: '新しいセッション' },
+} as const;
+
+return { fileSelectionAskTranslations };
+})();
+
+const Domain_fileTrackTranslations = (() => {
+const fileTrackTranslations = {
+  "ja": { track: '追跡', tracking: '追跡中', paused: '一時停止', resume: '再開', turnOnA11y: ({ agent }: { agent: string }) => `${agent} の編集を追跡`, turnOffA11y: ({ agent }: { agent: string }) => `${agent} の編集の追跡を停止`, resumeA11y: ({ agent }: { agent: string }) => `${agent} の編集の追跡を再開`, writing: '書き込み中', watch: '見る', agentWorking: ({ agent }: { agent: string }) => `${agent} が作業中`, view: '表示', needsYou: '対応が必要', caretA11y: ({ agent }: { agent: string }) => `${agent} がここに書き込み中` },
+} as const;
+
+return { fileTrackTranslations };
+})();
+
+const Domain_actionPresentationTranslations = (() => {
+const actionPresentationTranslations = {
+  "ja": Shared_actionPresentationTranslations.copy({ title: 'ドキュメントの公開リンクを作成', named: name => `「${name}」の公開リンクを作成しますか？`, summary: 'このリンクを知っている人は誰でもドキュメントを読めます。' }, { change: ({ name, kind }) => `「${name}」（${kind}）をすべての作業で変更します。`, reset: ({ name, kind }) => `「${name}」（${kind}）への変更を削除し、元の設定を使用します。` }, { now: '今すぐ', afterIdle: 'アイドル後', start: '開始', stop: '停止', suspend: '一時停止', resume: '再開', delete: '削除', external: '既存のサーバー', managedLocal: 'Happier が管理するゲートウェイ' }, {
+        destinations: { transcript: "ビジュアルをこのセッションの会話にコピーします。", board: "ビジュアルをこのセッションのボードにコピーします。", both: "ビジュアルをこのセッションの会話とボードにコピーします。" },
+        origins: origins => `コピーは ${origins} へのネットワークアクセスを維持します。`,
+        open: "コピーはすべてのウェブサイトへのネットワークアクセスを維持します。",
+    }),
+} as const;
+
+return { actionPresentationTranslations };
+})();
+
+const Domain_fileReviewNoteTranslations = (() => {
+const fileReviewNoteTranslations = {
+  "ja": {
+        discard: ({ paths, count }) => `${paths} の変更${count === null ? '' : ` ${count} 件`}を破棄しました`,
+        restore: ({ paths }) => `${paths} を以前の状態に復元しました`,
+        restoreBeforeTurn: ({ paths, turn }) => `${paths} を${turn}の前の状態に復元しました`,
+        undoDiscard: ({ paths }) => `${paths} の変更の破棄を取り消しました`,
+        undoRestore: ({ paths }) => `${paths} の復元を取り消しました`,
+        undo: ({ paths }) => `${paths} のレビュー操作を取り消しました`,
+    },
+} as const satisfies Pick<Record<string, Shared_fileReviewNoteTranslations.Labels>, "ja">;
+
+return { fileReviewNoteTranslations };
+})();
+
+const Domain_composerReferenceTranslations = (() => {
+const composerReferenceTranslations = {
+  "ja": { imageNumber: ({ number }) => `画像 #${number}`, imageAccessibility: ({ number, name }) => `画像 ${number}、${name}`, attachmentRemoved: '添付ファイルは削除されました', open: '開く', removeFromMessage: 'メッセージから削除', kindSession: 'セッション', kindFolder: 'フォルダ', kindSkill: 'スキル', kindPlugin: 'プラグイン', kindWorkflow: 'ワークフロー', kindWidget: 'ウィジェット', unavailableDetail: '現在は利用できません。名前として送信されます。', removedDetail: '添付ファイルが削除されました。送信時には含まれません。', hintMention: 'メンション', kindFile: "ファイル", tabAll: "すべて", hintNextKind: "次の種類", noMatches: ({ query }) => `「${query}」に一致するものはありません`, nothingToMention: "まだメンションできるものがありません", noMatchesDetail: "別の言葉を試すか、項目をここへドラッグしてください。" },
+} as const satisfies Pick<Record<string, Shared_composerReferenceTranslations.Labels>, "ja">;
+
+return { composerReferenceTranslations };
+})();
+
+const Domain_hunkReviewTranslations = (() => {
+const hunkReviewTranslations = {
+  "ja": {
+    change: ({ n }) => `変更 ${n}`,
+    line: ({ line }) => `${line} 行目`,
+    lines: ({ start, end }) => `${start}–${end} 行目`,
+    kept: '承認済み',
+    keep: '承認',
+    keepUnavailable: '変更を承認できません。このレビューを開き直して再試行してください。',
+    discard: '破棄',
+    keepA11y: ({ n, total, range }) =>
+      `${total} 件中 ${n} 件目の変更を承認、${range}`,
+    unkeepA11y: ({ n, total, range }) =>
+      `${total} 件中 ${n} 件目の変更（${range}）を未確認に戻す`,
+    discardA11y: ({ n, total, range }) =>
+      `${total} 件中 ${n} 件目の変更を破棄、${range}`,
+    counter: ({ current, total }) => `${current} / ${total}`,
+    changes: () => String('件の変更'),
+    previousChange: '前の変更',
+    nextChange: '次の変更',
+    keepAll: 'すべて承認',
+    fileReviewed: 'このファイルの変更をすべて確認しました',
+    filesLeft: ({ count }) => `残り ${count} ファイル`,
+    viewed: '表示済み',
+    viewedChanged: '表示後に変更あり',
+    viewedNotSaved: 'GitHub に保存されていません',
+    viewedA11y: ({ name }) => `${name}、GitHub で表示済み`,
+    viewedCount: ({ count, total }) => `${count} / ${total} 件表示済み`,
+    viewedUnavailable: '表示済みを読み込めません',
+    nextFile: '次のファイル',
+    nextNamed: ({ name }) => `次 · ${name}`,
+    scopeA11y: '表示する変更',
+    scopeTurn: 'このターン',
+    scopeSession: 'このセッション',
+    scopeUncommitted: '未コミット',
+    noTurnChanges: 'このファイルにはこのターンの変更はありません。',
+    noChanges: 'このファイルに変更はありません。',
+    showSession: 'このセッションを表示',
+    discardNeeds: ({ machine }) => `破棄には ${machine} が必要です`,
+    agentWriting: ({ agent }) => `${agent} がこのファイルに書き込み中`,
+    turn: ({ turn }) => `ターン ${turn}`,
+    comment: 'コメント',
+    askAbout: 'この変更について質問',
+    copy: 'コピー',
+    noticeDiscarded: '変更を破棄しました',
+    noticeDiscardedAt: ({ range }) => `${range}の変更を破棄しました`,
+    noticeRestored: ({ name }) => `${name} を復元しました`,
+    noticeKeptEdited: '保持：その後編集されています',
+    noticeUndone: '元に戻しました',
+    noticeUndoConflict: 'ファイルが変更されたため、元に戻せません。',
+    noticeUndoUnavailable: '完了しました。この操作は元に戻せません。',
+    noticeNoteFailed: ({ agent }) =>
+      `完了しましたが、${agent} に伝えられませんでした`,
+    noticeMovedOn: 'ファイルが変更されました。もう一度確認してください。',
+    noticeUpdateRequired: ({ machine }) =>
+      `変更の破棄や復元には ${machine} の更新が必要です`,
+    noticeUnsupported: 'この変更はここでは破棄できません。',
+    discardStaged: '先にこれらの変更のステージングを解除してください。',
+    discardRenamedOrCopied: '名前変更またはコピーされたファイルでは個別の変更を破棄できません。',
+    discardUntracked: '追跡されていないファイルでは個別の変更を破棄できません。',
+    noticeUnavailable: 'これらの変更はもう利用できません。',
+    noticeUnknown: '確認できませんでした。更新してください。',
+    undo: '元に戻す',
+    replaceUnsavedTitle: '未保存の編集を置き換えますか？',
+    replaceUnsavedMessage:
+      'ファイルを復元すると、保存していない編集が置き換えられます。',
+    replace: '置き換える',
+    imageSideBySide: '並べて表示',
+    imageSwipe: 'スワイプ',
+    imageOnion: 'オニオン',
+    imageModeA11y: '画像を比較',
+    imageBefore: '変更前',
+    imageAfter: '変更後',
+    pdfOpenBefore: '変更前を開く',
+    pdfOpenAfter: '変更後を開く',
+    imageAdded: '追加',
+    imageDeleted: '削除',
+    imageUnreadable: 'この画像を読み込めませんでした',
+    imageNoPreview: 'プレビューなし',
+    imageTooLarge: "大きすぎてプレビューできません",
+    imageUnsupported: "この形式はプレビューできません",
+    imageMissing: "ファイルが見つかりません",
+    imageLoading: '画像を読み込み中',
+    imageBlend: 'ブレンド',
+    unchangedLines: ({ count }) => `変更のない ${count} 行`,
+    agentFallback: 'エージェント',
+  },
+} as const satisfies Pick<Record<string, Shared_hunkReviewTranslations.Labels>, "ja">;
+
+return { hunkReviewTranslations };
+})();
+
+const Domain_storeInstalledTranslations = (() => {
+const storeInstalledTranslations = {
+  "ja": {
+    title: 'インストール済み',
+    purpose:
+      'Happier が管理しているすべてを、すべての Machine とプロジェクトにわたって。どこで動いているか、問題ないか、対応が必要なものを表示します。',
+    searchPlaceholder: 'Happier が管理しているものを検索',
+    groupBy: 'グループ',
+    groupKind: '種類',
+    groupMachine: 'Machine',
+    groupProject: 'プロジェクト',
+    status: '状態',
+    present: ({ count }) => `Happier が ${count} 件を管理しています。`,
+    presentAcross: ({ count, machines }) =>
+      `Happier が ${machines} 台のマシンで ${count} 件を管理しています。`,
+    needYou: ({ count }) => `${count} 件が対応待ちです。`,
+    includedMore: ({ count }) => `ほかに ${count} 件が Happier に含まれています。`,
+    includedBody: 'Happier に同梱され、Happier と一緒に更新されます。',
+    partial:
+      '一部がまだ読み込まれていないため、すべてではない可能性があります。',
+    needsYou: '対応が必要',
+    all: ({ count }) => `すべて（${count}）`,
+    allUnknown: 'すべて',
+    fewer: '少なく表示',
+    sectionNone: 'まだありません。',
+    browserProfileEmpty: 'ブラウザプロファイル(拡張機能はまだありません)',
+    browseKind: '見てみる',
+    sectionUnavailable: '今は読み込めませんでした。',
+    sectionPartial: '一部がまだ読み込まれていません。',
+    sectionIncomplete: '一部を読み取れなかったため、すべてではない可能性があります。',
+    accountGroup: 'アカウント',
+    accountGroupBody: '特定の Machine やプロジェクトに結び付いていません。',
+    unassignedGroup: '場所が未確定',
+    unassignedGroupBody: 'どこで動いているかはまだわかりません。',
+    noProjectGroup: 'プロジェクトなし',
+    noProjectGroupBody: 'プロジェクトに関連付けられていません。',
+    everyMachine: 'すべてのマシン',
+    appNoPage: '開けるページはまだありません',
+    machineFallback: 'Machine',
+    emptyTitle: 'まだ何もありません',
+    emptyBody:
+      '追加した MCP サーバー、スキル、エージェント、プロバイダー、プラグインが、動いている場所と対応が必要なものと一緒にここに表示されます。',
+    browse: 'Store を見る',
+    noMatch: ({ query }) => `「${query}」に一致するものはありません`,
+    noMatchFilters: 'このフィルターに一致するものはありません',
+    clear: 'クリア',
+    unavailable: 'このアカウントのインストール済みは今は表示できません。',
+    machineTitle: 'この Machine にあるもの',
+    machineBody: 'Happier がここで管理しているすべて。',
+    openInInstalled: 'インストール済みで開く',
+  },
+} as const satisfies Pick<Record<string, Shared_storeInstalledTranslations.Labels>, "ja">;
+
+return { storeInstalledTranslations };
+})();
+
+const Domain_connectedAccountCallbackTranslations = (() => {
+const connectedAccountCallbackTranslations = {
+  "ja": Shared_connectedAccountCallbackTranslations.callbackCopy('ja', {
+        connectedBody: '接続済みアカウントに戻っています…',
+        pasteBody: 'サインインを開始した接続画面に貼り付けてください。その画面で一度だけ使用できます。',
+        invalidBody: '接続画面からサインインをやり直してください。',
+        unfinishedBody: '接続画面に戻ってサインインを続けるか、この応答を貼り付けてください。',
+        openConnections: '接続済みアカウントを開く',
+    }),
+} as const satisfies Pick<Record<Shared_connectedAccountCallbackTranslations.Locale, Shared_connectedAccountCallbackTranslations.CallbackCopy>, "ja">;
+
+return { connectedAccountCallbackTranslations };
+})();
+
+const Domain_skillsPageTranslations = (() => {
+const ja: Shared_skillsPageTranslations.SkillsPageTranslation = {
+  pane: { thisBot: "このBotが作成", yours: "あなたのスキル", registries: "レジストリから", other: "その他のスキル", allSkills: "すべてのスキル" },
+  saved: {
+    saved: "スキルに保存しました",
+    notAttached: "このセッションには未追加",
+    attachAgain: "もう一度追加",
+    liveNow: "現在有効",
+    loadsAfterTurn: "このターンの後に読み込み",
+    restartNow: "今すぐ再起動",
+    needsRestart: "読み込みには再起動が必要",
+    view: "表示",
+    liveNowDetail: ({ name }) => name + " は次のメッセージから使います。",
+    loadsAfterTurnDetail: "ターンの合間に読み込まれます。会話はそのままです。",
+    restartDetail: "再起動しても会話はそのままです。",
+    restartTerminalDetail: "ターミナルから再起動してください。会話はそのままです。",
+    notAttachedDetail: "スキルには保存されていますが、このセッションには入っていません。",
+    onlyUses: ({ name }) => name + " だけが使います",
+  },
+  maker: {
+    title: "作成者",
+    anyone: "すべて",
+    you: "あなた",
+    anyBot: "すべてのボット",
+    registries: "レジストリから",
+    session: "セッション",
+    person: "他の人",
+    unknown: "作成者不明",
+    openSession: "セッションを開く",
+    createdHere: "Happierで作成",
+  },
+  title: 'スキル',
+  pageDescription:
+    'タスクに必要なときにエージェントが使う指示です。一度追加すれば、すべてのマシンに届きます。',
+  searchPlaceholder: 'スキルを検索',
+  addSkill: 'スキルを追加',
+  allSkills: 'すべてのスキル',
+  needLook: ({ count }) => `${count}件 要確認`,
+  inUse: '使用中',
+  off: 'オフ',
+  updates: 'アップデート',
+  noOwnSkills: '自分のスキルはまだありません',
+  noMatch: ({ query }) => `「${query}」に一致するスキルはありません`,
+  loadFailed: 'スキルを読み込めませんでした',
+  home: {
+    reach: ({ count, agents, machines }) =>
+      `${count}件のスキルが${machines}台のマシンの${agents}に届いています`,
+    reachNeedLook: ({ count }) => `。${count}件が要確認`,
+    reachNone: 'まだどのスキルもオンになっていません',
+    reachWaiting: ({ count }) =>
+      `${count} 件のスキルがオンです。マシンが手元のエージェントを知らせると届きます。`,
+    unsupported: ({ count, agents }) =>
+      `${count}件のスキルがオンですが、${agents}はスキルを使えません。`,
+    unsupportedNote: ({ agents }) => `${agents}はスキルを使えません。`,
+    noMachines: '最初に接続したマシンにスキルが届きます。',
+    catchesUp: ({ machines }) => `${machines}は戻ったときに追いつきます。`,
+    catchUpCount: ({ count }) => `オフラインの ${count} 台は、戻ったときに追いつきます。`,
+    mapLabel: ({ skills, machines }) =>
+      `${machines}台のマシンに${skills}件のスキル`,
+    offlineLastKnown: ({ time }) => `オフライン · 最終確認 ${time}`,
+    offline: 'オフライン',
+    noAgents: 'エージェントはまだありません',
+    noSkillAgents: 'ここにスキルを使うエージェントはいません',
+    moreMachines: ({ count }) => `ほか ${count} 台のマシン`,
+    needsLook: '要確認',
+    updateWaiting: '取得元に新しいバージョンがあります。',
+    modifiedUpstream: 'あなたも取得元も変更しています。',
+    removedFromSource: '取得元から削除されました。手元のコピーを残すか、削除してください。',
+    maskedOn: ({ machine }) => `そこでは ${machine} 自身のコピーが優先されます。`,
+    unreadable: 'このスキルを読み込めませんでした。',
+    byId: ({ id }) => `スキル ${id}`,
+    writeOwn: '自分で書く',
+    review: '確認',
+    decide: '選ぶ',
+    whereTitle: 'オンになっている場所',
+    whereBody:
+      '新しいスキルはどこでもオンです。プロジェクトやマシンに絞ったり、特定のエージェントから外したりできます。最も具体的なルールが優先され、各セッションで追加や除外もできます。',
+    firstHeadline: 'スキルがすべてのマシンに届くようになりました',
+    firstPurpose:
+      'スキルは、タスクに必要なときにエージェントが使う指示のフォルダーです（スクリプトを含むこともあります）。あなたのスキルはすべてのマシンについてきます。',
+    firstSentence: ({ on, off }) =>
+      `${on > 0 ? `${on}件はすでに使っていた場所でオンです。` : ''}${off}件はあなたが選ぶまでHomeで待機します。`,
+    choose: 'オンにするものを選ぶ',
+    chooseOff: ({ count }) => `${count}件オフ`,
+    nothingElse: '選ぶまでほかには何も変わりません。',
+    emptyTitle: 'エージェントに一度だけ教える',
+    emptyBody:
+      'スキルは、タスクに必要なときにエージェントが使う指示のフォルダーです。ここで追加すると、すべてのマシンのすべてのエージェントに届きます。',
+    emptySentence:
+      'マシンはあなたの Home の周りを回っています。追加したスキルは、どのマシンのどのエージェントにも届きます。',
+  },
+};
+
+const skillsPageTranslations = {
+  "ja": ja,
+} as const;
+
+return { skillsPageTranslations };
+})();
+
+const Domain_capabilityNoticeTranslations = (() => {
+const capabilityNoticeTranslations = {
+  "ja": Shared_capabilityNoticeTranslations.copy(['{name} を起動できませんでした', '{name} を読み込めませんでした', '{key} がありません', 'サインインが必要です', 'サインインは別のアドレス用です',
+    'リモートブリッジを利用できません', 'このエージェントはこの方法でスキルを受け取れません', 'MCP サーバー', 'スキル', 'ファイルを読み取れませんでした', 'サインイン情報をこのセッションに渡せませんでした']),
+} as const;
+
+return { capabilityNoticeTranslations };
+})();
+
+const Domain_skillDetailTranslations = (() => {
+const ja: Shared_skillDetailTranslations.SkillDetailTranslation = {
+  whereDescription:
+    '一度設定すれば、すべてのマシンが従います。最も具体的なルールが優先されます。',
+  tokensWhenUsed: ({ tokens }) => `使用時 ${tokens} トークン`,
+  menu: {
+    duplicate: '複製',
+    makeCopy: '編集可能なコピーを作成',
+    moveToFolder: 'フォルダーに移動',
+    noFolder: 'フォルダーなし',
+    exportZip: '.zip として書き出す',
+    copyLink: 'リンクをコピー',
+    linkCopied: 'リンクをコピーしました',
+  },
+  banner: {
+    couldntLoadTitle: 'このスキルを読み込めませんでした',
+    couldntLoadBody:
+      'ライブラリから応答がありませんでした。セッションは、すでに持っているコピーを使い続けます。',
+  },
+  instructions: {
+    title: '指示',
+    edit: '編集',
+    done: '完了',
+    preview: 'プレビュー',
+    showAll: 'すべて表示',
+    showLess: '表示を減らす',
+    saving: '保存中…',
+    saved: '保存しました · 新しいセッションに適用',
+    saveFailed: '保存できませんでした。入力したテキストは残っています。',
+    conflict: '別のデバイスで変更されました',
+    reviewBoth: '両方を確認',
+    keepMine: '自分のを残す',
+    takeTheirs: '相手のを使う',
+    yours: '自分',
+    theirs: '相手',
+    lintOk: '名前と説明が設定されています',
+    lintMissingName: 'frontmatter に名前を追加してください',
+    lintMissingDescription:
+      'エージェントが使うタイミングを判断できるよう、説明を追加してください',
+    lintNoFrontmatter: 'frontmatter ブロックで始めてください：名前と説明',
+    readOnlyPlugin: 'プラグインに付属し、そのバージョンに従います。',
+  },
+  files: {
+    title: 'ファイル',
+    description: ({ count }) =>
+      count === 1 ? '1 件のファイル、スクリプトなし。' : `${count} 件のファイル、スクリプトなし。`,
+    descriptionScripts: ({ count, scripts }) =>
+      `${count} 件のファイル、${scripts} 件はスクリプトとして実行されます。`,
+    script: 'スクリプト',
+    addFile: 'ファイルを追加',
+    addFilePrompt: 'スキル内でのパスです。',
+    addFilePlaceholder: 'reference/notes.md',
+    remove: '削除',
+    removeTitle: ({ path }) => `${path} を削除しますか？`,
+    removeBody: '新しいセッションは、このファイルなしでスキルを受け取ります。',
+    more: ({ count }) => `ほか ${count} 件`,
+    binary: 'テキストファイルではありません',
+    loading: '開いています…',
+    afterAdd: 'スキルがライブラリに入ったら、ファイルを追加できます。',
+  },
+  source: {
+    title: 'ソースとアップデート',
+    descriptionReview: 'ソースからの変更は、あなたの確認を待ちます。',
+    descriptionAuto:
+      'ソースからの変更は自動で届きます。ただし、あなたが変更したスキルは除きます。',
+    descriptionPinned:
+      'バージョンを固定中です。固定を外すまで、ソースからの変更は待機します。',
+    descriptionOwn: 'あなたのスキルです。あなた以外は更新しません。',
+    writtenByYou: 'あなたが作成',
+    writtenByYouBody: 'ここで編集すると、すべてのマシンに反映されます。',
+    uploadedByYou: 'あなたがアップロード',
+    foundOn: ({ machine }) => `${machine} で見つかりました`,
+    foundOnBody: ({ path }) => path,
+    firstParty: 'Happier に内蔵 · そのバージョンに従います',
+    verifiedByDigest: 'ダイジェストで検証済み',
+    noDigestPublished: 'ダイジェスト未公開',
+    added: ({ date }) => `${date} に追加`,
+    updates: 'アップデート',
+    upToDate: '最新です',
+    updateAvailable: 'アップデートあり',
+    removedFromSource: '取得元から削除されています',
+    notChecked: 'まだ確認していません',
+    checked: ({ time }) => `${time} に確認`,
+    checkNow: '今すぐ確認',
+    view: '表示',
+    auto: '自動で更新',
+    autoBody: '他の人のスキルではオフです。すべての変更を先に確認できます',
+    pin: 'このバージョンに固定',
+    pinBody: '固定を外すまでこのバージョンを保ちます',
+    checkFailed: '取得元を確認できませんでした',
+  },
+  machines: {
+    description: '各マシンのエージェントが、いま受け取っているものです。',
+    nowhere: 'まだどのマシンでもオンになっていません。',
+    offline: 'マシンはオフライン',
+    lastKnown: ({ time }) => `最終確認 ${time}`,
+    masked: ({ agent, machine }) =>
+      `${agent}：${machine} 自身のコピーが優先されます`,
+    cantLoad: ({ agents }) => `${agents}はここでスキルを読み込めません`,
+    previewFailed: ({ agent }) => `${agent}：—`,
+    checking: '確認中…',
+    projectNote:
+      'プロジェクト内では、プロジェクト自身のコピーが優先されることがあります。',
+    noAgent: 'ここにはスキルを受け取るエージェントがいません',
+    offlineCount: ({ count }) => `オフライン ${count} 台`,
+    summaryOn: ({ agents, machine }) => `${machine}: ${agents}`,
+    summaryOnMany: ({ agents, count }) => `${count} 台: ${agents}`,
+  },
+  details: {
+    title: '詳細',
+    summary: 'リビジョンと Happier 外のコピー',
+    revision: 'リビジョン',
+    contentHash: 'コンテンツハッシュ',
+    alsoInstall: ({ machine }) => `${machine} にもインストール`,
+    alsoInstallBody:
+      'Happier の外で使うため、各エージェント自身のスキルフォルダーに入れます',
+    installed: 'インストール済み',
+    install: 'インストール',
+  },
+  leave: {
+    remove: 'スキルを削除',
+    footnote: '実行中のセッションは、再起動するまで引き続き使えます。',
+    confirmTitle: ({ name }) => `${name} を削除しますか？`,
+    confirmBody:
+      'ライブラリとすべてのマシンから外れます。実行中のセッションは、再起動するまで引き続き使えます。',
+    confirm: '削除',
+  },
+  draft: {
+    title: '新しいスキル',
+    purpose:
+      '一度教えるだけで十分です。エージェントは説明を読んで、使うタイミングを判断します。',
+    add: 'ライブラリに追加',
+    adding: '追加中…',
+    addFailed: 'スキルを追加できませんでした。入力したテキストは残っています。',
+  },
+};
+
+const skillDetailTranslations = {
+  "ja": ja,
+} as const;
+
+return { skillDetailTranslations };
+})();
+
+const Domain_skillsFoundTranslations = (() => {
+const ja: Shared_skillsFoundTranslations.SkillsFoundTranslation = {
+  title: 'マシンで見つかったスキル',
+  purpose:
+    'エージェントが各マシンにすでに持っているスキルです。Happier が編集することはありません。ライブラリに追加すると、すべてのマシンで使えます。',
+  checkAgain: 'もう一度確認',
+  add: 'ライブラリに追加',
+  addAll: ({ count }) => `${count} 件すべてを追加`,
+  makeCopy: 'コピーを作成',
+  compare: '比較',
+  hideCompare: '閉じる',
+  inLibrary: 'ライブラリにあります',
+  adding: '追加中…',
+  plugin: 'プラグイン',
+  readBy: ({ agents }) => `${agents}が読み込みます`,
+  fromPlugin: ({ plugin }) => `${plugin} プラグインから`,
+  installedByHappier: 'Happier がインストール',
+  masks: ({ machine }) =>
+    `ライブラリに同じ名前のスキルがあります。${machine} ではこのコピーが優先され、そこのエージェントはこちらを使います。`,
+  more: ({ count }) => `ほか ${count} 件`,
+  showFewer: '表示を減らす',
+  looking: '探しています…',
+  nothingHere: 'ここにはスキルが見つかりません。',
+  quietEmpty: ({ count, others }) =>
+    others ? `他の ${count} 台のマシンにはスキルが見つかりません` : `${count} 台のマシンにはスキルが見つかりません`,
+  quietLooking: ({ count }) =>
+    `${count} 台のマシンを探しています…`,
+  lastKnown: ({ time }) => `最終確認 ${time}`,
+  offlineBring: ({ machine }) =>
+    `${machine} をオンラインにすると、そこから追加できます。`,
+  offlineUnseen: ({ count }) =>
+    count === 1
+      ? `オフラインのマシン 1 台はまだ確認していません。オンラインにするとスキルを表示できます。`
+      : `オフラインのマシン ${count} 台はまだ確認していません。オンラインにするとスキルを表示できます。`,
+  scanFailed: ({ machine }) => `${machine} のスキルを読み取れませんでした`,
+  tryAgain: 'もう一度試す',
+  olderMachine: ({ machine }) =>
+    `${machine} のスキルを一覧表示するには、より新しい Happier が必要です。`,
+  rootFailed: ({ path }) => `${path} を読み取れませんでした`,
+  noMachinesTitle: 'マシンはまだありません',
+  noMachinesBody:
+    'マシンを接続すると、エージェントがそこにすでに持っているスキルが表示されます。',
+  addFailed: ({ name }) =>
+    `${name} を追加できませんでした。何も変更されていません。`,
+  compareYours: 'ライブラリ',
+  compareTheirs: ({ machine }) => `${machine} 上`,
+  compareFailed: ({ machine }) =>
+    `${machine} のコピーを読み取れませんでした。`,
+  destination: 'マシンで見つかったスキル',
+  homeBody:
+    'エージェント自身のフォルダーにすでにあります。ライブラリに追加すると、どこでも使えます。',
+  seeAll: ({ count }) => `${count} 件すべて表示`,
+  alreadyOnMachines: ({ count }) => `${count} 件のスキルがすでにマシンにあります`,
+  install: {
+    installedIn: ({ path }) => `${path} にインストール済み`,
+    externallyModified: ({ machine }) =>
+      `${machine} のコピーは Happier の外で編集されたため、そのままにしました。`,
+    removeAnyway: 'それでも削除',
+    removeTitle: ({ machine }) => `${machine} から削除しますか？`,
+    removeBody:
+      'Happier がそこのエージェントのフォルダに置いたコピーを削除します。ライブラリのスキルは残ります。',
+    remove: '削除',
+    nativeConflict: ({ machine }) =>
+      `${machine} のエージェントのフォルダに、同じ名前の別のスキルがすでにあります。Happier はそのままにしました。`,
+    failed: ({ machine }) =>
+      `${machine} にインストールできませんでした。何も変更されていません。`,
+    removeFailed: ({ machine }) => `${machine} から削除できませんでした。`,
+    partial: ({ machine }) =>
+      `${machine} の一部のエージェントにインストールしました。そのほかには書き込めませんでした。`,
+  },
+};
+
+const skillsFoundTranslations = {
+  "ja": ja,
+} as const;
+
+return { skillsFoundTranslations };
+})();
+
+const Domain_mcpFoundTranslations = (() => {
+const ja: Shared_mcpFoundTranslations.McpFoundTranslation = {
+  purpose: '各マシンでエージェントがすでに設定している MCP サーバーです。Happier に追加すると、すべてのマシンのすべてのセッションで使えます。',
+  checkAgain: 'もう一度確認',
+  add: '追加',
+  inHappier: 'Happier に追加済み',
+  setUpIn: ({ agent }) => `${agent} で設定`,
+  offIn: ({ agent }) => `${agent} ではオフ`,
+  looking: '確認中…',
+  nothingHere: 'ここには MCP サーバーが見つかりません。',
+  lastKnown: ({ time }) => `最終確認 ${time}`,
+  offlineBring: ({ machine }) => `${machine} をオンラインにすると、ここから追加できます。`,
+  offlineUnseen: ({ count }) =>
+    count === 1
+      ? 'オフラインのマシン 1 台はまだ確認されていません。オンラインにすると MCP サーバーが表示されます。'
+      : `オフラインのマシン ${count} 台はまだ確認されていません。オンラインにすると MCP サーバーが表示されます。`,
+  scanFailed: ({ machine }) => `${machine} の MCP サーバーを読み取れませんでした`,
+  tryAgain: '再試行',
+  olderMachine: ({ machine }) => `${machine} の MCP サーバーを一覧表示するには、新しい Happier が必要です。`,
+  noMachinesTitle: 'マシンがまだありません',
+  noMachinesBody: 'マシンを接続すると、エージェントがすでに設定している MCP サーバーが表示されます。',
+  warningReadFailed: ({ agent }) => `${agent} の MCP 設定を読み取れませんでした`,
+  warningReadFailedNoAgent: 'MCP 設定ファイルを読み取れませんでした',
+  warningParseFailed: ({ agent }) => `${agent} の MCP 設定を解釈できませんでした`,
+  warningParseFailedNoAgent: 'MCP 設定ファイルを解釈できませんでした',
+  warningUnsupported: ({ agent }) => `${agent} の一部の MCP サーバーはまだ読み取れません`,
+  warningUnsupportedNoAgent: 'ここにある一部の MCP サーバーはまだ読み取れません',
+  quietEmpty: ({ count, others }) => `${others ? 'ほかの' : ''}${count} 台のマシンでは MCP サーバーが見つかりませんでした`,
+  quietLooking: ({ count }) =>
+    `${count} 台のマシンを探しています…`,
+};
+
+const mcpFoundTranslations = {
+  "ja": ja,
+} as const;
+
+return { mcpFoundTranslations };
+})();
+
+const Domain_skillsUpdatesTranslations = (() => {
+const ja: Shared_skillsUpdatesTranslations.SkillsUpdatesTranslation = {
+  updates: {
+    title: 'アップデート',
+    purpose:
+      'スキルの入手元にある新しいバージョンです。選ぶまで何も変わりません。',
+    checkNow: '今すぐ確認',
+    checking: '確認中…',
+    readyTitle: '更新できます',
+    readyBody: '変更していないので、安全に更新できます。',
+    choiceTitle: '選択が必要です',
+    choiceBody: ({ name }) =>
+      `${name} を編集しており、入手元に新しいバージョンがあります。ファイルごとに選んでください。両方の内容を表示しています。`,
+    refChange: ({ from, to }) => `${from} から ${to} へ`,
+    newerWaiting: '新しいバージョンがあります',
+    linesChanged: ({ count, file }) => `${file} の ${count} 行が変更`,
+    filesChanged: ({ count }) => `${count} 個のファイルが変更`,
+    viewChanges: '変更を表示',
+    hideChanges: '変更を隠す',
+    update: '更新',
+    fileDiffers: ({ count }) =>
+      `あなたの版と相手の版が異なります · ${count} 行`,
+    fileTheirsOnly: '相手の版で追加',
+    fileMineOnly: 'あなたの版のみ',
+    fileUnchanged: '変更なし',
+    nothingToChoose: '選ぶものはありません',
+    keepNote: ({ name }) =>
+      `自分のファイルを一つでも残すと ${name} は変更済みのままになり、今後の更新でも確認されます。`,
+    notNow: '後で',
+    applyChoices: '選択を適用',
+    upToDate: 'すべて最新です',
+    noSources: '更新元のあるスキルはありません。GitHub やレジストリから追加したスキルは、新しいバージョンがここに表示されます。',
+    updatedTitle: '更新済み',
+    checkedAt: ({ time }) => `${time} に確認`,
+    checkFailed: 'アップデートを確認できませんでした。',
+    diffFailed: '変更を読み込めませんでした。',
+    applyFailed: '更新できませんでした。',
+    applied: ({ ref }) => `${ref} に更新しました`,
+    tryAgain: '再試行',
+  },
+  choose: {
+    purpose: ({ total, off }) =>
+      `ライブラリには ${total} 個のスキルがあります。選ぶまで ${off} 個はオフのままなので、セッションはまだ変わりません。`,
+    purposeIdle: 'エージェントに渡すスキルを選びます。',
+    migratedTitle: ({ count }) => `${count} 個は使っていた場所ですでにオンです`,
+    migratedBody: ({ names }) =>
+      `${names} はアカウントまたはプロジェクトのコンテキストから来たため、使っていた場所でオンのままです。`,
+    listTitle: 'エージェントに渡すものを選ぶ',
+    selectAll: 'すべて選択',
+    selectNone: '選択を解除',
+    usedOn: ({ date }) => `${date} に使用`,
+    selected: ({ count }) => `${count} 個を選択`,
+    turnOn: ({ count }) => `${count} 個をどこでもオン`,
+    failed: 'オンにできませんでした。選択はそのままです。',
+    nothingWaits:
+      'どのスキルにもすでに場所があります。各スキルのページでオンにしたり範囲を絞ったりできます。',
+  },
+  shelf: {
+    title: 'あなたのレジストリから',
+    titleNew: 'まずはこちらから',
+    browseAll: 'すべて見る',
+    fromSource: ({ source }) => `${source} の新着と人気。`,
+    add: '追加',
+    inLibrary: 'ライブラリにあります',
+    addFailed: '追加できませんでした',
+  },
+};
+
+const skillsUpdatesTranslations = {
+  "ja": ja,
+} as const;
+
+return { skillsUpdatesTranslations };
+})();
+
+const Domain_mcpPageTranslations = (() => {
+const configJa: Shared_mcpPageTranslations.McpConfigTranslation = {
+  transport: '実行方法',
+  command: 'コマンド',
+  commandDescription: '各マシンが起動するプログラムです。',
+  arguments: '引数',
+  argument: ({ position }) => `引数 ${position}`,
+  removeArgument: ({ position }) => `引数 ${position} を削除`,
+  addArgument: '引数を追加',
+  workingFolder: '作業フォルダ',
+  workingFolderDescription: 'プログラムを起動する場所です。',
+  sessionFolder: 'セッションのプロジェクトフォルダ',
+  aFolder: 'マシン上のフォルダ',
+  folderPath: 'フォルダ',
+  environment: '環境',
+  environmentDescription: 'プログラムが読み取る値です。シークレットはエンドツーエンドで暗号化されたままで、マシン上でのみセッションに書き込まれます。',
+  addVariable: '変数を追加',
+  address: 'アドレス',
+  addressDescription: 'Happier の接続先です。すべてのマシンで同じものを使います。',
+  headers: 'ヘッダー',
+  headersDescription: 'すべてのリクエストと一緒に送信されます。シークレットは値ではなく名前が表示されます。',
+  addHeader: 'ヘッダーを追加',
+  saved: '保存しました · 新しいセッションに適用されます',
+  saving: '保存中…',
+  saveFailed: '保存できませんでした。編集内容はそのまま残っています。',
+  different: 'マシンごとに異なる…',
+  differentNone: 'すべてのマシンでこの値を使用',
+  differentOne: ({ machine }) => `${machine} は異なります`,
+  differentOn: ({ machine }) => `${machine} では異なります`,
+  addDifference: 'マシンごとの違いを追加',
+  addAnother: '別のマシン',
+  differentCount: ({ count }) => `${count} 台のマシンで異なります`,
+  differsFolder: ({ path }) => `作業フォルダ ${path}`,
+  differsCommand: 'コマンド',
+  differsArguments: '引数',
+  differsAddress: 'アドレス',
+  differsValues: ({ names }) => names,
+  inFolderOn: ({ folder, machine }) => `${machine} の ${folder} 内`,
+  removeDifference: '削除',
+};
+
+const ja: Shared_mcpPageTranslations.McpPageBase = {
+  allServers: 'すべてのサーバー',
+  foundOnMachines: 'マシンで見つかったもの',
+  inUse: '使用中',
+  off: 'オフ',
+  fromPlugins: 'プラグイン提供',
+  builtIn: '内蔵',
+  builtInHappier: 'Happier',
+  builtInHappierDescription: 'セッション、ファイル、マシン、あなたのアクション',
+  builtInActions: 'アクション',
+  remote: 'リモート',
+  local: 'ローカル',
+  tools: {
+    title: 'ツール',
+    description: 'エージェントが呼び出せるもの。「確認」は承認カードを表示し、「許可」は確認なしで実行し、「オフ」はツールを非表示にします。',
+    defaultTitle: 'ツールの既定',
+    defaultAsk: '確認',
+    defaultReadOnly: '読み取り専用を許可',
+    defaultAll: 'すべて許可',
+    defaultAskDescription: 'すべてのツールが先に確認します。自分で設定したツールはその設定のままです。',
+    defaultReadOnlyDescription: '読み取り専用のツールは確認なしで実行され、書き込みを行うものは先に確認します。自分で設定したツールはその設定のままです。',
+    defaultAllDescription: 'すべてのツールが確認なしで実行されます。自分で設定したツールはその設定のままです。',
+    off: 'オフ',
+    ask: '確認',
+    allow: '許可',
+    search: ({ count }) => `${count} 個のツールを検索`,
+    filterAll: 'すべて',
+    filterReadOnly: '読み取り専用',
+    filterWrites: '書き込み',
+    filterDestructive: '破壊的',
+    filterSetByYou: '自分で設定',
+    readOnly: '読み取り専用',
+    writes: '書き込み',
+    destructive: '破壊的',
+    setByYou: '自分で設定',
+    backToDefault: ({ value }) => `自分で設定 · 既定値（${value}）に戻す`,
+    useDefault: ({ value }) => `既定値（${value}）を使う`,
+    showAll: ({ count }) => `${count} 個のツールをすべて表示`,
+    cost: ({ count, tokens }) => `${count} 個のツール · すべて読み込むと ${tokens} トークン。`,
+    onDemand: ({ agents, count }) => `${agents} は必要なときだけツールを読み込みます。ほかのエージェントはセッション開始時に ${count} 個すべてを読み込みます。`,
+    notApply: ({ agents }) => `ツールの設定は ${agents} には適用されません。これらは自分で判断します。`,
+    blocked: ({ agents }) => `${agents} では、「オフ」にするとツールは非表示にならず、呼び出し時にブロックされます。`,
+    hiddenRestart: ({ agents }) => `非表示のツールを再びオンにすると、新しい ${agents} セッションに適用されます。`,
+    notListed: 'ツールはマシンで最初のテストを行うと表示されます。',
+    lastListed: ({ date }) => `最終取得 ${date}。サインインが戻ると再び表示されます。`,
+    loadFailed: 'ツールを読み取れませんでした。',
+    noMatch: '一致するツールはありません。',
+    setFailed: '保存できませんでした。もう一度お試しください。',
+  },
+  detail: {
+    configurationTitle: '設定',
+    configurationDescription: '値はその場で編集できます。すべてのマシンの新しいセッションに適用されます。',
+    machinesDescription: 'Happier は各マシンから接続するため、それぞれを確認します。',
+    test: 'テスト',
+    onNowhere: 'まだどのマシンでもオンになっていません。',
+    toolsOn: ({ count }) => `${count} 個のツール`,
+    checked: ({ time }) => `${time}に確認`,
+    notChecked: '未確認',
+    lastKnown: ({ time }) => `${time}時点の状態`,
+    summary: ({ ready, problems, offline, unchecked }) => {
+      const total = ready + problems + offline + unchecked;
+      if (total > 1 && ready === total) return `${total} 台すべてで準備完了`;
+      if (total > 1 && offline === total) return `${total} 台すべてオフライン`;
+      return [
+        ready > 0 ? `${ready} 台で準備完了` : null,
+        problems > 0 ? `${problems} 台は要確認` : null,
+        unchecked > 0 ? `${unchecked} 台はテスト待ち` : null,
+        offline > 0 ? `${offline} 台はオフライン` : null,
+      ].filter(Boolean).join(' · ');
+    },
+    detailsTitle: '詳細',
+    versionLine: ({ version, protocol }) => protocol ? `バージョン ${version} · プロトコル ${protocol}` : `バージョン ${version}`,
+    update: {
+      title: 'アップデート',
+      upToDate: '最新です',
+      available: ({ version }) => `バージョン ${version} を利用できます`,
+      checkFailed: 'アップデートを確認できませんでした',
+      removed: 'レジストリにこのサーバーはもうありません。このまま動作し続けます。',
+      checkNow: '今すぐ確認',
+      review: '確認する',
+      readFailed: '新しいバージョンを読み込めませんでした。もう一度お試しください。',
+      changesTitle: ({ version }) => `${version} に更新`,
+      changesBody: '名前、値、ツール、オンにしている場所はそのままです。',
+      now: '現在',
+      after: '更新後',
+      apply: '更新',
+      applyFailed: '更新できませんでした。選択内容は保持されています。',
+    },
+    serverInstructions: 'サーバーの指示',
+    lastError: '直近のテスト出力',
+    copy: 'コピー',
+    removeServer: 'サーバーを削除',
+    removeFootnote: 'すべてのマシンのすべてのセッションから外し、サインイン情報を削除します。',
+    conflict: {
+      reason: '別の場所で変更されました',
+      review: '確認',
+      title: '変更を確認',
+      description: '編集中に、このサーバーが別のデバイスで変更されました。残す値を選んでください。',
+      current: '現在',
+      yours: 'あなたの値',
+      notSet: '未設定',
+      machines: 'マシンごとの違い',
+      keepMine: '自分の値を残す',
+      useCurrent: '現在の値を使う',
+      removedTitle: '別の場所で削除されました',
+      removedDescription: 'このサーバーは別のデバイスで削除されました。編集内容は保存できません。',
+      discard: '編集内容を破棄',
+    },
+    copyInstallLink: 'インストールリンクをコピー',
+    installLinkLabel: 'インストールリンク',
+    duplicate: '複製',
+    fromPlugin: ({ plugin }) => `${plugin} 提供`,
+    pluginFootnote: ({ plugin }) => `${plugin} に付属しています。削除するにはプラグインをアンインストールしてください。`,
+    banner: {
+      expiredTitle: ({ name }) => `${name} のサインインの期限が切れました`,
+      expiredBody: ({ name, date, count }) => `${name} は${date ? ` ${date} に` : ''}サインインを受け付けなくなりました。再接続するまで、セッションは${count ? ` ${count} 個の` : ''}ツールなしで開始されます。一度再接続すれば、すべてのマシンで有効になります。`,
+      signinTitle: ({ name }) => `${name} にサインイン`,
+      signinBody: 'サインインするまで、セッションはそのツールなしで開始されます。一度サインインすれば、すべてのマシンで有効になります。',
+      moreAccessTitle: ({ name }) => `${name} にはより多くのアクセス権が必要です`,
+      moreAccessBody: 'ツールが、現在のサインインにはないアクセス権を求めました。一度付与すれば、すべてのマシンに反映されます。',
+      revokedTitle: ({ name }) => `${name} はアクセス権を失いました`,
+      revokedBody: 'サインインが取り消されました。再度サインインするまで、セッションはそのツールなしで開始されます。',
+      keyTitle: ({ name }) => `${name} にはキーが必要です`,
+      keyBody: '必要な値がまだ保存されていません。追加するまで、セッションはそれなしで開始されます。',
+      errorTitle: ({ name, machine }) => `${name} は ${machine} で停止しました`,
+      errorBody: 'そのマシンのセッションはツールなしで開始されます。直近のテスト出力は「詳細」にあります。',
+      cantrunTitle: ({ name, machine }) => `${name} は ${machine} で実行できません`,
+      cantrunBody: ({ runtime }) => `そのマシンには ${runtime} が必要です。そのマシンのセッションはそれなしで開始されます。ほかのマシンは問題ありません。`,
+    },
+  },
+};
+
+const mcpPageTranslations = {
+  "ja": { ...ja, config: configJa },
+} as const satisfies Pick<Record<string, Shared_mcpPageTranslations.McpPageTranslation>, "ja">;
+
+return { mcpPageTranslations };
+})();
+
+const Domain_valueRefRowsTranslations = (() => {
+const ja: Shared_valueRefRowsTranslations.ValueRefRowsTranslation = {
+  name: '名前',
+  value: '値',
+  typeLabel: '値の種類',
+  text: 'テキスト',
+  savedSecret: '保存済みシークレット',
+  fromMachine: 'マシンから',
+  template: 'テンプレート',
+  fromSession: 'セッションから',
+  chooseSecret: '保存済みシークレットを選択',
+  needsValue: '値が必要です',
+  more: ({ name }) => `${name} のその他の操作`,
+  edit: '編集…',
+  remove: '削除',
+  invalidEnvName: '大文字、数字、_ を使い、先頭は文字にしてください。',
+  invalidHeaderName: '文字、数字、- のみ使えます。',
+  duplicateName: 'この名前はすでに使われています。',
+  invalidMachine: 'マシン上の変数を指定してください（例: ${HOME}）。',
+};
+
+const valueRefRowsTranslations = {
+  "ja": ja,
+} as const;
+
+return { valueRefRowsTranslations };
+})();
+
+const Domain_agentAddTranslations = (() => {
+const agentAddTranslations = {
+  "ja": Shared_agentAddTranslations.en,
+} as const;
+
+return { agentAddTranslations };
+})();
+
+const Domain_mcpHomeTranslations = (() => {
+const ja: Shared_mcpHomeTranslations.McpHomeTranslation = {
+  loadFailed: 'サーバーを読み込めませんでした',
+  purpose:
+    'エージェントが呼び出せるツール: Issue トラッカー、ブラウザ、データベースなど。一度サインインすれば、すべてのマシンで使えます。',
+  firstHeadline: 'サーバーがあなたについてくるようになりました',
+  firstPurpose:
+    'これまでどおり、元の場所で動き続けます。さらに、サインインが必要なサーバーも使えるようになりました。どのデバイスからでも一度サインインすれば、すべてのマシンで使えます。',
+  firstDismiss: 'わかりました',
+  groupAccount: '一度のサインインで、すべてのマシンに',
+  groupMachine: 'あなたのマシンで動作',
+  newAccountBody:
+    'Linear、Sentry、Notion など: どのデバイスからでも、スマートフォンからでもサインインできます。',
+  newMachineBody:
+    'ブラウザやデータベースなど: セッションが動いているマシンで Happier が起動します。',
+  factAs: ({ identity }) => `${identity} として`,
+  factSignedIn: 'サインイン済み',
+  factKey: 'API キー・保存したシークレット',
+  present: ({ servers, tools, tokens }) =>
+    `${servers} 台のサーバーがエージェントに ${tools} 個のツールを提供しています。コンテキストは約 ${tokens} トークンです。`,
+  presentNoTools: ({ count }) =>
+    `${count} 台のサーバーがエージェント向けにオンです。`,
+  presentNone: 'オンのサーバーはまだありません。',
+  needYou: ({ count }) => ` ${count} 台は対応が必要です。`,
+  needsTitle: '対応が必要',
+  needsAccount: 'どのデバイスからでも一度直せば、すべてのマシンで使えます',
+  needsAccountTools: ({ count }) =>
+    `どのデバイスからでも一度直せば、すべてのマシンで ${count} 個のツールが戻ります`,
+  needsKey: 'キーを保存したシークレットとして一度追加すれば、すべてのマシンで使えます',
+  needsKeyNamed: ({ names }) => `${names} を保存したシークレットとして一度追加すれば、すべてのマシンで使えます`,
+  previewSignedInAs: ({ identity }) =>
+    `${identity} としてサインイン済み、すべてのマシンで利用可`,
+  previewSignedIn: '一度のサインインで、すべてのマシンで利用可',
+  previewKey: 'キーは保存したシークレットで、すべてのマシンで使われます',
+  previewMachine: 'セッションが動いているマシンで起動します',
+  previewOff: 'オフ: どのエージェントにも渡りません',
+  previewExpired:
+    'サインインの有効期限が切れました。一度再接続すれば、すべてのマシンで元どおり使えます。',
+  previewSignIn:
+    'どのデバイスからでも一度サインインすれば、すべてのマシンで使えます。',
+  previewNeedsKey:
+    'キーが必要です。保存したシークレットとして一度追加すれば、すべてのマシンで起動できます。',
+  newTitle: 'エージェントにもっとツールを',
+  newBody:
+    'MCP サーバーはエージェントにツールを渡します。Issue トラッカー、ブラウザ、データベースなど。ここで追加して一度サインインすれば、すべてのマシンで使えます。',
+  browse: 'サーバーを探す',
+  paste: '設定を貼り付け',
+  shelfTitle: 'おすすめのサーバー',
+  shelfFrom: ({ source }) =>
+    `${source} から。追加すれば、すべてのマシンで使えます。`,
+  shelfAdd: '追加',
+  foundTitle: 'マシンで見つかりました',
+  foundBody:
+    'エージェント内で設定済みで、Happier にはまだありません。追加すると、あなたについてきます。',
+  foundLine: ({ count, machine }) =>
+    `${count} 台のサーバーがすでに ${machine} にあります`,
+  foundLineMachines: ({ count, machines }) =>
+    `${count} 台のサーバーがすでに ${machines} 台のマシンにあります`,
+  foundLineBody:
+    'エージェントで設定済みです。追加すれば、すべてのマシンについてきます。',
+  review: '確認',
+  mapLabel: ({ count }) => `Home の周りに MCP サーバー ${count} 台`,
+  more: ({ count }) => `+${count}`,
+};
+
+const mcpHomeTranslations = {
+  "ja": ja,
+} as const satisfies Pick<Record<string, Shared_mcpHomeTranslations.McpHomeTranslation>, "ja">;
+
+return { mcpHomeTranslations };
+})();
+
+const Domain_agentsHomeTranslations = (() => {
+const ja: Shared_agentsHomeTranslations.AgentsHomeTranslation = {
+  purpose:
+    'セッションを始めるコーディングエージェント、そのインストール先とサインイン方法。',
+  needsTitle: '対応が必要',
+  needsSignIn: ({ machine }) =>
+    `サインインするまで ${machine} のセッションは開始できません`,
+  tryTitle: 'ほかのエージェントを試す',
+  tryBody: 'どれも今のエージェントと同じようにセッションを始められます。',
+  modelsTitle: 'エージェントのモデル',
+  modelsBody:
+    'プロバイダーでエージェントのモデルが増えます。1 つのキーで多くのモデル、またはマシン上のモデルサーバー。',
+};
+
+const agentsHomeTranslations = {
+  "ja": ja,
+} as const satisfies Pick<Record<string, Shared_agentsHomeTranslations.AgentsHomeTranslation>, "ja">;
+
+return { agentsHomeTranslations };
+})();
+
+const Domain_profileSeedsTranslations = (() => {
+const ja: Shared_profileSeedsTranslations.ProfileSeedsTranslation = {
+  title: 'このプロファイルが追加するスキル',
+  description: 'このプロファイルのセッションに、ルールで決まる内容に加えて追加されます。',
+  add: '追加',
+  addTitle: 'スキルを追加',
+  searchPlaceholder: 'スキルを検索',
+  nothingToAdd: 'ライブラリのスキルはすべて追加済みです。',
+  empty: 'まだありません。このプロファイルのセッションには、ルールで決まる内容が適用されます。',
+  emptyLibrary: 'ライブラリにはまだスキルがありません。',
+  openSkills: 'スキルを開く',
+  missing: 'ライブラリにありません',
+  pending: 'スキル',
+  unreadableItem: 'いまは読み込めません',
+  remove: ({ skill }) => `${skill} を削除`,
+  reading: 'スキルを読み込み中…',
+  unreadable: 'スキルを読み込めませんでした',
+  tryAgain: '再試行',
+};
+
+const profileSeedsTranslations = {
+  "ja": ja,
+} as const;
+
+return { profileSeedsTranslations };
+})();
+
+const Domain_scopeSectionTranslations = (() => {
+const scopeSectionTranslations = {
+  "ja": Shared_scopeSectionTranslations.copy({
+    title: 'スキルと MCP サーバー',
+    descMachine:
+      '{machine} 上のセッションが受け取るものです。ここのスイッチは {machine} だけのルールを設定し、エージェントごとの例外は引き続き有効です。',
+    descProject:
+      '{project} のセッションは、どのマシンでもこれらを受け取ります。ここのスイッチは {project} だけのルールを設定し、エージェントごとの例外は引き続き有効です。',
+    descProjectTeam:
+      '{project} のセッションは、どのマシンでもこれらを受け取ります。ここのスイッチは {project} だけのルールを設定します。{team} のセッションは独自のルールに従います。',
+    skills: 'スキル',
+    mcp: 'MCP サーバー',
+    allSkills: 'すべてのスキル（{count}）',
+    allMcp: 'すべての MCP サーバー（{count}）',
+    foundOne: '{machine} だけにあるスキルがほかに 1 件あります。',
+    foundMany: '{machine} だけにあるスキルがほかに {count} 件あります。',
+    foundLink: 'マシンで見つかったもの',
+    onFor: '{agents} でオン',
+    notFor: '{agents} ではオフ',
+    onOn: '{machines} でオン',
+    notOn: '{machines} ではオフ',
+    onIn: '{place} でオン',
+    offIn: '{place} でオフ',
+    onForPlace: '{place} でオン',
+    offForPlace: '{place} でオフ',
+    emptySkills: 'スキルはまだありません',
+    addSkill: 'スキルを追加',
+    emptyMcp: 'MCP サーバーはまだありません',
+    addMcp: 'サーバーを追加',
+    loadFailed: '読み込めませんでした',
+    whenRunning: '{machine} の実行中に表示されます',
+    turnedOn: '{name} は {place} でオンです',
+    turnedOff: '{name} は {place} でオフです',
+    migrationNote: '{names} は以前のプロジェクト設定からここに移りました。',
+    dismiss: '閉じる',
+  }),
+} as const;
+
+return { scopeSectionTranslations };
+})();
+
+const Domain_capabilityKitTranslations = (() => {
+const ja: Shared_capabilityKitTranslations.CapabilityKitTranslation = {
+  where: {
+    onEverywhere: 'すべてでオン',
+    everywhere: 'すべて',
+    off: 'オフ',
+    only: ({ agent, place }) =>
+      `${[place, agent && `${agent} 向け`].filter(Boolean).join(' · ')}のみ`,
+    on: ({ agent, place }) =>
+      `${[place, agent && `${agent} 向け`].filter(Boolean).join(' · ')}ではオン`,
+    except: ({ agent, place }) =>
+      `${[place, agent].filter(Boolean).join(' · ')}を除く`,
+    exceptions: ({ count }) => `例外 ${count} 件`,
+    more: ({ count }) => `ほか ${count} 件`,
+    effect: {
+      everywhereOn: 'すべてのマシンとエージェント、今後追加するものも含む',
+      everywhereOff: '下のルールでオンにしない限りオフ',
+      agentNever: ({ kind }) =>
+        kind === 'skill'
+          ? 'どこでオンでも、このスキルを受け取りません'
+          : 'どこでオンでも、このサーバーを受け取りません',
+      agentEverywhereOn: '他がオフの場所でも受け取ります',
+      machineOn: 'このマシンのすべてのエージェント',
+      machineOff: 'このマシンのエージェントには提供しません',
+      projectOn: 'このプロジェクトで、すべてのマシン',
+      projectOff: 'このプロジェクトでは、どのマシンでも提供しません',
+      folderOn: 'このマシンのこのフォルダー',
+      folderOff: 'このフォルダーでは提供しません',
+      agentAtOn: ({ agent, place }) => `${agent} は ${place} で受け取ります`,
+      agentAtOff: ({ agent, place }) =>
+        `${agent} は ${place} では受け取りません`,
+    },
+    available: ({ agents, machines, projects }) =>
+      `${machines} の ${agents} で利用できます${projects ? `（${projects} のみ）` : ''}`,
+    availableNowhere: 'まだどこでも利用できません',
+    offlineNote: ({ machine }) =>
+      `${machine} はオフラインです。戻ったときに受け取ります。`,
+    offlineNoteMany: ({ count }) =>
+      `オフラインのマシン ${count} 台は、戻ったときに受け取ります。`,
+    cantTake: ({ agent, kind }) =>
+      kind === 'skill'
+        ? `${agent} はスキルを読み込めません。`
+        : `${agent} は MCP サーバーを使えません。`,
+  },
+  control: {
+    title: '有効な場所',
+    description: '一度設定すればすべてのマシンに反映されます。最も具体的なルールが優先されます。',
+    everywhereLabel: 'すべての場所でオンまたはオフ',
+    on: 'オン',
+    off: 'オフ',
+    turnedOnIn: 'オンにする場所',
+    except: '除外',
+    nowhereYet: 'まだどこにもありません。プロジェクト、マシン、またはエージェントを追加してください。',
+    addException: '除外を追加',
+    addPlace: '場所を追加',
+    menuAgent: 'エージェント',
+    menuAgentEverywhere: 'エージェント(すべての場所)',
+    menuMachine: 'マシン',
+    menuProject: 'プロジェクト',
+    menuProjectEverywhere: 'プロジェクト(すべてのマシン)',
+    offline: 'オフライン',
+    machineCount: ({ count }) => `${count}台のマシン`,
+    allAgents: 'すべてのエージェント',
+    agentOnly: ({ agent }) => `${agent}のみ`,
+    whichAgents: ({ place }) => `${place}で使うエージェント`,
+    remove: ({ target }) => `${target}のルールを削除`,
+    staysOff: ({ agents }) => `${agents}はここでもオフのままです`,
+    change: '変更',
+    changeFailed: '変更を保存できませんでした。',
+    checking: 'マシンを確認しています…',
+  },
+  add: {
+    closeDetails: '詳細を閉じる',
+    backTo: ({ title }) => `戻る: ${title}`,
+    added: '追加済み',
+    done: '完了',
+    addFailed: '追加できませんでした。もう一度お試しください。',
+    modesLabel: '追加方法',
+    searchLabel: '検索',
+  },
+  facts: {
+    textOnly: 'テキストのみ',
+    hasFiles: 'ファイルあり',
+    runsScripts: 'スクリプトを実行',
+    tokensWhenUsed: ({ count }) => `${count} トークン`,
+    toolCount: ({ shown }) => `${shown} ツール`,
+    tokensPerTurn: ({ count }) => `${count} トークン/ターン`,
+    you: 'あなた',
+    happier: 'Happier',
+    pinnedTo: ({ ref }) => `固定: ${ref}`,
+    inYourLibrary: 'ライブラリにあります',
+  },
+  status: {
+    off: 'オフ',
+    signin: 'サインインが必要',
+    moreAccess: '追加のアクセスが必要',
+    key: 'キーが必要',
+    cantrun: ({ machine }) =>
+      machine ? `${machine} で実行できません` : '実行できません',
+    offline: 'オフライン',
+    update: 'アップデートあり',
+    removed: 'ソースから削除されました',
+    modified: '変更済み',
+    pinned: '固定',
+    unused: '最近使われていません',
+    unusedExplanation: ({ agents }) =>
+      `使用状況は ${agents} と、Happier 経由でスキルを読むエージェントで記録されます`,
+    error: ({ machine }) =>
+      machine ? `${machine} で停止` : '起動できませんでした',
+    masked: ({ machine }) =>
+      machine ? `${machine} のコピーが優先` : '別のコピーが優先',
+    signing: 'サインイン中…',
+    connected: '接続済み',
+    expired: 'サインインの期限切れ',
+    revoked: 'アクセスが取り消されました',
+    fix: {
+      signIn: 'サインイン',
+      reconnect: '再接続',
+      addKey: 'キーを追加',
+      howToFix: '解決方法',
+      tryAgain: '再試行',
+      reviewUpdate: 'アップデートを確認',
+      compare: '比較',
+      turnOn: 'オンにする',
+      grantAccess: 'アクセスを許可',
+    },
+  },
+};
+
+const capabilityKitTranslations = {
+  "ja": { ...ja, skills: Domain_skillsPageTranslations.skillsPageTranslations.ja, session: capabilityKitTranslations__sessionCapabilityTranslations.ja, notice: Domain_capabilityNoticeTranslations.capabilityNoticeTranslations.ja, detail: capabilityKitTranslations__capabilityDetailTranslations.ja, skillDetail: Domain_skillDetailTranslations.skillDetailTranslations.ja, skillsFound: Domain_skillsFoundTranslations.skillsFoundTranslations.ja, mcpFound: Domain_mcpFoundTranslations.mcpFoundTranslations.ja, skillsUpdates: Domain_skillsUpdatesTranslations.skillsUpdatesTranslations.ja, mcp: Domain_mcpPageTranslations.mcpPageTranslations.ja, valueRows: Domain_valueRefRowsTranslations.valueRefRowsTranslations.ja, mcpSignIn: capabilityKitTranslations__mcpSignInTranslations.ja, connectedAccountCallback: Domain_connectedAccountCallbackTranslations.connectedAccountCallbackTranslations.ja, mcpHome: Domain_mcpHomeTranslations.mcpHomeTranslations.ja, registries: capabilityKitTranslations__registriesTranslations.ja, skillAdd: capabilityKitTranslations__skillAddTranslations.ja, mcpAdd: capabilityKitTranslations__mcpAddTranslations.ja, agentAdd: Domain_agentAddTranslations.agentAddTranslations.ja, agentsHome: Domain_agentsHomeTranslations.agentsHomeTranslations.ja, profileSeeds: Domain_profileSeedsTranslations.profileSeedsTranslations.ja, scopeSection: Domain_scopeSectionTranslations.scopeSectionTranslations.ja, store: capabilityKitTranslations__storeTranslations.ja },
+} as const;
+
+return { capabilityKitTranslations };
+})();
+
+const Domain_sessionListSpacesKeyboardTranslations = (() => {
+const sessionListSpacesKeyboardTranslations = {
+  "ja": Shared_sessionListSpacesKeyboardTranslations.commands('リストのフィルターを開く', ordinal => `スペース ${ordinal} を選択`),
+} as const;
+
+return { sessionListSpacesKeyboardTranslations };
+})();
+
+const Domain_reviewKeyboardTranslations = (() => {
+const reviewKeyboardTranslations = {
+  "ja": {
+        reviewChangeNext: '次の変更', reviewChangePrevious: '前の変更',
+        reviewChangeKeep: '変更を確認済みにする・解除する', reviewChangeDiscard: '変更を破棄',
+        reviewChangeAsk: '変更について質問', reviewFileNext: '次の変更ファイル',
+        reviewFilePrevious: '前の変更ファイル', reviewUndo: 'レビュー操作を取り消す',
+        editorSelectionAsk: '選択範囲について質問', filesTrackToggle: 'エージェントの編集を追跡', fileBlameToggle: 'blame を表示/非表示',
+    },
+} as const;
+
+return { reviewKeyboardTranslations };
+})();
+
+const Domain_paneKeyboardTranslations = (() => {
+const paneArrangementTranslations = {
+  "ja": { paneArrangement: 'ペインの配置', paneArrangementDescription: 'セッションとエディターのどちらを中央に配置するか選択します。' , paneArrangementSession: 'セッション優先', paneArrangementEditor: 'エディター優先', paneArrangementSessionCaption: 'チャットを中央に', paneArrangementEditorCaption: 'コードを中央に', rightPanelPlacement: '右パネルの区切り', rightPanelPlacementDescription: '右パネルとページの区切り方を選択します。独立させるか、線またはやわらかい影でつなげます。', rightPanelPlacementSeparate: '独立', rightPanelPlacementLine: '線', rightPanelPlacementShadow: '影', rightPanelPlacementSeparateCaption: 'ページの横に独立したシート', rightPanelPlacementLineCaption: '細い線でつなぐ', rightPanelPlacementShadowCaption: 'やわらかい影でつなぐ' },
+} as const satisfies Pick<Record<paneKeyboardTranslations__SupportedLanguage, Readonly<{ paneArrangement: string; paneArrangementDescription: string; paneArrangementSession: string; paneArrangementEditor: string; paneArrangementSessionCaption: string; paneArrangementEditorCaption: string; rightPanelPlacement: string; rightPanelPlacementDescription: string; rightPanelPlacementSeparate: string; rightPanelPlacementLine: string; rightPanelPlacementShadow: string; rightPanelPlacementSeparateCaption: string; rightPanelPlacementLineCaption: string; rightPanelPlacementShadowCaption: string }>>, "ja">;
+
+const paneRegionLabels = {
+  "ja": { rail: 'アプリのナビゲーション', navigation: 'ナビゲーション列', right: 'サイドパネル', details: 'エディターと詳細', main: 'メイン列', bottom: '下部パネル' },
+} as const satisfies Pick<Record<paneKeyboardTranslations__SupportedLanguage, Readonly<Record<'rail' | 'navigation' | 'right' | 'details' | 'main' | 'bottom', string>>>, "ja">;
+
+const paneKeyboardTranslations = {
+  "ja": { commands: { shellColumnToggle: 'ナビゲーションの表示を切り替える', panesMainToggle: 'メイン列の表示を切り替える', panesSideToggle: 'サイドパネルの表示を切り替える', panesArrangementToggle: 'ペインの配置を切り替える', panesRegionNext: '次の領域にフォーカス', panesRegionPrevious: '前の領域にフォーカス' }, groups: { panes: 'ペイン', terminal: 'ターミナル', search: '検索', review: 'レビュー', files: 'ファイルとエディター', code: 'コード解析' }, desktop: 'デスクトップアプリ', browser: 'ブラウザー' },
+} as const satisfies Pick<Record<paneKeyboardTranslations__SupportedLanguage, Shared_paneKeyboardTranslations.PaneKeyboardCopy>, "ja">;
+
+return { paneArrangementTranslations, paneRegionLabels, paneKeyboardTranslations };
+})();
+
+const Domain_needsYouHighlightTranslations = (() => {
+const needsYouHighlightTranslations = {
+  "ja": { title: '対応が必要なセッションを目立たせる', description: 'このデバイスのリストで、対応が必要なセッションをどう目立たせるか。開くと動きは止まります。', dot: 'ドット', accent: 'アクセント', glint: 'きらめき', shimmer: 'シマー', pulse: 'パルス' },
+} as const satisfies Pick<Record<needsYouHighlightTranslations__SupportedLanguage, Shared_needsYouHighlightTranslations.NeedsYouHighlightCopy>, "ja">;
+
+const workingIndicatorTranslations = {
+  "ja": { title: '作業中インジケーター', description: '作業中のセッションをリストでどう表示するか。', spinner: 'スピナー', pulse: '点滅ドット', animatedTextTitle: '遊び心のある作業ワード', animatedTextDescription: 'ステータスワードがオンのとき、作業中のセッションに「作業中」の代わりに遊び心のある言葉を表示します。' },
+} as const satisfies Pick<Record<needsYouHighlightTranslations__SupportedLanguage, Shared_needsYouHighlightTranslations.WorkingIndicatorCopy>, "ja">;
+
+return { needsYouHighlightTranslations, workingIndicatorTranslations };
+})();
+
+const Domain_quickOpenTranslations = (() => {
+const quickOpenTranslations = {
+  "ja": { commands: { searchFiles: 'ファイルを開く', searchSymbols: 'シンボルへ移動' }, search: { recent: '最近開いたファイル', changed: 'このセッションで変更', changedInFolder: '変更されたファイル', openFile: 'ファイルを開く…', showMore: 'さらに表示', searchEverything: 'すべてを検索', noMatch: ({ query, scope }) => `${scope} に「${query}」に一致するファイルはありません`, symbolsNeedFile: 'シンボルを表示するにはファイルを開いてください', filesInScope: ({ scope }) => `${scope} 内のファイル`, symbolsUnavailable: ({ file }) => `${file} のシンボルはまだ利用できません`, symbols: 'シンボル', symbolAtLine: ({ name, line }) => `${name}（${line} 行目）`, symbolsInFile: ({ file }) => `${file} 内のシンボル`, offline: ({ machine }) => `${machine} が応答しません。最近開いたファイルを表示しています。` } },
+} as const satisfies Pick<Record<quickOpenTranslations__SupportedLanguage, Shared_quickOpenTranslations.QuickOpenCopy>, "ja">;
+
+return { quickOpenTranslations };
+})();
+
+const Domain_paneMainColumnTranslations = (() => {
+const paneMainColumnTranslations = {
+  "ja": { hideSession: 'セッションを非表示', showSession: 'セッションを表示', hideProject: 'プロジェクトを非表示', showProject: 'プロジェクトを表示', hideWorkflow: 'ワークフローを非表示', showWorkflow: 'ワークフローを表示', hidePage: ({ title }: { title: string }) => `${title}を非表示`, showPage: ({ title }: { title: string }) => `${title}を表示` , needsYou: '対応が必要', chipA11y: ({ label, name }: { label: string; name: string }) => `${label}: ${name}`, chipNeedsYouA11y: ({ label, name }: { label: string; name: string }) => `${label}: ${name}、対応が必要`, chipNeedsYouAnnouncement: ({ name }: { name: string }) => `${name} は対応が必要です`, sidebarReleaseToHide: '離すと非表示', backToTranscript: '会話に戻る' },
+} as const satisfies Pick<Record<paneMainColumnTranslations__SupportedLanguage, Shared_paneMainColumnTranslations.MainColumnCopy>, "ja">;
+
+return { paneMainColumnTranslations };
+})();
+
+const Domain_paneEmptyEditorTranslations = (() => {
+const paneEmptyEditorTranslations = {
+  "ja": { title: 'セッションの横でファイルを開く', reason: 'セッションの作業中に、このプロジェクトのファイルを読んだり編集したりできます。', openFile: 'ファイルを開く…', changedInSession: 'このセッションで変更', recent: '最近', projectTitle: 'このプロジェクトのファイルを開く', projectReason: 'ここでファイルを読んだり編集したりできます。エージェントはそれぞれのセッションで作業を続けます。', changedInProject: '未コミットの変更', openChangedFileA11y: ({ name }: { name: string }) => `${name}を開く` },
+} as const satisfies Pick<Record<paneEmptyEditorTranslations__SupportedLanguage, Shared_paneEmptyEditorTranslations.EmptyEditorCopy>, "ja">;
+
+const paneShortcutsSheetTranslations = {
+  "ja": { footer: 'レビューのキーは、差分にフォーカスがあり入力中でないときに使えます。', openSettings: '設定でショートカットを変更', hostA11y: 'ショートカットの表示先' },
+} as const satisfies Pick<Record<paneEmptyEditorTranslations__SupportedLanguage, Shared_paneEmptyEditorTranslations.ShortcutsSheetCopy>, "ja">;
+
+return { paneEmptyEditorTranslations, paneShortcutsSheetTranslations };
+})();
+
+const Domain_llmTaskRunnerTranslations = (() => {
+const llmTaskRunnerTranslations = {
+  "ja": {
+        auto: '自動',
+        autoCurrently: ({ runner }: { runner: string }) => `自動 — 現在 ${runner}`,
+        autoNothingReady: '自動 — 準備できたものがありません',
+        autoDescription: '自動は、このマシンで準備ができているエージェントの中で最も安い適切なモデルを、最も低い推論レベルで使います。同じ場合はセッション自身のエージェントを優先します。',
+        checking: 'このマシンで準備できているものを確認しています…',
+        currently: ({ runner }: { runner: string }) => `現在: ${runner}`,
+        noReadyAgent: 'このマシンで準備できているエージェントがありません。エージェントにサインインするか、ここで選んでください。',
+        noMatchingModel: 'このマシンの準備できたエージェントには、このタスクで使えるモデルがありません。ここで選んでください。',
+        unavailable: '現在このマシンを確認できません。',
+        chooseMachine: '自動が何を選ぶか見るには、マシンを選んでください。',
+        permissionTitle: '権限レベル',
+        permission: { no_tools: 'ツールなし', read_only: '読み取り専用', workspace_write: 'ファイルを編集可能', full: 'フルアクセス' },
+        permissionDescription: { no_tools: '渡されたテキストだけで作業します。', read_only: '何も変更しないツールも使えます。', workspace_write: 'プロジェクトのファイルを変更できます。', full: 'エージェントのすべてのツールを使えます。' },
+    },
+} as const satisfies Pick<Record<llmTaskRunnerTranslations__SupportedLanguage, Shared_llmTaskRunnerTranslations.LlmTaskRunnerCopy>, "ja">;
+
+return { llmTaskRunnerTranslations };
+})();
+
+const Domain_actionSettingsResourcesTranslations = (() => {
+const actionSettingsResourcesTranslations = {
+  "ja": {
+        status: {
+            humanAllowed: ({ partial }: { partial: boolean }): string => partial ? "一部の操作から実行できます" : "自分で実行できます",
+            humanAskFirst: ({ partial }: { partial: boolean }): string => partial ? "一部の操作で先に確認します" : "アプリで先に確認します",
+            humanOff: ({ partial }: { partial: boolean }): string => partial ? "一部の操作では無効" : "アプリでは無効",
+            agentAllowed: ({ partial }: { partial: boolean }): string => partial ? "一部のエージェントツールが実行できます" : "エージェントが実行できます",
+            agentAskFirst: ({ partial }: { partial: boolean }): string => partial ? "一部のエージェントツールで確認します" : "エージェントの実行時に確認します",
+            agentOff: ({ partial }: { partial: boolean }): string => partial ? "一部のエージェントツールでは無効" : "エージェントでは無効",
+            integrationAllowed: ({ partial }: { partial: boolean }): string => partial ? "一部の連携から実行できます" : "連携から実行できます",
+            integrationAskFirst: ({ partial }: { partial: boolean }): string => partial ? "一部の連携で先に確認します" : "連携の実行時に確認します",
+            integrationOff: ({ partial }: { partial: boolean }): string => partial ? "一部の連携では無効" : "連携では無効",
+            allOff: "無効",
+            destructive: "元に戻せません",
+            external: "Happier の外部を変更します",
+        },
+        family: {
+            title: 'リソース',
+            reading: { title: 'リソース · 読み取り', description: '見るだけで何も変わらないため、既定で許可されています。' },
+            changing: { title: 'リソース · 変更', description: '何かを停止または削除する操作は、既定で先に確認します。セッションの停止とワークツリーの削除には別のアクションがあります。' },
+            related: '独立したアクション · 設定を開きます',
+        },
+        facts: {
+            automationsSection: '自動化',
+            alwaysTrueSection: '常に適用',
+            automations: { title: '定期レビュー', subtitle: '定期レビューには、上のエージェント設定が適用されます。' },
+            forbidden: { title: '禁止された場所', subtitle: 'Happier は移動や削除を拒否します。' },
+            trashFirst: { title: 'ゴミ箱と完全削除', subtitle: '移動先はまず Happier のゴミ箱です。「今すぐ削除」は既定で確認を求めます。' },
+        },
+    },
+} as const;
+
+return { actionSettingsResourcesTranslations };
+})();
+
+const Domain_resourceProposalTranslations = (() => {
+const ja = {
+  title: {
+    storage: 'クリーンアップの提案',
+    processes: 'メモリを解放',
+    retry: '空きを作って再試行',
+  },
+  machineChecked: ({ machine, time }: { machine: string; time: string }) =>
+    `${machine} · ${time}に確認`,
+  machineChecking: ({ machine }: { machine: string }) =>
+    `${machine} · 確認中…`,
+  selected: ({ count, total }: { count: number; total: number }) =>
+    `${total}件中${count}件を選択`,
+  selectAll: 'すべて選択',
+  selectAllSafe: '安全なものをすべて選択',
+  givesBack: '回復',
+  frees: '解放',
+  onDisk: ({ amount }: { amount: string }) => `ディスク上の${amount}のうち`,
+  changed: '変更あり',
+  gone: '存在しません',
+  notIncluded: 'この提案には含まれていません',
+  includeAnyway: '含める',
+  goal: ({ found, goal }: { found: string; goal: string }) =>
+    `${goal}のうち${found}を検出`,
+  staleTitle: ({ count }: { count: number }) =>
+    count === 1
+      ? 'エージェントの確認後に1件変更されました。'
+      : `エージェントの確認後に${count}件変更されました。`,
+  staleBody: '再確認するまで承認できません。',
+  checkAgain: '再確認',
+  checkUnavailable:
+    '今は確認できませんでした。各項目は実行時に再確認されます。',
+  note: {
+    trash:
+      '各項目は再確認されてから移動されます。ゴミ箱を空にすると容量が戻ります。',
+    processes: '何も削除されません。それぞれ最初に再確認されます。',
+    emptyAfter:
+      '今すぐ容量が必要なため、ゴミ箱はすぐに空になります。この操作は元に戻せません。',
+  },
+  approve: {
+    trash: ({ count }: { count: number }) => `${count}件をゴミ箱に移動`,
+    emptyAndRetry: 'ゴミ箱に移動、空にして再試行',
+    keepUndo: 'ゴミ箱に移動して再試行',
+    keepUndoHint: '元に戻せます。容量はゴミ箱を空にしたときに解放されます。',
+    stop: ({ count }: { count: number }) => `${count}件を停止`,
+  },
+  notNow: '今はしない',
+  declinedTitle: '提案を却下しました',
+  declinedFacts: ({ count }: { count: number }) =>
+    `${count}件 · 何も変更されていません`,
+  reopen: '再度開く',
+  tryAgain: '再試行',
+  startAgain: 'もう一度開始',
+  startedAgain: '再開しました',
+  keptByGuard: '作業中のため保持',
+  memoryLabel: 'メモリ',
+  memoryAfter: ({ now, after }: { now: string; after: string }) => `現在 ${now} · 後で約 ${after}`,
+  memoryNow: ({ now }: { now: string }) => `${now} 使用中`,
+  processesTree: 'メモリを使っているもの',
+  analysingFound: ({ count }: { count: number }) => `これまでに ${count} 件`,
+  analysingNote: '読み込み中です。完了後に承認できます。',
+  inbox: {
+    allSafe: ({ count }: { count: number }) => `${count} 件、すべて安全`,
+    mixed: ({ count, safe, attention }: { count: number; safe: number; attention: number }) => `${count} 件 · 安全 ${safe} 件、確認が必要 ${attention} 件`,
+    stops: ({ count }: { count: number }) => `${count} 件を停止`,
+  },
+  restored: '元に戻しました · 何も削除されていません',
+  receiptChecking: 'ゴミ箱と最近のアクティビティを確認中…',
+  receiptUnavailable: '現在の結果を確認できませんでした。提案を開き直して再試行してください。',
+  receiptUnknown: ({ count }: { count: number }) => `${count} 件の最終結果を確認できません。`,
+  receiptRestored: ({ count }: { count: number }) => `${count} 件を元に戻しました`,
+  receiptFreed: ({ count, amount }: { count: number; amount: string }) => `${amount} 解放 · ${count} 件を削除`,
+  skipped: ({ reason }: { reason: string }) => `移動されませんでした: ${reason}`,
+  stopped: ({ count }: { count: number }) => `${count}件を停止しました`,
+  stoppedFreed: ({ amount }: { amount: string }) => `${amount}を解放`,
+  notStopped: ({ reason }: { reason: string }) => `停止されませんでした: ${reason}`,
+  failed: 'この提案を完了できませんでした。他には何も変更されていません。',
+  processSafe: '安全 · いつでも再起動できます',
+  processStopLoss: ({ title }: { title: string }) => `「${title}」を停止すると、現在の作業や回答待ちの質問が中断されます。`,
+  processKillLoss: ({ title }: { title: string }) => `「${title}」を強制終了すると作業が直ちに終了し、未保存の作業は失われます。`,
+  processCheck: '先に確認',
+  itemLabel: ({
+    title,
+    size,
+    verdict,
+  }: {
+    title: string;
+    size: string;
+    verdict: string;
+  }) => `${title}、${size}、${verdict}`,
+  owner: {
+    session: 'セッション',
+    terminal: 'ターミナル',
+    service: '開発サーバー',
+    run: '実行',
+    browser_sidecar: 'ブラウザサイドカー',
+    workspace_sync: 'ワークスペース同期',
+    other: 'プロセス',
+  },
+} as const;
+
+const resourceProposalTranslations = {
+  "ja": ja,
+} as const;
+
+return { resourceProposalTranslations };
+})();
+
+const Domain_machineResourceUiTranslations = (() => {
+const machineResourceUiTranslations = {
+  "ja": {
+        ask: { title: 'エージェントに聞く', placeholder: Shared_machineResourceUiTranslations.machinePhrase('', 'について質問…'), description: 'このページの内容を読んで変更を提案できます。あなたの承認なしに停止や削除は行われません。', offline: Shared_machineResourceUiTranslations.machinePhrase('', ' はオフラインのため、今はエージェントが確認できません。') },
+        askSuggestions: {
+            prompts: {
+                memory: Shared_machineResourceUiTranslations.machinePhrase('', ' のメモリが不足しているのはなぜ？'),
+                disk: Shared_machineResourceUiTranslations.machinePhrase('', ' で空けられる容量を探して'),
+                storage: Shared_machineResourceUiTranslations.machinePhrase('', ' の Happier ストレージを説明して'),
+                leftBehind: Shared_machineResourceUiTranslations.machinePhrase('', ' に残されたプロセスを確認して'),
+                guard: Shared_machineResourceUiTranslations.machinePhrase('', ' で Guard を有効にするとどうなるか説明して'),
+                overview: Shared_machineResourceUiTranslations.machinePhrase('', ' のリソース使用状況を確認して'),
+                processes: Shared_machineResourceUiTranslations.machinePhrase('', ' で最もメモリを使っているのは？'),
+                weeklyReview: '毎週月曜日にストレージを確認して',
+                lastReport: Shared_machineResourceUiTranslations.machinePhrase('', ' の最新リソースレポートを説明して'),
+                lastStorageReport: Shared_machineResourceUiTranslations.machinePhrase('', ' の最新ストレージレポートを確認して'),
+                notifyWhenBack: Shared_machineResourceUiTranslations.machinePhrase('', ' が再接続されたら知らせて'),
+                notifyWhenBackConsent: Shared_machineResourceUiTranslations.machinePhrase('', ' の継続的なオフライン通知と復旧の更新を有効にすることに同意します。'),
+                setupDocker: Shared_machineResourceUiTranslations.machinePhrase("", " に Docker をセットアップ"),
+                setupReview: Shared_machineResourceUiTranslations.machinePhrase("", " に何が設定されているか確認"),
+                setupHarden: Shared_machineResourceUiTranslations.machinePhrase("", " の SSH とファイアウォールを強化"),
+                securityAccess: Shared_machineResourceUiTranslations.machinePhrase("", " で誰が何をできるか説明"),
+                securityNetwork: Shared_machineResourceUiTranslations.machinePhrase("", " でインターネットに公開されているものを確認"),
+                securityUpdates: Shared_machineResourceUiTranslations.machinePhrase("", " の保留中の更新を確認"),
+            },
+            reasons: {
+                setup: "変更はすべて先に確認できます",
+                security: "承認するまでは読み取りのみ",
+                memory: 'メモリの逼迫を確認する必要があります', disk: Shared_machineResourceUiTranslations.amountPhrase('このボリュームの空き容量は ', ''),
+                storage: Shared_machineResourceUiTranslations.amountPhrase('Happier の使用量は ', ''), leftBehind: Shared_machineResourceUiTranslations.countPhrase('残されたプロセスは ', ' 件'),
+                guard: 'メモリ Guard はオフです', calm: 'このマシンは落ち着いています',
+                currentReport: 'このマシンのリソースレポートから', weeklyReview: '毎週の確認の提案',
+                offline: 'このマシンはオフラインです。最新レポートを使います',
+            },
+        },
+        widgets: {
+            body: machineResourceUiTranslations__machineWidgetBodyTranslations.ja,
+            machine_vitals: '状態', machine_fleet: 'マシン', machine_metric: '指標',
+            machine_top_consumers: '使用量上位', machine_left_behind: '残されたプロセス',
+            machine_storage: 'ストレージ', machine_worktrees: 'ワークツリー', machine_guard: 'Guard',
+            machine_activity: 'アクティビティ', machine_cleanup_suggestion: '提案',
+            followsSessionMachine: 'このセッションのマシンに連動',
+            inputs: {
+                volume: 'ボリューム', range: '期間', scope: '範囲', style: '表示', metrics: '指標',
+                warnAbove: '警告しきい値', cpu: 'CPU', memory: 'メモリ', diskFree: '空き容量',
+                network: 'ネットワーク', oneHour: '1 時間', oneDay: '24 時間', sevenDays: '7 日間',
+                machineScope: 'マシン', sessionScope: 'セッション', sparklines: 'ミニグラフ',
+                bars: 'バー', numbers: '数値', rings: 'リング', disk: 'ディスク',
+            },
+        },
+    },
+} as const satisfies Pick<Record<'en' | 'ca' | 'de' | 'es' | 'fr' | 'it' | 'ja' | 'pl' | 'pt' | 'ru' | 'zhHans' | 'zhHant', typeof Shared_machineResourceUiTranslations.en>, "ja">;
+
+return { machineResourceUiTranslations };
+})();
 
 const Domain_accountDisplayTranslations = (() => {
 type AccountDisplayTranslation = Shared_accountDisplayTranslations.AccountDisplayTranslation;
@@ -18173,4 +20457,55 @@ export {
     Domain_workspaceBarTranslations as workspaceBarTranslations,
     Domain_workspaceSyncDiagnosticTranslations as workspaceSyncDiagnosticTranslations,
     Domain_workspaceTabTranslations as workspaceTabTranslations,
+    Domain_simulatorDeviceToolsTranslations as simulatorDeviceToolsTranslations,
+    Domain_deploymentMoveTranslations as deploymentMoveTranslations,
+    Domain_newSessionActionDefaultTranslations as newSessionActionDefaultTranslations,
+    Domain_chatLinksTranslations as chatLinksTranslations,
+    Domain_deploymentDefaultsTranslations as deploymentDefaultsTranslations,
+    Domain_deploymentCopyTranslations as deploymentCopyTranslations,
+    Domain_deploymentSettingsTranslations as deploymentSettingsTranslations,
+    Domain_pluginPublishTranslations as pluginPublishTranslations,
+    Domain_botTemplateTranslations as botTemplateTranslations,
+    Domain_botTemplateRecipientTranslations as botTemplateRecipientTranslations,
+    Domain_botFaceNameTranslations as botFaceNameTranslations,
+    Domain_screenCaptureTranslations as screenCaptureTranslations,
+    Domain_deploymentCreationReviewTranslations as deploymentCreationReviewTranslations,
+    Domain_deploymentPlatformLinkTranslations as deploymentPlatformLinkTranslations,
+    Domain_deploymentPromotionTranslations as deploymentPromotionTranslations,
+    Domain_fileEditingTranslations as fileEditingTranslations,
+    Domain_usageChartInputTranslations as usageChartInputTranslations,
+    Domain_usageChartPlanetFamilyTranslations as usageChartPlanetFamilyTranslations,
+    Domain_fileSelectionAskTranslations as fileSelectionAskTranslations,
+    Domain_fileTrackTranslations as fileTrackTranslations,
+    Domain_actionPresentationTranslations as actionPresentationTranslations,
+    Domain_fileReviewNoteTranslations as fileReviewNoteTranslations,
+    Domain_composerReferenceTranslations as composerReferenceTranslations,
+    Domain_hunkReviewTranslations as hunkReviewTranslations,
+    Domain_storeInstalledTranslations as storeInstalledTranslations,
+    Domain_connectedAccountCallbackTranslations as connectedAccountCallbackTranslations,
+    Domain_skillsPageTranslations as skillsPageTranslations,
+    Domain_capabilityNoticeTranslations as capabilityNoticeTranslations,
+    Domain_skillDetailTranslations as skillDetailTranslations,
+    Domain_skillsFoundTranslations as skillsFoundTranslations,
+    Domain_mcpFoundTranslations as mcpFoundTranslations,
+    Domain_skillsUpdatesTranslations as skillsUpdatesTranslations,
+    Domain_mcpPageTranslations as mcpPageTranslations,
+    Domain_valueRefRowsTranslations as valueRefRowsTranslations,
+    Domain_agentAddTranslations as agentAddTranslations,
+    Domain_mcpHomeTranslations as mcpHomeTranslations,
+    Domain_agentsHomeTranslations as agentsHomeTranslations,
+    Domain_profileSeedsTranslations as profileSeedsTranslations,
+    Domain_scopeSectionTranslations as scopeSectionTranslations,
+    Domain_capabilityKitTranslations as capabilityKitTranslations,
+    Domain_sessionListSpacesKeyboardTranslations as sessionListSpacesKeyboardTranslations,
+    Domain_reviewKeyboardTranslations as reviewKeyboardTranslations,
+    Domain_paneKeyboardTranslations as paneKeyboardTranslations,
+    Domain_needsYouHighlightTranslations as needsYouHighlightTranslations,
+    Domain_quickOpenTranslations as quickOpenTranslations,
+    Domain_paneMainColumnTranslations as paneMainColumnTranslations,
+    Domain_paneEmptyEditorTranslations as paneEmptyEditorTranslations,
+    Domain_llmTaskRunnerTranslations as llmTaskRunnerTranslations,
+    Domain_actionSettingsResourcesTranslations as actionSettingsResourcesTranslations,
+    Domain_resourceProposalTranslations as resourceProposalTranslations,
+    Domain_machineResourceUiTranslations as machineResourceUiTranslations,
 };

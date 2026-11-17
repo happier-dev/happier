@@ -1,9 +1,11 @@
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
+import ts from 'typescript';
 import { expect, it } from 'vitest';
 
 it('loads selected web copy before activation and keeps explicit voice demand independent', async () => {
@@ -81,4 +83,85 @@ it('loads selected web copy before activation and keeps explicit voice demand in
     } finally {
         await rm(directory, { recursive: true, force: true });
     }
+});
+
+// Translation modules that still keep every locale in one module. Their English copy is read on every
+// load, so each non-English table here is parsed and evaluated for nobody. Move a module's other locales
+// into `translations/features/<locale>.ts` (the module keeps its types and English) and drop it from this
+// list. New copy never adds a module here.
+const PENDING_PER_LOCALE_SPLIT: readonly string[] = [
+    'botStoreTranslations.ts',
+    'botTemplateEditorTranslations.ts',
+    'botTemplatePageTranslations.ts',
+    'botTemplatePresentationTranslations.ts',
+    'botTemplateSetupTranslations.ts',
+    'botTemplateSharingTranslations.ts',
+    'botTemplateUpdateTranslations.ts',
+    'capabilityDetailTranslations.ts',
+    'deploymentEditorsTranslations.ts',
+    'deploymentMonitoringTranslations.ts',
+    'deploymentOperationalTranslations.ts',
+    'deploymentOverviewTranslations.ts',
+    'deploymentPreparationTranslations.ts',
+    'deploymentReceiptTranslations.ts',
+    'deploymentRecommendationTranslations.ts',
+    'discussionControlsTranslations.shared.ts',
+    'discussionQuoteTranslations.shared.ts',
+    'fileAiSuggestionsTranslations.shared.ts',
+    'glassAppearanceTranslations.shared.ts',
+    'machineWidgetBodyTranslations.shared.ts',
+    'mcpAddTranslations.ts',
+    'mcpSignInTranslations.ts',
+    'mediaKeyboardTranslations.ts',
+    'newAppTranslations.shared.ts',
+    'projectReadinessTranslations.ts',
+    'registriesTranslations.ts',
+    'sessionCapabilityTranslations.ts',
+    'sessionReadinessTranslations.shared.ts',
+    'simulatorViewerTranslations.ts',
+    'storeAppPageTranslations.ts',
+    'storeAppTranslations.ts',
+    'storeBrowserExtensionTranslations.ts',
+    'storeSoftwareTranslations.ts',
+    'storeTranslations.ts',
+    'templateChoicesTranslations.ts',
+];
+
+it('evaluates only English copy at boot: no English-root translation module holds another locale', async () => {
+    const result = await build({
+        entryPoints: [resolve('sources/text/i18n.ts')],
+        write: false,
+        bundle: true,
+        format: 'esm',
+        platform: 'node',
+        resolveExtensions: ['.web.ts', '.ts', '.js'],
+        // Only first-party copy is under test; packages and locale assets stay outside the graph.
+        packages: 'external',
+        loader: { '.bundle': 'empty' },
+        metafile: true,
+        logLevel: 'silent',
+    });
+    const otherLocales = new Set(['ca', 'de', 'es', 'fr', 'it', 'ja', 'pl', 'pt', 'ru', 'zh-Hans', 'zh-Hant', 'zhHans', 'zhHant', 'zh_Hans', 'zh_Hant']);
+    const holdsOtherLocale = (file: string) => {
+        const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+        let found = false;
+        const visit = (node: ts.Node) => {
+            if (found) return;
+            if (ts.isObjectLiteralExpression(node) && node.properties.some(property => property.name
+                && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) && otherLocales.has(property.name.text))) {
+                found = true;
+                return;
+            }
+            ts.forEachChild(node, visit);
+        };
+        visit(source);
+        return found;
+    };
+    const staticInputs = Object.keys(result.metafile.inputs);
+    const multiLocale = staticInputs
+        .filter(input => /sources\/text\/translations\/[^/]+\.ts$/.test(input) && holdsOtherLocale(input))
+        .map(input => input.replace(/^.*sources\/text\/translations\//, ''))
+        .sort();
+    console.info(JSON.stringify({ entry: 'English locale root', staticModules: staticInputs.length, multiLocaleModules: multiLocale.length }));
+    expect(multiLocale).toEqual([...PENDING_PER_LOCALE_SPLIT].sort());
 });

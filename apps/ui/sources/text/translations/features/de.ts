@@ -165,6 +165,2346 @@ import * as Shared_workspaceBarTranslations from '../workspaceBarTranslations.sh
 import type { TranslationStructure } from '../en';
 import * as Shared_workspaceSyncDiagnosticTranslations from '../workspaceSyncDiagnosticTranslations.shared';
 import * as Shared_workspaceTabTranslations from '../workspaceTabTranslations.shared';
+import * as Shared_simulatorDeviceToolsTranslations from '../simulatorDeviceToolsTranslations';
+import type { SupportedLanguage as simulatorDeviceToolsTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentMoveTranslations from '../deploymentMoveTranslations';
+import type { SupportedLanguage as deploymentMoveTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_newSessionActionDefaultTranslations from '../newSessionActionDefaultTranslations';
+import * as Shared_chatLinksTranslations from '../chatLinksTranslations';
+import type { SupportedLanguage as chatLinksTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentDefaultsTranslations from '../deploymentDefaultsTranslations';
+import type { SupportedLanguage as deploymentDefaultsTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentCopyTranslations from '../deploymentCopyTranslations';
+import type { SupportedLanguage as deploymentCopyTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentSettingsTranslations from '../deploymentSettingsTranslations';
+import { deploymentOperationalTranslations as deploymentSettingsTranslations__deploymentOperationalTranslations } from '../deploymentOperationalTranslations';
+import type { SupportedLanguage as deploymentSettingsTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_pluginPublishTranslations from '../pluginPublishTranslations';
+import * as Shared_botTemplateTranslations from '../botTemplateTranslations';
+import type { SupportedLanguage as botTemplateTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_botTemplateRecipientTranslations from '../botTemplateRecipientTranslations';
+import type { SupportedLanguage as botTemplateRecipientTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_botFaceNameTranslations from '../botFaceNameTranslations.shared';
+import * as Shared_screenCaptureTranslations from '../screenCaptureTranslations.shared';
+import * as Shared_deploymentCreationReviewTranslations from '../deploymentCreationReviewTranslations';
+import type { SupportedLanguage as deploymentCreationReviewTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentPlatformLinkTranslations from '../deploymentPlatformLinkTranslations';
+import type { SupportedLanguage as deploymentPlatformLinkTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_deploymentPromotionTranslations from '../deploymentPromotionTranslations';
+import type { SupportedLanguage as deploymentPromotionTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_fileEditingTranslations from '../fileEditingTranslations.shared';
+import { fileAiSuggestionsTranslations as fileEditingTranslations__fileAiSuggestionsTranslations } from '../fileAiSuggestionsTranslations.shared';
+import { fileAiSuggestionControls as fileEditingTranslations__fileAiSuggestionControls } from '../fileAiSuggestionsTranslations.shared';
+import { fileNextEditTranslations as fileEditingTranslations__fileNextEditTranslations } from '../fileAiSuggestionsTranslations.shared';
+import * as Shared_usageChartInputTranslations from '../usageChartInputTranslations.shared';
+import * as Shared_usageChartPlanetFamilyTranslations from '../usageChartPlanetFamilyTranslations.shared';
+import * as Shared_fileSelectionAskTranslations from '../fileSelectionAskTranslations.shared';
+import * as Shared_fileTrackTranslations from '../fileTrackTranslations.shared';
+import * as Shared_actionPresentationTranslations from '../actionPresentationTranslations';
+import * as Shared_fileReviewNoteTranslations from '../fileReviewNoteTranslations.shared';
+import * as Shared_composerReferenceTranslations from '../composerReferenceTranslations.shared';
+import * as Shared_hunkReviewTranslations from '../hunkReviewTranslations.shared';
+import * as Shared_storeInstalledTranslations from '../storeInstalledTranslations.shared';
+import * as Shared_connectedAccountCallbackTranslations from '../connectedAccountCallbackTranslations';
+import * as Shared_skillsPageTranslations from '../skillsPageTranslations';
+import * as Shared_capabilityNoticeTranslations from '../capabilityNoticeTranslations';
+import * as Shared_skillDetailTranslations from '../skillDetailTranslations';
+import * as Shared_skillsFoundTranslations from '../skillsFoundTranslations';
+import * as Shared_mcpFoundTranslations from '../mcpFoundTranslations';
+import * as Shared_skillsUpdatesTranslations from '../skillsUpdatesTranslations';
+import * as Shared_mcpPageTranslations from '../mcpPageTranslations';
+import * as Shared_valueRefRowsTranslations from '../valueRefRowsTranslations';
+import * as Shared_agentAddTranslations from '../agentAddTranslations';
+import * as Shared_mcpHomeTranslations from '../mcpHomeTranslations';
+import * as Shared_agentsHomeTranslations from '../agentsHomeTranslations';
+import * as Shared_profileSeedsTranslations from '../profileSeedsTranslations';
+import * as Shared_scopeSectionTranslations from '../scopeSectionTranslations';
+import * as Shared_capabilityKitTranslations from '../capabilityKitTranslations';
+import { sessionCapabilityTranslations as capabilityKitTranslations__sessionCapabilityTranslations } from '../sessionCapabilityTranslations';
+import { capabilityDetailTranslations as capabilityKitTranslations__capabilityDetailTranslations } from '../capabilityDetailTranslations';
+import { mcpSignInTranslations as capabilityKitTranslations__mcpSignInTranslations } from '../mcpSignInTranslations';
+import { registriesTranslations as capabilityKitTranslations__registriesTranslations } from '../registriesTranslations';
+import { skillAddTranslations as capabilityKitTranslations__skillAddTranslations } from '../registriesTranslations';
+import { mcpAddTranslations as capabilityKitTranslations__mcpAddTranslations } from '../mcpAddTranslations';
+import { storeTranslations as capabilityKitTranslations__storeTranslations } from '../storeTranslations';
+import * as Shared_sessionListSpacesKeyboardTranslations from '../sessionListSpacesKeyboardTranslations.shared';
+import * as Shared_reviewKeyboardTranslations from '../reviewKeyboardTranslations.shared';
+import * as Shared_paneKeyboardTranslations from '../paneKeyboardTranslations';
+import type { SupportedLanguage as paneKeyboardTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_needsYouHighlightTranslations from '../needsYouHighlightTranslations';
+import type { SupportedLanguage as needsYouHighlightTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_quickOpenTranslations from '../quickOpenTranslations';
+import type { SupportedLanguage as quickOpenTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_paneMainColumnTranslations from '../paneMainColumnTranslations';
+import type { SupportedLanguage as paneMainColumnTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_paneEmptyEditorTranslations from '../paneEmptyEditorTranslations';
+import type { SupportedLanguage as paneEmptyEditorTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_llmTaskRunnerTranslations from '../llmTaskRunnerTranslations';
+import type { SupportedLanguage as llmTaskRunnerTranslations__SupportedLanguage } from '../../_all';
+import * as Shared_actionSettingsResourcesTranslations from '../actionSettingsResourcesTranslations.shared';
+import * as Shared_resourceProposalTranslations from '../resourceProposalTranslations.shared';
+import * as Shared_machineResourceUiTranslations from '../machineResourceUiTranslations.shared';
+import { machineWidgetBodyTranslations as machineResourceUiTranslations__machineWidgetBodyTranslations } from '../machineWidgetBodyTranslations.shared';
+
+const Domain_simulatorDeviceToolsTranslations = (() => {
+const simulatorDeviceToolsTranslations = {
+  "de": {
+    start: "Starten",
+    stopped: "Gestoppt",
+    powerOff: "Ausschalten",
+    screenshot: "Bildschirmfoto aufnehmen",
+    operationFailed: "Das hat auf dem Gerät nicht geklappt",
+    videoUnsupported: "Video kann hier nicht abgespielt werden",
+    videoUnsupportedBody: "Dieser Browser kann das Video des Geräts nicht dekodieren. Öffne Happier in einem aktuellen Chrome, Edge oder Safari oder in der App.",
+    appSection: "App",
+    appDescription: "Starte oder beende eine App über ihre Bundle- oder Paket-ID.",
+    appId: "App-ID",
+    launch: "Starten",
+    terminate: "Beenden",
+    linkSection: "Link öffnen",
+    url: "URL oder Deep Link",
+    open: "Öffnen",
+    settingsSection: "Geräteeinstellungen",
+    appearance: "Darstellung",
+    light: "Hell",
+    dark: "Dunkel",
+    textSize: "Textgröße",
+    small: "Klein",
+    defaultSize: "Standard",
+    large: "Groß",
+    orientation: "Ausrichtung",
+    portrait: "Hochformat",
+    landscape: "Querformat",
+    location: "Standort",
+    latitude: "Breitengrad",
+    longitude: "Längengrad",
+    setLocation: "Setzen",
+    clearLocation: "Löschen",
+    permissions: "Berechtigungen",
+    permissionsDescription: "Ändere, was die App oben nutzen darf.",
+    permission: "Berechtigung",
+    allow: "Erlauben",
+    deny: "Verweigern",
+    reset: "Zurücksetzen",
+    camera: "Kamera",
+    photos: "Fotos",
+    microphone: "Mikrofon",
+    contacts: "Kontakte",
+    locationPermission: "Standort",
+    push: "Push-Mitteilung",
+    pushDescription: "Geht an die App oben.",
+    payload: "Inhalt (JSON)",
+    send: "Senden",
+    invalidJson: "Gib ein JSON-Objekt ein.",
+    needAppId: "Gib zuerst eine App-ID ein.",
+    accessibility: "Bedienungshilfen",
+    accessibilityDescription: "Die Elemente auf dem Bildschirm, wie Bedienungshilfen sie lesen.",
+    readScreen: "Bildschirm lesen",
+    press: "Drücken",
+    truncated: "Nur ein Teil des Bildschirms.",
+    noElements: "Keine Elemente gefunden.",
+  },
+} as const satisfies Pick<Record<simulatorDeviceToolsTranslations__SupportedLanguage, Shared_simulatorDeviceToolsTranslations.SimulatorDeviceToolsCopy>, "de">;
+
+return { simulatorDeviceToolsTranslations };
+})();
+
+const Domain_deploymentMoveTranslations = (() => {
+const deploymentMoveTranslations = {
+  "de": {
+    "dataReviewLead": "Prüfe die anzuhaltenden Quelldienste und die App-Änderungen. Der Workflow stoppt Schreibzugriffe, prüft eine letzte Sicherung, stellt das Ziel wieder her und prüft es, dann wird die App bereitgestellt. Die ursprünglichen Daten bleiben an der Quelle. Bei einem ungewissen Wechsel musst du im Lauf entscheiden, bevor es weitergeht.",
+    "writers": "Anzuhaltende Dienste",
+    "writerReviewRequired": "Die schreibenden Quelldienste konnten nicht bestimmt werden. Prüfe die Dienste und ihren Laufzustand und versuche es erneut.",
+    "noRunningWriter": "Starte die App-Dienste, die die verschobene Datenbank verwenden sollen, und prüfe den Umzug erneut.",
+    "stopped": "Bereits gestoppt · bleibt gestoppt",
+    "menu": "Auf einen anderen Rechner verschieben…",
+    "title": "Auf einen anderen Rechner verschieben",
+    "description": "Verwendet denselben Commit. Die Quelle läuft bis zum erfolgreichen Gesundheitscheck weiter; lokale Daten bleiben erhalten.",
+    "restriction": "Hier können nur Repository-Apps ohne Domains oder lokale Daten verschoben werden.",
+    "stateless": "Diese App hat keine lokalen Daten zu verschieben",
+    "source": "Von",
+    "destination": "Nach",
+    "run": "Umzugs-Workflow starten"
+  },
+} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'stopped', string>>>, "de">;
+
+return { deploymentMoveTranslations };
+})();
+
+const Domain_newSessionActionDefaultTranslations = (() => {
+const newSessionActionDefaultTranslations = {
+  "de": { name: 'Aktionsname', launchMode: 'Beim nächsten Mal', review: 'Vor dem Start prüfen', start: 'Sofort starten', open: 'Als Standard für diese Aktion speichern…', saved: 'Aktionsstandard gespeichert', failed: 'Nicht gespeichert.', stablePlacementRequired: "Wähle zum Speichern einen dauerhaften Rechner oder Nachfragen. Temporäre Rechner und Pool-Auswahlen können nicht gespeichert werden.", workspaceMode: "Diese Aktion benötigt eine Arbeitskopie. Wähle einen passenden Ordner und speichere erneut.", nameRequired: 'Gib einen Aktionsnamen ein.' },
+} as const;
+
+return { newSessionActionDefaultTranslations };
+})();
+
+const Domain_chatLinksTranslations = (() => {
+const chatLinksTranslations = {
+  "de": {"title": "Chat-Links öffnen in", "description": "Wähle, wo Chat-Links auf diesem Gerät geöffnet werden. Localhost-Links der Maschine bleiben in der App.", "browser": "Dein Browser", "embedded": "Eingebettet", "managed": "Verwaltet"},
+} as const satisfies Pick<Record<chatLinksTranslations__SupportedLanguage, Shared_chatLinksTranslations.ChatLinksCopy>, "de">;
+
+return { chatLinksTranslations };
+})();
+
+const Domain_deploymentDefaultsTranslations = (() => {
+const deploymentDefaultsTranslations = {
+  "de": {
+        accountDescription: 'Vorgaben für neue Umgebungen deiner Kontoprojekte. Teamprojekte verwenden ihre gemeinsamen Projektvorgaben.',
+        projectDescription: 'Gilt beim Erstellen einer Umgebung. Bestehende Umgebungen behalten ihre Einstellungen.',
+        useAccount: 'Kontovorgabe verwenden', useBuiltin: 'Happier-Vorgabe verwenden', retention: 'Für Rollback aufbewahrte Versionen',
+        clearToInherit: 'Leeren, um die Vorgabe zu übernehmen', projectTitle: 'Bereitstellungseinstellungen', alertChannels: 'Benachrichtigungskanäle', accountLink: 'Bereitstellungsvorgaben deines Kontos',
+        triggersTitle: "Auslöser", triggersDescription: "Jede Umgebung hat ihre eigenen Auslöser. Öffne eine, um sie zu sehen oder hinzuzufügen.",
+    },
+} as const satisfies Pick<Record<deploymentDefaultsTranslations__SupportedLanguage, Shared_deploymentDefaultsTranslations.Copy>, "de">;
+
+return { deploymentDefaultsTranslations };
+})();
+
+const Domain_deploymentCopyTranslations = (() => {
+const deploymentCopyTranslations = {
+  "de": {
+    name: ({ name }) => `${name} Kopie`,
+    preparePrompt: ({ name, sourceId, environmentId }) => `Bereite das Deployment für Umgebung ${name} (${environmentId}), Projektquelle ${sourceId}, vor. Prüfe Repository und Anweisungen. Schlage Dockerfile, compose.yaml und Healthcheck in einem Pull Request zur Prüfung vor. Nicht mergen oder deployen.`,
+    menu: "Umgebung duplizieren…",
+    title: "Umgebung duplizieren",
+    description: "Kopiert die Deployment-Definition. Wähle die Referenzen; es wird nichts automatisch bereitgestellt.",
+    bindings: "Was übernommen wird",
+    same: "Gleiche Referenz",
+    choose: "Andere wählen…",
+    omit: "Leer lassen",
+    include: "Übernehmen",
+    domainsStay: "Domains bleiben bei der Quelle: Eine Adresse gehört zu genau einer Umgebung.",
+    dataTitle: "Daten",
+    dataOmit: "Nicht anbinden",
+    dataOmitHint: "Erstellt diese Umgebung ohne diese Datenanbindung.",
+    dataRestoreUnavailable: "Eine Sicherung dieser Daten kann beim Duplizieren nicht wiederhergestellt werden.",
+    dataConnections: "Geteilte Verbindungen",
+    dataConnectionsHint: "Wähle die gespeicherten Verbindungen für diese Kopie. Die Datenbank bleibt mit der Quellumgebung verbunden.",
+    dataConnectionsUnavailable: "Es sind keine gespeicherten Verbindungsvariablen ausgewählt. Wähle oben eine aus oder wähle eine andere Datenoption.",
+    dataReuse: "Wiederverwenden",
+    dataReuseHint: "Beide Umgebungen nutzen dieselben Daten.",
+    dataEmpty: "Leer beginnen",
+    dataEmptyHint: "Bindet neue, leere Daten an. Konfiguriere ihre Verbindungen nach dem Erstellen der Umgebung.",
+    dataEmptyUnavailable: "Dieser Anbieter unterstützt das Erstellen einer leeren Datenbank nicht.",
+    dataRestore: "Letzte Sicherung wiederherstellen",
+    dataRestoreHint: "Eine neue Kopie aus der letzten Sicherung der Quelle.",
+    prepareTitle: "Keine compose.yaml · Agent fragen",
+    prepareBody: "Öffne Start und bitte einen Agenten um Dockerfile, compose.yaml und Healthcheck in einem Pull Request zur Prüfung.",
+    refresh: "Diese Angaben sind veraltet. Aktualisiere die Umgebung, prüfe ihre Einstellungen und versuche es erneut.",
+    permission: "Dein Zugriff erlaubt diese Aktion nicht. Bitte einen Umgebungsmanager um Zugriff und versuche es erneut.",
+    machine: "Die Controller-Maschine ist nicht verfügbar. Bringe die Controller-Maschine online und versuche es erneut.",
+    repository: "Es ist kein Repository-Checkout ausgewählt. Wähle in Start ein Repository und bereite es vor dem Deployment vor.",
+    unsupported: "Dieses Ziel unterstützt die Aktion nicht. Wähle ein unterstütztes Ziel oder ändere die Auswahl.",
+    retry: "Die Aktion wurde abgelehnt.Prüfe den Grund, ändere die Auswahl und versuche es erneut.",
+  },
+} as const satisfies Pick<Record<deploymentCopyTranslations__SupportedLanguage, Shared_deploymentCopyTranslations.DeploymentCopyTranslations>, "de">;
+
+return { deploymentCopyTranslations };
+})();
+
+const Domain_deploymentSettingsTranslations = (() => {
+const deploymentSettingsTranslations = {
+  "de": {
+    ...deploymentSettingsTranslations__deploymentOperationalTranslations['de'],
+    fleetIngressSuggestedBody: "Vorschlag anhand der Netzwerkinformationen der Maschinen. Wählen Sie ihn zum Speichern aus; bei der Domain-Einrichtung wird die Route noch geprüft.",
+    fleet: Shared_deploymentSettingsTranslations.fleetCopy,
+    moveToRepository: Shared_deploymentSettingsTranslations.moveToRepositoryCopy,
+    previewEditor: Shared_deploymentSettingsTranslations.previewEditorCopy,
+    restoreExtended: Shared_deploymentSettingsTranslations.restoreExtendedCopy,
+    fleetIngressTitle: "Öffentliche Route",
+    fleetIngressChoose: "Route wählen",
+    fleetIngressUnobserved: "Hier wurde noch keine Domain-Zone und kein gemeinsames privates Netzwerk geprüft. Wählen Sie eine Route; sie wird bei der Domain-Einrichtung geprüft.",
+    fleetIngressTunnel: "Cloudflare Tunnel",
+    fleetIngressEdge: "Caddy als Zugang",
+    fleetIngressTunnelBody: "Die Konnektoren sichern sich gegenseitig ab; sie verteilen keine Last. Ohne privates Netzwerk ist nur der Ausfall eines Hosts oder Konnektors abgedeckt.",
+    fleetIngressEdgeBody: "Verteilt den Datenverkehr über ein privates Netzwerk. Wenn die Zugangsmaschine stoppt, ist die App nicht erreichbar.",
+    privateSharingTitle: "Private Freigabe",
+    privateSharingBody: "Gib einen Dienst privat frei. Änderungen gelten ab dem nächsten Deployment.",
+    privateSharingAdd: "Dienst freigeben",
+    privateSharingRepository: "Bearbeite die Compose-Datei im Repository für eine private Veröffentlichung und richte den Dienstexport mit einem Agenten ein.",
+    privateSharingUnsupported: "Lass einen Agenten diese Exporte bearbeiten, damit bestehende Zugriffe erhalten bleiben.",
+    privateSharingMultipleMachines: "Dieser Editor kann die private Freigabe nur für eine Umgebung auf einer einzelnen Maschine einrichten.",
+    privateSharingNetworkMissing: "Öffne auf der Laufzeitmaschine Netzwerk → Private Netzwerke, verbinde Tailscale und tritt dem Netzwerk der anderen App bei.",
+    privateSharingService: "Dienst",
+    privateSharingKey: "Exportname",
+    privateSharingPort: "Containerport",
+    privateSharingScheme: "URL-Schema",
+    privateSharingNetwork: "Privates Netzwerk",
+    privateSharingAddress: "Hostadresse",
+    privateSharingHostPort: "Veröffentlichter Hostport",
+    privateSharingReview: "Freigabe prüfen",
+    privateSharingReviewBody: "Das nächste Deployment bindet diese Adresse und diesen Port. Andere Apps können dann den privaten Export nutzen.",
+    privateSharingInvalid: "Prüfe Dienst, Exportname, Schema und beide Ports.",
+    privateSharingHappierNetwork: "Happier-Netzwerk",
+    privateSharingHappierNetworkBody: "Deine Maschinen erreichen ihn privat über Happier. Kein VPN nötig.",
+    privateSharingHappierNetworkPending: "Noch nicht verfügbar",
+    privateSharingJoinedNetworkBody: "Apps in diesem Netzwerk erreichen ihn unter seiner privaten Adresse.",
+    privateSharingReviewBodyHappier: "Das nächste Deployment veröffentlicht diesen Port nur auf dieser Maschine. Deine anderen Maschinen erreichen ihn über Happier.",
+    destinationS3: ({ region }) => `S3 in ${region}`,
+    destinationS3NoRegion: 'S3-Speicher',
+    destinationTest: 'Testen',
+    destinationReachable: 'Erreichbar · gerade getestet',
+    destinationRepositoryMissing:
+      'Dort liegen keine Backups · Bucket und Präfix prüfen',
+    destinationNativeFailed: 'Das Ziel hat nicht geantwortet · Adresse prüfen',
+    destinationLocked:
+      'Ein anderes Backup nutzt es · erneut versuchen, wenn es fertig ist',
+    destinationPasswordIncorrect: 'Das Repository-Passwort stimmt nicht',
+    destinationRetry: 'Der Test wurde nicht abgeschlossen · erneut versuchen',
+    keepTitle: 'Behalten',
+    keepChange: 'Ändern',
+    keepDescription:
+      'Nach jedem Backup werden ältere über diese Anzahl hinaus entfernt. Alles leer lassen, um jedes Backup zu behalten.',
+    keepLast: 'Neueste',
+    keepDaily: 'Täglich',
+    keepWeekly: 'Wöchentlich',
+    keepMonthly: 'Monatlich',
+    keepSave: 'Speichern',
+    keepCancel: 'Abbrechen',
+    keepInvalid: 'Ganze Zahlen größer als null verwenden',
+    pruneTitle: 'Alte Backups jetzt entfernen',
+    pruneDescription:
+      'Entfernt Backups über das Behaltene hinaus, ohne auf das nächste Backup zu warten.',
+    pruneAction: 'Entfernen',
+    pruned: ({ count }) =>
+      count === 1
+        ? '1 altes Backup entfernt'
+        : `${count} alte Backups entfernt`,
+    prunedNothing: 'Nichts über das Behaltene hinaus',
+    rolloutRecreateShort: 'Vor Ort neu starten',
+    rolloutStartFirstShort: 'Neue zuerst',
+    previewsTitle: 'Vorschauen',
+    previewsOn: 'Für neue Pull Requests an',
+    previewsOff: 'Aus',
+    previewsEnrollmentUnavailable: "Gespeichert, aber neue Pull Requests bekommen noch keine Vorschauen",
+    previewsRunsOn: 'Läuft auf',
+    previewsAddress: 'Adresse',
+    previewsData: 'Daten',
+    previewsDataOwn: 'Eigene Datenbank',
+    previewsDataBranch: 'Ein Branch der Datenbank',
+    previewsDataNone: 'Keine',
+    previewsDataParent: "Abgezweigt von",
+    previewsDataParentBody: "Jeder Pull Request bekommt einen Branch ohne kopierte Daten, der beim Schließen des Pull Requests gelöscht wird",
+    previewsDataOwnUnavailable: "Eine eigene Datenbank richtet ein Agent ein",
+    previewsDataBranchUnavailable: "Branches brauchen eine verknüpfte Datenbank, die sie unterstützt",
+    previewsForks: 'Pull Requests aus Forks bekommen keine Vorschau',
+    previewsProductionTarget: 'Vorschauen teilen das Produktionsziel',
+    previewsDataUnavailable: 'Für diese Umgebung nicht eingerichtet · einen Agenten fragen',
+    previewsSetUpOff: 'Aus · einschalten, damit jeder Pull Request eine eigene Kopie dieser Umgebung bekommt',
+    previewsNeedRepository: 'Vorschauen brauchen ein Repository',
+    previewsNeedRepositoryBody: 'Die Definition dieser Umgebung ist in Happier gespeichert. Vorschauen bauen jeden Pull Request aus einem Repository.',
+    previewsNoRepository: 'Vorschauen brauchen das Repository des Projekts',
+    backupNotSetUpTitle: 'Kein Backup',
+    backupNotSetUpBody: 'Kein Backup eingerichtet, die Daten dieser Umgebung werden nirgendwohin kopiert.',
+    restoreOnFailOnBody: 'Ein Deploy, der die Prüfungen nicht besteht, geht zum letzten guten Release zurück',
+    restoreOnFailOffBody: 'Ein fehlgeschlagener Deploy bleibt, bis Sie zurückrollen',
+    keptBody: 'Releases auf dem Server, um ohne Neubau zurückzurollen',
+    setupTitle: 'Backups einrichten',
+    setupDestination: 'Ziel',
+    setupSheetTitle: "Wohin sollen die Backups?",
+    setupSheetLead: ({ machine }: { machine: string }) => `Jedes Backup wird auf ${machine} verschlüsselt, bevor es sie verlässt.`,
+    setupSheetNext: "Speicher testen, dann speichern. Nur ein neues Repository initialisieren.",
+    setupMoreOptions: "Weitere Optionen",
+    setupNoDatabaseTitle: "Zuerst eine Datenbank hinzufügen",
+    setupNoDatabaseBody: "Backups kopieren eine Datenbank dieser Umgebung.",
+    setupBody: "Speicher für verschlüsselte Sicherungen wählen.",
+    setupStart: 'Einrichten',
+    setupEndpoint: 'Endpunkt',
+    setupBucket: 'Bucket',
+    setupPrefix: 'Ordner im Bucket',
+    setupRegion: 'Region',
+    setupService: 'Datenbankdienst',
+    setupSave: 'Speichern',
+    setupCancel: 'Abbrechen',
+    setupIncomplete: "Speicher, Quelle und erforderliche gespeicherte Geheimnisse angeben.",
+    credentialAccessKeyId: 'Zugriffsschlüssel-ID',
+    credentialSecretAccessKey: 'Geheimer Zugriffsschlüssel',
+    credentialRepositoryPassword: 'Repository-Passwort',
+    credentialSessionToken: 'Sitzungstoken',
+    credentialMissing: 'Braucht ein gespeichertes Secret',
+    credentialSet: 'Gespeichertes Secret gewählt',
+    credentialChoose: 'Wählen…',
+    scheduleTitle: 'Nächtliche Backups',
+    scheduleOff: 'Aus · sichert jede Nacht um 02:00, prüft jede Kopie und behält Ihre Anzahl',
+    scheduleOn: 'An · jede Nacht um 02:00',
+    scheduleTurnOn: 'Einschalten',
+    setupNoDestination: 'Backups brauchen einen Ort für die Kopien. Fügen Sie zuerst Backup-Speicher aus dem Store hinzu.',
+    setupOpenStore: 'Store öffnen',
+    setupRoleRequired: "Erforderliches gespeichertes Geheimnis",
+    setupRoleOptional: 'Optional · nur wenn Ihr Speicher es nutzt',
+    setupInitializeAndSave: "Repository initialisieren und speichern",
+    setupAnotherMachine: "Anderer Rechner",
+    setupReceiverMachine: "Zielrechner",
+    setupLocalWarning: "Auf diesem Rechner · keine externe Kopie",
+    setupLocalGrowth: "Alles behalten löscht keine Sicherungen automatisch. Dieser Datenträger kann volllaufen.",
+    setupCapacityKnown: "Freier Speicherplatz",
+    setupCapacityUnknown: "Freier Speicherplatz nicht verfügbar",
+    setupCapacityAtBackupMachine: "Prüfe den freien Speicherplatz auf der Maschine, auf der dieser Backup-Pfad liegt.",
+    credentialSshPrivateKey: "Privater SSH-Schlüssel",
+    addCheck: 'Prüfung hinzufügen',
+    addCheckUnavailable:
+      'Prüfungen lassen sich hier nicht einrichten · Dienste-Seite der Maschine öffnen',
+  },
+} as const satisfies Pick<Record<deploymentSettingsTranslations__SupportedLanguage, Shared_deploymentSettingsTranslations.DeploymentSettingsTranslations>, "de">;
+
+return { deploymentSettingsTranslations };
+})();
+
+const Domain_pluginPublishTranslations = (() => {
+const pluginPublishTranslations = {
+  "de": {
+        title: 'Plugin veröffentlichen', subtitle: 'Veröffentliche eine neue Version auf npm, damit alle sie aus dem Store installieren können.',
+        templateTitle: ({ name }: { name: string }) => '{name} veröffentlichen'.replace('{name}', () => name), templateSubtitle: ({ name }: { name: string }) => 'Veröffentliche diese Vorlage auf npm, damit alle ihren eigenen {name} aus dem Store starten können.'.replace('{name}', () => name),
+        package: 'Paket', packageDescription: 'Prüfe, baue und packe dieses Projekt auf dem ausgewählten Rechner.',
+        prepare: 'Prüfen und vorbereiten', check: 'Prüfen', build: 'Bauen', pack: 'Packen', viewFiles: 'Dateien ansehen',
+        listing: 'Store-Eintrag', listingDescription: 'Was Personen vor der Installation im Store sehen.',
+        name: 'Name', description: 'Beschreibung', keywords: 'Schlagwörter', keywordsHint: 'Trenne Schlagwörter durch Kommas.',
+        icon: 'Paketsymbol', readme: 'README', versionAndNotes: 'Version und Änderungsprotokoll', version: 'Version', changelog: 'Änderungsprotokoll',
+        patch: 'Fehlerkorrektur', minor: 'Nebenversion', major: 'Hauptversion',
+        npm: 'Auf npm veröffentlichen', npmDescription: 'Wähle ein Registry-Profil, das auf diesem Rechner gespeichert ist.',
+        connect: 'Bei npm anmelden', change: 'Ändern', coordinate: 'Paketname', public: 'Öffentlich · alle können es installieren',
+        signInRequired: 'Wähle vor der Veröffentlichung ein npm-Profil.', direct: 'Direkt veröffentlichen', staged: 'Zur npm-Freigabe einreichen',
+        stageHint: 'Eine vorgemerkte Version muss auf npm von einer verantwortlichen Person freigegeben werden, bevor sie öffentlich ist. Ein neues Paket kann bis zur Freigabe einen Platzhalter anzeigen.',
+        github: 'GitHub', githubDescription: 'Optional. Bewahre den Quellcode beim Paket auf.',
+        githubEnable: 'Quellcode pushen und Release erstellen', repository: 'Repository', branch: 'Branch', remote: 'Git-Remote',
+        selectedFiles: 'Dateien für den Commit', selectedFilesHint: 'Ein projektbezogener Pfad pro Zeile. Nur diese Dateien werden aufgenommen.',
+        commitMessage: 'Commit-Nachricht', commit: 'Ausgewählte Dateien committen',
+        publish: 'Veröffentlichen', publishReview: 'Veröffentlicht das geprüfte Paket und führt die ausgewählten GitHub-Aktionen öffentlich aus.',
+        prepareRequired: 'Bereite das Paket vor, um seine Dateien vor der Veröffentlichung zu prüfen.',
+        preparing: 'Paket wird vorbereitet…', publishing: 'Wird veröffentlicht…', checking: 'Veröffentlichung wird geprüft…',
+        history: 'Veröffentlichte Versionen', historyDescription: 'Versionen dieses ausgewählten Pakets auf npm.',
+        checkPublication: 'Veröffentlichung prüfen', reviewNpm: 'npm-Freigabe öffnen', openNpm: 'Auf npm öffnen', openGithub: 'Auf GitHub öffnen', retryGithub: 'GitHub erneut versuchen',
+        published: 'Auf npm veröffentlicht', indexLag: 'Das Paket ist öffentlich. Es kann etwas dauern, bis es in der Store-Suche erscheint.',
+        awaitingMaintainer: 'Wartet auf npm-Freigabe', outcomeUnknown: 'Veröffentlichung konnte nicht bestätigt werden',
+        outcomeUnknownBody: 'Prüfe genau diese Version, bevor du einen weiteren Upload versuchst.',
+        versionConflict: 'Diese Version ist bereits vergeben. Wähle eine andere Version und bereite sie erneut vor.',
+        signInToPublish: 'Melde dich bei npm an, um zu veröffentlichen.', versionTakenReason: 'Wähle eine Version, die npm noch nicht hat.',
+        useVersion: ({ version }: { version: string }) => '{version} verwenden'.replace('{version}', () => version),
+        authenticationRequired: 'Du musst dich erneut bei npm anmelden.', challenge: 'npm benötigt eine zusätzliche Authentifizierung. Öffne Connect, um vertraulich fortzufahren.',
+        failed: 'Veröffentlichung fehlgeschlagen', cancelled: 'Veröffentlichung abgebrochen', missing: 'Diese Version ist nicht veröffentlicht.',
+        reviewRequired: 'Die vorbereiteten Dateien haben sich geändert. Prüfe vor der Veröffentlichung den neuen Bericht.',
+        githubFailed: 'Auf npm veröffentlicht. GitHub benötigt noch deine Aufmerksamkeit.',
+        noTests: 'Kein Testbefehl konfiguriert', testsPassed: 'Tests bestanden', testsFailed: 'Tests fehlgeschlagen',
+        unavailable: 'Dieses Projekt ist nicht verfügbar. Wähle einen erreichbaren Rechner und versuche es erneut.', project: 'Projektordner',
+        preview: 'Vorschau', loadMore: 'Mehr laden', githubUnavailable: 'Wähle GitHub-Optionen, um dieses Projekt zu prüfen.',
+        npmProfile: 'npm-Profil', publicationMode: 'Veröffentlichung', readDraft: 'Veröffentlichungsentwurf lesen', patchDraft: 'Veröffentlichungsentwurf bearbeiten',
+        chooseIcon: 'Bild auswählen', iconPng: 'PNG-Bild. Wird beim Vorbereiten in das Paket aufgenommen.', iconPickFailed: 'Das Bild konnte nicht geöffnet werden. Wähle es erneut aus.',
+        continueGithub: 'Mit GitHub fortfahren', githubSelectionRequired: 'Wähle ein Repository, einen Branch und die auszuführenden GitHub-Aktionen.',
+        githubHistory: 'GitHub-Releases laden', githubHistoryUnavailable: 'GitHub-Releases konnten nicht geladen werden.',
+        githubHistoryIncomplete: 'Einige Releases oder Details fehlen. Lade weitere, sobald sie verfügbar sind.', githubHistoryEmpty: 'Noch keine GitHub-Releases.',
+        scaffoldSource: 'Diesen Quellcode mit einem Agent vorbereiten',
+        scaffoldPrompt: 'Erstelle aus diesem vorhandenen Plugin-Quellcode ein veröffentlichbares Plugin-Paket mit dem öffentlichen Scaffold-Workflow für Plugin-Autoren. Erhalte den vorhandenen Quellcode und verwende ihn im resultierenden Paket.',
+        githubOptions: 'GitHub-Optionen auswählen', githubUnavailableReason: 'GitHub ist für dieses Projekt nicht verfügbar.',
+        pushSource: 'Quellcode pushen', createRelease: 'GitHub-Release erstellen', createRepository: 'Repository erstellen',
+        repositoryName: 'Repository-Name', repositoryOwner: 'Repository-Inhaber', noIconResources: 'Füge dem Projekt eine mitgelieferte PNG-Ressource hinzu, um ein Symbol auszuwählen.',
+        ready: 'Bereit', passed: 'Bestanden', notConfigured: 'Nicht konfiguriert', machineRequired: 'Wähle eine Maschine, um vorzubereiten und zu veröffentlichen.', notRun: 'Noch nicht ausgeführt', running: 'Läuft…',
+        githubReviewUnknown: 'Prüfe das Repository und das Release auf GitHub, bevor du eine unbestätigte Aktion erneut versuchst.',
+    },
+} as const;
+
+return { pluginPublishTranslations };
+})();
+
+const Domain_botTemplateTranslations = (() => {
+const botTemplateTranslations = {
+  "de": Shared_botTemplateTranslations.copy(["Bot-Vorlage", "Kopie weitergeben", "Eine Vorlage erstellen, aus der andere ihren eigenen machen", "Vorlage prüfen", "Enthaltene Inhalte", "Anweisungen", "Erste Aufgabe", "Version", "Versionshinweise", "Empfänger der Kopie", "Privater Entwurf", "Geteilt", "Wird gespeichert…", "Ungespeicherte Änderungen", "Gespeichert", "Deine Änderungen bleiben erhalten. Erneut speichern.", "Eine andere Revision wurde gespeichert. Prüfe sie vor dem Ersetzen.", "Andere Revision prüfen", "Diese Revision als Speicherbasis verwenden", "Vorlage nicht verfügbar", "Vorlage · erstellt aus {name}", "Von {author} · {version} · {sharing}", "Vor dem Verlassen speichern? Änderungen bleiben im offenen Entwurf dieses Kontos, bis die App geschlossen wird.", "Mit behaltenen Änderungen verlassen", "Ausgelassen", "Beschreibung", "Privat"], "de"),
+} as const satisfies Pick<Record<botTemplateTranslations__SupportedLanguage, Shared_botTemplateTranslations.BotTemplateTranslations>, "de">;
+
+return { botTemplateTranslations };
+})();
+
+const Domain_botTemplateRecipientTranslations = (() => {
+const botTemplateRecipientTranslations = {
+  "de": Shared_botTemplateRecipientTranslations.copy(['Eigene Kopie erstellen', 'Bot erstellen', 'Vorlagenquelle', 'Übernommene Version {version}', 'Vorlagenupdates folgen', 'Unabhängige Kopie', 'Gedächtnisregeln', 'Skills', 'Voraussetzungen', 'Erforderlich', 'Optional', 'Eingaben', 'Ausführbar', 'Binär · Base64', 'Herunterladen', "Die Vorlage wurde geändert. Prüfe die aktuelle Version vor dem Erstellen deiner Kopie.", "Wähle den Ausführungsort. Erstellen startet deinen Bot mit den Vorlagenanweisungen."], 'de'),
+} as const satisfies Pick<Record<botTemplateRecipientTranslations__SupportedLanguage, ReturnType<typeof Shared_botTemplateRecipientTranslations.copy>>, "de">;
+
+return { botTemplateRecipientTranslations };
+})();
+
+const Domain_botFaceNameTranslations = (() => {
+const botFaceNameTranslations = {
+  "de": {
+    accountDefault: 'Kontostandard',
+    bodies: { crab: "Krabbe", squid: "Kalmar", octopus: "Oktopus", ufo: "Untertasse", specter: "Phantom", ghost: "Geist", beetle: "Käfer", spider: "Spinne", jelly: "Qualle", hopper: "Hüpfer", pup: "Welpe", drone: "Drohne", robot: "Roboter", walker: "Läufer", rocket: "Rakete", feet: "Füße", tail: "Schwanz", drip: "Tropfen", bracelegs: "Klammerbeine", tagclaws: "Tag-Scheren", cursortail: "Cursorschwanz", termbody: "Terminal", antlers: "Zweiggeweih", semi: "Semikolon", brackets: "Klammern", cursor: "Cursor", bean: "Bohne", squat: "Gedrungen", bag: "Beutel", loaf: "Laib", puddle: "Pfütze", tower: "Turm", stilts: "Stelzen", tall: "Lang", cat: "Katze" },
+    colours: { daybreak: "Morgenrot", lagoon: "Lagune", orchid: "Orchidee", aurora: "Polarlicht", indigo: "Indigo", glacier: "Gletscher", moss: "Moos", sand: "Sand", ink: "Tinte" },
+  },
+} as const satisfies Pick<Readonly<Record<string, Shared_botFaceNameTranslations.BotFaceNames>>, "de">;
+
+return { botFaceNameTranslations };
+})();
+
+const Domain_screenCaptureTranslations = (() => {
+const screenCaptureCopy = {
+  "de": {
+    privacy: { hiddenTagsTitle: "Private Session-Tags", hiddenTagsDescription: "Sessions mit diesen Tags bleiben während der Aufnahme oder bei aktiviertem Datenschutz beim Teilen aus den Listen ausgeblendet." },
+    recording: {
+      systemSelectionTitle: 'Fenster oder Bildschirm wählen',
+      systemSelectionReason: 'Das System öffnet eine Quellenauswahl. Bereichsaufnahmen sind in dieser Desktop-Sitzung nicht verfügbar.',
+      pipewireUnavailable: 'PipeWire-Aufnahme ist nicht verfügbar. Installiere das GStreamer-PipeWire-Plugin und versuche es erneut.',
+      videoEncoderUnavailable: 'Der VP8-Encoder ist nicht verfügbar. Installiere das GStreamer-VP8-Plugin und versuche es erneut.',
+      videoMuxerUnavailable: 'Der WebM-Schreiber ist nicht verfügbar. Installiere die GStreamer-WebM-Plugins und versuche es erneut.',
+      videoDecoderUnavailable: 'Die Aufnahme lässt sich zum Zuschneiden nicht dekodieren. Installiere die GStreamer-VP8- und Matroska-Plugins und versuche es erneut.',
+      cursorUnavailable: 'Die Systemauswahl kann den Mauszeiger nicht einbeziehen. Verwende ein Desktop-Portal mit Zeigeraufnahme.',
+      videoPipelineUnavailable: 'Erforderliche GStreamer-Videokomponenten fehlen. Installiere die GStreamer-Video-Plugins und versuche es erneut.',
+      title: "Aufzeichnung",
+      pause: "Pausieren",
+      resume: "Fortsetzen",
+      stop: "Aufzeichnung beenden",
+      stopShort: "Beenden",
+      hideControl: "Ausblenden, Aufnahme läuft weiter",
+      saving: "Aufzeichnung wird gesichert…",
+      discarded: "Aufzeichnung verworfen",
+      play: "Abspielen",
+      afterTrim: ({ time }: Readonly<{ time: string }>) => `${time} nach dem Zuschneiden`,
+      marksOnPausedFrame: "Markierungen erscheinen auf dem pausierten Bild", theAgent: "Der Agent",
+      keyFrames: ({ agent, count }: Readonly<{ agent: string; count: number }>) => count === 1
+        ? `${agent} erhält ein Schlüsselbild mit deinen Notizen und Markierungen`
+        : `${agent} erhält ${count} Schlüsselbilder mit deinen Notizen und Markierungen`,
+      withVideo: "Personen in der Sitzung erhalten auch das Video.",
+      withoutVideo: "Das Video bleibt hier.",
+      blurredVideo: "Das Video bleibt hier, weil es zeigt, was du unkenntlich gemacht hast.",
+      includeBlurredQuestion: "Das Video zeigt, was du auf dem Bild unkenntlich gemacht hast. Trotzdem mitsenden?",
+      keepVideoOff: "Aus lassen",
+      includeAnyway: "Trotzdem mitsenden",
+      leaveOut: "Weglassen",
+      includeVideo: "Video mitsenden",
+      trimStart: "Zuschnitt Anfang",
+      trimEnd: "Zuschnitt Ende",
+      timeline: "Zeitleiste",
+      pins: "Notizen und Markierungen auf der Zeitleiste",
+      resetTrim: "Zuschnitt zurücksetzen",
+      continue: "Weiter", failedReason: "Sie wurde beendet, bevor das Video gesichert war. Es wurde nichts gesendet.", failedTitle: "Die Aufzeichnung wurde beendet", openingTitle: "Die Aufzeichnung wird geöffnet…", openFailedTitle: "Die Aufzeichnung ließ sich nicht öffnen", openFailedReason: "Happier konnte die Videodatei nicht lesen. Zuschnitt, Markierungen und Notizen bleiben erhalten.", mediaFailed: "Das Video konnte nicht gelesen werden", commitFailed: "Deine Markierungen auf diesem Bild wurden nicht gesichert",
+    },
+    attach: { capture: "Bildschirm aufnehmen", record: "Bildschirm filmen" },
+    recent: { refresh: "Aktualisieren", chooseFile: "Datei wählen…", chooseFolder: "Ordner wählen…", loadFailed: "Der Aufnahmeordner konnte nicht gelesen werden", operationFailed: "Das hat nicht geklappt. Deine Aufnahmen sind noch da.", folderMissing: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `${folder} fehlt`, folderDenied: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `Happier darf ${folder} nicht öffnen`, folderUnreadable: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `${folder} konnte nicht gelesen werden`, folderNotWatched: ({ folder }: Shared_screenCaptureTranslations.Copy<"folder">) => `${folder} aktualisiert sich nicht von selbst`, title: "Letzte Aufnahmen", attach: "anhängen", search: "Aufnahmen suchen", empty: "Noch keine Aufnahmen im Ordner" },
+    chooser: { title: "An Sitzung senden", attachTo: "Anhängen an", search: "Sitzungen suchen", openInHappier: "In Happier geöffnet", recent: "Zuletzt", newSession: "Neue Sitzung…", moveHint: "wählen", sendHere: "hierher senden", copyHere: "hierher kopieren", empty: "Keine passenden Sitzungen" },
+    windowText: { frontmostLabel: ({ app, count }: Shared_screenCaptureTranslations.Copy<"app" | "count">) => `Text des vordersten Fensters · ${app} · ${count} Wörter`,
+      label: ({ app, count }: Shared_screenCaptureTranslations.Copy<"app" | "count">) => `Text des ganzen Fensters · ${app} · ${count} Wörter`,
+      partialLabel: ({ app, count }: Shared_screenCaptureTranslations.Copy<"app" | "count">) => `Teil des Fenstertexts · ${app} · ${count} Wörter`,
+      words: ({ count }: Shared_screenCaptureTranslations.Copy<"count">) => `${count} Wörter`,
+      reading: "Fenstertext wird gelesen…", empty: "Kein Text in diesem Fenster", unavailable: "Fenstertext ist nicht verfügbar", view: "Ansehen",
+      sheetDescription: ({ app }: Shared_screenCaptureTranslations.Copy<"app">) => `Alles Lesbare im ${app}-Fenster, auch außerhalb deiner Aufnahme. Es geht als Text mit dem Bild mit, damit der Agent es zitieren kann.`,
+      dontInclude: "Nicht einbeziehen", lockedTitle: "Text des ganzen Fensters ist aus", lockedBody: "Du hast einen Teil der Aufnahme verwischt, und der Fenstertext würde ihn zeigen. Schalte ihn wieder ein, wenn du ihn trotzdem möchtest.",
+      includeTitle: "Der Text enthält, was du verwischt hast", includeBody: "Der Fenstertext kann noch enthalten, was du verwischt hast. Das Bild bleibt in jedem Fall verwischt.", keepOff: "Aus lassen", includeText: "Text einbeziehen",
+      permissionTitle: "Happier den Fenstertext lesen lassen", permissionBody: "macOS fragt einmal. Solange das an ist, liest Happier den Text des ganzen aufgenommenen Fensters und sonst nichts.", permissionOpen: "Datenschutz & Sicherheit › Bedienungshilfen öffnen", permissionEnable: "Happier einschalten", permissionWaiting: "Warte auf die Erlaubnis… das schaltet sich von selbst ein",
+    },
+    settings: { includeWindowShadow: "Fensterschatten einschließen", windowShadowDescription: "Fensteraufnahmen enthalten den macOS-Schatten mit transparentem Rand.", windowShadowUnavailable: "Verfügbar ab macOS 14.", screenFor: "Um deinen Bildschirm aufzunehmen", windowTextFor: "Um den Text des aufgenommenen Fensters zu lesen", title: 'Bildschirmaufnahme', captureShortcut: 'Tastenkombination für Aufnahmen', instantWindowShortcut: 'Tastenkombination für sofortige Fensteraufnahme', recordingShortcut: 'Tastenkombination für Aufzeichnungen', sound: 'Aufnahmeton', includeWindowText: 'Fenstertext standardmäßig einschließen', folder: 'Aufnahmeordner', description: "Drücke überall eine Tastenkombination, markiere, was du erfasst hast, und sende es an eine Sitzung.", notSet: "Nicht festgelegt", notOnWayland: "Unter Wayland noch nicht verfügbar", conflict: "Eine andere App nutzt diese Tastenkombination. Die bisherige funktioniert weiter.", refused: "Das System hat diese Tastenkombination abgelehnt. Die bisherige funktioniert weiter.", soundDescription: "Ein kurzer Ton, wenn eine Aufnahme ankommt. Er folgt der Stummschaltung des Systems.", windowTextDescription: "Neue Aufnahmen beginnen mit dem Fenstertext. Eine Verwischung schaltet ihn aus.", changeFolder: "Ändern…", permissionsTitle: "Berechtigungen", permissionsDescription: "Was dein System Happier erlaubt und wonach Agenten fragen müssen.", screenPermission: "Bildschirmaufnahme", accessibilityPermission: "Bedienungshilfen", approvals: "Freigaben für Agenten", approvalsDescription: "Ob ein Agent fragen muss, bevor er deinen Bildschirm aufnimmt" },
+    selection: { releaseRecording: "Loslassen zum Aufzeichnen", label: "Wähle aus, was aufgenommen werden soll", modeLabel: "Aufnahmeart", screenshot: "Bildschirmfoto", recording: "Aufzeichnung", instruction: "Bereich ziehen, Fenster anklicken oder R drücken", keyboardPosition: "Pfeiltasten zum Positionieren · Eingabe für die erste Ecke", keyboardRegion: "Pfeiltasten zum Anpassen · Eingabe zum Aufnehmen", release: "Zum Aufnehmen loslassen" },
+    window: { pickAnotherSession: "Andere Sitzung wählen",
+      title: "Aufnahme", notePlaceholder: "Notiz für den Agenten hinzufügen (optional)", chooseSession: "Sitzung wählen", sameAsLastCapture: "Wie bei der letzten Aufnahme", nativeTitle: ({ subject }: Shared_screenCaptureTranslations.Copy<"subject">) => `Happier-Aufnahme — ${subject}`, region: "Bereich",
+      sendTo: ({ session, machine }: Shared_screenCaptureTranslations.Copy<"session" | "machine">) => `An ${session} auf ${machine} senden`,
+      wholeWindowText: "Text des ganzen Fensters", addToDraft: "Zum Entwurf hinzufügen", send: "Senden", discard: "Verwerfen", copy: "Bild kopieren", showInFolder: "Im Ordner zeigen", more: "Mehr",
+      attachRecent: "Letzte Aufnahme anhängen", copyWindowText: "Fenstertext kopieren", settings: "Aufnahmeeinstellungen", justNow: "gerade eben", flattenFailed: "Die Markierungen konnten nicht auf das Bild angewendet werden",
+      unreachable: ({ machine }: Shared_screenCaptureTranslations.Copy<"machine">) => `${machine} ist nicht erreichbar`, lastSeen: ({ time }: Shared_screenCaptureTranslations.Copy<"time">) => `zuletzt gesehen ${time}`,
+      addOrPick: "Füge die Aufnahme zum Entwurf hinzu oder", pickAnother: "wähle eine andere Sitzung",
+    },
+    permission: { drag: "Ziehe Happier in die Liste", title: "Happier die Bildschirmaufnahme erlauben", reason: "macOS fragt einmal. Happier sieht deinen Bildschirm nur, wenn du die Tastenkombination drückst oder in der Menüleiste Bildschirm aufnehmen wählst.", reasonWithShortcut: ({ shortcut }: Shared_screenCaptureTranslations.Copy<"shortcut">) => `macOS fragt einmal. Happier sieht deinen Bildschirm nur, wenn du ${shortcut} drückst oder in der Menüleiste Bildschirm aufnehmen wählst.`, waiting: "Warte auf die Erlaubnis…", openSettings: "Systemeinstellungen öffnen", notNow: "Nicht jetzt", where: "Aktiviere Happier unter Datenschutz & Sicherheit › Bildschirm- & Systemaudioaufnahme. macOS bittet dich eventuell, Happier neu zu öffnen.", allowed: ({ shortcut }: Shared_screenCaptureTranslations.Copy<"shortcut">) => `Erlaubt · drücke ${shortcut} für eine Aufnahme`, reopenNeeded: "Wenn du Happier gerade erlaubt hast, öffne es neu, um es anzuwenden", reopen: "Happier neu öffnen" },
+    failed: { title: "Die Aufnahme ist nicht angekommen", reason: "Das Aufnahmewerkzeug wurde geschlossen, ohne ein Bild zu übergeben. Es wurde nichts gesendet.", tryAgain: "Erneut versuchen" },
+    pill: { notAdded: "Nicht zum Entwurf hinzugefügt", notStarted: "Die neue Sitzung ist nicht gestartet", notPrepared: "Die Aufnahme konnte nicht vorbereitet werden",
+      starting: "Neue Sitzung wird geöffnet…", started: "Bereit in einer neuen Sitzung",
+      sending: ({ session }: Shared_screenCaptureTranslations.Copy<"session">) => `Wird an ${session} gesendet…`, adding: "Wird zum Entwurf hinzugefügt…", sent: ({ session }: Shared_screenCaptureTranslations.Copy<"session">) => `An ${session} gesendet`,
+      added: ({ number }: Readonly<{ number: number }>) => `Als Bild #${number} zum Entwurf hinzugefügt`,
+      waiting: ({ session, count }: Readonly<{ session: string; count: number }>) => `${session} · ${count} Aufnahmen warten`,
+      failed: "Nicht gesendet", failedDetail: "Der Entwurf behält alles", discarded: "Aufnahme verworfen", open: "Öffnen", edit: "Bearbeiten",
+    },
+  },
+} as const;
+
+return { screenCaptureCopy };
+})();
+
+const Domain_deploymentCreationReviewTranslations = (() => {
+const deploymentCreationReviewTranslations = {
+  "de": {
+    title: 'So wird bereitgestellt',
+    description:
+      'Prüfe diese Werte, bevor du die Umgebung erstellst.',
+    create: 'Umgebung erstellen',
+    buildsOn: ({ machine }) => `Baut auf ${machine}`,
+    deploysFrom: ({ machine }) => `Bereitstellungen laufen von ${machine}`,
+    keepsPrevious: ({ count }) =>
+      count === 0
+        ? 'Behält keine früheren Versionen zum Zurücksetzen'
+        : count === 1
+          ? 'Behält 1 frühere Version zum Zurücksetzen'
+          : `Behält ${count} frühere Versionen zum Zurücksetzen`,
+    fromExplicit: 'Von dir gewählt',
+    fromProject: 'Aus dem Projekt',
+    fromAccount: 'Aus deinem Konto',
+    fromBuiltin: 'Happiers Standard',
+  },
+} as const satisfies Pick<Record<deploymentCreationReviewTranslations__SupportedLanguage, Shared_deploymentCreationReviewTranslations.DeploymentCreationReviewCopy>, "de">;
+
+return { deploymentCreationReviewTranslations };
+})();
+
+const Domain_deploymentPlatformLinkTranslations = (() => {
+const deploymentPlatformLinkTranslations = {
+  "de": {
+    detachLead: ({ name, platform }) => `${name} von Happier trennen und auf ${platform} belassen.`,
+    detachBody: ({ platform }) => `Die Anwendung läuft auf ${platform} weiter, mit ihren Daten und laufenden Kosten. Stoppe oder lösche sie direkt in ${platform}.`,
+    removalTitle: ({ resource }) => `${resource} trennen oder löschen`,
+    removalLead: ({ resource, platform }) => `${resource} läuft auf ${platform}. Behalte es dort oder lösche es auf ${platform}.`,
+    keepTitle: ({ platform }) => `Auf ${platform} behalten`,
+    keepBody: ({ resource, platform }) => `${resource} läuft mit seinen Daten und Kosten auf ${platform} weiter. Happier stellt dort nicht mehr bereit.`,
+    keepBodyData: ({ resource, platform }) => `${resource} bleibt mit seinen Daten und Kosten auf ${platform}. Happier verwaltet es nicht mehr.`,
+    deleteTitle: ({ platform }) => `Auf ${platform} löschen`,
+    deleteBody: ({ resource, platform }) => `${platform} löscht ${resource}. Das lässt sich nicht rückgängig machen.`,
+    deleteConsequence: ({ resource, platform }) => `${resource} auf ${platform} löschen?`,
+    typeToDelete: ({ resource }) => `Gib ${resource} ein, um es zu löschen`,
+    confirmDelete: ({ resource }) => `${resource} löschen`,
+    confirmDeleteWithEnvironment: ({ name, resource }) => `${name} und ${resource} löschen`,
+    createOnMachine: "Erstellen auf",
+    finishLinkingOnMachine: "Verknüpfung abschließen auf",
+    openProvider: "Beim Anbieter öffnen",
+    recoveryUnavailable: "Ergebnis der Erstellung nicht verfügbar",
+    modeExisting: "Vorhandenes verwenden",
+    modeCreate: "Neu erstellen",
+    create: ({ platform }) => `${platform} erstellen und verknüpfen`,
+    createConsequences: `Erstellt eine Ressource. Es können Anbieterkosten anfallen. Der ausgewählte Controller verwendet das hier angezeigte verbundene Konto.`,
+    provisioned: "Ressource erstellt; Verknüpfung unvollständig",
+    created: "Projekt erstellt und verknüpft",
+    branchSet: ({ branch }) => `Produktionsbranch: ${branch}.`,
+    branchDefaultKept: ({ branch, requestedBranch }) => `Der Produktionsbranch bleibt ${branch}. ${requestedBranch} konnte nicht gesetzt werden; ändere ihn beim Anbieter.`,
+    branchUnconfirmed: ({ requestedBranch }) => `Die Änderung auf ${requestedBranch} ist unbestätigt. Der Anbieter verwendet möglicherweise weiterhin den Standardbranch; prüfe ihn beim Anbieter.`,
+    finishLinking: "Verknüpfung abschließen",
+    outcomeUnknown: "Der Anbieter hat den Abschluss der Erstellung nicht bestätigt",
+    outcomeUnknownBody: "Prüfe den Anbieter, bevor du eine andere Ressource auswählst. Happier erstellt sie nicht erneut.",
+    duplicate: "Dieser Anbieterbereich ist bereits verknüpft",
+    useExisting: "Vorhandene Umgebung verwenden",
+    chooseAnother: "Anderen Bereich wählen",
+    accessTitle: "Bereitstellungszugriff",
+    deploysUse: ({ principal, platform }) => `Bereitstellungen nutzen den ${platform}-Zugriff von ${principal}`,
+    personalAccessDependency: "Diese persönliche Verbindung muss verfügbar bleiben. Wird sie entfernt oder verliert sie den Anbieterzugriff, sind weitere Bereitstellungen nicht möglich.",
+    teamAccessDependency: "Bereitstellungen benötigen verfügbare Team-Zugangsdaten mit Anbieterzugriff.",
+    providerAccount: "Anbieterkonto oder Team",
+    providerProject: "Anbieterprojekt",
+    providerScope: "Anbieterumgebung",
+    sourceManifest: "Quellmanifest",
+    providerBuild: "Build auf der Plattform",
+    controllerBuild: "Build auf dem Controller",
+    buildImage: "Build-Container",
+    buildToolchain: "Build-Werkzeuge",
+    buildOutputManifest: "Build-Ausgabemanifest",
+    sourceMethod: "Deployment-Methode",
+    gitIntegration: "Git-Integration",
+    upload: "Hochladen",
+    gitIntegrationBody: "Die Plattform liest den geprüften Commit aus ihrem verbundenen Repository.",
+    uploadBody: "Happier sendet den geprüften Commit über den Controller, ohne Git-Zugriff der Plattform.",
+    title: ({ name }) => `${name} auf einer Plattform bereitstellen`,
+    lead: 'Verknüpfe ein Projekt, das du schon auf einer Hosting-Plattform hast. Das Verknüpfen ändert dort nichts; das nächste Deployment schon.',
+    add: 'Plattform hinzufügen',
+    usePlatform: 'Plattform verwenden',
+    platform: 'Plattform',
+    loading: 'Plattformen werden gesucht…',
+    failed: 'Plattformen konnten nicht geladen werden',
+    empty: 'Keine Plattform ist eingeschaltet',
+    emptyBody:
+      'Schalte unter Plugins ein Deployment-Plugin ein, um eine Plattform zu verknüpfen.',
+    check: 'Prüfen',
+    checkAgain: 'Erneut prüfen',
+    link: ({ platform }) => `${platform} verknüpfen`,
+    ready: 'Bereit zum Verknüpfen',
+    needsGit: 'Dieses Projekt sieht dein Repository noch nicht',
+    needsGitBody: 'Gib ihm Zugriff und prüfe dann erneut.',
+    repositoryRequired: 'Diese Quelle benötigt ein Repository',
+    repositoryRequiredBody: 'Verbinde ein Repository mit dieser Quelle und prüfe erneut.',
+    grant: 'Zugriff geben',
+    refused: 'Dieses Projekt konnte nicht geprüft werden',
+    linkRefused: 'Dieses Projekt konnte nicht verknüpft werden',
+    onMachine: 'Einer Maschine',
+    platformLater: 'Das Plattform-Projekt wählst du direkt nach dem Erstellen.',
+    deploysFrom: 'Deployt von',
+    onPlatformTitle: ({ platform }) => `Auf ${platform}`,
+    onPlatformBody: 'Als Nächstes wählst du Konto und Projekt. Verknüpfen deployt nichts.',
+    platformBuilds: 'Die Plattform baut das Repository dieses Projekts auf dem gewählten Branch.',
+    managersOnly: 'Nur Verwalter dieser Umgebung können eine Plattform verknüpfen.',
+    refusedRemedy: 'Prüfe das gewählte Konto und Projekt und prüfe dann erneut.',
+    nothingDeployedBody: 'Das erste Deployment baut diesen Branch auf der verknüpften Plattform.',
+    deployNoPlatform: 'Diese Umgebung hat noch kein Plattform-Projekt zum Deployen.',
+    connectTitle: ({ platform }) => `Verbinde ${platform}, um hier zu deployen`,
+    connectBody: ({ platform }) => `Happier verknüpft diese Umgebung mit einem ${platform}-Projekt und prüft vor dem Verknüpfen, was dein Token darf, und sagt dir, was fehlt.`,
+    connectAction: ({ platform }) => `${platform}-Token hinzufügen`,
+    choicesFailed: ({ platform }) => `${platform}-Auswahl konnte nicht gelesen werden`,
+    choicesFailedBody: "Prüfe, ob die Verbindung deine Projekte sieht, und versuche es erneut.",
+    connection: "Verbindung",
+    hostNeedsSetup: ({ machine }) => `${machine} ist noch nicht für Deployments eingerichtet`,
+    hostSetupBody: "Du prüfst jede Änderung, bevor etwas läuft. Das Speichern dieser Umgebung kann so lange warten.",
+    hostSetupAction: ({ machine }) => `${machine} einrichten`,
+    hostReviewAction: ({ machine }) => `Einrichtung von ${machine} prüfen`,
+    hostUnchecked: ({ machine }) => `Konnte nicht prüfen, ob ${machine} Deployments hosten kann`,
+  },
+} as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "de">;
+
+return { deploymentPlatformLinkTranslations };
+})();
+
+const Domain_deploymentPromotionTranslations = (() => {
+const deploymentPromotionTranslations = {
+  "de": {
+    open: 'Übernehmen nach…', title: 'Bereitstellung übernehmen', lead: ({ name, version }) => `Wähle, wo ${version} aus ${name} bereitgestellt wird.`,
+    destination: 'Ziel', image: 'Erstelltes Artefakt', imageBody: 'Verwendet die Images dieser gespeicherten Compose-Bereitstellung in einer anderen gespeicherten Compose-Umgebung auf deinen Servern.',
+    emptyTitle: 'Andere Umgebung wählen',
+    emptyBody: 'Erstelle oder verknüpfe eine Zielumgebung und versuche es erneut.', loadFailed: 'Umgebungen konnten nicht geladen werden', refused: 'Übernahme fehlgeschlagen', review: 'Übernahme prüfen',
+    missingOne: ({ destination, name }) => `${destination} setzt ${name} nicht`, missingMany: ({ destination, count }) => `${destination} setzt ${count} Variablen nicht`,
+    missingBodyOne: ({ source, destination }) => `${source} setzt sie. Füge sie zuerst ${destination} hinzu, wenn diese Version sie liest.`,
+    missingBodyMany: ({ source, destination }) => `${source} setzt sie. Füge sie zuerst ${destination} hinzu, wenn diese Version sie liest.`,
+    missingAdd: ({ destination }) => `Zu ${destination} hinzufügen…`, compareFailed: ({ destination }) => `Variablen konnten nicht mit ${destination} verglichen werden`,
+  },
+} as const satisfies Pick<Record<deploymentPromotionTranslations__SupportedLanguage, Shared_deploymentPromotionTranslations.PromotionCopy>, "de">;
+
+return { deploymentPromotionTranslations };
+})();
+
+const Domain_fileEditingTranslations = (() => {
+const fileEditingTranslations = {
+  "de": {
+    aiSuggestions: { ...fileEditingTranslations__fileAiSuggestionsTranslations.de, ...fileEditingTranslations__fileAiSuggestionControls.de, ...fileEditingTranslations__fileNextEditTranslations.de },
+    statusEditing: 'Bearbeiten',
+    statusUnsaved: 'Nicht gespeichert',
+    statusSaving: 'Speichern',
+    statusSaved: 'Gespeichert',
+    discardEdits: 'Änderungen verwerfen',
+    conflictByAgent: ({ agent }) => `${agent} hat diese Datei geändert.`,
+    conflictOnDisk: 'Diese Datei wurde auf dem Datenträger geändert.',
+    editsKept: 'Deine Änderungen bleiben erhalten.',
+    useMine: 'Meine verwenden',
+    useAgents: ({ agent }) => `Die von ${agent} verwenden`,
+    useTheirs: 'Die vom Datenträger verwenden',
+    offline: ({ machine }) =>
+      `${machine} antwortet nicht. Deine Änderungen bleiben auf diesem Gerät; speichere, sobald es wieder da ist.`,
+    offlineSaving: ({ machine }) =>
+      `${machine} antwortet nicht. Deine Änderungen bleiben auf diesem Gerät und werden gespeichert, sobald es wieder da ist.`,
+    backOnline: ({ machine }) =>
+      `${machine} ist wieder da. Deine Änderungen können gespeichert werden.`,
+    awaitingApproval:
+      'Warte auf Freigabe zum Speichern. Deine Änderungen bleiben erhalten.',
+    saveFailed: 'Speichern fehlgeschlagen. Deine Änderungen bleiben erhalten.',
+    draftNotStored:
+      'Deine Änderungen sind auf diesem Gerät nicht gespeichert. Speichere, um sie zu behalten.',
+    lineEndings: ({ ending }) =>
+      `Zeilenenden werden als ${ending} gespeichert.`,
+    editsSetAside: 'Deine Änderungen wurden beiseitegelegt',
+    agentVersionReplaced: ({ agent }) =>
+      `Die Version von ${agent} wurde ersetzt`,
+    diskVersionReplaced: 'Die Version auf dem Datenträger wurde ersetzt',
+    dismissNotice: 'Schließen',
+    placesDiffer: ({ count }) =>
+      count === 1
+        ? '1 Stelle unterscheidet sich.'
+        : `${count} Stellen unterscheiden sich.`,
+    useAllMine: 'Überall meine',
+    useAllAgents: ({ agent }) => `Überall die von ${agent}`,
+    useAllTheirs: 'Überall die vom Datenträger',
+    backToEditing: 'Zurück zum Bearbeiten',
+    placeLine: ({ line }) => `Zeile ${line}`,
+    placeLines: ({ start, end }) => `Zeilen ${start}–${end}`,
+    onlyAgentChanged: ({ agent }) => `nur ${agent} hat sie geändert`,
+    onlyDiskChanged: 'nur die Version auf dem Datenträger hat sie geändert',
+    yoursVsAgents: ({ agent }) => `deine oder die von ${agent}`,
+    yoursVsDisk: 'deine oder die vom Datenträger',
+    usingAgents: ({ agent }) => `Version von ${agent}`,
+    usingTheirs: 'Version vom Datenträger',
+    usingMine: 'Deine Version',
+    replacedLines: ({ count }) =>
+      count === 1 ? '1 Zeile ersetzt' : `${count} Zeilen ersetzt`,
+    addedLines: ({ count }) =>
+      count === 1 ? '1 Zeile hinzugefügt' : `${count} Zeilen hinzugefügt`,
+    removedLines: ({ count }) =>
+      count === 1 ? '1 Zeile entfernt' : `${count} Zeilen entfernt`,
+    youEditedThisChange: 'Du hast diese Änderung bearbeitet',
+    nextChange: 'Nächste Änderung',
+    previousChange: 'Vorherige Änderung',
+    changes: 'Änderungen',
+    hideKeyboard: 'Tastatur ausblenden',
+    indent: 'Einrücken',
+    outdent: 'Ausrücken',
+    moveLeft: 'Nach links',
+    moveRight: 'Nach rechts',
+    insertText: ({ text }) => `${text} einfügen`,
+    editorKeys: 'Editortasten',
+      redo: 'Wiederholen',
+  },
+} as const satisfies Pick<Record<
+  | 'en'
+  | 'ca'
+  | 'de'
+  | 'es'
+  | 'fr'
+  | 'it'
+  | 'ja'
+  | 'pl'
+  | 'pt'
+  | 'ru'
+  | 'zh-Hans'
+  | 'zh-Hant',
+  Shared_fileEditingTranslations.FileEditingTranslations
+>, "de">;
+
+return { fileEditingTranslations };
+})();
+
+const Domain_usageChartInputTranslations = (() => {
+const usageChartInputTranslations = {
+  "de": { commandChoose: "Zeile wählen", commandValues: "Diagrammwerte", commandValuesInput: "Ohne Eingabe werden alle Intervalle gelesen. Mit bucket (Index ab null) und mode (read, select, toggle, hover, scrub) wird eines gelesen oder fixiert. Liefert genauen Titel, Summe und Zeilen.", commandChooseInput: "Mit row (id aus Diagrammwerte) eine Zeile des fixierten Intervalls wählen.",
+    inputColourBy: 'Färben nach', inputIntensity: 'Intensität', inputLeadingAgent: 'Führender Agent', inputDay: 'Tag',
+    inputPlanets: 'Planeten des Zeitraums', inputThread: 'Serienfaden', inputSkyline: 'Wochen-Skyline', inputSurface: 'Tage auf der Oberfläche',
+    inputRings: 'Serienringe', inputPeriodOrbit: 'Rund um den Zeitraum', inputMoons: 'Monde', inputGalaxy: 'Sitzungsgalaxie',
+    inputCalendar: 'Kalender', inputWeekdayHour: 'Wochentag / Stunde', inputSky: 'Tagehimmel', inputWeekTide: 'Wochentide', inputDaylight: 'Tageslicht',
+    inputLanes: 'Bahnen', inputDial: 'Zifferblatt', inputTimeline: 'Rechner-Zeitleiste', inputCrew: 'Besatzung', inputRiver: 'Agentenfluss',
+    inputShipped: 'Ausgeliefert', inputPersonalRecords: 'Persönliche Rekorde', inputSteering: 'Steuerung nach Agent' },
+} as const;
+
+return { usageChartInputTranslations };
+})();
+
+const Domain_usageChartPlanetFamilyTranslations = (() => {
+const usageChartPlanetFamilyTranslations = {
+  "de": Shared_usageChartPlanetFamilyTranslations.block({
+    levelColumn: 'Aktivität',
+    weekColumn: 'Woche',
+    activeDaysColumn: 'Aktive Tage',
+    shareColumn: 'Anteil',
+    daysColumn: 'Tage',
+    peakColumn: 'Gleichzeitig',
+    kindColumn: 'Rechner',
+    countColumn: 'Anzahl',
+    weekdayInitials: 'M,D,M,D,F,S,S',
+    streakBestDays: ({ count }) => `Bestwert · ${count} ${Number(count) === 1 ? 'Tag' : 'Tage'}`,
+    streakNowDays: ({ count }) => `${count} ${Number(count) === 1 ? 'Tag' : 'Tage'} aktuell`,
+    streakOngoingBest: ({ count }) =>
+      `${count} ${Number(count) === 1 ? 'Tag' : 'Tage'} · deine längste Serie in diesem Zeitraum`,
+    daysLit: ({ count, total }) => `${count} von ${total} Tagen beleuchtet`,
+    partialWeek: ({ from, to }) => `${from}–${to} · Teilwoche`, noStreakRings: 'Keine Serie von drei oder mehr Tagen in diesem Zeitraum',
+    moonsCaption: 'Jeder Agent ist ein Mond; seine Größe ist sein Anteil.',
+    moonsCaptionDays:
+      'Jeder Agent ist ein Mond; seine Größe ist sein Anteil, der beleuchtete Teil die Tage, an denen er gearbeitet hat.',
+    machinesUnavailable:
+      'Rechnerarten werden noch nicht erfasst. Sie erscheinen, sobald Happier erkennt, auf welcher Art Rechner jeder Agent lief.',
+    machinesEmpty: 'In diesem Zeitraum hat kein Rechner Agenten ausgeführt.',
+    machineKindUnknown: 'Unbekannte Art',
+    projectsEmpty: 'Noch keine öffentlichen Projekte verlinkt.',
+    atmosphereFirstWeek: 'Woche 1',
+    atmosphereCaption:
+      'Der Halo wird in Wochen mit mehr gleichzeitigen Agenten dichter; Woche 1 ist oben.',
+    atmosphereCaptionPeak: ({ count }) =>
+      `Der Halo wird in Wochen mit mehr gleichzeitigen Agenten dichter; bis zu ${count} gleichzeitig in diesem Zeitraum.`,
+  }),
+} as const;
+
+return { usageChartPlanetFamilyTranslations };
+})();
+
+const Domain_fileSelectionAskTranslations = (() => {
+const fileSelectionAskTranslations = {
+  "de": { ask: 'Fragen', comment: 'Kommentieren', copy: 'Kopieren', toolbarLabel: 'Auswahl', moreWaysToAsk: 'Weitere Möglichkeiten zu fragen', lineCount: ({ count }: { count: number }) => `${count} ${count === 1 ? 'Zeile' : 'Zeilen'}`, sideRun: 'In einem Nebenlauf fragen', targetTitle: 'Ohne Sitzung fragen', targetDescription: 'Wähle, wo Fragen zu Dateien ohne geöffnete Sitzung erscheinen.', detachedRun: 'Nebenlauf', newSession: 'Neue Sitzung' },
+} as const;
+
+return { fileSelectionAskTranslations };
+})();
+
+const Domain_fileTrackTranslations = (() => {
+const fileTrackTranslations = {
+  "de": { track: 'Folgen', tracking: 'Folgt', paused: 'Pausiert', resume: 'Fortsetzen', turnOnA11y: ({ agent }: { agent: string }) => `Den Änderungen von ${agent} folgen`, turnOffA11y: ({ agent }: { agent: string }) => `Den Änderungen von ${agent} nicht mehr folgen`, resumeA11y: ({ agent }: { agent: string }) => `Den Änderungen von ${agent} wieder folgen`, writing: 'Schreibt', watch: 'Ansehen', agentWorking: ({ agent }: { agent: string }) => `${agent} arbeitet`, view: 'Anzeigen', needsYou: 'Braucht dich', caretA11y: ({ agent }: { agent: string }) => `${agent} schreibt hier` },
+} as const;
+
+return { fileTrackTranslations };
+})();
+
+const Domain_actionPresentationTranslations = (() => {
+const actionPresentationTranslations = {
+  "de": Shared_actionPresentationTranslations.copy({ title: 'Öffentlichen Dokumentlink erstellen', named: name => `Öffentlichen Link für „${name}“ erstellen?`, summary: 'Jeder mit diesem Link kann das Dokument lesen.' }, { change: ({ name, kind }) => `„${name}“ (${kind}) für deine gesamte Arbeit ändern.`, reset: ({ name, kind }) => `Deine Änderungen an „${name}“ (${kind}) entfernen und die ursprünglichen Einstellungen verwenden.` }, { now: 'Jetzt', afterIdle: 'Nach Inaktivität', start: 'Starten', stop: 'Stoppen', suspend: 'Anhalten', resume: 'Fortsetzen', delete: 'Löschen', external: 'Vorhandener Server', managedLocal: 'Von Happier verwaltetes Gateway' }, {
+        destinations: { transcript: "Eine Visualisierung in diese Sitzung kopieren, in die Unterhaltung.", board: "Eine Visualisierung in diese Sitzung kopieren, auf das Board.", both: "Eine Visualisierung in diese Sitzung kopieren, in die Unterhaltung und auf das Board." },
+        origins: origins => `Die Kopie behält den Netzwerkzugriff auf ${origins}.`,
+        open: "Die Kopie behält den Netzwerkzugriff auf beliebige Websites.",
+    }),
+} as const;
+
+return { actionPresentationTranslations };
+})();
+
+const Domain_fileReviewNoteTranslations = (() => {
+const fileReviewNoteTranslations = {
+  "de": {
+        discard: ({ paths, count }) => `Du hast ${count === null ? 'Änderungen' : `${count} ${count === 1 ? 'Änderung' : 'Änderungen'}`} in ${paths} verworfen`,
+        restore: ({ paths }) => `Du hast ${paths} auf den vorherigen Stand zurückgesetzt`,
+        restoreBeforeTurn: ({ paths, turn }) => `Du hast ${paths} auf den Stand vor ${turn} zurückgesetzt`,
+        undoDiscard: ({ paths }) => `Du hast das Verwerfen in ${paths} rückgängig gemacht`,
+        undoRestore: ({ paths }) => `Du hast das Wiederherstellen von ${paths} rückgängig gemacht`,
+        undo: ({ paths }) => `Du hast die Überprüfungsaktion in ${paths} rückgängig gemacht`,
+    },
+} as const satisfies Pick<Record<string, Shared_fileReviewNoteTranslations.Labels>, "de">;
+
+return { fileReviewNoteTranslations };
+})();
+
+const Domain_composerReferenceTranslations = (() => {
+const composerReferenceTranslations = {
+  "de": { imageNumber: ({ number }) => `Bild #${number}`, imageAccessibility: ({ number, name }) => `Bild ${number}, ${name}`, attachmentRemoved: 'Anhang entfernt', open: 'Öffnen', removeFromMessage: 'Aus der Nachricht entfernen', kindSession: 'Sitzung', kindFolder: 'Ordner', kindSkill: 'Skill', kindPlugin: 'Plugin', kindWorkflow: 'Workflow', kindWidget: 'Widget', unavailableDetail: 'Gerade nicht verfügbar. Es wird mit seinem Namen gesendet.', removedDetail: 'Der Anhang wurde entfernt. Er wird beim Senden weggelassen.', hintMention: 'Erwähnen', kindFile: "Datei", tabAll: "Alle", hintNextKind: "Nächste Art", noMatches: ({ query }) => `Keine Treffer für „${query}“`, nothingToMention: "Noch nichts zum Erwähnen", noMatchesDetail: "Versuche ein anderes Wort oder zieh das Element hierher." },
+} as const satisfies Pick<Record<string, Shared_composerReferenceTranslations.Labels>, "de">;
+
+return { composerReferenceTranslations };
+})();
+
+const Domain_hunkReviewTranslations = (() => {
+const hunkReviewTranslations = {
+  "de": {
+    change: ({ n }) => `Änderung ${n}`,
+    line: ({ line }) => `Zeile ${line}`,
+    lines: ({ start, end }) => `Zeilen ${start}–${end}`,
+    kept: 'Behalten',
+    keep: 'Behalten',
+    keepUnavailable: 'Behalten ist nicht verfügbar. Öffne diese Überprüfung erneut und versuche es noch einmal.',
+    discard: 'Verwerfen',
+    keepA11y: ({ n, total, range }) =>
+      `Änderung ${n} von ${total} behalten, ${range}`,
+    unkeepA11y: ({ n, total, range }) =>
+      `Änderung ${n} von ${total}, ${range}, als nicht geprüft markieren`,
+    discardA11y: ({ n, total, range }) =>
+      `Änderung ${n} von ${total} verwerfen, ${range}`,
+    counter: ({ current, total }) => `${current} von ${total}`,
+    changes: ({ total }) => String((total === 1 ? 'Änderung' : 'Änderungen')),
+    previousChange: 'Vorherige Änderung',
+    nextChange: 'Nächste Änderung',
+    keepAll: 'Alle behalten',
+    fileReviewed: 'Alle Änderungen in dieser Datei geprüft',
+    filesLeft: ({ count }) => (count === 1 ? '1 Datei übrig' : `${count} Dateien übrig`),
+    viewed: 'Angesehen',
+    viewedChanged: 'Seit dem Ansehen geändert',
+    viewedNotSaved: 'Nicht auf GitHub gespeichert',
+    viewedA11y: ({ name }) => `${name}, auf GitHub angesehen`,
+    viewedCount: ({ count, total }) => `${count} von ${total} angesehen`,
+    viewedUnavailable: 'Angesehen nicht verfügbar',
+    nextFile: 'Nächste Datei',
+    nextNamed: ({ name }) => `Weiter · ${name}`,
+    scopeA11y: 'Angezeigte Änderungen',
+    scopeTurn: 'Dieser Zug',
+    scopeSession: 'Diese Sitzung',
+    scopeUncommitted: 'Nicht committet',
+    noTurnChanges: 'Keine Änderungen aus diesem Zug in dieser Datei.',
+    noChanges: 'Keine Änderungen in dieser Datei.',
+    showSession: 'Diese Sitzung zeigen',
+    discardNeeds: ({ machine }) => `Verwerfen braucht ${machine}`,
+    agentWriting: ({ agent }) => `${agent} schreibt in diese Datei`,
+    turn: ({ turn }) => `Zug ${turn}`,
+    comment: 'Kommentieren',
+    askAbout: 'Zu dieser Änderung fragen',
+    copy: 'Kopieren',
+    noticeDiscarded: 'Änderung verworfen',
+    noticeDiscardedAt: ({ range }) => `Änderung in ${range} verworfen`,
+    noticeRestored: ({ name }) => `${name} wiederhergestellt`,
+    noticeKeptEdited: 'Behalten: seitdem bearbeitet',
+    noticeUndone: 'Rückgängig gemacht',
+    noticeUndoConflict:
+      'Die Datei hat sich seitdem geändert. Rückgängig nicht möglich.',
+    noticeUndoUnavailable: 'Erledigt. Dies lässt sich nicht rückgängig machen.',
+    noticeNoteFailed: ({ agent }) =>
+      `Erledigt, aber ${agent} konnte nicht benachrichtigt werden`,
+    noticeMovedOn: 'Die Datei hat sich geändert. Bitte erneut prüfen.',
+    noticeUpdateRequired: ({ machine }) =>
+      `Aktualisiere ${machine}, um Änderungen zu verwerfen oder wiederherzustellen`,
+    noticeUnsupported: 'Diese Änderung kann hier nicht verworfen werden.',
+    discardStaged: 'Nimm diese Änderungen zuerst aus dem Index.',
+    discardRenamedOrCopied: 'Einzelne Änderungen in umbenannten oder kopierten Dateien können nicht verworfen werden.',
+    discardUntracked: 'Einzelne Änderungen in nicht versionierten Dateien können nicht verworfen werden.',
+    noticeUnavailable: 'Diese Änderungen sind nicht mehr verfügbar.',
+    noticeUnknown: 'Nicht bestätigt. Aktualisieren.',
+    undo: 'Rückgängig',
+    replaceUnsavedTitle: 'Ungespeicherte Änderungen ersetzen?',
+    replaceUnsavedMessage:
+      'Das Wiederherstellen ersetzt deine ungespeicherten Änderungen.',
+    replace: 'Ersetzen',
+    imageSideBySide: 'Nebeneinander',
+    imageSwipe: 'Wischen',
+    imageOnion: 'Überblenden',
+    imageModeA11y: 'Bilder vergleichen',
+    imageBefore: 'Vorher',
+    imageAfter: 'Nachher',
+    pdfOpenBefore: 'Vorher öffnen',
+    pdfOpenAfter: 'Nachher öffnen',
+    imageAdded: 'Hinzugefügt',
+    imageDeleted: 'Gelöscht',
+    imageUnreadable: 'Dieses Bild konnte nicht gelesen werden',
+    imageNoPreview: 'Keine Vorschau',
+    imageTooLarge: "Zu groß für die Vorschau",
+    imageUnsupported: "Vorschau für dieses Format nicht möglich",
+    imageMissing: "Datei nicht gefunden",
+    imageLoading: 'Bild wird geladen',
+    imageBlend: 'Überblendung',
+    unchangedLines: ({ count }) => (count === 1 ? '1 unveränderte Zeile' : `${count} unveränderte Zeilen`),
+    agentFallback: 'der Agent',
+  },
+} as const satisfies Pick<Record<string, Shared_hunkReviewTranslations.Labels>, "de">;
+
+return { hunkReviewTranslations };
+})();
+
+const Domain_storeInstalledTranslations = (() => {
+const storeInstalledTranslations = {
+  "de": {
+    title: 'Installiert',
+    purpose:
+      'Alles, was Happier verwaltet, auf jeder Machine und in jedem Projekt: wo es läuft, ob alles in Ordnung ist und was dich braucht.',
+    searchPlaceholder: 'Alles durchsuchen, was Happier verwaltet',
+    groupBy: 'Gruppieren nach',
+    groupKind: 'Art',
+    groupMachine: 'Machine',
+    groupProject: 'Projekt',
+    status: 'Status',
+    present: ({ count }) =>
+      count === 1
+        ? 'Happier verwaltet 1 Element für dich.'
+        : `Happier verwaltet ${count} Elemente für dich.`,
+    presentAcross: ({ count, machines }) =>
+      `Happier verwaltet ${count === 1 ? '1 Element' : `${count} Elemente`} auf ${machines === 1 ? '1 Rechner' : `${machines} Rechner`}.`,
+    needYou: ({ count }) =>
+      count === 1 ? '1 braucht dich.' : `${count} brauchen dich.`,
+    includedMore: ({ count }) => `${count} weitere ${count === 1 ? 'ist' : 'sind'} in Happier enthalten.`,
+    includedBody: 'Sie kommen mit Happier und werden mit Happier aktualisiert.',
+    partial: 'Ein Teil ist noch nicht geladen, das ist vielleicht nicht alles.',
+    needsYou: 'Braucht dich',
+    all: ({ count }) => `Alle ${count}`,
+    allUnknown: 'Alle',
+    fewer: 'Weniger',
+    sectionNone: 'Noch nichts.',
+    browserProfileEmpty: 'Browserprofil, noch ohne Erweiterungen',
+    browseKind: 'Durchsuchen',
+    sectionUnavailable: 'Konnte gerade nicht geladen werden.',
+    sectionPartial: 'Ein Teil ist noch nicht geladen.',
+    sectionIncomplete: 'Ein Teil konnte nicht gelesen werden; die Liste ist vielleicht nicht vollständig.',
+    accountGroup: 'Dein Konto',
+    accountGroupBody: 'An keine Machine und kein Projekt gebunden.',
+    unassignedGroup: 'Noch ohne Ort',
+    unassignedGroupBody: 'Wo diese laufen, ist noch nicht bekannt.',
+    noProjectGroup: 'Kein Projekt',
+    noProjectGroupBody: 'Keinem Projekt zugeordnet.',
+    everyMachine: 'Alle Rechner',
+    appNoPage: 'Noch keine Seite zum Öffnen',
+    machineFallback: 'Eine Machine',
+    emptyTitle: 'Noch nichts hier',
+    emptyBody:
+      'MCP-Server, Skills, Agents, Anbieter und Plugins, die du hinzufügst, erscheinen hier – mit Ort und dem, was dich braucht.',
+    browse: 'Store durchsuchen',
+    noMatch: ({ query }) => `Keine Treffer für „${query}“`,
+    noMatchFilters: 'Keine Treffer für diese Filter',
+    clear: 'Zurücksetzen',
+    unavailable:
+      'Installiert kann für dieses Konto gerade nicht angezeigt werden.',
+    machineTitle: 'Auf dieser Machine',
+    machineBody: 'Alles, was Happier hier verwaltet.',
+    openInInstalled: 'In Installiert öffnen',
+  },
+} as const satisfies Pick<Record<string, Shared_storeInstalledTranslations.Labels>, "de">;
+
+return { storeInstalledTranslations };
+})();
+
+const Domain_connectedAccountCallbackTranslations = (() => {
+const connectedAccountCallbackTranslations = {
+  "de": Shared_connectedAccountCallbackTranslations.callbackCopy('de', {
+        connectedBody: 'Zurück zu deinen verbundenen Konten…',
+        pasteBody: 'Füge ihn auf der Verbindungsseite ein, auf der du die Anmeldung gestartet hast. Er funktioniert nur dort, einmal.',
+        invalidBody: 'Starte die Anmeldung erneut auf der Verbindungsseite.',
+        unfinishedBody: 'Kehre zur Verbindungsseite zurück, um die Anmeldung fortzusetzen, oder füge dort diese Rückgabe ein.',
+        openConnections: 'Verbundene Konten öffnen',
+    }),
+} as const satisfies Pick<Record<Shared_connectedAccountCallbackTranslations.Locale, Shared_connectedAccountCallbackTranslations.CallbackCopy>, "de">;
+
+return { connectedAccountCallbackTranslations };
+})();
+
+const Domain_skillsPageTranslations = (() => {
+const de: Shared_skillsPageTranslations.SkillsPageTranslation = {
+  pane: { thisBot: "Von diesem Bot erstellt", yours: "Deine", registries: "Aus deinen Registries", other: "Andere Skills", allSkills: "Alle deine Skills" },
+  saved: {
+    saved: "In deinen Skills gespeichert",
+    notAttached: "Hier nicht angehängt",
+    attachAgain: "Erneut anhängen",
+    liveNow: "Jetzt aktiv",
+    loadsAfterTurn: "Wird nach diesem Zug geladen",
+    restartNow: "Jetzt neu starten",
+    needsRestart: "Braucht einen Neustart",
+    view: "Ansehen",
+    liveNowDetail: ({ name }) => name + " nutzt ihn ab der nächsten Nachricht.",
+    loadsAfterTurnDetail: "Er kommt zwischen zwei Zügen dazu. Das Gespräch bleibt erhalten.",
+    restartDetail: "Ein Neustart behält das Gespräch.",
+    restartTerminalDetail: "Starte sie im Terminal neu. Das Gespräch bleibt erhalten.",
+    notAttachedDetail: "Er ist in deinen Skills; diese Sitzung hat ihn nicht übernommen.",
+    onlyUses: ({ name }) => "nur " + name + " nutzt ihn",
+  },
+  maker: {
+    title: "Erstellt von",
+    anyone: "Allen",
+    you: "Dir",
+    anyBot: "Jedem Bot",
+    registries: "Aus Registries",
+    session: "Sitzung",
+    person: "Eine andere Person",
+    unknown: "Unbekannter Ersteller",
+    openSession: "Sitzung öffnen",
+    createdHere: "In Happier erstellt",
+  },
+  title: 'Skills',
+  pageDescription:
+    'Anweisungen, die deine Agenten nutzen, wenn eine Aufgabe sie braucht. Füge einen Skill einmal hinzu, und er erreicht jede Maschine.',
+  searchPlaceholder: 'Skills suchen',
+  addSkill: 'Skill hinzufügen',
+  allSkills: 'Alle Skills',
+  needLook: ({ count }) =>
+    count === 1 ? '1 braucht einen Blick' : `${count} brauchen einen Blick`,
+  inUse: 'In Gebrauch',
+  off: 'Aus',
+  updates: 'Updates',
+  noOwnSkills: 'Noch keine eigenen Skills',
+  noMatch: ({ query }) => `Keine Skills passen zu „${query}“`,
+  loadFailed: 'Deine Skills konnten nicht geladen werden',
+  home: {
+    reach: ({ count, agents, machines }) =>
+      `${count} ${count === 1 ? 'Skill erreicht' : 'Skills erreichen'} ${agents} auf ${machines} ${machines === 1 ? 'Maschine' : 'Maschinen'}`,
+    reachNeedLook: ({ count }) =>
+      `, und ${count} ${count === 1 ? 'braucht' : 'brauchen'} einen Blick`,
+    reachNone: 'Noch ist keiner deiner Skills irgendwo an',
+    reachWaiting: ({ count }) =>
+      `${count} ${count === 1 ? 'Skill ist' : 'Skills sind'} an. Sie erreichen deine Agents, sobald eine Maschine meldet, welche sie hat.`,
+    unsupported: ({ count, agents }) =>
+      `${count} ${count === 1 ? 'Skill ist' : 'Skills sind'} an, aber ${agents} kann keine Skills nutzen.`,
+    unsupportedNote: ({ agents }) => `${agents} kann keine Skills nutzen.`,
+    noMachines: 'Deine Skills erreichen die erste Maschine, die du verbindest.',
+    catchesUp: ({ machines }) => `${machines} holt auf, sobald sie zurück ist.`,
+    catchUpCount: ({ count }) => `${count} Offline-Maschinen holen auf, sobald sie zurück sind.`,
+    mapLabel: ({ skills, machines }) =>
+      `${skills} Skills auf ${machines} Maschinen`,
+    offlineLastKnown: ({ time }) => `Offline · zuletzt bekannt ${time}`,
+    offline: 'Offline',
+    noAgents: 'Noch keine Agenten',
+    noSkillAgents: 'Kein Agent hier nutzt Skills',
+    moreMachines: ({ count }) => `${count} weitere Maschinen`,
+    needsLook: 'Braucht einen Blick',
+    updateWaiting: 'Eine neuere Version wartet an ihrer Quelle.',
+    modifiedUpstream: 'Du hast ihn geändert, und die Quelle auch.',
+    removedFromSource: 'Die Quelle hat ihn nicht mehr. Behalte deine Kopie oder entferne ihn.',
+    maskedOn: ({ machine }) => `Dort gewinnt die eigene Kopie von ${machine}.`,
+    unreadable: 'Dieser Skill konnte nicht gelesen werden.',
+    byId: ({ id }) => `Skill ${id}`,
+    writeOwn: 'Selbst schreiben',
+    review: 'Ansehen',
+    decide: 'Entscheiden',
+    whereTitle: 'Wo er an ist',
+    whereBody:
+      'Ein neuer Skill ist überall an. Beschränke ihn auf ein Projekt oder eine Maschine oder halte ihn von einem Agenten fern; die genaueste Regel gewinnt, und jede Sitzung kann einen hinzufügen oder weglassen.',
+    firstHeadline: 'Deine Skills erreichen jetzt jede Maschine',
+    firstPurpose:
+      'Ein Skill ist ein Ordner mit Anweisungen, manchmal mit Skripten, den ein Agent nutzt, wenn eine Aufgabe ihn braucht. Deine folgen dir jetzt auf jede Maschine.',
+    firstSentence: ({ on, off }) =>
+      `${on > 0 ? `${on} ${on === 1 ? 'Skill ist' : 'Skills sind'} dort an, wo du ${on === 1 ? 'ihn' : 'sie'} schon genutzt hast. ` : ''}${off} warten unter deinem Home, bis du wählst.`,
+    choose: 'Auswählen, was an ist',
+    chooseOff: ({ count }) => `${count} aus`,
+    nothingElse: 'Sonst ändert sich nichts, bis du wählst.',
+    emptyTitle: 'Bring es deinen Agenten einmal bei',
+    emptyBody:
+      'Ein Skill ist ein Ordner mit Anweisungen, den ein Agent nutzt, wenn eine Aufgabe ihn braucht. Füge hier einen hinzu, und jeder Agent auf jeder Maschine bekommt ihn.',
+    emptySentence:
+      'Maschinen kreisen um dein Home. Ein Skill, den du hinzufügst, reist zu jeder von ihnen, für jeden Agenten darauf.',
+  },
+};
+
+const skillsPageTranslations = {
+  "de": de,
+} as const;
+
+return { skillsPageTranslations };
+})();
+
+const Domain_capabilityNoticeTranslations = (() => {
+const capabilityNoticeTranslations = {
+  "de": Shared_capabilityNoticeTranslations.copy(['{name} konnte nicht starten', '{name} konnte nicht geladen werden', '{key} fehlt', 'Anmeldung erforderlich', 'die Anmeldung gilt für eine andere Adresse',
+    'Remote-Bridge nicht verfügbar', 'dieser Agent kann Skills so nicht übernehmen', 'MCP-Server', 'Skills', 'seine Dateien konnten nicht gelesen werden', 'seine Anmeldung konnte nicht an diese Sitzung übergeben werden']),
+} as const;
+
+return { capabilityNoticeTranslations };
+})();
+
+const Domain_skillDetailTranslations = (() => {
+const de: Shared_skillDetailTranslations.SkillDetailTranslation = {
+  whereDescription:
+    'Einmal einstellen, und jede Maschine folgt. Die genaueste Regel gewinnt.',
+  tokensWhenUsed: ({ tokens }) => `${tokens} Tokens bei Nutzung`,
+  menu: {
+    duplicate: 'Duplizieren',
+    makeCopy: 'Bearbeitbare Kopie erstellen',
+    moveToFolder: 'In Ordner verschieben',
+    noFolder: 'Kein Ordner',
+    exportZip: 'Als .zip exportieren',
+    copyLink: 'Link kopieren',
+    linkCopied: 'Link kopiert',
+  },
+  banner: {
+    couldntLoadTitle: 'Dieser Skill konnte nicht geladen werden',
+    couldntLoadBody:
+      'Deine Bibliothek hat nicht geantwortet. Sitzungen behalten die Kopie, die sie schon haben.',
+  },
+  instructions: {
+    title: 'Anweisungen',
+    edit: 'Bearbeiten',
+    done: 'Fertig',
+    preview: 'Vorschau',
+    showAll: 'Alle anzeigen',
+    showLess: 'Weniger anzeigen',
+    saving: 'Wird gespeichert…',
+    saved: 'Gespeichert · gilt für neue Sitzungen',
+    saveFailed: 'Konnte nicht gespeichert werden. Dein Text bleibt erhalten.',
+    conflict: 'Auf einem anderen Gerät geändert',
+    reviewBoth: 'Beide ansehen',
+    keepMine: 'Meine behalten',
+    takeTheirs: 'Andere übernehmen',
+    yours: 'Deine',
+    theirs: 'Andere',
+    lintOk: 'Name und Beschreibung sind gesetzt',
+    lintMissingName: 'Füge dem Frontmatter einen Namen hinzu',
+    lintMissingDescription:
+      'Füge eine Beschreibung hinzu, damit Agenten wissen, wann sie ihn nutzen',
+    lintNoFrontmatter: 'Beginne mit einem Frontmatter-Block: Name und Beschreibung',
+    readOnlyPlugin: 'Wird mit seinem Plugin geliefert und folgt dessen Version.',
+  },
+  files: {
+    title: 'Dateien',
+    description: ({ count }) =>
+      count === 1 ? '1 Datei, keine Skripte.' : `${count} Dateien, keine Skripte.`,
+    descriptionScripts: ({ count, scripts }) =>
+      `${count} Dateien, ${scripts === 1 ? '1 läuft als Skript' : `${scripts} laufen als Skripte`}.`,
+    script: 'Skript',
+    addFile: 'Datei hinzufügen',
+    addFilePrompt: 'Ihr Pfad im Skill.',
+    addFilePlaceholder: 'reference/notes.md',
+    remove: 'Entfernen',
+    removeTitle: ({ path }) => `${path} entfernen?`,
+    removeBody: 'Neue Sitzungen erhalten den Skill ohne diese Datei.',
+    more: ({ count }) => `${count} weitere`,
+    binary: 'Keine Textdatei',
+    loading: 'Wird geöffnet…',
+    afterAdd:
+      'Füge weitere Dateien hinzu, sobald der Skill in deiner Bibliothek ist.',
+  },
+  source: {
+    title: 'Quelle und Updates',
+    descriptionReview: 'Änderungen aus der Quelle warten auf deine Prüfung.',
+    descriptionAuto:
+      'Änderungen aus der Quelle kommen von selbst, außer du hast ihn geändert.',
+    descriptionPinned:
+      'An eine Version angeheftet. Änderungen aus der Quelle warten, bis du ihn löst.',
+    descriptionOwn: 'Gehört dir. Nur du änderst ihn.',
+    writtenByYou: 'Von dir geschrieben',
+    writtenByYouBody: 'Bearbeite ihn hier; jede Maschine bekommt die Änderung.',
+    uploadedByYou: 'Von dir hochgeladen',
+    foundOn: ({ machine }) => `Gefunden auf ${machine}`,
+    foundOnBody: ({ path }) => path,
+    firstParty: 'In Happier eingebaut · folgt dessen Version',
+    verifiedByDigest: 'Per Prüfsumme verifiziert',
+    noDigestPublished: 'Keine Prüfsumme veröffentlicht',
+    added: ({ date }) => `hinzugefügt ${date}`,
+    updates: 'Updates',
+    upToDate: 'Aktuell',
+    updateAvailable: 'Update verfügbar',
+    removedFromSource: 'Seine Quelle hat ihn nicht mehr',
+    notChecked: 'Noch nicht geprüft',
+    checked: ({ time }) => `geprüft ${time}`,
+    checkNow: 'Jetzt prüfen',
+    view: 'Ansehen',
+    auto: 'Automatisch aktualisieren',
+    autoBody:
+      'Aus bei Skills von anderen, damit du jede Änderung zuerst siehst',
+    pin: 'An diese Version anheften',
+    pinBody: 'Diese Version behalten, bis du sie löst',
+    checkFailed: 'Quelle konnte nicht geprüft werden',
+  },
+  machines: {
+    description: 'Was die Agenten jeder Maschine gerade bekommen.',
+    nowhere: 'Er ist noch auf keiner Maschine an.',
+    offline: 'Maschine offline',
+    lastKnown: ({ time }) => `zuletzt bekannt ${time}`,
+    masked: ({ agent, machine }) =>
+      `${agent}: Die eigene Kopie von ${machine} gewinnt`,
+    cantLoad: ({ agents }) => `${agents} kann hier keine Skills laden`,
+    previewFailed: ({ agent }) => `${agent}: —`,
+    checking: 'Wird geprüft…',
+    projectNote:
+      'In einem Projekt kann die eigene Kopie des Projekts trotzdem gewinnen.',
+    noAgent: 'Kein Agent hier bekommt ihn',
+    offlineCount: ({ count }) => `${count} offline`,
+    summaryOn: ({ agents, machine }) => `${agents} auf ${machine}`,
+    summaryOnMany: ({ agents, count }) => `${agents} auf ${count} Geräten`,
+  },
+  details: {
+    title: 'Details',
+    summary: 'Revision und Kopien außerhalb von Happier',
+    revision: 'Revision',
+    contentHash: 'Inhalts-Hash',
+    alsoInstall: ({ machine }) => `Auch auf ${machine} installieren`,
+    alsoInstallBody:
+      'Zur Nutzung außerhalb von Happier, im eigenen Skills-Ordner jedes Agenten',
+    installed: 'Installiert',
+    install: 'Installieren',
+  },
+  leave: {
+    remove: 'Skill entfernen',
+    footnote: 'Laufende Sitzungen behalten ihn, bis sie neu starten.',
+    confirmTitle: ({ name }) => `${name} entfernen?`,
+    confirmBody:
+      'Er verschwindet aus deiner Bibliothek und von jeder Maschine. Laufende Sitzungen behalten ihn, bis sie neu starten.',
+    confirm: 'Entfernen',
+  },
+  draft: {
+    title: 'Neuer Skill',
+    purpose:
+      'Bring deinen Agenten etwas einmal bei. Sie lesen die Beschreibung, um zu entscheiden, wann sie ihn nutzen.',
+    add: 'Zur Bibliothek hinzufügen',
+    adding: 'Wird hinzugefügt…',
+    addFailed:
+      'Der Skill konnte nicht hinzugefügt werden. Dein Text bleibt erhalten.',
+  },
+};
+
+const skillDetailTranslations = {
+  "de": de,
+} as const;
+
+return { skillDetailTranslations };
+})();
+
+const Domain_skillsFoundTranslations = (() => {
+const de: Shared_skillsFoundTranslations.SkillsFoundTranslation = {
+  title: 'Auf deinen Maschinen gefunden',
+  purpose:
+    'Skills, die deine Agenten schon auf jeder Maschine haben. Happier ändert sie nie. Füge einen zur Bibliothek hinzu, um ihn auf jeder Maschine zu haben.',
+  checkAgain: 'Erneut prüfen',
+  add: 'Zur Bibliothek hinzufügen',
+  addAll: ({ count }) => `Alle ${count} hinzufügen`,
+  makeCopy: 'Kopie erstellen',
+  compare: 'Vergleichen',
+  hideCompare: 'Ausblenden',
+  inLibrary: 'In deiner Bibliothek',
+  adding: 'Wird hinzugefügt…',
+  plugin: 'Plugin',
+  readBy: ({ agents, count }) =>
+    count === 1 ? `${agents} liest ihn` : `${agents} lesen ihn`,
+  fromPlugin: ({ plugin }) => `Aus dem Plugin ${plugin}`,
+  installedByHappier: 'Von Happier installiert',
+  masks: ({ machine }) =>
+    `Deine Bibliothek hat einen Skill mit diesem Namen. Auf ${machine} gilt diese Kopie, deshalb nutzen die Agenten dort sie.`,
+  more: ({ count }) => `${count} weitere`,
+  showFewer: 'Weniger anzeigen',
+  looking: 'Suche…',
+  nothingHere: 'Hier wurden keine Skills gefunden.',
+  quietEmpty: ({ count, others }) =>
+    `Keine Skills auf ${count} ${others ? 'weiteren ' : ''}${count === 1 ? 'Maschine' : 'Maschinen'} gefunden`,
+  quietLooking: ({ count }) =>
+    `Suche auf ${count} ${count === 1 ? 'Maschine' : 'Maschinen'}…`,
+  lastKnown: ({ time }) => `zuletzt bekannt ${time}`,
+  offlineBring: ({ machine }) =>
+    `Bring ${machine} online, um davon hinzuzufügen.`,
+  offlineUnseen: ({ count }) =>
+    count === 1
+      ? `1 Offline-Maschine wurde noch nicht angesehen. Bring sie online, um ihre Skills zu sehen.`
+      : `${count} Offline-Maschinen wurden noch nicht angesehen. Bring eine online, um ihre Skills zu sehen.`,
+  scanFailed: ({ machine }) =>
+    `Skills von ${machine} konnten nicht gelesen werden`,
+  tryAgain: 'Erneut versuchen',
+  olderMachine: ({ machine }) =>
+    `${machine} braucht ein neueres Happier, um die Skills aufzulisten.`,
+  rootFailed: ({ path }) => `${path} konnte nicht gelesen werden`,
+  noMachinesTitle: 'Noch keine Maschinen',
+  noMachinesBody:
+    'Verbinde eine Maschine, um die Skills zu sehen, die deine Agenten dort schon haben.',
+  addFailed: ({ name }) =>
+    `${name} konnte nicht hinzugefügt werden. Es wurde nichts geändert.`,
+  compareYours: 'Deine Bibliothek',
+  compareTheirs: ({ machine }) => `Auf ${machine}`,
+  compareFailed: ({ machine }) =>
+    `Die Kopie auf ${machine} konnte nicht gelesen werden.`,
+  destination: 'Auf deinen Maschinen gefunden',
+  homeBody:
+    'Schon in den eigenen Ordnern deiner Agenten. Füge einen zur Bibliothek hinzu, dann begleitet er dich überall.',
+  seeAll: ({ count }) => `Alle ${count} ansehen`,
+  alreadyOnMachines: ({ count }) => `${count} Skills sind schon auf deinen Maschinen`,
+  install: {
+    installedIn: ({ path }) => `Installiert in ${path}`,
+    externallyModified: ({ machine }) =>
+      `Die Kopie auf ${machine} wurde außerhalb von Happier bearbeitet und deshalb unverändert gelassen.`,
+    removeAnyway: 'Trotzdem entfernen',
+    removeTitle: ({ machine }) => `Von ${machine} entfernen?`,
+    removeBody:
+      'Das löscht die Kopie, die Happier dort in die Agent-Ordner gelegt hat. Deine Bibliothek behält den Skill.',
+    remove: 'Entfernen',
+    nativeConflict: ({ machine }) =>
+      `${machine} hat in einem Agent-Ordner schon einen anderen Skill mit diesem Namen. Happier hat ihn unberührt gelassen.`,
+    failed: ({ machine }) =>
+      `Installation auf ${machine} fehlgeschlagen. Es wurde nichts geändert.`,
+    removeFailed: ({ machine }) =>
+      `Konnte nicht von ${machine} entfernt werden.`,
+    partial: ({ machine }) =>
+      `Auf ${machine} für einige Agenten installiert. Für die anderen konnte nicht geschrieben werden.`,
+  },
+};
+
+const skillsFoundTranslations = {
+  "de": de,
+} as const;
+
+return { skillsFoundTranslations };
+})();
+
+const Domain_mcpFoundTranslations = (() => {
+const de: Shared_mcpFoundTranslations.McpFoundTranslation = {
+  purpose: 'MCP-Server, die deine Agenten auf jeder Maschine bereits eingerichtet haben. Füge einen zu Happier hinzu, und jede Sitzung bekommt ihn, auf jeder Maschine.',
+  checkAgain: 'Erneut prüfen',
+  add: 'Hinzufügen',
+  inHappier: 'In Happier',
+  setUpIn: ({ agent }) => `Eingerichtet in ${agent}`,
+  offIn: ({ agent }) => `Aus in ${agent}`,
+  looking: 'Wird gesucht…',
+  nothingHere: 'Hier wurden keine MCP-Server gefunden.',
+  lastKnown: ({ time }) => `zuletzt bekannt ${time}`,
+  offlineBring: ({ machine }) => `Bring ${machine} online, um von dort hinzuzufügen.`,
+  offlineUnseen: ({ count }) =>
+    count === 1
+      ? '1 Offline-Maschine wurde noch nicht durchsucht. Bring sie online, um ihre MCP-Server zu sehen.'
+      : `${count} Offline-Maschinen wurden noch nicht durchsucht. Bring eine online, um ihre MCP-Server zu sehen.`,
+  scanFailed: ({ machine }) => `Die MCP-Server von ${machine} konnten nicht gelesen werden`,
+  tryAgain: 'Erneut versuchen',
+  olderMachine: ({ machine }) => `${machine} braucht ein neueres Happier, um seine MCP-Server aufzulisten.`,
+  noMachinesTitle: 'Noch keine Maschinen',
+  noMachinesBody: 'Verbinde eine Maschine, um die MCP-Server zu sehen, die deine Agenten dort schon eingerichtet haben.',
+  warningReadFailed: ({ agent }) => `Die MCP-Einstellungen von ${agent} konnten nicht gelesen werden`,
+  warningReadFailedNoAgent: 'Eine MCP-Einstellungsdatei konnte nicht gelesen werden',
+  warningParseFailed: ({ agent }) => `Die MCP-Einstellungen von ${agent} konnten nicht verstanden werden`,
+  warningParseFailedNoAgent: 'Eine MCP-Einstellungsdatei konnte nicht verstanden werden',
+  warningUnsupported: ({ agent }) => `Einige MCP-Server von ${agent} können noch nicht gelesen werden`,
+  warningUnsupportedNoAgent: 'Einige MCP-Server hier können noch nicht gelesen werden',
+  quietEmpty: ({ count, others }) => `Keine MCP-Server auf ${count} ${others ? (count === 1 ? 'weiteren ' : 'weiteren ') : ''}${count === 1 ? 'Maschine' : 'Maschinen'} gefunden`,
+  quietLooking: ({ count }) =>
+    `Suche auf ${count} ${count === 1 ? 'Maschine' : 'Maschinen'}…`,
+};
+
+const mcpFoundTranslations = {
+  "de": de,
+} as const;
+
+return { mcpFoundTranslations };
+})();
+
+const Domain_skillsUpdatesTranslations = (() => {
+const de: Shared_skillsUpdatesTranslations.SkillsUpdatesTranslation = {
+  updates: {
+    title: 'Updates',
+    purpose:
+      'Neuere Versionen von dort, woher deine Skills stammen. Nichts ändert sich, bis du entscheidest.',
+    checkNow: 'Jetzt prüfen',
+    checking: 'Wird geprüft…',
+    readyTitle: 'Bereit zum Aktualisieren',
+    readyBody: 'Du hast diese nicht geändert, das Update ist also sicher.',
+    choiceTitle: 'Deine Wahl nötig',
+    choiceBody: ({ name }) =>
+      `Du hast ${name} bearbeitet, und die Quelle hat eine neuere Version. Wähle pro Datei; beide Seiten werden gezeigt.`,
+    refChange: ({ from, to }) => `von ${from} zu ${to}`,
+    newerWaiting: 'Eine neuere Version wartet',
+    linesChanged: ({ count, file }) =>
+      `${count} ${count === 1 ? 'Zeile' : 'Zeilen'} in ${file} geändert`,
+    filesChanged: ({ count }) =>
+      `${count} ${count === 1 ? 'Datei' : 'Dateien'} geändert`,
+    viewChanges: 'Änderungen ansehen',
+    hideChanges: 'Änderungen ausblenden',
+    update: 'Aktualisieren',
+    fileDiffers: ({ count }) =>
+      `Deine und ihre unterscheiden sich · ${count} ${count === 1 ? 'Zeile' : 'Zeilen'}`,
+    fileTheirsOnly: 'Neu in ihrer Version',
+    fileMineOnly: 'Nur in deiner',
+    fileUnchanged: 'Unverändert',
+    nothingToChoose: 'Nichts zu wählen',
+    keepNote: ({ name }) =>
+      `Behältst du eine deiner Dateien, bleibt ${name} als geändert markiert, und spätere Updates fragen weiter.`,
+    notNow: 'Nicht jetzt',
+    applyChoices: 'Auswahl anwenden',
+    upToDate: 'Alles ist aktuell',
+    noSources: 'Keiner deiner Skills stammt aus einer Quelle mit Updates. Skills, die du von GitHub oder aus einer Registry hinzufügst, zeigen ihre neueren Versionen hier.',
+    updatedTitle: 'Aktualisiert',
+    checkedAt: ({ time }) => `Geprüft ${time}`,
+    checkFailed: 'Updates konnten nicht geprüft werden.',
+    diffFailed: 'Die Änderungen konnten nicht geladen werden.',
+    applyFailed: 'Konnte nicht aktualisiert werden.',
+    applied: ({ ref }) => `Aktualisiert auf ${ref}`,
+    tryAgain: 'Erneut versuchen',
+  },
+  choose: {
+    purpose: ({ total, off }) =>
+      `Deine Bibliothek hat ${total} Skills. ${off} bleiben aus, bis du wählst, deine Sitzungen ändern sich also noch nicht.`,
+    purposeIdle: 'Entscheide, welche deiner Skills deine Agents bekommen.',
+    migratedTitle: ({ count }) =>
+      `${count} ${count === 1 ? 'ist' : 'sind'} schon dort an, wo du sie genutzt hast`,
+    migratedBody: ({ names }) =>
+      `${names} kamen aus deinem Konto- oder Projektkontext und bleiben dort an, wo du sie genutzt hast.`,
+    listTitle: 'Wähle, was deine Agents bekommen',
+    selectAll: 'Alle auswählen',
+    selectNone: 'Keine auswählen',
+    usedOn: ({ date }) => `Genutzt ${date}`,
+    selected: ({ count }) => `${count} ausgewählt`,
+    turnOn: ({ count }) => `${count} überall einschalten`,
+    failed:
+      'Konnten nicht eingeschaltet werden. Deine Auswahl bleibt erhalten.',
+    nothingWaits:
+      'Jeder Skill hat schon einen Platz. Schalte einen auf seiner eigenen Seite ein oder grenze ihn ein.',
+  },
+  shelf: {
+    title: 'Aus deinen Registries',
+    titleNew: 'Fang mit einem davon an',
+    browseAll: 'Alle durchsuchen',
+    fromSource: ({ source }) => `Neu und beliebt auf ${source}.`,
+    add: 'Hinzufügen',
+    inLibrary: 'In deiner Bibliothek',
+    addFailed: 'Konnte nicht hinzugefügt werden',
+  },
+};
+
+const skillsUpdatesTranslations = {
+  "de": de,
+} as const;
+
+return { skillsUpdatesTranslations };
+})();
+
+const Domain_mcpPageTranslations = (() => {
+const configDe: Shared_mcpPageTranslations.McpConfigTranslation = {
+  transport: 'Läuft als',
+  command: 'Befehl',
+  commandDescription: 'Das Programm, das jede Maschine startet.',
+  arguments: 'Argumente',
+  argument: ({ position }) => `Argument ${position}`,
+  removeArgument: ({ position }) => `Argument ${position} entfernen`,
+  addArgument: 'Argument hinzufügen',
+  workingFolder: 'Arbeitsordner',
+  workingFolderDescription: 'Wo das Programm startet.',
+  sessionFolder: 'Der Projektordner der Sitzung',
+  aFolder: 'Ein Ordner auf der Maschine',
+  folderPath: 'Ordner',
+  environment: 'Umgebung',
+  environmentDescription: 'Werte, die das Programm liest. Secrets bleiben Ende-zu-Ende-verschlüsselt und werden nur auf der Maschine in die Sitzung geschrieben.',
+  addVariable: 'Variable hinzufügen',
+  address: 'Adresse',
+  addressDescription: 'Wohin sich Happier verbindet; jede Maschine verwendet dieselbe.',
+  headers: 'Header',
+  headersDescription: 'Werden mit jeder Anfrage gesendet. Ein Secret zeigt seinen Namen, nie seinen Wert.',
+  addHeader: 'Header hinzufügen',
+  saved: 'Gespeichert · gilt für neue Sitzungen',
+  saving: 'Speichern…',
+  saveFailed: 'Konnte nicht gespeichert werden. Deine Änderung ist noch da.',
+  different: 'Auf einer Maschine anders…',
+  differentNone: 'Jede Maschine verwendet diese Werte',
+  differentOne: ({ machine }) => `${machine} weicht ab`,
+  differentOn: ({ machine }) => `Abweichend auf ${machine}`,
+  addDifference: 'Maschinenabweichung hinzufügen',
+  addAnother: 'Weitere Maschine',
+  differentCount: ({ count }) => `${count} ${count === 1 ? 'Maschine weicht' : 'Maschinen weichen'} ab`,
+  differsFolder: ({ path }) => `Arbeitsordner ${path}`,
+  differsCommand: 'Befehl',
+  differsArguments: 'Argumente',
+  differsAddress: 'Adresse',
+  differsValues: ({ names }) => names,
+  inFolderOn: ({ folder, machine }) => `In ${folder} auf ${machine}`,
+  removeDifference: 'Entfernen',
+};
+
+const de: Shared_mcpPageTranslations.McpPageBase = {
+  allServers: 'Alle Server',
+  foundOnMachines: 'Auf deinen Maschinen gefunden',
+  inUse: 'In Verwendung',
+  off: 'Aus',
+  fromPlugins: 'Aus Plugins',
+  builtIn: 'Integriert',
+  builtInHappier: 'Happier',
+  builtInHappierDescription: 'Sitzungen, Dateien, Maschinen und deine Aktionen',
+  builtInActions: 'Aktionen',
+  remote: 'Remote',
+  local: 'Lokal',
+  tools: {
+    title: 'Tools',
+    description: 'Was deine Agenten aufrufen dürfen. Fragen zeigt eine Freigabekarte, Erlauben läuft ohne Nachfrage, Aus blendet das Tool aus.',
+    defaultTitle: 'Standard für Tools',
+    defaultAsk: 'Fragen',
+    defaultReadOnly: 'Nur Lesen erlauben',
+    defaultAll: 'Alles erlauben',
+    defaultAskDescription: 'Jedes Tool fragt zuerst. Ein Tool, das du selbst eingestellt hast, behält seine Einstellung.',
+    defaultReadOnlyDescription: 'Tools, die nur lesen, laufen ohne Nachfrage; alles, was schreibt, fragt zuerst. Ein Tool, das du selbst eingestellt hast, behält seine Einstellung.',
+    defaultAllDescription: 'Jedes Tool läuft ohne Nachfrage. Ein Tool, das du selbst eingestellt hast, behält seine Einstellung.',
+    off: 'Aus',
+    ask: 'Fragen',
+    allow: 'Erlauben',
+    search: ({ count }) => `${count} Tools durchsuchen`,
+    filterAll: 'Alle',
+    filterReadOnly: 'Nur Lesen',
+    filterWrites: 'Schreibend',
+    filterDestructive: 'Destruktiv',
+    filterSetByYou: 'Von dir festgelegt',
+    readOnly: 'Nur Lesen',
+    writes: 'Schreibend',
+    destructive: 'Destruktiv',
+    setByYou: 'Von dir festgelegt',
+    backToDefault: ({ value }) => `Von dir festgelegt · wieder den Standard verwenden (${value})`,
+    useDefault: ({ value }) => `Standard verwenden (${value})`,
+    showAll: ({ count }) => `Alle ${count} Tools anzeigen`,
+    cost: ({ count, tokens }) => `${count} ${count === 1 ? 'Tool' : 'Tools'} · ${tokens} Tokens, wenn alle geladen werden.`,
+    onDemand: ({ agents, count }) => `${agents} ${agents.includes(' und ') ? 'laden' : 'lädt'} ein Tool nur bei Bedarf; andere Agenten laden beim Start einer Sitzung alle ${count}.`,
+    notApply: ({ agents }) => `Tool-Einstellungen gelten nicht für ${agents}: Sie entscheiden selbst.`,
+    blocked: ({ agents }) => `In ${agents} blockiert Aus ein Tool beim Aufruf, statt es auszublenden.`,
+    hiddenRestart: ({ agents }) => `Ein wieder eingeschaltetes ausgeblendetes Tool gilt für neue ${agents}-Sitzungen.`,
+    notListed: 'Seine Tools erscheinen nach dem ersten Test auf einer Maschine.',
+    lastListed: ({ date }) => `Zuletzt aufgelistet ${date}. Sie kehren zurück, sobald die Anmeldung wieder funktioniert.`,
+    loadFailed: 'Die Tools konnten nicht gelesen werden.',
+    noMatch: 'Keine passenden Tools.',
+    setFailed: 'Das konnte nicht gespeichert werden. Versuche es erneut.',
+  },
+  detail: {
+    configurationTitle: 'Konfiguration',
+    configurationDescription: 'Bearbeite jeden Wert direkt; er gilt für neue Sitzungen auf jeder Maschine.',
+    machinesDescription: 'Happier verbindet sich von jeder Maschine aus, deshalb wird jede einzeln geprüft.',
+    test: 'Testen',
+    onNowhere: 'Es ist noch auf keiner Maschine aktiviert.',
+    toolsOn: ({ count }) => `${count} ${count === 1 ? 'Tool' : 'Tools'}`,
+    checked: ({ time }) => `geprüft ${time}`,
+    notChecked: 'noch nicht geprüft',
+    lastKnown: ({ time }) => `zuletzt bekannt ${time}`,
+    summary: ({ ready, problems, offline, unchecked }) => {
+      const total = ready + problems + offline + unchecked;
+      if (total > 1 && ready === total) return `Bereit auf allen ${total}`;
+      if (total > 1 && offline === total) return `Alle ${total} offline`;
+      return [
+        ready > 0 ? `Bereit auf ${ready}` : null,
+        problems > 0 ? `${problems} ${problems === 1 ? 'braucht' : 'brauchen'} einen Blick` : null,
+        unchecked > 0 ? `${unchecked} zu testen` : null,
+        offline > 0 ? `${offline} offline` : null,
+      ].filter(Boolean).join(' · ');
+    },
+    detailsTitle: 'Details',
+    versionLine: ({ version, protocol }) => protocol ? `Version ${version} · Protokoll ${protocol}` : `Version ${version}`,
+    update: {
+      title: 'Updates',
+      upToDate: 'Aktuell',
+      available: ({ version }) => `Version ${version} ist verfügbar`,
+      checkFailed: 'Updates konnten nicht geprüft werden',
+      removed: 'Die Registry listet diesen Server nicht mehr. Er funktioniert weiter wie bisher.',
+      checkNow: 'Jetzt prüfen',
+      review: 'Ansehen',
+      readFailed: 'Die neue Version konnte nicht gelesen werden. Erneut versuchen.',
+      changesTitle: ({ version }) => `Auf ${version} aktualisieren`,
+      changesBody: 'Name, Werte, Tools und wo er aktiv ist bleiben unverändert.',
+      now: 'Jetzt',
+      after: 'Nach dem Update',
+      apply: 'Aktualisieren',
+      applyFailed: 'Update fehlgeschlagen. Deine Auswahl bleibt erhalten.',
+    },
+    serverInstructions: 'Server-Anweisungen',
+    lastError: 'Ausgabe des letzten Tests',
+    copy: 'Kopieren',
+    removeServer: 'Server entfernen',
+    removeFootnote: 'Entfernt ihn aus jeder Sitzung auf jeder Maschine und löscht seine Anmeldung.',
+    conflict: {
+      reason: 'Anderswo geändert',
+      review: 'Ansehen',
+      title: 'Änderungen prüfen',
+      description: 'Dieser Server wurde auf einem anderen Gerät geändert, während du ihn bearbeitet hast. Wähle, welche Werte bleiben.',
+      current: 'Aktuell',
+      yours: 'Deine',
+      notSet: 'Nicht gesetzt',
+      machines: 'Unterschiede je Maschine',
+      keepMine: 'Meine behalten',
+      useCurrent: 'Aktuelle übernehmen',
+      removedTitle: 'Anderswo entfernt',
+      removedDescription: 'Dieser Server wurde auf einem anderen Gerät entfernt. Deine Änderungen können nicht gespeichert werden.',
+      discard: 'Meine Änderungen verwerfen',
+    },
+    copyInstallLink: 'Installationslink kopieren',
+    installLinkLabel: 'Installationslink',
+    duplicate: 'Duplizieren',
+    fromPlugin: ({ plugin }) => `Von ${plugin}`,
+    pluginFootnote: ({ plugin }) => `Kommt mit ${plugin}. Deinstalliere das Plugin, um ihn zu entfernen.`,
+    banner: {
+      expiredTitle: ({ name }) => `Anmeldung bei ${name} abgelaufen`,
+      expiredBody: ({ name, date, count }) => `${name} akzeptiert sie${date ? ` seit ${date}` : ''} nicht mehr. Sitzungen starten ohne ${count ? `die ${count} Tools` : 'die Tools'}, bis du dich neu verbindest. Einmal neu verbinden gilt für jede Maschine.`,
+      signinTitle: ({ name }) => `Bei ${name} anmelden`,
+      signinBody: 'Sitzungen starten ohne seine Tools, bis du dich anmeldest. Einmal anmelden gilt für jede Maschine.',
+      moreAccessTitle: ({ name }) => `${name} braucht mehr Zugriff`,
+      moreAccessBody: 'Ein Tool hat Zugriff angefordert, den deine Anmeldung nicht hat. Erteile ihn einmal, und jede Maschine zieht nach.',
+      revokedTitle: ({ name }) => `${name} hat keinen Zugriff mehr`,
+      revokedBody: 'Die Anmeldung wurde widerrufen. Sitzungen starten ohne seine Tools, bis du dich erneut anmeldest.',
+      keyTitle: ({ name }) => `${name} braucht einen Schlüssel`,
+      keyBody: 'Ein benötigter Wert ist noch nicht gespeichert. Sitzungen starten ohne ihn, bis du einen hinzufügst.',
+      errorTitle: ({ name, machine }) => `${name} auf ${machine} gestoppt`,
+      errorBody: 'Sitzungen dort starten ohne seine Tools. Die Ausgabe des letzten Tests steht unter Details.',
+      cantrunTitle: ({ name, machine }) => `${name} läuft nicht auf ${machine}`,
+      cantrunBody: ({ runtime }) => `Diese Maschine braucht ${runtime}. Sitzungen dort starten ohne ihn; andere Maschinen sind in Ordnung.`,
+    },
+  },
+};
+
+const mcpPageTranslations = {
+  "de": { ...de, config: configDe },
+} as const satisfies Pick<Record<string, Shared_mcpPageTranslations.McpPageTranslation>, "de">;
+
+return { mcpPageTranslations };
+})();
+
+const Domain_valueRefRowsTranslations = (() => {
+const de: Shared_valueRefRowsTranslations.ValueRefRowsTranslation = {
+  name: 'Name',
+  value: 'Wert',
+  typeLabel: 'Werttyp',
+  text: 'Text',
+  savedSecret: 'Gespeichertes Secret',
+  fromMachine: 'Von der Maschine',
+  template: 'Template',
+  fromSession: 'Aus der Sitzung',
+  chooseSecret: 'Gespeichertes Secret wählen',
+  needsValue: 'Braucht einen Wert',
+  more: ({ name }) => `Mehr zu ${name}`,
+  edit: 'Bearbeiten…',
+  remove: 'Entfernen',
+  invalidEnvName: 'Verwende Großbuchstaben, Ziffern und _ und beginne mit einem Buchstaben.',
+  invalidHeaderName: 'Verwende nur Buchstaben, Ziffern und -.',
+  duplicateName: 'Dieser Name wird bereits verwendet.',
+  invalidMachine: 'Gib eine Variable der Maschine an, etwa ${HOME}.',
+};
+
+const valueRefRowsTranslations = {
+  "de": de,
+} as const;
+
+return { valueRefRowsTranslations };
+})();
+
+const Domain_agentAddTranslations = (() => {
+const agentAddTranslations = {
+  "de": Shared_agentAddTranslations.en,
+} as const;
+
+return { agentAddTranslations };
+})();
+
+const Domain_mcpHomeTranslations = (() => {
+const de: Shared_mcpHomeTranslations.McpHomeTranslation = {
+  loadFailed: 'Deine Server konnten nicht geladen werden',
+  purpose:
+    'Tools, die deine Agenten aufrufen können: dein Issue-Tracker, ein Browser, eine Datenbank. Einmal anmelden, und jede Maschine kann sie nutzen.',
+  firstHeadline: 'Deine Server folgen dir jetzt',
+  firstPurpose:
+    'Sie liefen dort weiter, wo sie waren. Jetzt funktioniert auch ein Server, der eine Anmeldung braucht: Melde dich einmal an, von jedem Gerät, und jede Maschine kann ihn nutzen.',
+  firstDismiss: 'Verstanden',
+  groupAccount: 'Einmal angemeldet, auf jeder Maschine',
+  groupMachine: 'Läuft auf deinen Maschinen',
+  newAccountBody:
+    'Linear, Sentry oder Notion: Melde dich von jedem Gerät an, sogar vom Handy.',
+  newMachineBody:
+    'Ein Browser oder eine Datenbank: Happier startet sie auf der Maschine, auf der deine Sitzung läuft.',
+  factAs: ({ identity }) => `als ${identity}`,
+  factSignedIn: 'Angemeldet',
+  factKey: 'API-Schlüssel · gespeichertes Secret',
+  present: ({ servers, tools, tokens }) =>
+    `${servers} ${Shared_mcpHomeTranslations.plural(servers, 'Server gibt', 'Server geben')} deinen Agenten ${tools} ${Shared_mcpHomeTranslations.plural(tools, 'Tool', 'Tools')}, etwa ${tokens} Tokens Kontext.`,
+  presentNoTools: ({ count }) =>
+    `${count} ${Shared_mcpHomeTranslations.plural(count, 'Server ist', 'Server sind')} für deine Agenten aktiv.`,
+  presentNone: 'Noch ist kein Server aktiv.',
+  needYou: ({ count }) =>
+    ` ${count} ${Shared_mcpHomeTranslations.plural(count, 'braucht', 'brauchen')} dich.`,
+  needsTitle: 'Braucht dich',
+  needsAccount: 'Einmal beheben, von jedem Gerät aus, und jede Maschine kann ihn nutzen',
+  needsAccountTools: ({ count }) =>
+    `Einmal beheben, von jedem Gerät aus, und jede Maschine bekommt ihre ${count} ${Shared_mcpHomeTranslations.plural(count, 'Tool', 'Tools')} zurück`,
+  needsKey: 'Füge den Schlüssel einmal als gespeichertes Secret hinzu, und jede Maschine kann ihn nutzen',
+  needsKeyNamed: ({ names }) => `Füge ${names} einmal als gespeichertes Secret hinzu, und jede Maschine kann ihn nutzen`,
+  previewSignedInAs: ({ identity }) =>
+    `Angemeldet als ${identity}, für jede Maschine`,
+  previewSignedIn: 'Einmal angemeldet, für jede Maschine',
+  previewKey:
+    'Sein Schlüssel ist ein gespeichertes Secret und wird auf jeder Maschine genutzt',
+  previewMachine: 'Startet auf der Maschine, auf der deine Sitzung läuft',
+  previewOff: 'Aus: Kein Agent bekommt ihn',
+  previewExpired:
+    'Die Anmeldung ist abgelaufen. Verbinde einmal neu, und jede Maschine hat ihn wieder.',
+  previewSignIn:
+    'Melde dich einmal an, von jedem Gerät, und jede Maschine kann ihn nutzen.',
+  previewNeedsKey:
+    'Er braucht einen Schlüssel. Füge ihn einmal als gespeichertes Secret hinzu, und jede Maschine kann ihn starten.',
+  newTitle: 'Gib deinen Agenten mehr Tools',
+  newBody:
+    'Ein MCP-Server gibt deinen Agenten Tools: deinen Issue-Tracker, einen Browser, eine Datenbank. Füge hier einen hinzu, melde dich einmal an, und er funktioniert auf jeder Maschine.',
+  browse: 'Server durchsuchen',
+  paste: 'Konfiguration einfügen',
+  shelfTitle: 'Vorgeschlagene Server',
+  shelfFrom: ({ source }) =>
+    `Von ${source}. Füge einen hinzu, und er funktioniert auf jeder Maschine.`,
+  shelfAdd: 'Hinzufügen',
+  foundTitle: 'Auf deinen Maschinen gefunden',
+  foundBody:
+    'In einem Agenten eingerichtet, noch nicht in Happier. Füge einen hinzu, und er folgt dir.',
+  foundLine: ({ count, machine }) =>
+    `${count} ${Shared_mcpHomeTranslations.plural(count, 'Server ist', 'Server sind')} bereits auf ${machine}`,
+  foundLineMachines: ({ count, machines }) =>
+    `${count} ${Shared_mcpHomeTranslations.plural(count, 'Server ist', 'Server sind')} bereits auf ${machines} Maschinen`,
+  foundLineBody:
+    'In deinen Agenten eingerichtet. Füge sie hinzu, und sie folgen dir auf jede Maschine.',
+  review: 'Ansehen',
+  mapLabel: ({ count }) =>
+    `${count} ${Shared_mcpHomeTranslations.plural(count, 'MCP-Server', 'MCP-Server')} rund um dein Home`,
+  more: ({ count }) => `+${count}`,
+};
+
+const mcpHomeTranslations = {
+  "de": de,
+} as const satisfies Pick<Record<string, Shared_mcpHomeTranslations.McpHomeTranslation>, "de">;
+
+return { mcpHomeTranslations };
+})();
+
+const Domain_agentsHomeTranslations = (() => {
+const de: Shared_agentsHomeTranslations.AgentsHomeTranslation = {
+  purpose:
+    'Die Coding-Agents, mit denen du Sitzungen startest, wo sie installiert sind und wie sie sich anmelden.',
+  needsTitle: 'Braucht dich',
+  needsSignIn: ({ machine }) =>
+    `Sitzungen auf ${machine} können erst starten, wenn du dich anmeldest`,
+  tryTitle: 'Einen anderen Agent ausprobieren',
+  tryBody: 'Jeder startet Sitzungen wie deine bisherigen Agents.',
+  modelsTitle: 'Modelle für deine Agents',
+  modelsBody:
+    'Anbieter geben deinen Agents mehr Modelle: ein Schlüssel für viele oder ein Modellserver auf deinen Maschinen.',
+};
+
+const agentsHomeTranslations = {
+  "de": de,
+} as const satisfies Pick<Record<string, Shared_agentsHomeTranslations.AgentsHomeTranslation>, "de">;
+
+return { agentsHomeTranslations };
+})();
+
+const Domain_profileSeedsTranslations = (() => {
+const de: Shared_profileSeedsTranslations.ProfileSeedsTranslation = {
+  title: 'Skills, die dieses Profil hinzufügt',
+  description: 'Für Sitzungen mit diesem Profil hinzugefügt, zusätzlich zu dem, was deine Regeln geben.',
+  add: 'Hinzufügen',
+  addTitle: 'Skill hinzufügen',
+  searchPlaceholder: 'Deine Skills durchsuchen',
+  nothingToAdd: 'Alle Skills deiner Bibliothek sind schon hinzugefügt.',
+  empty: 'Noch keine. Sitzungen mit diesem Profil erhalten, was deine Regeln geben.',
+  emptyLibrary: 'Deine Bibliothek enthält noch keine Skills.',
+  openSkills: 'Skills öffnen',
+  missing: 'Nicht in deiner Bibliothek',
+  pending: 'Skill',
+  unreadableItem: 'Lässt sich gerade nicht lesen',
+  remove: ({ skill }) => `${skill} entfernen`,
+  reading: 'Deine Skills werden gelesen …',
+  unreadable: 'Deine Skills konnten nicht gelesen werden',
+  tryAgain: 'Erneut versuchen',
+};
+
+const profileSeedsTranslations = {
+  "de": de,
+} as const;
+
+return { profileSeedsTranslations };
+})();
+
+const Domain_scopeSectionTranslations = (() => {
+const scopeSectionTranslations = {
+  "de": Shared_scopeSectionTranslations.copy({
+    title: 'Skills und MCP-Server',
+    descMachine:
+      'Was Sitzungen auf {machine} bekommen. Ein Schalter hier setzt eine Regel nur für {machine}; Ausnahmen für Agenten gelten weiter.',
+    descProject:
+      'Deine Sitzungen in {project} bekommen diese auf jeder Maschine. Ein Schalter hier setzt eine Regel nur für {project}; Ausnahmen für Agenten gelten weiter.',
+    descProjectTeam:
+      'Deine Sitzungen in {project} bekommen diese auf jeder Maschine. Ein Schalter hier setzt eine Regel nur für {project}; die Sitzungen von {team} folgen ihren eigenen.',
+    skills: 'Skills',
+    mcp: 'MCP-Server',
+    allSkills: 'Alle {count} Skills',
+    allMcp: 'Alle {count} MCP-Server',
+    foundOne: '1 weiterer Skill liegt nur auf {machine}.',
+    foundMany: '{count} weitere Skills liegen nur auf {machine}.',
+    foundLink: 'Auf deinen Maschinen gefunden',
+    onFor: 'An für {agents}',
+    notFor: 'nicht {agents}',
+    onOn: 'An auf {machines}',
+    notOn: 'nicht {machines}',
+    onIn: 'An in {place}',
+    offIn: 'Aus in {place}',
+    onForPlace: 'An für {place}',
+    offForPlace: 'Aus für {place}',
+    emptySkills: 'Noch keine Skills',
+    addSkill: 'Skill hinzufügen',
+    emptyMcp: 'Noch keine MCP-Server',
+    addMcp: 'Server hinzufügen',
+    loadFailed: 'Konnte nicht geladen werden',
+    whenRunning: 'Erscheint, sobald {machine} läuft',
+    turnedOn: '{name} ist für {place} an',
+    turnedOff: '{name} ist für {place} aus',
+    migrationNote:
+      '{names} wurde aus den älteren Projekteinstellungen hierher verschoben.',
+    dismiss: 'Schließen',
+  }),
+} as const;
+
+return { scopeSectionTranslations };
+})();
+
+const Domain_capabilityKitTranslations = (() => {
+const de: Shared_capabilityKitTranslations.CapabilityKitTranslation = {
+  where: {
+    onEverywhere: 'Überall an',
+    everywhere: 'Überall',
+    off: 'Aus',
+    only: ({ agent, place, placeKind }) =>
+      Shared_capabilityKitTranslations.join(
+        'Nur',
+        agent && `für ${agent}`,
+        place && `${placeKind === 'machine' ? 'auf' : 'in'} ${place}`,
+      ),
+    on: ({ agent, place, placeKind }) =>
+      Shared_capabilityKitTranslations.join(
+        'an',
+        agent && `für ${agent}`,
+        place && `${placeKind === 'machine' ? 'auf' : 'in'} ${place}`,
+      ),
+    except: ({ agent, place, placeKind }) =>
+      Shared_capabilityKitTranslations.join(
+        'außer',
+        agent,
+        place && `${placeKind === 'machine' ? 'auf' : 'in'} ${place}`,
+      ),
+    exceptions: ({ count }) =>
+      count === 1 ? '1 Ausnahme' : `${count} Ausnahmen`,
+    more: ({ count }) => `${count} weitere`,
+    effect: {
+      everywhereOn: 'Jede Maschine und jeder Agent, auch später hinzugefügte',
+      everywhereOff: 'Aus, außer eine Regel unten schaltet es ein',
+      agentNever: ({ kind }) =>
+        kind === 'skill'
+          ? 'Bekommt diesen Skill nie, wo immer er an ist'
+          : 'Bekommt diesen Server nie, wo immer er an ist',
+      agentEverywhereOn: 'Bekommt es auch dort, wo der Rest aus ist',
+      machineOn: 'Jeder Agent auf dieser Maschine',
+      machineOff: 'Kein Agent auf dieser Maschine',
+      projectOn: 'In diesem Projekt, auf jeder Maschine',
+      projectOff: 'Nicht in diesem Projekt, auf keiner Maschine',
+      folderOn: 'In diesem Ordner auf dieser Maschine',
+      folderOff: 'Nicht in diesem Ordner',
+      agentAtOn: ({ agent, place, placeKind }) =>
+        `${agent} bekommt es ${placeKind === 'machine' ? 'auf' : 'in'} ${place}`,
+      agentAtOff: ({ agent, place, placeKind }) =>
+        `${agent} bekommt es nicht ${placeKind === 'machine' ? 'auf' : 'in'} ${place}`,
+    },
+    available: ({ agents, machines, projects }) =>
+      `Verfügbar für ${agents} auf ${machines}${projects ? `, nur in ${projects}` : ''}`,
+    availableNowhere: 'Noch nirgends verfügbar',
+    offlineNote: ({ machine }) =>
+      `${machine} ist offline. Es bekommt dies, sobald es zurück ist.`,
+    offlineNoteMany: ({ count }) =>
+      `${count} Geräte sind offline. Sie bekommen dies, sobald sie zurück sind.`,
+    cantTake: ({ agent, kind }) =>
+      kind === 'skill'
+        ? `${agent} kann keine Skills laden.`
+        : `${agent} kann keine MCP-Server nutzen.`,
+  },
+  control: {
+    title: 'Wo es aktiv ist',
+    description: 'Einmal festlegen, jede Maschine folgt. Die genaueste Regel gewinnt.',
+    everywhereLabel: 'Überall an oder aus',
+    on: 'An',
+    off: 'Aus',
+    turnedOnIn: 'Eingeschaltet in',
+    except: 'Außer',
+    nowhereYet: 'Noch nirgends. Füge ein Projekt, eine Maschine oder einen Agenten hinzu.',
+    addException: 'Ausnahme hinzufügen',
+    addPlace: 'Ort hinzufügen',
+    menuAgent: 'Ein Agent',
+    menuAgentEverywhere: 'Ein Agent, überall',
+    menuMachine: 'Eine Maschine',
+    menuProject: 'Ein Projekt',
+    menuProjectEverywhere: 'Ein Projekt, auf jeder Maschine',
+    offline: 'offline',
+    machineCount: ({ count }) => count === 1 ? '1 Maschine' : `${count} Maschinen`,
+    allAgents: 'Alle Agenten',
+    agentOnly: ({ agent }) => `Nur ${agent}`,
+    whichAgents: ({ place }) => `Welche Agenten in ${place}`,
+    remove: ({ target }) => `Regel für ${target} entfernen`,
+    staysOff: ({ agents }) => `${agents} bleibt hier aus`,
+    change: 'Ändern',
+    changeFailed: 'Die Änderung konnte nicht gespeichert werden.',
+    checking: 'Maschinen werden geprüft…',
+  },
+  add: {
+    closeDetails: 'Details schließen',
+    backTo: ({ title }) => `Zurück zu ${title}`,
+    added: 'Hinzugefügt',
+    done: 'Fertig',
+    addFailed: 'Konnte nicht hinzugefügt werden. Erneut versuchen.',
+    modesLabel: 'Arten zum Hinzufügen',
+    searchLabel: 'Suchen',
+  },
+  facts: {
+    textOnly: 'Nur Text',
+    hasFiles: 'Enthält Dateien',
+    runsScripts: 'Führt Skripte aus',
+    tokensWhenUsed: ({ count }) => `${count} Tokens`,
+    toolCount: ({ shown }) => `${shown} Tools`,
+    tokensPerTurn: ({ count }) => `${count} Tokens pro Runde`,
+    you: 'Du',
+    happier: 'Happier',
+    pinnedTo: ({ ref }) => `Fixiert auf ${ref}`,
+    inYourLibrary: 'In deiner Bibliothek',
+  },
+  status: {
+    off: 'Aus',
+    signin: 'Anmeldung nötig',
+    moreAccess: 'Mehr Zugriff nötig',
+    key: 'Schlüssel nötig',
+    cantrun: ({ machine }) =>
+      machine ? `Läuft nicht auf ${machine}` : 'Läuft nicht',
+    offline: 'Offline',
+    update: 'Update verfügbar',
+    removed: 'Aus der Quelle entfernt',
+    modified: 'Geändert',
+    pinned: 'Fixiert',
+    unused: 'Länger nicht benutzt',
+    unusedExplanation: ({ agents }) =>
+      `Die Nutzung wird für ${agents} und Agents erfasst, die Skills über Happier lesen`,
+    error: ({ machine }) =>
+      machine ? `Auf ${machine} gestoppt` : 'Konnte nicht starten',
+    masked: ({ machine }) =>
+      machine ? `Die Kopie von ${machine} gilt` : 'Eine andere Kopie gilt',
+    signing: 'Anmeldung läuft…',
+    connected: 'Verbunden',
+    expired: 'Anmeldung abgelaufen',
+    revoked: 'Zugriff widerrufen',
+    fix: {
+      signIn: 'Anmelden',
+      reconnect: 'Neu verbinden',
+      addKey: 'Schlüssel hinzufügen',
+      howToFix: 'So behebst du es',
+      tryAgain: 'Erneut versuchen',
+      reviewUpdate: 'Update prüfen',
+      compare: 'Vergleichen',
+      turnOn: 'Einschalten',
+      grantAccess: 'Zugriff gewähren',
+    },
+  },
+};
+
+const capabilityKitTranslations = {
+  "de": { ...de, skills: Domain_skillsPageTranslations.skillsPageTranslations.de, session: capabilityKitTranslations__sessionCapabilityTranslations.de, notice: Domain_capabilityNoticeTranslations.capabilityNoticeTranslations.de, detail: capabilityKitTranslations__capabilityDetailTranslations.de, skillDetail: Domain_skillDetailTranslations.skillDetailTranslations.de, skillsFound: Domain_skillsFoundTranslations.skillsFoundTranslations.de, mcpFound: Domain_mcpFoundTranslations.mcpFoundTranslations.de, skillsUpdates: Domain_skillsUpdatesTranslations.skillsUpdatesTranslations.de, mcp: Domain_mcpPageTranslations.mcpPageTranslations.de, valueRows: Domain_valueRefRowsTranslations.valueRefRowsTranslations.de, mcpSignIn: capabilityKitTranslations__mcpSignInTranslations.de, connectedAccountCallback: Domain_connectedAccountCallbackTranslations.connectedAccountCallbackTranslations.de, mcpHome: Domain_mcpHomeTranslations.mcpHomeTranslations.de, registries: capabilityKitTranslations__registriesTranslations.de, skillAdd: capabilityKitTranslations__skillAddTranslations.de, mcpAdd: capabilityKitTranslations__mcpAddTranslations.de, agentAdd: Domain_agentAddTranslations.agentAddTranslations.de, agentsHome: Domain_agentsHomeTranslations.agentsHomeTranslations.de, profileSeeds: Domain_profileSeedsTranslations.profileSeedsTranslations.de, scopeSection: Domain_scopeSectionTranslations.scopeSectionTranslations.de, store: capabilityKitTranslations__storeTranslations.de },
+} as const;
+
+return { capabilityKitTranslations };
+})();
+
+const Domain_sessionListSpacesKeyboardTranslations = (() => {
+const sessionListSpacesKeyboardTranslations = {
+  "de": Shared_sessionListSpacesKeyboardTranslations.commands('Listenfilter öffnen', ordinal => `Bereich ${ordinal} auswählen`),
+} as const;
+
+return { sessionListSpacesKeyboardTranslations };
+})();
+
+const Domain_reviewKeyboardTranslations = (() => {
+const reviewKeyboardTranslations = {
+  "de": {
+        reviewChangeNext: 'Nächste Änderung', reviewChangePrevious: 'Vorherige Änderung',
+        reviewChangeKeep: 'Änderung behalten oder Markierung aufheben', reviewChangeDiscard: 'Änderung verwerfen',
+        reviewChangeAsk: 'Zur Änderung fragen', reviewFileNext: 'Nächste geänderte Datei',
+        reviewFilePrevious: 'Vorherige geänderte Datei', reviewUndo: 'Überprüfungsaktion rückgängig machen',
+        editorSelectionAsk: 'Zur Auswahl fragen', filesTrackToggle: 'Agentenänderungen verfolgen', fileBlameToggle: 'Blame ein- oder ausblenden',
+    },
+} as const;
+
+return { reviewKeyboardTranslations };
+})();
+
+const Domain_paneKeyboardTranslations = (() => {
+const paneArrangementTranslations = {
+  "de": { paneArrangement: 'Bereichsanordnung', paneArrangementDescription: 'Wähle, ob die Sitzung oder der Editor in der Mitte steht.' , paneArrangementSession: 'Sitzung zuerst', paneArrangementEditor: 'Editor zuerst', paneArrangementSessionCaption: 'Chat in der Mitte', paneArrangementEditorCaption: 'Code in der Mitte', rightPanelPlacement: 'Trennung der rechten Leiste', rightPanelPlacementDescription: 'Wähle, wie die rechte Leiste an der Seite steht: für sich oder verbunden durch eine Linie oder einen weichen Schatten.', rightPanelPlacementSeparate: 'Getrennt', rightPanelPlacementLine: 'Linie', rightPanelPlacementShadow: 'Schatten', rightPanelPlacementSeparateCaption: 'Eigenes Blatt neben der Seite', rightPanelPlacementLineCaption: 'Verbunden durch eine feine Linie', rightPanelPlacementShadowCaption: 'Verbunden durch einen weichen Schatten' },
+} as const satisfies Pick<Record<paneKeyboardTranslations__SupportedLanguage, Readonly<{ paneArrangement: string; paneArrangementDescription: string; paneArrangementSession: string; paneArrangementEditor: string; paneArrangementSessionCaption: string; paneArrangementEditorCaption: string; rightPanelPlacement: string; rightPanelPlacementDescription: string; rightPanelPlacementSeparate: string; rightPanelPlacementLine: string; rightPanelPlacementShadow: string; rightPanelPlacementSeparateCaption: string; rightPanelPlacementLineCaption: string; rightPanelPlacementShadowCaption: string }>>, "de">;
+
+const paneRegionLabels = {
+  "de": { rail: 'App-Navigation', navigation: 'Navigationsspalte', right: 'Seitenbereich', details: 'Editor und Details', main: 'Hauptspalte', bottom: 'Unterer Bereich' },
+} as const satisfies Pick<Record<paneKeyboardTranslations__SupportedLanguage, Readonly<Record<'rail' | 'navigation' | 'right' | 'details' | 'main' | 'bottom', string>>>, "de">;
+
+const paneKeyboardTranslations = {
+  "de": { commands: { shellColumnToggle: 'Navigation ein- oder ausblenden', panesMainToggle: 'Hauptspalte ein- oder ausblenden', panesSideToggle: 'Seitenbereich ein- oder ausblenden', panesArrangementToggle: 'Bereichsanordnung wechseln', panesRegionNext: 'Nächsten Bereich fokussieren', panesRegionPrevious: 'Vorherigen Bereich fokussieren' }, groups: { panes: 'Bereiche', terminal: 'Terminal', search: 'Suche', review: 'Überprüfung', files: 'Dateien und Editor', code: 'Codeanalyse' }, desktop: 'Desktop-App', browser: 'Browser' },
+} as const satisfies Pick<Record<paneKeyboardTranslations__SupportedLanguage, Shared_paneKeyboardTranslations.PaneKeyboardCopy>, "de">;
+
+return { paneArrangementTranslations, paneRegionLabels, paneKeyboardTranslations };
+})();
+
+const Domain_needsYouHighlightTranslations = (() => {
+const needsYouHighlightTranslations = {
+  "de": { title: 'Sitzungen hervorheben, die dich brauchen', description: 'Wie eine Sitzung, die dich braucht, in der Liste auf diesem Gerät auffällt. Die Bewegung endet, sobald du sie öffnest.', dot: 'Punkt', accent: 'Akzent', glint: 'Glanz', shimmer: 'Schimmer', pulse: 'Puls' },
+} as const satisfies Pick<Record<needsYouHighlightTranslations__SupportedLanguage, Shared_needsYouHighlightTranslations.NeedsYouHighlightCopy>, "de">;
+
+const workingIndicatorTranslations = {
+  "de": { title: 'Arbeitsanzeige', description: 'Wie eine arbeitende Sitzung in der Liste erscheint.', spinner: 'Spinner', pulse: 'Pulsierender Punkt', animatedTextTitle: 'Verspielte Arbeitswörter', animatedTextDescription: 'Mit Statuswörtern zeigt eine arbeitende Sitzung ein verspieltes Wort statt „Arbeitet“.' },
+} as const satisfies Pick<Record<needsYouHighlightTranslations__SupportedLanguage, Shared_needsYouHighlightTranslations.WorkingIndicatorCopy>, "de">;
+
+return { needsYouHighlightTranslations, workingIndicatorTranslations };
+})();
+
+const Domain_quickOpenTranslations = (() => {
+const quickOpenTranslations = {
+  "de": { commands: { searchFiles: 'Datei öffnen', searchSymbols: 'Zu Symbol wechseln' }, search: { recent: 'Zuletzt geöffnet', changed: 'In dieser Sitzung geändert', changedInFolder: 'Geänderte Dateien', openFile: 'Datei öffnen…', showMore: 'Mehr anzeigen', searchEverything: 'Überall suchen', noMatch: ({ query, scope }) => `Keine Datei passt zu „${query}“ in ${scope}`, symbolsNeedFile: 'Für Symbole muss eine Datei geöffnet sein', filesInScope: ({ scope }) => `Dateien in ${scope}`, symbolsUnavailable: ({ file }) => `Symbole für ${file} sind noch nicht verfügbar`, symbols: 'Symbole', symbolAtLine: ({ name, line }) => `${name}, Zeile ${line}`, symbolsInFile: ({ file }) => `Symbole in ${file}`, offline: ({ machine }) => `${machine} antwortet nicht. Zuletzt geöffnete Dateien werden angezeigt.` } },
+} as const satisfies Pick<Record<quickOpenTranslations__SupportedLanguage, Shared_quickOpenTranslations.QuickOpenCopy>, "de">;
+
+return { quickOpenTranslations };
+})();
+
+const Domain_paneMainColumnTranslations = (() => {
+const paneMainColumnTranslations = {
+  "de": { hideSession: 'Sitzung ausblenden', showSession: 'Sitzung anzeigen', hideProject: 'Projekt ausblenden', showProject: 'Projekt anzeigen', hideWorkflow: 'Workflow ausblenden', showWorkflow: 'Workflow anzeigen', hidePage: ({ title }: { title: string }) => `${title} ausblenden`, showPage: ({ title }: { title: string }) => `${title} anzeigen` , needsYou: 'Braucht dich', chipA11y: ({ label, name }: { label: string; name: string }) => `${label}: ${name}`, chipNeedsYouA11y: ({ label, name }: { label: string; name: string }) => `${label}: ${name}, braucht dich`, chipNeedsYouAnnouncement: ({ name }: { name: string }) => `${name} braucht dich`, sidebarReleaseToHide: 'Loslassen zum Ausblenden', backToTranscript: 'Zurück zum Verlauf' },
+} as const satisfies Pick<Record<paneMainColumnTranslations__SupportedLanguage, Shared_paneMainColumnTranslations.MainColumnCopy>, "de">;
+
+return { paneMainColumnTranslations };
+})();
+
+const Domain_paneEmptyEditorTranslations = (() => {
+const paneEmptyEditorTranslations = {
+  "de": { title: 'Öffne eine Datei neben der Sitzung', reason: 'Lies oder bearbeite jede Datei in diesem Projekt, während die Sitzung arbeitet.', openFile: 'Datei öffnen…', changedInSession: 'In dieser Sitzung geändert', recent: 'Zuletzt geöffnet', projectTitle: 'Öffne eine Datei in diesem Projekt', projectReason: 'Lies oder bearbeite hier jede Datei; Agenten arbeiten in ihren Sitzungen weiter.', changedInProject: 'Nicht committete Änderungen', openChangedFileA11y: ({ name }: { name: string }) => `${name} öffnen` },
+} as const satisfies Pick<Record<paneEmptyEditorTranslations__SupportedLanguage, Shared_paneEmptyEditorTranslations.EmptyEditorCopy>, "de">;
+
+const paneShortcutsSheetTranslations = {
+  "de": { footer: 'Review-Tasten wirken, wenn ein Diff den Fokus hat und du nicht tippst.', openSettings: 'Kurzbefehle in den Einstellungen ändern', hostA11y: 'Kurzbefehle anzeigen für' },
+} as const satisfies Pick<Record<paneEmptyEditorTranslations__SupportedLanguage, Shared_paneEmptyEditorTranslations.ShortcutsSheetCopy>, "de">;
+
+return { paneEmptyEditorTranslations, paneShortcutsSheetTranslations };
+})();
+
+const Domain_llmTaskRunnerTranslations = (() => {
+const llmTaskRunnerTranslations = {
+  "de": {
+        auto: 'Auto',
+        autoCurrently: ({ runner }: { runner: string }) => `Auto — derzeit ${runner}`,
+        autoNothingReady: 'Auto — nichts bereit',
+        autoDescription: 'Auto nutzt das günstigste passende Modell der Agenten, die auf diesem Gerät bereit sind, mit dem niedrigsten Aufwand. Bei Gleichstand bevorzugt es den Agenten der Sitzung.',
+        checking: 'Prüfe, was auf diesem Gerät bereit ist…',
+        currently: ({ runner }: { runner: string }) => `Gerade: ${runner}`,
+        noReadyAgent: 'Auf diesem Gerät ist kein Agent bereit. Melde dich bei einem Agenten an oder wähle hier einen.',
+        noMatchingModel: 'Die bereiten Agenten auf diesem Gerät bieten kein Modell, das diese Aufgabe nutzen kann. Wähle hier eines.',
+        unavailable: 'Dieses Gerät kann gerade nicht geprüft werden.',
+        chooseMachine: 'Wähle ein Gerät, um zu sehen, was Auto wählt.',
+        permissionTitle: 'Berechtigungsstufe',
+        permission: { no_tools: 'Keine Tools', read_only: 'Nur lesen', workspace_write: 'Darf Dateien ändern', full: 'Voller Zugriff' },
+        permissionDescription: { no_tools: 'Arbeitet nur mit dem übergebenen Text.', read_only: 'Darf zusätzlich Tools nutzen, die nichts ändern.', workspace_write: 'Darf Dateien im Projekt ändern.', full: 'Darf alle Tools des Agenten nutzen.' },
+    },
+} as const satisfies Pick<Record<llmTaskRunnerTranslations__SupportedLanguage, Shared_llmTaskRunnerTranslations.LlmTaskRunnerCopy>, "de">;
+
+return { llmTaskRunnerTranslations };
+})();
+
+const Domain_actionSettingsResourcesTranslations = (() => {
+const actionSettingsResourcesTranslations = {
+  "de": {
+        status: {
+            humanAllowed: ({ partial }: { partial: boolean }): string => partial ? "Einige App-Bedienelemente können sie ausführen" : "Du kannst sie ausführen",
+            humanAskFirst: ({ partial }: { partial: boolean }): string => partial ? "Einige App-Bedienelemente fragen zuerst" : "Fragt dich zuerst in der App",
+            humanOff: ({ partial }: { partial: boolean }): string => partial ? "Für einige App-Bedienelemente aus" : "In der App aus",
+            agentAllowed: ({ partial }: { partial: boolean }): string => partial ? "Einige Agenten-Werkzeuge können sie ausführen" : "Agenten können sie ausführen",
+            agentAskFirst: ({ partial }: { partial: boolean }): string => partial ? "Einige Agenten-Werkzeuge fragen zuerst" : "Fragt dich bei Ausführung durch einen Agenten",
+            agentOff: ({ partial }: { partial: boolean }): string => partial ? "Für einige Agenten-Werkzeuge aus" : "Für Agenten aus",
+            integrationAllowed: ({ partial }: { partial: boolean }): string => partial ? "Einige Integrationen können sie ausführen" : "Integrationen können sie ausführen",
+            integrationAskFirst: ({ partial }: { partial: boolean }): string => partial ? "Einige Integrationen fragen zuerst" : "Fragt dich bei Ausführung durch eine Integration",
+            integrationOff: ({ partial }: { partial: boolean }): string => partial ? "Für einige Integrationen aus" : "Für Integrationen aus",
+            allOff: "Aus",
+            destructive: "Kann nicht rückgängig gemacht werden",
+            external: "Ändert Dinge außerhalb von Happier",
+        },
+        family: {
+            title: 'Ressourcen',
+            reading: { title: 'Ressourcen · Lesen', description: 'Nachsehen verändert nichts, deshalb ist es standardmäßig erlaubt.' },
+            changing: { title: 'Ressourcen · Ändern', description: 'Alles, was etwas beendet oder entfernt, fragt standardmäßig zuerst nach. Sessions beenden und Worktrees entfernen haben eigene Aktionen.' },
+            related: 'Eigene Aktion · öffnet ihre Einstellungen',
+        },
+        facts: {
+            automationsSection: 'Automatisierungen',
+            alwaysTrueSection: 'Gilt immer',
+            automations: { title: 'Geplante Prüfungen', subtitle: 'Geplante Prüfungen verwenden die Agenten-Einstellung oben.' },
+            forbidden: { title: 'Geschützte Orte', subtitle: 'Happier verweigert das Verschieben oder Löschen.' },
+            trashFirst: { title: 'Papierkorb und endgültiges Löschen', subtitle: 'Elemente landen zuerst im Happier-Papierkorb. „Jetzt löschen“ fragt standardmäßig nach.' },
+        },
+    },
+} as const;
+
+return { actionSettingsResourcesTranslations };
+})();
+
+const Domain_resourceProposalTranslations = (() => {
+const de = {
+  title: {
+    storage: 'Aufräumvorschlag',
+    processes: 'Arbeitsspeicher freigeben',
+    retry: 'Platz schaffen und erneut versuchen',
+  },
+  machineChecked: ({ machine, time }: { machine: string; time: string }) =>
+    `${machine} · geprüft ${time}`,
+  machineChecking: ({ machine }: { machine: string }) =>
+    `${machine} · wird geprüft…`,
+  selected: ({ count, total }: { count: number; total: number }) =>
+    `${count} von ${total} ausgewählt`,
+  selectAll: 'Alle auswählen',
+  selectAllSafe: 'Alle sicheren auswählen',
+  givesBack: 'Gibt frei',
+  frees: 'Gibt frei',
+  onDisk: ({ amount }: { amount: string }) => `von ${amount} auf der Festplatte`,
+  changed: 'geändert',
+  gone: 'nicht mehr vorhanden',
+  notIncluded: 'Nicht Teil dieses Vorschlags',
+  includeAnyway: 'Einbeziehen',
+  goal: ({ found, goal }: { found: string; goal: string }) =>
+    `${found} von ${goal} gefunden`,
+  staleTitle: ({ count }: { count: number }) =>
+    count === 1
+      ? 'Eine Sache hat sich geändert, seit der Agent nachgesehen hat.'
+      : `${count} Dinge haben sich geändert, seit der Agent nachgesehen hat.`,
+  staleBody: 'Nichts kann genehmigt werden, bevor es erneut geprüft wurde.',
+  checkAgain: 'Erneut prüfen',
+  checkUnavailable:
+    'Diese konnten gerade nicht geprüft werden. Jedes Element wird bei der Ausführung erneut geprüft.',
+  note: {
+    trash:
+      'Jedes Element wird erneut geprüft und dann verschoben. Der Platz wird frei, wenn der Papierkorb geleert wird.',
+    processes: 'Nichts wird gelöscht. Jeder Prozess wird vorher erneut geprüft.',
+    emptyAfter:
+      'Der Platz wird jetzt benötigt, daher wird der Papierkorb sofort geleert. Dieser Teil kann nicht rückgängig gemacht werden.',
+  },
+  approve: {
+    trash: ({ count }: { count: number }) =>
+      `${count} in den Papierkorb verschieben`,
+    emptyAndRetry: 'Papierkorb, leeren und erneut versuchen',
+    keepUndo: 'In den Papierkorb und erneut versuchen',
+    keepUndoHint:
+      'Behält Rückgängig; gibt Platz erst frei, wenn der Papierkorb geleert wird.',
+    stop: ({ count }: { count: number }) => `${count} beenden`,
+  },
+  notNow: 'Nicht jetzt',
+  declinedTitle: 'Vorschlag abgelehnt',
+  declinedFacts: ({ count }: { count: number }) =>
+    `${count} Elemente · nichts wurde geändert`,
+  reopen: 'Wieder öffnen',
+  tryAgain: 'Erneut versuchen',
+  startAgain: 'Wieder starten',
+  startedAgain: 'Wieder gestartet',
+  keptByGuard: 'Bleiben, weil sie arbeiten',
+  memoryLabel: 'Arbeitsspeicher',
+  memoryAfter: ({ now, after }: { now: string; after: string }) => `jetzt ${now} · danach etwa ${after}`,
+  memoryNow: ({ now }: { now: string }) => `${now} belegt`,
+  processesTree: 'Was Arbeitsspeicher belegt',
+  analysingFound: ({ count }: { count: number }) => `${count} bisher gefunden`,
+  analysingNote: 'Liest noch. Du kannst genehmigen, sobald es fertig ist.',
+  inbox: {
+    allSafe: ({ count }: { count: number }) => `${count} Elemente, alle sicher`,
+    mixed: ({ count, safe, attention }: { count: number; safe: number; attention: number }) => `${count} Elemente · ${safe} sicher, ${attention} brauchen deinen Blick`,
+    stops: ({ count }: { count: number }) => `${count} beenden`,
+  },
+  restored: 'Zurückgelegt · nichts wurde entfernt',
+  receiptChecking: 'Papierkorb und letzte Aktivitäten werden geprüft…',
+  receiptUnavailable: 'Das aktuelle Ergebnis konnte nicht geprüft werden. Öffne den Vorschlag erneut, um es nochmals zu versuchen.',
+  receiptUnknown: ({ count }: { count: number }) => `Endergebnis für ${count} Elemente nicht verfügbar.`,
+  receiptRestored: ({ count }: { count: number }) => `${count} Elemente zurückgelegt`,
+  receiptFreed: ({ count, amount }: { count: number; amount: string }) => `${amount} freigegeben · ${count} Elemente gelöscht`,
+  skipped: ({ reason }: { reason: string }) => `Nicht verschoben: ${reason}`,
+  stopped: ({ count }: { count: number }) => `${count} beendet`,
+  stoppedFreed: ({ amount }: { amount: string }) => `${amount} freigegeben`,
+  notStopped: ({ reason }: { reason: string }) => `Nicht beendet: ${reason}`,
+  failed:
+    'Dieser Vorschlag konnte nicht abgeschlossen werden. Sonst wurde nichts geändert.',
+  processSafe: 'Sicher · jederzeit neu startbar',
+  processStopLoss: ({ title }: { title: string }) => `Das Stoppen von „${title}“ unterbricht die aktuelle Arbeit oder offene Frage.`,
+  processKillLoss: ({ title }: { title: string }) => `Das Beenden von „${title}“ beendet die Arbeit sofort; ungespeicherte Arbeit geht verloren.`,
+  processCheck: 'Zuerst prüfen',
+  itemLabel: ({
+    title,
+    size,
+    verdict,
+  }: {
+    title: string;
+    size: string;
+    verdict: string;
+  }) => `${title}, ${size}, ${verdict}`,
+  owner: {
+    session: 'Sitzung',
+    terminal: 'Terminal',
+    service: 'Dev-Server',
+    run: 'Lauf',
+    browser_sidecar: 'Browser-Sidecar',
+    workspace_sync: 'Workspace-Synchronisierung',
+    other: 'Prozess',
+  },
+} as const;
+
+const resourceProposalTranslations = {
+  "de": de,
+} as const;
+
+return { resourceProposalTranslations };
+})();
+
+const Domain_machineResourceUiTranslations = (() => {
+const machineResourceUiTranslations = {
+  "de": {
+        ask: { title: 'Einen Agenten fragen', placeholder: Shared_machineResourceUiTranslations.machinePhrase('Frag etwas zu ', '…'), description: 'Er kann lesen, was diese Seite zeigt, und Änderungen vorschlagen. Ohne deine Zustimmung wird nichts beendet oder gelöscht.', offline: Shared_machineResourceUiTranslations.machinePhrase('', ' ist offline, daher kann ein Agent gerade nicht nachsehen.') },
+        askSuggestions: {
+            prompts: {
+                memory: Shared_machineResourceUiTranslations.machinePhrase('Warum hat ', ' wenig Arbeitsspeicher?'),
+                disk: Shared_machineResourceUiTranslations.machinePhrase('Finde Speicherplatz, den ich auf ', ' freigeben kann'),
+                storage: Shared_machineResourceUiTranslations.machinePhrase('Erkläre Happiers Speicher auf ', ''),
+                leftBehind: Shared_machineResourceUiTranslations.machinePhrase('Prüfe zurückgelassene Prozesse auf ', ''),
+                guard: Shared_machineResourceUiTranslations.machinePhrase('Erkläre, was Guard auf ', ' tun würde'),
+                overview: Shared_machineResourceUiTranslations.machinePhrase('Prüfe die Ressourcennutzung auf ', ''),
+                processes: Shared_machineResourceUiTranslations.machinePhrase('Was verbraucht auf ', ' am meisten Arbeitsspeicher?'),
+                weeklyReview: 'Prüfe den Speicher jeden Montag',
+                lastReport: Shared_machineResourceUiTranslations.machinePhrase('Erkläre den letzten Ressourcenbericht von ', ''),
+                lastStorageReport: Shared_machineResourceUiTranslations.machinePhrase('Prüfe den letzten Speicherbericht von ', ''),
+                notifyWhenBack: Shared_machineResourceUiTranslations.machinePhrase('Sag mir, wenn ', ' wieder erreichbar ist'),
+                notifyWhenBackConsent: Shared_machineResourceUiTranslations.machinePhrase('Ich stimme zu, fortlaufende Offline-Warnungen und Wiederherstellungsaktualisierungen für ', ' zu aktivieren.'),
+                setupDocker: Shared_machineResourceUiTranslations.machinePhrase("Docker einrichten auf ", ""),
+                setupReview: Shared_machineResourceUiTranslations.machinePhrase("Prüfen, was auf ", " eingerichtet ist"),
+                setupHarden: Shared_machineResourceUiTranslations.machinePhrase("SSH und Firewall härten auf ", ""),
+                securityAccess: Shared_machineResourceUiTranslations.machinePhrase("Erklären, wer was darf auf ", ""),
+                securityNetwork: Shared_machineResourceUiTranslations.machinePhrase("Prüfen, was auf ", " aus dem Internet erreichbar ist"),
+                securityUpdates: Shared_machineResourceUiTranslations.machinePhrase("Wartende Updates prüfen auf ", ""),
+            },
+            reasons: {
+                setup: "Du prüfst jede Änderung vorher",
+                security: "Nur lesend, bis du zustimmst",
+                memory: 'Speicherdruck braucht Aufmerksamkeit', disk: Shared_machineResourceUiTranslations.amountPhrase('', ' auf diesem Volume frei'),
+                storage: Shared_machineResourceUiTranslations.amountPhrase('Happier nutzt ', ''), leftBehind: Shared_machineResourceUiTranslations.countPhrase('', ' Prozesse zurückgelassen'),
+                guard: 'Der Speicherschutz ist aus', calm: 'Auf diesem Rechner ist alles ruhig',
+                currentReport: 'Aus dem Ressourcenbericht dieses Rechners', weeklyReview: 'Ein wöchentlicher Prüfvorschlag',
+                offline: 'Dieser Rechner ist offline; nutze seinen letzten Bericht',
+            },
+        },
+        widgets: {
+            body: machineResourceUiTranslations__machineWidgetBodyTranslations.de,
+            machine_vitals: 'Vitalwerte', machine_fleet: 'Rechner', machine_metric: 'Messwert',
+            machine_top_consumers: 'Größte Verbraucher', machine_left_behind: 'Zurückgelassen',
+            machine_storage: 'Speicher', machine_worktrees: 'Worktrees', machine_guard: 'Guard',
+            machine_activity: 'Aktivität', machine_cleanup_suggestion: 'Vorschlag',
+            followsSessionMachine: 'Folgt dem Rechner dieser Session',
+            inputs: {
+                volume: 'Volume', range: 'Zeitraum', scope: 'Bereich', style: 'Stil', metrics: 'Messwerte',
+                warnAbove: 'Warnen über', cpu: 'CPU', memory: 'Arbeitsspeicher', diskFree: 'Freier Speicher',
+                network: 'Netzwerk', oneHour: '1 Stunde', oneDay: '24 Stunden', sevenDays: '7 Tage',
+                machineScope: 'Rechner', sessionScope: 'Session', sparklines: 'Sparklines',
+                bars: 'Balken', numbers: 'Zahlen', rings: 'Ringe', disk: 'Festplatte',
+            },
+        },
+    },
+} as const satisfies Pick<Record<'en' | 'ca' | 'de' | 'es' | 'fr' | 'it' | 'ja' | 'pl' | 'pt' | 'ru' | 'zhHans' | 'zhHant', typeof Shared_machineResourceUiTranslations.en>, "de">;
+
+return { machineResourceUiTranslations };
+})();
 
 const Domain_accountDisplayTranslations = (() => {
 type AccountDisplayTranslation = Shared_accountDisplayTranslations.AccountDisplayTranslation;
@@ -17684,4 +20024,55 @@ export {
     Domain_workspaceBarTranslations as workspaceBarTranslations,
     Domain_workspaceSyncDiagnosticTranslations as workspaceSyncDiagnosticTranslations,
     Domain_workspaceTabTranslations as workspaceTabTranslations,
+    Domain_simulatorDeviceToolsTranslations as simulatorDeviceToolsTranslations,
+    Domain_deploymentMoveTranslations as deploymentMoveTranslations,
+    Domain_newSessionActionDefaultTranslations as newSessionActionDefaultTranslations,
+    Domain_chatLinksTranslations as chatLinksTranslations,
+    Domain_deploymentDefaultsTranslations as deploymentDefaultsTranslations,
+    Domain_deploymentCopyTranslations as deploymentCopyTranslations,
+    Domain_deploymentSettingsTranslations as deploymentSettingsTranslations,
+    Domain_pluginPublishTranslations as pluginPublishTranslations,
+    Domain_botTemplateTranslations as botTemplateTranslations,
+    Domain_botTemplateRecipientTranslations as botTemplateRecipientTranslations,
+    Domain_botFaceNameTranslations as botFaceNameTranslations,
+    Domain_screenCaptureTranslations as screenCaptureTranslations,
+    Domain_deploymentCreationReviewTranslations as deploymentCreationReviewTranslations,
+    Domain_deploymentPlatformLinkTranslations as deploymentPlatformLinkTranslations,
+    Domain_deploymentPromotionTranslations as deploymentPromotionTranslations,
+    Domain_fileEditingTranslations as fileEditingTranslations,
+    Domain_usageChartInputTranslations as usageChartInputTranslations,
+    Domain_usageChartPlanetFamilyTranslations as usageChartPlanetFamilyTranslations,
+    Domain_fileSelectionAskTranslations as fileSelectionAskTranslations,
+    Domain_fileTrackTranslations as fileTrackTranslations,
+    Domain_actionPresentationTranslations as actionPresentationTranslations,
+    Domain_fileReviewNoteTranslations as fileReviewNoteTranslations,
+    Domain_composerReferenceTranslations as composerReferenceTranslations,
+    Domain_hunkReviewTranslations as hunkReviewTranslations,
+    Domain_storeInstalledTranslations as storeInstalledTranslations,
+    Domain_connectedAccountCallbackTranslations as connectedAccountCallbackTranslations,
+    Domain_skillsPageTranslations as skillsPageTranslations,
+    Domain_capabilityNoticeTranslations as capabilityNoticeTranslations,
+    Domain_skillDetailTranslations as skillDetailTranslations,
+    Domain_skillsFoundTranslations as skillsFoundTranslations,
+    Domain_mcpFoundTranslations as mcpFoundTranslations,
+    Domain_skillsUpdatesTranslations as skillsUpdatesTranslations,
+    Domain_mcpPageTranslations as mcpPageTranslations,
+    Domain_valueRefRowsTranslations as valueRefRowsTranslations,
+    Domain_agentAddTranslations as agentAddTranslations,
+    Domain_mcpHomeTranslations as mcpHomeTranslations,
+    Domain_agentsHomeTranslations as agentsHomeTranslations,
+    Domain_profileSeedsTranslations as profileSeedsTranslations,
+    Domain_scopeSectionTranslations as scopeSectionTranslations,
+    Domain_capabilityKitTranslations as capabilityKitTranslations,
+    Domain_sessionListSpacesKeyboardTranslations as sessionListSpacesKeyboardTranslations,
+    Domain_reviewKeyboardTranslations as reviewKeyboardTranslations,
+    Domain_paneKeyboardTranslations as paneKeyboardTranslations,
+    Domain_needsYouHighlightTranslations as needsYouHighlightTranslations,
+    Domain_quickOpenTranslations as quickOpenTranslations,
+    Domain_paneMainColumnTranslations as paneMainColumnTranslations,
+    Domain_paneEmptyEditorTranslations as paneEmptyEditorTranslations,
+    Domain_llmTaskRunnerTranslations as llmTaskRunnerTranslations,
+    Domain_actionSettingsResourcesTranslations as actionSettingsResourcesTranslations,
+    Domain_resourceProposalTranslations as resourceProposalTranslations,
+    Domain_machineResourceUiTranslations as machineResourceUiTranslations,
 };
