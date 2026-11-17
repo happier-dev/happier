@@ -1013,6 +1013,48 @@ describe('consumed workspace navigation owner', () => {
         expect(boundary.mirrors).toEqual([]);
     });
 
+    it('paints the press before it renders the opened Session: the destination commits after the urgent update', async () => {
+        // P03-JOURNEYS-3: an open rendered the whole Session view in the press's synchronous commit (184–304 ms
+        // input-to-paint live), so neither the press feedback nor the destination's reads could leave before it.
+        boundary.platform = 'web'; boundary.pathname = '/session/A1'; boundary.params = { id: 'A1', serverId: 'home-a' };
+        boundary.segments = ['(app)', 'session', '[id]']; onTestFinished(() => { boundary.segments = null; });
+        const location = { pathname: boundary.pathname, search: '?serverId=home-a', hash: '' };
+        const entries: Array<{ state: unknown; href: string }> = [{ state: null, href: '/session/A1?serverId=home-a' }];
+        let index = 0;
+        const show = (href: string) => { const url = new URL(href, 'https://workspace.test'); location.pathname = url.pathname; location.search = url.search; };
+        const history = {
+            get state() { return entries[index]!.state; },
+            replaceState(state: unknown, _unused: string, href?: string | URL | null) {
+                const next = href ? String(href) : entries[index]!.href; entries[index] = { state, href: next }; show(next);
+            },
+            pushState(state: unknown, _unused: string, href: string) { entries.splice(index + 1, entries.length, { state, href }); index += 1; show(href); },
+            go(delta: number) { index += delta; show(entries[index]!.href); },
+        };
+        installBrowserBoundary({ location, history, sessionStorage: { getItem: () => 'main' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        const pressed = { current: null as null | ((value: boolean) => void) };
+        const commits: Array<Readonly<{ pressed: boolean; session: unknown }>> = [];
+        function PressAndDestination(props: Readonly<{ navigation: WorkspaceNavigationContextValue }>) {
+            const [isPressed, setPressed] = React.useState(false);
+            pressed.current = setPressed;
+            const state = props.navigation.state;
+            const session = state.tabs[state.groups[state.focusedGroupId].activeTabId].target.params.id;
+            React.useLayoutEffect(() => { commits.push({ pressed: isPressed, session }); });
+            return null;
+        }
+        const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}>
+            {navigation => <>{React.createElement('WorkspaceOwner', { navigation })}<PressAndDestination navigation={navigation} /></>}
+        </WorkspaceProvider>);
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        commits.length = 0;
+        await act(async () => {
+            pressed.current!(true);
+            navigation().openHref('/session/A2?serverId=home-a');
+        });
+        expect(commits[0]).toEqual({ pressed: true, session: 'A1' });
+        expect(commits.at(-1)).toEqual({ pressed: true, session: 'A2' });
+    });
+
     it('moves to another hosted route pattern with no Expo navigator update, and every current-route reader follows', async () => {
         boundary.platform = 'web'; boundary.pathname = '/session/A1'; boundary.params = { id: 'A1', serverId: 'home-a' };
         boundary.segments = ['(app)', 'session', '[id]']; onTestFinished(() => { boundary.segments = null; });

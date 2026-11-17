@@ -70,7 +70,9 @@ const subscribeNoBrowserHref = () => () => {};
 const NO_DESTINATION_TITLES: Readonly<Record<string, WorkspaceDestinationTitle>> = Object.freeze({});
 
 function runNavigation(navigate: () => void, intent?: 'history'): void {
-    const result = runGuardedNavigation(navigate, intent);
+    // The destination renders at transition priority: the press paints first, and an open's reads start
+    // while the destination renders instead of after one synchronous commit of the whole view.
+    const result = runGuardedNavigation(() => React.startTransition(navigate), intent);
     if (result !== true) fireAndForget(result, { tag: 'Workspace.navigation' });
 }
 
