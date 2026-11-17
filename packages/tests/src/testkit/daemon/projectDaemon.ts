@@ -5,7 +5,6 @@ import { pathToFileURL } from 'node:url';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
-import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { HomeOwnerClaimCommandOutputV1Schema, HOME_OWNER_CLAIM_COMMAND_ARGUMENT_V1 } from '@happier-dev/protocol/home/governance/claim';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
@@ -123,9 +122,7 @@ export async function startProjectDaemonFixture(params: Readonly<{
         connectedServices: { v: 2, bindingsByServiceId: {} }, terminal: { mode: 'plain' },
       });
       if (!result.ok) {
-        const targetRefusal = result.errorCode === 'machine_target_not_current'
-          ? /RPC target refused: ([a-z_]+(?:[/][a-z_]+)?)/u.exec(result.error)?.[1] : undefined;
-        throw new Error(`F baseline Session creation refused (${result.errorCode}${targetRefusal ? `/${targetRefusal}` : ''}); error=${JSON.stringify(result.error)}`);
+        throw new Error(`Project fixture Session creation refused (${result.errorCode}); error=${JSON.stringify(result.error)}`);
       }
       const created = SessionSpawnNewActionResultV1Schema.parse(result.result);
       if (created.type !== 'success') {
