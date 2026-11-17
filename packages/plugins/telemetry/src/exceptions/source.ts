@@ -169,6 +169,30 @@ function observation(
   };
 }
 
+/**
+ * Source-owned presentation for the detail surface, on the exact read only: what its occurrence and stack reads
+ * address (the Environment and fingerprint) and the lifecycle facts its overview states. Never retained.
+ */
+function detailData(record: Item['value'], shared: boolean) {
+  return {
+    v: 1 as const,
+    environmentId: record.environmentId,
+    // A Team-shared read never carries the owner's fingerprint (the collector address of its occurrences).
+    ...(shared ? {} : { fingerprint: record.fingerprint }),
+    status: record.status,
+    ...(record.regressed ? { regressed: true as const } : {}),
+    count: record.count,
+    firstSeenAtMs: record.firstSeenAtMs,
+    lastSeenAtMs: record.lastSeenAtMs,
+    asOfMs: record.asOfMs,
+    ...(record.serviceName ? { serviceName: record.serviceName } : {}),
+    ...(record.type ? { type: record.type } : {}),
+    ...(record.topFrame ? { topFrame: record.topFrame } : {}),
+    ...(record.lastServiceVersion ? { lastServiceVersion: record.lastServiceVersion } : {}),
+    ...(record.resolution ? { resolution: record.resolution } : {}),
+  };
+}
+
 function collection(context: PluginInvocationContext) {
   return (
     context.services.storage.account?.collection(
@@ -307,17 +331,16 @@ export async function getTelemetryException(
       });
       return row === null
         ? { kind: 'absent', localRef: input.localRef }
-        : observation({ rowId: row.rowId, value: row.value });
+        : { ...observation({ rowId: row.rowId, value: row.value }), detailData: detailData(row.value, false) };
     }
     const row = await issues.sharing.get(
       { ownerAccountId: owner, rowId: input.localRef.entryId },
       { signal: context.signal },
     );
-    return observation({
-      rowId: row.rowId,
-      value: row.value,
-      ownerAccountId: row.ownerAccountId,
-    });
+    return {
+      ...observation({ rowId: row.rowId, value: row.value, ownerAccountId: row.ownerAccountId }),
+      detailData: detailData(row.value, true),
+    };
   } catch (error) {
     if (context.signal.aborted) throw error;
     // A revoked or missing grant is absence for this viewer; it never discloses the owner's record.

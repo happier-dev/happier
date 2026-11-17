@@ -75,6 +75,25 @@ function context(sharing?: unknown) {
 }
 
 describe('built-in Happier exceptions Triage source', () => {
+  it('hands the detail surface what its occurrence and stack reads need, on the exact read only', async () => {
+    const got = TriageGetResultV1Schema.parse(
+      await getTelemetryException(
+        { v: 1, instance, localRef: exceptionLocalRefV1('a') },
+        context(),
+      ),
+    );
+    expect(got).toMatchObject({
+      kind: 'present',
+      detailData: { v: 1, environmentId: 'production', fingerprint: 'fp-a', status: 'resolved', count: 3,
+        firstSeenAtMs: 1, lastSeenAtMs: 10, lastServiceVersion: 'build-2', resolution: { atMs: 10, priorVersions: ['build-1'] } },
+    });
+    const scan = TriageScanResultV1Schema.parse(
+      await scanTelemetryExceptions({ v: 1, instance, page: { kind: 'initial', limit: 5 } }, context()),
+    );
+    // Scan rows feed the retained corpus; source-owned presentation stays on the exact read.
+    expect(JSON.stringify(scan)).not.toContain('detailData');
+  });
+
   it('reads own Account records newest first with lifecycle states, and keeps them when Team-shared reads are unavailable', async () => {
     const result = TriageScanResultV1Schema.parse(
       await scanTelemetryExceptions(
