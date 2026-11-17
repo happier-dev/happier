@@ -611,6 +611,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   // the incumbent execution-run bridge/action family with its nullable scope;
   // no Admin target picker, Session projection, or parallel daemon registry.
   const hostCapabilities = registerCapabilitiesHandlers(rpcHandlerManager, {
+    warmOnRegister: true,
     ...(params.deps?.secretSources ? { secretSources: params.deps.secretSources } : {}),
     ...(params.deps?.savedSecretOperationContext ? { savedSecretOperationContext: params.deps.savedSecretOperationContext } : {}),
     filesystemEffectAdmission,

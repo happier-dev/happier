@@ -586,6 +586,12 @@ export function registerCapabilitiesHandlers(
     rpcHandlerManager: RpcHandlerRegistrar,
     dependencies: Parameters<typeof createCliCapabilitiesService>[0] & Readonly<{
         filesystemEffectAdmission?: FilesystemEffectAdmission;
+        /**
+         * Start building the service at registration. Only the Machine registrar asks: the daemon
+         * builds it from its admitted registry lease. A Session host holds no lease, so a warm build
+         * there resolves the full merged plugin registry on the first Session's startup path.
+         */
+        warmOnRegister?: boolean;
     }> = {},
 ): Pick<import('@/capabilities/service').CapabilitiesService, 'invoke'> {
     const admission = dependencies.filesystemEffectAdmission ?? createFilesystemEffectAdmission();
@@ -615,7 +621,7 @@ export function registerCapabilitiesHandlers(
 
     // Warm capability loaders at daemon boot to avoid late dynamic-import failures
     // if the local CLI dist is rebuilt while the daemon process is already running.
-    void getService().catch(() => undefined);
+    if (dependencies.warmOnRegister === true) void getService().catch(() => undefined);
 
     rpcHandlerManager.registerHandler<unknown, SavedSecretVaultInvocationResultV1>(RPC_METHODS.DAEMON_SECRET_SOURCE_INVOKE, async (data, context) => {
         const parsed = SavedSecretVaultInvocationV1Schema.safeParse(data);
