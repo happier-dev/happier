@@ -62,8 +62,7 @@ export async function executeHomeRuntimeRestart(
     if (startIssued) return withActionFailureCauseDiagnostic(
       complete({ status: 'outcome_unknown', ...(taskId ? { taskId } : {}) }), error,
       taskId ? 'home.runtime.restart.wait' : 'home.runtime.restart.start');
-    if (context.signal?.aborted) return withActionFailureCauseDiagnostic(
-      { ok: false, errorCode: 'cancelled', error: 'cancelled' }, error, 'home.runtime.restart.detect');
+    if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     return withActionFailureCauseDiagnostic(complete({ status: 'unavailable', reason: 'system_tasks_unavailable' }),
       error, 'home.runtime.restart.detect');
   }

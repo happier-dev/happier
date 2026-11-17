@@ -2,6 +2,19 @@ import { expect, it } from 'vitest';
 import { createActionExecutor } from '../actionExecutor.js';
 import type { ActionOutputDiagnostic } from './actionFailureDiagnostic.js';
 
+it('preserves the exact cancelled restart result when capability detection aborts', async () => {
+  const controller = new AbortController();
+  const executor = createActionExecutor({
+    homeRuntimeTaskRpc: async () => {
+      controller.abort();
+      throw new Error('PRIVATE_CANCELLED_RESPONSE');
+    },
+  });
+  expect(await executor.execute('home.runtime.restart', { machineId: 'machine' }, {
+    surface: 'cli', authority: 'present_user', bypassApprovals: true, signal: controller.signal,
+  })).toEqual({ ok: false, errorCode: 'cancelled', error: 'cancelled' });
+});
+
 it.each(['detect', 'start', 'wait'] as const)('retains a private restart %s cause through terminal settlement', async phase => {
   const diagnostics: ActionOutputDiagnostic[] = [];
   // Connected-Machine capability RPC is the external boundary.
