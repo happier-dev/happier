@@ -3,7 +3,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
-import { MachineSetupV1Schema, mergeMachineSetupsV1, readMachineSetupAppIdentityV1, readMachineSetupRecipeIdentityV1, type MachineSetupV1, type MachinePresetItemV1 } from '../managed/machineSetupV1.js';
+import { MachineSetupV1Schema, mergeMachineSetupsV1, isMachineSetupRecipeItemV1, readMachineSetupAppIdentityV1, readMachineSetupRecipeIdentityV1, type MachineSetupV1, type MachineSetupRecipeItemV1 } from '../managed/machineSetupV1.js';
 import { MachineRecipeReferenceV1Schema, type MachineRecipeReferenceV1 } from './machineRecipeV1.js';
 import { MachineSetupSourceFactsMapV1Schema, type MachineSetupSourceFactsMapV1,
   type MachineSetupAcceptedAppRunV1, type MachineSetupFirstPresenceV1 as FirstPresence } from './machineSetupSourceFactsV1.js';
@@ -18,7 +18,7 @@ import { getMachineMetadataFieldV1, readMachineMetadataFieldV1, mutateMachineMet
 const id = () => z.string().check(z.trim(), z.minLength(1));
 const revision = () => z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER));
 export type MachineSetupSourceEntryV1 =
-  | Readonly<{ kind: 'accountPreset'; presetId: string; presetRevision: number; setup: MachineSetupV1 } & (
+  | Readonly<{ kind: 'accountPreset'; presetId: string; presetRevision: number; setupRevision?: number; setup: MachineSetupV1 } & (
       | { /** Author-owned mode captured with this opened local copy; never inferred from ciphertext. */
           contentEncryptionMode: 'plain' | 'e2ee';
           /** A locally retained opaque recipe-input edit, replayed only through the Action wire. */
@@ -63,7 +63,7 @@ export function machineSetupSourceOriginKeyV1(source: MachineSetupSourceEntryV1)
   return source.kind === 'accountPreset' ? `account:${source.presetId}`
     : source.kind === 'bundledPreset' ? `bundled:${source.ref.pluginId}/${source.ref.localId}` : 'direct';
 }
-type SetupItem = Exclude<MachinePresetItemV1, { kind: 'app' }>;
+type SetupItem = MachineSetupRecipeItemV1;
 export function machineSetupItemKeyV1(item: SetupItem): string {
   return createCanonicalJsonSigningInput(item);
 }
@@ -74,9 +74,9 @@ export function selectMachineSetupRecipeItemsV1(setups: readonly MachineSetupV1[
   const selected: { sourceIndex: number; itemIndex: number; item: SetupItem; execute: boolean }[] = [];
   for (const [sourceIndex, setup] of setups.entries()) {
     const executing = executionSources && new Set((executionSources[sourceIndex]?.items ?? [])
-      .flatMap(item => item.kind === 'app' ? [] : [machineSetupItemKeyV1(item)]));
+      .flatMap(item => isMachineSetupRecipeItemV1(item) ? [machineSetupItemKeyV1(item)] : []));
     for (const [itemIndex, item] of (setup.items ?? []).entries()) {
-      if (item.kind === 'app' || isMachineSetupRecipeExcludedV1(item.selection.ref, exclusions)) continue;
+      if (!isMachineSetupRecipeItemV1(item) || isMachineSetupRecipeExcludedV1(item.selection.ref, exclusions)) continue;
       selected.push({ sourceIndex, itemIndex, item,
         execute: !executing || executing.has(machineSetupItemKeyV1(item)) });
     }
@@ -87,7 +87,7 @@ export function readMachineSetupFirstPresentV1(sources: MachineSetupSourceV1,
   sourceFacts: MachineSetupSourceFactsMapV1 = {}): ReadonlyMap<string, FirstPresence | undefined> {
   const values = new Map<string, FirstPresence | undefined>();
   for (const source of sources) for (const item of source.setup.items ?? []) {
-    if (item.kind === 'app') continue;
+    if (!isMachineSetupRecipeItemV1(item)) continue;
     const key = machineSetupItemKeyV1(item);
     const observed = sourceFacts[machineSetupSourceOriginKeyV1(source)]?.firstPresence?.[key];
     const previous = values.get(key);
@@ -141,12 +141,12 @@ export function projectMachineSetupSourceChangeExecutionV1(currentSources: Machi
   const sources = proposedSources.map((source, index) => {
     const { toolchain, ...setup } = scriptSources[index]!;
     return { ...setup, ...(!unchangedToolchain && toolchain ? { toolchain } : {}),
-      ...(source.setup.items ? { items: source.setup.items.filter(item => item.kind === 'app' || !oldItems.has(machineSetupItemKeyV1(item))) } : {}),
+      ...(source.setup.items ? { items: source.setup.items.filter(item => !isMachineSetupRecipeItemV1(item) || !oldItems.has(machineSetupItemKeyV1(item))) } : {}),
     };
   });
   const { toolchain, ...setup } = mergedSetup;
   return { ok: true, sources, setup: { ...setup, ...(!unchangedToolchain && toolchain ? { toolchain } : {}),
-    ...(mergedSetup.items ? { items: mergedSetup.items.filter(item => item.kind === 'app' || !oldItems.has(machineSetupItemKeyV1(item))) } : {}),
+    ...(mergedSetup.items ? { items: mergedSetup.items.filter(item => !isMachineSetupRecipeItemV1(item) || !oldItems.has(machineSetupItemKeyV1(item))) } : {}),
     scripts: sources.flatMap(source => source.scripts ?? []),
   } };
 }
@@ -161,7 +161,7 @@ export function reviewMachineSetupSourceChangeV1(input: Readonly<{
 }>): Readonly<{ ok: true; sources: MachineSetupSourceV1; detached: readonly MachineSetupDetachedItemV1[] }>
   | Readonly<{ ok: false; errorCode: 'plan_changed' | 'remove_unsupported'; error: string }> {
   const proposed = new Set(input.proposedSources.flatMap(source => (source.setup.items ?? [])
-    .flatMap(item => item.kind === 'app' ? [] : [readMachineSetupRecipeIdentityV1(item.selection.ref)])));
+    .flatMap(item => isMachineSetupRecipeItemV1(item) ? [readMachineSetupRecipeIdentityV1(item.selection.ref)] : [])));
   const selected = new Set(input.removeItemKeys ?? []);
   if (selected.size !== (input.removeItemKeys ?? []).length) return { ok: false, errorCode: 'plan_changed', error: 'plan_changed' };
   const seen = new Set<string>();
@@ -169,12 +169,12 @@ export function reviewMachineSetupSourceChangeV1(input: Readonly<{
   const firstPresentByKey = readMachineSetupFirstPresentV1(input.currentSources, input.currentSourceFacts);
   const detached: MachineSetupDetachedItemV1[] = [];
   for (const source of input.currentSources) for (const item of source.setup.items ?? []) {
-    if (item.kind === 'app') continue;
+    if (!isMachineSetupRecipeItemV1(item)) continue;
     const itemKey = machineSetupItemKeyV1(item);
     const carriedToDirect = source.kind !== 'direct' && input.proposedSources.some(copy => copy.kind === 'direct'
-      && copy.setup.items?.some(candidate => candidate.kind !== 'app' && machineSetupItemKeyV1(candidate) === itemKey))
+      && copy.setup.items?.some(candidate => isMachineSetupRecipeItemV1(candidate) && machineSetupItemKeyV1(candidate) === itemKey))
       && !input.proposedSources.some(copy => copy.kind !== 'direct'
-        && copy.setup.items?.some(candidate => candidate.kind !== 'app'
+        && copy.setup.items?.some(candidate => isMachineSetupRecipeItemV1(candidate)
           && readMachineSetupRecipeIdentityV1(candidate.selection.ref) === readMachineSetupRecipeIdentityV1(item.selection.ref)));
     if (proposed.has(readMachineSetupRecipeIdentityV1(item.selection.ref)) && !carriedToDirect) continue;
     if (source.kind !== 'direct') detachedFromPreset.add(itemKey);
@@ -189,7 +189,7 @@ export function reviewMachineSetupSourceChangeV1(input: Readonly<{
   if (!kept.length) return { ok: true, sources: input.proposedSources, detached };
   const sources = input.proposedSources.map(source => {
     if (source.kind !== 'direct') return source;
-    const carried = new Set((source.setup.items ?? []).flatMap(item => item.kind === 'app' ? [] : [machineSetupItemKeyV1(item)]));
+    const carried = new Set((source.setup.items ?? []).flatMap(item => isMachineSetupRecipeItemV1(item) ? [machineSetupItemKeyV1(item)] : []));
     return { ...source, setup: { ...source.setup,
       items: [...source.setup.items ?? [], ...kept.filter(entry => !carried.has(entry.itemKey)).map(entry => entry.item)] } };
   });
@@ -198,17 +198,18 @@ export function reviewMachineSetupSourceChangeV1(input: Readonly<{
 
 /** A root creation continuation delegates only its admitted setup snapshot. */
 export function matchesMachineSetupCreationSourcesV1(sources: MachineSetupSourceV1,
-  admitted: Readonly<{ preset: { id: string; revision: number; contentEncryptionMode: 'plain' | 'e2ee' }; setup: MachineSetupV1 }>): boolean {
+  admitted: Readonly<{ preset: { id: string; revision: number; setupRevision?: number; contentEncryptionMode: 'plain' | 'e2ee' }; setup: MachineSetupV1 }>): boolean {
   return sources.length === 2 && sources.some(source => source.kind === 'accountPreset')
     && sources.some(source => source.kind === 'direct') && sources.every(source => source.kind === 'accountPreset'
       ? sameStrictJsonValue(source, { kind: 'accountPreset', presetId: admitted.preset.id,
         presetRevision: admitted.preset.revision, contentEncryptionMode: admitted.preset.contentEncryptionMode,
+        ...(admitted.preset.setupRevision === undefined ? {} : { setupRevision: admitted.preset.setupRevision }),
         setup: admitted.setup })
       : source.kind === 'direct' && sameStrictJsonValue(source,
         { kind: 'direct', setup: {} }));
 }
 const accountPresetReference = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('accountPreset'), presetId: id(), presetRevision: revision(),
+  kind: z.literal('accountPreset'), presetId: id(), presetRevision: revision(), setupRevision: z.optional(revision()),
 }));
 const accountPresetSource = lazyZodSchema(() => z.extend(accountPresetReference, {
   contentEncryptionMode: AccountEncryptionModeSchema,
@@ -257,6 +258,7 @@ export const MachineSetupNonAccountPresetSourceEntryV1Schema: z.ZodMiniType<Mach
 /** A saved encrypted preset crosses Home by address only; its setup stays with the keyholding target. */
 export const MachineSetupOpaquePresetSourceV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('accountPresetOpaque'), presetId: id(), presetRevision: z.int().check(z.gte(0)),
+  setupRevision: z.optional(revision()),
   /** Persisted author mode, verified by the server against the saved Preset. */
   contentEncryptionMode: AccountEncryptionModeSchema,
   /** Optional keyholder-sealed setup edit for this exact preset snapshot. */
@@ -304,7 +306,7 @@ export function isMachineSetupRecipeExcludedV1(ref: MachineRecipeReferenceV1, ex
 }
 export function areMachineSetupExclusionsBoundV1(setups: readonly MachineSetupV1[], exclusions: readonly MachineSetupExclusionV1[]): boolean {
   return MachineSetupExclusionsV1Schema.safeParse(exclusions).success && exclusions.every(exclusion => setups.some(setup =>
-    setup.items?.some(item => item.kind !== 'app' && sameStrictJsonValue(item.selection.ref, exclusion.ref))));
+    setup.items?.some(item => isMachineSetupRecipeItemV1(item) && sameStrictJsonValue(item.selection.ref, exclusion.ref))));
 }
 export type MachineSetupDesiredV1 = Readonly<{
   version: 1; revision: number; sources: MachineSetupSourceV1;
@@ -369,7 +371,7 @@ function mergeMachineSetupSourceFacts(current: MachineSetupDesiredV1, sources: M
     const origin = machineSetupSourceOriginKeyV1(source);
     const firstPresence: Record<string, FirstPresence> = {};
     for (const item of source.setup.items ?? []) {
-      if (item.kind === 'app') continue;
+      if (!isMachineSetupRecipeItemV1(item)) continue;
       const key = machineSetupItemKeyV1(item);
       const value = incumbent.has(key) ? incumbent.get(key) : observed[origin]?.firstPresence?.[key];
       if (value !== undefined) firstPresence[key] = value;

@@ -5,6 +5,22 @@ import { ManagedMachinePresetContentV1Schema } from './managedMachinePresetConte
 import { MachineSetupSourceV1Schema } from '../setup/machineSetupSourcesV1.js';
 
 describe('MachineSetupV1', () => {
+    it('retains catalog agent declarations through preset storage and merges duplicate selections once', () => {
+        const setup = MachineSetupV1Schema.parse({ items: [{ kind: 'agent', agentId: 'catalog.example/agent' }] });
+        expect(MachineSetupV1ReadSchema.parse(JSON.parse(JSON.stringify(setup)))).toEqual(setup);
+        expect(mergeMachineSetupsV1([setup, setup])).toEqual({ ok: true, setup });
+        const created = ManagedMachinePresetCreateInputV1Schema.parse({ homeId: 'home', id: 'agent-preset',
+            owner: { kind: 'account', accountId: 'account' }, contentEncryptionMode: 'plain',
+            content: { t: 'plain', v: { v: 1, name: 'Agent setup', setup,
+                launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} } } },
+            recipients: [], controller: { machineId: 'controller', installationId: 'installation' } });
+        const read = ManagedMachinePresetV1ReadSchema.parse(JSON.parse(JSON.stringify({ ...created, revision: 1 })));
+        expect(read.content).toMatchObject({ t: 'plain', v: { setup } });
+        const source = { kind: 'accountPreset', presetId: 'agent-preset', presetRevision: 4,
+            setupRevision: 2, contentEncryptionMode: 'plain', setup };
+        const sources = [source, { kind: 'direct', setup: {} }];
+        expect(MachineSetupSourceV1Schema.parse(sources)).toEqual(sources);
+    });
     it('preserves an authored app continuity key through source copies and capture without inventing legacy keys', () => {
         const definition = { name: 'Dashboard', project: { kind: 'create' as const }, bindings: [],
             definition: { from: 'compose' as const, document: 'services: {}', profiles: [], services: [] } };

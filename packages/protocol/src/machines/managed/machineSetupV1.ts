@@ -7,17 +7,25 @@ import { SecretReferenceOverlayV1Schema } from '../../profiles/secretReferenceOv
 import { MachineRecipeSelectionV1Schema, MachineRecipeImpactV1Schema, MachineSetupScriptCheckV1Schema,
   type MachineRecipeReferenceV1, type MachineRecipeSelectionV1 } from '../setup/machineRecipeV1.js';
 import { StoredAppPresetInputV1Schema, type DeploymentTemplateRefV1, type StoredAppPresetInputV1 } from '../../deployments/storedAppInputV1.js';
+import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
 
 export type MachinePresetItemV1 =
   | Readonly<{ kind: 'setupRecipe'; selection: MachineRecipeSelectionV1 }>
   | Readonly<{ kind: 'softwareRecipe'; selection: MachineRecipeSelectionV1 }>
+  | Readonly<{ kind: 'agent'; agentId: string }>
   | Readonly<{ kind: 'app'; definition: StoredAppPresetInputV1; authoredKey?: string }>;
 export const MachinePresetItemV1Schema: z.ZodMiniType<MachinePresetItemV1> = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('setupRecipe'), selection: MachineRecipeSelectionV1Schema }),
   z.strictObject({ kind: z.literal('softwareRecipe'), selection: MachineRecipeSelectionV1Schema }),
+  z.strictObject({ kind: z.literal('agent'), agentId: AgentIdV1Schema }),
   z.strictObject({ kind: z.literal('app'), definition: StoredAppPresetInputV1Schema,
     authoredKey: z.optional(z.string().check(z.trim(), z.minLength(1))) }),
 ]));
+
+export type MachineSetupRecipeItemV1 = Extract<MachinePresetItemV1, { kind: 'setupRecipe' | 'softwareRecipe' }>;
+export function isMachineSetupRecipeItemV1(item: MachinePresetItemV1): item is MachineSetupRecipeItemV1 {
+  return item.kind === 'setupRecipe' || item.kind === 'softwareRecipe';
+}
 
 /** Recipe kind and pinned revision do not change which recipe a Setup already contains. */
 export function readMachineSetupRecipeIdentityV1(ref: Pick<MachineRecipeReferenceV1, 'pluginId' | 'recipeId'>): string {
@@ -110,6 +118,7 @@ export function mergeMachineSetupsV1(setups: readonly MachineSetupV1[]):
   const items: MachinePresetItemV1[] = [];
   const byRecipe = new Map<string, MachinePresetItemV1>();
   const apps = new Set<string>();
+  const agents = new Set<string>();
   const scripts: MachineSetupScriptV1[] = [];
   for (const setup of setups) {
     if (setup.toolchain) {
@@ -125,6 +134,9 @@ export function mergeMachineSetupsV1(setups: readonly MachineSetupV1[]):
         const key = createCanonicalJsonSigningInput(item);
         if (apps.has(key)) return conflict;
         apps.add(key);
+      } else if (item.kind === 'agent') {
+        if (agents.has(item.agentId)) continue;
+        agents.add(item.agentId);
       } else {
         const key = readMachineSetupRecipeIdentityV1(item.selection.ref);
         const previous = byRecipe.get(key);
