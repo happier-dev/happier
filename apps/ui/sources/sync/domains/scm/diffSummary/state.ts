@@ -15,6 +15,7 @@ import type {
 } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { buildScmComparisonSourceKey } from '@happier-dev/protocol/scm';
 import { isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import { projectSessionModelRefToExecutionModelSelection, type SessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import type { ScmReviewComparisonSelector } from './selection';
 
 export const SCM_DIFF_SUMMARY_GENERATE_ACTION_ID = 'scm.diffSummary.generate' as const;
@@ -162,12 +163,23 @@ export type ScmDiffSummaryViewModel = Readonly<{
 /** Recorded authorship wins; a generation still writing can use its admitted Run selection. */
 export function selectScmDiffSummaryProducerModel(viewModel: Pick<ScmDiffSummaryViewModel, 'producer' | 'latestRun' | 'savedResult'> | null | undefined) {
     const saved = viewModel?.savedResult;
+    const recordedSelection = viewModel?.latestRun?.resolvedSelection ?? saved?.generator;
+    const { modelSelection: recordedModelSelection, ...recordedFacts } = recordedSelection ?? {};
+    const selection = recordedSelection ? { ...recordedFacts,
+        ...(recordedModelSelection ? projectSessionModelRefToExecutionModelSelection(recordedModelSelection) : {}) } : undefined;
+    let modelSelection: SessionModelRef | null = recordedModelSelection ?? null;
+    const teamCredentialModel = viewModel?.latestRun?.resolvedSelection?.teamCredentialModel;
+    if (teamCredentialModel) {
+        const { kind: _kind, ...ref } = teamCredentialModel;
+        modelSelection = { source: 'team_resource', ...ref };
+    }
     return {
         backendTarget: viewModel?.latestRun?.backendTarget ?? saved?.generator?.backendTarget,
-        selection: viewModel?.latestRun?.resolvedSelection ?? saved?.generator,
+        selection,
+        modelSelection,
         modelId: viewModel?.producer?.modelId
             ?? (viewModel?.producer?.kind !== 'review' ? saved?.generator?.modelId
-                ?? viewModel?.latestRun?.resolvedSelection?.modelSelection?.modelId
+                ?? modelSelection?.modelId
                 ?? viewModel?.latestRun?.resolvedSelection?.modelId : undefined),
     };
 }

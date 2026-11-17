@@ -9,6 +9,7 @@ import {
     type LlmTaskRunnerConfigV1,
 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
+import { readSessionModelRefProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 
 import type { SessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 
@@ -33,10 +34,12 @@ export function projectLlmTaskRunnerAuthoringSelection(
     if (isLlmTaskRunnerAutoV1(choice)) return EMPTY_SELECTION;
     const ref = choice.modelSelection;
     const agentTarget = readAgentTarget(ref.agentTargetKey, facts);
+    const modelSelection = 'source' in ref ? { v: 2 as const, ref, updatedAt: 0 } : { v: 1 as const, ref, updatedAt: 0 };
+    const native = 'source' in ref ? ref.source === 'native' : readSessionModelRefProviderConnectionId(ref) === null;
     return {
         ...(agentTarget ? { agentTarget } : {}),
         // The Agent's own default is no explicit model selection.
-        modelSelection: ref.modelId === 'default' && ref.providerConnectionId === null ? null : { v: 1, ref, updatedAt: 0 },
+        modelSelection: ref.modelId === 'default' && native ? null : modelSelection,
         ...(choice.connectedServices !== undefined ? { connectedServices: choice.connectedServices } : {}),
         ...(choice.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: choice.sessionConfigOptionOverrides } : {}),
     };

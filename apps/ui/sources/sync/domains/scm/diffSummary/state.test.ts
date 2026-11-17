@@ -4,12 +4,16 @@ import type { ExecutionRunPublicState} from '@happier-dev/protocol/execution/run
 import type { ScmComparison} from '@happier-dev/protocol/scm/comparison';
 import type { ScmDiffSummaryGenerateInput, ScmDiffSummaryGenerateSuccess } from '@happier-dev/protocol/scm/diffSummary';
 import { buildScmComparisonSourceKey, ScmDiffSummaryResultSchema } from '@happier-dev/protocol/scm';
+import { SessionModelRefSchema, projectSessionModelRefToExecutionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { projectExecutionRunResolvedSelection } from '@happier-dev/protocol/execution/runs/requestedConfiguration';
+import { resolveRunNativeModelLabel } from '@/components/sessions/runs/resolveExecutionRunSelectionLabel';
 
 import {
     applyScmDiffSummaryEvent,
     buildScmDiffSummaryRequestKey,
     createInitialScmDiffSummaryState,
     selectScmDiffSummaryViewModel,
+    selectScmDiffSummaryProducerModel,
 } from './state';
 
 const input = {
@@ -52,6 +56,32 @@ function runningRun(runId = 'run_1'): ExecutionRunPublicState {
 }
 
 describe('SCM diff summary state', () => {
+    it('keeps a saved Team producer out of the native model catalog', () => {
+        const modelSelection = SessionModelRefSchema.parse({ source: 'team_resource', teamId: 'summary-team',
+            resourceId: 'summary-resource', expectedResourceRevision: 7, deliveryMode: 'brokered',
+            agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'summary-model' });
+        const savedResult = ScmDiffSummaryResultSchema.parse({ resultId: 'result_1', revision: 0, canUndo: false,
+            generator: { backendTarget: { kind: 'backend', backendId: 'claude' }, modelSelection }, output: pending });
+        const producer = selectScmDiffSummaryProducerModel({ producer: null, savedResult, latestRun: null });
+        expect(resolveRunNativeModelLabel(producer.backendTarget, [{ title: 'Unrelated native model',
+            modelSelector: { backendTargetKey: modelSelection.agentTargetKey, modelId: modelSelection.modelId } }],
+        producer.selection)(modelSelection.modelId)).toBeNull();
+    });
+
+    it('projects the latest Run Team source as its canonical model ref', () => {
+        const modelSelection = SessionModelRefSchema.parse({ source: 'team_resource', teamId: 'summary-team',
+            resourceId: 'summary-resource', expectedResourceRevision: 7, deliveryMode: 'brokered',
+            agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'summary-model' });
+        const resolvedSelection = projectExecutionRunResolvedSelection({ source: 'explicit',
+            ...projectSessionModelRefToExecutionModelSelection(modelSelection) });
+        const savedResult = ScmDiffSummaryResultSchema.parse({ resultId: 'result_1', revision: 0, canUndo: false,
+            generator: { backendTarget: { kind: 'backend', backendId: 'claude' },
+                modelSelection: { agentTargetKey: modelSelection.agentTargetKey, providerConnectionId: null, modelId: 'older-native' } },
+            output: pending });
+        expect(selectScmDiffSummaryProducerModel({ producer: null, savedResult,
+            latestRun: { ...runningRun(), resolvedSelection } })).toMatchObject({ modelSelection });
+    });
+
     it('keeps generation requests for distinct retained comparisons separate even when their selector is the same', () => {
         const source = { kind: 'branch' as const, head: 'HEAD', base: 'main' };
         const first = buildScmDiffSummaryRequestKey({ sessionId: 'session_1', input: { cwd: '/repo', source, comparisonId: 'a'.repeat(64) } });
