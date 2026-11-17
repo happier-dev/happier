@@ -104,7 +104,7 @@ export function projectMachineAgentForCredential(agent: MachineAgent | null | un
     // the shared execution-state resolver owns native authentication requirements.
     const authenticationRequired = Object.entries(selection.credentialBindings?.bindingsByServiceId ?? {})
         .some(([serviceId, binding]) => binding.source !== 'native' && !suppressedServiceIds.has(serviceId))
-        ? true : acceptedServiceIds.size > 0 && [...acceptedServiceIds].every(serviceId => suppressedServiceIds.has(serviceId))
+        ? true : [...acceptedServiceIds].some(serviceId => suppressedServiceIds.has(serviceId))
             ? false : undefined;
     const signIn = resolveMachineAgentSignIn({
         native: agent.signIn.native ?? { status: agent.signIn.via?.kind === 'connected' ? 'unknown' : agent.signIn.status, loginSupport: 'unsupported' },

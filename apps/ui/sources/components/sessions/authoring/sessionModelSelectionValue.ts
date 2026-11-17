@@ -1,6 +1,6 @@
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { backendTargetKeysMatch, buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
-import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { SessionModelSelectionSchema, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 
 /**
@@ -29,6 +29,19 @@ export function buildSessionModelSelectionForAgentTarget(params: Readonly<{
             providerConnectionId: null,
             modelId: params.modelId,
         },
+    });
+}
+
+/** Reconcile a parsed authoring choice with the current Agent; stale choices use its default. */
+export function resolveSessionModelSelectionForAgentTarget(
+    selection: SessionModelSelection | null | undefined,
+    agentTarget: AgentExecutionTargetV1 | string | null | undefined,
+): SessionModelSelection | null {
+    if (!selection || !agentTarget) return selection ?? null;
+    const agentTargetKey = typeof agentTarget === 'string' ? agentTarget : buildBackendTargetKeyV2(agentTarget);
+    if (!backendTargetKeysMatch(selection.ref.agentTargetKey, agentTargetKey)) return null;
+    return selection.ref.agentTargetKey === agentTargetKey ? selection : SessionModelSelectionSchema.parse({
+        ...selection, ref: { ...selection.ref, agentTargetKey },
     });
 }
 

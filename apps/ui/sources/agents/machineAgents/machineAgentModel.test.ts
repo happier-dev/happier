@@ -125,16 +125,25 @@ describe('machine agent projection', () => {
         expect(projectMachineAgentForCredential(inventoryWithOtherService, { ...selection,
             providerRoute: { ...providerRoute, acceptedConnectedServiceIds: [serviceId] },
         })?.state).toBe('ready');
+        // Claude also accepts the optional Kimi upstream. An unselected alternative
+        // does not restore native vendor sign-in after its selected Provider route is admitted.
+        expect(projectMachineAgentForCredential(agent, { ...selection, providerRoute: { ...providerRoute,
+            acceptedConnectedServiceIds: [serviceId, 'happier.agent.claude/anthropic', 'happier.agent.kimi/kimi-code'],
+        } })?.state).toBe('ready');
         expect(projectMachineAgentForCredential(agent, { credentialBindings: null })?.state).toBe('needsSignIn');
         expect(projectMachineAgentForCredential(agent, { ...selection, providerRoute: { ...providerRoute, ready: false } })?.state).toBe('unknown');
         expect(projectMachineAgentForCredential(agent, { ...selection, providerRoute: { ...providerRoute, suppressedConnectedServiceIds: [] } })?.state).toBe('needsSignIn');
         expect(projectMachineAgentForCredential({ ...agent, stale: true }, selection)?.stale).toBe(true);
         expect(projectMachineAgentForCredential({ ...agent, installed: false, state: 'notInstalled' }, selection)?.state).toBe('notInstalled');
         expect(projectMachineAgentForCredential({ ...agent, platform: { supported: false, reason: 'arch' } }, selection)?.state).toBe('unsupported');
-        expect(projectMachineAgentForCredential({ ...agent, signIn: { ...agent.signIn, connectedServices: [
+        const withOtherAccount = { ...agent, signIn: { ...agent.signIn, connectedServices: [
             ...agent.signIn.connectedServices, { serviceId: 'acme.agent/anthropic', title: 'Other account', connected: false,
                 healthy: false, profileLabel: null, profiles: [] },
-        ] } }, selection)?.state).toBe('needsSignIn');
+        ] } };
+        expect(projectMachineAgentForCredential(withOtherAccount, selection)?.state).toBe('ready');
+        expect(projectMachineAgentForCredential(withOtherAccount, { ...selection, credentialBindings: { v: 2, bindingsByServiceId: {
+            'acme.agent/anthropic': { source: 'connected', selection: 'profile', profileId: 'missing' },
+        } } })?.state).toBe('needsSignIn');
     });
     it('admits a selected healthy account or pool without native CLI sign-in proof', () => {
         const serviceId = 'happier.agent.claude/claude-account';

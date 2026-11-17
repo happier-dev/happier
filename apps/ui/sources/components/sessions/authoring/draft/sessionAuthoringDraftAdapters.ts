@@ -66,6 +66,7 @@ import type { NewSessionDraft } from '@/sync/domains/state/persistence';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
 import type { SessionAuthoringDraft } from './sessionAuthoringDraft';
+import { resolveSessionModelSelectionForAgentTarget } from '../sessionModelSelectionValue';
 import { readCapabilitySelectionCarrierV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 
 type ExistingSessionAuthoringSnapshotSession = Pick<
@@ -304,10 +305,7 @@ function buildCanonicalDraftModelSelection(params: Readonly<{
     const targetKey = params.agentTarget ? buildBackendTargetKeyV2(params.agentTarget) : null;
     if (params.modelSelection) {
         const selection = SessionModelSelectionSchema.parse(params.modelSelection);
-        if (targetKey && selection.ref.agentTargetKey !== targetKey) {
-            throw new Error('Session authoring model selection target mismatch');
-        }
-        return selection;
+        return resolveSessionModelSelectionForAgentTarget(selection, targetKey);
     }
 
     const modelId = normalizeOptionalString(params.legacyModelId);

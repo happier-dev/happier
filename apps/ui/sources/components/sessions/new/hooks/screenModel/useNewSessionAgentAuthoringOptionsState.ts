@@ -14,6 +14,7 @@ import type { RuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadat
 import type { RememberedEngineSelectionV1 } from '@/sync/domains/session/authoring/rememberedEngineSelections';
 import { backendTargetKeysMatch, resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
+import { resolveSessionModelSelectionForAgentTarget } from '@/components/sessions/authoring/sessionModelSelectionValue';
 
 type PersistedAuthoringDraftLike = Readonly<{
     agentTarget?: AgentExecutionTargetV1 | null;
@@ -111,14 +112,6 @@ type ResolvedAuthoringModelState = Readonly<{
     modelSelection: SessionModelSelection | null;
 }>;
 
-/** A stale model intent during an Agent switch resolves to that target's default. */
-function resolveTargetModelSelection(selection: SessionModelSelection | null | undefined, agentTargetKey: string): SessionModelSelection | null {
-    if (!selection || !backendTargetKeysMatch(selection.ref.agentTargetKey, agentTargetKey)) return null;
-    return selection.ref.agentTargetKey === agentTargetKey ? selection : SessionModelSelectionSchema.parse({
-        ...selection, ref: { ...selection.ref, agentTargetKey },
-    });
-}
-
 function readDraftModelSelection(params: Readonly<{
     draft: TempAuthoringDraftLike | PersistedAuthoringDraftLike;
     agentTargetKey: string;
@@ -126,7 +119,7 @@ function readDraftModelSelection(params: Readonly<{
     if (!params.draft) return { present: false, selection: null };
     if (params.draft.modelSelection !== undefined) {
         if (params.draft.modelSelection === null) return { present: true, selection: null };
-        const selection = resolveTargetModelSelection(SessionModelSelectionSchema.parse(params.draft.modelSelection), params.agentTargetKey);
+        const selection = resolveSessionModelSelectionForAgentTarget(SessionModelSelectionSchema.parse(params.draft.modelSelection), params.agentTargetKey);
         return { present: selection !== null, selection };
     }
     if (typeof params.draft.modelId !== 'string') return { present: false, selection: null };
@@ -164,7 +157,7 @@ function resolveAuthoringModelState(params: Readonly<{
         agentTargetKey: params.agentTargetKey,
     });
     const profileSelection = params.implicitProfileModelSelection ?? null;
-    const rememberedSelection = resolveTargetModelSelection(params.rememberedEngineSelection?.modelSelection, params.agentTargetKey);
+    const rememberedSelection = resolveSessionModelSelectionForAgentTarget(params.rememberedEngineSelection?.modelSelection, params.agentTargetKey);
     const candidate = temp.present
         ? temp.selection
         : persisted.present
@@ -278,11 +271,9 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
     }, [currentBackendTargetKey, params.agentType]);
     // A launch profile's model intent names its own Agent target, like a draft does. Once the
     // person picks another Agent it no longer applies, so it is scoped here with the drafts.
-    const implicitProfileModelSelection = params.implicitProfileModelSelection ?? null;
-    const targetScopedImplicitProfileModelSelection = implicitProfileModelSelection
-        && backendTargetKeysMatch(implicitProfileModelSelection.ref.agentTargetKey, effectiveModelTargetKey)
-        ? implicitProfileModelSelection
-        : null;
+    const targetScopedImplicitProfileModelSelection = resolveSessionModelSelectionForAgentTarget(
+        params.implicitProfileModelSelection, effectiveModelTargetKey,
+    );
     const resolvedModelState = React.useMemo(() => resolveAuthoringModelState({
         ...params,
         agentTargetKey: effectiveModelTargetKey,
@@ -382,7 +373,7 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
     }, [currentBackendTargetKey, effectiveModelTargetKey, resolvedModelState]);
 
     const setModelSelection = React.useCallback((selection: SessionModelSelection | null) => {
-        const parsed = resolveTargetModelSelection(selection === null ? null : SessionModelSelectionSchema.parse(selection), effectiveModelTargetKey);
+        const parsed = resolveSessionModelSelectionForAgentTarget(selection === null ? null : SessionModelSelectionSchema.parse(selection), effectiveModelTargetKey);
         setModelState({
             backendTargetKey: currentBackendTargetKey,
             value: {
@@ -400,7 +391,7 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         if (!targetKey) {
             throw new Error('Session authoring model selection requires backend target');
         }
-        const parsed = resolveTargetModelSelection(selection === null ? null : SessionModelSelectionSchema.parse(selection), targetKey);
+        const parsed = resolveSessionModelSelectionForAgentTarget(selection === null ? null : SessionModelSelectionSchema.parse(selection), targetKey);
         setModelState({
             backendTargetKey: targetKey,
             value: {
@@ -490,7 +481,7 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
                         },
                     })
                 : selection.modelSelection;
-            const nextModelSelection = resolveTargetModelSelection(candidate, targetKey);
+            const nextModelSelection = resolveSessionModelSelectionForAgentTarget(candidate, targetKey);
             setModelState({
                 backendTargetKey: targetKey,
                 value: {

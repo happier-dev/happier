@@ -34,6 +34,8 @@ import {
 import { decodeAutomationTemplate } from '@/sync/domains/automations/automationTemplateCodec';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import { PluginUiJsonObjectV1Schema } from '@happier-dev/protocol/plugins/ui';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 
 function modelSelection(
     agentTargetKey: string,
@@ -94,6 +96,46 @@ function intervalAutomationDraft(params: Readonly<{
 }
 
 describe('sessionAuthoringDraftAdapters', () => {
+    it.each(['resolved', 'temp', 'persisted'] as const)('reconciles Claude to OpenCode before %s draft materialization and reload', source => {
+        const claude: AgentExecutionTargetV1 = { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
+        const opencode: AgentExecutionTargetV1 = { kind: 'agent', identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' } };
+        const native = modelSelection('agent:happier.agent.claude/claude', 'sonnet');
+        const team: SessionModelSelection = { v: 2, updatedAt: 1, ref: {
+            source: 'team_resource', teamId: 'team-a', resourceId: 'muse-share-r1117c', expectedResourceRevision: 0,
+            deliveryMode: 'brokered', agentTargetKey: native.ref.agentTargetKey, modelId: 'muse-spark-1.3-contributor',
+        } };
+        const build = (agentTarget: AgentExecutionTargetV1, selection: SessionModelSelection) => {
+            if (source === 'resolved') return buildNewSessionAuthoringDraftFromResolvedInputs({
+                agentTarget, modelSelection: selection, directory: '/repo', prompt: 'Review', connectedServices: null,
+            });
+            if (source === 'temp') return buildNewSessionAuthoringDraftFromTempData({ agentTarget, modelSelection: selection, directory: '/repo' });
+            return buildNewSessionAuthoringDraftFromPersistedDraft({ agentTarget, modelSelection: selection,
+                input: 'Review', selectedMachineId: 'machine', selectedPath: '/repo', selectedProfileId: null,
+                selectedSecretId: null, agentType: 'claude', permissionMode: 'default', acpSessionModeId: null, updatedAt: 1 });
+        };
+        // A native control and the valid Team choice survive before the actual Agent switch.
+        expect(build(claude, native).modelSelection).toEqual(native);
+        expect(build(claude, team).modelSelection).toEqual(team);
+        const switched = build(opencode, team);
+        expect(switched.agentTarget).toEqual(opencode);
+        expect(switched.modelSelection).toBeNull();
+        const persisted = buildPersistedNewSessionDraftFromAuthoringDraft({ draft: switched, machineId: 'machine',
+            selectedSecretId: null, selectedSecretIdByProfileIdByEnvVarName: null,
+            sessionOnlySecretValueEncByProfileIdByEnvVarName: null, backendNewSessionOptionStateByTargetKey: null, updatedAt: 2 });
+        expect(buildNewSessionAuthoringDraftFromPersistedDraft(persisted).modelSelection).toBeNull();
+        const valid: SessionModelSelection = { ...team, ref: { ...team.ref, agentTargetKey: 'agent:happier.agent.opencode/opencode' } };
+        expect(build(opencode, valid).modelSelection).toEqual(valid);
+    });
+    it('reconciles an automation template model with its current Agent before draft hydration', () => {
+        const claude: AgentExecutionTargetV1 = { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
+        const opencode: AgentExecutionTargetV1 = { kind: 'agent', identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' } };
+        const selection = modelSelection('agent:happier.agent.claude/claude', 'sonnet');
+        const hydrate = (agentTarget: AgentExecutionTargetV1) => hydrateSessionAuthoringDraftFromAutomationTemplate({
+            targetType: 'new_session', template: { directory: '/repo', agentTarget, modelSelection: selection },
+        });
+        expect(hydrate(claude).modelSelection).toEqual(selection);
+        expect(hydrate(opencode).modelSelection).toBeNull();
+    });
     it.each([undefined, '', '/', '/Users/coder/project', 'C:\\Users\\coder\\project'])('preserves directory intent %s without inventing a root during hydration', directory => {
         const temporary = buildNewSessionAuthoringDraftFromTempData({ directory });
         const persisted = buildNewSessionAuthoringDraftFromPersistedDraft({
