@@ -122,6 +122,8 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   lead: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   leadText: { flexShrink: 1 },
+  // Text inherits no ink on web: every line in the block names its colour.
+  primary: { color: theme.colors.text.primary },
   secondary: { color: theme.colors.text.secondary },
   line: {
     flexDirection: 'row',
@@ -242,7 +244,7 @@ export const ApprovalAutomaticChecks = React.memo(
               size={ICON_SIZE.sm}
               color={theme.colors.text.secondary}
             />
-            <Text variant="body" emphasis="semiBold" style={styles.leadText}>
+            <Text variant="body" emphasis="semiBold" style={[styles.primary, styles.leadText]}>
               {title}
             </Text>
           </View>
@@ -279,7 +281,7 @@ export const ApprovalAutomaticChecks = React.memo(
         >
           <View style={styles.lead}>
             <ActivitySpinner size="small" color={theme.colors.text.secondary} />
-            <Text variant="body" emphasis="semiBold" style={styles.leadText}>
+            <Text variant="body" emphasis="semiBold" style={[styles.primary, styles.leadText]}>
               {t('workflows.triggers.checks.checkingBefore', {
                 action: props.actionTitle,
               })}
@@ -311,7 +313,7 @@ export const ApprovalAutomaticChecks = React.memo(
               size={ICON_SIZE.sm}
               color={theme.colors.text.secondary}
             />
-            <Text variant="body" emphasis="semiBold" style={styles.leadText}>
+            <Text variant="body" emphasis="semiBold" style={[styles.primary, styles.leadText]}>
               {checks.phase === 'override'
                 ? t('workflows.triggers.checks.overrideTitle', { workflow })
                 : failed.outcome === 'unavailable'
@@ -319,9 +321,10 @@ export const ApprovalAutomaticChecks = React.memo(
                   : t('workflows.triggers.checks.refused', { workflow })}
             </Text>
           </View>
-          {/* The workflow's own reason for failing, as it said it. */}
-          {failed.reason ? (
-            <Text variant="body" testID={props.testID ? `${props.testID}:reason` : undefined}>{failed.reason}</Text>
+          {/* The workflow's own reason for failing, as it said it. A refusal settles the request, whose failure
+              already leads with that reason, so only the open override says it here. */}
+          {checks.phase === 'override' && failed.reason ? (
+            <Text variant="body" style={styles.primary} testID={props.testID ? `${props.testID}:reason` : undefined}>{failed.reason}</Text>
           ) : null}
           <View style={styles.line}>
             {checks.phase === 'override' ? (
