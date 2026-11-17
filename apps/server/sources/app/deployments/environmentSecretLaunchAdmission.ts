@@ -11,6 +11,7 @@ import type { Tx } from '@/storage/inTx';
 import type { DeploymentRestoreNativeAdmissionV1, DeploymentBackupNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import type { DeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { admitDeploymentMachineInTx, admitDeploymentMachinesInTx, canDeployDeploymentEnvironment, deploymentFailure, type DeploymentAuthentication } from './deploymentAdmission';
 import { loadDeploymentEnvironmentInTx, loadDeploymentEnvironmentCustodyInTx, loadDeploymentEnvironmentForInstalledMachineInTx, projectDeploymentEnvironmentHeader } from './deploymentEnvironmentService';
 import { readEnvironmentMachineSecretGrantsInTx, readMachineConnectorSecretGrantInTx,
@@ -92,6 +93,7 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
     admittedChild?: DeploymentChildAdmission,
     admittedBackup?: DeploymentRestoreNativeAdmissionV1 | DeploymentBackupNativeAdmissionV1,
     admittedDataQuery?: Extract<DeploymentReadAdmissionV1, { actionId: 'deployments.data.query' }>
+        | Extract<DeploymentReadAdmissionV1, { actionId: typeof DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 }>
         | Extract<DeploymentReadAdmissionV1, { actionId: typeof ACTION_INVOKE_ACTION_ID_V1 }>,
 ): Promise<EnvironmentSecretLaunchAdmissionResultV1> {
     if ('kind' in input) return readEnvironmentBindingPreparationInTx(tx, actorAccountId, input, authentication);
@@ -117,26 +119,28 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
         // HTTP binds the signed query operands; this scope owner decides their
         // current Environment/link custody. Service and binding selection stay
         // private to the host; another seal never selects a role.
-        if (!admittedDataQuery) return deploymentFailure('deployment_access_denied');
-        const scope = await readAdmittedDeploymentReadScopeInTx(tx, admittedDataQuery);
-        if (!scope) return deploymentFailure('deployment_access_denied');
-        if ('databaseTarget' in admittedDataQuery) {
-            const target = admittedDataQuery.databaseTarget, materialization = input.materialization;
-            if (input.environmentId !== admittedDataQuery.environmentId || input.targetLinkId !== admittedDataQuery.targetLinkId) return deploymentFailure('deployment_access_denied');
-            if (target.kind === 'deployment_service' ? 'targetLinkId' in materialization
-                || materialization.deploymentId !== target.deploymentId || materialization.service !== target.serviceId
-                : !('targetLinkId' in materialization) || materialization.targetLinkId !== target.targetLinkId
-                    || scope.managedControllerMachineId !== input.machineId) return deploymentFailure('deployment_access_denied');
-        } else if (admittedDataQuery.actionId === ACTION_INVOKE_ACTION_ID_V1) {
-            const materialization = input.materialization;
-            if (!('targetLinkId' in materialization) || input.environmentId !== admittedDataQuery.environmentId || input.targetLinkId !== admittedDataQuery.targetLinkId
-                || materialization.targetLinkId !== admittedDataQuery.targetLinkId
-                || materialization.expectedRevision !== admittedDataQuery.expectedRevision) {
+        if (!admittedDataQuery && admittedBackup?.kind !== 'restore') return deploymentFailure('deployment_access_denied');
+        if (admittedDataQuery) {
+            const scope = await readAdmittedDeploymentReadScopeInTx(tx, admittedDataQuery);
+            if (!scope) return deploymentFailure('deployment_access_denied');
+            if ('databaseTarget' in admittedDataQuery) {
+                const target = admittedDataQuery.databaseTarget, materialization = input.materialization;
+                if (input.environmentId !== admittedDataQuery.environmentId || input.targetLinkId !== admittedDataQuery.targetLinkId) return deploymentFailure('deployment_access_denied');
+                if (target.kind === 'deployment_service' ? 'targetLinkId' in materialization
+                    || materialization.deploymentId !== target.deploymentId || materialization.service !== target.serviceId
+                    : !('targetLinkId' in materialization) || materialization.targetLinkId !== target.targetLinkId
+                        || scope.managedControllerMachineId !== input.machineId) return deploymentFailure('deployment_access_denied');
+            } else if (admittedDataQuery.actionId === ACTION_INVOKE_ACTION_ID_V1) {
+                const materialization = input.materialization;
+                if (!('targetLinkId' in materialization) || input.environmentId !== admittedDataQuery.environmentId || input.targetLinkId !== admittedDataQuery.targetLinkId
+                    || materialization.targetLinkId !== admittedDataQuery.targetLinkId
+                    || materialization.expectedRevision !== admittedDataQuery.expectedRevision) {
+                    return deploymentFailure('deployment_access_denied');
+                }
+                if (scope.managedControllerMachineId !== input.machineId) return deploymentFailure('deployment_access_denied');
+            } else if ('targetLinkId' in input.materialization) {
                 return deploymentFailure('deployment_access_denied');
             }
-            if (scope.managedControllerMachineId !== input.machineId) return deploymentFailure('deployment_access_denied');
-        } else if ('targetLinkId' in input.materialization) {
-            return deploymentFailure('deployment_access_denied');
         }
         const loaded = await loadDeploymentEnvironmentCustodyInTx(tx, input);
         if (!loaded.ok) return loaded;

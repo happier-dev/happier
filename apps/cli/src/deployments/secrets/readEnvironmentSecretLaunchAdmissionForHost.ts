@@ -9,7 +9,7 @@ import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizat
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { createActionExecuteFailureError, parseActionExecuteFailure, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { deploymentOutputValidationFailure } from '../outputValidation';
 import { projectDeploymentException } from '../deploymentFailure';
@@ -180,6 +180,10 @@ function createInstalledSecretTransportForHost(input: InstalledSecretHostInput,
 }
 
 async function readEnvironmentSecretAdmissionForHost(input: HostSecretAdmissionRequest | BindingPreparationAdmissionRequest) {
+    const root = input.context.externalActionExecutionAuthorization?.binding;
+    const native = root?.deploymentNativeAdmission;
+    const dataRoleRoot = native && 'kind' in native && native.kind === 'restore' ? native.actionId
+        : root?.deploymentReadAdmission?.actionId === DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 ? DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 : undefined;
     const actionOperationId = input.actionOperationId ?? input.context.operationAcceptance?.operationId;
     if (input.materialization.kind === 'deployment' && !actionOperationId) return refuse('operation_unavailable');
     const custody = createInstalledSecretTransportForHost(input, 'createRequestHeaders' in input ? input.createRequestHeaders : undefined);
@@ -202,9 +206,9 @@ async function readEnvironmentSecretAdmissionForHost(input: HostSecretAdmissionR
                 ? input.materialization.buildMachineId || input.environmentUpdate
                     ? 'deployments.environments.update' : 'deployments.bindings.set'
                 : input.materialization.kind === 'dataRole'
-                    ? 'targetLinkId' in input.materialization
+                    ? dataRoleRoot ?? ('targetLinkId' in input.materialization
                         || input.context.externalActionExecutionAuthorization?.binding.actionId === ACTION_INVOKE_ACTION_ID_V1
-                        ? ACTION_INVOKE_ACTION_ID_V1 : 'deployments.data.query'
+                        ? ACTION_INVOKE_ACTION_ID_V1 : 'deployments.data.query')
                 : input.materialization.kind === 'domain' && !input.materialization.use
                     ? 'deployments.domains.add'
                     : (input.materialization.kind === 'deployment' || input.materialization.kind === 'copySourceRead') && (input.context.externalActionExecutionAuthorization?.binding.actionId === 'deployments.backups.restore'

@@ -80,7 +80,7 @@ import { isDeploymentDomainDnsActionIdV1, isDeploymentEnvironmentMetadataReadAct
     DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1,
     isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
     DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1, DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1,
-    DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_LOGS_READ_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_LOGS_READ_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema,
     DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/deployment-protocol';
 import { isMachineConnectorSecretGrantHttpPurpose } from '@/app/deployments/machineConnectorSecretGrantAuthorization';
@@ -2789,7 +2789,8 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
     proof: ExternalActionExecutionRequestProof): Promise<Pick<VerifiedExternalActionExecutionRequest,
         'acceptedDeploymentReceipt' | 'deploymentChildArtifactRead'> | false> {
     const admission = verified.binding.deploymentReadAdmission;
-    if (admission?.actionId !== 'deployments.data.query' && admission?.actionId !== ACTION_INVOKE_ACTION_ID_V1) return false;
+    if (admission?.actionId !== 'deployments.data.query' && admission?.actionId !== ACTION_INVOKE_ACTION_ID_V1
+        && admission?.actionId !== DEPLOYMENT_DATA_SIZE_ACTION_ID_V1) return false;
     if (verified.effectActionId === admission.actionId && proof.method.toUpperCase() === 'POST'
         && proof.path === `/v1/deployments/environments/${encodeURIComponent(admission.environmentId)}/secret-launch-admission`) {
         const secret = EnvironmentSecretLaunchAdmissionInputV1Schema.safeParse(proof.body);
@@ -2820,6 +2821,7 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
             && body.targetLinkId === admission.targetLinkId && body.machineId === admission.machineId
             && body.installationId === admission.installationId && materialization.deploymentId === admission.deploymentId
             && materialization.expectedRevision === admission.expectedRevision
+            && (!('service' in admission) || materialization.service === admission.service)
             && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, body)) ? {} : false;
     }
     if (verified.signedChildPurpose.sibling.deploymentRead) {
@@ -2920,17 +2922,27 @@ async function readDeploymentBackupHttpPurpose(verified: VerifiedSignedChildRequ
         if (proof.method.toUpperCase() === 'POST') {
             if (proof.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return isDeploymentWorkspaceListHttpPurpose(verified.binding.serverIdentityId, proof) ? {} : false;
             const secret = EnvironmentSecretLaunchAdmissionInputV1Schema.safeParse(proof.body);
-            if (!secret.success || secret.data.materialization.kind !== scope.secretKind) continue;
+            if (!secret.success) continue;
             const body = secret.data, materialization = secret.data.materialization;
+            if (proof.path !== `/v1/deployments/environments/${encodeURIComponent(scope.environmentId)}/secret-launch-admission`
+                || body.serverId !== verified.binding.serverIdentityId || body.environmentId !== scope.environmentId
+                || body.targetLinkId !== scope.targetLinkId || body.machineId !== admission.machineId
+                || body.installationId !== admission.installationId
+                || proof.routeInput !== undefined && !sameManagedInput(proof.routeInput, body)) continue;
+            if (materialization.kind === 'dataRole') {
+                if (scope.secretKind === 'deployment' && admission.kind === 'restore' && admission.mode === 'confirm'
+                    && admission.destination?.kind === 'database' && !('targetLinkId' in materialization)
+                    && materialization.service === admission.destination.service
+                    && receipts.some(receipt => receipt.id === link.activeDeploymentId
+                        && receipt.id === materialization.deploymentId)) return {};
+                continue;
+            }
+            if (materialization.kind !== scope.secretKind) continue;
             if (materialization.kind !== 'deployment' && materialization.kind !== 'copySourceRead') continue;
             const generation = receipts.find(receipt => receipt.id === (scope.secretKind === 'copySourceRead'
                 ? admission.deploymentId : link.activeDeploymentId));
-            if (!!generation && proof.path === `/v1/deployments/environments/${encodeURIComponent(scope.environmentId)}/secret-launch-admission`
-                && body.serverId === verified.binding.serverIdentityId && body.environmentId === scope.environmentId
-                && body.targetLinkId === scope.targetLinkId && body.machineId === admission.machineId
-                && body.installationId === admission.installationId && materialization.deploymentId === generation.id
-                && materialization.actionOperationId === generation.actionOperationId
-                && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, body))) return {};
+            if (generation && materialization.deploymentId === generation.id
+                && materialization.actionOperationId === generation.actionOperationId) return {};
             continue;
         }
         if (!isReadOnlyArtifactHttpPurpose(proof)) return false;
@@ -3904,7 +3916,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         // Restart consumes its native handle, not Environment, receipt or Artifact
         // content. Only transport of the exact admitted root/codec remains.
         if (!isAdmittedRootRelay && !readsExecutionMachine) return refuse('deployment_restart_purpose');
-    } else if (verified.binding.actionId === 'deployments.data.query'
+    } else if (verified.binding.actionId === 'deployments.data.query' || verified.binding.actionId === DEPLOYMENT_DATA_SIZE_ACTION_ID_V1
         || verified.binding.actionId === ACTION_INVOKE_ACTION_ID_V1 && verified.binding.deploymentReadAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1) {
         if (!isAdmittedRootRelay && !readsExecutionMachine) {
             const purpose = await readDeploymentDataQueryHttpPurpose(verified, proof);

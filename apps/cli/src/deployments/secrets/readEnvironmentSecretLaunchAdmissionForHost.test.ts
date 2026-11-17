@@ -110,6 +110,50 @@ describe('installed Environment secret launch reader', () => {
         await expect(admitted.assertCurrent()).rejects.toMatchObject({ code: 'secret_missing' });
     });
 
+    it.each(['restore', 'size'] as const)('keeps native read-role acquisition under its admitted %s root', async kind => {
+        install();
+        const reader = await import('./readEnvironmentSecretLaunchAdmissionForHost');
+        const actionId = kind === 'restore' ? 'deployments.backups.restore' as const : 'deployments.data.size' as const;
+        const target = { kind: 'machine' as const, machineId: 'machine' };
+        const common = { serverId: 'home', environmentId: 'environment', targetLinkId: 'link',
+            machineId: 'machine', installationId: 'installation' };
+        const input = kind === 'restore' ? { ...common, deploymentId: 'capture', expectedRevision: 3, mode: 'confirm' as const,
+            prepareOperationId: 'prepare', source: { kind: 'repository' as const, snapshotId: 'snapshot' },
+            destination: { kind: 'database' as const, service: 'postgres', database: 'app' } }
+            : { ...common, deploymentId: 'restored', expectedRevision: 4, service: 'postgres' };
+        const envelope = { v: 1 as const, requestId: 'restore-request', target, input };
+        const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'restore-root', binding: {
+            accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'home', actionId,
+            target, machineId: 'machine', installationId: 'installation', custodianAccountId: 'owner',
+            accountEncryptionMode: 'plain', requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            ...(kind === 'restore'
+                ? { environmentId: input.environmentId, deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(actionId, input) }
+                : { deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, input) }),
+        } });
+        const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: root, serverId: 'home',
+            serverIdentityId: 'home', serverHttpBaseUrl: request.serverHttpBaseUrl, target,
+            installationId: 'installation', privateKey: keys.secretKey, rootAdmitted: true });
+        if (!authorization) throw new Error('Expected the admitted restore HTTP projection');
+        const sent: unknown[] = [];
+        vi.spyOn(axios, 'request').mockImplementation(async config => {
+            const payload = EnvironmentSecretLaunchAdmissionInputV1Schema.parse(config.data);
+            sent.push({ effectActionId: config.headers?.[EXTERNAL_ACTION_EFFECT_ACTION_HEADER], materialization: payload.materialization,
+                signedByRoot: verifyExternalActionMachineRequestV1({ authorizationToken: root.token, effectActionId: actionId,
+                target, installationId: 'installation', requestId: envelope.requestId, method: 'POST',
+                path: '/v1/deployments/environments/environment/secret-launch-admission', body: config.data,
+                signature: String(config.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER] ?? ''), publicKey: keys.publicKey }) });
+            return { status: 200, data: { ok: true, grants: [] }, headers: {} };
+        });
+        const admitted = await reader.readEnvironmentDataRoleLaunchAdmissionForHost({ ...request, expectedRevision: 4,
+            deploymentId: 'restored', service: 'postgres', context: { externalActionExecutionAuthorization: authorization,
+                externalActionTarget: target, originalActionEnvelope: envelope } });
+        expect(admitted.grants).toEqual([]);
+        expect(sent).toEqual([{ effectActionId: actionId, signedByRoot: true,
+            materialization: { kind: 'dataRole', expectedRevision: 4, deploymentId: 'restored', service: 'postgres' } }]);
+        admitted.release?.();
+    });
+
     it('signs an admitted qualified managed query for its exact data link without selecting a service role', async () => {
         install();
         const reader = await import('./readEnvironmentSecretLaunchAdmissionForHost');

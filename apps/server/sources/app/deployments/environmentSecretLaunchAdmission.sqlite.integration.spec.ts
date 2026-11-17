@@ -299,6 +299,108 @@ describe('private installed Environment secret launch transport', () => {
         await expect(mint(input)).rejects.toMatchObject({ code: 'credential_scope_denied' });
     });
 
+    it.each(['plain', 'e2ee'] as const)('spends the admitted %s restore root on its current destination read role', async mode => {
+        const f = await admittedTeamDelivery(mode, false, 'postgres');
+        const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
+        const captured = await db.deployment.update({ where: { id: f.receipt.deploymentId }, data: { state: 'succeeded' } });
+        await db.deploymentTargetLink.update({ where: { id: f.payload.targetLinkId }, data: { activeDeploymentId: captured.id,
+            machines: { updateMany: { where: { machineId: f.payload.machineId, installationId: f.payload.installationId },
+                data: { state: 'active' } } } } });
+        const actionId = 'deployments.backups.restore' as const;
+        const input = { serverId, environmentId: row.id, targetLinkId: f.payload.targetLinkId,
+            deploymentId: captured.id, expectedRevision: row.revision, machineId: f.payload.machineId,
+            installationId: f.payload.installationId, mode: 'confirm' as const, prepareOperationId: crypto.randomUUID(),
+            source: { kind: 'repository' as const, snapshotId: 'a'.repeat(64) },
+            destination: { kind: 'database' as const, service: 'postgres', database: 'app' } };
+        const target = { kind: 'machine' as const, machineId: input.machineId };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.requester.id, authentication: { kind: 'account', tokenEpoch: f.requester.tokenEpoch },
+            actionId, machineId: input.machineId, target, requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+        const active = await db.deployment.create({ data: { ...captured, id: crypto.randomUUID(),
+            requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), ...await f.artifact('deployment-receipt.v1') } });
+        await db.deploymentTargetLink.update({ where: { id: input.targetLinkId }, data: { activeDeploymentId: active.id } });
+        await db.deploymentEnvironment.update({ where: { id: row.id }, data: { revision: { increment: 1 } } });
+        await db.teamMembership.delete({ where: { teamId_accountId: { teamId: f.team.id, accountId: f.requester.id } } });
+        const request = (changes: Partial<EnvironmentSecretLaunchAdmissionBodyV1> = {}) => {
+            const body: EnvironmentSecretLaunchAdmissionBodyV1 = { serverId, environmentId: row.id,
+                targetLinkId: input.targetLinkId, machineId: input.machineId, installationId: input.installationId,
+                materialization: { kind: 'dataRole', expectedRevision: row.revision + 1,
+                    deploymentId: active.id, service: input.destination.service }, ...changes };
+            const payload = { ...body, proof: signMachineInstallationProof({ payload: { version: 1,
+                accountId: f.requester.id, machineId: body.machineId, installationId: body.installationId,
+                deploymentSecretLaunch: { requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(body) } },
+                privateKey: f.keys.secretKey }) };
+            return { method: 'POST' as const, url: f.url, payload, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: actionId, target, installationId: input.installationId, requestId: envelope.requestId,
+                    method: 'POST', path: f.url, body: payload, privateKey: f.keys.secretKey }),
+            } };
+        };
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const allowed = await app.inject(request());
+            expect(allowed.statusCode, allowed.body).toBe(200);
+            expect(allowed.json()).toMatchObject({ ok: true, grants: [f.grant] });
+            for (const changes of [
+                { materialization: { kind: 'dataRole' as const, expectedRevision: row.revision + 1,
+                    deploymentId: captured.id, service: 'postgres' } },
+                { materialization: { kind: 'dataRole' as const, expectedRevision: row.revision + 1,
+                    deploymentId: active.id, service: 'other-service' } },
+                { targetLinkId: crypto.randomUUID() }, { machineId: crypto.randomUUID() },
+            ]) expect((await app.inject(request(changes))).statusCode).toBe(401);
+        }, { authentication: 'real' });
+    });
+
+    it.each(['plain', 'e2ee'] as const)('spends the admitted %s size root only on its signed native service', async mode => {
+        const f = await admittedTeamDelivery(mode, false, 'postgres');
+        const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
+        await db.deployment.update({ where: { id: f.receipt.deploymentId }, data: { state: 'succeeded' } });
+        await db.deploymentTargetLink.update({ where: { id: f.payload.targetLinkId }, data: { activeDeploymentId: f.receipt.deploymentId,
+            machines: { updateMany: { where: { machineId: f.payload.machineId, installationId: f.payload.installationId },
+                data: { state: 'active' } } } } });
+        const actionId = 'deployments.data.size' as const;
+        const input = { serverId, environmentId: row.id, targetLinkId: f.payload.targetLinkId,
+            deploymentId: f.receipt.deploymentId, expectedRevision: row.revision, machineId: f.payload.machineId,
+            installationId: f.payload.installationId, service: 'postgres' };
+        const target = { kind: 'machine' as const, machineId: input.machineId };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.requester.id, authentication: { kind: 'account', tokenEpoch: f.requester.tokenEpoch },
+            actionId, machineId: input.machineId, target, requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, input) }, { input });
+        await db.deploymentEnvironment.update({ where: { id: row.id }, data: { revision: { increment: 1 } } });
+        await db.teamMembership.delete({ where: { teamId_accountId: { teamId: f.team.id, accountId: f.requester.id } } });
+        const request = (service = input.service) => {
+            const body: EnvironmentSecretLaunchAdmissionBodyV1 = { serverId, environmentId: row.id,
+                targetLinkId: input.targetLinkId, machineId: input.machineId, installationId: input.installationId,
+                materialization: { kind: 'dataRole', expectedRevision: input.expectedRevision,
+                    deploymentId: input.deploymentId, service } };
+            const payload = { ...body, proof: signMachineInstallationProof({ payload: { version: 1,
+                accountId: f.requester.id, machineId: body.machineId, installationId: body.installationId,
+                deploymentSecretLaunch: { requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(body) } },
+                privateKey: f.keys.secretKey }) };
+            return { method: 'POST' as const, url: f.url, payload, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: actionId, target, installationId: input.installationId, requestId: envelope.requestId,
+                    method: 'POST', path: f.url, body: payload, privateKey: f.keys.secretKey }),
+            } };
+        };
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const allowed = await app.inject(request());
+            expect(allowed.statusCode, allowed.body).toBe(200);
+            expect(allowed.json()).toMatchObject({ ok: true, grants: [f.grant] });
+            expect((await app.inject(request('another-service'))).statusCode).toBe(401);
+        }, { authentication: 'real' });
+    });
+
     it('keeps backup receipt selection on the destination and copy-source targets at the scope owner', async () => {
         const f = await admittedTeamDelivery();
         const { isDeploymentReadOperandInAdmittedScopeInTx: inScope } = await import('./deploymentPreparationAuthorization');
