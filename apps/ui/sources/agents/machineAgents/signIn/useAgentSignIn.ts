@@ -282,11 +282,13 @@ export function useAgentSignIn(target: Readonly<{ serverId?: string | null; mach
     accountLabel: entry?.accountLabel ?? null, ...actions };
 }
 
+export type MachineCliSignInAuthentication = Omit<AgentSignInStatusResponse, 'checkedAt'>;
+
 export type MachineCliSignInRow = Readonly<{
   id: string;
   title: string;
   kind: 'agent' | 'systemTool';
-  authentication: Omit<AgentSignInStatusResponse, 'checkedAt'> | null;
+  authentication: MachineCliSignInAuthentication | null;
   signIn: MachineAgentSignInSession;
 }>;
 const EMPTY_CLI_SIGN_INS: readonly MachineCliSignInRow[] = Object.freeze([]);

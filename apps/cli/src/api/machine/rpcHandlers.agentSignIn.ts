@@ -15,11 +15,18 @@ import type { MachineTerminalRpcHandlerDeps } from './rpcHandlers.terminal';
 
 export function registerMachineAgentSignInRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerRegistrar;
-  deps?: Pick<MachineTerminalRpcHandlerDeps, 'agentIsolation' | 'nativeOperationRuntime' | 'resolveHostHomeServerIdentityId'>;
+  deps?: Pick<MachineTerminalRpcHandlerDeps, 'agentIsolation' | 'nativeOperationRuntime' | 'resolveHostHomeServerIdentityId'> & Readonly<{
+    readSignInConnectedDefaultSelection?: (agentId: string, context: import('../rpc/types').RpcHandlerContext) => Promise<import('@/session/services/agentConnectedDefaultRoutes').CliConnectedDefaultSelection>;
+  }>;
 }>): void {
   params.rpcHandlerManager.registerHandler(AGENT_SIGN_IN_STATUS_RPC_METHOD, async (raw, context) => {
     const request = AgentSignInStatusRequestSchema.parse(raw);
-    if (context?.machineAdmission?.role !== 'use') return await probeAgentSignInStatus(request.agentId);
+    const readCredentialSource = async (status: Awaited<ReturnType<typeof probeAgentSignInStatus>>) => {
+      if (!context || !params.deps?.readSignInConnectedDefaultSelection) return status;
+      const selection = await params.deps.readSignInConnectedDefaultSelection(request.agentId, context);
+      return { ...status, credentialSource: selection === 'native' ? status.credentialSource : selection };
+    };
+    if (context?.machineAdmission?.role !== 'use') return await readCredentialSource(await probeAgentSignInStatus(request.agentId));
     const snapshot = params.deps?.agentIsolation?.read();
     const placement = resolveMachineAgentExecutionPlacementV1({ policy: snapshot ?? { enabled: false }, platform: process.platform });
     const readNativeStatus = async () => {
@@ -52,7 +59,7 @@ export function registerMachineAgentSignInRpcHandlers(params: Readonly<{
         await operation.dispose();
       }
     };
-    const status = await readNativeStatus().catch(() => probeAgentSignInStatus(request.agentId, null));
+    const status = await readCredentialSource(await readNativeStatus().catch(() => probeAgentSignInStatus(request.agentId, null)));
     // The verified ingress owns access. Project before transport encryption;
     // the Home cannot inspect an E2EE reply to remove Account identity.
     return {

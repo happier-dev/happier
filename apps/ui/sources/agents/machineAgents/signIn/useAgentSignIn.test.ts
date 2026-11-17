@@ -70,7 +70,8 @@ describe('shared Agent sign-in', () => {
         },
       };
       if (method === 'daemon.agents.signIn.status') return { status: payload.agentId === toolId ? 'signedIn' : 'signedOut',
-        accountLabel: payload.agentId === toolId ? 'GitHub work' : null, checkedAt: Date.now(), nativeLogin: 'login_terminal',
+        accountLabel: payload.agentId === toolId ? 'GitHub work' : null,
+        credentialSource: payload.agentId === toolId ? 'connectedAccount' : 'none', checkedAt: Date.now(), nativeLogin: 'login_terminal',
         connectedServices: payload.agentId === toolId ? [{ serviceId: `${github.id}/github-account`, title: 'GitHub' }] : [] };
       if (method === 'daemon.agents.signIn.prepare') return payload.method === 'connected' ? { method: 'connected', command }
         : { method: 'native', launch: { kind: 'agent_login', agentId: payload.agentId } };
@@ -93,7 +94,7 @@ describe('shared Agent sign-in', () => {
       for (let attempt = 0; attempt < 50 && mounted.getCurrent().phase !== 'ready'; attempt++) await flushHookEffects();
       expect(mounted.getCurrent()).toMatchObject({ phase: 'ready', items: expect.arrayContaining([
         expect.objectContaining({ id: 'acme/helper', kind: 'agent', authentication: expect.objectContaining({ status: 'signedOut' }) }),
-        expect.objectContaining({ id: toolId, kind: 'systemTool', authentication: expect.objectContaining({ status: 'signedIn', accountLabel: 'GitHub work' }) }),
+        expect.objectContaining({ id: toolId, kind: 'systemTool', authentication: expect.objectContaining({ status: 'signedIn', accountLabel: 'GitHub work', credentialSource: 'connectedAccount' }) }),
         expect.objectContaining({ id: 'happier.secret-source.onepassword/op', kind: 'systemTool', authentication: expect.objectContaining({ status: 'signedOut' }) }),
       ]) });
       expect(boundary.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)).toHaveLength(1);

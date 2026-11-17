@@ -124,6 +124,15 @@ purposes. A saved GitHub or other machine CLI Account does not supply credential
 to that probe or block it when unavailable. Actual Session and setup processes
 retain their explicitly selected CLI Account purposes and delivery refusals.
 
+Machine CLI sign-in status exposes `credentialSource` as `connectedAccount`,
+`machineLogin`, `none`, or `null` while the source cannot be resolved. The daemon
+reads the requesting Account's purpose defaults through the same selection owner
+as launch; a selected Connected Account takes precedence over native login.
+This field describes selection, not credential availability: an unavailable bound
+account does not fall back to Machine login. Native `status` remains a separate
+observation. The per-Machine `useMachineCliSignIns` hook retains this source on
+`items[].authentication` without reading credential material or adding polling.
+
 Cursor subscription usage reads the DashboardService current-period usage RPC
 with the stored OAuth access token through the existing daemon quota coordinator.
 API-key mode remains unavailable. This RPC is undocumented and may change without

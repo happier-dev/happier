@@ -150,6 +150,7 @@ export type MachineAgentSignInActionResultById = {
             title: string;
         }[];
         accountLabel?: null | string | undefined;
+        credentialSource?: 'connectedAccount' | 'machineLogin' | 'none' | null | undefined;
         signInScope?: 'machineOwner' | 'member' | 'sharedAgent' | undefined;
     };
     readonly "machines.agents.signIn.cancel": {

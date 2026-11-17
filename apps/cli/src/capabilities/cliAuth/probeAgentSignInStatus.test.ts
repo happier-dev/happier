@@ -7,6 +7,7 @@ import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import { AgentSignInStatusResponseSchema } from '@happier-dev/protocol/daemon/agentSignIn';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { resolveCliConnectedDefaultSelection } from '@/session/services/agentConnectedDefaultRoutes';
 import { createActionExecutor } from '@happier-dev/protocol';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
@@ -47,12 +48,12 @@ describe('on-demand native sign-in status', () => {
       runtimeOptions: { pluginIds: ['happier.agent.cursor'] },
     });
     try {
-      expect(await probeAgentSignInStatus('cursor')).toMatchObject({ status: 'signedIn', accountLabel: 'fixture@example.invalid' });
+      expect(await probeAgentSignInStatus('cursor')).toMatchObject({ status: 'signedIn', accountLabel: 'fixture@example.invalid', credentialSource: 'machineLogin' });
       const admission = { actorAccountId: 'guest', custodianAccountId: 'owner', machineId: 'machine',
         installationId: 'installation', role: 'use', encryptionMode: 'plain' } as const;
       const guestContext = { signal: new AbortController().signal, machineAdmission: admission };
       const guest = await probeAgentSignInStatus('cursor', guestContext);
-      expect(guest).toMatchObject({ status: 'signedIn', signInScope: 'machineOwner' });
+      expect(guest).toMatchObject({ status: 'signedIn', signInScope: 'machineOwner', credentialSource: 'machineLogin' });
       expect(guest).not.toHaveProperty('accountLabel');
       // Start at the real Action dispatcher, retaining its admitted root across
       // the local Machine transport and native probe rather than supplying a reply.
@@ -93,14 +94,37 @@ describe('on-demand native sign-in status', () => {
         expect(full).not.toHaveProperty('signInScope');
       }
       write('{}');
-      expect(await probeAgentSignInStatus('cursor')).toMatchObject({ status: 'signedOut' });
+      expect(await probeAgentSignInStatus('cursor')).toMatchObject({ status: 'signedOut', credentialSource: 'none' });
       expect(await probeAgentSignInStatus('cursor', guestContext)).toMatchObject({ status: 'signedOut', signInScope: 'machineOwner' });
       write('not-json');
-      expect(await probeAgentSignInStatus('cursor')).toMatchObject({ status: 'unknown' });
+      expect(await probeAgentSignInStatus('cursor')).toMatchObject({ status: 'unknown', credentialSource: null });
       expect(await probeAgentSignInStatus('cursor', guestContext)).toMatchObject({ status: 'unknown', signInScope: 'machineOwner' });
     } finally {
       await runtime.dispose();
     }
+  });
+  it('retains a selected connected source for Use without claiming native login or exposing Account identity', async () => {
+    const consumer = { pluginId: 'acme.cli', localId: 'helper' };
+    const service = { pluginId: consumer.pluginId, localId: 'account' };
+    const id = `${consumer.pluginId}/${consumer.localId}`;
+    const handlers = new Map<string, RpcHandler>();
+    const contributions = { agentDefinitionsById: new Map(), systemTools: [{ pluginId: consumer.pluginId,
+      definition: { id: consumer.localId, title: 'Helper', executableNames: ['helper'],
+        connectedAccountLaunch: { purpose: 'auth', service: service.localId, environmentKey: 'HELPER_TOKEN' } } }] };
+    const purposeCatalog = { status: 'ready' as const, revision: 1, record: { key: 'purposes' as const,
+      value: { v: 1 as const, bindings: [{ purpose: { consumer, purpose: 'auth' },
+        target: { kind: 'account' as const, account: { service, accountId: 'unavailable-private-account' } } }] } } };
+    registerMachineAgentSignInRpcHandlers({ rpcHandlerManager: { registerHandler: (method, handler) => handlers.set(method, handler) },
+      deps: { readSignInConnectedDefaultSelection: async agentId => resolveCliConnectedDefaultSelection({
+        agentId, contributions, purposeCatalog, accountSettings: {},
+      }) } });
+    const result = AgentSignInStatusResponseSchema.parse(await handlers.get('daemon.agents.signIn.status')!({ agentId: id }, {
+      signal: new AbortController().signal, machineAdmission: { actorAccountId: 'member', custodianAccountId: 'owner',
+        machineId: 'machine', installationId: 'installation', role: 'use', encryptionMode: 'plain' },
+    }));
+    expect(result).toMatchObject({ status: 'unknown', credentialSource: 'connectedAccount', signInScope: 'machineOwner' });
+    expect(result).not.toHaveProperty('accountLabel');
+    expect(JSON.stringify(result)).not.toContain('unavailable-private-account');
   });
   it('does not infer signed-in or signed-out when no native probe can answer', async () => {
     expect(await probeAgentSignInStatus('missing-fixture-agent')).toMatchObject({ status: 'unknown' });

@@ -15,6 +15,8 @@ export const AgentSignInPrepareRequestSchema = lazyZodSchema(() => (<T extends z
 export const AgentSignInStatusResponseSchema = lazyZodSchema(() => z.strictObject({
   status: z.enum(['signedIn', 'signedOut', 'unknown']),
   accountLabel: z.optional(z.nullable(z.string())),
+  /** Selected credential route, not an assertion that bound material is available. */
+  credentialSource: z.optional(z.nullable(z.enum(['connectedAccount', 'machineLogin', 'none']))),
   signInScope: z.optional(z.enum(['machineOwner', 'member', 'sharedAgent'])),
   checkedAt: z.number(),
   nativeLogin: z.enum(['login_terminal', 'status_only', 'manual_only', 'unsupported']),
@@ -37,6 +39,7 @@ export const MachinesAgentsSignInStartOutputSchema = lazyZodSchema(() => z.union
   ConnectedAccountAttemptResponseSchema,
   z.strictObject({ ok: z.literal(false), errorCode: z.string(), error: z.string() }),
 ]));
+export type MachineCliCredentialSource = NonNullable<AgentSignInStatusResponse['credentialSource']>;
 export type AgentSignInPrepareRequest = z.output<typeof AgentSignInPrepareRequestSchema>;
 export type AgentSignInPrepareResponse = z.output<typeof AgentSignInPrepareResponseSchema>;
 export type AgentSignInStatusResponse = z.output<typeof AgentSignInStatusResponseSchema>;

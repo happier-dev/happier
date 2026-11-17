@@ -3,7 +3,7 @@ import { AZ_DEP_ID } from '@happier-dev/protocol/installables/definitions/az';
 
 /** Machine sign-in and service facts Use may receive, before encryption. */
 const IDENTITY_FREE_SIGN_IN_FIELDS = [
-  'status', 'checkedAt', 'nativeLogin', 'connectedServices', 'signInScope',
+  'status', 'credentialSource', 'checkedAt', 'nativeLogin', 'connectedServices', 'signInScope',
   'loginSupport', 'required', 'state', 'method', 'reason', 'source',
   'authenticated', 'credentialState', 'machineRegistered', 'machineRegistrationState', 'machineId', 'needsAuth',
   'serviceAutostart', 'managedServiceInstalled', 'runningManagedServiceCount', 'serviceTargetMode',

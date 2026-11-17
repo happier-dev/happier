@@ -23,7 +23,7 @@ import { readDeclaredCatalogConnectedAccountServiceIds, resolveCatalogAgentConne
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import type { AgentSpawnPurposeContributions } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
-import { resolveLaunchPurposeDeclarations } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
+import { resolveLaunchPurposeDeclarations, resolveSystemToolLaunchPurposeDeclarations } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
 import { isAccountSettingsContentInvalidError } from '@/settings/accountSettings/accountSettingsRefreshError';
 import { readTeamCredentialLaunchReadinessRefusal } from './sessionTeamCredentialReadiness';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
@@ -34,12 +34,21 @@ import { readTeamCredentialLaunchFailureCode, type TeamCredentialLaunchFailureCo
 export { readSpawnConnectedServicesTeamResources } from './sessionTeamCredentialCatalog';
 export { readTeamCredentialLaunchReadinessRefusal } from './sessionTeamCredentialReadiness';
 
+/** Standalone CLI reads and Session launch defaulting share declared purposes. */
+function readDefaultPurposeDeclarations(agentId: string, contributions: AgentSpawnPurposeContributions,
+  catalogEntry?: AgentCatalogEntry | null, purposeDemand?: 'agent', bindings?: ConnectedServiceBindingsV2) {
+  return contributions.agentDefinitionsById.has(agentId)
+    ? resolveLaunchPurposeDeclarations({ agentId, contributions, catalogEntry, purposeDemand, bindings })
+    : resolveSystemToolLaunchPurposeDeclarations(contributions).filter(({ consumer }) =>
+        buildQualifiedPluginContributionKey(consumer) === agentId);
+}
+
 function readSpawnConnectedAccountServiceIds(agentId: string, catalogEntry: AgentCatalogEntry | null | undefined,
-  contributions: AgentSpawnPurposeContributions = readCurrentContributionRegistry()) {
+  contributions: AgentSpawnPurposeContributions = readCurrentContributionRegistry(), bindings?: ConnectedServiceBindingsV2) {
   const agentServices = catalogEntry === undefined
     ? resolveCatalogAgentConnectedAccountServiceIds(agentId)
     : readDeclaredCatalogConnectedAccountServiceIds(catalogEntry);
-  const launchServices = resolveLaunchPurposeDeclarations({ agentId, catalogEntry, contributions })
+  const launchServices = readDefaultPurposeDeclarations(agentId, contributions, catalogEntry, undefined, bindings)
     .flatMap(declaration => declaration.snapshot.authorizedPurposes.flatMap(scope => scope.serviceRefs.map(buildQualifiedPluginContributionKey)));
   return [...new Set([...agentServices, ...launchServices])];
 }
@@ -232,17 +241,15 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
  */
 export function readAgentPurposeDefaults(params: Readonly<{
   onlySavedDefaults?: boolean;
+  purposeDemand?: 'agent';
   accountSettings: unknown;
   agentId: string;
   contributions?: AgentSpawnPurposeContributions;
   catalogEntry?: AgentCatalogEntry | null;
   purposeCatalog?: ConnectedAccountCatalogSnapshotV1;
 }>): readonly AgentConnectedAccountPurposeDefault[] {
-  const declarations = resolveLaunchPurposeDeclarations({
-    agentId: params.agentId,
-    contributions: params.contributions ?? readCurrentContributionRegistry(),
-    catalogEntry: params.catalogEntry,
-  });
+  const declarations = readDefaultPurposeDeclarations(params.agentId,
+    params.contributions ?? readCurrentContributionRegistry(), params.catalogEntry, params.purposeDemand);
   const settings = params.accountSettings && typeof params.accountSettings === 'object' && !Array.isArray(params.accountSettings)
     ? params.accountSettings as Readonly<Record<string, unknown>>
     : {};
@@ -453,11 +460,11 @@ export function resolveSpawnConnectedServicesDefaultDisposition(params: Readonly
   teamCredentialResourceCatalog?: SpawnConnectedServicesTeamResourceCatalog;
   purposeDefaults?: readonly AgentConnectedAccountPurposeDefault[];
 }>): SpawnConnectedServicesDefaultDisposition {
-  const supportedServiceIds = [...new Set([
+  const declaredServiceIds = [...new Set([
     ...readSpawnConnectedAccountServiceIds(params.agentId, params.catalogEntry, params.contributions),
     ...(params.purposeDefaults ?? []).map(entry => buildQualifiedPluginContributionKey(entry.service)),
   ])];
-  if (supportedServiceIds.length === 0) return { kind: 'native' };
+  if (declaredServiceIds.length === 0) return { kind: 'native' };
 
   if (params.purposeCatalog && (params.purposeCatalog.status !== 'ready' || params.purposeCatalog.record.key !== 'purposes')) {
     return {
@@ -468,8 +475,15 @@ export function resolveSpawnConnectedServicesDefaultDisposition(params: Readonly
   }
 
   const defaults = params.purposeDefaults ?? readAgentPurposeDefaults(params);
-  const configuredBindings = projectAgentConnectedAccountPurposeDefaultsToSessionBindings(defaults)
-    ?.bindingsByServiceId ?? {};
+  const selectedBindings = projectAgentConnectedAccountPurposeDefaultsToSessionBindings(defaults)
+    ?? { v: 2 as const, bindingsByServiceId: {} };
+  const configuredBindings = selectedBindings.bindingsByServiceId;
+  // Optional process tools participate only when explicitly selected; required
+  // Agent purposes retain their native entries through the declaration owner.
+  const supportedServiceIds = [...new Set([
+    ...readSpawnConnectedAccountServiceIds(params.agentId, params.catalogEntry, params.contributions, selectedBindings),
+    ...Object.keys(configuredBindings).filter(serviceId => configuredBindings[serviceId]?.source !== 'native'),
+  ])];
   const teamIdByServiceId = new Map(defaults.flatMap((entry) => (
     entry.teamResource
       ? [[buildQualifiedPluginContributionKey(entry.service), entry.teamResource.teamId] as const]

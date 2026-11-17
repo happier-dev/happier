@@ -302,6 +302,7 @@ export type MachineRpcHandlerDeps = Readonly<{
   agentIsolation?: MachineTerminalRpcHandlerDeps['agentIsolation'];
   nativeOperationRuntime?: MachineTerminalRpcHandlerDeps['nativeOperationRuntime'] & Partial<Pick<import('@/api/apiMachine').ApiMachineClient, 'readMemberFolderOwner'>>;
   resolveHostHomeServerIdentityId?: MachineTerminalRpcHandlerDeps['resolveHostHomeServerIdentityId'];
+  readSignInConnectedDefaultSelection?: NonNullable<Parameters<typeof registerMachineAgentSignInRpcHandlers>[0]['deps']>['readSignInConnectedDefaultSelection'];
   readMachineEffectiveCores?: () => number | undefined;
   requesterSessionRuntime?: NonNullable<Parameters<typeof import('@/rpc/handlers/sessionLifecycle').registerSessionLifecycleRpcHandlers>[0]['requesterSessionRuntime']>;
   requesterBootstrapBoundary?: NonNullable<Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['requesterBootstrapBoundary']>;

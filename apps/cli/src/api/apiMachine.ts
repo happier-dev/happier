@@ -1134,6 +1134,28 @@ export class ApiMachineClient {
         });
     }
 
+    /** Diagnostic selection metadata uses the same Account-purpose defaults as launch.
+     * It neither opens credentials nor promises that selected material is available. */
+    async readSignInConnectedDefaultSelection(agentId: string, ingress: RpcHandlerContext) {
+        const authorization = ingress.callerInputAuthorization ?? ingress.localActionContext?.externalActionExecutionAuthorization;
+        const requester = readRequesterAccountActionContext(authorization);
+        // An external requester without installed private Account custody cannot
+        // inherit the daemon's defaults, regardless of their Machine role.
+        if (authorization && !requester) return null;
+        const admission = ingress.machineAdmission;
+        if (!requester && admission?.actorAccountId !== admission?.custodianAccountId) return null;
+        const installed = requester ? null : await this.resolveInstalledAccountRuntime(ingress.signal,
+            admission?.actorAccountId);
+        const credentials = requester?.credentials ?? installed?.credentials;
+        const snapshot = requester ? requester.savedSecretOperationContext.readSnapshot() : getActiveAccountSettingsSnapshot();
+        if (!credentials || !snapshot || snapshot.scopeKey !== resolveAccountSettingsScopeKeyForToken(credentials.token)) return null;
+        const { readAgentConnectedDefaultRoutes } = await import('@/session/services/agentConnectedDefaultRoutes');
+        const result = await runWithServerHttpBaseUrl(requester?.serverHttpBaseUrl ?? installed!.serverHttpBaseUrl, () =>
+            readAgentConnectedDefaultRoutes({ credentials, settings: snapshot.settings, agentIds: [agentId],
+                signal: ingress.signal, ...(requester ? { operationContext: requester.savedSecretOperationContext } : {}) }));
+        return result.selections.get(agentId) ?? null;
+    }
+
     /** Host-private process admission; no credential value enters an Action operand. */
     async prepareConnectedAccountProcessEnvironment(input: Readonly<{
         authorization?: import('@happier-dev/protocol').ExternalActionExecutionAuthorizationV1;
@@ -2313,6 +2335,7 @@ export class ApiMachineClient {
                         message: 'Choose an accepted Workspace or path for this Session', retryable: false });
                     return placement.payloadPlacement;
                 },
+                readSignInConnectedDefaultSelection: (agentId, ingress) => this.readSignInConnectedDefaultSelection(agentId, ingress),
                 nativeOperationRuntime: { prepareNativeOperation: input => this.prepareNativeOperation(input),
                     readMemberFolderOwner: path => this.readMemberFolderOwner(path),
                     prepareConnectedAccountProcessEnvironment: input => this.prepareConnectedAccountProcessEnvironment(input) },

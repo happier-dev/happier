@@ -26,19 +26,24 @@ export function getAgentSignInServices(agentId: string) {
 /** Fresh native facts, using exactly the same admitted probe as the inventory. */
 export async function probeAgentSignInStatus(agentId: string, nativeExecution?: CliAuthNativeExecution | null): Promise<AgentSignInStatusResponse> {
   const tool = readSystemToolAuthentication(agentId);
-  if (tool) return {
-    status: await probeSystemToolAuthentication(tool, nativeExecution), accountLabel: null, checkedAt: Date.now(),
-    nativeLogin: tool.authentication.loginLaunches.length ? 'login_terminal' : 'unsupported',
-    connectedServices: getAgentSignInServices(agentId).map(({ serviceId, title }) => ({ serviceId, title })),
-  };
+  if (tool) {
+    const status = await probeSystemToolAuthentication(tool, nativeExecution);
+    return {
+      status, credentialSource: nativeCredentialSource(status), accountLabel: null, checkedAt: Date.now(),
+      nativeLogin: tool.authentication.loginLaunches.length ? 'login_terminal' : 'unsupported',
+      connectedServices: getAgentSignInServices(agentId).map(({ serviceId, title }) => ({ serviceId, title })),
+    };
+  }
   const agent = readAgentCatalogSnapshot().agentDefinitionsById.get(agentId);
   const launch = agent?.runtimeSpec ? resolveAgentCliLaunchSpecForRuntime(agent.runtimeSpec) : null;
   // null means this execution user's native probe is unavailable, never a
   // request to retry using the daemon's credentials.
   const auth = launch && nativeExecution !== null ? await detectNativeAgentCliAuthStatus({ agentId,
     resolvedPath: launch.resolvedPath, ...(nativeExecution ? { nativeExecution, processEnv: nativeExecution.processEnv } : {}) }) : null;
+  const status = auth?.state === 'logged_in' ? 'signedIn' : auth?.state === 'logged_out' ? 'signedOut' : 'unknown';
   return {
-    status: auth?.state === 'logged_in' ? 'signedIn' : auth?.state === 'logged_out' ? 'signedOut' : 'unknown',
+    credentialSource: nativeCredentialSource(status),
+    status,
     accountLabel: auth?.accountLabel ?? null,
     checkedAt: auth?.checkedAt ?? Date.now(),
     nativeLogin: agent?.cliMetadata?.auth.support ?? 'unsupported',
@@ -68,4 +73,8 @@ export function prepareAgentSignIn(request: AgentSignInPrepareRequest): AgentSig
   }
   return { method,
     launch: { kind: 'agent_login', agentId: request.agentId, launchId } };
+}
+
+function nativeCredentialSource(status: AgentSignInStatusResponse['status']): AgentSignInStatusResponse['credentialSource'] {
+  return status === 'signedIn' ? 'machineLogin' : status === 'signedOut' ? 'none' : null;
 }
