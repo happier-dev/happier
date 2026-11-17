@@ -692,7 +692,8 @@ higher (P03 ORCH, 2026-11-17): the routed body exports the run's admission class
 bootstrap and preparation as `HAPPIER_ADMISSION_PREPARES_CLASS`, the client sends it as
 `preparesClass`, and the broker takes the maximum over waiting requests for the same
 step (same class and publication locks, or the same command identity without locks).
-Other classes ignore the field. Ranks order only
+Other classes ignore the field. QA reload preparation (`source-reload`) is served first
+(owner 15:31Z, P03 ORCH ruling 2026-11-17), then overdue waiters, then ranks. Ranks order only
 waiters within the 22m24s bound: a waiter that has waited past it is served first, in
 arrival order, whatever its rank, so sustained ranked arrivals cannot starve rank-0 work
 (the bound's guaranteed start, owner 2026-11-13; on nl1 on 2026-11-17 package-dist and

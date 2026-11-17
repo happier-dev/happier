@@ -617,6 +617,23 @@ test('a waiter past the reservation bound heads the queue ahead of later priorit
   await focused.admit();
 });
 
+test('QA reload preparation runs ahead of overdue waiters (reload #173)', linux, async t => {
+  // P03 ORCH RULING 2026-11-17 (owner 15:31Z: reload preparation runs ahead of tests):
+  // source-reload first, then overdue waiters in arrival order, then rank. #173 slid
+  // from 50 to 71 of 109 behind overdue waiters while its QA stack was down.
+  const { root } = await fixture(t);
+  const holder = await (await acquire(root, 100, t)).admit();
+  const overdue = await acquire(root, 60, t, { ...priorityIdentity(root, 'ordinary'), arrivedAt: Date.now() - headReservationDelayMs });
+  const reload = await acquire(root, 60, t, { className: 'validation', resourceClass: 'source-reload', component: '.', entry: 'node inline-preparation' });
+  const sample = await requestAdmissionSample(root);
+  assert.equal(sample.head.headPriority, 2, 'the reload preparation heads the queue');
+  assert.equal(sample.head.ageMs < headReservationDelayMs, true);
+  await holder.release();
+  const started = await reload.admit();
+  await started.release();
+  await overdue.admit();
+});
+
 test('a shared preparation step takes the highest rank among the runs waiting on it', linux, async t => {
   // P03 ORCH 2026-11-17: a package-dist build is a prerequisite of every run waiting
   // on its output, so a later focused run's request for the same build raises it.

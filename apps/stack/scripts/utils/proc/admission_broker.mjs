@@ -4,7 +4,7 @@ import { appendFileSync, closeSync, lstatSync, mkdirSync, openSync, readFileSync
 import { createConnection, createServer } from 'node:net';
 import { dirname, isAbsolute, join, posix, relative } from 'node:path';
 import { availableParallelism } from 'node:os';
-import { FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, resolveAdmissionCpuCores } from '../dev_targets/command_resources.mjs';
+import { FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, SOURCE_RELOAD_ADMISSION_CLASS, resolveAdmissionCpuCores } from '../dev_targets/command_resources.mjs';
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import { admitWorkerDiskBudget } from '../dev_targets/worker_disk_budget.mjs';
@@ -286,8 +286,12 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   // has a guaranteed start, so overdue waiters are served first, in arrival order,
   // whatever their rank. Without this, ranked arrivals headed nl1's queue for
   // 2.5 h while rank-0 work never reserved (P03-ADMISSION-3, 2026-11-17).
+  // P03 ORCH RULING 2026-11-17 (owner 15:31Z): QA reload preparation runs ahead of
+  // tests, so it precedes overdue waiters: source-reload, then overdue FIFO, then rank.
   const overdue = (item, now) => now - item.arrivedAt >= HEAD_RESERVATION_DELAY_MS;
-  const compareService = now => (left, right) => Number(overdue(right, now)) - Number(overdue(left, now))
+  const reload = item => (item.resourceClass ?? item.className) === SOURCE_RELOAD_ADMISSION_CLASS;
+  const compareService = now => (left, right) => Number(reload(right)) - Number(reload(left))
+    || Number(overdue(right, now)) - Number(overdue(left, now))
     || (overdue(left, now) ? 0 : right.headPriority - left.headPriority)
     || left.arrivedAt - right.arrivedAt || left.arrivalOrder - right.arrivalOrder;
   // Order is a function of time and of who waits on a shared step; re-derive it
