@@ -91,6 +91,12 @@ export const ActionExecutionDescriptorV1Schema = lazyZodSchema(() => z.looseObje
   }));
 export type ActionExecutionDescriptorV1 = z.infer<typeof ActionExecutionDescriptorV1Schema>;
 
+const ActionAutomationChoicesV1Schema = lazyZodSchema(() => z.strictObject({
+    before: z.boolean(),
+    after: z.boolean(),
+    workflowStep: z.boolean(),
+  }));
+
 export const ActionDefinitionSummaryV1Schema = lazyZodSchema(() => z.looseObject({
     id: ActionDefinitionIdV1Schema,
     title: z.string().check(z.minLength(1)),
@@ -115,6 +121,7 @@ export const ActionDefinitionSummaryV1Schema = lazyZodSchema(() => z.looseObject
     outputSchema: z.optional(LooseJsonObjectSchema),
     execution: z.optional(ActionExecutionDescriptorV1Schema),
     sideEffectClass: z.optional(z.enum(['none', 'read', 'write', 'external', 'danger'])),
+    automation: z.optional(ActionAutomationChoicesV1Schema),
     operation: z.optional(ActionOperationDeclarationV1Schema),
   }));
 export type ActionDefinitionSummaryV1 = z.infer<typeof ActionDefinitionSummaryV1Schema>;

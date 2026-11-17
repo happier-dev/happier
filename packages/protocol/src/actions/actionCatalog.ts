@@ -3,6 +3,8 @@ import type { JsonValue } from '../json/strictJsonValue.js';
 import { pluginJsonValuesEqual } from '../plugins/contributions/jsonSchemaValues.js';
 import {
   getActionSpec,
+  isActionEffectHookableV1,
+  isWorkflowStepActionSpecV1,
   resolveActionPermissionChangingV1,
   isActionSpecSurfacedOn,
   listActionSpecs,
@@ -197,6 +199,16 @@ function projectSerializedActionOutput(
   return { ...metadata, ...(outputSchema ? { outputSchema } : {}) };
 }
 
+function projectActionAutomationChoices(definition: Pick<ActionDefinitionSummaryV1,
+  'id' | 'surfaces' | 'sideEffectClass' | 'executionPlacement'> & Readonly<{ completion?: unknown }>) {
+  const before = isActionEffectHookableV1(definition.sideEffectClass);
+  return {
+    before,
+    after: before && definition.completion === undefined,
+    workflowStep: isWorkflowStepActionSpecV1(definition),
+  };
+}
+
 function serializeActionSpecMetadata(
   spec: ActionSpec,
   params?: ActionCatalogSurfaceParams,
@@ -225,6 +237,7 @@ function serializeActionSpecMetadata(
     ...(spec.sessionTarget ? { sessionTarget: spec.sessionTarget } : {}),
     ...(spec.execution ? { execution: spec.execution } : {}),
     ...(spec.sideEffectClass ? { sideEffectClass: spec.sideEffectClass } : {}),
+    automation: projectActionAutomationChoices(spec),
     ...(spec.operation ? { operation: spec.operation } : {}),
   };
 }
@@ -376,6 +389,7 @@ function projectActionDefinitionSummaryMetadata(definition: ActionDefinitionSumm
       ? {}
       : { execution: projectActionDiscoveryExecution(definition.execution) }),
     ...(definition.sideEffectClass === undefined ? {} : { sideEffectClass: definition.sideEffectClass }),
+    ...(definition.automation === undefined ? {} : { automation: definition.automation }),
     ...(definition.operation === undefined ? {} : { operation: definition.operation }),
   };
 }
@@ -384,7 +398,9 @@ export function projectActionDefinitionForExternalDiscovery(
   definition: ActionDefinitionV1,
 ): ActionDiscoveryDefinitionV1 {
   return ActionDiscoveryDefinitionV1Schema.parse({
-    ...projectActionDefinitionSummaryForExternalDiscovery(definition),
+    ...projectActionDefinitionSummaryForExternalDiscovery({
+      ...definition, automation: projectActionAutomationChoices(definition),
+    }),
     kindVersion: definition.kindVersion,
     inputSchema: definition.inputSchema,
     ...(definition.completion === undefined ? {} : { completion: definition.completion }),
@@ -403,7 +419,9 @@ export function searchSerializedActionSpecs(
 }
 
 function actionDefinitionToSummary(definition: ActionDefinitionSummaryV1, includeOutputSchema = true): ActionDefinitionSummaryV1 {
-  return projectActionDefinitionSummaryMetadata(definition, includeOutputSchema);
+  return projectActionDefinitionSummaryMetadata({
+    ...definition, automation: projectActionAutomationChoices(definition),
+  }, includeOutputSchema);
 }
 
 type ActionDefinitionSearchCandidate = Readonly<{

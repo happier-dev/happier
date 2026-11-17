@@ -217,6 +217,10 @@ export const WORKFLOW_ACTION_IDS_V1 = [
   'session.trigger.list', 'session.trigger.add', 'session.trigger.update', 'session.trigger.remove',
 ] as const;
 export type WorkflowActionIdV1 = typeof WORKFLOW_ACTION_IDS_V1[number];
+/** Run-family classification; the Action catalog separately owns availability. */
+export function isWorkflowRunActionIdV1(actionId: string): boolean {
+  return actionId.startsWith('workflow.run.');
+}
 /** This read does not compose or control a Run and is safe in an ordinary Action leaf. */
 export function isWorkflowRunSummaryActionIdV1(actionId: string): actionId is 'workflow.run.summaries' {
   return actionId === 'workflow.run.summaries';

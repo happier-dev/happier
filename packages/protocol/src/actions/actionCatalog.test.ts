@@ -15,12 +15,64 @@ import {
   SerializedActionDefinitionV1Schema,
 } from '../index.js';
 import { z } from 'zod/mini';
-import { filterResolvedActionOptions, projectActionDefinitionForExternalDiscovery } from './actionCatalog.js';
+import { filterResolvedActionOptions, projectActionDefinitionForExternalDiscovery, projectActionDefinitionSummaryForExternalDiscovery } from './actionCatalog.js';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 import { prepareExternalActionResponseEnvelopeV1 } from './externalActionApi.js';
 import { compileProtocolJsonSchema } from '../plugins/actions/jsonSchemaCompiler.js';
 
 describe('actionCatalog action-definition adapter', () => {
+  it('publishes hook and Workflow choices consistently to catalog and strict external discovery', () => {
+    for (const [id, automation] of [
+      ['machines.command.run', { before: true, after: true, workflowStep: true }],
+      ['workflow.run.summaries', { before: false, after: false, workflowStep: true }],
+      ['ui.current_context.read', { before: false, after: false, workflowStep: false }],
+      [DEPLOYMENT_DEPLOY_ACTION_ID_V1, { before: true, after: false, workflowStep: true }],
+    ] as const) {
+      const summary = serializeActionSpec(getActionSpec(id), { includeOutputSchema: false });
+      expect(summary, id).toMatchObject({ automation });
+      expect(projectActionDefinitionSummaryForExternalDiscovery(summary), id).toMatchObject({ automation });
+    }
+
+    const contributed: ActionDefinitionV1 = {
+      ...actionSpecToActionDefinitionV1(getActionSpec('machines.command.run')),
+      id: 'test.automation/actions/contributed',
+      title: 'Contributed automation choice',
+      sideEffectClass: 'read',
+    };
+    const contributedSummary = searchSerializedActionSpecsForSurface({
+      surface: 'agent', query: contributed.id, includeOutputSchema: false,
+      isActionEnabled: () => false, additionalDefinitions: [contributed],
+    });
+    expect(contributedSummary).toHaveLength(1);
+    expect(contributedSummary[0]).toMatchObject({
+      automation: { before: false, after: false, workflowStep: true },
+    });
+    expect(projectActionDefinitionForExternalDiscovery(contributed)).toMatchObject({
+      automation: { before: false, after: false, workflowStep: true },
+    });
+    const workflowNamedPlugin = { ...contributed, id: 'workflow.run.example/actions/read' };
+    expect(searchSerializedActionSpecsForSurface({
+      surface: 'agent', query: workflowNamedPlugin.id, includeOutputSchema: false,
+      isActionEnabled: () => false, additionalDefinitions: [workflowNamedPlugin],
+    })[0]).toMatchObject({ automation: { workflowStep: true } });
+    expect(projectActionDefinitionForExternalDiscovery(workflowNamedPlugin)).toMatchObject({
+      automation: { workflowStep: true },
+    });
+    const accountPlugin = { ...contributed, executionPlacement: 'account' as const };
+    const accountSummary = searchSerializedActionSpecsForSurface({
+      surface: 'agent', query: accountPlugin.id, includeOutputSchema: false,
+      isActionEnabled: () => false, additionalDefinitions: [accountPlugin],
+    });
+    expect(accountSummary[0]).toMatchObject({ automation: { workflowStep: false } });
+    expect(projectActionDefinitionForExternalDiscovery(accountPlugin)).toMatchObject({
+      automation: { workflowStep: false },
+    });
+    expect(serializeActionSpec(getActionSpec('wait'), { includeOutputSchema: false })).toMatchObject({
+      executionPlacement: 'account', automation: { workflowStep: true },
+    });
+  });
+
   it('admits a deliberate 201-row option projection through the canonical Action schema', () => {
     expect(getActionSpec('action.options.resolve').inputSchema.safeParse({
       optionsSourceId: 'machines.available', limit: 201,

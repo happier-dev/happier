@@ -1,5 +1,5 @@
-import { listActionSpecs, type ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { isWorkflowRunSummaryActionIdV1, WORKFLOW_STEP_PROMOTED_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { isWorkflowStepActionSpecV1, listActionSpecs, type ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { WORKFLOW_STEP_PROMOTED_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { ActionJsonSchemaProjectionError } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -40,9 +40,7 @@ function projectWorkflowAction(read: () => WorkflowActionSpec, unavailable: () =
 }
 
 export function projectWorkflowHostActionSpecs(specs: readonly ActionSpec[]): WorkflowActionSpec[] {
-    return specs.filter((spec) => spec.surfaces.agent
-        && spec.executionPlacement !== 'client'
-        && (!spec.id.startsWith('workflow.run.') || isWorkflowRunSummaryActionIdV1(spec.id)))
+    return specs.filter(isWorkflowStepActionSpecV1)
         .map(spec => {
             const presentation = { id: spec.id, title: resolveWorkflowActionTitle(spec.id, spec),
             ...resolveHostActionPickerPresentation(spec.id),

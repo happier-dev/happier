@@ -1,4 +1,5 @@
 import { PROJECT_STARTER_ACTION_SPECS_V1 } from './specs/projectStarters.js';
+import { parseQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 import { lazyActionSpecArray, lazyActionSpecRecord, memoizeActionSpecValue , type ActionSpecArrayConcat } from './lazyActionSpecValue.js';
 import type { ExternalActionRequestEnvelope, ExternalActionTargetV1 } from './externalActionApi.js';
 
@@ -158,6 +159,8 @@ import {
   type RuntimeActionIdV1,
   isRuntimeActionIdV1,
   isSessionPreparationRootActionIdV1,
+  isWorkflowRunActionIdV1,
+  isWorkflowRunSummaryActionIdV1,
 } from './actionIds.js';
 import {
   HUMAN_SECRET_API_EXCLUSION_ACTION_IDS,
@@ -2405,8 +2408,25 @@ export { describeActionForVoiceTool } from './actionVoiceToolSummary.js';
  * stable host call/result identity across reconnects. Such callbacks may
  * expose only none/read actions and must never advertise mutations.
  */
+/** Undeclared effects remain hookable; safety and approval danger do not imply read-only. */
+export function isActionEffectHookableV1(effectClass: ActionSpec['sideEffectClass']): boolean {
+  return effectClass !== 'none' && effectClass !== 'read';
+}
+
+/** Catalog eligibility only; execution keeps the Action's ordinary authority. */
+export function isWorkflowStepActionSpecV1(spec: Readonly<{
+  id: string;
+  surfaces: Readonly<{ agent: boolean }>;
+  executionPlacement?: ActionSpec['executionPlacement'];
+}>): boolean {
+  if (!spec.surfaces.agent || spec.executionPlacement === 'client') return false;
+  return parseQualifiedPluginActionId(spec.id)
+    ? spec.executionPlacement === 'machine'
+    : !isWorkflowRunActionIdV1(spec.id) || isWorkflowRunSummaryActionIdV1(spec.id);
+}
+
 export function isVoiceSdkSafeActionSpec(spec: Pick<ActionSpec, 'sideEffectClass'>): boolean {
-  return spec.sideEffectClass === 'none' || spec.sideEffectClass === 'read';
+  return !isActionEffectHookableV1(spec.sideEffectClass);
 }
 
 /** Effect projection only: it grants no authority and never admits a replay. */
