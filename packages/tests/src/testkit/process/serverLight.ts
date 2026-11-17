@@ -374,12 +374,13 @@ export async function withServerSharedDepsBuildLock<T>(
   },
 ): Promise<T> {
   const lockPath = options?.lockPath ?? resolve(repoRootDir(), '.project', 'tmp', 'server-shared-deps-build.lock');
-  const timeoutMs = options?.timeoutMs ?? 240_000;
+  // Waiters wait while a live, heartbeating holder builds (the build itself has no harness
+  // deadline); a dead holder's lease goes stale and is reclaimed.
   return await withTestProcessLease(async () => await fn(), {
     lockPath,
-    timeoutMs,
+    timeoutMs: options?.timeoutMs ?? Number.POSITIVE_INFINITY,
     pollIntervalMs: options?.pollIntervalMs,
-    staleAfterMs: options?.staleAfterMs ?? timeoutMs,
+    staleAfterMs: options?.staleAfterMs ?? 240_000,
     errorLabel: 'server shared deps build lock',
   });
 }
@@ -591,6 +592,20 @@ async function prepareServerLightDataDir(params: {
   });
 }
 
+/**
+ * Once per test run (the Vitest and Playwright global setups): build the server's shared workspace
+ * dependencies through the canonical builder, then let every server start in the run skip it.
+ * Workers inherit the skip through the environment. Before, each server start (one per test file)
+ * re-ran the builder: a pnpm build invocation per file, and on shared hosts a package-dist
+ * admission wait per file.
+ */
+export async function prepareServerSharedDepsForRun(params: { testDir: string; env: NodeJS.ProcessEnv }): Promise<void> {
+  if (shouldSkipServerSharedDepsBuild(params.env)) return;
+  mkdirSync(params.testDir, { recursive: true });
+  await ensureServerSharedDepsBuilt(params);
+  process.env.HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD = '1';
+}
+
 async function ensureServerSharedDepsBuilt(params: { testDir: string; env: NodeJS.ProcessEnv }): Promise<void> {
   if (shouldSkipServerSharedDepsBuild(params.env)) return;
   const rootDir = repoRootDir();
@@ -608,7 +623,9 @@ async function ensureServerSharedDepsBuilt(params: { testDir: string; env: NodeJ
       env: { ...params.env, CI: '1' },
       stdoutPath: resolve(params.testDir, 'server.sharedDeps.stdout.log'),
       stderrPath: resolve(params.testDir, 'server.sharedDeps.stderr.log'),
-      timeoutMs: 240_000,
+      // The publisher owns readiness and may wait for admission or workspace locks, as the CLI
+      // shared-deps build does: a 240 s harness deadline failed every UI spec on shared hosts.
+      timeoutMs: null,
     });
 
     if (!hasServerSharedDepsOutputs(rootDir)) {

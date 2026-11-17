@@ -48,6 +48,7 @@ const voiceLaunchArgs = [
 
 export default defineConfig({
   testDir: 'suites/ui-e2e',
+  globalSetup: './src/testkit/uiE2e/globalSetup.ts',
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,

@@ -11,6 +11,7 @@ let healthAttempt = 0;
 let healthFailuresBeforeSuccess = 1;
 let spawnAttempt = 0;
 let sharedDepsBuildFailure: Error | undefined;
+let sharedDepsBuildCount = 0;
 let isolatedLeasesDir: string;
 
 vi.mock('node:net', () => ({
@@ -23,6 +24,7 @@ vi.mock('node:net', () => ({
 
 vi.mock('./spawnProcess', () => ({
   runLoggedCommand: async (params: { args: string[] }) => {
+    if (params.args.includes('build:shared')) sharedDepsBuildCount += 1;
     if (params.args.includes('build:shared') && sharedDepsBuildFailure) throw sharedDepsBuildFailure;
   },
   spawnLoggedProcess: (params: { stdoutPath: string; stderrPath: string }) => {
@@ -57,13 +59,14 @@ vi.mock('../http', () => ({
   },
 }));
 
-import { hasServerSharedDepsOutputs, startServerLight } from './serverLight';
+import { hasServerSharedDepsOutputs, prepareServerSharedDepsForRun, startServerLight } from './serverLight';
 
 beforeEach(async () => {
   healthAttempt = 0;
   healthFailuresBeforeSuccess = 1;
   spawnAttempt = 0;
   sharedDepsBuildFailure = undefined;
+  sharedDepsBuildCount = 0;
   isolatedLeasesDir = await mkdtemp(join(tmpdir(), 'happier-retry-diagnostic-leases-'));
   vi.stubEnv('HAPPIER_E2E_PROCESS_LEASES_DIR', isolatedLeasesDir);
 });
@@ -108,6 +111,29 @@ describe('startServerLight retry diagnostics', () => {
       expect(spawnAttempt).toBe(0);
     } finally {
       await server?.stop();
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('builds shared dependencies once per run, not once per server start', async () => {
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-server-light-run-prepared-'));
+    const previous = process.env.HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD;
+    delete process.env.HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD;
+    healthFailuresBeforeSuccess = 0;
+    try {
+      await prepareServerSharedDepsForRun({ testDir, env: process.env });
+      for (const name of ['first', 'second']) {
+        const server = await startServerLight({
+          testDir: join(testDir, name), dbProvider: 'sqlite',
+          extraEnv: { HAPPIER_E2E_PROVIDER_SKIP_SERVER_GENERATE: '1', HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: '0' },
+          __portAllocator: async () => 42_000 + spawnAttempt,
+        });
+        await server.stop();
+      }
+      expect(sharedDepsBuildCount).toBe(1);
+    } finally {
+      if (previous === undefined) delete process.env.HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD;
+      else process.env.HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD = previous;
       await rm(testDir, { recursive: true, force: true });
     }
   });
