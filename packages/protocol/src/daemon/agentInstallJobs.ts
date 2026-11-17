@@ -82,7 +82,7 @@ export const MachinesAgentsInstallInputSchema = lazyZodSchema(() => z.extend(
   z.omit(DaemonAgentInstallStartRequestSchema, { expectedDefinitionVersion: true }), {
     machineId: z.string().check(z.minLength(1)), intent: AgentAcquireJobIntentSchema,
     consent: z.optional(AgentInstallJobConsentSchema),
-  }).check(z.overwrite(input => ({ ...input, consent: { vendorRecipe: true } }))));
+  }).check(z.overwrite(input => ({ ...input, consent: input.consent ?? { vendorRecipe: true } }))));
 export const DaemonAgentInstallStartResponseSchema = lazyZodSchema(() => z.union([
   z.strictObject({ ok: z.literal(true), jobId: z.string().check(z.minLength(1)),
     executionScope: AgentInstallJobSchema.shape.executionScope }),

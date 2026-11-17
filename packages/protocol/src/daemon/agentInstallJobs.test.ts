@@ -18,6 +18,9 @@ describe('agent install job wire contract', () => {
     const input = { machineId: 'machine', agentId: 'custom-acp', definitionId: 'registry-definition', intent: 'install', consent: { vendorRecipe: false } };
     const publicInputSchema = getActionSpec('machines.agents.install').inputSchema;
     expect(publicInputSchema.parse(input)).toEqual(input);
+    expect(publicInputSchema.parse({ ...input, consent: { vendorRecipe: true } })).toEqual({ ...input, consent: { vendorRecipe: true } });
+    expect(publicInputSchema.parse({ ...input, consent: undefined })).toEqual({ ...input, consent: { vendorRecipe: true } });
+    expect(publicInputSchema.safeParse({ ...input, consent: null }).success).toBe(false);
     expect(publicInputSchema.safeParse({ ...input, expectedDefinitionVersion: '1.2.3' }).success).toBe(false);
   });
 
