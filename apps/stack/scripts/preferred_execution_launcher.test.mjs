@@ -2198,6 +2198,28 @@ test('AUTO ranks waiting workers by projected finish: queue start plus that work
   assert.equal(result.stdout, 'remote:fast\n', 'a short queue on a slow worker finishes later');
 });
 
+// P03-INFRA-SWEEP 2026-11-17: nl1's shared telemetry read "unknown" queue in
+// 33 of 60 one-second samples while its broker held 83 waiters (735 GiB). Light
+// probes rewrote it; heavy placement then read a zero backlog and piled onto nl1.
+test('AUTO light observation keeps the last measured broker queue for heavy placement', { skip: process.platform !== 'linux' }, async t => {
+  const queuedKiB = gibKiB(735);
+  const fixture = await placementFleet(t, {
+    nl1: placementSample({ achievableKiB: gibKiB(86), ceilingKiB: gibKiB(100), queuedKiB, expectedStartMs: 3_600_000 }),
+  });
+  const heavy = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], fixture.invocation);
+  assert.equal(heavy.status, 0, heavy.stderr);
+  const telemetryPath = join(fixture.stackDir, 'dev-target-command-load-native/nl1.telemetry');
+  // A lightweight remote observation reports host facts only (16 fields).
+  const ssh = join(fixture.binDir, 'ssh');
+  await writeFile(ssh, (await readFile(ssh, 'utf8')).replace(/printf '%s\\n' '8 [^']*'/, `printf '%s\\n' '8 0.1 0.5 22000000 20 0 ${gibKiB(64)} 33554432 0 0 0 0 0 0 0 linux'`));
+  const light = spawnSync('/bin/sh', [launcher, '--', 'cat', 'source'], fixture.invocation);
+  assert.equal(light.status, 0, light.stderr);
+  const fields = (await readFile(telemetryPath, 'utf8')).trim().split(/\s+/);
+  assert.equal(fields[6], String(gibKiB(64)), 'host facts follow the newest observation');
+  assert.equal(fields[19], String(queuedKiB), 'an observation that did not measure the queue keeps the measured one');
+  assert.equal(fields[25], '3600000', 'and its projected start');
+});
+
 test('AUTO sends test overflow to a Mac only while every Linux worker would queue, and keeps compilers on Linux', { skip: process.platform !== 'linux' }, async t => {
   const busy = placementSample({ achievableKiB: gibKiB(16), ceilingKiB: gibKiB(100), queuedKiB: gibKiB(32), expectedStartMs: 600_000 });
   const mac = placementSample({ platform: 'darwin', cores: 18, load: 4, totalKiB: gibKiB(128), availableKiB: gibKiB(60), unreservedKiB: gibKiB(60) });

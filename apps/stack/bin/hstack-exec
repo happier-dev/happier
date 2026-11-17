@@ -1598,8 +1598,13 @@ EOF
     sample_score=$(score_load_sample "$sample" "$heavyweight_placement_required")
     score=$(score_load_sample "$sample" "$heavyweight_placement_required" "$minimum_memory_capacity_kib")
     capacity=$(printf '%s\n' "$sample" | awk '{if ($1 ~ /^[0-9]+$/ && $1 > 0) print $1}')
-    telemetry=$(printf '%s\n' "$sample" | awk -v heavy="$heavyweight_placement_required" '{for(i=1;i<=15;i++){if($i !~ /^[0-9]+([.][0-9]+)?$/)$i=0} platform=($16=="linux"||$16=="darwin")?$16:"unknown"; printf "%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s",$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,platform,($17==""?$7:$17),($18==""?0:$18),($19==""?"unknown":$19),($20==""?(heavy?0:"unknown"):$20); for(i=21;i<=26;i++) printf " %s", ($i ~ /^[0-9]+$/ ? $i : "unknown"); printf "\n"}')
     telemetry_cache="$cache_dir/$name.telemetry"
+    # A lightweight observation measures host facts only. Placement reads this
+    # file for every candidate, so keep the last measured broker fields (17-26)
+    # instead of erasing them: an erased queue read as zero backlog and drew all
+    # heavy work to that worker (2026-11-17 nl1: 83 waiting, nl3 0).
+    telemetry_previous=$(sed -n '1p' "$telemetry_cache" 2>/dev/null || true)
+    telemetry=$(printf '%s\n' "$sample" | awk -v heavy="$heavyweight_placement_required" -v previous="$telemetry_previous" '{for(i=1;i<=15;i++){if($i !~ /^[0-9]+([.][0-9]+)?$/)$i=0} platform=($16=="linux"||$16=="darwin")?$16:"unknown"; if ($19 == "" && split(previous, kept, " ") >= 20 && kept[16] == platform && kept[19] ~ /^[0-9]+$/) {for(i=17;i<=26;i++) $i=(i in kept ? kept[i] : "")} printf "%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s",$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,platform,($17==""?$7:$17),($18==""?0:$18),($19==""?"unknown":$19),($20==""?(heavy?0:"unknown"):$20); for(i=21;i<=26;i++) printf " %s", ($i ~ /^[0-9]+$/ ? $i : "unknown"); printf "\n"}')
     telemetry_temporary=$(create_cache_temporary "$telemetry_cache" 2>/dev/null || true)
     if [ -n "$telemetry_temporary" ]; then
       printf '%s\n' "$telemetry" > "$telemetry_temporary" && \
