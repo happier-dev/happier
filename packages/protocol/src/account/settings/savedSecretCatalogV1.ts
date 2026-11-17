@@ -14,6 +14,7 @@ import { AccountRecipientEnvelopeUnavailableReasonSchema } from '../encryptionMo
 import { ContentPublicKeyFingerprintSchema } from '../../machines/identity/contentPublicKeyFingerprint.js';
 import { ACCOUNT_CONTENT_PUBLIC_KEY_BYTES_V1 } from '../../crypto/accountContentKeyBindingFormatV1.js';
 import { TeamGroupNameProjectionV1Schema } from '../../teams/groupLabel.js';
+import { ResourceTeamShareScopeV1Schema } from '../../teams/resourceGrantAccessV1.js';
 
 export const SavedSecretResourceEncryptionModeV1Schema = lazyZodSchema(() => z.enum(['plain', 'e2ee']));
 export type SavedSecretResourceEncryptionModeV1 = z.infer<typeof SavedSecretResourceEncryptionModeV1Schema>;
@@ -62,6 +63,7 @@ export const SavedSecretCatalogAudienceV1Schema = lazyZodSchema(() => z.strictOb
 export type SavedSecretCatalogAudienceV1 = z.infer<typeof SavedSecretCatalogAudienceV1Schema>;
 
 export const SavedSecretCatalogEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  sharedWithTeamScope: z.optional(ResourceTeamShareScopeV1Schema),
   ref: z.string().check(z.minLength(1), z.maxLength(256)),
   source: z.enum(['personal', 'shared_resource']),
   relationship: z.enum(['owner', 'recipient']),
@@ -101,6 +103,7 @@ export function formatSavedSecretCatalogFingerprintV1(input: Readonly<{
 }
 
 const SavedSecretCatalogCorruptOwnerEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  sharedWithTeamScope: z.optional(ResourceTeamShareScopeV1Schema),
   materialStatus: z.literal('resource_corrupt'),
   relationship: z.literal('owner'),
   repair: z.strictObject({
@@ -114,6 +117,7 @@ const SavedSecretCatalogCorruptOwnerEntryV1Schema = lazyZodSchema(() => z.strict
 }));
 
 const SavedSecretCatalogCorruptRecipientEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  sharedWithTeamScope: z.optional(ResourceTeamShareScopeV1Schema),
   materialStatus: z.literal('resource_corrupt'),
   relationship: z.literal('recipient'),
   repair: z.null(),

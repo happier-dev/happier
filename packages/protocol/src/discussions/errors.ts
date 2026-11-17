@@ -49,6 +49,7 @@ export const DISCUSSION_ERROR_CODES_V1 = [
   'discussion_read_cursor_invalid', 'discussion_owner_transfer_required', 'discussion_subject_not_found',
   'discussion_subject_ineligible', 'discussion_invalid_recipient_envelope', 'discussion_data_key_changed',
   'recipient_key_unavailable', 'data_key_not_required',
+  'team_authentication_required', 'team_authentication_unavailable',
 ] as const;
 
 export const DiscussionErrorCodeV1Schema = lazyZodSchema(() => z.union([

@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
+import { ResourceTeamShareScopeV1Schema } from '../../teams/resourceGrantAccessV1.js';
 import { WorkspaceExecutionConfigAddressV1Schema } from '../../workspaces/projectWorkerPreferencesV1.js';
 import { ProjectMemoryDemandV1Schema } from '../../workspaces/projectSetup/projectMemoryDemandV1.js';
 import { ManagedControllerV1Schema, ManagedControllerAccessV1Schema, ReusableRetentionV1Schema } from '../managed/managedMachineV1.js';
@@ -172,6 +173,7 @@ export type MachinePoolAvailabilityV1 = z.infer<typeof MachinePoolAvailabilityV1
 
 /** What a client renders after opening Pool labels: one definition and its observed availability. */
 export const MachinePoolViewV1Schema = lazyZodSchema(() => z.strictObject({
+  sharedWithTeamScope: z.optional(ResourceTeamShareScopeV1Schema),
   pool: MachinePoolSummaryV1Schema,
   availability: MachinePoolAvailabilityV1Schema,
   access: z.optional(MachinePoolAccessV1Schema),
@@ -180,6 +182,7 @@ export type MachinePoolViewV1 = z.infer<typeof MachinePoolViewV1Schema>;
 
 /** The opaque server response, deliberately distinct from the client-rendered Pool view. */
 export const MachinePoolPrivateViewV1Schema = lazyZodSchema(() => z.strictObject({
+  sharedWithTeamScope: z.optional(ResourceTeamShareScopeV1Schema),
   pool: MachinePoolPrivateSummaryV1Schema,
   availability: MachinePoolAvailabilityV1Schema,
   access: z.optional(MachinePoolAccessV1Schema),
@@ -263,6 +266,7 @@ export const MachinePoolMemberEligibilityV1Schema = lazyZodSchema(() => z.discri
 export type MachinePoolMemberEligibilityV1 = z.infer<typeof MachinePoolMemberEligibilityV1Schema>;
 
 export const MachinePoolListInputV1Schema = lazyZodSchema(() => z.strictObject({
+  sharedWithTeamId: z.optional(z.string().check(z.minLength(1))),
   memberMachineIds: z.optional(z.array(z.string().check(z.minLength(1)))),
 }));
 export type MachinePoolListInputV1 = z.infer<typeof MachinePoolListInputV1Schema>;

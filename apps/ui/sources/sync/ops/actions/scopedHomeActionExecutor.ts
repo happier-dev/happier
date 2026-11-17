@@ -49,10 +49,15 @@ export function scopedHomeActionExecutor(
         }
         return ordinary;
     };
+    const forAccount = (context: Parameters<typeof ordinary>[2]) => ({
+        ...context,
+        expectedAccountId: scope.accountId,
+    });
     const execute: typeof ordinary = Object.assign((...args: Parameters<typeof ordinary>) =>
-        forInvocation(args[0], args[2])(...args), {
-        confirmed: (...args: Parameters<typeof ordinary>) => forInvocation(args[0], args[2]).confirmed(...args),
-        prepare: ordinary.prepare,
+        forInvocation(args[0], args[2])(args[0], args[1], forAccount(args[2])), {
+        confirmed: (...args: Parameters<typeof ordinary>) =>
+            forInvocation(args[0], args[2]).confirmed(args[0], args[1], forAccount(args[2])),
+        prepare: (...args: Parameters<typeof ordinary.prepare>) => ordinary.prepare(args[0], args[1], forAccount(args[2]), args[3]),
     });
     if (!options) executorsByScope.set(key, execute);
     return execute;

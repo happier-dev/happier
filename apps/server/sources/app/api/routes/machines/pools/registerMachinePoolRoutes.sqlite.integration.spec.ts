@@ -89,6 +89,64 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
         ]);
     });
 
+    it('filters selected Team pools and withdraws access without changing the global inventory', async () => {
+        await seedAccounts();
+        const selectedTeam = await db.team.create({ data: { name: 'Selected Team' } });
+        const foreignTeam = await db.team.create({ data: { name: 'Other Team' } });
+        for (const teamId of [selectedTeam.id, foreignTeam.id]) await db.teamMembership.createMany({ data: [
+            { teamId, accountId, role: 'admin' },
+            { teamId, accountId: otherAccountId, role: 'member' },
+        ] });
+        const foreignPoolId = '589396c1-a343-4d42-83e6-27d90bbc2e16';
+        const privatePoolId = 'fe09f4cd-3b5f-43db-a981-963c8bdbe542';
+        await withPoolRoutes(async app => {
+            for (const [id, teamId] of [[poolId, selectedTeam.id], [foreignPoolId, foreignTeam.id]]) {
+                const created = await app.inject({ method: 'POST', url: '/v1/machines/pools/create', headers, payload: {
+                    poolId: id, name: plainPrivateLabel('Team builders'), audience: { kind: 'team', teamId },
+                    members: [{ machineId, priorityTier: 0, enabled: true }],
+                } });
+                expect(created.statusCode).toBe(200);
+            }
+            expect((await app.inject({ method: 'POST', url: '/v1/machines/pools/create', headers: otherHeaders, payload: {
+                poolId: privatePoolId, name: plainPrivateLabel('Private builders'), audience: { kind: 'private' }, members: [],
+            } })).statusCode).toBe(200);
+            const globalBefore = await app.inject({ method: 'POST', url: '/v1/machines/pools/list', headers: otherHeaders, payload: {} });
+            expect(globalBefore.statusCode).toBe(200);
+            expect(globalBefore.json().pools.map((view: { pool: { id: string } }) => view.pool.id).sort())
+                .toEqual([poolId, foreignPoolId, privatePoolId].sort());
+            const ownerBefore = await app.inject({ method: 'POST', url: '/v1/machines/pools/list', headers, payload: {} });
+            expect(ownerBefore.statusCode).toBe(200);
+
+            const selected = await app.inject({ method: 'POST', url: '/v1/machines/pools/list', headers: otherHeaders,
+                payload: { sharedWithTeamId: selectedTeam.id } });
+            expect(selected.statusCode).toBe(200);
+            expect(selected.json()).toMatchObject({ pools: [{ pool: { id: poolId, members: [] }, sharedWithTeamScope: 'team',
+                access: { canManage: false, canResolve: false, canViewMembers: false } }] });
+            expect(selected.json().pools).toHaveLength(1);
+            expect(selected.body).not.toContain(machineId);
+            const foreign = await app.inject({ method: 'POST', url: '/v1/machines/pools/list', headers: otherHeaders,
+                payload: { sharedWithTeamId: foreignTeam.id } });
+            expect(foreign.statusCode).toBe(200);
+            expect(foreign.json()).toMatchObject({ pools: [{ pool: { id: foreignPoolId }, sharedWithTeamScope: 'team' }] });
+            expect(foreign.json().pools).toHaveLength(1);
+            expect((await app.inject({ method: 'POST', url: '/v1/machines/pools/list', headers: otherHeaders, payload: {} })).json())
+                .toEqual(globalBefore.json());
+
+            await db.teamMembership.delete({ where: { teamId_accountId: { teamId: selectedTeam.id, accountId: otherAccountId } } });
+            const refused = await app.inject({ method: 'POST', url: '/v1/machines/pools/list', headers: otherHeaders,
+                payload: { sharedWithTeamId: selectedTeam.id } });
+            expect(refused.statusCode).toBe(200);
+            expect(refused.json()).toEqual({ pools: [] });
+            const globalAfter = await app.inject({ method: 'POST', url: '/v1/machines/pools/list', headers: otherHeaders, payload: {} });
+            expect(globalAfter.statusCode).toBe(200);
+            expect(globalAfter.json().pools.map((view: { pool: { id: string } }) => view.pool.id).sort())
+                .toEqual([foreignPoolId, privatePoolId].sort());
+            expect((await app.inject({ method: 'POST', url: '/v1/machines/pools/list', headers, payload: {} })).json())
+                .toEqual(ownerBefore.json());
+            expect(await db.machinePool.count()).toBe(3);
+        });
+    });
+
     it.each(['connected', 'offline', 'unavailable'] as const)('shares aggregate %s availability without Machine identities or controller resolution', async presence => {
         await seedAccounts();
         const team = await db.team.create({ data: { name: 'Build team' } });

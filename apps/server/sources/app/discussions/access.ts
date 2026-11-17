@@ -288,6 +288,8 @@ export async function resolveDiscussionContextsInTx(tx: Tx, params: Readonly<{
     /** Prepared append holds its resource parents before locking authority rows. */
     lockMembershipAuthority?: boolean;
     includeActorAudience?: boolean;
+    /** Selected-Team list admission already qualified this audience. */
+    qualifiedTeamIds?: ReadonlySet<string>;
 }>): Promise<ReadonlyMap<string, DiscussionContext>> {
     const contexts = new Map<string, DiscussionContext>();
     if (params.discussionIds.length === 0 || !await isDiscussionCredentialCurrentInTx(tx, params)) return contexts;
@@ -329,7 +331,7 @@ export async function resolveDiscussionContextsInTx(tx: Tx, params: Readonly<{
             throw new TransactionReplayRequiredError('transaction-account-audience-changed');
         }
     }
-    const qualified = await resolveQualifiedSessionTeamIdsInTx(tx, { accountIds: [params.accountId],
+    const qualified = params.qualifiedTeamIds ?? await resolveQualifiedSessionTeamIdsInTx(tx, { accountIds: [params.accountId],
         teams: teamsFromFacts(rows), authentication: params.authentication });
     const readiness = deriveAccountRecipientEnvelopeReadinessFromRow(account);
     for (const row of rows) {

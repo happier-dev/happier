@@ -55,6 +55,8 @@ function statusForDiscussionFailure(error: DiscussionFailureCode): DiscussionFai
         case "discussion_post_denied":
         case "discussion_manage_denied":
         case "discussion_access_forbidden":
+        case 'team_authentication_required':
+        case 'team_authentication_unavailable':
             return 403;
         case "discussion_archived":
         case "discussion_idempotency_conflict":
@@ -184,6 +186,7 @@ export function registerDiscussionRoutes(app: Fastify) {
             ...(request.query.anchorSessionId === undefined ? {} : { anchorSessionId: request.query.anchorSessionId }),
             ...(request.query.anchorDocArtifactId === undefined ? {} : { anchorDocArtifactId: request.query.anchorDocArtifactId }),
             ...(request.query.creationLocalId === undefined ? {} : { creationLocalId: request.query.creationLocalId }),
+            ...(request.query.sharedWithTeamId === undefined ? {} : { sharedWithTeamId: request.query.sharedWithTeamId }),
             ...(request.query.limit === undefined ? {} : { limit: request.query.limit }),
             authentication: readSessionAccessAuthenticationFromRequest(request),
         });

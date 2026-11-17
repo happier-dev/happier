@@ -1,7 +1,7 @@
 import { decodeBase64, encodeBase64 } from "privacy-kit";
 import { z } from "zod/mini";
 
-import { SavedSecretResourceActionErrorV1Schema, SavedSecretResourceEnvelopeRepairInputV1Schema, SavedSecretResourceEnvelopeRepairOutputV1Schema, SavedSecretResourceRecipientEnvelopeInputV1Schema, SharedSavedSecretCreateInputV1Schema, SharedSavedSecretDeleteInputV1Schema, SharedSavedSecretDeleteOutputV1Schema, SharedSavedSecretGrantsSetInputV1Schema, SharedSavedSecretListOutputV1Schema, SharedSavedSecretMutationOutputV1Schema, SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretPromoteOutputV1Schema, SharedSavedSecretUpdateInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { SavedSecretResourceActionErrorV1Schema, SavedSecretResourceEnvelopeRepairInputV1Schema, SavedSecretResourceEnvelopeRepairOutputV1Schema, SavedSecretResourceRecipientEnvelopeInputV1Schema, SharedSavedSecretCreateInputV1Schema, SharedSavedSecretDeleteInputV1Schema, SharedSavedSecretDeleteOutputV1Schema, SharedSavedSecretGrantsSetInputV1Schema, SharedSavedSecretListInputV1Schema, SharedSavedSecretListOutputV1Schema, SharedSavedSecretMutationOutputV1Schema, SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretPromoteOutputV1Schema, SharedSavedSecretUpdateInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { SavedSecretResourceMaterialsResponseV1Schema, SavedSecretResourceEnvelopeCensusRequestV1Schema, SavedSecretResourceEnvelopeCensusResponseV1Schema, SavedSecretResourceOwedEnvelopeCensusResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { inReadSnapshot, inTx } from "@/storage/inTx";
 import { getDbProviderFromEnv } from '@/storage/prisma';
@@ -15,7 +15,7 @@ import {
     listSavedSecretResourceMaterialsForAccountInTx,
     listSavedSecretResourceEnvelopeCensusInTx,
     listOwedSavedSecretResourceEnvelopesInTx,
-    listSavedSecretResourcesForAccountInTx,
+    listSavedSecretResourcePageForAccountInTx,
     promoteSavedSecretResourceInTx,
     repairSavedSecretResourceKeyEnvelopesInTx,
     SavedSecretResourceTransactionAbort,
@@ -82,7 +82,8 @@ function savedSecretResourceErrorHttpStatus(
     error: SavedSecretResourceServiceError,
     missingResourceStatus: 400 | 404,
 ): 400 | 403 | 404 | 409 {
-    if (error === "forbidden" || error === "recipient_mode_unsupported") return 403;
+    if (error === "forbidden" || error === "recipient_mode_unsupported"
+        || error === 'team_authentication_required' || error === 'team_authentication_unavailable') return 403;
     if (error === "resource_not_found") return missingResourceStatus;
     if (error === "resource_changed" || error === "recipient_changed"
         || error === "settings_conflict" || error === "references_conflict" || error === "account_mode_mismatch") return 409;
@@ -99,16 +100,16 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
         // Catalog reads intentionally return metadata only. Raw plaintext or
         // recipient DEKs are never exposed through a generic HTTP reveal API;
         // materialization remains owned by the admitted daemon/client path.
-        schema: { response: { 200: SharedSavedSecretListOutputV1Schema, 403: SavedSecretResourceActionErrorV1Schema, 500: SavedSecretResourceActionErrorV1Schema } },
+        schema: { querystring: SharedSavedSecretListInputV1Schema,
+            response: { 200: SharedSavedSecretListOutputV1Schema, 403: SavedSecretResourceActionErrorV1Schema, 500: SavedSecretResourceActionErrorV1Schema } },
     }, async (request, reply) => {
         try {
             const authentication = readTeamOperationAuthenticationFromRequest(request);
-            const resources = await inReadSnapshot((tx) => listSavedSecretResourcesForAccountInTx(
-                tx,
-                request.userId,
-                authentication,
-            ));
-            return reply.send({ resources: [...resources] });
+            const page = await inReadSnapshot(tx => listSavedSecretResourcePageForAccountInTx(tx, {
+                ...request.query, actorAccountId: request.userId, authentication,
+            }));
+            if (!page.ok) return reply.code(403).send({ error: page.error });
+            return reply.send(page.value);
         } catch {
             return reply.code(500).send({ error: "internal" });
         }

@@ -233,7 +233,14 @@ export const AccountEncryptionMigrateSavedSecretResourcesDirectiveV1Schema = laz
 })));
 export type AccountEncryptionMigrateSavedSecretResourcesDirectiveV1 = z.infer<typeof AccountEncryptionMigrateSavedSecretResourcesDirectiveV1Schema>;
 
-export const SharedSavedSecretListInputV1Schema = lazyZodSchema(() => z.strictObject({}));
+export const SharedSavedSecretListInputV1Schema = lazyZodSchema(() => z.strictObject({
+  sharedWithTeamId: z.optional(GrantIdSchema),
+  cursor: z.optional(ResourceIdSchema),
+  // This catalog has no existing page ceiling or default. The caller selects
+  // its page size; omission preserves the full-catalog operation.
+  limit: z.optional(z.coerce.number().check(z.int(), z.minimum(1))),
+}));
+export type SharedSavedSecretListInputV1 = z.infer<typeof SharedSavedSecretListInputV1Schema>;
 /** Person disclosure is client-owned; neither its input nor result can carry material. */
 export const SharedSavedSecretRevealInputV1Schema = lazyZodSchema(() => z.strictObject({
   ref: SharedResourceReferenceSchema,
@@ -289,6 +296,7 @@ export const SavedSecretDisclosureHistoryV1Schema = lazyZodSchema(() => z.strict
 }));
 export const SharedSavedSecretListOutputV1Schema = lazyZodSchema(() => z.strictObject({
   resources: z.array(SavedSecretCatalogResultV1Schema),
+  nextCursor: z.optional(z.nullable(ResourceIdSchema)),
 }));
 
 export const SharedSavedSecretCreateInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -508,6 +516,7 @@ export const SavedSecretResourceActionErrorV1Schema = lazyZodSchema(() => z.unio
     'recipient_changed', 'recipient_key_unavailable', 'invalid_cursor',
     'recipient_mode_unsupported', 'settings_conflict', 'settings_invalid', 'internal',
     'references_conflict', 'references_invalid', 'resource_in_use', 'account_mode_mismatch',
+    'team_authentication_required', 'team_authentication_unavailable',
   ]),
 }), z.strictObject({
   error: z.literal('managed_resources_review_required'),

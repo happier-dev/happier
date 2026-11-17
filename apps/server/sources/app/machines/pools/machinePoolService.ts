@@ -173,10 +173,15 @@ async function publishMachinePoolChangedInTx(tx: Tx, pool: StoredPool, previous?
 
 export async function listMachinePools(params: Readonly<{
     accountId: string;
+    sharedWithTeamId?: string;
     authentication?: MachinePoolActor['authentication'];
     io: MachineDaemonPresenceSocketServer;
 }>): Promise<readonly MachinePoolPrivateViewV1[]> {
     const stored = await inReadSnapshot(async tx => {
+        if (params.sharedWithTeamId) return tx.machinePool.findMany({
+            where: await scopedMachinePoolWhereInTx(tx, params, params.sharedWithTeamId),
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], ...poolAggregate,
+        });
         const teamIds = await readableMachinePoolTeamsInTx(tx, params);
         const owned = await tx.machinePool.findMany({
             where: { accountId: params.accountId },
@@ -202,8 +207,10 @@ export async function listMachinePools(params: Readonly<{
     }
     const inventories = new Map(await Promise.all([...poolsByCustodian].map(async ([accountId, pools]) =>
         [accountId, await inventoryFor(accountId, params.io, pools)] as const)));
-    return stored.map(pool => projectPool(pool, inventories.get(pool.accountId)!, pool.accountId === params.accountId
-        ? CUSTODIAN_POOL_ACCESS : TEAM_POOL_ACCESS, params.accountId));
+    return stored.map(pool => ({ ...projectPool(pool, inventories.get(pool.accountId)!, pool.accountId === params.accountId
+        ? CUSTODIAN_POOL_ACCESS : TEAM_POOL_ACCESS, params.accountId),
+        ...(params.sharedWithTeamId ? { sharedWithTeamScope: 'team' as const } : {}),
+    }));
 }
 
 /** Team overview reads the same pool relation without members, labels or presence. */

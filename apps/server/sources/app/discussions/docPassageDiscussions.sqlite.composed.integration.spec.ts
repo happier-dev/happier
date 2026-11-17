@@ -59,6 +59,27 @@ describe('Doc passage Discussions through the canonical writer and client codec 
         return { owner, reader, doc, passage, request };
     }
 
+    it('applies selected-Team scope before the Doc preparation window', async () => {
+        const { owner, doc, request } = await fixture();
+        const team = await db.team.create({ data: { name: 'Doc Team scope' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
+        const ids: string[] = [];
+        for (let index = 0; index < 3; index++) {
+            const result = await createDiscussion({ authentication, actorAccountId: owner.id, request: {
+                ...request, creationLocalId: randomUUID(), anchor: { kind: 'doc', doc },
+                firstMessage: { ...request.firstMessage, localId: randomUUID() },
+            } });
+            if (!result.ok) throw new Error(result.error);
+            ids.push(result.value.discussion.id);
+            await db.discussion.update({ where: { id: result.value.discussion.id }, data: { lastMessageAt: new Date(index + 1) } });
+        }
+        await db.discussionGrant.create({ data: { principalKind: 'team', discussionId: ids[0]!,
+            teamId: team.id, createdByAccountId: owner.id, accessLevel: 'view' } });
+        const page = await listDiscussions({ actorAccountId: owner.id, authentication,
+            sharedWithTeamId: team.id, anchorDocArtifactId: doc.ref.artifactId, limit: 1 });
+        expect(page).toMatchObject({ ok: true, value: { discussions: [{ id: ids[0] }], nextCursor: null } });
+    });
+
     it('projects only active matching Doc roots through the scoped list and preserves explicit source unavailability', async () => {
         const { owner, reader, doc, request } = await fixture();
         await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: doc.ref.artifactId, accountId: reader.id,

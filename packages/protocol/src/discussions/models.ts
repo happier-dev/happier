@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { ResourceTeamShareScopeV1Schema } from '../teams/resourceGrantAccessV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
@@ -78,6 +79,7 @@ export type DiscussionRoundOutcomeV1 = z.infer<typeof DiscussionRoundOutcomeV1Sc
 export const DiscussionRoundOutcomeV1StoredSchema = createStoredReadSchema(DiscussionRoundOutcomeV1Schema);
 
 export const DiscussionSummaryV1Schema = lazyZodSchema(() => z.strictObject({
+  sharedWithTeamScope: z.optional(ResourceTeamShareScopeV1Schema),
   id: DiscussionIdSchema,
   ownerAccountId: DiscussionAccountIdSchema,
   encryptionMode: AccountEncryptionModeSchema,

@@ -8,7 +8,7 @@ import { describeSavedSecretResourceContentV1, SavedSecretResourceStoredContentV
 import { type AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
 import { acceptsManagedResourceDispositions, readManagedResourceDependenciesInTx } from '@/app/machines/managed/managedRead';
 import { resolveProjectSourcesAccessInTx } from '@/app/projects/sources/projectSourceService';
-import type { SavedSecretBackupRekeyRequiredV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import type { SavedSecretBackupRekeyRequiredV1, SharedSavedSecretListInputV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { deleteObsoleteSavedSecretInstallationGrantsInTx } from '@/app/deployments/environmentSecretGrantRepository';
 import { readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { SavedSecretReferenceCensusV1Schema, SavedSecretPromoteReferenceCensusV1Schema, SavedSecretCatalogMutationsV1Schema, SavedSecretOpaquePresetRewritesV1Schema, SavedSecretPersonalPromotionsV1Schema,
@@ -84,7 +84,7 @@ import {
     type TeamActorContext,
 } from "@/app/teams/actorContext";
 import { resourceGrantArmWheres } from '@/app/teams/resourceGrantAccess';
-import { resourceTeamShareScopeV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
+import { resourceTeamShareScopeV1, type ResourceTeamShareScopeV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 import { resolveTeamCredentialCapabilities } from "@/app/teams/capabilities";
 import {
     ACCOUNT_DISPLAY_PROFILE_SELECT,
@@ -721,7 +721,9 @@ export type SavedSecretResourceServiceError =
     | "references_conflict"
     | "references_invalid"
     | "resource_in_use"
-    | "account_mode_mismatch";
+    | "account_mode_mismatch"
+    | "team_authentication_required"
+    | "team_authentication_unavailable";
 
 export type SavedSecretResourceServiceResult<T, Error extends SavedSecretResourceServiceError = SavedSecretResourceServiceError> =
     | Readonly<{ ok: true; value: T }>
@@ -974,6 +976,39 @@ export async function countSavedSecretResourcesInTx(tx: Tx, input: Readonly<{
 }>) {
     const scoped = await readSavedSecretScopedResourceIdsInTx(tx, input);
     return scoped.ok ? { ok: true as const, count: scoped.resourceIds.length } : scoped;
+}
+
+/** Existing catalog Action with optional owner keyset paging and Team scope. */
+export async function listSavedSecretResourcePageForAccountInTx(tx: Tx, input: SharedSavedSecretListInputV1 & Readonly<{
+    actorAccountId: string; authentication?: TeamOperationAuthenticationContext;
+}>) {
+    if (input.sharedWithTeamId === undefined && input.cursor === undefined && input.limit === undefined) {
+        return { ok: true as const, value: { resources: await listSavedSecretResourcesForAccountInTx(tx, input.actorAccountId, input.authentication) } };
+    }
+    let resourceIds: readonly string[];
+    let catalogScope: Readonly<{ teamId: string; shareScopes: ReadonlyMap<string, ResourceTeamShareScopeV1> }> | undefined;
+    if (input.sharedWithTeamId !== undefined) {
+        const scope = await readSavedSecretScopedResourceIdsInTx(tx, { ...input, sharedWithTeamId: input.sharedWithTeamId });
+        if (!scope.ok) return scope;
+        resourceIds = scope.resourceIds;
+        catalogScope = { teamId: input.sharedWithTeamId, shareScopes: scope.shareScopes };
+    } else {
+        const { accountGrants, teamGrants, groupGrants } = authorizedSavedSecretRowSelect(input.actorAccountId);
+        const rows = await tx.savedSecretResource.findMany({ where: authorizedSavedSecretRowWhere(input.actorAccountId),
+            select: { id: true, ownerAccountId: true, accountGrants, teamGrants, groupGrants }, orderBy: { id: 'asc' } });
+        const admitted = await retainQualifiedSavedSecretRowsInTx(tx, { rows, accountId: input.actorAccountId, authentication: input.authentication });
+        resourceIds = admitted.rows.map(row => row.id);
+    }
+    const remaining = input.cursor === undefined ? resourceIds : resourceIds.filter(id => id > input.cursor!);
+    const selected = input.limit === undefined ? remaining : remaining.slice(0, input.limit);
+    const resources: SavedSecretCatalogResultV1[] = [];
+    for (const ids of portableQueryChunks({ values: selected, bindingsPerValue: 1, fixedBindings: 5 })) {
+        resources.push(...(await listSavedSecretResourceMaterialsForAccountInTx(tx, input.actorAccountId,
+            input.authentication, ids, false,
+            catalogScope, true)).map(resource => resource.entry));
+    }
+    return { ok: true as const, value: { resources,
+        nextCursor: selected.length < remaining.length ? selected.at(-1) ?? null : null } };
 }
 
 /** Lists only resources currently authorized for the Account. */
@@ -1236,10 +1271,12 @@ export async function listSavedSecretResourceMaterialsForAccountInTx(
     authentication?: TeamOperationAuthenticationContext,
     resourceIds?: readonly string[],
     includeReferenceCensus = false,
+    catalogScope?: Readonly<{ teamId: string; shareScopes: ReadonlyMap<string, ResourceTeamShareScopeV1> }>,
+    orderByResourceId = false,
 ): Promise<readonly SavedSecretResourceMaterialProjection[]> {
     const [rows, account] = await Promise.all([tx.savedSecretResource.findMany({
         where: resourceIds ? { id: { in: [...resourceIds] } } : authorizedSavedSecretRowWhere(accountId),
-        orderBy: { updatedAt: "desc" },
+        orderBy: orderByResourceId ? { id: "asc" } : { updatedAt: "desc" },
         select: authorizedSavedSecretRowSelect(accountId),
     }), tx.account.findUnique({
         where: { id: accountId },
@@ -1250,7 +1287,9 @@ export async function listSavedSecretResourceMaterialsForAccountInTx(
             contentPublicKeySig: true,
         },
     })]);
-    const authorized = await retainQualifiedSavedSecretRowsInTx(tx, { rows, accountId, authentication });
+    const authorized = catalogScope === undefined
+        ? await retainQualifiedSavedSecretRowsInTx(tx, { rows, accountId, authentication })
+        : { rows, qualifiedTeamIds: new Set([catalogScope.teamId]) };
     const deploymentReferences = includeReferenceCensus
         ? await readDeploymentSavedSecretReferenceStatesInTx(tx, authorized.rows.map(row => row.id)) : null;
     const readiness = account && authorized.rows.length > 0
@@ -1259,12 +1298,14 @@ export async function listSavedSecretResourceMaterialsForAccountInTx(
     const projectedRows: SavedSecretResourceMaterialProjection[] = [];
     for (const row of authorized.rows) {
         const envelope = row.keyEnvelopes?.[0] ?? null;
-        const entry = projectRow(
+        const projected = projectRow(
             row,
             accountId,
             resolveEncryptedMaterialStatus(readiness, envelope),
             authorized.qualifiedTeamIds,
         );
+        const sharedWithTeamScope = catalogScope?.shareScopes.get(row.id);
+        const entry = projected && sharedWithTeamScope ? { ...projected, sharedWithTeamScope } : projected;
         if (!entry) continue;
         const facts = { ownerAccountId: row.ownerAccountId, revision: row.revision };
         if (entry.materialStatus === "resource_corrupt") {

@@ -13,6 +13,7 @@ export const DISCUSSION_DEFAULT_PAGE_SIZE_V1 = 30;
 export const DISCUSSION_MAX_PAGE_SIZE_V1 = 100;
 
 export const DiscussionListQueryV1Schema = lazyZodSchema(() => z.strictObject({
+  sharedWithTeamId: z.optional(DiscussionIdSchema),
   state: z.optional(z.enum(['active', 'archived'])),
   cursor: z.optional(z.string().check(z.minLength(1), z.maxLength(512))),
   limit: z.optional(PageLimitSchema),

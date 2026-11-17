@@ -274,6 +274,7 @@ export async function countDiscussionsInTx(tx: Tx, input: Parameters<typeof read
 /** Candidate grants narrow before paging; current admission still decides every returned row. */
 export async function listDiscussions(input: Reader & Readonly<{
     state?: 'active' | 'archived'; cursor?: string; limit?: number; anchorSessionId?: string; creationLocalId?: string; anchorDocArtifactId?: string;
+    sharedWithTeamId?: string;
 }>): Promise<DiscussionResult<DiscussionListResponseV1>> {
     if (input.anchorDocArtifactId !== undefined && !DiscussionListQueryV1Schema.safeParse({
         anchorDocArtifactId: input.anchorDocArtifactId, state: input.state,
@@ -281,6 +282,10 @@ export async function listDiscussions(input: Reader & Readonly<{
     const cursor = input.cursor === undefined ? null : decodeDiscussionListCursorV1(input.cursor);
     if (input.cursor !== undefined && !cursor) return discussionFailure('discussion_invalid_content');
     return inReadSnapshot(async tx => {
+        const scope = input.sharedWithTeamId === undefined ? null : await readDiscussionTeamScopedIdsInTx(tx, {
+            ...input, sharedWithTeamId: input.sharedWithTeamId,
+        });
+        if (scope && !scope.ok) return scope;
         const take = pageSize(input.limit);
         const docSourceAdmissions: DiscussionDocSourceAdmissions = new Map();
         const discussions: DiscussionSummaryV1[] = [];
@@ -291,28 +296,53 @@ export async function listDiscussions(input: Reader & Readonly<{
             // SQLite's Prisma connector has no JSON-path filter. Select exact
             // Doc candidates in SQL on every provider before ORM/page admission.
             const position = frontier ? discussionSqlTimestamp(new Date(frontier.at)) : sql.empty;
-            const scopedIds = input.anchorDocArtifactId === undefined ? null : await tx.$queryRaw<{ id: string }[]>(sql.sql`
+            const readDocWindow = (candidateIds?: readonly string[]) => tx.$queryRaw<{ id: string }[]>(sql.sql`
                 SELECT d.${name('id')} AS id FROM ${name('Discussion')} d
-                WHERE ${discussionCandidateSql(input.actorAccountId)} AND d.${name('archivedAt')} IS NULL
+                WHERE ${candidateIds ? sql.sql`d.${name('id')} IN (${sql.join([...candidateIds])})` : discussionCandidateSql(input.actorAccountId)}
+                    AND d.${name('archivedAt')} IS NULL
                     AND ${discussionJsonText(sql.sql`d.${name('anchorV1')}`, ['kind'])} = 'doc'
                     AND ${discussionJsonText(sql.sql`d.${name('anchorV1')}`, ['doc', 'ref', 'artifactId'])} = ${input.anchorDocArtifactId}
                     ${input.anchorSessionId ? sql.sql`AND d.${name('anchorSessionId')} = ${input.anchorSessionId}` : sql.empty}
                     ${input.creationLocalId ? sql.sql`AND d.${name('createdByAccountId')} = ${input.actorAccountId} AND d.${name('creationLocalId')} = ${input.creationLocalId}` : sql.empty}
                     ${frontier ? sql.sql`AND (d.${name('lastMessageAt')} < ${position} OR (d.${name('lastMessageAt')} = ${position} AND d.${name('id')} < ${frontier.id}))` : sql.empty}
                 ORDER BY d.${name('lastMessageAt')} DESC, d.${name('id')} DESC LIMIT ${take + 1}`);
+            let scopedIds: Awaited<ReturnType<typeof readDocWindow>> | null = null;
+            if (input.anchorDocArtifactId !== undefined) {
+                if (scope?.ok) {
+                    scopedIds = [];
+                    for (const ids of portableQueryChunks({ values: scope.resourceIds, bindingsPerValue: 1,
+                        fixedBindings: take + 1 + 16 })) {
+                        scopedIds = await readDocWindow([...ids, ...scopedIds.map(row => row.id)]);
+                    }
+                } else scopedIds = await readDocWindow();
+            }
             if (scopedIds?.length === 0) return discussionSuccess({ discussions, nextCursor: null });
-            const rows = await tx.discussion.findMany({
+            const readWindow = (candidateIds?: readonly string[]) => tx.discussion.findMany({
                 where: {
-                    AND: [discussionCandidateWhere(input.actorAccountId), ...(frontier ? [buildDiscussionListCursorPredicate(frontier)] : [])],
+                    AND: [candidateIds ? { id: { in: [...candidateIds] } } : discussionCandidateWhere(input.actorAccountId),
+                        ...(frontier ? [buildDiscussionListCursorPredicate(frontier)] : [])],
                     archivedAt: input.state === 'archived' ? { not: null } : null,
                     ...(scopedIds ? { id: { in: scopedIds.map(row => row.id) } } : {}),
                     ...(input.anchorSessionId ? { anchorSessionId: input.anchorSessionId } : {}),
                     ...(input.creationLocalId ? { createdByAccountId: input.actorAccountId, creationLocalId: input.creationLocalId } : {}),
                 }, select: DISCUSSION_SELECT, orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }], take: take + 1,
             });
+            let rows: Awaited<ReturnType<typeof readWindow>> = [];
+            if (scope?.ok && scopedIds) rows = await readWindow(scopedIds.map(row => row.id));
+            else if (scope?.ok) {
+                // The next window merges each identity chunk with the current
+                // leading window. Its bind budget includes both that window
+                // and the optional Doc/cursor filters; valid large Teams page
+                // without exceeding SQLite's portable parameter boundary.
+                for (const ids of portableQueryChunks({ values: scope.resourceIds, bindingsPerValue: 1,
+                    fixedBindings: take + 1 + (scopedIds?.length ?? 0) + 12 })) {
+                    rows = await readWindow([...ids, ...rows.map(row => row.id)]);
+                }
+            } else rows = await readWindow();
             if (rows.length === 0) return discussionSuccess({ discussions, nextCursor: null });
             const contexts = await resolveDiscussionContextsInTx(tx, { discussionIds: rows.map(row => row.id), accountId: input.actorAccountId,
-                authentication: input.authentication, includeActorAudience: true });
+                authentication: input.authentication, includeActorAudience: true,
+                ...(input.sharedWithTeamId === undefined ? {} : { qualifiedTeamIds: new Set([input.sharedWithTeamId]) }) });
             const admitted = rows.filter(row => {
                 if (!contexts.has(row.id)) return false;
                 if (input.anchorDocArtifactId === undefined) return true;
@@ -325,7 +355,8 @@ export async function listDiscussions(input: Reader & Readonly<{
                 viewerAccountId: input.actorAccountId, authentication: input.authentication,
                 ...(input.anchorDocArtifactId === undefined ? {} : { anchorDocArtifactId: input.anchorDocArtifactId }) });
             if (!projected.ok) return projected;
-            discussions.push(...projected.value);
+            discussions.push(...projected.value.map(row => scope?.ok
+                ? { ...row, sharedWithTeamScope: scope.shareScopes.get(row.id) } : row));
             const lastSelected = selected[selected.length - 1];
             if (lastSelected) frontier = { v: 1, at: lastSelected.lastMessageAt.getTime(), id: lastSelected.id };
             if (admitted.length > selected.length) return discussionSuccess({ discussions, nextCursor: frontier ? encodeDiscussionListCursorV1(frontier) : null });
