@@ -169,6 +169,9 @@ describe('producer-backed database Action declarations', () => {
         expect(rows.surfaces).toEqual(['ui', 'cli', 'plugin', 'agent', 'mcp']);
         expect(run.surfaces).toEqual(rows.surfaces);
         expect(explain.surfaces).toEqual(rows.surfaces);
+        const edits = actions.find(action => action.id === databaseActionLocalIdV1(DATABASE_EDITS_APPLY_ACTION_ID_V1))!;
+        // D13: agents reach writes; the access decider and the Environment level decide admission and Ask.
+        expect(edits.surfaces).toEqual(rows.surfaces);
         expect(databaseActionMetadata[DATABASE_ACCESS_SET_ACTION_ID_V1].agentDefault).toBe('authority');
         expect(databaseActionMetadata[DATABASE_STATEMENT_RUN_ACTION_ID_V1].agentDefault).toEqual({ read: 'allow', write: 'ask' });
     });

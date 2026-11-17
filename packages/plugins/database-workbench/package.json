@@ -15,7 +15,9 @@
       "happier-source": "./src/manifest.ts",
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
-    }
+    },
+    "./happier-plugin-ui/database-panel-native": "./src/ui/surface/DatabasesPanel.tsx",
+    "./happier-plugin-ui/database-workbench-native": "./src/ui/surface/WorkbenchPage.tsx"
   },
   "files": [
     "src",
@@ -51,10 +53,5 @@
     "react-native": "0.83.5",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
-  },
-  "happier": {
-    "pluginScaffold": {
-      "shipping": "reservation_only"
-    }
   }
 }

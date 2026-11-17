@@ -10,8 +10,10 @@ export type PluginServiceLaunchEnvironmentProjectionV1 = Readonly<{
 }>;
 /** Private admitted preparation; this input is never an Action or review payload. */
 export type PluginServiceLaunchEnvironmentInputV1 = Readonly<{
-    workspace: Readonly<{ id: string; serverId: string; machineId: string; rootPath: string; createdAtMs?: number }>;
+    workspace: Readonly<{ id: string; serverId: string; machineId: string; rootPath: string; createdAtMs?: number; projectKey?: string }>;
     project: Readonly<{ serverId: string; projectId: string }>;
+    /** Captured from this launch's admitted requester, never from a service declaration. */
+    requester?: Readonly<{ accountId: string; installationId: string }>;
     serviceId: string;
     executionPlacement: Readonly<{ mode: 'spawn' | 'native'; machineId: string }>;
     /** Admitted physical execution-root comparison identity, equal to removal.worktreePath.
@@ -22,6 +24,8 @@ export type PluginServiceLaunchEnvironmentInputV1 = Readonly<{
     /** Demand after opt-in and eligibility. Ready assignment.listenerPorts uses these same local names. */
     requestListenerPorts?(keys: readonly string[]): Promise<WorktreePortsResultV1>;
     readEnvironment(): Promise<PluginServiceLaunchEnvironmentProjectionV1>;
+    /** Original declared config projection from this same preparation; secret bindings stay excluded. */
+    readDeclaredEnvironment?(): Promise<PluginServiceLaunchEnvironmentProjectionV1>;
 }>;
 export type PluginServiceLaunchEnvironmentResultV1 = Readonly<{ kind: 'unchanged' }>
     | Readonly<{ kind: 'unavailable'; code: 'service_launch_environment_unavailable' | 'service_launch_environment_failed'; reason?: string }>

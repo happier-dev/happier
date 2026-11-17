@@ -26,6 +26,10 @@ export type DatabaseActionProducers = Readonly<{
         => database.DatabaseFindingReadResultV1 | Promise<database.DatabaseFindingReadResultV1>;
     buildInsightBrief?: (input: database.DatabaseInsightBriefBuildInputV1, context: PluginInvocationContext)
         => database.DatabaseFindingBriefBuildResultV1 | Promise<database.DatabaseFindingBriefBuildResultV1>;
+    readAccess?: (input: database.DatabaseAccessReadInputV1, context: PluginInvocationContext)
+        => database.DatabaseAccessReadResultV1 | Promise<database.DatabaseAccessReadResultV1>;
+    setAccess?: (input: database.DatabaseAccessSetInputV1, context: PluginInvocationContext)
+        => database.DatabaseAccessSetResultV1 | Promise<database.DatabaseAccessSetResultV1>;
 }>;
 
 /** The existing plugin producer supplies handlers; the SDK owns input/result admission. */
@@ -87,7 +91,8 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
         const { agentDefault: _agentDefault, ...metadata } = databaseActionMetadata[actionId];
         actions[database.databaseActionLocalIdV1(actionId)] = {
             ...common, ...metadata, inputSchema,
-            ...(metadata.readOnly !== false ? { surfaces: readSurfaces } : {}),
+            // Agents reach writes too: the access decider and the D13 level decide admission and Ask.
+            surfaces: readSurfaces,
             resultSchema: database.DatabaseOperationResultV1ProtocolSchema,
             // All entries come from the P1 operation union; the SDK has already parsed the input.
             run: async (input: JsonValue, context: PluginInvocationContext) => {
@@ -131,6 +136,28 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
             resultSchema: database.DatabaseFindingBriefBuildResultV1ProtocolSchema,
             run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
                 await buildInsightBrief(input as database.DatabaseInsightBriefBuildInputV1, context)),
+        };
+    }
+    const readAccess = producers.readAccess;
+    if (readAccess) {
+        const { agentDefault: _agentDefault, ...metadata } = databaseActionMetadata[database.DATABASE_ACCESS_READ_ACTION_ID_V1];
+        actions[database.databaseActionLocalIdV1(database.DATABASE_ACCESS_READ_ACTION_ID_V1)] = {
+            ...common, ...metadata, surfaces: readSurfaces,
+            inputSchema: database.DatabaseAccessReadInputV1ProtocolSchema,
+            resultSchema: database.DatabaseAccessReadResultV1ProtocolSchema,
+            run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
+                await readAccess(input as database.DatabaseAccessReadInputV1, context)),
+        };
+    }
+    const setAccess = producers.setAccess;
+    if (setAccess) {
+        const { agentDefault: _agentDefault, ...metadata } = databaseActionMetadata[database.DATABASE_ACCESS_SET_ACTION_ID_V1];
+        actions[database.databaseActionLocalIdV1(database.DATABASE_ACCESS_SET_ACTION_ID_V1)] = {
+            ...common, ...metadata,
+            inputSchema: database.DatabaseAccessSetInputV1ProtocolSchema,
+            resultSchema: database.DatabaseAccessSetResultV1ProtocolSchema,
+            run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
+                await setAccess(input as database.DatabaseAccessSetInputV1, context)),
         };
     }
     return actions;

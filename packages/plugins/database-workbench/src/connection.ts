@@ -20,17 +20,28 @@ function selectDatabaseConnection(connectionString: string, databaseEngines?: Da
     if (candidates.length > 1) throw new PluginError({ code: 'plugin_service_unavailable' });
     const contributed = candidates[0];
     if (contributed) return { engine: contributed.engineId, capabilities: contributed.capabilities, contributed: true } as const;
-    if (!builtinDatabaseConnectionEngine(connectionString)) throw new PluginError({ code: 'plugin_service_unavailable' });
+    if (!builtinDatabaseConnectionEngine(connectionString)) return undefined;
     const { engine } = parseDatabaseConnectionUrl(connectionString);
     return { engine, capabilities: builtinDatabaseCapabilities(engine), contributed: false } as const;
 }
 
-/** No driver load or connection open is needed to select a contributed scheme. */
-export function describeDatabaseConnection(connectionString: string, databaseEngines?: DatabaseEnginesServiceV1): Readonly<{
+type DatabaseConnectionDescriptor = Readonly<{
     engine: DatabaseEngineIdV1; capabilities: readonly DatabaseCapabilityV1[];
-}> {
-    const { engine, capabilities } = selectDatabaseConnection(connectionString, databaseEngines);
+}>;
+
+/** Cold discovery ignores URLs whose schemes have no enabled database engine. */
+export function findDatabaseConnectionDescriptor(connectionString: string, databaseEngines?: DatabaseEnginesServiceV1): DatabaseConnectionDescriptor | undefined {
+    const selected = selectDatabaseConnection(connectionString, databaseEngines);
+    if (!selected) return undefined;
+    const { engine, capabilities } = selected;
     return { engine, capabilities };
+}
+
+/** No driver load or connection open is needed to select a contributed scheme. */
+export function describeDatabaseConnection(connectionString: string, databaseEngines?: DatabaseEnginesServiceV1): DatabaseConnectionDescriptor {
+    const descriptor = findDatabaseConnectionDescriptor(connectionString, databaseEngines);
+    if (!descriptor) throw new PluginError({ code: 'plugin_service_unavailable' });
+    return descriptor;
 }
 
 /** Credential acquisition and access admission remain with the invoking target owner. */
@@ -39,6 +50,7 @@ export async function openDatabaseConnection(input: Readonly<{
 }>): Promise<DatabaseWorkbenchConnection> {
     input.signal?.throwIfAborted();
     const descriptor = selectDatabaseConnection(input.connectionString, input.databaseEngines);
+    if (!descriptor) throw new PluginError({ code: 'plugin_service_unavailable' });
     if (descriptor.contributed && input.databaseEngines) return input.databaseEngines.open(descriptor.engine, {
         connectionString: input.connectionString, access: input.access, signal: input.signal,
     });
