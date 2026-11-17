@@ -128,7 +128,8 @@ import { resolveCliAgentStartContextV1 } from '@/session/actions/resolveCliAgent
 import { resolveSessionRoleRpcOrigin } from '@/session/actions/sessionRoleRpcOrigin';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { readSessionPreparationFailureDiagnostic } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
-import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListRequestV1Schema, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListRequestV1Schema, ProjectAccountRowListResponseV1Schema,
+  ProjectAccountRowReadRequestV1Schema, ProjectAccountRowReadResponseV1Schema, ProjectAccountRowV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { decodeExternalActionResolvedTargetV1, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
   EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
   EXTERNAL_ACTION_RESOLVED_TARGET_HEADER } from '@happier-dev/protocol/actions';
@@ -450,6 +451,7 @@ function params(definitionId: string, beforeSessionRunnerLaunch: () => Promise<b
     connectedServicesMaterializationBaseDir: join(storage.home, 'connected-services'),
     connectedServiceRefreshCoordinator: null, connectedServiceQuotasCoordinator: null,
     connectedServiceRuntimeRegistry: { registerTarget: () => {} },
+    activateSessionPurposeBindings: createNativePurposeBindingFixture().activateSessionPurposeBindings,
     trackedSessionsByKey: new Map(), spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(),
     spawnWebhookTimeoutByKey: new Map(), spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
     resolveCanonicalTrackedSessionId: () => '', onChildExited: () => {},
@@ -458,6 +460,20 @@ function params(definitionId: string, beforeSessionRunnerLaunch: () => Promise<b
 
 function homeResponse<T>(data: T, status = 200): AxiosResponse<T> {
   return { data, status, statusText: 'OK', headers: {}, config: { headers: new AxiosHeaders() } };
+}
+
+function createNativePurposeBindingFixture() {
+  let bindings = QualifiedConnectedAccountPurposeBindingsV1Schema.parse({ v: 1, bindings: [] });
+  return createConnectedAccountPurposeBindingOwner({
+    // Persisted Account configuration is the boundary; binding authority stays real.
+    store: { read: async () => bindings, update: async mutate => { bindings = mutate(bindings); return bindings; },
+      subscribe: () => ({ dispose() {} }) },
+    selectTarget: async () => { throw new Error('Native launch must not select connected credentials'); },
+    resolveTarget: async () => null,
+    materializeAccount: async () => { throw new Error('Native launch must not materialize connected credentials'); },
+    projectTargetAccounts: async () => { throw new Error('Native launch must not list connected Accounts'); },
+    assertTargetAccountMaterializable: async () => { throw new Error('Native launch must not disclose connected credentials'); },
+  });
 }
 
 function fixtureMachineMetadata() {
@@ -1029,19 +1045,8 @@ describe('Custom ACP fresh daemon launch composition', () => {
         await writeExecutableShim({ dir: storage.home, fileName: 'claude', contents: '#!/bin/sh\necho 2.1.322\n' });
       }
       const input = params('alpha', async () => true);
-      let bindings = QualifiedConnectedAccountPurposeBindingsV1Schema.parse({ v: 1, bindings: [] });
-      const purposes = createConnectedAccountPurposeBindingOwner({
-        store: { read: async () => bindings, update: async mutate => { bindings = mutate(bindings); return bindings; },
-          subscribe: () => ({ dispose() {} }) },
-        selectTarget: async () => { throw new Error('Native launch must not select connected credentials'); },
-        resolveTarget: async () => null,
-        materializeAccount: async () => { throw new Error('Native launch must not materialize connected credentials'); },
-        projectTargetAccounts: async () => { throw new Error('Native launch must not list connected Accounts'); },
-        assertTargetAccountMaterializable: async () => { throw new Error('Native launch must not disclose connected credentials'); },
-      });
       const result = await executeSpawnSessionRequest({ ...input, processEnv: { ...process.env,
         ...(uncertain ? { PATH: `${storage.home}${delimiter}${process.env.PATH ?? ''}` } : {}) },
-        activateSessionPurposeBindings: purposes.activateSessionPurposeBindings,
         options: { ...input.options, approvalProfileId: 'builtin:read-propose',
           ...(uncertain ? {
             agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
@@ -1200,7 +1205,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
       const path = new URL(String(url)).pathname;
       if (path === '/v1/account/profile') return Response.json({ id: 'df38-owner' });
       if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(FeaturesResponseSchema.parse({
-        features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_preflight_owner' },
+        features: { sharing: { enabled: true, session: { enabled: true } } }, capabilities: { serverIdentity: { serverIdentityId: 'srv_preflight_owner' },
           encryption: { storagePolicy: 'plaintext_only', allowAccountOptOut: false, defaultAccountMode: 'plain' } },
       }));
       throw new Error(`Unexpected preflight fetch ${path}`);
@@ -1246,10 +1251,9 @@ describe('Custom ACP fresh daemon launch composition', () => {
         definitionId: 'alpha' }, connectedServices: { v: 2, bindingsByServiceId: {} } });
     try {
       const ownerRaw = await relay.invokeUi(RPC_METHODS.SESSION_SPAWN_NEW, request('owner', ownerDirectory));
-      expect(ownerRaw, JSON.stringify(ownerRaw)).toMatchObject({ type: 'error' });
-      const ownerResult = SessionSpawnNewResultV1Schema.parse(ownerRaw);
-      expect(ownerResult).toMatchObject({ type: 'error' });
-      expect(preflightDirectories, JSON.stringify(ownerResult)).toEqual([ownerDirectory]);
+      // Registered Actions project a refusal as an Action result envelope.
+      expect(ownerRaw, JSON.stringify(ownerRaw)).toMatchObject({ ok: false, errorCode: expect.any(String) });
+      expect(preflightDirectories, JSON.stringify(ownerRaw)).toEqual([ownerDirectory]);
       expect((await lstat(ownerDirectory)).isDirectory()).toBe(true);
       for (const actorAccountId of ['member-use', 'member-manage']) {
         const directory = join(storage.home, actorAccountId);
@@ -1273,18 +1277,6 @@ describe('Custom ACP fresh daemon launch composition', () => {
     let inspected = false;
     try {
       const executable = await writeExecutableShim({ dir: storage.home, fileName: agentId, contents: `#!${process.execPath}\nif (process.argv.slice(2).join(' ') === 'auth list') console.log('1 credential');\nprocess.exit(0)\n` });
-      let bindings = QualifiedConnectedAccountPurposeBindingsV1Schema.parse({ v: 1, bindings: [] });
-      // Real binding authority over an isolated Account persistence boundary.
-      // This launch stops before Session creation or credential disclosure.
-      const purposes = createConnectedAccountPurposeBindingOwner({
-        store: { read: async () => bindings, update: async mutate => { bindings = mutate(bindings); return bindings; },
-          subscribe: () => ({ dispose() {} }) },
-        selectTarget: async () => { throw new Error('Prelaunch inspection must not select credentials'); },
-        resolveTarget: async () => null,
-        materializeAccount: async () => { throw new Error('Prelaunch inspection must not materialize credentials'); },
-        projectTargetAccounts: async () => { throw new Error('Prelaunch inspection must not list Accounts'); },
-        assertTargetAccountMaterializable: async () => { throw new Error('Prelaunch inspection must not disclose credentials'); },
-      });
       const prepared = params('alpha', async () => {
         const directory = join(storage.home, 'tmp', 'runner-agent-session-bootstraps');
         const [file] = await readdir(directory);
@@ -1302,7 +1294,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
         inspected = true;
         return false;
       });
-      const result = await executeSpawnSessionRequest({ ...prepared, activateSessionPurposeBindings: purposes.activateSessionPurposeBindings,
+      const result = await executeSpawnSessionRequest({ ...prepared,
         processEnv: { ...prepared.processEnv, [agentId === 'claude' ? 'HAPPIER_CLAUDE_PATH' : 'HAPPIER_OPENCODE_PATH']: executable }, options: {
         directory: storage.home, backendTarget: { kind: 'backend', backendId: agentId, sourceKind: 'built_in' },
         connectedServices: { v: 2, bindingsByServiceId: {} },
@@ -2234,6 +2226,8 @@ describe('Custom ACP fresh daemon launch composition', () => {
       } });
       if (path === '/v1/account/entity-rows/acp') return homeResponse({ status: 'present', revision: savedCatalog.revision,
         content: { t: 'plain', v: savedCatalog.record } });
+      const catalog = readFixtureCatalogResponse(path);
+      if (catalog) return catalog;
       if (path === '/v1/account/encryption/currentness') return homeResponse(createAccountEncryptionCurrentnessFixture({ mode: 'plain' }));
       if (createdSession && path === `/v2/sessions/${createdSession.id}`) return homeResponse({ session: createdSession });
       throw new Error(`Unexpected FIX54 Home read ${path}`);
@@ -2257,7 +2251,8 @@ describe('Custom ACP fresh daemon launch composition', () => {
     vi.stubGlobal('fetch', async (url: string | URL | Request) => {
       const path = new URL(String(url)).pathname;
       if (path === '/v1/account/profile') return new Response(JSON.stringify({ id: 'df38-owner' }), { status: 200 });
-      if (path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({ features: {}, capabilities: {
+      if (path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({ features: {
+        sharing: { enabled: true, session: { enabled: true } } }, capabilities: {
         encryption: { storagePolicy: 'plaintext_only', allowAccountOptOut: false, defaultAccountMode: 'plain' },
       } }));
       throw new Error(`Unexpected FIX54 Home fetch ${path}`);
@@ -2300,7 +2295,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
       const observed = { result, daemonResult, boundaryReads, reachedLaunch };
       expect(observed, JSON.stringify(observed)).toMatchObject(unsupportedBinding ? { reachedLaunch: false,
         daemonResult: { type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED' },
-        result: { ok: true, result: { type: 'error', code: 'spawn_failed',
+        result: { ok: false, errorCode: 'spawn_failed', details: { type: 'error', code: 'spawn_failed',
           launchError: { code: 'connected_service_qualified_purpose_authority_unavailable' } } },
       // Local cancellation after dispatch retains the existing unknown outcome.
       } : scenario === 'cancelled_at_launch' ? { reachedLaunch: true,
@@ -2493,7 +2488,8 @@ describe('Custom ACP fresh daemon launch composition', () => {
       storage.runnerExited = true;
       if (child) { child.exitCode = 0; child.emit('exit', 0, null); }
     }));
-    const features = FeaturesResponseSchema.parse({ features: { sessions: { enabled: true } }, capabilities: {
+    const features = FeaturesResponseSchema.parse({ features: { sessions: { enabled: true },
+      sharing: { enabled: true, session: { enabled: true } } }, capabilities: {
       serverIdentity: { serverIdentityId: 'srv_df38_owner' },
       accountStoredContentCompatibility: { v: 1, minimumProtocolVersion: 2,
         currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
@@ -2501,6 +2497,10 @@ describe('Custom ACP fresh daemon launch composition', () => {
       encryption: { storagePolicy: 'plaintext_only', allowAccountOptOut: false, defaultAccountMode: 'plain' },
       session: { runtimeActivity: { protocolVersion: 2 }, publisherAuthority: { protocolVersion: 1 } },
     } });
+    const workspaceRow = ProjectAccountRowV1Schema.parse({ key: { kind: 'workspace-ref', serverId: 'df38-home', id: 'df41-workspace' },
+      revision: 1, content: { t: 'plain', v: { key: { kind: 'workspace-ref', serverId: 'df38-home', id: 'df41-workspace' },
+        value: { id: 'df41-workspace', serverId: 'df38-home', machineId: 'df38-machine', rootPath: storage.home,
+          projectKey: 'df41-project', createdAtMs: 1 } } } });
     const activity = createSessionRuntimeActivityHomeStub({ machineId: 'df38-machine' });
     const transcript = createSessionTranscriptHomeStub();
     const socket = createApiSessionSocketStub({ connected: true,
@@ -2618,10 +2618,13 @@ describe('Custom ACP fresh daemon launch composition', () => {
           if (ordinaryPlacement === 'unassociated' || request.serverId && request.serverId !== 'df38-home') {
             return homeResponse(ProjectAccountRowListResponseV1Schema.parse({ status: 'listed', coverage: 'complete', rows: [] }));
           }
-          const key = { kind: 'workspace-ref', serverId: 'df38-home', id: 'df41-workspace' };
-          return homeResponse(ProjectAccountRowListResponseV1Schema.parse({ status: 'listed', coverage: 'complete', rows: [{ key, revision: 1,
-            content: { t: 'plain', v: { key, value: { id: 'df41-workspace', serverId: 'df38-home',
-              machineId: 'df38-machine', rootPath: storage.home, projectKey: 'df41-project', createdAtMs: 1 } } } }] }));
+          return homeResponse(ProjectAccountRowListResponseV1Schema.parse({ status: 'listed', coverage: 'complete', rows: [workspaceRow] }));
+        }
+        if (parsedUrl.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`) {
+          const { key } = ProjectAccountRowReadRequestV1Schema.parse(body);
+          return homeResponse(ProjectAccountRowReadResponseV1Schema.parse(ordinaryPlacement !== 'unassociated'
+            && key.kind === 'workspace-ref' && key.serverId === 'df38-home' && key.id === 'df41-workspace'
+            ? { status: 'present', row: workspaceRow } : { status: 'absent' }));
         }
         if (parsedUrl.pathname.endsWith('/access-key')) return homeResponse({ success: true });
         throw new Error(`Unexpected Home POST ${parsedUrl.pathname}`);
@@ -3452,13 +3455,13 @@ describe('Custom ACP fresh daemon launch composition', () => {
       errorDetail: { kind: 'launch_error', code: 'SPAWN_FAILED', message: 'Unexpected launch failure' } });
   });
 
-  it('preserves the actual Account ACP launch-resolution refusal code', async () => {
+  it('preserves the first Account launch-custody refusal code', async () => {
     storage.persistedToken = 'foreign-account-token';
     const result = await executeSpawnSessionRequest(params('alpha', async () => {
       throw new Error('Unavailable Account launch custody must not reach runner admission');
     }));
-    expect(result).toMatchObject({ type: 'error', errorCode: 'SPAWN_FAILED',
-      errorDetail: { kind: 'launch_error', code: 'ACP_CATALOG_UNAVAILABLE', message: expect.stringContaining('credentials-unavailable') } });
+    expect(result).toMatchObject({ type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED',
+      errorDetail: { kind: 'launch_error', code: 'connected_account_purpose_catalog_unavailable' } });
   });
 
   it('validates the selected command on the supplied launch PATH', async () => {
