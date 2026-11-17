@@ -8364,7 +8364,7 @@ const ru: HomesJourneysTranslation = {
     pathOtherServiceTitle: 'Войти через другой сервис',
     pathOtherServiceSubtitle: 'Ваш собственный вход или вход вашей компании',
     pathDirectTitle: 'Подключиться к Home напрямую',
-    pathDirectSubtitle: 'Ссылка или адрес · без аккаунта',
+    pathDirectSubtitle: "Ссылка для связывания или адрес Home",
 
     serviceLead: 'После входа ваши Home будут найдены и показаны вместе. Личный Home этого компьютера останется, пока вы не решите.',
     defaultServiceFact: 'сервис входа по умолчанию',

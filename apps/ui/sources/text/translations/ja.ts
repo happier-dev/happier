@@ -3730,6 +3730,7 @@ export const ja: TranslationStructure = {
     pairingLinkSecurityWarning: "この一時リンクを持つ人は、有効期限内にデバイスを追加できます。自分のデバイスだけと共有してください。",
     pairingLinkFieldLabel: "ペアリングリンク",
     signInPairingLinkHelp: "すでにサインインしているデバイスで「設定 → スマートフォンを追加」を開き、ペアリングリンクをコピーします。リンクは1回だけ使え、数分で期限切れになります。",
+    signInPairingLinkHelpScan: "サインイン済みのデバイスで「設定 → スマートフォンを追加」を開き、「カメラを使う」でコードをスキャンするか、ペアリングリンクを貼り付けてください。",
     signInShowQr: "ここにQRコードを表示して、そのデバイスでスキャンする",
     pairingLinkPlaceholder: "ペアリングリンクを貼り付け",
     pairingLinkRequired: "もう一方のデバイスに表示されているペアリングリンクを貼り付けてください。",

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View, useWindowDimensions } from 'react-native';
+import { Platform, View } from 'react-native';
 import { router } from 'expo-router';
 import { useRouter as useHomeRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
@@ -43,9 +43,6 @@ import {
     resolveEndpointReachabilityRemediation,
     type EndpointReachabilityRemediation,
 } from '@/components/serverReachability/remediation';
-import { isRunningOnMac } from '@/utils/platform/platform';
-import { isWebQrScannerSupported } from '@/utils/platform/qrScannerSupport';
-import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
 import type { EmailPasswordAuthStepRequest } from '@/components/account/auth/emailPassword/EmailPasswordAuthStep';
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
@@ -61,7 +58,7 @@ import { ConfirmSwitchRelayStep, type RelaySwitchDecision } from '../steps/Confi
 import { parseOnboardingScanPayload } from '../state/scanPayload';
 import { promptLegacyPairingUpdateRequired } from '@/auth/pairing/legacyPairingUpdateRequired';
 import { promptAccountConnectApprovalRequired } from '@/components/account/restore/accountConnectApprovalGuidance';
-import { resolveReverseQrTargetProfileId } from '@/components/onboarding/restore/loginWays';
+import { resolveReverseQrTargetProfileId, useLoginScansFirst } from '@/components/onboarding/restore/loginWays';
 import { useEndpointReadinessMap } from '../hooks/useEndpointReadinessMap';
 import {
     setOnboardingWizardAwaitingAuthResumeIntent,
@@ -151,19 +148,11 @@ export type OnboardingWizardHomeContext = Readonly<{
     status: 'active' | 'selected';
 }>;
 
-function resolveCanScanQr(params: Readonly<{ width: number; height: number; platform: string }>): boolean {
-    if (isRunningOnMac()) return false;
-    if (params.platform !== 'web') return true;
-    if (!isWebQrScannerSupported()) return false;
-    return isWebMobileLikeQrScannerHost({ width: params.width, height: params.height });
-}
-
 export function useOnboardingWizardController(props: OnboardingWizardSurfaceProps): OnboardingWizardController {
     const requestPersonalHomeBootstrap = useRequestPersonalHomeBootstrap();
     const homeRouter = useHomeRouter();
     const { theme } = useUnistyles();
     const styles = onboardingWizardSurfaceStylesheet;
-    const { width, height } = useWindowDimensions();
     const activeServerSnapshot = useActiveServerSnapshot();
     const wizardPlatform: WizardPlatform = props.isDesktopShell ? 'desktop' : (Platform.OS === 'web' ? 'web' : 'native');
     const wizardCapabilities = React.useMemo(
@@ -187,32 +176,8 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         }
     }, [snapshotRelayUrl]);
 
-    const qrScannerHeuristicViewport = React.useMemo(() => {
-        if (Platform.OS !== 'web') {
-            return { width, height };
-        }
-        if (!props.isDesktopShell) {
-            return { width, height };
-        }
-        const screen =
-            (globalThis as unknown as { screen?: unknown }).screen
-            ?? (typeof window !== 'undefined' ? window.screen : null);
-        const screenWidth = typeof (screen as { availWidth?: unknown } | null)?.availWidth === 'number'
-            ? Number((screen as { availWidth: number }).availWidth)
-            : (typeof (screen as { width?: unknown } | null)?.width === 'number' ? Number((screen as { width: number }).width) : 0);
-        const screenHeight = typeof (screen as { availHeight?: unknown } | null)?.availHeight === 'number'
-            ? Number((screen as { availHeight: number }).availHeight)
-            : (typeof (screen as { height?: unknown } | null)?.height === 'number' ? Number((screen as { height: number }).height) : 0);
-        if (Number.isFinite(screenWidth) && Number.isFinite(screenHeight) && screenWidth > 0 && screenHeight > 0) {
-            return { width: screenWidth, height: screenHeight };
-        }
-        return { width, height };
-    }, [height, props.isDesktopShell, width]);
-
-    const canScanQr = React.useMemo(
-        () => resolveCanScanQr({ width: qrScannerHeuristicViewport.width, height: qrScannerHeuristicViewport.height, platform: Platform.OS }),
-        [qrScannerHeuristicViewport.height, qrScannerHeuristicViewport.width],
-    );
+    // Whether this device starts Login on its camera is Login's own decision (loginWays), not a screen-size guess.
+    const canScanQr = useLoginScansFirst();
 
     const [urlDraft, setUrlDraft] = React.useState('');
     const [relaySwitchDecision, setRelaySwitchDecision] = React.useState<RelaySwitchDecision>('switch');
@@ -1470,15 +1435,15 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         && typeof state.parsedScanPayload.rawLink === 'string'
             ? state.parsedScanPayload.rawLink
             : null;
-    // "Show QR instead" chosen for a scanned legacy account link. Otherwise a device that cannot
-    // scan reached this step from "Enter URL manually", so it opens on the link field it promised.
+    // "Show QR instead" chosen for a scanned legacy account link. Otherwise a phone that can scan starts on its
+    // camera, and every other device opens Login's one screen (recovery key, pairing link, camera when it has one).
     const restoreInitialView =
         state.parsedScanPayload
         && typeof state.parsedScanPayload === 'object'
         && 'kind' in state.parsedScanPayload
         && state.parsedScanPayload.kind === 'account_connect'
             ? 'qr' as const
-            : !canScanQr && !initialPairingLink ? 'paste' as const : undefined;
+            : initialPairingLink ? undefined : canScanQr ? 'scanner' as const : 'paste' as const;
     const relaySelectBody = renderWizardChoiceList({
         accessibilityLabel: t('setupOnboarding.preAuthTitle'),
         items: [

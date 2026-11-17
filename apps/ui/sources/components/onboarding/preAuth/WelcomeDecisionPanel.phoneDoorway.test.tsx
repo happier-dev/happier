@@ -139,4 +139,28 @@ describe('WelcomeDecisionPanel on a phone (the Homes doorway)', () => {
             authority: { purpose: 'home', target } }));
         await screen.unmount();
     });
+
+    it('gives a first visit to a Home that can create a key the 0.2 doors on every width, not the doorway', async () => {
+        const { WelcomeDecisionPanel } = await import('./WelcomeDecisionPanel');
+        const target = { kind: 'saved_profile' as const, profileRef: 'qa-home' };
+        const url = 'https://qa-home.test';
+        for (const klass of ['compact', 'medium'] as const) {
+            viewport.klass = klass;
+            // No Home was requested (no ?server=): the build's own Home, which can generate a key here.
+            const screen = await renderScreen(<WelcomeDecisionPanel
+                authEntryOptions={{ ...firstRunOptions, homeTarget: target, requestedHomeTarget: null, homeLabel: 'QA Home',
+                    serverUrlForCopy: url, authenticationActions: [{
+                        method: { id: 'key_challenge', enabledActions: [{ id: 'provision', mode: 'keyed' }, { id: 'login', mode: 'keyed' }] },
+                        action: { id: 'provision', mode: 'keyed' }, execution: { kind: 'generated_key' },
+                    }, {
+                        method: { id: 'key_challenge', enabledActions: [{ id: 'provision', mode: 'keyed' }, { id: 'login', mode: 'keyed' }] },
+                        action: { id: 'login', mode: 'keyed' }, execution: { kind: 'key_entry' },
+                    }] }}
+                onContinueWithHomeAuthentication={vi.fn()} onOpenRestore={vi.fn()} onChangeRelay={vi.fn()} onConnectHomeDirectly={vi.fn()} />);
+            expect(screen.findByTestId('welcome-doorway-scan')).toBeNull();
+            expect(screen.findByTestId('welcome-primary-start')).toBeTruthy();
+            expect(screen.findByTestId('welcome-scan-existing-home')).toBeTruthy();
+            await screen.unmount();
+        }
+    });
 });

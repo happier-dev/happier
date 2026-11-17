@@ -31,14 +31,18 @@ export function RestoreSignInWays(props: Readonly<{
     offerSecretKey: boolean;
 }>) {
     const { theme } = useUnistyles();
-    const linkFirst = useLoginLeadsWithLink() || !props.offerSecretKey;
+    const phone = useLoginLeadsWithLink();
+    const linkFirst = phone || !props.offerSecretKey;
     const pairingLink = (
         <View key="link" style={styles.way}>
             <PairingLinkEntryForm
                 embedded
-                description={t('connect.signInPairingLinkHelp')}
+                // A phone scans the other device's code; a computer copies its link.
+                description={t(phone && props.onOpenScanner ? 'connect.signInPairingLinkHelpScan' : 'connect.signInPairingLinkHelp')}
                 onSubmit={props.onSubmitLink}
-                autoFocus={linkFirst}
+                // A computer focuses its first way (the key, or the link when adding a Home); a phone focuses nothing,
+                // since its keyboard would cover the camera and the key.
+                autoFocus={!phone && !props.offerSecretKey}
                 emptyAction={props.onOpenScanner ? (
                     <RoundButton
                         testID="restore-sign-in-use-camera"

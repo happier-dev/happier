@@ -3179,6 +3179,7 @@ export const zhHans: TranslationStructure = {
     pairingLinkSecurityWarning: "任何拥有此临时链接的人都可以在链接过期前添加设备。请只与您自己的设备共享。",
     pairingLinkFieldLabel: "配对链接",
     signInPairingLinkHelp: "在已登录的设备上打开“设置 → 添加你的手机”，复制它的配对链接。链接只能使用一次，几分钟后过期。",
+    signInPairingLinkHelpScan: "在已登录的设备上打开“设置 → 添加你的手机”，然后用“使用摄像头”扫描它的代码，或粘贴它的配对链接。",
     signInShowQr: "在这里显示二维码，用那台设备扫描",
     pairingLinkPlaceholder: "粘贴配对链接",
     pairingLinkRequired: "粘贴另一台设备上显示的配对链接。",

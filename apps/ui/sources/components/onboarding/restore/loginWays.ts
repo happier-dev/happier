@@ -41,3 +41,12 @@ export function loginOffersQr(): boolean {
     canUseCurrentDeviceQrScanner() || resolveReverseQrTargetProfileId() !== null
   );
 }
+
+/**
+ * Whether Login starts on this device's camera: a phone (Login leads with the link) that can scan. The Welcome's
+ * scan door, the wizard's scan step and Login's first view all read this one decision; a computer opens Login's
+ * one screen, where the camera stays one press away.
+ */
+export function useLoginScansFirst(): boolean {
+    return useLoginLeadsWithLink() && canUseCurrentDeviceQrScanner();
+}

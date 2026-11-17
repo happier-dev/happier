@@ -8337,7 +8337,7 @@ const ca: HomesJourneysTranslation = {
     pathOtherServiceTitle: 'Inicia sessió amb un altre servei',
     pathOtherServiceSubtitle: 'El teu propi inici de sessió o el de la teva empresa',
     pathDirectTitle: 'Connecta’t directament a un Home',
-    pathDirectSubtitle: 'Un enllaç o una adreça · sense compte',
+    pathDirectSubtitle: "Un enllaç d’emparellament o l’adreça del Home",
 
     serviceLead: 'Els teus Homes apareixen junts quan inicies sessió. El Home personal d’aquest ordinador es manté fins que decideixis.',
     defaultServiceFact: 'el servei d’inici de sessió predeterminat',

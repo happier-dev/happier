@@ -144,7 +144,7 @@ export const SecretKeyEntryForm = React.memo(function SecretKeyEntryForm(props: 
                     trailing={(
                         <IconButton
                             testID="restore-manual-secret-reveal"
-                            accessibilityLabel={revealed ? t('settingsAccount.tapToHide') : t('settingsAccount.tapToReveal')}
+                            accessibilityLabel={revealed ? t('settingsAccount.hideRecoveryKey') : t('settingsAccount.showRecoveryKey')}
                             iconName={revealed ? 'eye-slash' : 'eye'}
                             variant="plain"
                             size={28}

@@ -8241,7 +8241,7 @@ const zhHans: HomesJourneysTranslation = {
     pathOtherServiceTitle: '使用其他服务登录',
     pathOtherServiceSubtitle: '你自己或公司的登录服务',
     pathDirectTitle: '直接连接到 Home',
-    pathDirectSubtitle: '链接或地址 · 无需账户',
+    pathDirectSubtitle: "配对链接或 Home 地址",
 
     serviceLead: '登录后会找到你的 Home 并一起显示。在你决定之前，这台电脑的个人 Home 会一直保留。',
     defaultServiceFact: '默认登录服务',

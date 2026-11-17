@@ -196,7 +196,10 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
         && !(model.notice?.kind === 'service_unsupported' && model.notice.hasUsableHomeMethods)
         && !options.requestedHomeTarget
         && accountServiceEntry?.endpoint.source !== 'user'
-        && props.canCreatePersonalHome !== true;
+        && props.canCreatePersonalHome !== true
+        // A Home here that can generate a key gives a first visit 0.2's two doors (First time, Login); the doorway
+        // is for a device with no Home that can make an account yet (WELCOME-ACCEPT-1117 F1).
+        && !(hasHome && newHereCreatesKey);
     const renderActions = () => {
         const renderAction = (row: WelcomeEntryModelAction, index: number) => {
             const action = row.action;
@@ -390,7 +393,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                 </Text>
                 {!terminalWaiting && !isReturningUser ? (
                     <Text testID="welcome-intro" style={styles.intro}>
-                        {t(newHereCreatesKey ? 'welcome.welcomeQuestionBodyWithKey' : 'welcome.welcomeQuestionBody')}
+                        {t(newHereCreatesKey && !firstRunDoorway ? 'welcome.welcomeQuestionBodyWithKey' : 'welcome.welcomeQuestionBody')}
                     </Text>
                 ) : null}
             </View> : null}

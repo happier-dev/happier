@@ -118,6 +118,13 @@ describe('RestoreIndexEmbedded — Login keeps its promise', () => {
       expect(firstWay(tree)).toBe('pairing-link');
       expect(pressable(tree, 'restore-sign-in-use-camera')).toBeTruthy();
       expect(tree.root.findAllByType('secret-key-form' as never)).toHaveLength(1);
+      // Nothing takes focus on a phone: a raised keyboard would cover the camera and the key.
+      expect(
+        tree.root
+          .findAllByProps({ testID: 'restore-pairing-link-input' })
+          .some((node) => node.props.autoFocus === true),
+      ).toBe(false);
+      expect(tree.root.findByType('secret-key-form' as never).props.autoFocus).toBe(false);
     } finally {
       viewport.current = DESKTOP;
       act(() => tree.unmount());

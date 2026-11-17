@@ -8365,7 +8365,7 @@ const pl: HomesJourneysTranslation = {
     pathOtherServiceTitle: 'Zaloguj się przez inną usługę',
     pathOtherServiceSubtitle: 'Własne logowanie lub logowanie Twojej firmy',
     pathDirectTitle: 'Połącz się bezpośrednio z Home',
-    pathDirectSubtitle: 'Link lub adres · bez konta',
+    pathDirectSubtitle: "Link parowania lub adres Home",
 
     serviceLead: 'Po zalogowaniu Twoje Home zostaną odnalezione i pokazane razem. Osobisty Home tego komputera zostaje, dopóki nie zdecydujesz.',
     defaultServiceFact: 'domyślna usługa logowania',

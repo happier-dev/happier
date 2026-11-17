@@ -3677,6 +3677,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         pairingLinkSecurityWarning: '任何擁有此暫時連結的人都可以在連結過期前新增裝置。請只與您自己的裝置分享。',
         pairingLinkFieldLabel: '配對連結',
         signInPairingLinkHelp: "在已登入的裝置上開啟「設定 → 新增你的手機」，複製它的配對連結。連結只能使用一次，幾分鐘後過期。",
+        signInPairingLinkHelpScan: "在已登入的裝置上開啟「設定 → 新增你的手機」，然後用「使用相機」掃描它的代碼，或貼上它的配對連結。",
         signInShowQr: "在這裡顯示 QR 碼，用那台裝置掃描",
         pairingLinkPlaceholder: "貼上配對連結",
         pairingLinkRequired: '貼上另一台裝置上顯示的配對連結。',

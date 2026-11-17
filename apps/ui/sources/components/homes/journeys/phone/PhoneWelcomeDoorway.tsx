@@ -47,7 +47,7 @@ export function PhoneWelcomeDoorway(props: Readonly<{
                 testID="welcome-doorway-scan"
                 primary
                 presentation="button"
-                title={t(props.canScanQr ? 'homesJourneys.phone.scanComputerCode' : 'connect.enterUrlManually')}
+                title={t(props.canScanQr ? 'homesJourneys.phone.scanComputerCode' : 'connect.pairingLinkPlaceholder')}
                 iconName={props.canScanQr ? 'qr-code' : 'link'}
                 onPress={props.onScan}
             />
@@ -74,10 +74,10 @@ export function PhoneWelcomeDoorway(props: Readonly<{
                     </>}
                 </View>
             </View>
-            <ListPresentationProvider value="page">
-            {/* The welcome panel already draws the box edge its buttons stand on; the sheet stands there too,
-                not a page's sheet inset further in (L2: card at 40 under buttons at 24). */}
-            <ItemGroup containerStyle={styles.doorwaySheet}>
+            {/* The welcome column owns its padding: the sheet stands on the same edges as the buttons above it,
+                with no section inset of its own (L2: card at 40 under buttons at 24; WELCOME-ACCEPT-1117 F7: 4 px). */}
+            <ListPresentationProvider value="page" pageInsets="contained">
+            <ItemGroup>
             {onConnectDirectly ? (
                 <Item
                     testID="welcome-doorway-direct"
@@ -105,9 +105,6 @@ export function PhoneWelcomeDoorway(props: Readonly<{
 }
 
 const styles = StyleSheet.create((theme) => ({
-    doorwaySheet: {
-        marginHorizontal: 0,
-    },
     signIn: {
         gap: theme.space.s8,
     },

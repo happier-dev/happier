@@ -8346,7 +8346,7 @@ const it: HomesJourneysTranslation = {
     pathOtherServiceTitle: 'Accedi con un altro servizio',
     pathOtherServiceSubtitle: 'Il tuo accesso o quello della tua azienda',
     pathDirectTitle: 'Collegati direttamente a un Home',
-    pathDirectSubtitle: 'Un link o un indirizzo · senza account',
+    pathDirectSubtitle: "Un link di associazione o l’indirizzo del Home",
 
     serviceLead: 'I tuoi Home vengono trovati dopo l’accesso e compaiono insieme. Il Home personale di questo computer resta finché non decidi.',
     defaultServiceFact: 'il servizio di accesso predefinito',

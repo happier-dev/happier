@@ -194,7 +194,7 @@ export const en: HomesJourneysTranslation = {
     pathOtherServiceTitle: 'Sign in with another service',
     pathOtherServiceSubtitle: 'Your own or your company’s sign-in',
     pathDirectTitle: 'Connect to a Home directly',
-    pathDirectSubtitle: 'A link or an address · no account',
+    pathDirectSubtitle: "A pairing link or the Home's address",
 
     serviceLead: 'Your Homes are found after you sign in and show up together. This computer’s Personal Home stays until you decide.',
     defaultServiceFact: 'the default sign-in service',

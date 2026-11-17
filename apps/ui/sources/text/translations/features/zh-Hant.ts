@@ -8240,7 +8240,7 @@ const zhHant: HomesJourneysTranslation = {
     pathOtherServiceTitle: '使用其他服務登入',
     pathOtherServiceSubtitle: '你自己或公司的登入服務',
     pathDirectTitle: '直接連線到 Home',
-    pathDirectSubtitle: '連結或位址 · 不需要帳號',
+    pathDirectSubtitle: "配對連結或 Home 位址",
 
     serviceLead: '登入後會找到你的 Home 並一起顯示。在你決定之前，這台電腦的個人 Home 會一直保留。',
     defaultServiceFact: '預設登入服務',

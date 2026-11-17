@@ -8346,7 +8346,7 @@ const de: HomesJourneysTranslation = {
     pathOtherServiceTitle: 'Mit einem anderen Dienst anmelden',
     pathOtherServiceSubtitle: 'Deine eigene Anmeldung oder die deiner Firma',
     pathDirectTitle: 'Direkt mit einem Home verbinden',
-    pathDirectSubtitle: 'Ein Link oder eine Adresse · kein Konto',
+    pathDirectSubtitle: "Ein Kopplungslink oder die Adresse des Home",
 
     serviceLead: 'Nach der Anmeldung werden deine Homes gefunden und gemeinsam angezeigt. Das persönliche Home dieses Computers bleibt, bis du entscheidest.',
     defaultServiceFact: 'der Standard-Anmeldedienst',

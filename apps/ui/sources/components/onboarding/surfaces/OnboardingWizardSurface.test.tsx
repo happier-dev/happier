@@ -34,6 +34,8 @@ installDisconnectedServerSocketBoundary();
 
 const reactNativeMockState = vi.hoisted(() => ({
     os: 'web' as 'web' | 'ios' | 'android',
+    // The window is a platform boundary: a phone-sized one unless a case says otherwise.
+    window: { width: 390, height: 844, scale: 1, fontScale: 1 },
 }));
 
 
@@ -104,7 +106,7 @@ installTokenStorageWebPlatformMocks({
 vi.doMock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
-        useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
+        useWindowDimensions: () => reactNativeMockState.window,
         Platform: {
             get OS() {
                 return reactNativeMockState.os;
@@ -596,30 +598,31 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('onboarding-wizard-skip')).toBeNull();
     });
 
-    it('uses the physical screen size (not the window size) for web QR-scanner heuristics on desktop shells', async () => {
-        const originalScreen = (globalThis as unknown as { screen?: unknown }).screen;
-        Object.defineProperty(globalThis, 'screen', {
-            value: { width: 1440, height: 900, availWidth: 1440, availHeight: 900 },
-            configurable: true,
-        });
-
-        Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: vi.fn() } });
-        Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'iPhone' });
-
+    it('starts Login on the camera only on a phone that can scan; a computer opens Login\'s one screen', async () => {
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
-        const screen = await renderScreen(
-            React.createElement(OnboardingWizardSurface, {
-                layout: 'portrait',
-                isDesktopShell: true,
-                initialStepId: 'auth',
-                authEntryOptions: baseAuthOptions,
-            }),
-        );
-
         const { WelcomeDecisionPanel } = await import('../preAuth/WelcomeDecisionPanel');
-        expect(screen.findByType(WelcomeDecisionPanel as never).props.canScanQr).toBe(false);
-
-        Object.defineProperty(globalThis, 'screen', { value: originalScreen, configurable: true });
+        // The camera is a platform boundary (getUserMedia).
+        Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: vi.fn() } });
+        const render = (initialStepId: 'auth' | 'auth_restore') => renderScreen(React.createElement(OnboardingWizardSurface, {
+            layout: 'portrait', initialStepId, authEntryOptions: baseAuthOptions,
+        }));
+        try {
+            for (const [window, scans, initialView] of [
+                [{ width: 390, height: 844, scale: 1, fontScale: 1 }, true, 'scanner'],
+                [{ width: 1440, height: 900, scale: 1, fontScale: 1 }, false, 'paste'],
+            ] as const) {
+                reactNativeMockState.window = window;
+                const welcome = await render('auth');
+                expect(welcome.findByType(WelcomeDecisionPanel as never).props.canScanQr).toBe(scans);
+                await welcome.unmount();
+                const restore = await render('auth_restore');
+                expect((restore.findByType(RestoreIndexEmbedded as never) as unknown as ReactTestInstance).props.initialView).toBe(initialView);
+                await restore.unmount();
+            }
+        } finally {
+            reactNativeMockState.window = { width: 390, height: 844, scale: 1, fontScale: 1 };
+            Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined });
+        }
     });
 
     const enterRemoteRelayAccess = async (screen: Awaited<ReturnType<typeof renderScreen>>) => {

@@ -8353,7 +8353,7 @@ const fr: HomesJourneysTranslation = {
     pathOtherServiceTitle: 'Se connecter avec un autre service',
     pathOtherServiceSubtitle: 'Ta propre connexion ou celle de ton entreprise',
     pathDirectTitle: 'Se connecter directement à un Home',
-    pathDirectSubtitle: 'Un lien ou une adresse · sans compte',
+    pathDirectSubtitle: "Un lien d’association ou l’adresse du Home",
 
     serviceLead: 'Tes Homes sont retrouvés après la connexion et s’affichent ensemble. Le Home personnel de cet ordinateur reste en place jusqu’à ce que tu décides.',
     defaultServiceFact: 'le service de connexion par défaut',

@@ -8331,7 +8331,7 @@ const pt: HomesJourneysTranslation = {
     pathOtherServiceTitle: 'Iniciar sessão com outro serviço',
     pathOtherServiceSubtitle: 'O seu próprio início de sessão ou o da sua empresa',
     pathDirectTitle: 'Ligar diretamente a um Home',
-    pathDirectSubtitle: 'Uma ligação ou um endereço · sem conta',
+    pathDirectSubtitle: "Um link de emparelhamento ou o endereço do Home",
 
     serviceLead: 'Os seus Homes são encontrados depois de iniciar sessão e aparecem juntos. O Home pessoal deste computador mantém-se até decidir.',
     defaultServiceFact: 'o serviço de início de sessão predefinido',

@@ -8296,7 +8296,7 @@ const ja: HomesJourneysTranslation = {
     pathOtherServiceTitle: '別のサービスでサインイン',
     pathOtherServiceSubtitle: '自分または会社のサインイン',
     pathDirectTitle: 'Home に直接接続',
-    pathDirectSubtitle: 'リンクまたはアドレス · アカウント不要',
+    pathDirectSubtitle: "ペアリングリンクまたは Home のアドレス",
 
     serviceLead: 'サインインすると Home が見つかり、まとめて表示されます。このコンピューターのパーソナル Home は、決めるまでそのまま残ります。',
     defaultServiceFact: '既定のサインインサービス',
