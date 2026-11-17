@@ -239,9 +239,10 @@ describe('WarningActionBanner', () => {
             />,
         );
 
+        // The copy runs to two lines, so the glyph stands on the title's line (the actions stay centred beside it).
         expect(flattenStyle(screen.findByTestId('warning')?.props.style)).toMatchObject({
             flexDirection: 'row',
-            alignItems: 'center',
+            alignItems: 'flex-start',
         });
         expect(screen.findByTestId('warning-title-row')?.findAllByProps({ testID: 'warning-primary' })).toHaveLength(0);
         expect(flattenStyle(screen.findByTestId('warning-actions-row')?.props.style)).toMatchObject({
@@ -309,9 +310,10 @@ describe('WarningActionBanner', () => {
         // Four actions stay beside the copy on a wide banner, but the block is capped and
         // shrinkable so it wraps into a right-aligned grid instead of starving the message or
         // dropping below it and leaving the row half empty.
+        // The copy runs to two lines, so the glyph stands on the title's line (the actions stay centred beside it).
         expect(flattenStyle(screen.findByTestId('warning')?.props.style)).toMatchObject({
             flexDirection: 'row',
-            alignItems: 'center',
+            alignItems: 'flex-start',
         });
         expect(flattenStyle(screen.findByTestId('warning-actions-row')?.props.style)).toMatchObject({
             flexDirection: 'row',

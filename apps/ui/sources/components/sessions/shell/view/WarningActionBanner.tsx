@@ -220,7 +220,12 @@ export function WarningActionBanner(props: WarningActionBannerProps): React.Reac
             backgroundColor={plain ? 'transparent' : toneTokens.background}
             // A floating banner's whole hairline is the rim's, drawn over it.
             borderColor={props.floating || plain ? 'transparent' : toneTokens.border}
-            icon={iconName ? <Icon name={iconName} size={16} color={toneTokens.icon} /> : undefined}
+            icon={iconName ? (
+                // The mark is centred on the title's own line, which holds the actions when they sit beside it.
+                <View style={{ height: actionsInTitle ? ACTION_HEIGHT : ITEM_TITLE_TEXT_METRICS.compact.lineHeight, justifyContent: 'center' }}>
+                    <Icon name={iconName} size={16} color={toneTokens.icon} />
+                </View>
+            ) : undefined}
             style={[
                 plain
                     ? {

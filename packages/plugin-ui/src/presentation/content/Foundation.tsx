@@ -583,6 +583,9 @@ export function HappierBanner(
   const fullWidthAction =
     narrow && props.compactActionPlacement === 'full-width';
   const actionBelow = narrow || props.actionPlacement === 'below' || (props.points?.length ?? 0) > 0;
+  const titleStyle = resolveHappierPageTextStyle('rowTitle', typography);
+  // More than one line of words: the mark belongs to the title's line, not to the middle of a tall block.
+  const tallBlock = actionBelow || Boolean(props.description || props.descriptionContent);
   const descriptionStyle = {
     ...resolveHappierPageTextStyle('rowDescription', typography),
     color: props.theme.colors.secondaryText,
@@ -622,8 +625,7 @@ export function HappierBanner(
       style={[
         {
           flexDirection: 'row',
-          // Stacked, the mark belongs to the title's line, not to the middle of a tall block.
-          alignItems: actionBelow ? 'flex-start' : 'center',
+          alignItems: tallBlock ? 'flex-start' : 'center',
           borderRadius: HAPPIER_PAGE_METRICS.sheetRadiusPx,
           paddingVertical: 12,
           paddingLeft: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx,
@@ -657,6 +659,8 @@ export function HappierBanner(
             width: HAPPIER_PAGE_METRICS.rowLeadingColumnPx,
             alignItems: 'center',
             justifyContent: 'center',
+            // A host whose title line is taller (actions beside the title) sizes its icon to that line.
+            ...(tallBlock ? { minHeight: titleStyle.lineHeight } : null),
           }}
         >
           {props.icon}
@@ -666,7 +670,7 @@ export function HappierBanner(
         {props.titleContent ?? (
           <HappierText
             style={{
-              ...resolveHappierPageTextStyle('rowTitle', typography),
+              ...titleStyle,
               color: props.theme.colors.text,
             }}
           >
@@ -714,7 +718,7 @@ export function HappierBanner(
         ) : null}
       </View>
       {props.action && !actionBelow ? (
-        <View style={{ flexShrink: 0 }}>{props.action}</View>
+        <View style={{ flexShrink: 0, alignSelf: 'center' }}>{props.action}</View>
       ) : null}
       {props.dismiss ? (
         <View
