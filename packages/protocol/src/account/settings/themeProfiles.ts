@@ -70,7 +70,7 @@ export type ThemeProfileSource = z.infer<typeof ThemeProfileSourceSchema>;
 
 export const ThemeProfileV1Schema = z.strictObject({
     schemaVersion: z.literal(1),
-    id: ThemeProfileIdSchema.check(z.refine((id) => !isReservedThemeProfileId(id))),
+    id: ThemeProfileIdSchema,
     name: ThemeProfileNameSchema,
     createdAt: z.string(),
     updatedAt: z.string(),
@@ -82,7 +82,8 @@ export const ThemeProfileV1Schema = z.strictObject({
     css: z.optional(z.string()),
     source: z.optional(ThemeProfileSourceSchema),
     requiresAppVersion: z.optional(z.string()),
-});
+}).check(z.refine(profile => !isReservedThemeProfileId(profile.id)
+    || (profile.source?.kind === 'built-in' && profile.source.presetId === profile.id)));
 export type ThemeProfileV1 = z.infer<typeof ThemeProfileV1Schema>;
 defineStoredReadProjection(ThemeProfileV1Schema, () => z.pipe(z.unknown(), z.transform((value, context): ThemeProfileV1 => {
     const result = parseThemeProfileDocument(value);
@@ -215,7 +216,7 @@ export function parseThemeProfileDocument(value: unknown): ThemeProfileDocumentR
 /** Overlay deliberate edits, retaining presentation this build cannot interpret. */
 export function mergeThemeProfileDocumentEdit(document: ThemeProfileDocument, edit: ThemeProfileKnownEdit,
     options?: Readonly<{ retainedPresentation?: ThemeProfileDocument; removeKnownFields?: readonly ('seeds' | 'style' | 'css')[] }>): ThemeProfileDocument {
-    const checked = z.partial(ThemeProfileV1Schema).parse(edit);
+    const checked = z.partial(z.strictObject(ThemeProfileV1Schema.shape)).parse(edit);
     const retained = options?.retainedPresentation;
     const unknown = retained ? Object.fromEntries(Object.entries(retained.raw)
         .filter(([key]) => !Object.hasOwn(ThemeProfileV1Schema.shape, key))) : {};

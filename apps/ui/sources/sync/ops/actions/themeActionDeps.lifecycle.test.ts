@@ -15,6 +15,15 @@ vi.mock('react-native', async () => {
 
 const actionContext = { surface: 'ui' as const, authority: 'present_user' as const };
 describe('theme Actions through real library and try-on owners', () => {
+    it('returns a built-in document through the public Action output parser', async () => {
+        const f = setup();
+        const execute = createActionExecutor({ themeAction: createThemeActionExecute({
+            withLibrary: async operation => operation(f.library), readSelection: () => f.selection, clientId: () => 'this-app',
+        }) });
+        expect(await execute.execute(THEME_ACTION_IDS.get,
+            { ref: { kind: 'built-in', presetId: 'premiumDark' }, include: ['document'] }, actionContext))
+            .toMatchObject({ ok: true, result: { document: { profile: { source: { kind: 'built-in' } } } } });
+    });
     it('projects the requested retained profile and mode into its surface map and guide', async () => {
         const { projectThemeSurfacePaintMap } = await import('@/theme/css/themeSurfacePaintMap');
         const f = setup();
