@@ -585,8 +585,9 @@ export function resolveSessionRuntimeIssueSignInRecovery(
   issue: SessionRuntimeIssueV1 | null | undefined,
   machineId: string | null | undefined,
 ): SessionRuntimeIssueSignInRecovery | null {
-  if (issue?.source !== 'auth_error' || !issue.agentId || !machineId?.trim()) return null;
-  return { kind: 'agent_sign_in', machineId: machineId.trim(), agentId: issue.agentId };
+  const agentId = readSessionRuntimeIssueNativeAuthAgentId(issue);
+  if (!agentId || !machineId?.trim()) return null;
+  return { kind: 'agent_sign_in', machineId: machineId.trim(), agentId };
 }
 
 const SAFE_USAGE_LIMIT_STRING_MAX_LENGTH = 512;

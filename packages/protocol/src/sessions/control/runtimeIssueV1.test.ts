@@ -170,14 +170,23 @@ describe('runtime authentication recovery', () => {
     }
   });
 
-  it('targets the failing Agent on the same machine, including normalized predecessor issues', () => {
+  it('does not offer Agent sign-in for a Provider endpoint credential failure', () => {
     const issue = SessionRuntimeIssueV1Schema.parse({ v: 1, scope: 'primary_session', status: 'failed',
-      code: 'auth_failed', source: 'auth_error', occurredAt: 1, provider: 'codex' });
-    expect(resolveSessionRuntimeIssueSignInRecovery(issue, 'machine')).toEqual({ kind: 'agent_sign_in', machineId: 'machine', agentId: 'codex' });
-    expect(resolveSessionRuntimeIssueSignInRecovery({ ...issue, source: 'usage_limit' }, 'machine')).toBeNull();
-    expect(resolveSessionRuntimeIssueSignInRecovery(issue, null)).toBeNull();
-    expect(resolveSessionRuntimeIssueSignInRecovery({ ...issue, agentId: undefined }, 'machine')).toBeNull();
+      code: 'invalid_api_key', source: 'auth_error', occurredAt: 1, agentId: 'muse',
+      failureCause: { phase: 'authentication', failureReason: 'authentication_required', providerErrorCode: 'invalid_api_key', httpStatus: 401 } });
+    expect(resolveSessionRuntimeIssueSignInRecovery(issue, 'machine')).toBeNull();
   });
+
+  it.each(['provider_endpoint_auth_required', 'codex_refresh_free_auth_unsupported'])(
+    'targets the failing native Agent on the same machine for %s, including normalized predecessor issues', (code) => {
+      const issue = SessionRuntimeIssueV1Schema.parse({ v: 1, scope: 'primary_session', status: 'failed',
+        code, source: 'auth_error', occurredAt: 1, provider: 'codex' });
+      expect(resolveSessionRuntimeIssueSignInRecovery(issue, 'machine')).toEqual({ kind: 'agent_sign_in', machineId: 'machine', agentId: 'codex' });
+      expect(resolveSessionRuntimeIssueSignInRecovery({ ...issue, source: 'usage_limit' }, 'machine')).toBeNull();
+      expect(resolveSessionRuntimeIssueSignInRecovery(issue, null)).toBeNull();
+      expect(resolveSessionRuntimeIssueSignInRecovery({ ...issue, agentId: undefined }, 'machine')).toBeNull();
+    },
+  );
 });
 
 describe('SessionRuntimeUsageLimitDetailsV1Schema', () => {
