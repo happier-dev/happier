@@ -164,8 +164,8 @@ function SelectionScene(props: Readonly<{ scene: 'mp' | 'ws' }>) {
     );
 }
 
-const SHORTCUT = { label: '⇧⌘2', note: null, editable: true };
-const UNSET = { label: null, note: null, editable: true };
+const SHORTCUT = { status: 'ready' as const, label: '⇧⌘2', note: null, editable: true };
+const UNSET = { status: 'ready' as const, label: null, note: null, editable: true };
 
 /** The section's rows with their real anatomy; native reads answer only in the desktop app. */
 function SettingsScene(props: Readonly<{ reopen: boolean }>) {

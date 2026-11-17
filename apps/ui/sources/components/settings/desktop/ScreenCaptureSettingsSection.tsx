@@ -20,7 +20,7 @@ import { t } from '@/text';
 import { recordDesktopCaptureShortcut } from './desktopCapturePreferenceBinding';
 import { DESKTOP_SETTINGS } from './desktopSettings';
 import { ScreenCaptureSettingsRows, type CaptureShortcutRow } from './ScreenCaptureSettingsRows';
-import { useScreenCaptureSettings } from './useScreenCaptureSettings';
+import { useScreenCaptureSettings, type CaptureSettingsRead } from './useScreenCaptureSettings';
 
 const KEYS: readonly NativeCaptureBindingKey[] = ['captureShortcut', 'instantWindowShortcut', 'recordingShortcut'];
 const SETTINGS = {
@@ -35,19 +35,23 @@ function formatNativeBinding(binding: string, platform: ReturnType<typeof resolv
 }
 
 export function projectCaptureShortcutRows(
-    snapshot: NativeCaptureShortcutSnapshot | null,
+    read: CaptureSettingsRead<NativeCaptureShortcutSnapshot>,
     platform: ReturnType<typeof resolveKeyboardPlatform>,
 ): Readonly<Record<NativeCaptureBindingKey, CaptureShortcutRow>> {
+    const snapshot = read.status === 'ready' ? read.value : null;
+    const status = read.status !== 'ready' ? read.status : snapshot?.availability === 'ready' ? 'ready'
+        : snapshot?.availability === 'pending' ? 'loading' : 'failed';
     const row = (key: NativeCaptureBindingKey): CaptureShortcutRow => {
         const binding = snapshot?.bindings.find((candidate) => candidate.key === key);
         const portal = snapshot?.backend === 'portal';
         const noInstant = portal && key === 'instantWindowShortcut';
         return {
-            label: binding?.active ? formatNativeBinding(binding.active, platform) : null,
+            status,
+            label: status === 'ready' && binding?.active ? formatNativeBinding(binding.active, platform) : null,
             note: noInstant ? t('screenCapture.settings.notOnWayland')
                 : binding?.failure === 'conflict' ? t('screenCapture.settings.conflict')
                 : binding?.failure ? t('screenCapture.settings.refused') : null,
-            editable: !noInstant && snapshot !== null,
+            editable: !noInstant && status === 'ready',
         };
     };
     return { captureShortcut: row('captureShortcut'), instantWindowShortcut: row('instantWindowShortcut'), recordingShortcut: row('recordingShortcut') };
@@ -75,7 +79,7 @@ export const ScreenCaptureSettingsSection = React.memo(function ScreenCaptureSet
     };
     return (
         <ScreenCaptureSettingsRows
-            shortcuts={projectCaptureShortcutRows(shortcuts.status === 'ready' ? shortcuts.value : null, platform)}
+            shortcuts={projectCaptureShortcutRows(shortcuts, platform)}
             sound={sound}
             onSoundChange={(value) => void setSetting(DESKTOP_SETTINGS.settings.captureSound, value)}
             includeWindowText={includeWindowText}

@@ -15,10 +15,12 @@ import type { NativeCaptureBindingKey, NativeCapturePermissionState, NativeWindo
 import { t } from '@/text';
 
 import { DESKTOP_SETTINGS } from './desktopSettings';
+import type { CaptureSettingsRead } from './useScreenCaptureSettings';
 
 const ACTION_HEIGHT = 32;
 
 export type CaptureShortcutRow = Readonly<{
+    status: CaptureSettingsRead<unknown>['status'];
     /** The keys that work now, already in the person's platform spelling. */
     label: string | null;
     /** What stopped a new binding, or why this platform can't bind one. */
@@ -56,7 +58,8 @@ export function ScreenCaptureSettingsRows(props: Readonly<{
                 subtitle={row.note ?? undefined}
                 rightElement={(
                     <View style={styles.actions}>
-                        {row.label ? <KeyCombinationHint label={row.label} /> : <Text variant="meta" style={styles.unset}>{t('screenCapture.settings.notSet')}</Text>}
+                        {row.label ? <KeyCombinationHint label={row.label} /> : <Text variant="meta" style={styles.unset}>{t(row.status === 'loading'
+                            ? 'common.loading' : row.status === 'failed' ? 'common.unavailable' : 'screenCapture.settings.notSet')}</Text>}
                         {row.editable ? (
                             <RoundButton
                                 size="small"

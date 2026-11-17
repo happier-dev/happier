@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
 import { useScreenCaptureSettings } from './useScreenCaptureSettings';
+import { projectCaptureShortcutRows } from './ScreenCaptureSettingsSection';
 
 const events = new Map<string, (event: { payload: unknown }) => void>();
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); events.clear(); });
@@ -30,35 +31,47 @@ it('reads bindings once and consumes permission and folder pushes without reread
     vi.stubGlobal('window', { __TAURI_INTERNALS__: internals, __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} } });
     vi.stubGlobal('__TAURI_INTERNALS__', internals);
     const hook = await renderHook(useScreenCaptureSettings);
-    await act(async () => { await vi.waitFor(() => expect(invoke.mock.calls.filter(([command]) => !command.startsWith('plugin:'))).toHaveLength(4)); });
-    expect(hook.getCurrent().shortcuts).toEqual({ status: 'loading' });
-    await act(async () => { rejectShortcuts('unsupported_platform'); });
-    expect(hook.getCurrent().shortcuts).toEqual({ status: 'failed', reason: 'unsupported_platform' });
-    await act(async () => { events.get('desktopCapture://shortcuts')?.({ payload: bindings }); });
-    expect(hook.getCurrent()).toMatchObject({ shortcuts: { status: 'ready', value: bindings },
-        permissions: { status: 'ready', value: { screen: 'denied' } }, folder: { status: 'ready', value: null } });
-    expect(invoke.mock.calls.map(([command]) => command).filter(command => !command.startsWith('plugin:')).sort()).toEqual([
-        'desktop_capture_permissions_watch', 'desktop_capture_preference', 'desktop_capture_shortcuts', 'desktop_capture_window_shadow',
-    ]);
-    const before = hook.getCurrent();
-    await act(async () => {
-        for (let i = 0; i < 20; i++) events.get('desktopCapture://preference/recordingShortcut')?.({ payload: 'Alt+R' });
-    });
-    expect(hook.getCurrent()).toBe(before);
-    const reads = () => invoke.mock.calls.filter(([command]) => !command.startsWith('plugin:'));
-    expect(reads()).toHaveLength(4);
-    await act(async () => {
-        events.get('desktopCapture://permissions')?.({ payload: { screen: 'granted', windowText: 'request_required' } });
-        events.get('desktopCapture://preference/libraryFolder')?.({ payload: '/Pictures/Captures' });
-        events.get('desktopCapture://preference/includeWindowShadow')?.({ payload: { enabled: true, supported: true } });
-        events.get('desktopCapture://shortcuts')?.({ payload: { ...bindings, availability: 'unavailable',
-            bindings: [{ ...bindings.bindings[0], failure: 'conflict' }] } });
-    });
-    expect(hook.getCurrent()).toMatchObject({ permissions: { value: { screen: 'granted' } },
-        folder: { value: '/Pictures/Captures' }, windowShadow: { value: { enabled: true, supported: true } },
-        shortcuts: { value: { availability: 'unavailable', bindings: [{ failure: 'conflict' }] } } });
-    expect(reads()).toHaveLength(4);
-    await hook.unmount();
+    try {
+        const rows = () => projectCaptureShortcutRows(hook.getCurrent().shortcuts, 'macos');
+        await act(async () => { await vi.waitFor(() => expect(invoke.mock.calls.filter(([command]) => !command.startsWith('plugin:'))).toHaveLength(4)); });
+        expect(hook.getCurrent().shortcuts).toEqual({ status: 'loading' });
+        expect(rows().captureShortcut).toMatchObject({ status: 'loading', label: null, editable: false });
+        await act(async () => { rejectShortcuts('unsupported_platform'); });
+        expect(hook.getCurrent().shortcuts).toEqual({ status: 'failed', reason: 'unsupported_platform' });
+        expect(rows().captureShortcut).toMatchObject({ status: 'failed', label: null, editable: false });
+        await act(async () => { events.get('desktopCapture://shortcuts')?.({ payload: bindings }); });
+        expect(hook.getCurrent()).toMatchObject({ shortcuts: { status: 'ready', value: bindings },
+            permissions: { status: 'ready', value: { screen: 'denied' } }, folder: { status: 'ready', value: null } });
+        expect(rows().captureShortcut).toMatchObject({ status: 'ready', label: expect.stringContaining('2'), editable: true });
+        await act(async () => { events.get('desktopCapture://shortcuts')?.({ payload: { ...bindings, availability: 'pending',
+            bindings: [{ ...bindings.bindings[0], requested: null, active: null }] } }); });
+        expect(rows().captureShortcut).toMatchObject({ status: 'loading', label: null, editable: false });
+        await act(async () => { events.get('desktopCapture://shortcuts')?.({ payload: { ...bindings,
+            bindings: [{ ...bindings.bindings[0], requested: null, active: null }] } }); });
+        expect(rows().captureShortcut).toMatchObject({ status: 'ready', label: null, editable: true });
+        expect(invoke.mock.calls.map(([command]) => command).filter(command => !command.startsWith('plugin:')).sort()).toEqual([
+            'desktop_capture_permissions_watch', 'desktop_capture_preference', 'desktop_capture_shortcuts', 'desktop_capture_window_shadow',
+        ]);
+        const before = hook.getCurrent();
+        await act(async () => {
+            for (let i = 0; i < 20; i++) events.get('desktopCapture://preference/recordingShortcut')?.({ payload: 'Alt+R' });
+        });
+        expect(hook.getCurrent()).toBe(before);
+        const reads = () => invoke.mock.calls.filter(([command]) => !command.startsWith('plugin:'));
+        expect(reads()).toHaveLength(4);
+        await act(async () => {
+            events.get('desktopCapture://permissions')?.({ payload: { screen: 'granted', windowText: 'request_required' } });
+            events.get('desktopCapture://preference/libraryFolder')?.({ payload: '/Pictures/Captures' });
+            events.get('desktopCapture://preference/includeWindowShadow')?.({ payload: { enabled: true, supported: true } });
+            events.get('desktopCapture://shortcuts')?.({ payload: { ...bindings, availability: 'unavailable',
+                bindings: [{ ...bindings.bindings[0], failure: 'conflict' }] } });
+        });
+        expect(hook.getCurrent()).toMatchObject({ permissions: { value: { screen: 'granted' } },
+            folder: { value: '/Pictures/Captures' }, windowShadow: { value: { enabled: true, supported: true } },
+            shortcuts: { value: { availability: 'unavailable', bindings: [{ failure: 'conflict' }] } } });
+        expect(rows().captureShortcut).toMatchObject({ status: 'failed', label: null, editable: false });
+        expect(reads()).toHaveLength(4);
+    } finally { await hook.unmount(); }
     expect(events.size).toBe(0);
     expect(invoke.mock.calls.filter(([command, args]) => command === 'desktop_capture_permissions_watch' && args?.consumed === false)).toHaveLength(1);
 });
