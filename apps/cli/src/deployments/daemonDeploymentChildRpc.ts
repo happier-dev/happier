@@ -113,6 +113,7 @@ export function registerDaemonDeploymentChildRpcHandler(registrar: RpcHandlerReg
             savedSecretOperationContext: requester.savedSecretOperationContext, serverId: job.input.serverId,
             serverHttpBaseUrl: requesterRuntime.serverHttpBaseUrl, machineId: host.machineId,
             runtime: createOwnServerDeploymentRuntimeForHost({ credentials: installed.credentials,
+                ensureServiceObservations: host.ensureServiceObservations,
                 resolveRequesterIdentity: host.resolveRequesterIdentity,
                 credentialProfileId: installed.serverId,
                 serverId: job.input.serverId, serverHttpBaseUrl: installed.serverHttpBaseUrl, machineId: host.machineId,

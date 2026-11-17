@@ -12,6 +12,7 @@ import { MachineServicesDetailResultV1Schema, MachineServicesListResultV1Schema,
 import { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
     DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createDeploymentEnvironmentHeaderV1, createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1,
     createDeploymentReceiptHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { configuration } from '@/configuration';
@@ -47,6 +48,7 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { createDaemonDeploymentActionDeps } from '../../createDaemonDeploymentActionDeps';
 import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHostRuntime';
+import { resolvePrivateServiceReferenceForHost } from './privateServiceReference';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
 import { artifactListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';
@@ -60,7 +62,8 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopped' | 'removed' | 'partially-removed' = 'running',
     homeInventoryMode?: 'plain' | 'e2ee', sourceCase?: 'reused-container' | 'foreign-environment' | 'mixed-service-sources', publishedPorts = true, noHealthcheck = false,
-    primaryService = 'app', appliedServiceExports: DeploymentServiceExportV1[] = [], restoration = false, prepareReadRole = false) {
+    primaryService = 'app', appliedServiceExports: DeploymentServiceExportV1[] = [], restoration = false, prepareReadRole = false,
+    referencePublication?: Readonly<{ host: string; port: string }>) {
     const root = await mkdtemp(join(tmpdir(), 'happier-retained-service-recovery-'));
     const home = createHash('sha256').update(root).digest('hex').slice(0, 12);
     const docker = await createOwnServerDockerBoundary(join(root, 'tools'), { engineId: `recovery-${home}`, accounting: { memoryBytes: 2097152 } });
@@ -94,7 +97,7 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
     const document = JSON.stringify({ services: Object.fromEntries(images.map(image => [image.service,
         { image: image.registryReference, pull_policy: 'never', restart: 'unless-stopped',
             ...(noHealthcheck ? { healthcheck: { disable: true } } : {}),
-            ports: image.service === primaryService && publishedPorts ? [{ target: 5432, published: '25432', host_ip: '100.64.0.7', protocol: 'tcp' },
+            ports: image.service === primaryService && publishedPorts ? [{ target: 5432, published: referencePublication?.port ?? '25432', host_ip: referencePublication?.host ?? '100.64.0.7', protocol: 'tcp' },
                 { target: 5432, published: '35432', host_ip: '127.0.0.1', protocol: 'udp' }] : [] }])) });
     const definition = { kind: 'stored' as const, contentRevision: 1, document,
         composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, profiles: [], services: composeServices };
@@ -232,6 +235,12 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
             if (path === '/v1/account/encryption/currentness') return { status: 200,
                 data: requester?.currentness ?? createAccountEncryptionCurrentnessFixture({ mode }) };
             if (path === '/v1/account/encryption') return { status: 200, data: { mode, updatedAt: 0 } };
+            if (referencePublication && path === `/v1/machines/${target.machineId}`) return { status: 200, data: { machine: {
+                id: target.machineId, kind: 'persistent', revokedAt: null, replacedByMachineId: null,
+                seq: 1, active: true, activeAt: 1, createdAt: 1, updatedAt: 1,
+                installationId: installation.installationId, storageMode: 'plain',
+                metadata: null, metadataVersion: 1, daemonState: null, daemonStateVersion: 1, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+            } } };
             if (path === `/v1/machines/${target.machineId}`) throw new axios.AxiosError('No private networks', 'ERR_BAD_REQUEST',
                 undefined, undefined, { status: 404, statusText: 'Not Found', data: { error: 'not_found' },
                     headers: {}, config: { headers: new axios.AxiosHeaders() } });
@@ -362,6 +371,36 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
                 });
             } finally { await prepared?.dispose(); await channel.close(); }
         },
+        async resolveReference(component: 'host' | 'port', applied = false) {
+            const sourceEnvironment = createDeploymentEnvironmentDetailV1({ environment });
+            sourceEnvironment.environment.runtimeTargetLinkId = link.id;
+            sourceEnvironment.content.ownServer = { ...sourceEnvironment.content.ownServer, serviceExports: appliedServiceExports };
+            sourceEnvironment.targetLinks[0]!.targetLink = { ...link, machines: [target.machineId], members: [
+                { machineId: target.machineId, installationId: installation.installationId, state: 'active' },
+            ] };
+            const host = { ...target, credentials, serverHttpBaseUrl: serverUrl,
+                ensureServiceObservations: runtime.ensureEnvironmentServices,
+                resolveRequesterIdentity: async () => ({ kind: 'unknown' as const, reason: 'requester_authority_unavailable' as const }),
+                async acquirePluginRuntimeRegistryLease() {
+                    const lease = pluginReloadController.tryAcquireRuntimeRegistry();
+                    if (!lease) throw new Error('Expected admitted native runtime');
+                    return lease;
+                } };
+            if (applied) {
+                const dependencies = createDaemonDeploymentActionDeps({ ...host, runtime: createOwnServerDeploymentRuntimeForHost(host) });
+                const binding = await dependencies.resolveServiceExportBinding({ exportKey: appliedServiceExports[0]!.key,
+                    deploymentId: sourceDeploymentId, installationId: installation.installationId, service,
+                    generation: 'retained-export-generation', destination: { host: '127.0.0.1', port: Number(referencePublication!.port) },
+                }, new AbortController().signal);
+                return binding ? component === 'host' ? binding.destination.host : String(binding.destination.port) : null;
+            }
+            return resolvePrivateServiceReferenceForHost({ source: { kind: 'reference', environmentId: environment.id,
+                export: appliedServiceExports[0]!.key, via: 'auto', component },
+                environment: createDeploymentEnvironmentDetailV1(), readEnvironment: async () => sourceEnvironment,
+                host, context, actionId: 'deployments.deploy', signal: new AbortController().signal,
+                owner: fixture.registry.projectManagedServices, homeServerIdentityId: identity.homeServerIdentityId,
+                installationId: installation.installationId, privateKey: installationKeys.secretKey });
+        },
         sourcePath: source.rootPath, sourceDeploymentId, openedReceiptArtifacts, environmentRevision: environment.revision,
         listMachine: (readable = true) => runtime.execute({ actionId: 'machines.services.list', input: target, context,
             canReadEnvironments: async ids => new Set(readable ? ids : []) }),
@@ -407,6 +446,20 @@ describe('retained Environment service recovery on first use', () => {
             expect(await fixture.executeNoticeRestart(restart.input)).toMatchObject({ ok: true,
                 result: { kind: 'observed', serviceId: fixture.service.serviceId, generation: listed.services[0]!.generation } });
             expect((await fixture.docker.readInvocations()).filter(call => call.args.includes('restart'))).toHaveLength(1);
+        } finally { await fixture.dispose(); }
+    });
+    it.each([false, true])('resolves the captured DB-MOVE loopback export after a restart without first opening Machine Services (applied=%s)', async applied => {
+        // COR3-164/dbmove/svcs.json and COR3B-DATA-1115/dbmove/dest-export-save.input.json:
+        // the retained database was running with this publication, but cutover returned service_export_unavailable.
+        const fixture = await createRestartedEnvironmentFixture('running', 'plain', undefined, true, false, 'database', [
+            { containerPort: 5432, exposure: 'loopback', key: 'cor3b-move-db', scheme: 'postgres',
+                service: 'database', transport: { kind: 'iroh' } },
+        ], false, false, { host: '127.0.0.1', port: '32785' });
+        try {
+            expect(fixture.readHandle()).toBeNull();
+            await expect(fixture.resolveReference('host', applied)).resolves.toBe('127.0.0.1');
+            await expect(fixture.resolveReference('port', applied)).resolves.toBe('32785');
+            expect(fixture.inventoryReads).toBe(1);
         } finally { await fixture.dispose(); }
     });
     it('reads a healthy selected service when another retained service source is missing', async () => {

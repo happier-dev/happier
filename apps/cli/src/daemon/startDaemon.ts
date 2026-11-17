@@ -4330,6 +4330,10 @@ export async function startDaemon(
             return lease;
           };
           const host = { credentials, serverId: homeId, serverHttpBaseUrl: readDaemonHomeServerHttpBaseUrl(), machineId,
+            ensureServiceObservations: async (scope: import('@/plugins/runtime/invocation/services/environmentServiceRecovery').EnvironmentServiceRecoveryScope | undefined) => {
+              if (!apiMachineForSessions) throw new Error('Machine service recovery is unavailable');
+              await apiMachineForSessions.ensureEnvironmentServices(scope);
+            },
             resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' } as const),
             acquirePluginRuntimeRegistryLease };
           // Deployment dependencies load on the first service-export binding (P03-CODE-COVERAGE).

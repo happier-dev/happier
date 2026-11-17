@@ -26,7 +26,7 @@ export type PrivateServiceReferenceHostInput = Readonly<{
     source: Extract<ResolveInput, { kind: 'reference' }>;
     environment: Awaited<ReturnType<OwnServerDeploymentTargetHostInput['readEnvironment']>>;
     readEnvironment?: OwnServerDeploymentTargetHostInput['readEnvironment'];
-    host: Pick<OwnServerDeploymentRuntimeHostInput, 'credentials' | 'machineId' | 'serverHttpBaseUrl' | 'serverId' | 'acquireServiceExportForward'>;
+    host: Pick<OwnServerDeploymentRuntimeHostInput, 'credentials' | 'machineId' | 'serverHttpBaseUrl' | 'serverId' | 'acquireServiceExportForward' | 'ensureServiceObservations'>;
     context: Parameters<OwnServerDeploymentTargetHostInput['readEnvironment']>[0]['context'];
     actionId: string; signal: AbortSignal;
     owner: OwnServerDeploymentRuntimeAcquisition['projectManagedServices'];
@@ -122,6 +122,7 @@ async function readPrivateServiceExportAdmissionForHost(input: PrivateServiceRef
         const networks = machine.daemonState?.reachability?.privateNetworks ?? [];
         let rows: readonly MachineServiceRowV1[];
         if (member.machineId === host.machineId) {
+            await host.ensureServiceObservations?.({ environmentId: source.environmentId, composeService: exported.service });
             const environmentInstanceId = resolveOwnServerDeploymentEnvironmentInstanceIdForHost(input.homeServerIdentityId, source.environmentId);
             const handle = input.owner.resolveEnvironmentService(input.homeServerIdentityId, { kind: 'deployment', machineId: member.machineId,
                 environmentId: source.environmentId, environmentInstanceId, composeService: exported.service,

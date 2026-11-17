@@ -619,6 +619,7 @@ resolveServerFeaturesSnapshot?: () =>
         readMachineVitals: () => params.readDoctorResourceVitals?.().sample ?? null,
         ...(apiMachineForSessions ? { ensureServiceObservations: scope => apiMachineForSessions.ensureEnvironmentServices(scope) } : {}),
         runtime: createOwnServerDeploymentRuntimeForHost({
+          ...(apiMachineForSessions ? { ensureServiceObservations: scope => apiMachineForSessions.ensureEnvironmentServices(scope) } : {}),
           // The native receiver consumes only installation grants and the admitted
           // requester's source projection, never the controller's Account keys.
           credentials: params.credentials,

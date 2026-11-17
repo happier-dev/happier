@@ -73,6 +73,7 @@ export type OwnServerDeploymentRuntimeHostInput = Readonly<{
     serverId: string;
     serverHttpBaseUrl: string;
     machineId: string;
+    ensureServiceObservations?: import('@/plugins/runtime/invocation/services/environmentServiceRecovery').EnsureEnvironmentServices;
     acquireServiceExportForward?: (input: Readonly<{
         targetMachineId: string;
         serviceExport: import('@happier-dev/protocol/machines/peer/mediation/directRouteGrantScopesV1').TcpTunnelServiceExportBindingV1;

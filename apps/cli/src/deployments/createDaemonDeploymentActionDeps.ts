@@ -2032,6 +2032,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             const identity = readInstallationIdentityIfExistsSync();
             if (!identity || !host.acquirePluginRuntimeRegistryLease) return null;
             signal.throwIfAborted();
+            await host.ensureServiceObservations?.({ environmentId: binding.service.environmentId, serviceId: binding.service.serviceId });
             const lease = await host.acquirePluginRuntimeRegistryLease();
             try {
                 const { homeServerIdentityId } = await resolveOwnServerDeploymentIdentityForHost({
