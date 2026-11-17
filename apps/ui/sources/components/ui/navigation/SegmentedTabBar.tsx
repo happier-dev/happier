@@ -658,7 +658,8 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
     const valueChoice = props.role === 'radiogroup';
     const inherited = props.valueSource === 'inherited' && !pills && !plain;
     const contentSized = pills || plain || props.segmentSizing === 'content';
-    const equalValueRow = valueChoice && !contentSized;
+    // Equal segments (a view switch or a value choice) share the row evenly and draw the tight padding.
+    const equalRow = !contentSized;
     // Icons replace labels only when the whole bar is iconic; a half-iconic row reads as broken.
     // Page tabs keep both: the glyph leads its label.
     const iconOnly = !plain && props.iconPlacement !== 'leading' && props.tabs.length > 0 && props.tabs.every((tab) => tab.icon != null);
@@ -694,8 +695,9 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
             && (!tab.count || measured[`b:${tab.id}`] !== undefined))
             && measured.more !== undefined;
         if (!complete || rowWidth === null) return null;
-        // An equal-width value row gives every choice the same share, so it fits only while its widest choice does.
-        const segmentWidths = (widths: readonly number[]) => equalValueRow && !labelSized ? widths.map(() => Math.max(...widths)) : widths;
+        // An equal-width row gives every segment the same share, so it fits only while its widest segment does: summing
+        // natural widths kept a count that then cut the selected name ("Needs you 15…").
+        const segmentWidths = (widths: readonly number[]) => equalRow && !labelSized ? widths.map(() => Math.max(...widths)) : widths;
         return resolveSegmentedTabFit({
             // The track's own padding is not room for segments: counting it let a row that "fit" squeeze
             // every label ("Overvi…") instead of dropping the glyphs first.
@@ -709,7 +711,7 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
             reserveMore,
             keep: keep >= 0 ? keep : null,
         });
-    }, [availableForSegments, equalValueRow, hasOverflow, keep, labelSized, measured, plain, reserveMore, rowTabs, rowWidth]);
+    }, [availableForSegments, equalRow, hasOverflow, keep, labelSized, measured, plain, reserveMore, rowTabs, rowWidth]);
     // A tab set that changes (a count arriving) is measured again; until then the last resolved fit stands,
     // never a row that paints every tab squeezed. Before the first fit the row is laid out but not painted.
     const lastFit = React.useRef<SegmentedTabFit | null>(null);
@@ -826,14 +828,14 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
                         return (
                             <React.Fragment key={tab.id}>
                                 <View onLayout={(event) => recordMeasure(`i:${tab.id}`, event)}>
-                                    <PlainTabCaption surfaceState={surfaceStateFor(tab)} tab={tab} icon active={active} measuring segmented={!plain} compact={compact} tight={equalValueRow} />
+                                    <PlainTabCaption surfaceState={surfaceStateFor(tab)} tab={tab} icon active={active} measuring segmented={!plain} compact={compact} tight={equalRow} />
                                 </View>
                                 <View onLayout={(event) => recordMeasure(`l:${tab.id}`, event)}>
-                                    <PlainTabCaption surfaceState={surfaceStateFor(tab)} tab={tab} icon={false} active={active} measuring segmented={!plain} compact={compact} tight={equalValueRow} />
+                                    <PlainTabCaption surfaceState={surfaceStateFor(tab)} tab={tab} icon={false} active={active} measuring segmented={!plain} compact={compact} tight={equalRow} />
                                 </View>
                                 {tab.count ? (
                                     <View onLayout={(event) => recordMeasure(`b:${tab.id}`, event)}>
-                                        <PlainTabCaption surfaceState={surfaceStateFor(tab)} tab={tab} icon={false} count={false} active={active} measuring segmented={!plain} compact={compact} tight={equalValueRow} />
+                                        <PlainTabCaption surfaceState={surfaceStateFor(tab)} tab={tab} icon={false} count={false} active={active} measuring segmented={!plain} compact={compact} tight={equalRow} />
                                     </View>
                                 ) : null}
                             </React.Fragment>

@@ -238,3 +238,26 @@ it('keeps an equal segment\'s cut-short name inside its own padding, as the shar
         host.remove();
     }
 });
+
+it('fits an equal row by its widest tab, so a count drops before the selected name is cut (Inbox on a phone)', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+        await act(async () => root.render(
+            <View style={{ width: 342 }}>
+                <SegmentedTabBar tabs={[{ id: 'needs', label: 'Needs you', count: '15290' }, { id: 'updates', label: 'Updates', count: '2483' },
+                    { id: 'mentions', label: 'Mentions' }]} activeTabId="needs" onSelectTab={() => {}} overflow={{ label: 'More' }} testIDPrefix="inbox" />
+            </View>,
+        ));
+        const layout = await measureWebLayout(host, { viewport: { width: 400, height: 200 }, settle: replay => act(replay) });
+        const label = host.querySelector<HTMLElement>('[data-testid="inbox:needs"] [data-surface="tab-bar"][data-part="label"]')!;
+        label.dataset.testid = 'needs-label';
+        const measured = await measureWebLayout(host, { viewport: { width: 400, height: 200 }, settle: replay => act(replay) });
+        expect(layout.rects.has('inbox:needs')).toBe(true);
+        expect(measured.rect('needs-label').clipped).toBe(false);
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});

@@ -167,15 +167,17 @@ export function TabBarSpecimen() {
           testIDPrefix={`specimen-machine-failing-${width ?? 'full'}`}
         />
       ))}
-      {section('Segmented, equal, long counts (Inbox on a phone)', () => (
+      {section('Segmented, equal, long counts, fits with More (Inbox on a phone)', () => (
         <SegmentedTabBar
+          // As InboxView passes them on a phone: raw counts, equal segments, fitting (counts drop before a name is cut).
           tabs={[
-            { id: 'needs', label: 'Needs you', count: '15,290' },
-            { id: 'updates', label: 'Updates', count: '2,483' },
+            { id: 'needs', label: 'Needs you', count: '15290' },
+            { id: 'updates', label: 'Updates', count: '2483' },
             { id: 'mentions', label: 'Mentions' },
           ]}
           activeTabId="needs"
           onSelectTab={() => {}}
+          overflow={more}
           accessibilityLabel="Inbox view"
           testIDPrefix="specimen-inbox-long"
         />
