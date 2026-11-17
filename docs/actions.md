@@ -6682,6 +6682,13 @@ The flag is Action-only, never sent to the server. A failed later page fails the
 Action rather than returning partial findings. Review & converge uses this read
 for both Judge evidence and its persisted convergence check.
 
+In the 0.3 development implementation, structural filters, ordering and the
+candidate-page limit run in SQL. File, folder, severity and taxonomy filters apply
+within that demanded candidate page after opening its content. A page with no
+displayed matches can still carry a continuation cursor; the next candidate page
+loads only on explicit demand. Cancellation stops that demand, and a failed
+continuation preserves the already loaded comments.
+
 Final-panel fingerprint certification requires every reviewer to complete and
 report complete finding materialization. Missing, partial or failed materialization
 cannot authorize an identical-tree skip; the factual reviewed fingerprint remains
