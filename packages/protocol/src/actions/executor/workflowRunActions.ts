@@ -1720,16 +1720,41 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     targetId: string,
     run: WorkflowRunSummaryV1,
     signal?: AbortSignal,
+    workspaceRestore?: Readonly<{ kind: 'admit' | 'rejoin'; invocationIds: readonly string[] }>,
   ): Promise<WorkflowInvocationRecoveryAvailabilityV1['retry']> => {
     const unavailable = (reason: Exclude<WorkflowInvocationRecoveryAvailabilityV1['retry'], { kind: 'available' }>['reason']) =>
       ({ kind: 'unavailable' as const, reason });
     const target = graph.get(targetId);
-    if (!target || !isCurrentInvocation(graph, target)) return unavailable('invocation_not_recoverable');
+    if (!target || (workspaceRestore?.kind !== 'rejoin' && !isCurrentInvocation(graph, target))) {
+      return unavailable('invocation_not_recoverable');
+    }
+    const targets = new Set(workspaceRestore?.invocationIds ?? [targetId]);
+    let parents = graph.currentParents;
+    if (workspaceRestore?.kind === 'rejoin') {
+      // Project the canonical current ancestry back through this recovery's
+      // predecessor links, including members inherited from an older frame.
+      // Storage assigns the transaction's replacements consecutive new sequences;
+      // earlier completed/active recoveries retain their current identities.
+      const start = [...graph.currentParents.keys()].reduce<bigint | undefined>((first, id) => {
+        const row = graph.get(id)!;
+        if (!targets.has(row.progress.previousAttemptRecordId ?? '')) return first;
+        const sequence = BigInt(row.index.sequence);
+        return first === undefined || sequence < first ? sequence : first;
+      }, undefined);
+      const originalId = (id: string) => {
+        const row = graph.get(id)!;
+        return start !== undefined && BigInt(row.index.sequence) >= start
+          ? row.progress.previousAttemptRecordId ?? id : id;
+      };
+      parents = new Map([...graph.currentParents].map(([id, parentId]) => [
+        originalId(id), parentId === null ? null : originalId(parentId),
+      ]));
+    }
     const ancestors = new Set<string>();
-    for (let current: typeof target | undefined = target; current;) {
+    for (let current: typeof target | undefined = workspaceRestore ? undefined : target; current;) {
       if (ancestors.has(current.index.id)) return unavailable('causal_set_requires_batch_review');
       ancestors.add(current.index.id);
-      const parentId = graph.currentParents.get(current.index.id);
+      const parentId = parents.get(current.index.id);
       if (parentId === null) break;
       const parent = parentId === undefined ? undefined : graph.get(parentId);
       if (!parent) return unavailable('causal_set_requires_batch_review');
@@ -1737,7 +1762,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     }
     const groupIds = new Set<string>();
     for (const row of graph.values()) {
-      if (!isCurrentInvocation(graph, row)) continue;
+      if (workspaceRestore || !isCurrentInvocation(graph, row)) continue;
       const code = row.progress.reason?.code;
       if (code === 'container_fail_stop') return unavailable('causal_set_requires_batch_review');
       if (!code?.startsWith('container_fail_stop:')) continue;
@@ -1748,9 +1773,12 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       }
       if (ancestors.has(groupId)) groupIds.add(groupId);
     }
-    const selected = new Set<string>([targetId]);
+    const selected = new Set(targets);
     for (const row of graph.values()) {
-      if (!isCurrentInvocation(graph, row)) continue;
+      if (workspaceRestore) {
+        if (row.index.lifecycle !== (workspaceRestore?.kind === 'rejoin' ? 'superseded' : 'needs_attention')
+          || !isPreExecutionWorkspaceFailure(row.progress)) continue;
+      } else if (!isCurrentInvocation(graph, row)) continue;
       // A stop request can race with successful completion. Its retained
       // causal reason is history, not permission to replay the successful leaf.
       if (row.index.lifecycle === 'completed' || row.index.lifecycle === 'skipped') continue;
@@ -1766,19 +1794,19 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       // the stop reason attached to cancelled siblings. Selecting a sibling
       // must recover that failure too, and must not overlook a still-active
       // member whose stop fact has not arrived yet.
-      if (!EXACT_RECOVERY_RETRY_LIFECYCLES.has(row.index.lifecycle)
+      if (!workspaceRestore && !EXACT_RECOVERY_RETRY_LIFECYCLES.has(row.index.lifecycle)
         && !EXACT_RECOVERY_ACTIVE_LIFECYCLES.has(row.index.lifecycle)
         && row.progress.execution === undefined) continue;
-      let parentId = graph.currentParents.get(row.index.id);
+      let parentId = parents.get(row.index.id);
       while (parentId != null) {
-        if (groupIds.has(parentId)) {
+        if (workspaceRestore ? targets.has(parentId) : groupIds.has(parentId)) {
           selected.add(row.index.id);
           break;
         }
-        parentId = graph.currentParents.get(parentId);
+        parentId = parents.get(parentId);
       }
     }
-    for (const seedId of [...selected]) {
+    for (const seedId of workspaceRestore ? [] : [...selected]) {
       let current = graph.get(seedId);
       while (current) {
         // An independent failure replaces only its interrupted ancestry. A
@@ -1788,7 +1816,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           && !EXACT_RECOVERY_RETRY_LIFECYCLES.has(current.index.lifecycle)
           && !(current.index.lifecycle === 'needs_attention' && isStructuralRecoveryFrame(current.progress.blockKind))) break;
         selected.add(current.index.id);
-        const parentId = graph.currentParents.get(current.index.id);
+        const parentId = parents.get(current.index.id);
         if (groupIds.has(current.index.id) || parentId === null) break;
         current = parentId === undefined ? undefined : graph.get(parentId);
         if (!current) return unavailable('causal_set_requires_batch_review');
@@ -1797,24 +1825,27 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     const rows = [...selected].map((id) => graph.get(id));
     if (rows.some((row) => !row)) return unavailable('causal_set_requires_batch_review');
     if (rows.some((row) => row!.index.lifecycle === 'cancel_requested')) return unavailable('stop_pending');
-    if (rows.some((row) => !isRetryableInvocationState(row!.index, row!.progress))) {
+    if (rows.some((row) => workspaceRestore
+      ? !targets.has(row!.index.id) && (row!.index.lifecycle !== (workspaceRestore.kind === 'rejoin' ? 'superseded' : 'needs_attention')
+        || !isPreExecutionWorkspaceFailure(row!.progress))
+      : !isRetryableInvocationState(row!.index, row!.progress))) {
       return unavailable('causal_set_requires_batch_review');
     }
     for (const row of rows) {
-      if (!row || row.progress.blockKind !== 'step') continue;
+      if (workspaceRestore || !row || row.progress.blockKind !== 'step') continue;
       const availability = deriveExactInvocationRecoveryAvailability({ run, index: row.index, progress: row.progress,
         evidence: await recoveryEvidence(run, row, signal), current: isCurrentInvocation(graph, row) });
       if (availability.retry.kind !== 'available') return availability.retry;
     }
     const depth = (row: NonNullable<typeof rows[number]>): number => {
       let value = 0;
-      let parentId = graph.currentParents.get(row.index.id);
+      let parentId = parents.get(row.index.id);
       const seen = new Set<string>();
       while (parentId != null && selected.has(parentId)) {
         if (seen.has(parentId)) return Number.MAX_SAFE_INTEGER;
         seen.add(parentId);
         value += 1;
-        parentId = graph.currentParents.get(parentId);
+        parentId = parents.get(parentId);
       }
       return value;
     };
@@ -2290,6 +2321,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       ...(signal ? { signal } : {}),
     });
     const priors: Array<Awaited<ReturnType<typeof readPriorProgress>>> = [];
+    let restoreGraph: Awaited<ReturnType<typeof readInvocationGraph>> | undefined;
     for (const choice of args.input.invocations) {
       const prior = await readPriorProgress(
         args.input.runId,
@@ -2344,7 +2376,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
             || restoreWorkspaces.some(workspace => workspace.descriptor?.machineId !== openedAccepted.accepted.machineId)) {
             throw workflowError('workflow_workspace_restore_unavailable');
           }
-          const availability = await recoveryAvailability(openedAccepted.snapshot.run, prior, signal, undefined, undefined, restoreWorkspaces);
+          restoreGraph ??= await readInvocationGraph(args.input.runId, resolvedEncryption, signal, prior);
+          const availability = await recoveryAvailability(openedAccepted.snapshot.run, prior, signal, undefined, restoreGraph, restoreWorkspaces);
           if (availability.restoreWorkspace.kind !== 'available') throw workflowError('ineligible_state');
           const evidence = await recoveryEvidence(openedAccepted.snapshot.run, prior, signal);
           if (prior.progress.execution && choice.acknowledgeUncertainPriorEffects !== true) throw workflowError('workflow_outcome_unresolved');
@@ -2367,6 +2400,32 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     const continuing = args.input.invocations.flatMap((choice, index) => choice.kind === 'reattach'
       ? []
       : [{ choice, choiceIndex: index, prior: priors[index]! }]);
+    if (restoresWorkspace) {
+      const graph = restoreGraph ?? await readInvocationGraph(args.input.runId, resolvedEncryption, signal);
+      const restoreChoices = continuing.filter(item => item.choice.kind === 'restore_workspace');
+      const first = restoreChoices[0]!;
+      const closure = await deriveRetryCausalSet(graph, first.prior.index.id, openedAccepted.snapshot.run, signal, {
+        kind: first.prior.index.lifecycle === 'superseded' ? 'rejoin' : 'admit',
+        invocationIds: restoreChoices.map(item => item.prior.index.id),
+      });
+      if (closure.kind !== 'available') throw workflowError('ineligible_state');
+      const explicit = new Map(continuing.map(item => [item.prior.index.id, item]));
+      const ordered = closure.causalInvocationIds.map((id, index) => {
+        const existing = explicit.get(id);
+        explicit.delete(id);
+        return existing ?? { prior: graph.get(id)!, choiceIndex: args.input.invocations.length + index, choice: {
+          kind: 'restore_workspace' as const, invocation: { recordId: id }, conversation: first.choice.conversation,
+          input: { kind: 'original' as const },
+        } };
+      });
+      continuing.splice(0, continuing.length, ...ordered, ...explicit.values());
+    }
+    const replacementId = (priorId: string, choiceIndex: number) => deriveWorkflowReplacementId([
+      'workflow.run.resume.recover', args.context.actionRequestId ?? args.input, args.input.runId, priorId, choiceIndex, args.input.expectedRevision,
+    ]);
+    const replacementByPriorId = new Map(continuing.map(({ prior, choiceIndex }) => [prior.index.id, replacementId(prior.index.id, choiceIndex)]));
+    const replacementParent = (prior: Awaited<ReturnType<typeof readPriorProgress>>) => prior.index.parentRecordId === null
+      ? null : replacementByPriorId.get(prior.index.parentRecordId) ?? prior.index.parentRecordId;
     if (continuing.some(({ prior }) => prior.index.lifecycle === 'superseded')) {
       if (!checkpoint
         || continuing.some(({ prior }) => prior.index.lifecycle !== 'superseded')
@@ -2375,7 +2434,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       }
       const replacements = await Promise.all(continuing.map(({ choiceIndex, prior }) => readPriorProgress(
         args.input.runId,
-        deriveWorkflowReplacementId(['workflow.run.resume.recover', args.context.actionRequestId ?? args.input, args.input.runId, prior.index.id, choiceIndex, args.input.expectedRevision]),
+        replacementId(prior.index.id, choiceIndex),
         resolvedEncryption,
         signal,
       )));
@@ -2383,7 +2442,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         const replacement = replacements[index]!;
         return replacement.parentRevision === openedAccepted.snapshot.run.revision
           && replacement.index.runId === args.input.runId
-          && replacement.index.parentRecordId === prior.index.parentRecordId
+          && replacement.index.parentRecordId === replacementParent(prior)
           && replacement.index.memberOrdinal === prior.index.memberOrdinal
           && replacement.index.attempt === (BigInt(prior.index.attempt) + 1n).toString()
           && replacement.index.lifecycle === 'pending'
@@ -2404,34 +2463,25 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       newId: string;
       newSequence: string;
       newAttempt: string;
+      parentRecordId: string | null;
       progress: WorkflowProgressEnvelopeV1;
     }>> = [];
     let nextSequence = start;
-    for (const [choiceIndex, choice] of args.input.invocations.entries()) {
-      const prior = priors[choiceIndex]!;
-      if (choice.kind === 'reattach') {
-        continue;
-      }
+    for (const { choiceIndex, choice, prior } of continuing) {
       const newAttempt = (BigInt(prior.index.attempt) + 1n).toString();
-      const newId = deriveWorkflowReplacementId([
-        'workflow.run.resume.recover',
-        args.context.actionRequestId ?? args.input,
-        args.input.runId,
-        prior.index.id,
-        choiceIndex,
-        args.input.expectedRevision,
-      ]);
+      const newId = replacementId(prior.index.id, choiceIndex);
+      const parentRecordId = replacementParent(prior);
       const newSequenceString = nextSequence.toString();
       nextSequence += 1n;
       const progress = makeRecoveryProgress(prior, choice);
       const contentEnvelope = await sealProgress({
         accountId: openedAccepted.accountId, enc: openedAccepted.enc,
         runId: args.input.runId, recordId: newId, sequence: newSequenceString,
-        parentRecordId: prior.index.parentRecordId, memberOrdinal: prior.index.memberOrdinal, attempt: newAttempt,
+        parentRecordId, memberOrdinal: prior.index.memberOrdinal, attempt: newAttempt,
         progress, ...(signal ? { signal } : {}),
       });
       recoveries.push({ invocationId: prior.index.id, newInvocationId: newId, contentEnvelope });
-      preparedRecoveries.push({ prior, newId, newSequence: newSequenceString, newAttempt, progress });
+      preparedRecoveries.push({ prior, newId, newSequence: newSequenceString, newAttempt, parentRecordId, progress });
     }
     const lastNewSequence = nextSequence - 1n;
     const nextCheckpoint = bumpCheckpointForNewSequences(checkpoint, lastNewSequence);
@@ -2469,7 +2519,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
             return freshPrior.index.lifecycle === 'superseded'
               && replacement.parentRevision === fresh.snapshot.run.revision
               && replacement.index.runId === args.input.runId
-              && replacement.index.parentRecordId === prepared.prior.index.parentRecordId
+              && replacement.index.parentRecordId === prepared.parentRecordId
               && replacement.index.memberOrdinal === prepared.prior.index.memberOrdinal
               && replacement.index.sequence === prepared.newSequence
               && replacement.index.attempt === prepared.newAttempt

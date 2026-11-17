@@ -17,7 +17,7 @@ import { validateWorkflowDefinition } from '../../workflows/workflowValidationV1
 import { materializeWorkflowAcceptedSnapshotV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
 import { WorkflowRunGetResultV1Schema, WorkflowRunStartRequestV1Schema, WorkflowRunWaitRequestV1Schema, WorkflowRunListRequestV1Schema, WorkflowRunSummariesRequestV1Schema } from '../../workflows/actionsV1.js';
 import { projectWorkflowRunDisplaySummaryV1, sealWorkflowRunDisplaySummaryStoredEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
-import { WorkflowRunSummaryV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowProgressEnvelopeV1Schema } from '../../workflows/workflowProgressV1.js';
+import { WorkflowRunSummaryV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowProgressEnvelopeV1Schema, type WorkflowRunInvocationIndexV1 } from '../../workflows/workflowProgressV1.js';
 import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
 import { SessionAgentSpawnPolicyV1StrictSchema } from '../../account/settings/sessionAgentSpawnPolicyV1.js';
 import { createWorkflowAccountRunActionOwner, prepareWorkflowApprovedOperation, prepareWorkflowApprovedOperationSnapshot, type WorkflowAccountRunActionDeps, type WorkflowCombinedRunStartV1 } from './workflowRunActions.js';
@@ -3363,12 +3363,13 @@ describe('shared Account workflow run owner', () => {
     expect(readReportPolicy).toHaveBeenCalledTimes(scenario.delivery ? 1 : 0);
   });
 
-  it.each(['restore_action', 'retry_action', 'restore_parallel', 'restore_denied', 'restore_cancelled', 'restore_unknown',
+  it.each(['restore_action', 'retry_action', 'restore_parallel', 'restore_parallel_inherited', 'restore_denied', 'restore_cancelled', 'restore_unknown',
     'retry_rejoin_unavailable', 'restore_rejoin_unavailable', 'retry_rejoin_cancelled', 'restore_rejoin_cancelled'] as const)(
     'preserves non-Agent recovery outcomes and response-loss causes (%s)', async testCase => {
     const rejoinFailure = testCase.includes('_rejoin_');
     const restoreFailure = testCase === 'restore_denied' || testCase === 'restore_cancelled' || testCase === 'restore_unknown';
-    const scenario = testCase.startsWith('retry_') ? 'retry_action' : testCase === 'restore_parallel' ? testCase : 'restore_action';
+    const scenario = testCase.startsWith('retry_') ? 'retry_action' : testCase.startsWith('restore_parallel') ? 'restore_parallel' : 'restore_action';
+    const inherited = testCase === 'restore_parallel_inherited';
     const failure = testCase.endsWith('_cancelled') ? Object.assign(new Error('cancelled'), { name: 'AbortError' })
       : testCase === 'restore_denied' ? Object.assign(new Error('run_access_denied'), { code: 'run_access_denied' })
       : testCase === 'restore_unknown' ? new Error('restore_observation_failed')
@@ -3378,7 +3379,9 @@ describe('shared Account workflow run owner', () => {
       definition: validateWorkflowDefinition({ version: 1, inputs: [], defaults: scenario === 'restore_parallel'
         ? { workspace: { kind: 'new_worktree', source: { kind: 'original' } } } : {},
         blocks: scenario === 'restore_parallel'
-          ? [{ kind: 'parallel', id: 'work', maxConcurrent: 1, failurePolicy: 'collect_outcomes', branches: [{ id: 'branch', blocks: [
+          ? [{ kind: 'action', id: 'boundary', actionId: 'machines.command.run', input: { command: { kind: 'literal', value: 'pwd' } } },
+            { kind: 'parallel', id: 'work', maxConcurrent: 1, failurePolicy: 'collect_outcomes', branches: [{ id: 'branch', blocks: [
+            ...(inherited ? [{ kind: 'action' as const, id: 'done', actionId: 'machines.command.run', input: { command: { kind: 'literal' as const, value: 'pwd' } } }] : []),
             { kind: 'action', id: 'command', actionId: 'machines.command.run', input: { command: { kind: 'literal', value: 'pwd' } } },
           ] }] }]
           : [{ kind: 'action', id: 'work', actionId: 'machines.command.run', input: { command: { kind: 'literal', value: 'pwd' } } }] }).normalizedDefinition!,
@@ -3402,31 +3405,88 @@ describe('shared Account workflow run owner', () => {
     } as const;
     const root = storedRootInvocation(snapshot, scenario === 'restore_parallel' ? workspace : undefined);
     const recordId = '33333333-3333-4333-8333-333333333333';
-    const index = WorkflowRunInvocationIndexV1Schema.parse({ id: recordId, runId, sequence: '1',
-      parentRecordId: root.index.id, memberOrdinal: '0', attempt: '0', contentRevision: '1', lifecycle: scenario === 'retry_action' ? 'failed' : 'needs_attention',
+    const parallel = scenario === 'restore_parallel';
+    const predecessorId = '88888888-8888-4888-8888-888888888888';
+    const index = WorkflowRunInvocationIndexV1Schema.parse({ id: recordId, runId, sequence: parallel ? inherited ? '3' : '2' : '1',
+      parentRecordId: root.index.id, memberOrdinal: parallel ? '1' : '0', attempt: inherited ? '1' : '0', contentRevision: '1', lifecycle: scenario === 'retry_action' ? 'failed' : 'needs_attention',
       createdAt: snapshot.run.createdAt, updatedAt: snapshot.run.updatedAt });
     const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
       blockKind: scenario === 'restore_parallel' ? 'parallel' : 'action',
-      ...(scenario === 'restore_parallel' ? { container: { kind: 'parallel', nextBranchOrdinal: '1' } } : {}), invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: recordId,
+      ...(scenario === 'restore_parallel' ? { container: { kind: 'parallel', nextBranchOrdinal: '1' } } : {}), invocationPath: { blockId: 'work', scope: [] }, attempt: index.attempt, logicalInvocationRecordId: inherited ? predecessorId : recordId,
+      ...(inherited ? { previousAttemptRecordId: predecessorId } : {}),
       ...(scenario === 'retry_action' ? { execution: { kind: 'action', actionId: 'machines.command.run',
         localInputId: 'failed-command-input', actionRequestId: 'failed-command', input: { command: 'pwd' } } } : {}),
       ...(scenario === 'retry_action' ? {} : { reason: { code: 'workspace_unavailable' } }),
       ...(scenario === 'restore_parallel' ? {} : { workspace }) });
     const contentEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
       mode: 'plain', binding: { v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId, recordId,
-        sequence: '1', parentRecordId: root.index.id, memberOrdinal: '0', attempt: '0' }, progress,
+        sequence: index.sequence, parentRecordId: root.index.id, memberOrdinal: index.memberOrdinal, attempt: index.attempt }, progress,
     }));
+    const heldRows = [{ index, contentEnvelope, parentRevision: 2 }];
+    const { previousAttemptRecordId: _previousAttemptRecordId, ...predecessorProgress } = progress;
+    const predecessor = { index: { ...index, id: predecessorId, sequence: '2', attempt: '0', lifecycle: 'superseded' as const }, parentRevision: 2,
+      contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+        binding: { v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId, recordId: predecessorId,
+          sequence: '2', parentRecordId: root.index.id, memberOrdinal: '1', attempt: '0' },
+        progress: { ...predecessorProgress, attempt: '0', logicalInvocationRecordId: predecessorId },
+      })) };
+    const boundaryId = '44444444-4444-4444-8444-444444444444';
+    const boundaryIndex = { ...index, id: boundaryId, sequence: '1', memberOrdinal: '0', attempt: '0', lifecycle: 'completed' as const };
+    const boundaryProgress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: 'action',
+      invocationPath: { blockId: 'boundary', scope: [] }, attempt: '0', logicalInvocationRecordId: boundaryId,
+      execution: { kind: 'action', actionId: 'machines.command.run', localInputId: 'boundary-input',
+        actionRequestId: 'boundary-request', input: { command: 'pwd' } }, result: { ok: true } });
+    const boundary = { index: boundaryIndex, parentRevision: 2, contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(
+      sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain', binding: { v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId,
+        recordId: boundaryId, sequence: '1', parentRecordId: root.index.id, memberOrdinal: '0', attempt: '0' }, progress: boundaryProgress })) };
+    if (parallel) {
+      let parentRecordId = inherited ? predecessorId : recordId;
+      for (const [offset, blockKind] of ['parallel', 'action'].entries()) {
+        const id = offset === 0 ? '55555555-5555-4555-8555-555555555555' : '77777777-7777-4777-8777-777777777777';
+        const childIndex = { ...index, id, parentRecordId, memberOrdinal: inherited && offset === 1 ? '1' : '0', attempt: '0',
+          sequence: String(offset + (inherited ? offset === 1 ? 6 : 4 : 3)) };
+        const childProgress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind,
+          invocationPath: { blockId: offset === 0 ? 'work' : 'command', scope: [{ kind: 'branch', blockId: 'work', branchId: 'branch' }] },
+          attempt: '0', logicalInvocationRecordId: id, reason: { code: 'workspace_unavailable' },
+          ...(offset === 0 ? { frame: { ownerBlockId: 'work', source: { kind: 'branch', branchId: 'branch' } },
+            container: { kind: 'body', nextBlockOrdinal: inherited ? '1' : '0' } } : {}) });
+        heldRows.push({ index: childIndex, parentRevision: 2, contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(
+          sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain', binding: { v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId,
+            recordId: id, sequence: childIndex.sequence, parentRecordId, memberOrdinal: childIndex.memberOrdinal, attempt: '0' }, progress: childProgress })) });
+        parentRecordId = id;
+      }
+    }
+    // An earlier recovered child is already complete. Rejoining this Restore
+    // must retain it rather than following its historical predecessor again.
+    const retainedRows = inherited ? ['superseded', 'completed'].map((lifecycle, attempt) => {
+      const id = attempt === 0 ? 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' : '99999999-9999-4999-8999-999999999999';
+      const parentRecordId = heldRows[1]!.index.id;
+      const index = WorkflowRunInvocationIndexV1Schema.parse({ ...boundaryIndex, id, sequence: String(5 + attempt), parentRecordId,
+        memberOrdinal: '0', attempt: String(attempt), lifecycle });
+      const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: 'action',
+        invocationPath: { blockId: 'done', scope: [{ kind: 'branch', blockId: 'work', branchId: 'branch' }] },
+        attempt: String(attempt), logicalInvocationRecordId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        ...(attempt === 0 ? { reason: { code: 'workspace_unavailable' } }
+          : { previousAttemptRecordId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', execution: boundaryProgress.execution, result: { ok: true } }) });
+      return { index, parentRevision: 2, contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+        binding: { v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId, recordId: id,
+          sequence: index.sequence, parentRecordId, memberOrdinal: '0', attempt: index.attempt }, progress })) };
+    }) : [];
+    const firstReplacementSequence = parallel ? inherited ? 8 : 5 : 2;
     let checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({
       mode: 'plain', binding: { v: 1, purpose: 'checkpoint', accountId: 'account-1', runId },
-      checkpoint: { kind: 'happier.workflow-checkpoint.v1', rootRecordId: root.index.id, nextSequence: '2',
+      checkpoint: { kind: 'happier.workflow-checkpoint.v1', rootRecordId: root.index.id, nextSequence: String(firstReplacementSequence),
         frontier: { nextBlockOrdinal: 0, paused: false } },
     }));
     let replacementProgress: unknown;
     let restorations = 0;
     let admissions = 0;
     let recoveryIssued = false;
+    let recoveredIds: string[] = [];
+    let recoveredRows: WorkflowRunInvocationIndexV1[] = [];
     const rows = new Map([[root.index.id, { index: root.index, contentEnvelope: root.contentEnvelope, parentRevision: 2 }],
-      [recordId, { index, contentEnvelope, parentRevision: 2 }]]);
+      ...heldRows.map(row => [row.index.id, row] as const), ...(parallel ? [[boundaryId, boundary] as const] : []),
+      ...(inherited ? [[predecessorId, predecessor] as const] : []), ...retainedRows.map(row => [row.index.id, row] as const)]);
     const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
       if (operation.operation === 'get') {
         if (recoveryIssued && rejoinFailure) throw failure;
@@ -3438,26 +3498,41 @@ describe('shared Account workflow run owner', () => {
       recoveryIssued = true;
       if (rejoinFailure) throw Object.assign(new Error('connection_lost'), { code: 'ECONNRESET' });
       // Substitute only persistent storage; recovery opens and seals the real envelopes.
-      const recoveries = operation.recoveries as { newInvocationId: string; contentEnvelope: string }[];
-      expect(recoveries).toHaveLength(1);
-      const recovery = recoveries[0]!;
-      const opened = openWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
-        envelope: parseWorkflowStoredContentEnvelopeV1(recovery.contentEnvelope)!,
-        binding: { v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId,
-          recordId: recovery.newInvocationId, sequence: '2', parentRecordId: root.index.id, memberOrdinal: '0', attempt: '1' } });
-      expect(opened.kind).toBe('available');
-      if (opened.kind === 'available') replacementProgress = opened.content;
-      const replacement = { ...index, id: recovery.newInvocationId, sequence: '2', attempt: '1', lifecycle: 'pending' as const };
-      rows.set(recordId, { ...rows.get(recordId)!, index: { ...index, lifecycle: 'superseded' } });
-      rows.set(replacement.id, { index: replacement, contentEnvelope: recovery.contentEnvelope, parentRevision: 3 });
+      const recoveries = operation.recoveries as { invocationId: string; newInvocationId: string; contentEnvelope: string }[];
+      recoveredIds = recoveries.map(recovery => recovery.invocationId);
+      const replacements = new Map<string, WorkflowRunInvocationIndexV1>();
+      for (const [ordinal, recovery] of recoveries.entries()) {
+        const prior = rows.get(recovery.invocationId)!;
+        const parentRecordId = replacements.get(prior.index.parentRecordId!)?.id ?? prior.index.parentRecordId;
+        const sequence = String(firstReplacementSequence + ordinal);
+        const attempt = (BigInt(prior.index.attempt) + 1n).toString();
+        const opened = openWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+          envelope: parseWorkflowStoredContentEnvelopeV1(recovery.contentEnvelope)!,
+          binding: { v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId,
+            recordId: recovery.newInvocationId, sequence, parentRecordId, memberOrdinal: prior.index.memberOrdinal, attempt } });
+        expect(opened.kind).toBe('available');
+        if (opened.kind === 'available') {
+          expect(opened.content.previousAttemptRecordId).toBe(prior.index.id);
+          expect(opened.content).not.toHaveProperty('execution');
+          expect(opened.content).not.toHaveProperty('reason');
+          if (ordinal === 0) replacementProgress = opened.content;
+        }
+        const replacement = { ...prior.index, id: recovery.newInvocationId, sequence, parentRecordId, attempt, lifecycle: 'pending' as const };
+        rows.set(prior.index.id, { ...prior, index: { ...prior.index, lifecycle: 'superseded' } });
+        rows.set(replacement.id, { index: replacement, contentEnvelope: recovery.contentEnvelope, parentRevision: 3 });
+        replacements.set(prior.index.id, replacement);
+      }
+      recoveredRows = [...replacements.values()];
+      if (parallel) expect(rows.get(boundaryId)).toEqual(boundary);
       snapshot.run = { ...snapshot.run, state: 'queued', revision: 3 };
       checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({
         mode: 'plain', binding: { v: 1, purpose: 'checkpoint', accountId: 'account-1', runId },
-        checkpoint: { kind: 'happier.workflow-checkpoint.v1', rootRecordId: root.index.id, nextSequence: '3',
+        checkpoint: { kind: 'happier.workflow-checkpoint.v1', rootRecordId: root.index.id, nextSequence: String(firstReplacementSequence + recoveries.length),
           frontier: { nextBlockOrdinal: 0, paused: false } },
       }));
       admissions++;
-      return { disposition: 'accepted', run: snapshot.run, invocations: [replacement] };
+      if (parallel) throw Object.assign(new Error('connection_lost_after_commit'), { code: 'ECONNRESET' });
+      return { disposition: 'accepted', run: snapshot.run, invocations: [...replacements.values()] };
     } }), observeRecovery: async () => ({ activity: 'not_active', canReattach: false, canContinueConversation: false }),
       restoreWorkspace: async request => {
         expect(request).toEqual(workspace);
@@ -3482,11 +3557,12 @@ describe('shared Account workflow run owner', () => {
       return;
     }
     await expect(owner.execute(args)).resolves.toMatchObject(expected);
+    expect(recoveredIds).toEqual(heldRows.map(row => row.index.id));
     await expect(owner.execute(args)).resolves.toMatchObject(expected);
     expect(admissions).toBe(1);
     expect(restorations).toBe(scenario === 'retry_action' ? 0 : 1);
-    expect(replacementProgress).toMatchObject({ blockKind: progress.blockKind, attempt: '1', previousAttemptRecordId: recordId,
-      logicalInvocationRecordId: recordId, ...(progress.workspace ? { workspace: progress.workspace } : {}) });
+    expect(replacementProgress).toMatchObject({ blockKind: progress.blockKind, attempt: inherited ? '2' : '1', previousAttemptRecordId: recordId,
+      logicalInvocationRecordId: inherited ? predecessorId : recordId, ...(progress.workspace ? { workspace: progress.workspace } : {}) });
     if (scenario === 'restore_parallel') {
       expect(replacementProgress).toMatchObject({ container: { kind: 'parallel', nextBranchOrdinal: '0' } });
       expect(replacementProgress).not.toHaveProperty('workspace');
@@ -3494,6 +3570,18 @@ describe('shared Account workflow run owner', () => {
     expect(replacementProgress).not.toHaveProperty('recovery');
     expect(replacementProgress).not.toHaveProperty('input');
     expect(replacementProgress).not.toHaveProperty('reason');
+    if (parallel) {
+      // A reply-loss rejoin must verify every replacement, including a child
+      // that has since started. It cannot accept only the still-pending parent.
+      const started = recoveredRows.at(-1)!;
+      rows.set(started.id, { ...rows.get(started.id)!, index: { ...started, lifecycle: 'running' } });
+      await expect(owner.execute(args)).rejects.toMatchObject({ code: 'currentness_conflict' });
+      expect(admissions).toBe(1);
+      expect(restorations).toBe(1);
+      expect(rows.get(boundaryId)).toEqual(boundary);
+      if (inherited) expect(rows.get(predecessorId)).toEqual(predecessor);
+      for (const row of retainedRows) expect(rows.get(row.index.id)).toEqual(row);
+    }
   });
 
   it.each([
