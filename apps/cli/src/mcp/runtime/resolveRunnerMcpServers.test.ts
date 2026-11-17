@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import axios, { AxiosHeaders } from 'axios';
-import { createServer, request as httpRequest, Server, type IncomingMessage, type RequestOptions } from 'node:http';
+import { createServer, request as httpRequest, type IncomingMessage, type RequestOptions } from 'node:http';
+import { Server } from 'node:net';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { watch } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -405,7 +406,8 @@ describe('resolveRunnerMcpServers catalog admission', () => {
           })]));
           await expect(stat(calledPath)).rejects.toMatchObject({ code: 'ENOENT' });
           const respond = permissionRpc.handlers.get('session.permission.respond')!;
-          await expect(respond({ id: requestId, approved: true })).resolves.toMatchObject({
+          await expect(respond({ id: requestId, turnId: pendingRequest.turnId,
+            nativeChoice: { requirementId: `${offer!.requirementId}-stale`, choiceId: 'approved' }, approved: true })).resolves.toMatchObject({
             ok: false, errorCode: 'permission_response_invalid',
           });
           await expect(stat(calledPath)).rejects.toMatchObject({ code: 'ENOENT' });
@@ -438,7 +440,7 @@ describe('resolveRunnerMcpServers catalog admission', () => {
 
     it.runIf(process.platform === 'linux').each(['default', 'disabled'] as const)(
       'keeps custom source permission and Account currentness with %s built-in delivery', exerciseCustomSource);
-    it.runIf(process.platform === 'linux')('requires the stored native choice before a custom MCP tool effect',
+    it.runIf(process.platform === 'linux')('rejects a stale native requirement before a custom MCP tool effect',
       () => exerciseCustomSource('native'));
 
   });
@@ -1022,7 +1024,7 @@ describe('resolveRunnerMcpServers catalog admission', () => {
     const releaseListener = createDeferred<void>();
     let listener: Server | undefined;
     const emit = Server.prototype.emit as (this: Server, event: string | symbol, ...args: unknown[]) => boolean;
-    // The HTTP listener's OS completion is held; the real bridge, command
+    // The socket listener's OS completion is held; the real bridge, command
     // resolution, Account owner and SavedSecret materializer remain unmocked.
     vi.spyOn(Server.prototype, 'emit').mockImplementation(function (this: Server, event: string | symbol, ...args: unknown[]) {
       if (event !== 'listening') return emit.call(this, event, ...args);
@@ -1086,7 +1088,8 @@ describe('resolveRunnerMcpServers catalog admission', () => {
     vi.stubEnv('HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', '1');
     const events: unknown[] = [];
     const result = await resolveRunnerMcpServers({ session: { ...session(), getWorkDepth: () => 0,
-      getActiveTurnPermissionWitness: () => ({ turnId: 'optional-startup-turn', workDepth: 0,
+      getMetadataSnapshot: () => createTestMetadata({}),
+      getActiveTurnPermissionWitness: () => ({ inputId: 'optional-startup-input', turnId: 'optional-startup-turn', workDepth: 0,
         causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } }),
       enqueueSessionEventCommitted: async event => {
       events.push(event); return { persisted: true, delivered: true };

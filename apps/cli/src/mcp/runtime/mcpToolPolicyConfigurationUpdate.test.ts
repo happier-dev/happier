@@ -17,8 +17,10 @@ import { createMcpServerActionExecuteV1 } from '@happier-dev/protocol/mcp/server
 import { McpServerCatalogRowMutationV1Schema, openMcpServerCatalogContentV1, type McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { runHostSessionRuntime } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import { createNativeAgentSessionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
+import { createProjectSessionRuntimeFixture } from '@/daemon/testkit/projectSessionRuntimeFixture';
+import { readRequesterSessionCredentialsForChild, requesterSessionCredentialPath, REQUESTER_SESSION_ID_ENV } from '@/daemon/sessionEncryption/requesterSessionCustody';
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetActiveAccountSettingsSnapshotForTests(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); resetActiveAccountSettingsSnapshotForTests(); });
 
 it('a real tools.set row-only publication sends one native SDK update with unchanged mode', async () => {
   const agentId = 'com.acme.mcp-tools/agent';
@@ -29,7 +31,14 @@ it('a real tools.set row-only publication sends one native SDK update with uncha
         capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: false, configuration: true }, tools: { delivery: 'native_mcp', mcpToolControl: { off: 'blocked', approval: 'native' } } } }],
     } }), files: { 'daemon.mjs': 'export function activate(api) {}' },
   }] });
-  const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'mcp-policy-account' })).toString('base64url')}.signature`, encryption: null };
+  const source = await createProjectSessionRuntimeFixture({ accountId: 'mcp-policy-account',
+    serverId: 'mcp-policy-home', serverUrl: 'https://mcp-policy-home.test',
+    homeServerIdentityId: 'srv_mcp_policy_home', boundSessionId: 'mcp-policy-session' });
+  vi.stubEnv(REQUESTER_SESSION_ID_ENV, 'mcp-policy-session');
+  const credentials = await readRequesterSessionCredentialsForChild(requesterSessionCredentialPath({
+    happyHomeDir: source.directory, sessionId: 'mcp-policy-session', attribution: source.bootstrap.attribution,
+  }));
+  if (!credentials) throw new Error('Expected admitted requester custody');
   const server: McpServerCatalogEntryV1 = { id: 'docs-id', name: 'docs', transport: 'stdio', stdio: { command: 'echo', args: [] }, env: {}, createdAt: 1, updatedAt: 1,
     tools: { default: 'allow_all', overrides: {} }, toolsSnapshot: { checkedAt: 1, machineId: 'machine', tools: [{ name: 'write', tokens: 1 }] } };
   let catalog: McpServerCatalogV1 = { v: 1, servers: [server], bindings: [{ id: 'rule', serverId: server.id, enabled: true, target: { t: 'allMachines' }, createdAt: 1, updatedAt: 1 }] };
@@ -42,7 +51,9 @@ it('a real tools.set row-only publication sends one native SDK update with uncha
   vi.stubGlobal('fetch', async () => Response.json(FeaturesResponseSchema.parse({ features: {}, capabilities: {} })));
   // Only Home HTTP and the Agent SDK implementation are replaced. Actual Action,
   // CAS, row admission, publication, host subscription and native config adapter run.
-  vi.spyOn(axios, 'get').mockImplementation(async input => {
+  const readAdmittedHome = vi.mocked(axios.get).getMockImplementation();
+  if (!readAdmittedHome) throw new Error('Expected admitted Home HTTP boundary');
+  vi.spyOn(axios, 'get').mockImplementation(async (input, request) => {
     const path = new URL(String(input)).pathname;
     if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1, settingsVersion: 7, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
     if (path === '/v1/account/entity-rows/mcp') return { status: 200, data: { status: 'present', revision, content: { t: 'plain', v: catalog } } };
@@ -50,7 +61,7 @@ it('a real tools.set row-only publication sends one native SDK update with uncha
     if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
     if (path === '/v1/account/entity-rows/profiles/transfer') return { status: 200, data: { status: 'absent' } };
     if (path.startsWith('/v1/account/entity-rows/')) return { status: 404, data: {} };
-    throw new Error(`Unexpected Account HTTP boundary ${path}`);
+    return readAdmittedHome(input, request);
   });
   vi.spyOn(axios, 'post').mockImplementation(async (url, value) => {
     expect(new URL(String(url)).pathname).toBe('/v1/account/entity-rows/mcp');
@@ -62,6 +73,8 @@ it('a real tools.set row-only publication sends one native SDK update with uncha
   });
   const metadata = createTestMetadata({ path: '/tmp/mcp-policy-project', permissionMode: 'default' });
   const session = createMutableApiSessionClientFixture({ sessionId: 'mcp-policy-session', metadata, overrides: {
+    getServerBinding: () => ({ serverId: 'mcp-policy-home', serverUrl: 'https://mcp-policy-home.test' }),
+    getServerIdentityId: () => 'srv_mcp_policy_home',
     claimCurrentSessionPublisherAuthorityForStartup: async () => ({ status: 'claimed' }), refreshSessionSnapshotFromServerRequired: async () => undefined,
     activateDurableMutationDelivery: async () => undefined, deactivateDurableMutationDelivery: () => undefined,
     enqueueSessionTurnMutation: async () => undefined, enqueueRegisteredSessionStateFieldMutation: async () => undefined,
