@@ -34,7 +34,7 @@ it('discovers the selected launched service from prepared originals, isolates cu
         const launch = {
             workspace: { id: 'selected', serverId: 'home', machineId: 'machine', rootPath: '/selected', projectKey: 'project' },
             project: { serverId: 'home', projectId: 'project' }, requester: { accountId: 'alice', installationId: 'installation' },
-            serviceId: 'postgres', executionPlacement: { mode: 'spawn', machineId: 'machine' }, assignedPorts: {},
+            serviceId: 'postgres', physicalRootIdentity: '/physical/selected', executionPlacement: { mode: 'spawn', machineId: 'machine' }, assignedPorts: {},
             async readEnvironment() { return { projectedEnvironment: { DATABASE_URL: 'postgresql://capture@localhost/replacement' }, provenance: {} }; },
             async readDeclaredEnvironment() { return { projectedEnvironment: { API_URL: 'https://api.example.test', CUSTOM_DATABASE: original },
                 provenance: { CUSTOM_DATABASE: { source: 'dotenv', file: '.env' } } }; },
@@ -70,7 +70,7 @@ it('does not expose another Account launch or turn missing prepared identity int
         if (!observer) throw new Error('Missing database discovery contribution');
         const launch = { workspace: { id: 'selected', serverId: 'home', machineId: 'machine', rootPath: '/selected', projectKey: 'project' },
             project: { serverId: 'home', projectId: 'project' }, serviceId: 'postgres',
-            executionPlacement: { mode: 'spawn', machineId: 'machine' }, assignedPorts: {},
+            physicalRootIdentity: '/physical/selected', executionPlacement: { mode: 'spawn', machineId: 'machine' }, assignedPorts: {},
             async readEnvironment() { return { projectedEnvironment: { DATABASE_URL: 'postgresql://app:neighbor@localhost/neighbor' }, provenance: {} }; },
         } satisfies PluginServiceLaunchEnvironmentInputV1;
         expect(await observer.prepare(launch)).toEqual({ kind: 'unchanged' });
@@ -92,7 +92,7 @@ it('resolves the discovered service original into a native operation and withdra
     const retained = await targets.launch.prepare({
         workspace: { id: 'selected', serverId: 'home', machineId: 'machine', rootPath: '/selected', projectKey: 'project' },
         project: { serverId: 'home', projectId: 'project' }, requester: { accountId: 'alice', installationId: 'installation' },
-        serviceId: 'sqlite-app', executionPlacement: { mode: 'spawn', machineId: 'machine' }, assignedPorts: {},
+        serviceId: 'sqlite-app', physicalRootIdentity: '/physical/selected', executionPlacement: { mode: 'spawn', machineId: 'machine' }, assignedPorts: {},
         async readEnvironment() { return { projectedEnvironment: { DATABASE_URL: pathToFileURL(path).toString() }, provenance: {} }; },
     });
     let connection: Awaited<ReturnType<typeof targets.resolve>>['connection'] | undefined;
@@ -135,7 +135,7 @@ it('stores the worktree database agent level on this Machine: Read & write (asks
         const retained = await observer.prepare({
             workspace: { id: 'selected', serverId: 'home', machineId: 'machine', rootPath: '/selected', projectKey: 'project' },
             project: { serverId: 'home', projectId: 'project' }, requester: { accountId: 'alice', installationId: 'installation' },
-            serviceId: 'postgres', executionPlacement: { mode: 'spawn', machineId: 'machine' }, assignedPorts: {},
+            serviceId: 'postgres', physicalRootIdentity: '/physical/selected', executionPlacement: { mode: 'spawn', machineId: 'machine' }, assignedPorts: {},
             async readEnvironment() { return { projectedEnvironment: { DATABASE_URL: 'postgresql://app:secret@localhost:5432/selected' }, provenance: {} }; },
         });
         try {
