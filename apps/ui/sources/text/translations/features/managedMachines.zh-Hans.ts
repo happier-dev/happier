@@ -700,6 +700,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 attachPreset: "添加预设",
                 attachNone: "所有设置预设都已添加",
                 newerRevision: ({ revision }: { revision: number }) => `修订版 ${revision} 可用`,
+                presetArchived: "已归档",
+                presetGone: "已不可用",
                 reviewChanges: "查看更改",
                 signInsTitle: ({ machine }: { machine: string }) => `${machine} 上的登录`,
                 signInsHelp: ({ machine }: { machine: string }) => `${machine} 自己使用的账号，用于代理、克隆和推送。如果你为其中某项选择了已连接的账号，则改用该账号。`,

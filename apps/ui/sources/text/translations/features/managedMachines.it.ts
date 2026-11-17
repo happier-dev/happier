@@ -700,6 +700,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 attachPreset: "Collega un preset",
                 attachNone: "Tutti i preset di configurazione sono già collegati",
                 newerRevision: ({ revision }: { revision: number }) => `La revisione ${revision} è disponibile`,
+                presetArchived: "Archiviato",
+                presetGone: "Non più disponibile",
                 reviewChanges: "Rivedi le modifiche",
                 signInsTitle: ({ machine }: { machine: string }) => `Accessi su ${machine}`,
                 signInsHelp: ({ machine }: { machine: string }) => `Account che ${machine} usa per conto suo, per agenti, cloni e push. Un account collegato che scegli per uno di essi viene usato al suo posto.`,

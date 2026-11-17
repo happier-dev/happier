@@ -700,6 +700,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 attachPreset: "Adjuntar un preajuste",
                 attachNone: "Todos los preajustes de configuración ya están adjuntos",
                 newerRevision: ({ revision }: { revision: number }) => `La revisión ${revision} está disponible`,
+                presetArchived: "Archivado",
+                presetGone: "Ya no está disponible",
                 reviewChanges: "Revisar cambios",
                 signInsTitle: ({ machine }: { machine: string }) => `Inicios de sesión en ${machine}`,
                 signInsHelp: ({ machine }: { machine: string }) => `Cuentas que ${machine} usa por su cuenta, para agentes, clonaciones y envíos. Si eliges una cuenta conectada para alguna, se usa esa.`,

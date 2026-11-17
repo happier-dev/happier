@@ -700,6 +700,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 attachPreset: "Vorlage anhängen",
                 attachNone: "Alle Einrichtungsvorlagen sind bereits angehängt",
                 newerRevision: ({ revision }: { revision: number }) => `Revision ${revision} ist verfügbar`,
+                presetArchived: "Archiviert",
+                presetGone: "Nicht mehr verfügbar",
                 reviewChanges: "Änderungen prüfen",
                 signInsTitle: ({ machine }: { machine: string }) => `Anmeldungen auf ${machine}`,
                 signInsHelp: ({ machine }: { machine: string }) => `Konten, die ${machine} selbst nutzt, für Agenten, Klone und Pushes. Ein verbundenes Konto, das du dafür wählst, wird stattdessen verwendet.`,

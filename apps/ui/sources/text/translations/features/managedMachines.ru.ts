@@ -700,6 +700,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 attachPreset: "Подключить пресет",
                 attachNone: "Все пресеты настройки уже подключены",
                 newerRevision: ({ revision }: { revision: number }) => `Доступна ревизия ${revision}`,
+                presetArchived: "В архиве",
+                presetGone: "Больше недоступен",
                 reviewChanges: "Просмотреть изменения",
                 signInsTitle: ({ machine }: { machine: string }) => `Входы на ${machine}`,
                 signInsHelp: ({ machine }: { machine: string }) => `Аккаунты, которые ${machine} использует сам: для агентов, клонирования и отправки. Если выбрать для одного из них подключённый аккаунт, будет использоваться он.`,

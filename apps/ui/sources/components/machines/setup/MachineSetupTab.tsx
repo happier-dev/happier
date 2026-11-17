@@ -27,7 +27,7 @@ import {
 import { describeMachineSetup } from '@/components/settings/machines/managed/MachineSetupSection';
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
 import type { OpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
-import { machineSetupPresetSource, readMachineSetupPresetChoices, type MachineSetupPresetChoice, type SavedMachineSetupPresetChoice } from '@/components/settings/machines/managed/machineSetupPresetChoices';
+import { machineSetupPresetSource, readMachineSetupPresetChoices, type MachineSetupPresetChoice } from '@/components/settings/machines/managed/machineSetupPresetChoices';
 import { machineSetupSourceName } from '@/components/machines/setup/machineSetupSourceName';
 import { showMachineSavePreset } from '@/components/machines/setup/MachineSavePresetModal';
 import { machinePresetCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
@@ -63,6 +63,7 @@ import {
   readOpenedMachineSetupSources,
   readMachineSetupRecipes,
   type MachineSetupOpenedSourceV1,
+  type MachineSetupPresetUpdateV1,
   useMachineSetup,
   type MachineSetupRecipeRow,
   type MachineSetupState,
@@ -318,25 +319,22 @@ function MachineSetupRoot(
                   const sourceKey = source.sourceKey;
                   const opened = source.opened;
                   const openedSource = opened?.source;
-                  const latest =
-                    openedSource?.kind === 'accountPreset'
-                      ? (presetList.find((entry): entry is SavedMachineSetupPresetChoice => !('kind' in entry) && entry.id === openedSource.presetId) ?? null)
-                      : null;
+                  // The setup owner decides whether an attached preset's setup changed or went away; the row only says so.
+                  const update = openedSource?.kind === 'accountPreset'
+                    ? setup.presetUpdates.find((entry) => entry.presetId === openedSource.presetId) ?? null
+                    : null;
                   return (
                     <AttachedPresetRow
                       key={sourceKey}
                       sourceKey={sourceKey}
                       source={openedSource && openedSource.kind !== 'direct' ? openedSource : null}
                       name={nameOf(source)}
-                      newer={
-                        latest && opened?.source.kind === 'accountPreset' && latest.revision > opened.source.presetRevision
-                          ? latest
-                          : null
-                      }
+                      update={update}
                       editable={editable}
                       busy={setup.pending !== null}
-                      onApplyAgain={(choice) => {
-                        void setup.prepare({ kind: 'preset', preset: choice });
+                      onReviewUpdate={(change) => {
+                        void setup.prepare({ kind: 'presetUpdate', presetId: change.presetId,
+                          presetRevision: change.presetRevision, setupRevision: change.setupRevision, name: nameOf(source) });
                       }}
                       onStopUsing={() => {
                         void setup.prepare({ kind: 'stop', sourceKey, name: nameOf(source) });
@@ -712,8 +710,8 @@ function MachineSetupReviewInPlace(
             : removing
               ? t('machinePresets.setup.tab.reviewRemove')
               // The title names what gets applied, where: the chosen preset, or the Machine's own setup again.
-              : review.intent.kind === 'preset'
-                ? t('machinePresets.setup.tab.reviewApplyPreset', { preset: review.intent.preset.name, machine: props.machineName })
+              : review.intent.kind === 'preset' || (review.intent.kind === 'presetUpdate' && review.intent.name)
+                ? t('machinePresets.setup.tab.reviewApplyPreset', { preset: review.intent.kind === 'preset' ? review.intent.preset.name : review.intent.name!, machine: props.machineName })
                 : review.intent.kind === 'reapply'
                   ? t('machinePresets.setup.tab.reviewReapplyTitle', { machine: props.machineName })
                   : t('machinePresets.setup.tab.reviewTitle')
@@ -914,16 +912,17 @@ function AttachedPresetRow(
     sourceKey: string;
     source: AttachedSource | null;
     name: string;
-    newer: SavedMachineSetupPresetChoice | null;
+    update: MachineSetupPresetUpdateV1 | null;
     editable: boolean;
     busy: boolean;
-    onApplyAgain: (preset: SavedMachineSetupPresetChoice) => void;
+    onReviewUpdate: (change: Extract<MachineSetupPresetUpdateV1, { kind: 'changed' }>) => void;
     onStopUsing: () => void;
   }>,
 ) {
   const { theme } = useUnistyles();
   const [menuOpen, setMenuOpen] = React.useState(false);
-  const { source, newer } = props;
+  const { source, update } = props;
+  const changed = update?.kind === 'changed' ? update : null;
   const facts =
     source === null
       ? t('common.unavailable')
@@ -940,22 +939,24 @@ function AttachedPresetRow(
       icon={<Icon name="stack" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
       title={props.name}
       subtitle={
-        newer
-          ? `${t('machinePresets.setup.tab.newerRevision', { revision: newer.revision })} · ${facts}`
-          : facts
+        changed
+          ? `${t('machinePresets.setup.tab.newerRevision', { revision: changed.presetRevision })} · ${facts}`
+          : update?.kind === 'unavailable'
+            ? `${t(update.reason === 'preset_archived' ? 'machinePresets.setup.tab.presetArchived' : 'machinePresets.setup.tab.presetGone')} · ${facts}`
+            : facts
       }
       showChevron={false}
       rightElement={
         props.editable ? (
           <View style={styles.rowActions}>
-            {newer ? (
+            {changed ? (
               <RoundButton
                 testID={`machine-setup-source-again:${props.sourceKey}`}
                 size="small"
                 display="secondary"
                 title={t('machinePresets.setup.tab.reviewChanges')}
                 disabled={props.busy}
-                onPress={() => props.onApplyAgain(newer)}
+                onPress={() => props.onReviewUpdate(changed)}
               />
             ) : null}
             <DropdownMenu

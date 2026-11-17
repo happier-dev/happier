@@ -66,7 +66,8 @@ export function readOpenedMachineSetupSources(
 export type MachineSetupReviewIntent =
   | Readonly<{ kind: 'reapply' }>
   | Readonly<{ kind: 'preset'; preset: MachineSetupPresetChoice }>
-  | Readonly<{ kind: 'presetUpdate'; presetId: string; presetRevision: number; setupRevision: number }>
+  /** `name`: the attached copy's name, so the review can say what it applies (as Stop using carries it). */
+  | Readonly<{ kind: 'presetUpdate'; presetId: string; presetRevision: number; setupRevision: number; name?: string }>
   | Readonly<{ kind: 'sources'; sources: MachineSetupSourceApplyV1 }>
   /** Stop using one attached preset (its source origin key); what it set up stays unless the review removes it. */
   | Readonly<{ kind: 'stop'; sourceKey: string; name: string }>

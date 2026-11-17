@@ -700,6 +700,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 attachPreset: "Anexar uma predefinição",
                 attachNone: "Todas as predefinições de configuração já estão anexadas",
                 newerRevision: ({ revision }: { revision: number }) => `A revisão ${revision} está disponível`,
+                presetArchived: "Arquivado",
+                presetGone: "Já não está disponível",
                 reviewChanges: "Rever alterações",
                 signInsTitle: ({ machine }: { machine: string }) => `Inícios de sessão em ${machine}`,
                 signInsHelp: ({ machine }: { machine: string }) => `Contas que ${machine} usa por conta própria, para agentes, clonagens e envios. Se escolheres uma conta ligada para alguma, é essa que é usada.`,

@@ -700,6 +700,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 attachPreset: "Dołącz szablon",
                 attachNone: "Wszystkie szablony konfiguracji są już dołączone",
                 newerRevision: ({ revision }: { revision: number }) => `Dostępna jest wersja ${revision}`,
+                presetArchived: "Zarchiwizowany",
+                presetGone: "Już niedostępny",
                 reviewChanges: "Przejrzyj zmiany",
                 signInsTitle: ({ machine }: { machine: string }) => `Logowania na ${machine}`,
                 signInsHelp: ({ machine }: { machine: string }) => `Konta, których ${machine} używa samodzielnie, dla agentów, klonowania i wypychania. Jeśli wybierzesz dla któregoś połączone konto, zostanie użyte ono.`,

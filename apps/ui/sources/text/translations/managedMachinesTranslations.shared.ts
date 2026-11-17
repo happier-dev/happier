@@ -680,6 +680,8 @@ export const managedMachinesEn = {
                 attachPreset: "Attach a preset",
                 attachNone: "Every setup preset is already attached",
                 newerRevision: ({ revision }: { revision: number }) => `Revision ${revision} is available`,
+                presetArchived: "Archived",
+                presetGone: "No longer available",
                 reviewChanges: "Review changes",
                 signInsTitle: ({ machine }: { machine: string }) => `Sign-ins on ${machine}`,
                 signInsHelp: ({ machine }: { machine: string }) => `Accounts ${machine} uses on its own, for agents, clones and pushes. A connected account you choose for one is used instead.`,

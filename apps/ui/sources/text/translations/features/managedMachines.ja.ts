@@ -700,6 +700,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 attachPreset: "プリセットを追加",
                 attachNone: "すべてのセットアッププリセットが追加済みです",
                 newerRevision: ({ revision }: { revision: number }) => `リビジョン ${revision} を利用できます`,
+                presetArchived: "アーカイブ済み",
+                presetGone: "利用できなくなりました",
                 reviewChanges: "変更を確認",
                 signInsTitle: ({ machine }: { machine: string }) => `${machine} のサインイン`,
                 signInsHelp: ({ machine }: { machine: string }) => `${machine} が自分で使うアカウントです（エージェント、クローン、プッシュ用）。接続済みアカウントを選んだ場合は、そちらが使われます。`,

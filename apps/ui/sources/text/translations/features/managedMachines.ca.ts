@@ -700,6 +700,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 attachPreset: "Adjunta un predefinit",
                 attachNone: "Tots els predefinits de configuració ja estan adjunts",
                 newerRevision: ({ revision }: { revision: number }) => `La revisió ${revision} està disponible`,
+                presetArchived: "Arxivat",
+                presetGone: "Ja no està disponible",
                 reviewChanges: "Revisa els canvis",
                 signInsTitle: ({ machine }: { machine: string }) => `Inicis de sessió a ${machine}`,
                 signInsHelp: ({ machine }: { machine: string }) => `Comptes que ${machine} fa servir pel seu compte, per a agents, clonacions i pujades. Si tries un compte connectat per a algun, es fa servir aquest.`,

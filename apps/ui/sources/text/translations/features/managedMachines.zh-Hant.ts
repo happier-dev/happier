@@ -700,6 +700,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 attachPreset: "加入預設",
                 attachNone: "所有設定預設都已加入",
                 newerRevision: ({ revision }: { revision: number }) => `修訂版 ${revision} 可用`,
+                presetArchived: "已封存",
+                presetGone: "已無法使用",
                 reviewChanges: "檢視變更",
                 signInsTitle: ({ machine }: { machine: string }) => `${machine} 上的登入`,
                 signInsHelp: ({ machine }: { machine: string }) => `${machine} 自行使用的帳號，用於代理程式、複製與推送。若你為其中某項選擇已連結的帳號，就會改用該帳號。`,
