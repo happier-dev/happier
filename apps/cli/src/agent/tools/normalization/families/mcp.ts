@@ -1,3 +1,4 @@
+import { parseMcpToolWireNameV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { isDeepStrictEqual } from 'node:util';
 
 type UnknownRecord = Record<string, unknown>;
@@ -68,13 +69,8 @@ function summarizeArgs(input: UnknownRecord): string {
 }
 
 export function parseMcpToolName(toolName: string): { serverId: string; toolId: string } | null {
-    if (!toolName.startsWith('mcp__')) return null;
-    const withoutPrefix = toolName.replace(/^mcp__/, '');
-    const parts = withoutPrefix.split('__').filter((p) => p.length > 0);
-    if (parts.length < 2) return null;
-    const serverId = parts[0];
-    const toolId = parts.slice(1).join('__');
-    return { serverId, toolId };
+    const identity = parseMcpToolWireNameV1(toolName);
+    return identity ? { serverId: identity.server, toolId: identity.tool } : null;
 }
 
 export function normalizeMcpInput(toolName: string, rawInput: unknown): UnknownRecord {

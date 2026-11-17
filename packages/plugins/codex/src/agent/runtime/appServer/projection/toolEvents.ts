@@ -1,3 +1,4 @@
+import { formatMcpToolWireNameV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { parseMcpToolWireNameV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { mapCodexRolloutEventToActions } from '../../../rollout/projection/actions.js';
@@ -344,7 +345,7 @@ export function projectCodexAppServerToolEventsFromNotification(params: Readonly
     // built-in bridge, whose name is also every injected key's prefix.
     const identity = parseMcpToolWireNameV1(event.name, nativeKeys);
     return identity
-      ? { ...event, name: `mcp__${wireKeysByNativeKey.get(identity.server)!}__${identity.tool}` }
+      ? { ...event, name: formatMcpToolWireNameV1(wireKeysByNativeKey.get(identity.server)!, identity.tool) }
       : event;
   });
 }

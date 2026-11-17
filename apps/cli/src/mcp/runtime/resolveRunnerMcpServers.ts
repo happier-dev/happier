@@ -1,3 +1,4 @@
+import { formatMcpToolWireNameV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { McpServerConfig } from '@/agent';
@@ -548,7 +549,7 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
       const witness = scopedSession.getActiveTurnAdmissionWitness?.();
       const mode = String(scopedSession.getPermissionMode?.() ?? 'default');
       const decision = await params.mcpPermissionHandler.handleToolCall(input.toolCallId ?? randomUUID(),
-        `mcp__${input.source}__${input.toolName}`, input.args, {
+        formatMcpToolWireNameV1(input.source, input.toolName), input.args, {
           buildNativeChoices: facts => createMcpPermissionChoices('mcp.tool', facts.mcpTool),
           ...(currentSignal ? { signal: currentSignal } : {}),
           ...(witness ? { turnId: witness.turnId, causalPermissionAuthority: witness.causalPermissionAuthority ?? null } : {}),

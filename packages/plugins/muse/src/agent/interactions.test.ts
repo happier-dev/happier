@@ -8,6 +8,7 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.test-support.js';
+import { assignMcpWireNames } from '@/mcp/runtime/assignMcpWireNames';
 import { McpServerCatalogV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { readMuseRecord } from './events.js';
 
@@ -123,7 +124,9 @@ it('retains Allow once approval after the native tool and turn complete', async 
     } finally { events.dispose(); await fixture.dispose(); await rm(scratch, { recursive: true, force: true }); }
 });
 
-it('offers host MCP catalog consent and applies its captured native grant exactly once', async () => {
+it.each(['qa_muse_r1117c', 'qa-muse-r1117c'])('round-trips catalog %s through native approval and applies its captured grant once', async (catalogName) => {
+    const nativeToolName = 'mcp__qa_muse_r1117c__qa_echo';
+    const assigned = assignMcpWireNames({ items: [{ serverId: 'catalog-probe', name: catalogName, serverTitle: 'Probe' }] });
     // Advanced create handshake plus the captured lifecycle allow-once turn.
     // Only the MCP tool identity is schema-derived on that native occurrence.
     // The native process still rejects every choice ID outside its own offer.
@@ -145,10 +148,10 @@ it('offers host MCP catalog consent and applies its captured native grant exactl
         const params = readMuseRecord(message.params);
         return typeof message.method === 'string' && message.method.startsWith('approval/')
             ? { ...row, message: { ...message, params: { ...params,
-                subject: { kind: 'tool', toolName: 'mcp__probe__pebble' }, toolName: 'mcp__probe__pebble', rawArgs: '{"query":"pebble"}',
+                subject: { kind: 'tool', toolName: nativeToolName }, toolName: nativeToolName, rawArgs: '{"query":"pebble"}',
                 availableChoices: Array.isArray(params.availableChoices)
                     ? params.availableChoices.map(value => readMuseRecord(value).choiceId === 'allow_once'
-                        ? { ...readMuseRecord(value), label: 'Allow tool `mcp__probe__pebble`', rulePreview: 'tool `mcp__probe__pebble`' }
+                        ? { ...readMuseRecord(value), label: 'Allow tool `mcp__qa_muse_r1117c__qa_echo`', rulePreview: 'tool `mcp__qa_muse_r1117c__qa_echo`' }
                         : value) : [],
             } } }
             : row;
@@ -157,12 +160,12 @@ it('offers host MCP catalog consent and applies its captured native grant exactl
             nativePolicyPath: join(scratch, 'unused-native-policy.json') },
         readActiveTurnAdmissionWitness: () => ({ inputId: 'catalog-choice-input', turnId: 'catalog-choice-turn',
             userMessageSeq: null, userMessageSeqs: [], causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } }),
-        mcpToolContext: { mcpServerIdentities: { probe: { serverId: 'catalog-probe', serverTitle: 'Probe' } },
+        mcpToolContext: { mcpServerIdentities: assigned.mcpServerIdentities,
             catalog: { status: 'ready', authority: 'active', revision: 1, diagnostics: [],
-                catalog: McpServerCatalogV1Schema.parse({ v: 1, servers: [{ id: 'catalog-probe', name: 'probe', title: 'Probe',
+                catalog: McpServerCatalogV1Schema.parse({ v: 1, servers: [{ id: 'catalog-probe', name: catalogName, title: 'Probe',
                     transport: 'stdio', stdio: { command: 'fixture', args: [] }, env: {}, createdAt: 1, updatedAt: 1,
                     tools: { default: 'ask', overrides: {} }, toolsSnapshot: { checkedAt: 1, machineId: 'machine',
-                        tools: [{ name: 'pebble', title: 'Pebble', tokens: 1 }] } }], bindings: [] }) } },
+                        tools: [{ name: 'qa_echo', title: 'Pebble', tokens: 1 }] } }], bindings: [] }) } },
     });
     const events = createAgentSessionRuntimeHarness();
     try {
@@ -172,18 +175,18 @@ it('offers host MCP catalog consent and applies its captured native grant exactl
             delivery: { kind: 'newTurn', turnId: 'catalog-choice-turn' } });
         await fixture.waitForAudit(audit => audit.receiptCount === 1);
         await vi.waitFor(() => {
-            const pending = Object.values(fixture.host.getAgentStateSnapshot()?.requests ?? {}).find(request => request.tool === 'mcp__probe__pebble');
+            const pending = Object.values(fixture.host.getAgentStateSnapshot()?.requests ?? {}).find(request => request.tool === nativeToolName);
             expect(pending).toMatchObject({ turnId: 'catalog-choice-turn' });
             expect(pending?.arguments).toEqual({ query: 'pebble' });
             expect(pending?.nativeChoices?.choices.find(choice => choice.id === 'allow_once')).toMatchObject({
-                label: 'Allow tool mcp__probe__pebble', rulePreview: 'tool mcp__probe__pebble',
+                label: 'Allow tool mcp__qa_muse_r1117c__qa_echo', rulePreview: 'tool mcp__qa_muse_r1117c__qa_echo',
             });
             expect(pending?.nativeChoices?.choices.find(choice => choice.id === 'mcp_always_allow')).toMatchObject({
                 scope: 'localPersistent', followUp: { actionId: 'mcp.servers.tools.set',
-                    input: { serverId: 'catalog-probe', tools: { pebble: 'allow' } } },
+                    input: { serverId: 'catalog-probe', tools: { qa_echo: 'allow' } } },
             });
         });
-        const entry = Object.entries(fixture.host.getAgentStateSnapshot()?.requests ?? {}).find(([, request]) => request.tool === 'mcp__probe__pebble');
+        const entry = Object.entries(fixture.host.getAgentStateSnapshot()?.requests ?? {}).find(([, request]) => request.tool === nativeToolName);
         if (!entry?.[1].nativeChoices) throw new Error('Expected native MCP catalog offer');
         const [id, pending] = entry;
         await expectNativeApprovalApplied(fixture, { id, nativeChoice: {

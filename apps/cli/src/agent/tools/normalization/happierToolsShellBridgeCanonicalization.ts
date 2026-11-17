@@ -1,3 +1,4 @@
+import { formatMcpToolWireNameV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { parseHappierToolsShellBridgeCommand } from '@happier-dev/protocol/tools/happierToolsShellBridge';
 import type { HappierToolsShellBridgeCommand } from '@happier-dev/protocol';
 import { isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2/aliases';
@@ -48,10 +49,10 @@ export function resolveCanonicalToolNameFromHappierToolsShellBridge(rawInput: un
     if (command.source === 'custom' && command.tool.includes('/')) {
         const [serverId, ...toolParts] = command.tool.split('/').filter(Boolean);
         if (!serverId || toolParts.length === 0) return null;
-        return `mcp__${serverId}__${toolParts.join('__')}`;
+        return formatMcpToolWireNameV1(serverId, toolParts.join('__'));
     }
 
-    return `mcp__${command.source}__${command.tool.replaceAll('/', '__')}`;
+    return formatMcpToolWireNameV1(command.source, command.tool.replaceAll('/', '__'));
 }
 
 export function extractCanonicalInputFromHappierToolsShellBridge(rawInput: unknown): unknown | null {

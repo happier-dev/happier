@@ -1,3 +1,4 @@
+import { formatMcpToolWireNameV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { isDeepStrictEqual } from 'node:util';
 
 import type {
@@ -198,7 +199,7 @@ export function mergeAcpToolObservation(
 
 function resolveToolName(record: MutableAcpToolCallRecord): string {
     const mcp = record.toolMetadata?.mcp;
-    return mcp ? `mcp__${mcp.server}__${mcp.tool}` : record.name ?? record.semanticName ?? record.kind ?? 'other';
+    return mcp ? formatMcpToolWireNameV1(mcp.server, mcp.tool) : record.name ?? record.semanticName ?? record.kind ?? 'other';
 }
 
 export function snapshotAcpToolCall(record: MutableAcpToolCallRecord): MergedAcpToolCall {

@@ -1,3 +1,4 @@
+import { formatMcpToolWireNameV1, parseMcpToolWireNameV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { SDKMessage } from '../../../sdk/types.js';
 import { readClaudeTaskLifecycleEnvelope } from '../../../transcripts/taskNotification.js';
 import { isGenericSubagentToolName } from '@happier-dev/plugin-sdk/sessions/subagents';
@@ -13,10 +14,11 @@ export function createClaudeMcpUsageWitness(serverNames: readonly string[], star
     const calls = new Map<string, string>();
     const counts = new Map(serverNames.map(name => [name, 0]));
     const serverForTool = (tool: string): string | null => {
-        const matches = [...nativeServerNames].filter(name => tool.startsWith(`mcp__${name}__`));
+        const matches = [...nativeServerNames].filter(name => tool.startsWith(formatMcpToolWireNameV1(name, '')));
         if (matches.length > 1 && matches.some(name => counts.has(name))) incomplete = true;
         // Native connectors outside the selected bindings are not part of this window.
-        return matches.length === 1 && counts.has(matches[0]!) ? matches[0]! : null;
+        const identity = parseMcpToolWireNameV1(tool, nativeServerNames);
+        return matches.length === 1 && identity && counts.has(identity.server) ? identity.server : null;
     };
     return {
         observe(message: SDKMessage): void {

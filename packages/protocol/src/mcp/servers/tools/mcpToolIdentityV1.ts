@@ -15,12 +15,28 @@ export const ResolvedMcpToolIdentityV1Schema = lazyZodSchema(() => z.strictObjec
   item: z.strictObject({ serverId: z.string().check(z.minLength(1)), plugin: z.optional(z.strictObject({ pluginId: z.string().check(z.minLength(1)), localId: z.string().check(z.minLength(1)) })) }),
   serverTitle: z.string(), toolTitle: z.optional(z.string()), annotations: z.optional(McpToolAnnotationsV1Schema), decision: McpToolDecisionV1Schema,
 }));
-export function parseMcpToolWireNameV1(name: string, knownServerKeys: ReadonlySet<string>): McpToolIdentityV1 | null {
+/** Portable launch key: native Agents may replace punctuation, including hyphens. */
+export function normalizeMcpServerWireKeyV1(name: string): string {
+  return name.replace(/[^A-Za-z0-9_]/g, '_');
+}
+
+/** Server is the recorded launch key, never a catalog id inferred from a tool name. */
+export function formatMcpToolWireNameV1(server: string, tool: string): string {
+  return `mcp__${server}__${tool}`;
+}
+
+/** Without an inventory this is presentation-only; policy always supplies recorded keys. */
+export function parseMcpToolWireNameV1(name: string, knownServerKeys?: ReadonlySet<string>): McpToolIdentityV1 | null {
   if (!name.startsWith('mcp__')) return null;
+  if (!knownServerKeys) {
+    const separator = name.indexOf('__', 5);
+    return separator > 5 && separator + 2 < name.length
+      ? { server: name.slice(5, separator), tool: name.slice(separator + 2) } : null;
+  }
   let longest: McpToolIdentityV1 | null = null;
   for (const server of knownServerKeys) {
     if (server === 'happier' || !server) continue;
-    const prefix = `mcp__${server}__`;
+    const prefix = formatMcpToolWireNameV1(server, '');
     if (!name.startsWith(prefix)) continue;
     if (!longest || server.length > longest.server.length) longest = { server, tool: name.slice(prefix.length) };
   }

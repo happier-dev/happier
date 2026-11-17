@@ -1,3 +1,4 @@
+import { formatMcpToolWireNameV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { randomUUID } from 'node:crypto';
 
 import type {
@@ -70,7 +71,7 @@ function canonicalizeMcpToolName(request: SessionMcpElicitRequestV1): string | n
     if (!serverName) {
         return toolName;
     }
-    return `mcp__${serverName}__${toolName}`;
+    return formatMcpToolWireNameV1(serverName, toolName);
 }
 
 function mapPermissionResult(value: unknown): SessionMcpElicitResultV1 {

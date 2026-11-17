@@ -486,7 +486,7 @@ export {
   listHappierToolAutoApprovedNamesV1,
   listHappierToolAutoApprovedNameSpellingsV1,
 } from '@happier-dev/protocol/tools/happierToolAutoApprovalV1';
-export { parseMcpToolWireNameV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
+export { formatMcpToolWireNameV1, parseMcpToolWireNameV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 export type { McpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 export {
   AGENT_STARTUP_FAILURE_PREVIEWS,

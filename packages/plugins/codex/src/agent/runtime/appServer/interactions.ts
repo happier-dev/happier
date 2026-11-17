@@ -1,3 +1,4 @@
+import { formatMcpToolWireNameV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createHash, randomUUID } from 'node:crypto';
 
 import type {
@@ -344,7 +345,7 @@ export function registerCodexAppServerInteractionHandlers(params: Readonly<{
       if (
         isMcpTool
         && params.mcpServerKeys
-        && ![...params.mcpServerKeys.keys()].some(server => event.name.startsWith(`mcp__${server}__`))
+        && ![...params.mcpServerKeys.keys()].some(server => event.name.startsWith(formatMcpToolWireNameV1(server, '')))
       ) continue;
       approvalSubjectsByItem.set(key, { name: event.name, input: event.input });
     }

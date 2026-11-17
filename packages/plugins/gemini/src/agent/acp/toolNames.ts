@@ -1,3 +1,4 @@
+import { formatMcpToolWireNameV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import {
   CHANGE_TITLE_TOOL_NAME_ALIASES,
 } from '@happier-dev/plugin-sdk/sessions';
@@ -17,7 +18,7 @@ export function buildGeminiAcpToolNameResolver(
 ): AgentAcpToolNameResolver {
   const keys = Object.keys(request.mcpServers ?? {});
   const named = keys.flatMap(server => Object.keys(request.mcpToolPolicy?.[server]?.tools ?? {})
-    .map(tool => ({ native: geminiMcpFunctionName(server, tool), canonical: `mcp__${server}__${tool}` })));
+    .map(tool => ({ native: geminiMcpFunctionName(server, tool), canonical: formatMcpToolWireNameV1(server, tool) })));
   return ({ toolName, toolCallId }) => {
     switch (toolName) {
       case 'GeminiPatch': return 'Patch';
@@ -43,7 +44,7 @@ export function buildGeminiAcpToolNameResolver(
       }
       const tool = toolCallId.slice(prefix.length, boundary);
       if (!tool || tool.includes('...')) throw new Error('Gemini MCP tool identity is lossy');
-      return [`mcp__${server}__${tool}`];
+      return [formatMcpToolWireNameV1(server, tool)];
     });
     if (candidates.length > 1) throw new Error('Gemini MCP server identity is ambiguous');
     return candidates[0] ?? null;

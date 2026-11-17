@@ -1,3 +1,4 @@
+import { formatMcpToolWireNameV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { CHANGE_TITLE_TOOL_NAME_ALIASES, isChangeTitleToolNameAlias } from '@happier-dev/plugin-sdk/sessions';
 
 export type CodexAcpToolPattern = Readonly<{
@@ -35,7 +36,7 @@ function canonicalizeCodexExplicitToolHint(value: unknown): string | null {
   const allParts = [serverId, ...toolParts];
   if (!allParts.every((part) => /^[a-z0-9_.-]+$/i.test(part))) return null;
 
-  return `mcp__${serverId}__${toolParts.join('__')}`;
+  return formatMcpToolWireNameV1(serverId, toolParts.join('__'));
 }
 
 export function resolveCodexAcpExplicitToolHint(params: Readonly<{

@@ -1,3 +1,4 @@
+import { formatMcpToolWireNameV1, parseMcpToolWireNameV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { normalizeCodexMcpServerName } from '../../mcp/serverKeys.js';
 
 export type CodexRolloutToolSource = Readonly<{
@@ -13,24 +14,13 @@ function readStringField(record: Readonly<Record<string, unknown>>, key: string)
 
 function parseMcpToolName(name: string): { serverName: string; toolName: string } | null {
     const normalized = name.trim();
-    const prefix = 'mcp__';
-    if (!normalized.startsWith(prefix)) return null;
-
-    const parts = normalized.slice(prefix.length).split('__');
-    if (parts.length < 2 || parts.some((part) => part.trim().length === 0)) return null;
-
-    if (parts[0] === 'happier' && parts.length >= 3) {
-        const serverParts = parts.length > 3 ? parts.slice(0, -1) : parts.slice(0, 2);
-        return {
-            serverName: normalizeCodexMcpServerName(serverParts.join('__')),
-            toolName: parts.slice(serverParts.length).join('__'),
-        };
-    }
-
-    return {
-        serverName: normalizeCodexMcpServerName(parts[0]),
-        toolName: parts.slice(1).join('__'),
-    };
+    // Historical rollouts have no launch inventory. Their injected namespace
+    // ends at the last separator; this is a read-only legacy format adapter.
+    const legacyKey = normalized.startsWith('mcp__happier__')
+        ? normalized.slice(5, normalized.lastIndexOf('__')) : null;
+    const identity = parseMcpToolWireNameV1(normalized,
+        legacyKey && legacyKey !== 'happier' ? new Set([legacyKey]) : undefined);
+    return identity ? { serverName: normalizeCodexMcpServerName(identity.server), toolName: identity.tool } : null;
 }
 
 function parseMcpNamespace(namespace: string): string | null {
@@ -44,13 +34,13 @@ export function normalizeCodexMcpToolName(name: string): string {
     const normalized = name.trim();
     const happierPrefix = 'mcp__happier__happier__';
     if (normalized.startsWith(happierPrefix)) {
-        return `mcp__happier__${normalized.slice(happierPrefix.length)}`;
+        return formatMcpToolWireNameV1('happier', normalized.slice(happierPrefix.length));
     }
     return normalized;
 }
 
 export function formatCodexMcpToolSource(source: CodexRolloutToolSource): string {
-    return normalizeCodexMcpToolName(`mcp__${source.serverName}__${source.toolName}`);
+    return normalizeCodexMcpToolName(formatMcpToolWireNameV1(source.serverName, source.toolName));
 }
 
 export function readCodexMcpToolSource(

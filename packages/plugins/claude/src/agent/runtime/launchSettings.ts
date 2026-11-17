@@ -1,3 +1,4 @@
+import { formatMcpToolWireNameV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { readClaudeSettingSourcesV2 } from '@happier-dev/protocol/agents/claude/predecessor-message-meta';
 import type { ClaudeSettingSourceV2 } from '@happier-dev/protocol/agents/claude/settings-policy';
@@ -265,16 +266,16 @@ export function resolveClaudeLaunchSettingsOverlayArgs(input: Readonly<{
       : {};
     const rules = (value: unknown) => Array.isArray(value) ? value.filter((rule): rule is string => typeof rule === 'string') : [];
     const existingAllow = [...rules(basePermissions.allow), ...rules(permissions.allow)]
-      .filter(rule => !mcpPolicies.some(([server]) => rule === `mcp__${server}` || rule.startsWith(`mcp__${server}__`)));
+      .filter(rule => !mcpPolicies.some(([server]) => rule === `mcp__${server}` || rule.startsWith(formatMcpToolWireNameV1(server, ''))));
     const mcpAsk: string[] = [];
     const mcpDeny: string[] = [];
     for (const [server, policy] of mcpPolicies) {
       // No live native rule replacement exists on this leaf. Keep Allow on the
       // host permission path, including detached Runs, so it cannot become stale.
       const hasExposedTools = Object.values(policy.tools).some(setting => setting === 'ask' || setting === 'allow');
-      (policy.unlisted === 'deny' && !hasExposedTools ? mcpDeny : mcpAsk).push(`mcp__${server}__*`);
+      (policy.unlisted === 'deny' && !hasExposedTools ? mcpDeny : mcpAsk).push(formatMcpToolWireNameV1(server, '*'));
       for (const [tool, setting] of Object.entries(policy.tools)) {
-        (setting === 'off' || setting === 'deny' ? mcpDeny : mcpAsk).push(`mcp__${server}__${tool}`);
+        (setting === 'off' || setting === 'deny' ? mcpDeny : mcpAsk).push(formatMcpToolWireNameV1(server, tool));
       }
     }
     const deny = [...rules(basePermissions.deny), ...rules(permissions.deny),

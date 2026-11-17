@@ -1,3 +1,4 @@
+import { formatMcpToolWireNameV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { readSessionModelSelectionProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import { createSessionHolderAdoptedTurnReader, hasSessionHolderAdoptToken } from '@/subprocess/supervision/sessionHolder';
 import { resolveSessionAgentPath, resolveSessionAgentSkills } from '@/subprocess/supervision/sessionTargetRelay';
@@ -1087,7 +1088,7 @@ export function toAgentSessionMcpLaunchConfigs(
             ...(server.env === undefined ? {} : { env: Object.freeze({ ...server.env }) }),
             ...(toolPolicy?.unlistedTools === 'deny'
                 ? { enabledTools: Object.freeze(toolNames!.filter((tool) =>
-                    isToolAllowedForSession(toolPolicy.allowedTools ?? [], `mcp__${name}__${tool}`, {}))) }
+                    isToolAllowedForSession(toolPolicy.allowedTools ?? [], formatMcpToolWireNameV1(name, tool), {}))) }
                 : server.enabledTools === undefined ? {} : { enabledTools: Object.freeze([...server.enabledTools]) }),
         });
     }

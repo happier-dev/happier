@@ -12,6 +12,7 @@ export {
   isSessionModeSelectionUnavailable,
   listHappierToolAutoApprovedNamesV1,
   listHappierToolAutoApprovedNameSpellingsV1,
+  formatMcpToolWireNameV1,
   parseMcpToolWireNameV1,
   readAgentStartupFailureCode,
   resolveUsageTokenCategories,

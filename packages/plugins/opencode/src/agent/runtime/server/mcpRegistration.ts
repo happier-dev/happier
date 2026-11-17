@@ -1,3 +1,4 @@
+import { formatMcpToolWireNameV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { projectOpenCodeServerError } from './formatOpenCodeServerPromptErrorMessage.js';
 import { createHash } from 'node:crypto';
 
@@ -187,7 +188,7 @@ export function canonicalizeOpenCodeProjectedMcpToolName(
     ? Object.keys(policy![registration.originalName]!.tools).filter(name => sanitizeOpenCodeMcpName(name) === suffix)
     : [];
   if (knownTools.length > 1) return rawToolName;
-  return suffix ? `mcp__${registration.originalName}__${knownTools[0] ?? suffix}` : rawToolName;
+  return suffix ? formatMcpToolWireNameV1(registration.originalName, knownTools[0] ?? suffix) : rawToolName;
 }
 
 /** Resolve only transport aliases; ordinary tools retain their local canonical path. */
@@ -200,7 +201,7 @@ export function resolveOpenCodeProjectedMcpToolName(
   const registration = parsed?.registration;
   if (parsed && registration?.resolveToolName && registration.toolAliasPrefix && parsed.suffix.startsWith(registration.toolAliasPrefix)) {
     return registration.resolveToolName(parsed.suffix).then(original =>
-      original === null ? rawToolName : `mcp__${registration.originalName}__${original}`);
+      original === null ? rawToolName : formatMcpToolWireNameV1(registration.originalName, original));
   }
   return canonicalizeOpenCodeProjectedMcpToolName(rawToolName, projection, policy);
 }

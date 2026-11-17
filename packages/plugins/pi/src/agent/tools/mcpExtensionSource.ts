@@ -1,9 +1,11 @@
+import { formatMcpToolWireNameV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 // Emitted inside the native extension alongside its schema validator and notice codec.
 export function buildPiMcpExtensionSource(): string {
-  return `// Meta Muse/OpenAI-compatible function names have a 64-character boundary.
+  return `const formatMcpToolWireNameV1 = ${formatMcpToolWireNameV1.toString()};
+// Meta Muse/OpenAI-compatible function names have a 64-character boundary.
 // https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create
 function providerMcpToolName(serverName, toolName) {
-  const original = "mcp__" + serverName + "__" + toolName;
+  const original = formatMcpToolWireNameV1(serverName, toolName);
   const aliasPrefix = "mcp__h__";
   if (original.length <= 64 && /^[A-Za-z0-9_-]+$/.test(original) && !original.startsWith(aliasPrefix)) return original;
   // Retain the full SHA-256 digest. Base64url leaves room for a readable prefix.
@@ -142,7 +144,7 @@ function createMcpServers(pi, config, onRegistered) {
       const aliases = {};
       for (const tool of selectedTools) {
         const name = providerMcpToolName(serverName, tool.name);
-        const originalName = "mcp__" + serverName + "__" + tool.name;
+        const originalName = formatMcpToolWireNameV1(serverName, tool.name);
         if (name !== originalName) aliases[name] = originalName;
         names.push(name);
         pi.registerTool({ name, label: tool.title || tool.name,

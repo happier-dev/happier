@@ -1,3 +1,4 @@
+import { formatMcpToolWireNameV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
   AgentLaunchEnvironment,
   AgentPermissionIntent,
@@ -26,7 +27,7 @@ export function buildKiloAcpToolNameResolver(
       // A native underscore could be a raw underscore, dot, slash or another
       // replaced character. A birth policy is not a complete tool inventory.
       if (!/^[a-zA-Z0-9-]+$/.test(suffix)) throw new Error('Kilo MCP tool identity is lossy');
-      return `mcp__${key}__${suffix}`;
+      return formatMcpToolWireNameV1(key, suffix);
     }
     return toolName;
   };

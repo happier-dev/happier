@@ -1,3 +1,4 @@
+import { parseMcpToolWireNameV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { ResolvedMcpToolIdentityV1Schema, type ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import type { ToolCall } from '../messages/index.js';
 
@@ -33,10 +34,10 @@ export function resolveMcpToolTitle(toolName: string, mcpTool?: ResolvedMcpToolI
     if (actionTitle) return actionTitle;
     const identity = ResolvedMcpToolIdentityV1Schema.safeParse(mcpTool);
     if (identity.success) return `${identity.data.toolTitle ?? identity.data.tool} · ${identity.data.serverTitle}`;
-    const withoutPrefix = toolName.replace(/^mcp__/, '');
-    const parts = withoutPrefix.split('__');
-    if (parts.length >= 2) {
-        return `MCP: ${snakeToPascalWithSpaces(parts[0]!)} ${snakeToPascalWithSpaces(parts.slice(1).join('_'))}`;
+    const parsed = parseMcpToolWireNameV1(toolName);
+    if (parsed) {
+        return `MCP: ${snakeToPascalWithSpaces(parsed.server)} ${snakeToPascalWithSpaces(parsed.tool.replaceAll('__', '_'))}`;
     }
+    const withoutPrefix = toolName.replace(/^mcp__/, '');
     return `MCP: ${snakeToPascalWithSpaces(withoutPrefix)}`;
 }

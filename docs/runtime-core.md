@@ -1646,7 +1646,14 @@ as a still-settling predecessor. Permission denial continues to cancel the
 current prompt through the same owner; plugins do not own host turn state.
 
 In 0.3 development source, known third-party MCP wire names resolve through the
-runner's canonical item-identity map and Protocol's tool decision owner. Off
+runner's canonical item-identity map and Protocol's tool decision owner. The
+launch-name owner assigns portable server keys before handing them to Agents,
+reserving both native names and their normalized spellings and suffixing
+collisions. Catalog ids remain unchanged in that map. Protocol's
+`formatMcpToolWireNameV1` / `parseMcpToolWireNameV1` own wire encoding and
+decoding; approvals resolve only against recorded launch keys, never by guessing
+which catalog name a native Agent normalized. Existing Sessions keep their
+captured mapping until a fresh launch. Off
 remains denied under full access and existing grants, including when a pending
 permission answer is rechecked. Read classification requires both the server's
 read-only opt-in and the tool's annotation. The built-in Happier server retains
