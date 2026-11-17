@@ -139,6 +139,11 @@ export async function executeAgentLaunchPayload(input: AgentLaunchFramePayload, 
       HOME: io.agentHome, USER: identity.username, LOGNAME: identity.username, SHELL: '/bin/sh',
       XDG_CACHE_HOME: cacheHome };
     if (io.terminal) {
+      // Framing has finished. Close Node's duplicated TTY read handle while
+      // the shim is still foreground; fd 0 remains available for inheritance.
+      // Closing it at process teardown would restore termios from a background
+      // group after shell job control, stopping the shim with SIGTTOU.
+      io.input.destroy();
       // The payload shares the actual foreground terminal. Pipes would lose
       // isatty, job control and kernel window-size propagation.
       const mask = process.umask(0o002);

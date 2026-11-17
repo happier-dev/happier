@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { encodeAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
@@ -317,4 +317,77 @@ describe.skipIf(process.platform === 'win32')('native inherited PTY launch trans
       expect(output).not.toContain('happier-agent-launch-');
     } finally { manager.dispose(); await rm(root, { recursive: true, force: true }); }
   });
+  it.skipIf(process.platform !== 'linux')('closes the native shim after an interactive shell takes the foreground process group', async () => {
+    const provider = createPythonPtyRelayProvider({ env: process.env, platform: process.platform });
+    if (!provider) throw new Error('POSIX PTY relay is unavailable');
+    const root = await mkdtemp(join(tmpdir(), 'happier-native-close-'));
+    const require = createRequire(import.meta.url);
+    const shimUrl = new URL('../../daemon/agentIsolation/agentLaunchShim.ts', import.meta.url).href;
+    const frameUrl = new URL('../../daemon/agentIsolation/agentLaunchFrame.ts', import.meta.url).href;
+    const source = String.raw`
+      const { readAgentLaunchFrame } = await import(${JSON.stringify(frameUrl)});
+      const { executeAgentLaunchPayload } = await import(${JSON.stringify(shimUrl)});
+      const controller = new AbortController();
+      process.on('SIGTERM', () => controller.abort());
+      process.stdin.setRawMode(true);
+      process.stdout.write('\x1b]777;happier-agent-launch-ready\x07');
+      const payload = await readAgentLaunchFrame(process.stdin, 'terminal');
+      process.stdin.pause(); process.stdin.setRawMode(false);
+      process.stdout.write('shim-pid:' + process.pid + '\n');
+      const result = await executeAgentLaunchPayload(payload, { agentHome: ${JSON.stringify(root)},
+        input: process.stdin, stdout: process.stdout, stderr: process.stderr, signal: controller.signal,
+        terminal: { accepted: () => process.stdout.write('\x1b]777;happier-agent-launch-accepted\x07') } });
+      process.exitCode = result.code ?? 0;
+    `;
+    // sudo's monitor keeps the shim's group non-orphaned in the same terminal
+    // session. Cross the real fork/setpgid/tcsetpgrp boundary without sudo policy
+    // or a privileged test account; no stop signal or exit event is fabricated.
+    const monitor = `
+import os, signal, sys
+signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+pid = os.fork()
+if pid == 0:
+    os.setpgid(0, 0)
+    os.tcsetpgrp(0, os.getpgrp())
+    signal.signal(signal.SIGTTOU, signal.SIG_DFL)
+    os.execv(sys.argv[1], sys.argv[1:])
+signal.signal(signal.SIGTERM, lambda *_: os.kill(pid, signal.SIGTERM))
+_, status = os.waitpid(pid, 0)
+sys.exit(os.waitstatus_to_exitcode(status))
+`;
+    const payload = { v: 1 as const, executable: '/bin/bash', args: ['--noprofile', '--norc', '-i'], cwd: root,
+      runtimeHome: join(root, 'runtime/person'), environment: {}, selectedMaterials: [] };
+    const manager = createTerminalPtySessionManager({ ptyProvider: provider, config, env: process.env });
+    let terminalId: string | undefined;
+    let shimPid: number | undefined;
+    const output = () => {
+      const read = manager.read({ terminalId: terminalId!, cursor: 0, maxBytes: 1_000_000, maxEvents: 1000 });
+      return read.ok ? read.events.map(event => event.t === 'data' ? event.data : '').join('') : '';
+    };
+    try {
+      const opened = await manager.ensure({ terminalKey: 'native-job-control-close', cwd: root,
+        authorizedNativeLaunch: { command: resolvePythonPtyRelayExecutable({ env: process.env })!,
+          args: ['-c', monitor, process.execPath, '--import', require.resolve('tsx/esm'), '--input-type=module', '-e', source],
+          cwd: process.cwd(), env: { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string,string] => typeof entry[1] === 'string')),
+            TSX_TSCONFIG_PATH: resolve('tsconfig.json') }, stdinPreamble: encodeAgentLaunchFrame(payload), release() {} },
+        launchProcess: { file: '/bin/bash', args: [], initialInput: "printf 'shell-ready:%s\n' $$\n" },
+      });
+      if (!opened.ok) throw new Error(opened.errorCode);
+      terminalId = opened.terminalId;
+      await expect.poll(output).toMatch(/shell-ready:\d+/u);
+      shimPid = Number(/shim-pid:(\d+)/u.exec(output())![1]);
+      const stat = (await readFile(`/proc/${shimPid}/stat`, 'utf8')).split(') ')[1]!.split(' ');
+      expect(stat[5]).not.toBe(stat[2]); // kernel foreground group differs from shim group
+      expect(stat[0], 'native shim must remain runnable behind the foreground shell').not.toBe('T');
+      expect(await manager.requestStop({ terminalId })).toMatchObject({ kind: expect.stringMatching(/^(requested|exited)$/u) });
+      expect(await manager.waitForExit({ terminalId })).toMatchObject({ kind: 'exited' });
+      expect(manager.close({ terminalId })).toEqual({ ok: true });
+      expect(manager.list()).toEqual([]);
+    } finally {
+      if (shimPid && isPidAlive(shimPid)) await terminateProcessTree({ pid: shimPid });
+      manager.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
 });
