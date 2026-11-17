@@ -514,6 +514,13 @@ they do not map Event ids to copy keys. Machine services declares title and
 description resources for all supported locales through its ordinary plugin
 translation contributions.
 
+In unreleased 0.3, the same declaration/setup catalog carries the optional
+host-owned `observationBinding` for headless Event authoring through
+`workflow.events.list`. CLI and UI request the existing supported binding
+version from the daemon. The neutral catalog owns exact-source/host validation;
+the UI projection adds only its physical `setupSurface`. Projecting the catalog
+must preserve the assignment so an agent can configure the selected Event.
+
 The same Machine-services catalog contributes `managed-machine-setup-failed`
 and `mcp-update-available`. The first reads `machines.managed.get` and the
 server-retained failed operation's `settledAtMs`; the second reads

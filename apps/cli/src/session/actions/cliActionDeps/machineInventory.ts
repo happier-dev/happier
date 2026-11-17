@@ -152,7 +152,7 @@ export function createCliMachineInventoryActionDeps(
           const response = DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse(await callMachineAction({
             machineId: args.machineId, serverId: args.serverId,
             method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
-            request: { machineId: args.machineId },
+            request: { machineId: args.machineId, supportedEventObservationBindingVersions: [1] },
             ...(context.signal ? { signal: context.signal } : {}),
           }));
           if (!response.success || response.data.automationEligibleEvents === undefined) {

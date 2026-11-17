@@ -40,7 +40,6 @@ import {
   getPluginMachineExecutionOriginRef,
   type PluginMachineExecutionOriginV1,
 } from '../machines/administration/pluginMachineExecutionOriginV1.js';
-import { PluginMachineMaterializationRefV1Schema } from '../plugins/availability/materializationRefV1.js';
 import { PluginExecutionTargetV2Schema } from '../plugins/manifest/v2.js';
 import { PluginSkillLibraryContentV1Schema } from '../prompts/library/skills/skillReadV1.js';
 import { PluginWorkItemsContributionV1Schema } from '../plugins/contributions/workItems.js';
@@ -395,30 +394,11 @@ export type DaemonContributionRegistryProjectionDescribeRequest = z.infer<
  * display catalog with no Event-store or setup-binding ownership.
  */
 export const DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema = lazyZodSchema(() => (<T extends zMini.ZodMiniObject>(schema: T) => zMini.core.clone(schema, { ...schema._zod.def, catchall: zMini.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(zMini.safeExtend(AutomationEligibleEventCatalogEntryV1Schema, {
-  /** Same current daemon source, with its actual host-owned observer assignment. */
-  observationBinding: z.optional(z.strictObject({
-    executionOrigin: PluginMachineExecutionOriginV1Schema,
-    materializationRef: PluginMachineMaterializationRefV1Schema,
-  })),
   setupSurface: z.optional(z.lazy(
     () => DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1Schema,
   )),
 })).check(zMini.superRefine((entry, context) => {
   const eventIdentity = entry.event.identity;
-  const binding = entry.observationBinding;
-  if (binding) {
-    const source = getPluginMachineExecutionOriginRef(binding.executionOrigin);
-    if (source.pluginId !== eventIdentity.pluginId
-      || binding.materializationRef.pluginId !== eventIdentity.pluginId
-      || source.machineId !== binding.materializationRef.machineId
-      || ('materializationRef' in binding.executionOrigin
-        && binding.executionOrigin.materializationRef.materializationId !== binding.materializationRef.materializationId)
-      || ('sourceRef' in binding.executionOrigin && (!entry.event.sourceCustody
-        || !pluginSourceCustodyV1Equal(binding.executionOrigin.sourceRef.sourceCustody, entry.event.sourceCustody)))) {
-      context.addIssue({ code: 'custom', path: ['observationBinding'],
-        message: 'Observer assignment must match the exact admitted Event source and host.' });
-    }
-  }
   if (!entry.setupSurface) return;
   if (
     entry.setupSurface.contribution.pluginId !== eventIdentity.pluginId

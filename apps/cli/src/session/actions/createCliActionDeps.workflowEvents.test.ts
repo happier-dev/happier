@@ -18,6 +18,13 @@ const event = {
       setupActionRef: { pluginId: 'acme.events', localId: 'configure-source' },
     } },
   },
+  observationBinding: {
+    executionOrigin: { serverIdentityId: 'srv_events', sourceRef: {
+      machineId: 'machine-1', pluginId: 'acme.events',
+      sourceCustody: { kind: 'development', registeredRootId: 'events-root' },
+    } },
+    materializationRef: { machineId: 'machine-1', pluginId: 'acme.events', materializationId: 'observer-1' },
+  },
   setupAction: {
     id: 'acme.events/configure-source',
     identity: { pluginId: 'acme.events', localId: 'configure-source' },
@@ -48,7 +55,7 @@ describe('workflow eligible Event catalog through Actions', () => {
       ok: true, result: { machineId: 'machine-1', events: [event] },
     });
     expect(requests).toEqual([{ method: 'daemon.extensions.contributionRegistryProjection.describe', signal,
-      request: { machineId: 'machine-1' } }]);
+      request: { machineId: 'machine-1', supportedEventObservationBindingVersions: [1] } }]);
   });
 
   it('distinguishes an empty supported catalog from missing eligibility support and invalid occurrence facts', async () => {

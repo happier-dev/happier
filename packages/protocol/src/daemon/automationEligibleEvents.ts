@@ -4,7 +4,9 @@ import { ActionInputHintsSchema } from '../actions/actionInputHints.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema as CanonicalPluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { PluginUiRuntimeOccurrenceIdV1Schema as CanonicalPluginUiRuntimeOccurrenceIdV1Schema } from '../plugins/ui/targetedContributions.js';
-import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
+import { PluginSourceCustodyV1Schema, pluginSourceCustodyV1Equal } from '../plugins/runtime/sourceCustody.js';
+import { PluginMachineExecutionOriginV1Schema, getPluginMachineExecutionOriginRef } from '../machines/administration/pluginMachineExecutionOriginV1.js';
+import { PluginMachineMaterializationRefV1Schema } from '../plugins/availability/materializationRefV1.js';
 import { PluginJsonSchemaV2Schema, PluginLocalizedStringV2Schema } from '../plugins/contributions/publicTypes.js';
 import { PluginEventAutomationDeclarationV1Schema } from '../automations/automationEventDeclarationV1.js';
 
@@ -42,7 +44,26 @@ export const AutomationEligibleEventCatalogEntryV1Schema = lazyZodSchema(() => z
   }),
   setupAction: DaemonContributionRegistryProjectionAutomationEligibleEventActionV1Schema,
   historyGapResetAction: z.optional(DaemonContributionRegistryProjectionAutomationEligibleEventActionV1Schema),
+  /** Same current daemon source, with its actual host-owned observer assignment. */
+  observationBinding: z.optional(z.strictObject({
+    executionOrigin: PluginMachineExecutionOriginV1Schema,
+    materializationRef: PluginMachineMaterializationRefV1Schema,
+  })),
 }).check(z.superRefine((entry, context) => {
+  const binding = entry.observationBinding;
+  if (binding) {
+    const source = getPluginMachineExecutionOriginRef(binding.executionOrigin);
+    if (source.pluginId !== entry.event.identity.pluginId
+      || binding.materializationRef.pluginId !== entry.event.identity.pluginId
+      || source.machineId !== binding.materializationRef.machineId
+      || ('materializationRef' in binding.executionOrigin
+        && binding.executionOrigin.materializationRef.materializationId !== binding.materializationRef.materializationId)
+      || ('sourceRef' in binding.executionOrigin
+        && !pluginSourceCustodyV1Equal(binding.executionOrigin.sourceRef.sourceCustody, entry.event.sourceCustody))) {
+      context.addIssue({ code: 'custom', path: ['observationBinding'],
+        message: 'Observer assignment must match the exact admitted Event source and host.' });
+    }
+  }
   const requireSamePluginOccurrence = (
     value: Readonly<{ identity: Readonly<{ pluginId: string }>; occurrenceId: string }>,
     path: (string | number)[],
@@ -64,7 +85,8 @@ export const AutomationEligibleEventsCatalogV1Schema = lazyZodSchema(() => z.arr
 export function projectAutomationEligibleEventsCatalogV1(
   events: readonly AutomationEligibleEventCatalogEntryV1[],
 ): AutomationEligibleEventCatalogEntryV1[] {
-  return AutomationEligibleEventsCatalogV1Schema.parse(events.map(({ event, setupAction, historyGapResetAction }) => ({
+  return events.map(({ event, setupAction, historyGapResetAction, observationBinding }) => ({
     event, setupAction, ...(historyGapResetAction === undefined ? {} : { historyGapResetAction }),
-  })));
+    ...(observationBinding === undefined ? {} : { observationBinding }),
+  }));
 }
